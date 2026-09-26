@@ -1144,7 +1144,7 @@ already-inserted run) — never an orphan worktree or live ACP session.
   `Running`/`NeedsInput` — a claimed worktree holds a slot.
 - **(Implemented — ADR-183)** While the execution host reports outbox
   pressure (`execution_hosts.pressured_since` set) the effective cap is zero:
-  a launch is still created and answered 201, queued `Pending` with
+  a launch is still created and answered 202, queued `Pending` with
   `queueReason: "host_pressured"` (derived on read, no column), and it starts
   when the `system_sweep` sees `pressured: false`, clears the record and calls
   `promoteNextPending`. The run page's `Pending` label names the reason.

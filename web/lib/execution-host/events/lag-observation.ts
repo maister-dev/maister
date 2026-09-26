@@ -5,7 +5,10 @@ import type {
   OpenExecutionCommands,
   PoisonedExecutionConsumer,
 } from "@/types/execution-host-observability";
-import type { RuntimeEventStreamCloses } from "@/types/platform-status";
+import type {
+  RuntimeEventStreamCloses,
+  SupervisorEventStreamPressure,
+} from "@/types/platform-status";
 
 import {
   isHostBacklogLagEligible,
@@ -51,11 +54,21 @@ export type LagObservationSample = Readonly<{
         // them. Monotonic within one bootId; no verdict reads them.
         subscriberPauses?: number;
         closes?: RuntimeEventStreamCloses;
+        // ADR-183 D-M7: the host's pressure episode, null while it is not
+        // pressured; absent from a host that does not report it.
+        pressure?: HostBacklogPressure | null;
       }>
     | Readonly<{ status: "unsupported" | "unavailable" }>;
   projectionBacklog:
     | Readonly<{ status: "available"; maximumBacklog: string }>
     | Readonly<{ status: "unsupported" | "unavailable" }>;
+}>;
+
+export type HostBacklogPressure = Readonly<{
+  since: string;
+  durationMs: number;
+  unacknowledgedAtStart: number;
+  episodes: number;
 }>;
 
 export type LagObservationTransition = "lagging" | "recovered" | "reset";
@@ -405,7 +418,15 @@ function isBacklogSource(value: unknown, availableKey: string): boolean {
       (isRecord(value.closes) &&
         RUNTIME_EVENT_CLOSE_REASONS.every((reason) =>
           isCount((value.closes as Record<string, unknown>)[reason]),
-        )))
+        ))) &&
+    (value.pressure === undefined ||
+      value.pressure === null ||
+      (isRecord(value.pressure) &&
+        isNonemptyString(value.pressure.since) &&
+        Number.isFinite(Date.parse(value.pressure.since)) &&
+        isCount(value.pressure.durationMs) &&
+        isCount(value.pressure.unacknowledgedAtStart) &&
+        isCount(value.pressure.episodes)))
   );
 }
 
@@ -505,6 +526,20 @@ export function boundExecutionObservability(
   return withoutRows;
 }
 
+function backlogPressure(
+  pressure: SupervisorEventStreamPressure | null,
+  sampledAt: string,
+): HostBacklogPressure | null {
+  if (pressure === null) return null;
+
+  return {
+    since: pressure.since,
+    durationMs: Math.max(0, Date.parse(sampledAt) - Date.parse(pressure.since)),
+    unacknowledgedAtStart: pressure.unacknowledgedCountAtStart,
+    episodes: pressure.episodes,
+  };
+}
+
 function selectedStream(
   model: ExecutionEventLagReadModel,
   previous: LagStreamObservation | null,
@@ -559,6 +594,14 @@ export function createExecutionObservability(
           ...(stream.hostTelemetry.closes === null
             ? {}
             : { closes: { ...stream.hostTelemetry.closes } }),
+          ...(stream.hostTelemetry.pressure === undefined
+            ? {}
+            : {
+                pressure: backlogPressure(
+                  stream.hostTelemetry.pressure,
+                  input.model.sampledAt,
+                ),
+              }),
         }
       : {
           status:

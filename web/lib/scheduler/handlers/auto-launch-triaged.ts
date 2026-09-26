@@ -14,7 +14,7 @@ import {
   isTerminalLaunchRefusal,
   loadC2CandidateRows,
 } from "@/lib/scheduler/c2-eligibility";
-import { capForPool, countLiveRuns } from "@/lib/scheduler";
+import { countLiveRuns, effectivePoolCap } from "@/lib/scheduler";
 import { launchRun } from "@/lib/services/runs";
 import {
   projectShareAllowsC2,
@@ -89,7 +89,7 @@ export async function runAutoLaunchTriagedJob(
   };
 
   // ADR-121 capacity context (computed once, then tracked per launch this tick).
-  const flowCap = capForPool("flow");
+  const { cap: flowCap } = await effectivePoolCap(db, "flow");
   const reserve = resolveAutoReserve();
   // Count live flow runs PLUS outstanding slot-free-gate C2 claims (Codex-2), so
   // the poll's reserve guard is consistent with the gate's when both run.

@@ -8,6 +8,7 @@ import type { WorkspaceGcSummary } from "@/lib/gc/workspace-gc";
 import type { PlainAgentDirectoryGcSummary } from "@/lib/gc/plain-agent-directory-gc";
 import type { EvidenceSweepSummary } from "@/lib/evaluations/evidence/gc";
 import type { WorkspaceReconciliationSummary } from "@/lib/gc/workspace-reconciler";
+import type { PlatformStatus } from "@/types/platform-status";
 import type {
   ExecutionObservabilitySummary,
   LagStreamObservation,
@@ -27,6 +28,16 @@ import {
 } from "@/lib/execution-host";
 import { getDb } from "@/lib/db/client";
 import { collectExecutionEventLag } from "@/lib/execution-host/events/lag-read-model";
+import {
+  recordHostPressureSample,
+  type HostPressureObservation,
+} from "@/lib/execution-host/host-pressure";
+import {
+  effectivePoolCap,
+  promoteNextPending,
+  type PromoteNextPendingOptions,
+  type SchedulerPool,
+} from "@/lib/scheduler";
 import {
   createExecutionObservability,
   createUnavailableExecutionObservability,
@@ -113,7 +124,20 @@ export type SystemSweepSummary = GcCompatibilitySummary & {
   // null when it threw before returning a summary.
   brainReindex: Awaited<ReturnType<typeof runBrainReindexSweep>> | null;
   executionObservability: ExecutionObservabilitySummary | null;
+  // ADR-183 D-M0/D-M4: the host-pressure record as this tick's health sample
+  // left it, and how many queued units the clear admitted. null when the
+  // observation was not requested or the host reported no stream.
+  pressure: HostPressureSweepSummary | null;
 };
+
+export type HostPressureSweepSummary = HostPressureObservation & {
+  promoted: number;
+};
+
+type PromoteDispatch = Pick<
+  PromoteNextPendingOptions,
+  "runFlow" | "resumeRun" | "startAgentRun" | "launchRun"
+>;
 
 export type SystemSweepInput = Readonly<{
   executionObservation?: Readonly<{
@@ -317,6 +341,7 @@ export async function runSystemSweep(
   let strandedAgentTurns: number | null = 0;
   let digest: SystemSweepSummary["digest"] = null;
   let executionObservability: ExecutionObservabilitySummary | null = null;
+  let pressure: HostPressureSweepSummary | null = null;
 
   try {
     keepalive = await runSweepTick();
@@ -423,6 +448,15 @@ export async function runSystemSweep(
 
     try {
       const health = await executionHosts.local().platformStatus();
+
+      try {
+        pressure = await applyHostPressureSample(health);
+      } catch (err) {
+        const message = errorMessage(err);
+
+        errors.push(`host pressure sample failed: ${message}`);
+        log.warn({ err: message }, "system_sweep host pressure sample threw");
+      }
       const model = await collectExecutionEventLag({
         db: getDb(),
         health,
@@ -535,6 +569,7 @@ export async function runSystemSweep(
     brain,
     brainReindex,
     executionObservability,
+    pressure,
     workspace: gc.workspace,
     workspaceReconciliation: gc.workspaceReconciliation,
     revision: gc.revision,
@@ -593,6 +628,56 @@ function gcFailureMessages(
   }
 
   return errors;
+}
+
+// ADR-183 D-M0: the host is the authority on pressure — its sample sets and
+// clears the record. A clear lifts the admission fence, and nothing else would
+// wake the work it queued, so the clear itself admits it (D-M4, C29).
+export async function applyHostPressureSample(
+  health: PlatformStatus,
+  dispatch: PromoteDispatch = {},
+): Promise<HostPressureSweepSummary | null> {
+  if (health.kind !== "ready") return null;
+  const hostKey = health.health.host?.hostKey;
+  const stream = health.health.stream;
+
+  if (!hostKey || !stream) return null;
+  const observed = await recordHostPressureSample({
+    db: getDb(),
+    hostKey,
+    stream,
+    logger: log,
+  });
+
+  if (!observed) return null;
+
+  return {
+    ...observed,
+    promoted:
+      observed.transition === "cleared"
+        ? await promoteQueuedAfterClear(dispatch)
+        : 0,
+  };
+}
+
+async function promoteQueuedAfterClear(
+  dispatch: PromoteDispatch,
+): Promise<number> {
+  let promoted = 0;
+
+  for (const pool of ["flow", "agent"] as const satisfies SchedulerPool[]) {
+    const { cap } = await effectivePoolCap(getDb(), pool);
+
+    for (let admitted = 0; admitted < cap; admitted += 1) {
+      const { promotedRunId } = await promoteNextPending({ ...dispatch, pool });
+
+      if (!promotedRunId) break;
+      promoted += 1;
+    }
+  }
+  log.info({ promoted }, "host pressure cleared → queued work promoted");
+
+  return promoted;
 }
 
 function errorMessage(err: unknown): string {

@@ -1071,6 +1071,9 @@ export default async function RunDetailLayout({
     closeInspector: t("headerCloseInspector"),
     task: t("headerTask"),
     budgetWarn: t("headerBudgetWarn"),
+    ...(detail.queueReason
+      ? { queueReason: t(`queueReason.${detail.queueReason}`) }
+      : {}),
     review: t("flowCenterReviewChanges"),
     promote: t("inspectorActionPromote"),
     promotionStarted: t("promotionStarted"),

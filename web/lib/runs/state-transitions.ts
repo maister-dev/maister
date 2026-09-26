@@ -44,7 +44,11 @@ import {
   authorizeNodePermissionContinuation,
   consumeUndeliveredFlowPermission,
 } from "@/lib/flows/graph/permission-resume";
-import { capForPool, countLiveRuns, takeSchedulerLock } from "@/lib/scheduler";
+import {
+  countLiveRuns,
+  effectivePoolCap,
+  takeSchedulerLock,
+} from "@/lib/scheduler";
 import { admitCompletedAgentResume } from "@/lib/agents/resume";
 import {
   readAgentPermissionResume,
@@ -520,7 +524,10 @@ export async function markResumedFromWait(
         )
           return { ok: false, reason: "status-guard-mismatch" };
       }
-      if ((await countLiveRuns(tx, "flow")) >= capForPool("flow")) {
+      if (
+        (await countLiveRuns(tx, "flow")) >=
+        (await effectivePoolCap(tx, "flow")).cap
+      ) {
         const deferred = await tx
           .update(runs)
           .set({

@@ -40,9 +40,20 @@ export type FlowPermissionContinueResume = Omit<
 > &
   Readonly<{ kind: "permission_continue" }>;
 
+// ADR-183: the ACP handle of a node parked by a `node_interrupt` — an operator's
+// or the execution host's (outbox pressure). `promptOrdinal` is the NEXT turn:
+// the park advances the attempt past the interrupted prompt, and a resume that
+// mints a new assignment rebinds `assignmentId` to it.
+export type FlowInterruptResume = ActionResumeIdentity &
+  Readonly<{
+    kind: "interrupt";
+    cause: "operator" | "host_pressure";
+  }>;
+
 export type FlowActionResume =
   | FlowPermissionResultResume
   | FlowPermissionContinueResume
+  | FlowInterruptResume
   | (ActionResumeIdentity &
       (
         | Readonly<{

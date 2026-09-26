@@ -194,6 +194,9 @@ export async function POST(req: NextRequest): Promise<Response> {
               runId: result.runId,
               status: "Pending",
               queuePosition: result.queuePosition,
+              ...(result.queueReason
+                ? { queueReason: result.queueReason }
+                : {}),
             },
         { status: 202 },
       );

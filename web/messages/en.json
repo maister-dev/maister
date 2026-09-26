@@ -2740,6 +2740,9 @@
       "Abandoned": "Abandoned",
       "Failed": "Failed"
     },
+    "queueReason": {
+      "host_pressured": "Waiting for the execution host to catch up on its event backlog"
+    },
     "nodeStatus": {
       "Pending": "Pending",
       "Running": "Running",
@@ -3189,8 +3192,6 @@
     "title": "Execution host",
     "subtitle": "Current host, event-stream, projection, worker, and command evidence in one operator view.",
     "missing": "unavailable",
-    "yes": "yes",
-    "no": "no",
     "sampledAt": "Current data sampled {value}",
     "hosts": {
       "title": "Hosts",
@@ -3209,6 +3210,14 @@
       "closesLegend": "Why the host closed runtime-event connections since its boot",
       "watermarkLegend": "R received · C contiguous · A ACK-confirmed",
       "lagLegend": "H→M host to manager · G gap · A ACK confirmation"
+    },
+    "pressure": {
+      "active": "Pressured",
+      "clear": "Not pressured",
+      "since": "since {value}",
+      "duration": "for {value}",
+      "unackedAtStart": "{count} unACKed at start",
+      "episodes": "{count} earlier episodes"
     },
     "closeReason": {
       "disconnect": "disconnect",

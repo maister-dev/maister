@@ -83,6 +83,10 @@ import { resolveReentryNode } from "@/lib/runs/reentry";
 import { assertReworkClaimEligible } from "@/lib/runs/rework-claim";
 import { resolveNodeRecoverInfo } from "@/lib/flows/graph/current-node-kind";
 import { resolveNodeResumeSessionId } from "@/lib/runs/node-resume-session";
+import {
+  HOST_PRESSURED_REASON,
+  localHostPressuredSince,
+} from "@/lib/execution-host/host-pressure";
 import { buildSettingsView } from "@/lib/flows/settings-view";
 import { gcAgeDays, gcWarningDays } from "@/lib/instance-config";
 import { extractOptions } from "@/lib/queries/hitl";
@@ -191,6 +195,9 @@ export interface RunDetail {
   // scratch/agent runs with no flow.
   flowRef: string | null;
   status: string;
+  // ADR-183 D-M4: why a `Pending` run waits, derived on read from the host's
+  // pressure record (no column); null for a plain capacity queue.
+  queueReason: typeof HOST_PRESSURED_REASON | null;
   startedAt: Date;
   endedAt: Date | null;
   currentStepId: string | null;
@@ -845,6 +852,11 @@ export const getRunDetail = cache(async function getRunDetail(
     row,
     activeClaimRow,
   });
+  const queueReason =
+    row.status === "Pending" &&
+    (await localHostPressuredSince(client as never)) !== null
+      ? HOST_PRESSURED_REASON
+      : null;
 
   return {
     runId: row.runId,
@@ -862,6 +874,7 @@ export const getRunDetail = cache(async function getRunDetail(
     taskPrompt: row.taskPrompt,
     flowRef: row.flowRef,
     status: row.status,
+    queueReason,
     startedAt: row.startedAt,
     endedAt: row.endedAt,
     runKind: row.runKind,

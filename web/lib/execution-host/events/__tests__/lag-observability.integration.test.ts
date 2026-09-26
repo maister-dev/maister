@@ -37,7 +37,16 @@ describe("execution lag observability across the real host and manager stores", 
     database = await startMainPostgresTestDb({
       databaseName: "execution_lag_observability",
     });
-    supervisor = await startRealSupervisor({ fixtureArgs: ["--hang"] });
+    // ADR-183: the held backlog below (110+ unACKed rows) is a pressure
+    // episode at these budgets, and the caught-up stream is not.
+    supervisor = await startRealSupervisor({
+      fixtureArgs: ["--hang"],
+      env: {
+        MAISTER_EVENT_OUTBOX_LOW_ROWS: "50",
+        MAISTER_EVENT_OUTBOX_SOFT_ROWS: "100",
+        MAISTER_EVENT_OUTBOX_HARD_ROWS: "5000",
+      },
+    });
     restoreUrl = useRealSupervisorUrl(supervisor.url);
   }, 180_000);
 
@@ -253,7 +262,21 @@ describe("execution lag observability across the real host and manager stores", 
       expect(model.streams[0].streamState).toBe("active");
       expect(observation.stream?.hostBacklog).toMatchObject({
         status: "available",
+        pressure: {
+          since: expect.any(String),
+          durationMs: expect.any(Number),
+          unacknowledgedAtStart: expect.any(Number),
+          episodes: expect.any(Number),
+        },
       });
+      const pressure =
+        observation.stream?.hostBacklog.status === "available"
+          ? observation.stream.hostBacklog.pressure
+          : undefined;
+
+      expect(pressure?.unacknowledgedAtStart).toBeGreaterThanOrEqual(100);
+      // `episodes` counts COMPLETED episodes: this is the store's first.
+      expect(pressure?.episodes).toBe(0);
     }
 
     // The gate is real: an over-THRESHOLD count alone never counts toward the
@@ -351,6 +374,12 @@ describe("execution lag observability across the real host and manager stores", 
       verdict: "clear",
       incidentOpen: false,
       transition: "recovered",
+    });
+    // Relief ends the episode: the host reports no pressure, and the
+    // observation carries that as null rather than dropping the field.
+    expect(recovered.stream?.hostBacklog).toMatchObject({
+      status: "available",
+      pressure: null,
     });
 
     const consumerName = `lag-projection-${randomUUID()}`;

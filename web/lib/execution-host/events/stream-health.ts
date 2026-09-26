@@ -20,6 +20,9 @@ export type StalledStream = {
   executionHostId: string;
   lastSeenAt: Date | null;
   openCommands: number;
+  // ADR-183: the host's outbox-pressure record. A pressured host pauses every
+  // producer, so its silence is not a stall.
+  pressuredSince: Date | null;
 };
 
 // There is NO heartbeat event type: every runtime event is session- or
@@ -43,6 +46,7 @@ export async function findStalledEventStreams(input: {
       streamId: executionEventStreams.streamId,
       executionHostId: executionEventStreams.executionHostId,
       lastSeenAt: executionEventStreams.lastSeenAt,
+      pressuredSince: executionHosts.pressuredSince,
       openCommands: sql<number>`(
         select count(*)::int from ${executionCommands}
          where ${executionCommands.executionHostId} = ${executionEventStreams.executionHostId}
@@ -69,6 +73,9 @@ export type StreamHealthSweepSummary = {
   checked: number;
   stalled: number;
   degraded: number;
+  /** Silent streams with open work on a pressured, reachable host (ADR-183):
+   * neither repaired nor degraded. */
+  pressured: number;
   /** Projection consumers parked on an event they cannot apply. A poisoned row
    * never advances its cursor, so that run's read model is frozen until an
    * operator rearms it — which nothing surfaced before. */
@@ -199,6 +206,7 @@ export async function runEventStreamHealthPass(input: {
     checked: 0,
     stalled: 0,
     degraded: 0,
+    pressured: 0,
     poisonedConsumers: 0,
     errors: [],
   };
@@ -216,8 +224,25 @@ export async function runEventStreamHealthPass(input: {
   });
 
   summary.checked = stalled.length;
+  const now = input.now ?? new Date();
 
   for (const stream of stalled) {
+    if (stream.pressuredSince) {
+      summary.pressured += 1;
+      input.logger?.info(
+        {
+          hostId: stream.executionHostId,
+          streamId: stream.streamId,
+          openCommands: stream.openCommands,
+          pressuredForMs: Math.max(
+            0,
+            now.getTime() - stream.pressuredSince.getTime(),
+          ),
+        },
+        "runtime-event-stream-pressured",
+      );
+      continue;
+    }
     summary.stalled += 1;
     try {
       const [row] = await input.db

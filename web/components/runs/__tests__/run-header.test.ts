@@ -56,6 +56,23 @@ describe("RunHeader — task-first header", () => {
     expect(html).toContain("MAI-42");
   });
 
+  it("ADR-183: names the host-pressure queue reason beside a Pending status, and only there", () => {
+    const reason = "Waiting for the execution host";
+    const pending = render({
+      status: "Pending",
+      labels: { ...labels, queueReason: reason },
+    });
+
+    expect(pending).toContain('data-testid="run-header-queue-reason"');
+    expect(pending).toContain(reason);
+    expect(render({ status: "Pending" })).not.toContain(
+      'data-testid="run-header-queue-reason"',
+    );
+    expect(
+      render({ status: "Running", labels: { ...labels, queueReason: reason } }),
+    ).not.toContain('data-testid="run-header-queue-reason"');
+  });
+
   it("omits the KEY-N chip for scratch runs (keyRef null)", () => {
     const html = render({ keyRef: null });
 

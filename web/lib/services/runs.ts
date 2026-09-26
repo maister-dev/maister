@@ -97,7 +97,7 @@ import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import { actorForUserId, recordTaskActivity } from "@/lib/social/activity";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
 import { assertUpgradeMaintenanceAllows } from "@/lib/maintenance/upgrade-fence";
-import { tryStartRun } from "@/lib/scheduler";
+import { tryStartRun, type PoolCapFence } from "@/lib/scheduler";
 import { localHost, mintPlacement } from "@/lib/execution-host";
 import { executionDataPlaneModeForHost } from "@/lib/execution-host/data-plane-capabilities";
 import { fetchProjectRemote, listProjectRemotes } from "@/lib/git-remotes";
@@ -582,7 +582,12 @@ export async function* launchRunStaged(
   opts: { signal?: AbortSignal } = {},
 ): AsyncGenerator<
   LaunchProgressEvent,
-  { runId: string; status: string; queuePosition?: number },
+  {
+    runId: string;
+    status: string;
+    queuePosition?: number;
+    queueReason?: PoolCapFence;
+  },
   void
 > {
   // D9 step 2: refuse before any worktree, run row or session exists, so a
@@ -1991,7 +1996,14 @@ export async function* launchRunStaged(
     return { runId, status: "Running" };
   }
 
-  return { runId, status: "Pending", queuePosition: startResult.queuePosition };
+  return {
+    runId,
+    status: "Pending",
+    queuePosition: startResult.queuePosition,
+    ...(startResult.queueReason
+      ? { queueReason: startResult.queueReason }
+      : {}),
+  };
 }
 
 // Back-compat drain: non-streaming callers (the non-SSE route path, scheduler
@@ -2000,7 +2012,12 @@ export async function launchRun(
   input: LaunchRunInput,
   ctx: LaunchRunContext,
   db?: Db,
-): Promise<{ runId: string; status: string; queuePosition?: number }> {
+): Promise<{
+  runId: string;
+  status: string;
+  queuePosition?: number;
+  queueReason?: PoolCapFence;
+}> {
   const gen = launchRunStaged(input, ctx, db);
   let step = await gen.next();
 

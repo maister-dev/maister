@@ -34,6 +34,10 @@ import {
 } from "@/lib/runs/state-transitions";
 import { getLatestAssignment } from "@/lib/execution-host/assignments";
 import { getHostById } from "@/lib/execution-host/hosts";
+import {
+  HOST_PRESSURED_REASON,
+  localHostPressuredSince,
+} from "@/lib/execution-host/host-pressure";
 import { CRASH_RECOVER_BUDGET_RESET } from "@/lib/runs/crash-recover";
 import { SLOT_HOLDING_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 import {
@@ -156,6 +160,40 @@ export function capForPool(pool: SchedulerPool): number {
   return pool === "agent" ? agentCapFromEnv() : capFromEnv();
 }
 
+export type PoolCapFence = typeof HOST_PRESSURED_REASON;
+
+export type EffectivePoolCap = {
+  cap: number;
+  fence: PoolCapFence | null;
+  pressuredSince: Date | null;
+};
+
+// ADR-183 D-M4: the ONE cap every admission reads. A host whose outbox is
+// behind admits no new work — each admission would only deepen the backlog —
+// so its pools read as full until the pressure record clears. Callers read it
+// under the scheduler lock they already hold.
+export async function effectivePoolCap(
+  tx: Db,
+  pool: SchedulerPool,
+): Promise<EffectivePoolCap> {
+  const pressuredSince = await localHostPressuredSince(tx);
+
+  if (pressuredSince) {
+    log.debug(
+      {
+        pool,
+        reason: HOST_PRESSURED_REASON,
+        pressuredForMs: Math.max(0, Date.now() - pressuredSince.getTime()),
+      },
+      "pool admission fenced by host pressure",
+    );
+
+    return { cap: 0, fence: HOST_PRESSURED_REASON, pressuredSince };
+  }
+
+  return { cap: capForPool(pool), fence: null, pressuredSince: null };
+}
+
 // The one cap predicate: a run holds a scheduler slot while it is in any of
 // these statuses. Counted per pool (M34): flow/scratch and agent runs hold
 // independent budgets. Takes the caller's db/tx handle so tryStartRun /
@@ -253,7 +291,11 @@ type Db = any;
 
 export type TryStartRunResult =
   | { started: true }
-  | { started: false; queuePosition: number };
+  | {
+      started: false;
+      queuePosition: number;
+      queueReason?: PoolCapFence;
+    };
 
 export type ScratchCapacityDecision = {
   allowed: boolean;
@@ -407,12 +449,27 @@ export async function tryStartRun(
     // D9 step 2: a fenced installation admits nothing new — the run keeps its
     // real queue position and starts once the operator lifts the fence.
     const fenced = upgradeMaintenanceEngaged();
-    const cap = fenced ? 0 : capForPool(pool);
+    const effective = await effectivePoolCap(tx, pool);
+    const cap = fenced ? 0 : effective.cap;
 
     if (fenced) {
       log.info(
         { runId, pool, reason: "upgrade_maintenance_fence" },
         "tryStartRun → queued by the upgrade maintenance fence",
+      );
+    }
+    if (effective.fence) {
+      log.info(
+        {
+          runId,
+          pool,
+          reason: effective.fence,
+          pressuredForMs: Math.max(
+            0,
+            Date.now() - (effective.pressuredSince?.getTime() ?? Date.now()),
+          ),
+        },
+        "tryStartRun → queued by host pressure",
       );
     }
 
@@ -500,11 +557,15 @@ export async function tryStartRun(
     const queuePosition = Number(aheadRows[0]?.count ?? 0) + 1;
 
     log.info(
-      { runId, pool, liveCount, cap, queuePosition },
+      { runId, pool, liveCount, cap, queuePosition, fence: effective.fence },
       "tryStartRun → queued",
     );
 
-    return { started: false, queuePosition } satisfies TryStartRunResult;
+    return {
+      started: false,
+      queuePosition,
+      ...(effective.fence ? { queueReason: effective.fence } : {}),
+    } satisfies TryStartRunResult;
   });
 }
 
@@ -639,7 +700,6 @@ export async function promoteNextPending(
 
     return { promotedRunId: null };
   }
-  const cap = capForPool(pool);
 
   // M19 Phase 3: lazy dispatch defaults so the queued-resume loop closes for
   // ALL callers (e.g. the discard route) without per-caller wiring. Dynamic
@@ -705,6 +765,17 @@ export async function promoteNextPending(
 
   const decision = await db.transaction(async (tx: Db) => {
     await takeSchedulerLock(tx);
+
+    const { cap, fence } = await effectivePoolCap(tx, pool);
+
+    if (fence) {
+      log.info(
+        { pool, reason: fence },
+        "promoteNextPending → host pressured, leaving work queued",
+      );
+
+      return null;
+    }
 
     // Recheck cap under the lock — a Running/NeedsInput/HumanWorking run could
     // have started between this terminal transition and the promote call, so the

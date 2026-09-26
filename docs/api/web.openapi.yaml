@@ -17792,7 +17792,7 @@ components:
           description: |
             (Implemented — ADR-183) Present iff the run was queued because the
             execution host reports outbox pressure (the manager's pressure
-            record is set) — the launch is still created and answered 201,
+            record is set) — the launch is still created and answered 202,
             never 503; absent when it was queued by the concurrency cap alone.
             The run starts when a health sample reports the host recovered.
     RecoverQueuedResponse:

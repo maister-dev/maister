@@ -10,6 +10,11 @@ import { describe, expect, it } from "vitest";
 
 import { buildEnvelope } from "@/lib/execution-host/ledger";
 import {
+  hostPressuredError,
+  isHostPressuredError,
+  isHostPressureRefusal,
+} from "@/lib/execution-host/host-pressure";
+import {
   supervisorErrorToMaister,
   UNKNOWN_OUTCOME_TRANSPORT,
 } from "@/lib/supervisor-client";
@@ -141,6 +146,50 @@ describe("T2 supervisorErrorToMaister", () => {
 
     expect(err.code).toBe("PRECONDITION");
     expect(err.details?.reason).toBe("unknown_workspace");
+  });
+
+  it("ADR-183: the host-pressure refusal predicate maps exactly PRECONDITION/event_outbox_backpressure", () => {
+    const refusal = supervisorErrorToMaister(
+      409,
+      {
+        code: "PRECONDITION",
+        message: "runtime event outbox is under backpressure",
+        details: { reason: "event_outbox_backpressure" },
+      },
+      "ACP_PROTOCOL",
+    );
+
+    expect(isHostPressureRefusal(refusal)).toBe(true);
+    const mapped = hostPressuredError(refusal, "cmd-1");
+
+    expect(mapped.code).toBe("EXECUTOR_UNAVAILABLE");
+    expect(mapped.details).toEqual({
+      reason: "host_pressured",
+      hostReason: "event_outbox_backpressure",
+      commandId: "cmd-1",
+    });
+    expect(isHostPressuredError(mapped)).toBe(true);
+    // The hard bound's own refusal and every other reason are not pressure.
+    for (const [code, reason] of [
+      ["PRECONDITION", "event_outbox_hard_limit"],
+      ["PRECONDITION", "unknown_workspace"],
+      ["EXECUTOR_UNAVAILABLE", "event_outbox_backpressure"],
+      ["CONFLICT", "event_outbox_backpressure"],
+    ] as const) {
+      expect(
+        isHostPressureRefusal(
+          supervisorErrorToMaister(
+            409,
+            { code, message: "x", details: { reason } },
+            "ACP_PROTOCOL",
+          ),
+        ),
+      ).toBe(false);
+    }
+    expect(isHostPressureRefusal(new Error("event_outbox_backpressure"))).toBe(
+      false,
+    );
+    expect(isHostPressuredError(refusal)).toBe(false);
   });
 
   it("falls back for an unknown code and a bodyless response", () => {

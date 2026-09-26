@@ -2858,6 +2858,8 @@ export function memoryHost(
     registeredAt: now,
     updatedAt: now,
     retiredAt: null,
+    pressuredSince: null,
+    pressureUnacknowledgedAtStart: null,
   };
 }
 

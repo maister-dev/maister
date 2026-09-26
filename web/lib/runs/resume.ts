@@ -22,7 +22,12 @@ import {
   MaisterError,
   type MaisterErrorCode,
 } from "@/lib/errors";
-import { capForPool, countLiveRuns, takeSchedulerLock } from "@/lib/scheduler";
+import {
+  countLiveRuns,
+  effectivePoolCap,
+  takeSchedulerLock,
+  type PoolCapFence,
+} from "@/lib/scheduler";
 import {
   createExecutionHosts,
   isFencedError,
@@ -294,16 +299,16 @@ export async function resumeRun(
   // cannot both observe a free slot and both claim (the residual burst race).
   // NeedsInputIdle is not counted by countLiveRuns; the claim flips it to
   // NeedsInput (counted), so live < cap before the flip ⇒ live + 1 ≤ cap after.
-  const cap = capForPool("flow");
   const capGate = await db.transaction(
     async (
       tx: Db,
     ): Promise<
-      | { kind: "queued" }
+      | { kind: "queued"; cap: number; fence: PoolCapFence | null }
       | { kind: "claim"; result: Awaited<ReturnType<typeof markResumed>> }
     > => {
       await takeSchedulerLock(tx);
       const live = await countLiveRuns(tx, "flow");
+      const { cap, fence } = await effectivePoolCap(tx, "flow");
 
       if (live >= cap) {
         await tx
@@ -313,7 +318,7 @@ export async function resumeRun(
           })
           .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInputIdle")));
 
-        return { kind: "queued" };
+        return { kind: "queued", cap, fence };
       }
 
       // M8 review finding #3: the markResumed CAS serializes concurrent
@@ -338,7 +343,7 @@ export async function resumeRun(
 
   if (capGate.kind === "queued") {
     log.info(
-      { runId, cap },
+      { runId, cap: capGate.cap, fence: capGate.fence },
       "resumeRun: flow pool at cap — deferred (resume_requested_at stamped, gate will admit)",
     );
 

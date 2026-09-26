@@ -251,6 +251,90 @@ describe("ExecutionHostStatus", () => {
     expect(html).toContain("streams.closes: missing");
   });
 
+  it("ADR-183: renders the pressure episode with a warning tone, not yes/no", async () => {
+    const telemetry = (
+      pressure: null | {
+        since: string;
+        unacknowledgedCountAtStart: number;
+        unacknowledgedBytesAtStart: number;
+        episodes: number;
+      },
+      rowId: string,
+    ) => ({
+      streamRowId: rowId,
+      executionHostId: "host-1",
+      hostKey: "eh_local",
+      displayName: "Local",
+      readiness: "ready",
+      readinessReason: null,
+      hostLastSeenAt: sampledAt,
+      hostBootId: "boot-1",
+      streamId: rowId,
+      streamState: "active" as const,
+      lastReceivedSequence: "9",
+      lastContiguousSequence: "9",
+      lastAckConfirmedSequence: "9",
+      streamLastSeenAt: sampledAt,
+      lastError: null,
+      claimOwner: null,
+      claimExpiresAt: null,
+      hostTelemetry: {
+        streamId: rowId,
+        headSequence: "900",
+        unacknowledgedCount: pressure ? 700 : 0,
+        retainedCount: 900,
+        pressured: pressure !== null,
+        oldestUnacknowledgedAgeMs: null,
+        subscriberPauses: null,
+        closes: null,
+        pressure,
+        sampledAt,
+        bootId: "boot-1",
+      },
+      hostTelemetryStatus: "available" as const,
+      hostTelemetryReason: null,
+      lag: {
+        hostToManager: "0",
+        contiguityGap: "0",
+        ackConfirmation: "0",
+        diagnostics: [],
+      },
+    });
+    const html = renderToStaticMarkup(
+      await ExecutionHostStatus({
+        status: {
+          ...status,
+          lag: {
+            ...lag,
+            streams: [
+              telemetry(
+                {
+                  since: "2026-09-22T09:58:30.000Z",
+                  unacknowledgedCountAtStart: 640,
+                  unacknowledgedBytesAtStart: 65_536,
+                  episodes: 2,
+                },
+                "stream-pressured",
+              ),
+              telemetry(null, "stream-clear"),
+            ],
+          },
+        },
+      }),
+    );
+    const cell = html.slice(html.indexOf('data-testid="stream-pressure"'));
+
+    expect(cell).toContain("▲");
+    expect(cell).toContain("pressure.active");
+    expect(cell).toMatch(/pressure\.since\(value=[^)]+\)/);
+    // 90 s between the episode start and the sample.
+    expect(cell).toContain("pressure.duration(value=1m 30s)");
+    expect(cell).toContain("pressure.unackedAtStart(count=640)");
+    expect(cell).toContain("pressure.episodes(count=2)");
+    expect(html).toContain("pressure.clear");
+    expect(html).not.toMatch(/>(yes|no)</);
+  });
+
   it("renders an explicit empty state when no host has host-span data", async () => {
     const html = renderToStaticMarkup(
       await ExecutionHostStatus({

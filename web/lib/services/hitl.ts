@@ -108,7 +108,11 @@ import {
 } from "@/lib/runs/budget-breach-fork";
 import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import { budgetFromSnapshot } from "@/lib/runs/execution-policy";
-import { capForPool, countLiveRuns, takeSchedulerLock } from "@/lib/scheduler";
+import {
+  countLiveRuns,
+  effectivePoolCap,
+  takeSchedulerLock,
+} from "@/lib/scheduler";
 import { launchRun } from "@/lib/services/runs";
 import { sendTaskToTriageInTransaction } from "@/lib/services/triage";
 import { requireNoLiveGateChatTurn } from "@/lib/services/gate-chat";
@@ -255,7 +259,10 @@ async function claimGraphResumeSlot(
 
     if (current.status !== "NeedsInputIdle") return "noop";
 
-    if ((await countLiveRuns(tx, "flow")) >= capForPool("flow")) {
+    if (
+      (await countLiveRuns(tx, "flow")) >=
+      (await effectivePoolCap(tx, "flow")).cap
+    ) {
       await tx
         .update(runs)
         .set({
@@ -376,7 +383,10 @@ export async function claimAgentResumeSlot(
 
     // NeedsInputIdle freed the slot — cap-gate the reclaim (INV-1).
     if (cur.status === "NeedsInputIdle") {
-      if ((await countLiveRuns(tx, "agent")) >= capForPool("agent")) {
+      if (
+        (await countLiveRuns(tx, "agent")) >=
+        (await effectivePoolCap(tx, "agent")).cap
+      ) {
         await tx
           .update(runs)
           .set({
@@ -1488,7 +1498,7 @@ async function handlePermissionResponse(
       await takeSchedulerLock(tx);
       const live = await countLiveRuns(tx, "agent");
 
-      if (live >= capForPool("agent")) {
+      if (live >= (await effectivePoolCap(tx, "agent")).cap) {
         await tx
           .update(runs)
           .set({

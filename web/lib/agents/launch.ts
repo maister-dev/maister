@@ -155,7 +155,8 @@ import {
   tryStartRun,
   takeSchedulerLock,
   countLiveRuns,
-  capForPool,
+  effectivePoolCap,
+  type PoolCapFence,
 } from "@/lib/scheduler";
 import {
   createExecutionHosts,
@@ -286,7 +287,12 @@ export type LaunchAgentRunInput = {
 };
 
 export type LaunchAgentRunResult =
-  | { runId: string; status: "Running" | "Pending"; queuePosition?: number }
+  | {
+      runId: string;
+      status: "Running" | "Pending";
+      queuePosition?: number;
+      queueReason?: PoolCapFence;
+    }
   | { deduped: true; triggerEventId: number };
 
 export type AgentLaunchErrorKind =
@@ -927,6 +933,7 @@ async function launchAgentDrivenFlowRun(
     ...(result.queuePosition !== undefined
       ? { queuePosition: result.queuePosition }
       : {}),
+    ...(result.queueReason ? { queueReason: result.queueReason } : {}),
   };
 }
 
@@ -1594,6 +1601,9 @@ export async function launchAgentRun(
     runId,
     status: "Pending",
     queuePosition: startResult.queuePosition,
+    ...(startResult.queueReason
+      ? { queueReason: startResult.queueReason }
+      : {}),
   };
 }
 
@@ -2515,12 +2525,16 @@ async function claimAgentReworkCapacity(
   runId: string,
 ): Promise<void> {
   await takeSchedulerLock(tx);
-  if ((await countLiveRuns(tx, "agent")) >= capForPool("agent"))
+  const { cap, fence } = await effectivePoolCap(tx, "agent");
+
+  if ((await countLiveRuns(tx, "agent")) >= cap)
     throw new MaisterError(
       "CONFLICT",
-      "agent pool is full; retry rework when a slot is available",
+      fence
+        ? "the execution host is behind on its event outbox; retry rework when it recovers"
+        : "agent pool is full; retry rework when a slot is available",
       {
-        details: { reason: "agent_pool_full", runId },
+        details: { reason: fence ?? "agent_pool_full", runId },
       },
     );
 }
