@@ -2172,6 +2172,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
   ]),
   ...wrappers("lib/gc/preserve.ts", "repository-worktree", [
     ["preserveWorktree", false],
+    ["rescueStagedWorkBeforeSnapshot", false],
   ]),
   ...wrappers("lib/gc/revision-gc.ts", "repository-worktree", [
     ["runRevisionGcSweep", false],

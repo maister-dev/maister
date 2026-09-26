@@ -29,6 +29,7 @@ import {
   type ReconciliationFinding,
   type ReconciliationObservation,
 } from "@/lib/gc/workspace-reconciliation-findings";
+import { rescueStagedWorkBeforeSnapshot } from "@/lib/gc/preserve";
 import { gcAgeDays, worktreesRoot } from "@/lib/instance-config";
 import { canReclaimLifecycle } from "@/lib/runs/lifecycle-claim";
 import { recordReattached } from "@/lib/workbench-git/service";
@@ -781,6 +782,12 @@ async function processTrustedCandidate(args: {
 
   const rescueRef = `maister/orphan/${args.claim.id}/${provenance.runId}`;
 
+  // The snapshot's `add -A` overwrites staged work and the removal below takes
+  // the index: keep it first (ADR-181 D8).
+  await rescueStagedWorkBeforeSnapshot({
+    worktreePath,
+    runId: provenance.runId,
+  });
   await snapshotDirtyWorktree({
     worktreePath,
     commitMessage: `chore: rescue orphan ${args.claim.id}`,

@@ -55,6 +55,10 @@ async function git(cwd: string, args: readonly string[]): Promise<void> {
   await execFileAsync("git", args, { cwd });
 }
 
+async function gitOut(cwd: string, args: readonly string[]): Promise<string> {
+  return (await execFileAsync("git", args, { cwd })).stdout.trim();
+}
+
 async function seedProject(): Promise<void> {
   projectId = randomUUID();
   projectSlug = `reconciler-${projectId.slice(0, 8)}`;
@@ -450,6 +454,57 @@ describe("runWorkspaceReconciliationSweep", () => {
       rescueRef: afterCrash.rescueRef,
       rescueCommit: afterCrash.rescueCommit,
     });
+  });
+
+  // ADR-181 D8 (Codex F1's class): the orphan rescue snapshots with `add -A`
+  // and then removes the tree, so a file staged and edited again, or staged and
+  // deleted, would keep its staged version nowhere. The index is kept first.
+  it("keeps an orphan's staged-only work as a rescue ref before the snapshot and the removal", async () => {
+    const runId = randomUUID();
+    const worktreePath = path.join(worktreesRoot, projectSlug, runId);
+
+    await addWorktree({
+      projectRepoPath: repoPath,
+      branch: `maister/${runId}`,
+      worktreePath,
+      startPoint: "main",
+      provenance: {
+        version: 2,
+        runId,
+        parentRepoPath: repoPath,
+        projectId,
+        branch: `maister/${runId}`,
+        workspaceKind: "flow",
+        createdAt: "2026-06-01T12:00:00.000Z",
+      },
+    });
+    await writeFile(path.join(worktreePath, "README.md"), "staged\n");
+    await git(worktreePath, ["add", "README.md"]);
+    await writeFile(path.join(worktreePath, "README.md"), "working\n");
+    await writeFile(path.join(worktreePath, "new.txt"), "new\n");
+    await git(worktreePath, ["add", "new.txt"]);
+    await rm(path.join(worktreePath, "new.txt"));
+
+    const summary = await runWorkspaceReconciliationSweep({
+      database: db,
+      root: worktreesRoot,
+      now: () => new Date("2026-07-16T12:00:00.000Z"),
+    });
+    const finding = (
+      await db.select().from(schema.workspaceReconciliationFindings)
+    )[0];
+    const kept = `refs/maister/rescue/${runId}/1`;
+
+    expect(summary).toMatchObject({ preserved: 1, removed: 1 });
+    await expect(lstat(worktreePath)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await gitOut(repoPath, ["show", `${kept}^2:README.md`])).toBe(
+      "staged",
+    );
+    expect(await gitOut(repoPath, ["show", `${kept}^2:new.txt`])).toBe("new");
+    // The orphan branch still holds the tree as it stood.
+    expect(
+      await gitOut(repoPath, ["show", `${finding.rescueRef}:README.md`]),
+    ).toBe("working");
   });
 
   it("does not remove a trusted orphan after its reconciliation lease expires", async () => {

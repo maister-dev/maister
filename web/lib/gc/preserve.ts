@@ -67,6 +67,32 @@ async function stagedWorkTheSnapshotOverwrites(
   return (await names([])).some((path) => staged.has(path));
 }
 
+// ADR-181 D8: a snapshot that precedes a removal overwrites staged work, and
+// the removal then takes the only index that had it. Keep that index first, as
+// a rescue ref whose second parent is the index as it stood. Null when nothing
+// staged would be lost. Every removal that snapshots calls this first: the
+// preserve below (GC, archive, drop, scratch discard) and the reconciler's
+// orphan rescue.
+export async function rescueStagedWorkBeforeSnapshot(args: {
+  worktreePath: string;
+  runId: string;
+}): Promise<{ ref: string; sha: string } | null> {
+  if (!(await stagedWorkTheSnapshotOverwrites(args.worktreePath))) return null;
+
+  const rescue = await writeRescueRef(args);
+
+  log.info(
+    {
+      runId: args.runId,
+      worktreePath: args.worktreePath,
+      rescueRef: rescue.ref,
+    },
+    "the index was kept as a rescue ref before the snapshot",
+  );
+
+  return rescue;
+}
+
 // Codex F1: preserve EVERYTHING (tracked + untracked + committed divergence)
 // BEFORE any removal, and NEVER throw. Any git failure in the preserve steps →
 // {ok:false} so the caller skips removeOwnedWorktree. NEVER merges to
@@ -98,17 +124,7 @@ export async function preserveWorktree(
           },
         );
       }
-      // ADR-181 D8: staged work the snapshot would overwrite is kept first, as
-      // a rescue ref whose second parent is the index as it stood. Every
-      // removal (GC, archive, drop, scratch discard) preserves through here.
-      if (await stagedWorkTheSnapshotOverwrites(worktreePath)) {
-        const rescue = await writeRescueRef({ worktreePath, runId });
-
-        log.info(
-          { runId, worktreePath, rescueRef: rescue.ref },
-          "preserve kept the index as a rescue ref",
-        );
-      }
+      await rescueStagedWorkBeforeSnapshot({ worktreePath, runId });
       // Capture tracked + untracked into a snapshot commit on the worktree's
       // own HEAD (the run branch), so `git branch -f` HEAD carries everything.
       await git(worktreePath, ["add", "-A"]);
