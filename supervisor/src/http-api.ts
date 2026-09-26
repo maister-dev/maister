@@ -73,6 +73,7 @@ import { ModelSourceRegistry } from "./model-catalog/registry";
 import { resolveModelCatalog } from "./model-catalog/resolve";
 import { ModelCatalogDraftSchema } from "./model-catalog/types";
 import { checkpointSession } from "./checkpoint-teardown";
+import { PRODUCER_PAUSE_MAX_MS } from "./producer-pressure";
 import { pendingPermissions } from "./pending-permissions";
 import { contentBlockUriViolation } from "./prompt-confinement";
 import { resolvePromptRuntimeObjects } from "./prompt-runtime-objects";
@@ -205,6 +206,9 @@ export type RegisterRoutesOptions = {
   killGraceMs?: number;
   // ADR-182: the host's bound on one steer; tests shorten it.
   steerTimeoutMs?: number;
+  // ADR-183: the producer pause bound; tests shorten it (a code constant,
+  // never an operator setting).
+  producerPauseMaxMs?: number;
   spawnOverrides?: SpawnOverrides;
   // ADR-076 model-catalog resolver. Injected so tests can stub the source set
   // and the cache; main.ts wires the real registry (with Phase-2 sources) and
@@ -273,6 +277,44 @@ function parseHealthStreamOption(query: unknown): boolean {
     "includeStream must occur once with the literal value true or false",
     { details: { reason: "health_query_invalid" } },
   );
+}
+
+// ADR-183 D-D1: the one admission table. Soft (unACKed) pressure refuses
+// `new_work` and `producer`, the hard budget refuses `resolve` too, and
+// nothing refuses a `teardown` — whatever the session record's liveness. A
+// session teardown names its producer wallet; the store credits it only while
+// that wallet is open.
+function receiptAdmission(
+  kind: CommandKind,
+  context: { payload?: unknown; entry?: RegistryEntry },
+): ReceiptAdmission {
+  switch (kind) {
+    case "session.create":
+      return {
+        kind: "producer",
+        outputBindingCount:
+          StartSessionRequestSchema.parse(context.payload).outputObjects
+            ?.length ?? 0,
+      };
+    case "session.prompt":
+    case "workspace.adopt":
+    case "runtime_object.reserve":
+    case "runtime_object.upload":
+      return { kind: "new_work" };
+    case "session.input":
+    case "session.steer":
+      return { kind: "resolve" };
+    case "session.cancel":
+    case "session.checkpoint":
+    case "session.delete":
+      return {
+        kind: "teardown",
+        walletId: context.entry?.record.createdByCommandId,
+      };
+    case "workspace.release":
+    case "runtime_object.delete":
+      return { kind: "teardown" };
+  }
 }
 
 function runtimeEventSupervisorError(error: unknown): SupervisorError {
@@ -528,6 +570,44 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   const { app, registry, logger, runtimeRoot } = opts;
   const killGraceMs = opts.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
   const steerTimeoutMs = opts.steerTimeoutMs ?? STEER_ACP_TIMEOUT_MS;
+  const producerPauseMaxMs = opts.producerPauseMaxMs ?? PRODUCER_PAUSE_MAX_MS;
+
+  // ADR-183 D6: a producer whose frames stayed paused by outbox pressure past
+  // the bound is parked with ADR-180's graceful teardown, never killed first.
+  const parkPausedProducer = (sessionId: string, pausedMs: number): void => {
+    const entry = registry.get(sessionId);
+
+    if (!entry) return;
+    logger.warn(
+      {
+        sessionId,
+        runId: entry.record.runId,
+        pausedMs,
+        boundMs: producerPauseMaxMs,
+        unacknowledgedCount:
+          hostState.runtimeEventOutboxStats().unacknowledgedCount,
+      },
+      "producer-pause-exceeded",
+    );
+    void checkpointSession({
+      entry,
+      registry,
+      permissions: pendingPermissions,
+      logger,
+      killGraceMs,
+      cause: "outbox_pressure",
+    }).catch((err: unknown) => {
+      // Host-internal like the permission cap: no caller to answer, and the
+      // stall pass and reconcile own a session that would not die.
+      logger.error(
+        {
+          sessionId,
+          err: err instanceof Error ? err.message : String(err),
+        },
+        "checkpoint-pause-bound-escalated",
+      );
+    });
+  };
   const mcRegistry = opts.modelCatalog?.registry ?? new ModelSourceRegistry();
   const mcCache = opts.modelCatalog?.cache ?? modelCatalogCache;
   const { hostState } = opts;
@@ -710,20 +790,10 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     const { reply, parsed, kind, entry } = args;
     const envelope = parsed.envelope;
     const sessionKind = isSessionCommandKind(kind) ? kind : null;
-    const admission: ReceiptAdmission | undefined =
-      kind === "session.create"
-        ? {
-            kind: "producer",
-            outputBindingCount:
-              StartSessionRequestSchema.parse(parsed.payload).outputObjects
-                ?.length ?? 0,
-          }
-        : entry?.record.status === "live" &&
-            ["session.cancel", "session.checkpoint", "session.delete"].includes(
-              kind,
-            )
-          ? { kind: "teardown", walletId: entry.record.createdByCommandId }
-          : undefined;
+    const admission = receiptAdmission(kind, {
+      payload: parsed.payload,
+      entry,
+    });
     const commandEvents = new Map<
       "accepted" | "completed" | "rejected",
       SessionCommandEvent
@@ -846,6 +916,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       logger: fenceLog,
     });
     const outcome = await receipts.executeRestartableUpload({
+      admission: receiptAdmission("runtime_object.upload", {}),
       envelope: args.parsed.envelope,
       hostSessionId:
         args.parsed.envelope.payload &&
@@ -927,6 +998,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   }): Promise<void> {
     assertRuntimeObjectDeleteFence(args.object, args.parsed.envelope);
     const outcome = await receipts.execute({
+      admission: receiptAdmission("runtime_object.delete", {}),
       envelope: args.parsed.envelope,
       hostSessionId: args.object.id,
       persistReceipt: (transition) => {
@@ -988,6 +1060,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       );
     }
     const outcome = await receipts.executeAsync({
+      admission: receiptAdmission("session.prompt", {}),
       envelope,
       hostSessionId: entry.record.sessionId,
       persistReceipt: (transition) => {
@@ -1404,6 +1477,31 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     }
   }
 
+  // ADR-183 D7: a prompt the host's own pause bound interrupted names the
+  // park — the token `/input` already mints — so the manager parks instead of
+  // failing. Only this checkpoint: a route or permission-cap checkpoint has a
+  // manager owner already, and its rejection evidence is unchanged. The code
+  // stays ACP_PROTOCOL; a genuine output failure other than the interrupted
+  // turn's incomplete output keeps its own evidence.
+  function throwIfParkedByPressure(entry: RegistryEntry): void {
+    if (
+      !entry.intentionalShutdown ||
+      entry.intentionalReason !== "checkpoint" ||
+      entry.intentionalCause !== "outbox_pressure" ||
+      (entry.record.outputFailure &&
+        entry.record.outputFailure.details?.reason !==
+          "required_output_incomplete")
+    )
+      return;
+    throw new SupervisorError(
+      "ACP_PROTOCOL",
+      "the execution host checkpointed the session while the prompt ran",
+      {
+        details: { reason: "session_checkpointed", cause: "outbox_pressure" },
+      },
+    );
+  }
+
   async function executePromptTurn(input: {
     entry: RegistryEntry;
     sessionId: string;
@@ -1520,6 +1618,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     } catch (error) {
       chatBudget.release();
       throwIfFenced(entry, parsed.envelope);
+      throwIfParkedByPressure(entry);
       if (entry.record.outputFailure) {
         throw new SupervisorError(
           entry.record.outputFailure.code,
@@ -1535,6 +1634,9 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     }
     try {
       throwIfFenced(entry, parsed.envelope);
+      // ADR-183: a turn the outbox-pressure bound parked was cut short, even
+      // when the adapter answered before it died — it is never a success.
+      throwIfParkedByPressure(entry);
       if (entry.record.outputFailure) {
         throw new SupervisorError(
           entry.record.outputFailure.code,
@@ -2516,6 +2618,10 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
               assignmentEpoch: parsed.envelope.fence.assignmentEpoch,
             },
             logger,
+            producerPauseBound: {
+              maxMs: producerPauseMaxMs,
+              onExceeded: (pausedMs) => parkPausedProducer(sessionId, pausedMs),
+            },
             binaryOverride: opts.spawnOverrides?.binary,
             preArgs: opts.spawnOverrides?.preArgs,
             runtimeObjectEnv: {

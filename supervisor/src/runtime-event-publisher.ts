@@ -255,6 +255,18 @@ export class RuntimeEventPublisher {
         event.kind,
       );
 
+    // ADR-183: an answer is admitted under soft pressure, so its evidence
+    // must not drain the credit the producer needs for its own terminal.
+    if (
+      event.type === "session.command" &&
+      (event.kind === "session.input" || event.kind === "session.steer")
+    )
+      return { partition: "regular" };
+    // A teardown of a session whose wallet already closed has no credit; its
+    // evidence may still fall back to the emergency floor at the hard budget.
+    if (teardown && !this.state.producerWalletOpen(record.createdByCommandId))
+      return { partition: "regular", overflow: "emergency" };
+
     if (
       terminal ||
       (pressured &&
@@ -356,7 +368,16 @@ export class RuntimeEventPublisher {
               walletId: input.walletId,
             },
           }
-        : {}),
+        : metadata.state === "deleted"
+          ? // ADR-183: a deletion is a teardown; with no wallet its evidence
+            // may fall back to the emergency floor at the hard budget.
+            {
+              funding: {
+                partition: "regular" as const,
+                overflow: "emergency" as const,
+              },
+            }
+          : {}),
       terminal: metadata.state === "deleted" || metadata.state === "corrupt",
       draft: {
         runId: input.runId,

@@ -888,21 +888,24 @@ describe("runtime object transport", () => {
     expect(reserved.status).toBe(201);
     const uploadCommandId = randomUUID();
 
-    host.hostState.putReceipt({
-      commandId: uploadCommandId,
-      runId,
-      kind: "runtime_object.upload",
-      assignmentId,
-      epoch: 1,
-      hostSessionId: objectId,
-      requestDigest: null,
-      eventId: null,
-      phase: "accepted",
-      httpStatus: 202,
-      body: {},
-      receivedAt: new Date().toISOString(),
-      completedAt: null,
-    });
+    host.hostState.putReceipt(
+      {
+        commandId: uploadCommandId,
+        runId,
+        kind: "runtime_object.upload",
+        assignmentId,
+        epoch: 1,
+        hostSessionId: objectId,
+        requestDigest: null,
+        eventId: null,
+        phase: "accepted",
+        httpStatus: 202,
+        body: {},
+        receivedAt: new Date().toISOString(),
+        completedAt: null,
+      },
+      { kind: "new_work" },
+    );
     const uploaded = await fetch(
       `${host.url}/runtime-objects/${objectId}/content`,
       {
@@ -991,21 +994,24 @@ describe("runtime object transport", () => {
     const digest = `sha-256=:${Buffer.from(checksum, "hex").toString("base64")}:`;
     const uploadCommandId = randomUUID();
 
-    host.hostState.putReceipt({
-      commandId: uploadCommandId,
-      runId,
-      kind: "runtime_object.upload",
-      assignmentId,
-      epoch: 1,
-      hostSessionId: objectId,
-      requestDigest: null,
-      eventId: null,
-      phase: "accepted",
-      httpStatus: 202,
-      body: {},
-      receivedAt: new Date().toISOString(),
-      completedAt: null,
-    });
+    host.hostState.putReceipt(
+      {
+        commandId: uploadCommandId,
+        runId,
+        kind: "runtime_object.upload",
+        assignmentId,
+        epoch: 1,
+        hostSessionId: objectId,
+        requestDigest: null,
+        eventId: null,
+        phase: "accepted",
+        httpStatus: 202,
+        body: {},
+        receivedAt: new Date().toISOString(),
+        completedAt: null,
+      },
+      { kind: "new_work" },
+    );
     const uploadHeaders = {
       "content-type": "application/octet-stream",
       "content-length": String(payload.byteLength),

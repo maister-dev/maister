@@ -384,8 +384,10 @@ default). The soft gate refuses new work and never an answer or a teardown:
 A refusal is `409 PRECONDITION {details.reason: "event_outbox_backpressure"}`,
 writes no receipt and logs `outbox-admission-refused`. A teardown of a session
 that still owns an open producer wallet takes that wallet's terminal credit; a
-teardown with no open wallet is admitted without credit. A `resolve` command's
-events are funded from the regular partition, never from the producer wallet.
+teardown with no open wallet is admitted without credit; its evidence is written
+to the regular partition and falls back to the emergency floor at the hard
+budget. A `resolve` command's events are funded from the regular partition,
+never from the producer wallet.
 
 Accepting a session create reserves `(18 + output binding count)` control rows
 with its receipt, before spawning. Each control row is at most 16 KiB. A
@@ -411,7 +413,10 @@ cap does, with `cause: "outbox_pressure"`: pending deferreds are cancelled as
 wallet, SIGTERM, then `session.exited{reason: "checkpoint", cause:
 "outbox_pressure"}`, and only after that the interrupted prompt's rejection,
 which keeps `code: "ACP_PROTOCOL"` and carries `details: {reason:
-"session_checkpointed", cause}`. SIGKILL follows only an expired kill grace. The
+"session_checkpointed", cause: "outbox_pressure"}` — also when the adapter
+answered before it died. SIGKILL follows only an expired kill grace. Only a
+frame wait the outbox refuses is bounded; a runtime-file or physical-headroom
+pause re-arms and keeps waiting. The
 manager parks the run and resumes it when pressure clears (see
 [execution-hosts](execution-hosts.md#host-pressure-on-the-manager-implemented--adr-183)).
 

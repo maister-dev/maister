@@ -43,7 +43,7 @@ export type CommandOutcome = {
 export type ExecutedCommand = CommandOutcome & { replayed: boolean };
 
 export type ReceiptTransition = {
-  admission?: ReceiptAdmission;
+  admission: ReceiptAdmission;
   row: CommandReceiptRow;
   phase: ReceiptPhase;
   outcome: CommandOutcome;
@@ -55,7 +55,7 @@ type ExecuteCommandArgs = {
   onAccepted?: () => void;
   persistReceipt?: (transition: ReceiptTransition) => void;
   afterReceipt?: (transition: ReceiptTransition) => void;
-  admission?: ReceiptAdmission;
+  admission: ReceiptAdmission;
   run: () => Promise<CommandOutcome>;
 };
 
@@ -260,7 +260,7 @@ export class CommandReceipts {
     hostSessionId?: string;
     persistReceipt?: (transition: ReceiptTransition) => void;
     afterReceipt?: (transition: ReceiptTransition) => void;
-    admission?: ReceiptAdmission;
+    admission: ReceiptAdmission;
     run: () => Promise<CommandOutcome>;
   }): Promise<ExecutedCommand> {
     const { envelope } = args;
@@ -341,7 +341,7 @@ export class CommandReceipts {
       hostSessionId?: string;
       persistReceipt?: (transition: ReceiptTransition) => void;
       afterReceipt?: (transition: ReceiptTransition) => void;
-      admission?: ReceiptAdmission;
+      admission: ReceiptAdmission;
       run: () => Promise<CommandOutcome>;
     },
     receivedAt: string,
@@ -416,7 +416,7 @@ export class CommandReceipts {
     callbacks: {
       envelope: CommandEnvelope;
       hostSessionId?: string;
-      admission?: ReceiptAdmission;
+      admission: ReceiptAdmission;
       onAccepted?: () => void;
       persistReceipt?: (transition: ReceiptTransition) => void;
       afterReceipt?: (transition: ReceiptTransition) => void;

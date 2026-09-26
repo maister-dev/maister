@@ -8,11 +8,25 @@ export type FrameAdmission =
   | { kind: "decode"; release: () => void }
   | { kind: "drain" };
 
+// ADR-183 D6: how long a producer may stay paused by outbox pressure before
+// the host checkpoints it gracefully (ADR-180's teardown). One stall window;
+// ≥ 7× the row-lane and ≈ 2× the byte-lane drain at the measured manager
+// throughput. A code constant, not an operator setting.
+export const PRODUCER_PAUSE_MAX_MS = 5 * 60_000;
+
+export type ProducerPauseBound = {
+  maxMs: number;
+  // Called once, while the producer is still paused, not stopping, and the
+  // outbox is what refuses its frames.
+  onExceeded: (pausedMs: number) => void;
+};
+
 /** Capacity wakeups come from committed ACK/prune/release transitions. */
 export function producerPressure(
   state: HostState,
   record: SessionRecord,
   files?: ProducerFiles,
+  pauseBound?: ProducerPauseBound,
 ): {
   beforeFrame: (frameBytes: number) => Promise<FrameAdmission>;
   beforeWrite: (bytes: number) => Promise<LogWriteAdmission>;
@@ -25,16 +39,41 @@ export function producerPressure(
   const waitForCapacity = <T>(
     allocate: () => T | null,
     stoppedValue: () => T,
+    bounded: boolean,
   ): Promise<T> =>
     new Promise((resolve, reject) => {
       let attempting = false;
       let settled = false;
       let unsubscribe = (): void => {};
+      let pauseTimer: NodeJS.Timeout | undefined;
       const cleanup = (): void => {
         settled = true;
         record.outputPaused = false;
+        record.outputPausedSince = undefined;
+        if (pauseTimer) clearTimeout(pauseTimer);
+        pauseTimer = undefined;
         unsubscribe();
         wake = undefined;
+      };
+      // A pause the outbox did not cause (runtime-file or physical headroom)
+      // keeps waiting as before; the bound re-arms instead of parking.
+      const onPauseBound = (): void => {
+        pauseTimer = undefined;
+        if (settled || stopping || !record.outputPaused || !pauseBound) return;
+        if (!state.runtimeEventOutboxRefusesFrames()) {
+          armPauseBound();
+
+          return;
+        }
+        pauseBound.onExceeded(
+          Date.now() - (record.outputPausedSince ?? Date.now()),
+        );
+      };
+      const armPauseBound = (): void => {
+        if (!bounded || !pauseBound || pauseTimer || settled) return;
+        record.outputPausedSince ??= Date.now();
+        pauseTimer = setTimeout(onPauseBound, pauseBound.maxMs);
+        pauseTimer.unref();
       };
       const attempt = (): void => {
         if (attempting || settled) return;
@@ -50,7 +89,10 @@ export function producerPressure(
 
             cleanup();
             resolve(final);
-          } else record.outputPaused = true;
+          } else {
+            record.outputPaused = true;
+            armPauseBound();
+          }
         } catch (error) {
           cleanup();
           reject(error);
@@ -85,6 +127,7 @@ export function producerPressure(
           };
         },
         () => ({ kind: "drain" }),
+        true,
       );
     },
     beforeWrite(bytes) {
@@ -98,6 +141,7 @@ export function producerPressure(
 
           return { kind: "drain" };
         },
+        false,
       );
     },
     beginTeardown() {

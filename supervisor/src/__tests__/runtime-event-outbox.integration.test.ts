@@ -68,6 +68,29 @@ function eventDraft(
   };
 }
 
+// ADR-183: the per-kind gate replaces the dead assertCanAcceptMutatingCommand;
+// a `new_work` receipt runs the physical, soft and hard admission checks.
+function admitNewWork(state: HostState): void {
+  state.putReceipt(
+    {
+      commandId: randomUUID(),
+      runId: "admission-probe",
+      kind: "session.prompt",
+      assignmentId: randomUUID(),
+      epoch: 1,
+      hostSessionId: null,
+      requestDigest: "admission-probe",
+      eventId: null,
+      phase: "accepted",
+      httpStatus: 202,
+      body: {},
+      receivedAt: new Date().toISOString(),
+      completedAt: null,
+    },
+    { kind: "new_work" },
+  );
+}
+
 describe("Stage B durable host event outbox", () => {
   it("retains an accepted v2 output span until terminal ACK and keeps its receipt for explicit retirement", () => {
     let clock = new Date("2026-09-04T12:00:00.000Z");
@@ -82,6 +105,7 @@ describe("Stage B durable host event outbox", () => {
       const accepted = state.putReceiptWithRuntimeEvent(
         receipt,
         eventDraft("session.command"),
+        { kind: "new_work" },
       );
 
       state.ackRuntimeEvents(accepted.streamId, accepted.sequence);
@@ -90,6 +114,7 @@ describe("Stage B durable host event outbox", () => {
       const terminal = state.putReceiptWithRuntimeEvent(
         { ...receipt, phase: "completed", completedAt: clock.toISOString() },
         eventDraft("session.command"),
+        { kind: "new_work" },
       );
 
       expect(state.pruneAcknowledgedRuntimeEvents(clock)).toBe(0);
@@ -117,11 +142,14 @@ describe("Stage B durable host event outbox", () => {
 
     try {
       state.reserveProducerReceipt(receipt, 0);
-      state.putReceipt({
-        ...receipt,
-        phase: "completed",
-        completedAt: receipt.receivedAt,
-      });
+      state.putReceipt(
+        {
+          ...receipt,
+          phase: "completed",
+          completedAt: receipt.receivedAt,
+        },
+        { kind: "producer", outputBindingCount: 0 },
+      );
       state.closeProducerWallet(receipt.commandId);
       expect(
         state.retireReceipt(receipt.commandId, {
@@ -240,18 +268,21 @@ describe("Stage B durable host event outbox", () => {
 
       state.reserveProducerReceipt(create, 0);
       state.bindProducerSession(create.commandId, sessionId);
-      state.putReceipt({
-        ...create,
-        phase: "completed",
-        completedAt: new Date(clock).toISOString(),
-      });
+      state.putReceipt(
+        {
+          ...create,
+          phase: "completed",
+          completedAt: new Date(clock).toISOString(),
+        },
+        { kind: "producer", outputBindingCount: 0 },
+      );
       const prompt = {
         ...createReceipt(),
         kind: "session.prompt",
         hostSessionId: sessionId,
       };
 
-      state.putReceipt(prompt);
+      state.putReceipt(prompt, { kind: "new_work" });
       for (let index = 0; index < SMALL_LIMITS.eventHardRows; index += 1)
         state.appendRuntimeEvent(eventDraft());
       const teardown = {
@@ -324,9 +355,7 @@ describe("Stage B durable host event outbox", () => {
 
         for (let index = 0; index < count; index += 1)
           state.appendRuntimeEvent(regular);
-        expect(() => state.assertCanAcceptMutatingCommand()).toThrow(
-          /soft limit/,
-        );
+        expect(() => admitNewWork(state)).toThrow(/soft limit/);
         expect(() => state.appendRuntimeEvent(regular)).toThrow(
           /regular partition is full/,
         );
@@ -518,16 +547,15 @@ describe("Stage B durable host event outbox", () => {
           new Date(clock - SMALL_LIMITS.eventAckGraceMs),
         ),
       ).toBe(2);
-      expect(() => state.assertCanAcceptMutatingCommand()).toThrow(
-        /low watermark/,
-      );
+      expect(() => admitNewWork(state)).toThrow(/low watermark/);
       state.ackRuntimeEvents(state.getRuntimeEventStreamId(), "2");
-      expect(() => state.assertCanAcceptMutatingCommand()).not.toThrow();
+      expect(() => admitNewWork(state)).not.toThrow();
       expect(state.runtimeEventHealthSnapshot()).toMatchObject({
         pressured: false,
         pressure: null,
       });
-      expect(snapshots).toEqual([true, false]);
+      // Notifications: the prune, the ACK, then the admitted probe receipt.
+      expect(snapshots).toEqual([true, false, false]);
       unsubscribe();
     } finally {
       state.close();
@@ -611,7 +639,7 @@ describe("Stage B durable host event outbox", () => {
       state.ackRuntimeEvents(state.getRuntimeEventStreamId(), lastSequence);
       expect(state.runtimeEventOutboxStats().unacknowledgedBytes).toBe(0);
       expect(state.runtimeEventHealthSnapshot().pressured).toBe(false);
-      expect(() => state.assertCanAcceptMutatingCommand()).not.toThrow();
+      expect(() => admitNewWork(state)).not.toThrow();
     } finally {
       state.close();
     }

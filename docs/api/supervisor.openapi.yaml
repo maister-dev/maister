@@ -3932,6 +3932,10 @@ components:
           type: string
           enum: [promptRequired, startedNewTurn, failed, error]
           description: (`steer_no_active_turn`) What the adapter answered instead of `injected`; absent when the host refused before the ACP call.
+        cause:
+          type: string
+          enum: [outbox_pressure]
+          description: (Implemented — ADR-183, with `session_checkpointed` on a prompt rejection) The host's own pause bound checkpointed the session while the prompt ran; the manager parks the run instead of failing it.
     SupervisorErrorBody:
       type: object
       required: [code, message]

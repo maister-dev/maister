@@ -707,10 +707,11 @@ returned to anyone. The steps are identical from here on:
    only**, read by nothing for control flow, and deliberately not spelled as a
    new `reason` value, because the web's SSE decoder validates
    `reason ∈ {checkpoint, intentional, fenced}` and drops the whole terminal
-   event otherwise. A prompt in flight when the session is checkpointed is
-   rejected after that terminal with `details: {reason:
-   "session_checkpointed", cause}` — the manager's signal to park, not fail
-   (ADR-183).
+   event otherwise. A prompt in flight when the pause bound checkpoints the
+   session is rejected after that terminal with `details: {reason:
+   "session_checkpointed", cause: "outbox_pressure"}` — the manager's signal to
+   park, not fail (ADR-183); a route or permission-cap checkpoint keeps its
+   existing rejection evidence.
 3. SIGTERMs the child with `MAISTER_KILL_GRACE_MS` grace.
 4. On 200 the web sweeper runs `markCheckpointed(runId)` →
    `NeedsInputIdle` and `releaseSlotOnIdle` → `promoteNextPending`.

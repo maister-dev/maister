@@ -131,6 +131,23 @@ describe("SessionRegistry", () => {
     expect(registry.markIntentionalShutdown("none")).toBe(false);
   });
 
+  // ADR-183: the web sweeper's route checkpoint can race the host's own
+  // outbox-pressure teardown; the second mark must not erase the cause the
+  // interrupted prompt's rejection is built from.
+  it("keeps a checkpoint's cause across a second cause-less checkpoint mark", () => {
+    const registry = new SessionRegistry(silentLogger);
+
+    registry.register(makeRecord("s1"), makeFakeChild(), new EventEmitter());
+    registry.markIntentionalShutdown("s1", "checkpoint", "outbox_pressure");
+    registry.markIntentionalShutdown("s1", "checkpoint");
+    expect(registry.get("s1")).toMatchObject({
+      intentionalReason: "checkpoint",
+      intentionalCause: "outbox_pressure",
+    });
+    registry.markIntentionalShutdown("s1", "intentional");
+    expect(registry.get("s1")?.intentionalCause).toBeUndefined();
+  });
+
   it("exposes SESSION_EVENT_CHANNEL constant", () => {
     expect(SESSION_EVENT_CHANNEL).toBe("session.event");
   });

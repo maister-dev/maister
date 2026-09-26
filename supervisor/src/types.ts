@@ -791,6 +791,9 @@ export type SupervisorErrorDetails = {
   parentCommandId?: string;
   activePromptCommandId?: string | null;
   adapterOutcome?: SteerAdapterOutcome;
+  // ADR-183: a prompt rejected `session_checkpointed` because the host's own
+  // pause bound parked its session names that cause.
+  cause?: "outbox_pressure";
 };
 
 export const STEER_ADAPTER_OUTCOMES = [
@@ -1267,6 +1270,8 @@ export type SessionRecord = {
   stopOutputForTeardown?: () => void;
   outputTeardownStarted?: boolean;
   outputPaused?: boolean;
+  // ADR-183: epoch ms of the first unanswered capacity wait; cleared on wake.
+  outputPausedSince?: number;
   outputTerminal?: Promise<void>;
   terminalPublished?: boolean;
   outputFailure?: SupervisorErrorBody;
@@ -1464,12 +1469,13 @@ export type SessionEvent =
       // operator-cancel path. ADR-166: `"fenced"` = evicted by a command with a
       // higher assignment epoch.
       reason?: "checkpoint" | "intentional" | "fenced";
-      // ADR-180: diagnostic only — present exactly when the host's own
-      // absolute permission cap started the teardown. Nothing branches on it,
-      // and it is deliberately NOT a new `reason` value: the web's SSE decoder
-      // validates `reason` against the three above and drops the whole
-      // terminal event for anything else.
-      cause?: "permission_cap";
+      // ADR-180 / ADR-183: diagnostic only — present exactly when the host
+      // itself started the teardown: its absolute permission cap, or a
+      // producer paused by outbox pressure past its bound. Nothing branches on
+      // it, and it is deliberately NOT a new `reason` value: the web's SSE
+      // decoder validates `reason` against the three above and drops the
+      // whole terminal event for anything else.
+      cause?: "permission_cap" | "outbox_pressure";
     }
   // ADR-166: command acceptance / completion for the enveloped session routes
   // — the durable completion signal that is NOT the long-lived HTTP response.

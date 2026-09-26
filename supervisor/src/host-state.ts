@@ -21,11 +21,11 @@ import {
 } from "./runtime-limits";
 import {
   admitReceipt,
-  assertOutboxAdmission,
   assertStoredOutboxFits,
   closeProducerWallet,
   outboxBudgetSnapshot,
   outboxPressureEpisode,
+  outboxRefusesFrames,
   OUTBOX_BUDGET_SCHEMA,
   refreshOutboxPressure,
   retainedAtThreshold,
@@ -86,10 +86,6 @@ export const HOST_STATE_FILE = "state.sqlite";
 // The compacted body of a retired receipt: disposition stays in `phase` /
 // `http_status`, so the tombstone needs no payload of its own.
 const RETIRED_RECEIPT_BODY = JSON.stringify({ retired: true });
-
-// Retired receipts are never deleted, so retention is bounded by a count that
-// refuses NEW admissions instead of silently forgetting a still-valid key.
-export const MAX_RETAINED_RECEIPTS = 500_000;
 
 export type CommandRetirementProof = {
   expectedRequestSha256: string | null;
@@ -391,7 +387,10 @@ export type HostState = {
   getFence(runId: string): RunFence | null;
   setFence(runId: string, assignmentId: string, epoch: number): void;
   getReceipt(commandId: string): CommandReceiptRow | null;
-  putReceipt(row: CommandReceiptRow, admission?: ReceiptAdmission): void;
+  putReceipt(row: CommandReceiptRow, admission: ReceiptAdmission): void;
+  // ADR-183: whether a producer wallet can still fund terminal evidence; a
+  // teardown of a session whose wallet closed writes regular rows instead.
+  producerWalletOpen(walletId: string): boolean;
   reserveProducerReceipt(
     row: CommandReceiptRow,
     outputBindingCount: number,
@@ -399,6 +398,9 @@ export type HostState = {
   closeProducerWallet(walletId: string): void;
   bindProducerSession(walletId: string, hostSessionId: string): void;
   tryReserveRuntimeFrame(walletId: string, frameBytes?: number): string | null;
+  // ADR-183: whether the OUTBOX (unACKed pressure or no room under hard) is
+  // what refuses frames, as opposed to runtime-file or physical headroom.
+  runtimeEventOutboxRefusesFrames(): boolean;
   releaseRuntimeFrame(reservationId: string): void;
   subscribeRuntimeCapacity(
     listener: (snapshot: OutboxBudgetSnapshot) => void,
@@ -451,7 +453,7 @@ export type HostState = {
   putReceiptWithRuntimeEvent(
     receipt: CommandReceiptRow,
     event: AppendRuntimeEventInput,
-    admission?: ReceiptAdmission,
+    admission: ReceiptAdmission,
   ): HostRuntimeEventRow;
   getRuntimeEventStreamId(): string;
   nextRuntimeEventPosition(): { streamId: string; sequence: string };
@@ -472,7 +474,6 @@ export type HostState = {
   ackRuntimeEvents(streamId: string, throughSequence: string): string;
   runtimeEventOutboxStats(): RuntimeEventOutboxStats;
   runtimeEventHealthSnapshot(): RuntimeEventHealthSnapshot;
-  assertCanAcceptMutatingCommand(): void;
   // One bounded page (≤ 100 rows / 1 MiB). `grace` prunes rows ACKed before
   // `olderThan` and the replay grace; `retained_pressure` (ADR-183) prunes any
   // confirmed-ACKed row, because retained rows reached the soft budget.
@@ -990,6 +991,22 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
       );
   };
   const bootId = randomUUID();
+  // The OR'd "constrained" bit funds completions and teardown from producer
+  // wallets and drains output on teardown. It is NOT the manager-facing
+  // pressure (`stream.pressured`, unACKed only — ADR-183): retained rows at
+  // soft, file pressure and physical headroom constrain funding too.
+  const constrained = (
+    budget: OutboxBudgetSnapshot,
+    filePressure: boolean,
+  ): boolean =>
+    budget.pressured ||
+    retainedAtThreshold(
+      budget.regular,
+      limits.eventSoftBytes,
+      limits.eventSoftRows,
+    ) ||
+    filePressure ||
+    !canAdmitPhysical();
 
   // An old process cannot still own a parser reservation on this single host.
   // Its accepted commands retain their independent durable terminal wallets.
@@ -1011,7 +1028,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
       log?.info(runtimeFileBudgetSnapshot(db), "runtime-file-pressure-changed");
     const snapshot = {
       ...logical,
-      pressured: logical.pressured || filePressure || !canAdmitPhysical(),
+      pressured: constrained(logical, filePressure),
     };
     const episode = outboxPressureEpisode(db);
 
@@ -1083,12 +1100,12 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
 
   const admitRuntimeReceipt = (
     row: CommandReceiptRow,
-    admission?: ReceiptAdmission,
+    admission: ReceiptAdmission,
   ): void => {
     if (
       row.phase === "accepted" &&
       row.kind.startsWith("session.") &&
-      admission?.kind !== "teardown" &&
+      admission.kind !== "teardown" &&
       refreshRuntimeFilePressure(db, limits)
     )
       throw new HostRuntimeEventError(
@@ -1096,7 +1113,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         "runtime file capacity is reserved until usage drops below the low watermark",
       );
     admitReceipt(db, limits, row, admission);
-    if (row.phase === "accepted" && admission?.kind === "producer")
+    if (row.phase === "accepted" && admission.kind === "producer")
       reserveProducerFileWallet(
         db,
         limits,
@@ -1104,6 +1121,40 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         admission.outputBindingCount,
         storage.snapshot().filesystemFreeBytes,
       );
+  };
+
+  // ADR-183: one line per refused admission, whichever gate refused it.
+  const logAdmissionRefusal = (
+    row: CommandReceiptRow,
+    admission: ReceiptAdmission,
+    error: unknown,
+  ): void => {
+    if (
+      row.phase !== "accepted" ||
+      !(error instanceof HostRuntimeEventError) ||
+      !error.reason.startsWith("event_outbox_")
+    )
+      return;
+    const budget = outboxBudgetSnapshot(db);
+    const partitions = [budget.regular, budget.control, budget.emergency];
+
+    log?.warn(
+      {
+        commandId: row.commandId,
+        kind: row.kind,
+        admission: admission.kind,
+        reason: error.reason,
+        unacknowledgedCount: partitions.reduce(
+          (sum, item) => sum + item.unacknowledgedCount,
+          0,
+        ),
+        retainedCount: partitions.reduce(
+          (sum, item) => sum + item.retainedCount,
+          0,
+        ),
+      },
+      "outbox-admission-refused",
+    );
   };
 
   const state: HostState = {
@@ -1227,20 +1278,30 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
     },
     putReceipt(row, admission) {
       return storage.write(() => {
-        if (row.phase === "accepted" && admission?.kind !== "teardown")
-          assertPhysicalAdmission();
-        db.exec("BEGIN IMMEDIATE");
         try {
+          if (row.phase === "accepted" && admission.kind !== "teardown")
+            assertPhysicalAdmission();
+          db.exec("BEGIN IMMEDIATE");
           admitRuntimeReceipt(row, admission);
           writeReceiptRow(db, row);
           settleReceiptBudget(db, row);
           db.exec("COMMIT");
         } catch (error) {
           if (db.isTransaction) db.exec("ROLLBACK");
+          logAdmissionRefusal(row, admission, error);
           throw error;
         }
         notifyCapacity();
       });
+    },
+    producerWalletOpen(walletId) {
+      return (
+        db
+          .prepare(
+            "SELECT 1 FROM runtime_event_wallets WHERE wallet_id = ? AND closed = 0",
+          )
+          .get(walletId) !== undefined
+      );
     },
     reserveProducerReceipt(row, outputBindingCount) {
       state.putReceipt(row, { kind: "producer", outputBindingCount });
@@ -1266,6 +1327,9 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         closeProducerWallet(db, walletId);
         notifyCapacity();
       });
+    },
+    runtimeEventOutboxRefusesFrames() {
+      return outboxRefusesFrames(db, limits);
     },
     tryReserveRuntimeFrame(walletId, frameBytes = 1048576) {
       if (!canAdmitPhysical(8 * 1024 * 1024 + 4 * 16 * 1024)) return null;
@@ -1405,36 +1469,41 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
             completedAt: now().toISOString(),
           };
 
-          state.putReceiptWithRuntimeEvent(receipt, {
-            terminal: true,
-            ...(wallet
-              ? {
-                  funding: {
-                    partition: "control" as const,
-                    walletId: wallet.wallet_id,
-                    commandId: row.command_id,
-                  },
-                }
-              : {}),
-            draft: {
-              runId: row.run_id,
-              assignmentId: wallet?.assignment_id ?? row.assignment_id,
-              assignmentEpoch: wallet?.assignment_epoch ?? row.epoch,
-              hostSessionId: receipt.hostSessionId,
-              eventType: "session.command",
-              occurredAt: now().toISOString(),
-              payload:
-                row.request_version === 2
-                  ? commandReceiptPayloadV2(receipt, state)
-                  : {
+          state.putReceiptWithRuntimeEvent(
+            receipt,
+            {
+              terminal: true,
+              ...(wallet
+                ? {
+                    funding: {
+                      partition: "control" as const,
+                      walletId: wallet.wallet_id,
                       commandId: row.command_id,
-                      kind: row.kind,
-                      phase: "completed",
-                      status: "failed",
-                      error: body,
                     },
+                  }
+                : {}),
+              draft: {
+                runId: row.run_id,
+                assignmentId: wallet?.assignment_id ?? row.assignment_id,
+                assignmentEpoch: wallet?.assignment_epoch ?? row.epoch,
+                hostSessionId: receipt.hostSessionId,
+                eventType: "session.command",
+                occurredAt: now().toISOString(),
+                payload:
+                  row.request_version === 2
+                    ? commandReceiptPayloadV2(receipt, state)
+                    : {
+                        commandId: row.command_id,
+                        kind: row.kind,
+                        phase: "completed",
+                        status: "failed",
+                        error: body,
+                      },
+              },
             },
-          });
+            // A rejection settles a lost prompt; it admits nothing.
+            { kind: "new_work" },
+          );
           recoveredCount += 1;
         }
       }
@@ -1846,8 +1915,13 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
     },
     putReceiptWithRuntimeEvent(receipt, eventInput, admission) {
       return storage.write(() => {
-        if (receipt.phase === "accepted" && admission?.kind !== "teardown")
-          assertPhysicalAdmission();
+        try {
+          if (receipt.phase === "accepted" && admission.kind !== "teardown")
+            assertPhysicalAdmission();
+        } catch (error) {
+          logAdmissionRefusal(receipt, admission, error);
+          throw error;
+        }
         db.exec("BEGIN IMMEDIATE");
 
         try {
@@ -1879,6 +1953,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
           return event;
         } catch (error) {
           if (db.isTransaction) db.exec("ROLLBACK");
+          logAdmissionRefusal(receipt, admission, error);
           throw error;
         }
       });
@@ -2077,10 +2152,10 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         ...stats,
         budget: {
           ...stats.budget,
-          pressured:
-            stats.budget.pressured ||
-            runtimeFileBudgetSnapshot(db).pressured ||
-            !canAdmitPhysical(),
+          pressured: constrained(
+            stats.budget,
+            runtimeFileBudgetSnapshot(db).pressured,
+          ),
         },
       };
     },
@@ -2088,21 +2163,6 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
       const streamId = ensureRuntimeEventStream(db, now).stream_id;
 
       return runtimeEventHealthSnapshot(db, streamId, now(), log);
-    },
-    assertCanAcceptMutatingCommand() {
-      assertPhysicalAdmission();
-      assertOutboxAdmission(db, limits);
-      // Retirement compacts receipts but never drops the key, so the only
-      // honest response to unbounded retention is to stop admitting rather
-      // than to forget a key a retry may still legally use (D6).
-      const retained = state.retainedReceiptCount();
-
-      if (retained > MAX_RETAINED_RECEIPTS) {
-        throw new HostRuntimeEventError(
-          "event_outbox_hard_limit",
-          `retained command receipts (${retained}) exceed the retirement bound; drain retirement before admitting more commands`,
-        );
-      }
     },
     pruneAcknowledgedRuntimeEvents(olderThan, options) {
       const mode = options?.mode ?? "grace";

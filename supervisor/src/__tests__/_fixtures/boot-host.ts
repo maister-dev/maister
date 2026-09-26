@@ -86,6 +86,7 @@ export type BootHostOptions = {
   pinnedKey?: string;
   killGraceMs?: number;
   steerTimeoutMs?: number;
+  producerPauseMaxMs?: number;
   logger?: Logger;
   hostState?: HostState;
   runtimeEventSubscribers?: RuntimeEventSubscribers;
@@ -136,6 +137,7 @@ export async function bootHost(
     runtimeRoot,
     killGraceMs,
     steerTimeoutMs: opts.steerTimeoutMs,
+    producerPauseMaxMs: opts.producerPauseMaxMs,
     spawnOverrides,
     hostState,
     workspaceRoots,
