@@ -10,6 +10,7 @@ import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { preserveWorktree } from "@/lib/gc/preserve";
 import { worktreesRoot } from "@/lib/instance-config";
 import { assertLocalPackageAssistantActor } from "@/lib/scratch-runs/service";
@@ -302,6 +303,24 @@ export async function POST(
         runId,
         "abandoned",
       );
+      // B6 (C17 c): the discard is a terminal writer like any other.
+      if (run.projectId)
+        await emitDomainEvent({
+          db: tx,
+          kind: "run.abandoned",
+          projectId: run.projectId,
+          runId,
+          actor: { type: "system", id: null },
+          parentRunId: null,
+          payload: {
+            runId,
+            taskId: null,
+            flowId: null,
+            runKind: "scratch",
+            reason: "discard",
+          },
+          cause: { code: null, reason: "discard", source: "operator" },
+        });
     });
 
     if (run.localPackageId) {

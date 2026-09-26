@@ -5,6 +5,7 @@ import type {
   PromptEvidenceClass,
 } from "@/lib/reconcile-evidence";
 import type { CrashReason } from "@/lib/runs/state-transitions";
+import type { TerminalCauseSource } from "@/lib/domain-events/taxonomy";
 
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import pino from "pino";
@@ -116,6 +117,9 @@ export async function closeTurnLostAttempt(
      * sweep side — the command's evidence re-read under lock
      * (`applyTurnLostBoundary`). */
     admitCompletedAction?: boolean;
+    /** B6: the terminal cause's source — `graph` from an owner application,
+     * the sweep's `reconcile` otherwise. */
+    causeSource?: TerminalCauseSource;
   },
 ): Promise<void> {
   const closed = await tx
@@ -151,6 +155,7 @@ export async function closeTurnLostAttempt(
   const crashed = await crashRunningRun(input.runId, input.reason, {
     db: tx,
     fromStatuses: [...(input.fromStatuses ?? ["Running"])],
+    ...(input.causeSource ? { causeSource: input.causeSource } : {}),
   });
 
   if (!crashed.ok) throw new TurnLostCasLost("run");

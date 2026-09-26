@@ -41,6 +41,7 @@ import {
   resolvePromptEvidence,
 } from "@/lib/reconcile-evidence-db";
 import { EVIDENCE_CRASH_REASONS } from "@/lib/reconcile-evidence";
+import { causeReason } from "@/lib/domain-events/taxonomy";
 import { listGraphOnlyCutoverRunIds } from "@/lib/queries/run-cutover";
 import { systemCloseActiveAssignmentsForRun } from "@/lib/assignments/service";
 import { reconcileGraceSeconds } from "@/lib/instance-config";
@@ -2022,6 +2023,7 @@ export async function runReconcileSweep(
           // may pretend it was.
           const result = await finalizeAgentRun(cand.runId, "Crashed", {
             db,
+            causeReason: causeReason(reason),
             reason: observerFailure
               ? `reconcile: ${reason} (observer gave up after ${observerFailure.attempts} attempts: ${observerFailure.code} ${observerFailure.message})`
               : `reconcile: ${reason}`,
@@ -2157,7 +2159,10 @@ export async function runReconcileSweep(
         // emits run.abandoned, stamps the workspace for GC and releases context
         // mounts. No promote: a queued run never held a slot.
         const { markAbandoned } = await import("@/lib/runs/state-transitions");
-        const result = await markAbandoned(cand.runId, { db });
+        const result = await markAbandoned(cand.runId, {
+          db,
+          cause: { code: null, reason: "orphan", source: "reconcile" },
+        });
 
         if (!result.ok) {
           skipped += 1;

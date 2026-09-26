@@ -364,8 +364,11 @@ DESC`, served by the partial index `domain_events_run_terminal_idx` (migration
 crashed, recovered and then finished `Done` reads null, and a `Failed` run whose
 only event is an older `run.crashed` reads null rather than the wrong cause.
 An event written before `cause` existed (and the 0094 cut-over rows) is read
-through a legacy synthesis: `{code: isMaisterErrorCode(reason) ? reason : null,
-reason, source: "legacy"}` from `payload.reason` / `payload.errorCode`. A
+through a legacy synthesis from `payload.reason` / `payload.errorCode`: `code`
+is whichever of the two is a `MaisterErrorCode` (else null), and `reason` is the
+old reason normalized to snake_case when it is not the code itself — kept only
+if it is a well-formed token, so an old prose reason (an error message) never
+reaches the cause: `{code, reason?, source: "legacy"}`. A
 project-less run can never have an event (`domain_events.project_id` is NOT
 NULL), so a scratch detail falls back to `{code: scratch_runs.error_code,
 source: "scratch"}`. The cause reaches the flow/agent run page, the scratch

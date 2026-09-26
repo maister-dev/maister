@@ -25,7 +25,13 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { RUN_SYNC_TERMINAL_PHASES } from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
-import { type RunReviewCause } from "@/lib/domain-events/taxonomy";
+import {
+  causeReason,
+  type RunReviewCause,
+  type TerminalCause,
+  type TerminalCauseSource,
+} from "@/lib/domain-events/taxonomy";
+import { isMaisterErrorCode } from "@/lib/errors-core";
 import { emitDelegatedReviewIfChild } from "@/lib/runs/delegated-review-emit";
 import { mintPlacement, releaseAssignmentForRun } from "@/lib/execution-host";
 import { gcAgeDays } from "@/lib/instance-config";
@@ -921,6 +927,19 @@ export async function bumpKeepalive(
 
 export type FailReason = string;
 
+// B6 (ADR-177 amendment): a resume failure's cause. The reason names a code
+// itself (`CHECKPOINT`) or the host's (`supervisor-<CODE>`); every other token
+// is a crash of the resume itself.
+function resumeFailureCause(reason: FailReason): TerminalCause {
+  const named = /^supervisor-(.+)$/.exec(reason)?.[1] ?? reason;
+
+  return {
+    code: isMaisterErrorCode(named) ? named : "CRASH",
+    reason: causeReason(reason),
+    source: "resume",
+  };
+}
+
 // M8 D7 failure rows that produce terminal Failed via failResumedRun:
 //   - supervisor 400 spawn refused (CHECKPOINT)
 //   - supervisor 201 but empty acpSessionId (CHECKPOINT)
@@ -976,6 +995,7 @@ export async function failResumedRun(
       taskId: rows[0].taskId,
       actor: { type: "system", id: null },
       parentRunId: rows[0].parentRunId,
+      cause: resumeFailureCause(reason),
       payload: {
         runId,
         taskId: rows[0].taskId,
@@ -1194,7 +1214,9 @@ export const ABANDONABLE_STATUSES = [
 
 export async function markAbandoned(
   runId: string,
-  opts: StateTransitionOptions = {},
+  // B6: why, when it is not the operator's abandon. The top-level
+  // `payload.reason: "user"` stays as it is; the truth rides `cause`.
+  opts: StateTransitionOptions & { cause?: TerminalCause } = {},
 ): Promise<StateTransitionResult> {
   const db = opts.db ?? getDb();
 
@@ -1256,6 +1278,7 @@ export async function markAbandoned(
       taskId: rows[0].taskId,
       actor: { type: "system", id: null },
       parentRunId: rows[0].parentRunId,
+      cause: opts.cause ?? { code: null, reason: "user", source: "operator" },
       payload: {
         runId,
         taskId: rows[0].taskId,
@@ -1344,6 +1367,7 @@ export async function crashResumedRun(
       taskId: rows[0].taskId,
       actor: { type: "system", id: null },
       parentRunId: rows[0].parentRunId,
+      cause: resumeFailureCause(reason),
       payload: {
         runId,
         taskId: rows[0].taskId,
@@ -1416,6 +1440,9 @@ export async function crashRunningRun(
     // reviewing orphan of a dead coordinator can be crashed too — while a run
     // that moved since classification loses the CAS instead of being clobbered.
     fromStatuses?: readonly string[];
+    // B6: who proved the crash — the sweep by default, the node's own owner
+    // application when it closes a lost or crashed turn.
+    causeSource?: TerminalCauseSource;
   } = {},
 ): Promise<StateTransitionResult> {
   const db = opts.db ?? getDb();
@@ -1484,6 +1511,11 @@ export async function crashRunningRun(
       taskId: rows[0].taskId,
       actor: { type: "system", id: null },
       parentRunId: rows[0].parentRunId,
+      cause: {
+        code: "CRASH",
+        reason: causeReason(reason),
+        source: opts.causeSource ?? "reconcile",
+      },
       payload: {
         runId,
         taskId: rows[0].taskId,
@@ -1572,6 +1604,11 @@ export async function crashWaitingOnChildren(
       taskId: rows[0].taskId,
       actor: { type: "system", id: null },
       parentRunId: rows[0].parentRunId,
+      cause: {
+        code: "CRASH",
+        reason: causeReason(reason),
+        source: "reconcile",
+      },
       payload: {
         runId,
         taskId: rows[0].taskId,

@@ -54,6 +54,8 @@ let agentScript: Array<
   | { ok: true }
   | { ok: false; errorCode: string }
   | { commitFile: string; thenFail: string }
+  // B6: a typed refusal the node throws, its token in `details.reason`.
+  | { throws: { code: "CRASH" | "CONFIG"; reason: string } }
 > = [];
 
 vi.mock("@/lib/flows/runner-agent", async (importOriginal) => ({
@@ -65,6 +67,14 @@ vi.mock("@/lib/flows/runner-agent", async (importOriginal) => ({
     ) => {
       agentCalls.push({ mode: step.mode, stepId: step.id });
       const next = agentScript.shift() ?? { ok: true as const };
+
+      if ("throws" in next) {
+        const { MaisterError } = await import("@/lib/errors");
+
+        throw new MaisterError(next.throws.code, "refused by the node", {
+          details: { reason: next.throws.reason },
+        });
+      }
 
       if ("commitFile" in next) {
         // Simulate agent work that COMMITS, then fails retryably — the
@@ -350,6 +360,16 @@ async function attemptsFor(runId: string) {
   }>;
 }
 
+async function terminalCause(runId: string, kind: string): Promise<unknown> {
+  const { rows } = await pool.query(
+    `SELECT payload->'cause' AS cause FROM domain_events
+     WHERE run_id = $1 AND kind = $2 ORDER BY id DESC LIMIT 1`,
+    [runId, kind],
+  );
+
+  return rows[0]?.cause;
+}
+
 async function runStatus(runId: string): Promise<string> {
   const r = await pool.query(`SELECT status FROM runs WHERE id = $1`, [runId]);
 
@@ -466,6 +486,10 @@ describe("retry_policy auto-retry (ADR-080)", () => {
     expect(attempts[0].auto_retry).toBe(false);
     expect(agentCalls).toHaveLength(1);
     expect(await runStatus(runId)).toBe("Failed");
+    expect(await terminalCause(runId, "run.failed")).toEqual({
+      code: "PRECONDITION",
+      source: "graph",
+    });
   }, 120_000);
 
   it("preserves CRASH precedence by terminalizing the run as Crashed", async () => {
@@ -492,6 +516,36 @@ describe("retry_policy auto-retry (ADR-080)", () => {
         )
       ).rows[0]?.kind,
     ).toBe("run.crashed");
+    expect(await terminalCause(runId, "run.crashed")).toEqual({
+      code: "CRASH",
+      source: "graph",
+    });
+  }, 120_000);
+
+  // B6 (C17 e): a refusal's own token rides the terminal cause — on master the
+  // consensus no-draft reason was lost at the run boundary.
+  it("a thrown refusal's details.reason reaches the run.crashed cause", async () => {
+    const { runGraph } = await import("@/lib/flows/graph/runner-graph");
+    const { loaded, runId } = await seedRun(
+      retryManifest({ attempts: 3, on_errors: ["SPAWN"] }),
+    );
+
+    agentScript = [
+      { throws: { code: "CRASH", reason: "consensus_no_draft_available" } },
+    ];
+
+    await runGraph(loaded as never, {
+      db,
+      runtimeRoot: createdPaths[0],
+      executionHosts: (await fakeGraphHosts(db, runId)).hosts,
+    });
+
+    expect(await runStatus(runId)).toBe("Crashed");
+    expect(await terminalCause(runId, "run.crashed")).toEqual({
+      code: "CRASH",
+      reason: "consensus_no_draft_available",
+      source: "graph",
+    });
   }, 120_000);
 
   it("no retry_policy declared → single attempt on retryable failure (opt-in)", async () => {

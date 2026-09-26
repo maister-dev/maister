@@ -43,6 +43,10 @@ import {
 } from "@/components/board/run-timeline";
 import { RunRecoverActions } from "@/components/runs/run-recover-actions";
 import {
+  TerminalCauseNotice,
+  type TerminalCauseLabels,
+} from "@/components/runs/terminal-cause-notice";
+import {
   AgentRunCenter,
   type AgentRunCenterLabels,
   shouldRenderAgentRunCenter,
@@ -852,6 +856,15 @@ export default async function RunDetailLayout({
     autoFinalizeHint: t("autoFinalizeHint"),
   };
 
+  const terminalCauseCopy = t.raw("terminalCause") as Omit<
+    TerminalCauseLabels,
+    "codes"
+  >;
+  const terminalCauseLabels: TerminalCauseLabels = {
+    ...terminalCauseCopy,
+    codes: (t.raw("failure") as Pick<TerminalCauseLabels, "codes">).codes,
+  };
+
   const timelineLabels: TimelineLabels = {
     failure: t.raw("failure"),
     title: t("timelineTitle"),
@@ -968,6 +981,7 @@ export default async function RunDetailLayout({
       agent: detail.agent,
       runKind: detail.runKind,
       recoverable: detail.recoverable,
+      terminalCause: detail.terminalCause,
       takeoverOwnerUserId: detail.takeoverOwnerUserId,
       ttlState: detail.ttlState,
       effectiveRemovalAt: detail.effectiveRemovalAt,
@@ -1637,6 +1651,14 @@ export default async function RunDetailLayout({
             </section>
           ) : null}
 
+          {detail.status === "Failed" || detail.status === "Abandoned" ? (
+            <TerminalCauseNotice
+              cause={detail.terminalCause}
+              labels={terminalCauseLabels}
+              status={detail.status}
+            />
+          ) : null}
+
           {detail.status === "Crashed" ? (
             <section
               className="mb-6 rounded-[14px] border border-red-300 bg-red-50/60 p-5 dark:border-red-900/60 dark:bg-red-950/30"
@@ -1645,6 +1667,12 @@ export default async function RunDetailLayout({
               <h2 className="mb-1 inline-flex items-center gap-2 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink before:h-[7px] before:w-[7px] before:rounded-full before:bg-red-500 before:content-['']">
                 {t("crashTitle")}
               </h2>
+              <TerminalCauseNotice
+                cause={detail.terminalCause}
+                labels={terminalCauseLabels}
+                showTitle={false}
+                status={detail.status}
+              />
               {detail.recoverable ? (
                 <p className="mb-4 text-[13px] leading-[1.4] text-body">
                   {t("crashRecoverableHint")}

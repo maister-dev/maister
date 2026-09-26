@@ -513,6 +513,7 @@ export async function runPass2(db: Db): Promise<number> {
           taskId: updated[0].taskId,
           actor: { type: "system", id: null },
           parentRunId: updated[0].parentRunId,
+          cause: { code: null, reason: "ttl", source: "sweeper" },
           payload: {
             runId: row.id,
             taskId: updated[0].taskId,
@@ -842,6 +843,11 @@ async function runTimeLimitPass(
         taskId: upd[0].taskId,
         actor: { type: "system", id: null },
         parentRunId: upd[0].parentRunId,
+        cause: {
+          code: "PRECONDITION",
+          reason: "max_duration",
+          source: "sweeper",
+        },
         payload: {
           runId: row.id,
           taskId: upd[0].taskId,
@@ -2105,6 +2111,11 @@ async function actBudgetTerminateRun(
         taskId: upd[0].taskId,
         actor: { type: "system", id: null },
         parentRunId: upd[0].parentRunId,
+        cause: {
+          code: "BUDGET_EXCEEDED",
+          reason: "budget_breach",
+          source: "sweeper",
+        },
         payload: {
           runId: candidate.id,
           taskId: upd[0].taskId,
@@ -2325,6 +2336,11 @@ async function actBudgetTerminateTree(
         taskId: rows[0].taskId,
         actor: { type: "system", id: null },
         parentRunId: rows[0].parentRunId,
+        cause: {
+          code: "BUDGET_EXCEEDED",
+          reason: "budget_breach",
+          source: "sweeper",
+        },
         payload: {
           runId: candidate.id,
           taskId: rows[0].taskId,

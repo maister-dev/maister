@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import type { Root } from "react-dom/client";
+import type { TerminalCause } from "@/lib/domain-events/taxonomy";
 import type {
   ScratchDetail,
   ScratchDialogStatus,
@@ -77,6 +78,7 @@ let container: HTMLDivElement;
 let dialogStatus: ScratchDialogStatus;
 let runStatus: string;
 let recoverRefusal: string | null;
+let terminalCause: TerminalCause | null;
 
 function detail(): ScratchDetail {
   return {
@@ -104,6 +106,7 @@ function detail(): ScratchDetail {
     workspace: null,
     capabilityProfile: null,
     pendingHitl: null,
+    terminalCause,
   } as unknown as ScratchDetail;
 }
 
@@ -152,6 +155,7 @@ beforeEach(() => {
   dialogStatus = "Running";
   runStatus = "Running";
   recoverRefusal = null;
+  terminalCause = null;
   vi.useFakeTimers();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal(
@@ -241,6 +245,39 @@ describe("scratch delivery feedback (ADR-182)", () => {
       ).toBe(text);
     },
   );
+
+  // B6 (ADR-177 amendment): the ended dialog says why, and a budget kill says
+  // it cannot be recovered instead of offering a resume.
+  it("the Crashed and Failed hints carry the run's terminal cause", async () => {
+    const causeLine = () =>
+      container.querySelector('[data-testid="terminal-cause-notice"]')
+        ?.textContent ?? null;
+
+    dialogStatus = "Crashed";
+    runStatus = "Crashed";
+    terminalCause = {
+      code: "CRASH",
+      reason: "agent_session_gone",
+      source: "scratch",
+    };
+    await render();
+    await act(async () => {});
+    expect(container.textContent).toContain(en.scratch.recoverHint);
+    expect(causeLine()).toContain(
+      en.run.terminalCause.reasons.agent_session_gone,
+    );
+
+    terminalCause = {
+      code: "BUDGET_EXCEEDED",
+      reason: "budget_breach",
+      source: "scratch",
+    };
+    await refresh("Crashed", "Failed");
+    expect(container.textContent).toContain(en.scratch.recoverRefused.Failed);
+    expect(container.textContent).not.toContain(en.scratch.recoverHint);
+    expect(causeLine()).toContain(en.run.failure.codes.BUDGET_EXCEEDED);
+    expect(causeLine()).toContain(en.run.terminalCause.reasons.budget_breach);
+  });
 
   it("a delivery notice ends with its turn and is not revived by the next dispatched turn", async () => {
     await render();

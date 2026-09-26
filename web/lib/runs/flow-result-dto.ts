@@ -1,3 +1,4 @@
+import type { TerminalCause } from "@/lib/domain-events/taxonomy";
 import type { ResolvedCapabilitySet, RunKind } from "@/lib/db/schema";
 import type {
   GraphTopology,
@@ -55,6 +56,7 @@ export interface FlowResultRunInput {
   agent: string | null;
   runKind: RunKind;
   recoverable: boolean;
+  terminalCause?: TerminalCause | null;
   takeoverOwnerUserId: string | null;
   ttlState: string;
   effectiveRemovalAt: Date | string | null;
@@ -165,6 +167,7 @@ export interface FlowRunResultDto {
     agent: string | null;
     runKind: RunKind;
     recoverable: boolean;
+    terminalCause: TerminalCause | null;
     takeoverOwnerUserId: string | null;
     ttlState: string;
     effectiveRemovalAt: string | null;
@@ -464,6 +467,7 @@ export function buildFlowRunResultDto(
       agent: input.run.agent,
       runKind: input.run.runKind,
       recoverable: input.run.recoverable,
+      terminalCause: input.run.terminalCause ?? null,
       takeoverOwnerUserId: input.run.takeoverOwnerUserId,
       ttlState: input.run.ttlState,
       effectiveRemovalAt: isoOrNull(input.run.effectiveRemovalAt),

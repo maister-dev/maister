@@ -302,6 +302,7 @@ describe("agent public result — the D10 failure table", () => {
     expect(events.find((e) => e.kind === "run.failed")?.payload).toMatchObject({
       reason: "result_missing",
       resultStatus: "unavailable",
+      cause: { code: "CONFIG", reason: "result_missing", source: "agent" },
     });
   }, 60_000);
 
@@ -364,7 +365,10 @@ describe("agent public result — the D10 failure table", () => {
       });
       expect(
         (await getEvents(runId)).find((e) => e.kind === "run.failed")?.payload,
-      ).toMatchObject({ reason: "result_invalid" });
+      ).toMatchObject({
+        reason: "result_invalid",
+        cause: { code: "CONFIG", reason: "result_invalid", source: "agent" },
+      });
     },
     60_000,
   );
@@ -466,7 +470,11 @@ describe("W4 — death before the finalize transaction", () => {
     // rather than waiting forever.
     const events = await getEvents(runId);
 
-    expect(events.some((e) => e.kind === "run.crashed")).toBe(true);
+    // B6: the prose reason ("supervisor reported session crash") stays on
+    // the payload and never reaches the cause.
+    expect(events.find((e) => e.kind === "run.crashed")?.payload.cause).toEqual(
+      { code: "CRASH", source: "agent" },
+    );
     expect(events.some((e) => e.kind === "run.done")).toBe(false);
   }, 60_000);
 

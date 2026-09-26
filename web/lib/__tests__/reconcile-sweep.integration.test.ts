@@ -27,7 +27,7 @@ import type { WorktreeInfo } from "@/lib/worktree";
 
 import { randomUUID } from "node:crypto";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import {
@@ -1660,6 +1660,22 @@ describe("runReconcileSweep (integration)", () => {
     await runReconcileSweep(opts);
 
     expect((await readRun(orphan)).status).toBe("Crashed");
+    // B6: the agent crash carries the sweep's token, not its prose reason.
+    const [crashed] = await db
+      .select({ payload: schema.domainEvents.payload })
+      .from(schema.domainEvents)
+      .where(
+        and(
+          eq(schema.domainEvents.runId, orphan),
+          eq(schema.domainEvents.kind, "run.crashed"),
+        ),
+      );
+
+    expect((crashed.payload as Record<string, unknown>).cause).toEqual({
+      code: "CRASH",
+      reason: "orphaned_child",
+      source: "agent",
+    });
 
     const [request] = await db
       .select({ respondedAt: schema.hitlRequests.respondedAt })

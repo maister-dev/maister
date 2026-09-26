@@ -131,6 +131,7 @@ import {
   steerRefusalReason,
 } from "@/lib/execution-host/steer-settlement";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
+import { causeReason } from "@/lib/domain-events/taxonomy";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import {
   addWorktree,
@@ -681,6 +682,14 @@ export async function markScratchCrashed(args: {
           flowId: null,
           runKind: "scratch",
           reason: errorCode ?? null,
+        },
+        cause: {
+          code: errorCode,
+          ...(isMaisterError(args.err) &&
+          typeof args.err.details?.reason === "string"
+            ? { reason: causeReason(args.err.details.reason) }
+            : {}),
+          source: "scratch",
         },
       });
     }
@@ -3240,6 +3249,26 @@ export async function stopScratchWorkbench(
       })
       .where(eq(runs.id, runId));
     await releaseAssignmentForRun(tx, runId, "stopped");
+    // B6: a stop that ends the run says so on the bus, like every other
+    // terminal writer (C17 c). A project-less assistant run has no project.
+    if (nextRunStatus === "Abandoned" && run.projectId)
+      await emitDomainEvent({
+        db: tx,
+        kind: "run.abandoned",
+        projectId: run.projectId,
+        runId,
+        actor: { type: "system", id: null },
+        // scratch runs are never delegated children
+        parentRunId: null,
+        payload: {
+          runId,
+          taskId: null,
+          flowId: null,
+          runKind: "scratch",
+          reason: "stop",
+        },
+        cause: { code: null, reason: "stop", source: "operator" },
+      });
   });
 
   if (nextDialogStatus === "Abandoned" && run.localPackageId) {

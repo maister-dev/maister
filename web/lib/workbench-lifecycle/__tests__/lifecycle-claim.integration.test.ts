@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import {
   afterAll,
@@ -231,6 +231,47 @@ describe("workbench lifecycle claim persistence", () => {
       lifecycleOperationState: "claiming",
       lifecycleOperationAttemptId: claim.attemptId,
       lifecycleOperationName: "drop",
+    });
+  });
+
+  // B6 (ADR-177 amendment): the drop names itself on the terminal event.
+  it("recordDrop abandons the run with a run.abandoned whose cause names the workbench", async () => {
+    const { runId, workspaceId } = await seedWorkspace();
+    const claim = await claimLifecycleOperation({
+      runId,
+      workspaceId,
+      operation: "drop",
+      expectedRunStatus: "Review",
+    });
+
+    await recordDrop({
+      runId,
+      runKind: "flow",
+      workspaceId,
+      removedAt: new Date(),
+      expectedRunStatus: "Review",
+      nextRunStatus: "Abandoned",
+      archivedBranch: null,
+      archivedAt: null,
+      archivedCommit: null,
+      preservationOutcome: "not_needed",
+      removalKind: "drop",
+      attemptId: claim.attemptId,
+    });
+    const [event] = await db
+      .select({ payload: schema.domainEvents.payload })
+      .from(schema.domainEvents)
+      .where(
+        and(
+          eq(schema.domainEvents.runId, runId),
+          eq(schema.domainEvents.kind, "run.abandoned"),
+        ),
+      );
+
+    expect(event.payload.cause).toEqual({
+      code: null,
+      reason: "workbench",
+      source: "workbench",
     });
   });
 

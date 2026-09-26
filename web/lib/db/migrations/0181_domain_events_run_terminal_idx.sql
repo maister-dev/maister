@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS "domain_events_run_terminal_idx" ON "domain_events" USING btree ("run_id","occurred_at" DESC NULLS FIRST,"id" DESC NULLS FIRST) WHERE "domain_events"."kind" IN ('run.done', 'run.failed', 'run.crashed', 'run.abandoned');

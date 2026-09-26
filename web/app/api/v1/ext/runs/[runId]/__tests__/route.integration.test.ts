@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { NextRequest } from "next/server";
 import {
@@ -248,6 +249,8 @@ describe("GET /api/v1/ext/runs/[runId]", () => {
     expect(body).toHaveProperty("status");
     expect(body).toHaveProperty("flowId");
     expect(body).toHaveProperty("runnerId");
+    // B6: a Running run has no terminal cause.
+    expect(body.terminalCause).toBeNull();
 
     // Verify no leaked fields
     expect((body as any).acp_session_id).toBeUndefined();
@@ -265,5 +268,40 @@ describe("GET /api/v1/ext/runs/[runId]", () => {
       status_code: 200,
       scope_used: "runs:read",
     });
+  });
+
+  // B6 (ADR-177 amendment): a Failed run says why, read from its run.failed.
+  it("a Failed run carries terminalCause from its terminal event", async () => {
+    const { projectId, flowId, executorId } = await seedProject(
+      `ext-run-cause-${randomUUID().slice(0, 8)}`,
+    );
+    const taskId = await seedTask(projectId, flowId);
+    const runId = await seedRun(projectId, taskId, flowId, executorId);
+    const cause = {
+      code: "BUDGET_EXCEEDED",
+      reason: "budget_breach",
+      source: "sweeper",
+    };
+
+    await db
+      .update(schema.runs as any)
+      .set({ status: "Failed", endedAt: new Date() })
+      .where(eq(schema.runs.id, runId));
+    await db.insert(schema.domainEvents as any).values({
+      kind: "run.failed",
+      projectId,
+      runId,
+      taskId,
+      payload: { runId, reason: "budget_breach", cause },
+      occurredAt: new Date(),
+    });
+    const token = await issueToken({ projectId, name: "Cause Token" }, db);
+    const req = makeRequest(runId);
+
+    req.headers.set("authorization", `Bearer ${token.secret}`);
+    const res = await GET(req, { params: Promise.resolve({ runId }) });
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).terminalCause).toEqual(cause);
   });
 });

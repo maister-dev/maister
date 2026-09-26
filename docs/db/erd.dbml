@@ -382,6 +382,7 @@ table domain_events {
 
     (run_id, occurred_at) [name: 'domain_events_m43_cutover_run_occurred_idx']
     (task_id, occurred_at) [name: 'domain_events_m43_cutover_task_occurred_idx']
+    (run_id, occurred_at, id) [name: 'domain_events_run_terminal_idx']
   }
 }
 

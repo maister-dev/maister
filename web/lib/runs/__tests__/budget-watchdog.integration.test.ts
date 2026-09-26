@@ -23,7 +23,7 @@ import type {
 
 import { randomUUID } from "node:crypto";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import {
   afterAll,
@@ -964,7 +964,13 @@ describe("budget watchdog — TERMINATE ladder (E5, D7 each arm)", () => {
       .from(schema.domainEvents)
       .where(eq(schema.domainEvents.runId, runId));
 
-    expect(events.some((e: any) => e.kind === "run.failed")).toBe(true);
+    expect(
+      events.find((e: any) => e.kind === "run.failed")?.payload.cause,
+    ).toEqual({
+      code: "BUDGET_EXCEEDED",
+      reason: "budget_breach",
+      source: "sweeper",
+    });
     // ADR-166 D7: the terminal flip ends the driver generation in the same tx.
     expect(await assignmentStates(runId)).toEqual([
       { state: "released", releasedReason: "failed" },
@@ -1202,6 +1208,21 @@ describe("budget watchdog — TREE scope (E6)", () => {
     const root = await getRun(rootId);
 
     expect(root.status).toBe("Failed");
+    const [rootFailed] = await db
+      .select({ payload: schema.domainEvents.payload })
+      .from(schema.domainEvents)
+      .where(
+        and(
+          eq(schema.domainEvents.runId, rootId),
+          eq(schema.domainEvents.kind, "run.failed"),
+        ),
+      );
+
+    expect(rootFailed.payload.cause).toEqual({
+      code: "BUDGET_EXCEEDED",
+      reason: "budget_breach",
+      source: "sweeper",
+    });
     // No HITL anywhere (tree never escalates).
     expect(await getHitl(rootId)).toHaveLength(0);
     expect(await getHitl(childA)).toHaveLength(0);

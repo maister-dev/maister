@@ -173,6 +173,8 @@ describe("T-E5 — paired domain emission at terminal state transitions", () => 
       // for a top-level/parentless run) so the orchestrator resume/auto-launch
       // consumers can route to the parent.
       parentRunId: null,
+      // B6: the operator's abandon is the default cause.
+      cause: { code: null, reason: "user", source: "operator" },
     });
 
     const webhookRows = await db
@@ -201,6 +203,8 @@ describe("T-E5 — paired domain emission at terminal state transitions", () => 
       runKind: "flow",
       reason: "CHECKPOINT",
       parentRunId: null,
+      // B6: a reason that names a code carries it.
+      cause: { code: "CHECKPOINT", reason: "checkpoint", source: "resume" },
     });
   });
 
@@ -227,6 +231,11 @@ describe("T-E5 — paired domain emission at terminal state transitions", () => 
     expect((rows[0].payload as Record<string, unknown>).reason).toBe(
       "worktree-gone",
     );
+    expect((rows[0].payload as Record<string, unknown>).cause).toEqual({
+      code: "CRASH",
+      reason: "worktree_gone",
+      source: "reconcile",
+    });
   });
 
   it("crashResumedRun captures exactly one run.crashed", async () => {
@@ -240,6 +249,11 @@ describe("T-E5 — paired domain emission at terminal state transitions", () => 
 
     expect(rows).toHaveLength(1);
     expect(rows[0].kind).toBe("run.crashed");
+    expect((rows[0].payload as Record<string, unknown>).cause).toEqual({
+      code: "CRASH",
+      reason: "resume_timeout",
+      source: "resume",
+    });
   });
 });
 
@@ -339,6 +353,11 @@ describe("T-E7 — runPass2 TTL abandon: one tx, both emits", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].kind).toBe("run.abandoned");
     expect((rows[0].payload as Record<string, unknown>).reason).toBe("ttl");
+    expect((rows[0].payload as Record<string, unknown>).cause).toEqual({
+      code: null,
+      reason: "ttl",
+      source: "sweeper",
+    });
 
     const webhookRows = (await db
       .select()

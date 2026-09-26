@@ -437,6 +437,11 @@ describe("respondToHitl budget_breach integration — abandon", () => {
 
     expect(events.length).toBe(1);
     expect((events[0].payload as any)?.reason).toBe("budget_abandoned");
+    expect((events[0].payload as any)?.cause).toEqual({
+      code: "BUDGET_EXCEEDED",
+      reason: "budget_abandoned",
+      source: "hitl",
+    });
   });
 
   it("abandon with dropWorkspace true terminalizes and delegates immediate workspace drop", async () => {
@@ -472,6 +477,51 @@ describe("respondToHitl budget_breach integration — abandon", () => {
     expect(hitlRow.response).toEqual({
       optionId: "abandon",
       dropWorkspace: true,
+    });
+  });
+});
+
+// B6 (ADR-177 amendment): the infra-recovery abandon's cause carries the code
+// the escalation recorded (the one its webhook already carries).
+describe("respondToHitl infra_recovery abandon — terminal cause", () => {
+  it("abandon → run Failed with a run.failed naming the escalated code", async () => {
+    const projectId = await seedProject("infra-abandon");
+    const runId = await seedRun(projectId);
+    const hitlRequestId = randomUUID();
+
+    await (db as any).insert(schema.hitlRequests).values({
+      id: hitlRequestId,
+      runId,
+      stepId: "plan",
+      kind: "infra_recovery",
+      prompt: "Infrastructure recovery",
+      schema: { code: "SPAWN" },
+      response: null,
+      respondedAt: null,
+    });
+
+    const res = await respondToHitl(
+      { runId, hitlRequestId, body: { optionId: "abandon" } },
+      userActor,
+      { db },
+    );
+
+    expect(res.status).toBe(200);
+    const events = await (db as any)
+      .select()
+      .from(schema.domainEvents)
+      .where(
+        and(
+          eq(schema.domainEvents.runId, runId),
+          eq(schema.domainEvents.kind, "run.failed"),
+        ),
+      );
+
+    expect(events).toHaveLength(1);
+    expect((events[0].payload as any)?.cause).toEqual({
+      code: "SPAWN",
+      reason: "infra_recovery_abandoned",
+      source: "hitl",
     });
   });
 });

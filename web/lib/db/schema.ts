@@ -7779,6 +7779,15 @@ export const domainEvents = pgTable(
       .where(
         sql`${t.kind} = 'run.failed' AND ${t.payload}->>'reason' = 'legacy_steps_engine_3_cutover' AND ${t.payload}->>'source' = 'upgrade_cutover' AND ${t.taskId} IS NOT NULL`,
       ),
+    // B6 (ADR-177 amendment 2026-09-26): the run page's terminal-cause read —
+    // the newest terminal event of one run, kind-matched to its status.
+    runTerminalIdx: index("domain_events_run_terminal_idx")
+      // NULLS FIRST is plain `DESC`: the reader's ORDER BY, so the index
+      // serves the ordering (drizzle's `desc()` alone emits NULLS LAST).
+      .on(t.runId, t.occurredAt.desc().nullsFirst(), t.id.desc().nullsFirst())
+      .where(
+        sql`${t.kind} IN ('run.done', 'run.failed', 'run.crashed', 'run.abandoned')`,
+      ),
   }),
 );
 export type DomainEventRow = typeof domainEvents.$inferSelect;

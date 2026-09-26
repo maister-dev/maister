@@ -599,6 +599,11 @@ async function handlePermissionRequest(
             taskId: rows[0].taskId,
             actor: { type: "system", id: null },
             parentRunId: rows[0].parentRunId,
+            cause: {
+              code: "CRASH",
+              reason: "permission_persist_failed",
+              source: "graph",
+            },
             payload: {
               runId: pctx.runId,
               taskId: rows[0].taskId,
@@ -1075,6 +1080,7 @@ async function settleCrashedPermissionPark(
       runId,
       nodeAttemptId: attempt.id,
       reason: "session-crashed",
+      causeSource: "graph",
       fromStatuses: ["NeedsInput"],
       fromAttemptStatuses: [attempt.status],
       admitCompletedAction: true,

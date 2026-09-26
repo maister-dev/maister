@@ -1,3 +1,4 @@
+import type { TerminalCause } from "@/lib/domain-events/taxonomy";
 import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { WorkbenchLifecycleActionId } from "@/lib/workbench-lifecycle/policy";
 import type { WorkbenchRunStatus } from "@/lib/workbench-lifecycle/policy";
@@ -103,6 +104,9 @@ export type ScratchDetail = {
       | { response: unknown; confidence?: number }
       | null;
   } | null;
+  // B6: why a Failed | Crashed | Abandoned dialog's run ended. A project-less
+  // assistant run emits no event, so its fallback is the dialog's own code.
+  terminalCause: TerminalCause | null;
   capabilityProfile: {
     selectedMcpIds: string[];
     selectedSkillIds: string[];

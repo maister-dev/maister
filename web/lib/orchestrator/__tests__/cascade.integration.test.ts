@@ -338,6 +338,11 @@ describe("cascadeAbandonRunTree (M37 T7.4)", () => {
       expect(payload.parentRunId).toBe(orchestratorRunId);
       expect(payload.reason).toBe("cascade/user_stopped");
       expect(payload.runKind).toBe("agent");
+      expect(payload.cause).toEqual({
+        code: null,
+        reason: "cascade/user_stopped",
+        source: "orchestrator",
+      });
     }
 
     // The freed agent slots let the standalone queued run promote. Post-cascade

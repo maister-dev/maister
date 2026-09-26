@@ -289,6 +289,11 @@ export async function failCheckpointedFlowPermission(
       taskId: run.taskId,
       actor: { type: "system", id: null },
       parentRunId: run.parentRunId,
+      cause: {
+        code: "HITL_TIMEOUT",
+        reason: "permission_delivery_rejected",
+        source: "hitl",
+      },
       payload: {
         runId,
         taskId: run.taskId,

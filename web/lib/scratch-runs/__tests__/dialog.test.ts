@@ -52,6 +52,7 @@ function detail(over: {
     messages: [],
     attachments: [],
     pendingHitl: null,
+    terminalCause: null,
     capabilityProfile: null,
   };
 }

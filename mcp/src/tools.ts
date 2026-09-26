@@ -276,7 +276,8 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
     },
   },
   run_get: {
-    description: "Get a run by ID",
+    description:
+      "Get a run by ID. A Failed, Crashed or Abandoned run carries terminalCause {code, reason?, source} — why it ended; null otherwise.",
     inputSchema: {
       type: "object",
       properties: {

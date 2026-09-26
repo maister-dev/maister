@@ -385,6 +385,21 @@ describe("time-limit watchdog — kill-on-cap (3B.1 / 3B.2)", () => {
     const run = await getRun(runId);
 
     expect(run.status).toBe("Failed");
+    const failed = (
+      await db
+        .select({
+          kind: schema.domainEvents.kind,
+          payload: schema.domainEvents.payload,
+        })
+        .from(schema.domainEvents)
+        .where(eq(schema.domainEvents.runId, runId))
+    ).find((event: { kind: string }) => event.kind === "run.failed");
+
+    expect((failed?.payload as Record<string, unknown>).cause).toEqual({
+      code: "PRECONDITION",
+      reason: "max_duration",
+      source: "sweeper",
+    });
 
     const attempt = await getAttempt(runId);
 

@@ -22,6 +22,10 @@ import {
 import { ScratchComposer } from "@/components/scratch/scratch-composer";
 import { ScratchPermissionPanel } from "@/components/scratch/scratch-permission-panel";
 import {
+  TerminalCauseNotice,
+  type TerminalCauseLabels,
+} from "@/components/runs/terminal-cause-notice";
+import {
   attachmentSummary,
   canCompose,
   canSendWhileBusy,
@@ -764,7 +768,24 @@ export function ScratchConversation({
 
       {status === "Crashed" ? (
         <div className="min-w-0 border-t border-line-soft px-4 py-2 text-[12px] leading-[1.5] text-ink-2">
-          {t("recoverHint")}
+          {/* A budget kill leaves the dialog Crashed over a Failed run, which
+          Recover refuses: the hint says so instead of offering a resume. */}
+          {detail?.run.status === "Failed"
+            ? t("recoverRefused.Failed")
+            : t("recoverHint")}
+          <TerminalCauseNotice
+            cause={detail?.terminalCause ?? null}
+            labels={{
+              ...(tRun.raw("terminalCause") as Omit<
+                TerminalCauseLabels,
+                "codes"
+              >),
+              codes: (tRun.raw("failure") as Pick<TerminalCauseLabels, "codes">)
+                .codes,
+            }}
+            showTitle={false}
+            status={detail?.run.status ?? ""}
+          />
         </div>
       ) : null}
 

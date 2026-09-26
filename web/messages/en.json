@@ -2775,7 +2775,50 @@
         "CHECKPOINT": "The agent session could not resume from its checkpoint. Check adapter resume support and supervisor logs.",
         "PRECONDITION": "A prerequisite for this step was not met. Check the Flow inputs and required resources.",
         "HITL_TIMEOUT": "The agent session ended before the answer arrived. Relaunch the run.",
-        "CONFLICT": "The step encountered a conflicting operation. Check the run state and active operations."
+        "CONFLICT": "The step encountered a conflicting operation. Check the run state and active operations.",
+        "NEEDS_INPUT": "The run stopped waiting for input it could not get.",
+        "FLOW_INSTALL": "The Flow package could not be installed. Check its source and version.",
+        "STEP_CHECKPOINTED": "The step was checkpointed and could not continue.",
+        "EMBEDDING_UNAVAILABLE": "The embedding service was unavailable."
+      }
+    },
+    "terminalCause": {
+      "title": {
+        "Failed": "Why this run failed",
+        "Crashed": "Why this run crashed",
+        "Abandoned": "Why this run was abandoned"
+      },
+      "reasonLabel": "Reason",
+      "reasons": {
+        "agent_turn_lost": "The execution host restarted and lost the agent's turn.",
+        "turn_lost": "The execution host restarted and lost the agent's turn.",
+        "session_crashed": "The agent process crashed while the run waited for an answer.",
+        "agent_session_gone": "The agent session was gone and did not come back.",
+        "agent_prompt_failed": "The agent's turn failed.",
+        "stream_lost": "The execution host's event stream was lost, so the turn's result can never arrive.",
+        "owner_poisoned": "The turn's result could not be applied safely.",
+        "worktree_gone": "The run's worktree disappeared.",
+        "cli_not_retry_safe": "A command step stopped and is not safe to run twice.",
+        "orphaned_child": "Its coordinating run is gone.",
+        "orchestrator_stuck": "The coordinating run had nothing left to wait for.",
+        "budget_breach": "The run reached its budget limit.",
+        "budget_parked": "The run was parked at its budget limit and then abandoned.",
+        "max_duration": "The run exceeded its time limit.",
+        "ttl": "Nobody answered before the idle time limit.",
+        "user": "Abandoned by an operator.",
+        "orphan": "A queued child whose coordinator is gone.",
+        "workbench": "Dropped from the workbench.",
+        "child_cancel": "Cancelled by its coordinating run.",
+        "stop": "Stopped by an operator.",
+        "discard": "Discarded by an operator.",
+        "result_missing": "The run finished without the result its contract requires.",
+        "result_invalid": "The run's result did not match its contract.",
+        "consensus_no_draft_available": "No consensus draft was available to decide on.",
+        "stale_resume_pointer": "The node the run was resuming no longer exists in its Flow.",
+        "permission_persist_failed": "An agent permission request could not be saved.",
+        "permission_delivery_rejected": "The checkpointed permission could not accept the answer.",
+        "infra_recovery_abandoned": "An infrastructure recovery was abandoned.",
+        "hook_trip_abandoned": "A guardrail stopped the run and it was abandoned."
       }
     }
   },

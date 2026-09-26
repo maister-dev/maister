@@ -14,6 +14,7 @@ import { revokeOrchestratorRunTokensForRun } from "@/lib/agents/tokens";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
+import { causeReason } from "@/lib/domain-events/taxonomy";
 import { releaseAssignmentForRun } from "@/lib/execution-host";
 import {
   CASCADE_NON_TERMINAL_RUN_STATUSES,
@@ -170,6 +171,11 @@ export async function cascadeAbandonRunTree(
             taskId: row.taskId,
             actor: { type: "system", id: null },
             parentRunId: row.parentRunId,
+            cause: {
+              code: null,
+              reason: `cascade/${causeReason(reason)}`,
+              source: "orchestrator",
+            },
             payload: {
               runId: row.id,
               taskId: row.taskId,

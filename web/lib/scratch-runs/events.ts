@@ -739,6 +739,11 @@ function startScratchEventConsumer(args: {
                     actor: { type: "system", id: null },
                     // scratch runs are never delegated children
                     parentRunId: null,
+                    cause: {
+                      code: "CRASH",
+                      reason: "session_crashed",
+                      source: "scratch",
+                    },
                     payload: {
                       runId: args.runId,
                       taskId: null,

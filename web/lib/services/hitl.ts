@@ -56,6 +56,8 @@ import {
 import { isPlanReviewDecisionRequestSchema } from "@/lib/flows/graph/plan-review-decisions";
 import { hasFlowPermissionResume } from "@/lib/flows/graph/permission-resume";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
+import { causeReason } from "@/lib/domain-events/taxonomy";
+import { isMaisterErrorCode } from "@/lib/errors-core";
 import { isLaunchedLineageRun } from "@/lib/evaluations/membership";
 import { runFlow } from "@/lib/flows/runner";
 import {
@@ -3642,6 +3644,11 @@ async function handleInfraRecoveryResponse(args: {
           taskId: terminal[0].taskId,
           actor: { type: "system", id: null },
           parentRunId: terminal[0].parentRunId,
+          cause: {
+            code: isMaisterErrorCode(errorCode) ? errorCode : null,
+            reason: "infra_recovery_abandoned",
+            source: "hitl",
+          },
           payload: {
             runId,
             taskId: terminal[0].taskId,
@@ -3856,6 +3863,11 @@ async function terminalizeBudgetRun(args: {
       taskId: row.taskId,
       actor: { type: "system", id: null },
       parentRunId: row.parentRunId,
+      cause: {
+        code: "BUDGET_EXCEEDED",
+        reason: causeReason(args.reason),
+        source: "hitl",
+      },
       payload: {
         runId: args.runId,
         taskId: row.taskId,
@@ -3941,6 +3953,7 @@ async function markBudgetParkedRun(args: {
         taskId: row.taskId,
         actor: { type: "system", id: null },
         parentRunId: row.parentRunId,
+        cause: { code: null, reason: "budget_parked", source: "hitl" },
         payload: {
           runId: args.runId,
           taskId: row.taskId,
@@ -5209,6 +5222,11 @@ async function handleHookTripResponse(args: {
           taskId: terminal[0].taskId,
           actor: { type: "system", id: null },
           parentRunId: terminal[0].parentRunId,
+          cause: {
+            code: "PRECONDITION",
+            reason: "hook_trip_abandoned",
+            source: "hitl",
+          },
           payload: {
             runId,
             taskId: terminal[0].taskId,

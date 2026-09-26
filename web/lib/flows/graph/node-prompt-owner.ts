@@ -231,6 +231,7 @@ export async function prepareNodePrompt(input: {
           runId: ref.runId,
           nodeAttemptId: attempt.id,
           reason: "turn-lost",
+          causeSource: "graph",
           fromStatuses: [run.status],
           fromAttemptStatuses: [attempt.status],
         });

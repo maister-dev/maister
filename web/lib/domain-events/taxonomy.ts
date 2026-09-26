@@ -1,3 +1,5 @@
+import { isMaisterErrorCode, type MaisterErrorCode } from "@/lib/errors-core";
+
 // Domain-event kind taxonomy v1 (ADR-086). Extension rule: one entry here +
 // emit site(s) in the owning domain transaction + one doc row + a CHECK update
 // via migration. `task.triage_requeued` is registered with NO emitter — it
@@ -86,6 +88,74 @@ export function isRunSettledEventKind(
   value: string,
 ): value is RunSettledEventKind {
   return (RUN_SETTLED_EVENT_KINDS as readonly string[]).includes(value);
+}
+
+// ADR-177 amendment 2026-09-26 (B6, D-B1): WHY a run ended `Failed`,
+// `Crashed` or `Abandoned`, carried on its terminal event's `cause`. Tokens
+// only, never text: payloads reach agent prompts and `distill`, and the raw
+// message stays where it lives (`scratch_runs.error_message`, the attempt
+// rows). The run page composes the copy from `code` + `reason`.
+export const TERMINAL_FAILURE_EVENT_KINDS = [
+  "run.failed",
+  "run.crashed",
+  "run.abandoned",
+] as const satisfies readonly RunTerminalEventKind[];
+
+export type TerminalFailureEventKind =
+  (typeof TERMINAL_FAILURE_EVENT_KINDS)[number];
+
+export const TERMINAL_CAUSE_SOURCES = [
+  "graph",
+  "hitl",
+  "sweeper",
+  "scratch",
+  "agent",
+  "reconcile",
+  "consensus",
+  "resume",
+  "operator",
+  "orchestrator",
+  "workbench",
+  "legacy",
+] as const;
+
+export type TerminalCauseSource = (typeof TERMINAL_CAUSE_SOURCES)[number];
+
+export type TerminalCause = Readonly<{
+  code: MaisterErrorCode | null;
+  reason?: string;
+  source: TerminalCauseSource;
+}>;
+
+const CAUSE_REASON = /^[a-z][a-z0-9_]*(\/[a-z][a-z0-9_]*)?$/;
+
+/** A reason token as the emitter minted it, normalized to snake_case. */
+export function causeReason(token: string): string {
+  return token.replace(/-/g, "_").toLowerCase();
+}
+
+/** The stored `cause`, or null when it is not a well-formed cause. */
+export function parseTerminalCause(value: unknown): TerminalCause | null {
+  if (typeof value !== "object" || value === null) return null;
+  const { code, reason, source } = value as Record<string, unknown>;
+
+  if (code !== null && !isMaisterErrorCode(code)) return null;
+  if (
+    typeof source !== "string" ||
+    !(TERMINAL_CAUSE_SOURCES as readonly string[]).includes(source)
+  )
+    return null;
+  if (
+    reason !== undefined &&
+    (typeof reason !== "string" || !CAUSE_REASON.test(reason))
+  )
+    return null;
+
+  return {
+    code: code as MaisterErrorCode | null,
+    ...(reason === undefined ? {} : { reason }),
+    source: source as TerminalCauseSource,
+  };
 }
 
 // ADR-163 (Codex review F1): WHY a delegated child entered `Review`, carried on

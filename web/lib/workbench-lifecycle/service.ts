@@ -1998,7 +1998,10 @@ async function cancelDelegatedFlowChild(
   const supervisorStopped = await stopLiveSupervisorSession(ctx, deps);
 
   await db().transaction(async (tx) => {
-    const abandoned = await markAbandoned(runId, { db: tx });
+    const abandoned = await markAbandoned(runId, {
+      db: tx,
+      cause: { code: null, reason: "child_cancel", source: "workbench" },
+    });
 
     if (!abandoned.ok) {
       // Lost the CAS to a concurrent terminal write — the outcome is identical;
@@ -2490,6 +2493,7 @@ export async function recordDrop(args: RecordDropInput): Promise<void> {
           taskId: updatedRunRows[0].taskId,
           actor: { type: "system", id: null },
           parentRunId: updatedRunRows[0].parentRunId,
+          cause: { code: null, reason: "workbench", source: "workbench" },
           payload: {
             runId: args.runId,
             taskId: updatedRunRows[0].taskId,

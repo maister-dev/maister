@@ -226,6 +226,17 @@ describe("Agent terminal application transaction", () => {
     const committed = await db.transaction(prepared.apply);
 
     expect(committed).toMatchObject({ finalized: true, status: "Crashed" });
+    const [crashed] = await db
+      .select({ payload: domainEvents.payload })
+      .from(domainEvents)
+      .where(eq(domainEvents.runId, runId));
+
+    // B6: a token reason is the cause's reason; an agent crash is CRASH.
+    expect(crashed.payload.cause).toEqual({
+      code: "CRASH",
+      reason: "agent_turn_lost",
+      source: "agent",
+    });
     // Only the message: a generation turn is not the queue's to close.
     expect(await states()).toEqual({
       [running]: "queued",

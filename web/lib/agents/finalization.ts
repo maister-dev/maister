@@ -4,7 +4,10 @@ import type { RawNodeOutputPayload } from "@/lib/flows/graph/node-output";
 import type { Db } from "@/lib/execution-host/db";
 import type { Run, Workspace, Project } from "@/lib/db/schema";
 import type { RunResultContract, ResultStatus } from "@/lib/run-results/types";
-import type { RunReviewCause } from "@/lib/domain-events/taxonomy";
+import type {
+  RunReviewCause,
+  TerminalCause,
+} from "@/lib/domain-events/taxonomy";
 
 import { stat } from "node:fs/promises";
 
@@ -57,6 +60,7 @@ import { removeOwnedPlainAgentDirectory } from "@/lib/gc/plain-agent-directory-g
 import { removeWorktree } from "@/lib/worktree";
 import { promoteNextPending } from "@/lib/scheduler";
 import { MaisterError } from "@/lib/errors";
+import { isMaisterErrorCode } from "@/lib/errors-core";
 
 const log = pino({
   name: "agent-finalization",
@@ -96,6 +100,9 @@ type AgentAssignmentClose =
 export type AgentFinalizeOptions = {
   db?: Db;
   reason?: string;
+  // B6: the terminal cause's reason token when `reason` is prose (the
+  // reconcile crash carries its observer diagnosis there).
+  causeReason?: string;
   closeOpenHitl?: boolean;
   closeAssignments?: AgentAssignmentClose;
   // ADR-165 (T5.4): the completing turn's agent text, from which the public
@@ -141,6 +148,32 @@ const DOMAIN_KIND_BY_OUTCOME: Record<
   Crashed: "run.crashed",
   Abandoned: "run.abandoned",
 };
+
+// B6 (ADR-177 amendment): tokens only — a free-text reason stays on the
+// payload's `reason` and never reaches the cause.
+function agentTerminalCause(
+  outcome: AgentTerminalOutcome,
+  reason: string | undefined,
+  resultFailure: "result_missing" | "result_invalid" | null,
+): TerminalCause {
+  if (resultFailure)
+    return { code: "CONFIG", reason: resultFailure, source: "agent" };
+  const token =
+    reason !== undefined && /^[a-z][a-z0-9_]*$/.test(reason)
+      ? reason
+      : undefined;
+
+  return {
+    code:
+      outcome === "Crashed"
+        ? "CRASH"
+        : reason !== undefined && isMaisterErrorCode(reason)
+          ? reason
+          : null,
+    ...(token ? { reason: token } : {}),
+    source: "agent",
+  };
+}
 
 const WEBHOOK_TYPE_BY_STATUS: Record<
   AgentFinalStatus,
@@ -656,20 +689,20 @@ async function prepareAgentFinalization(
         });
       }
     } else {
-      await emitDomainEvent({
+      // ADR-165: a result-caused failure emits `run.failed`, not the clean
+      // exit's `run.done` — the outcome the coordinator must react to is the
+      // FAILURE, and a `run.done` here would wake it into believing the child
+      // succeeded.
+      const kind =
+        resultDecision.kind === "invalid"
+          ? "run.failed"
+          : DOMAIN_KIND_BY_OUTCOME[outcome];
+      const event = {
         db: tx,
-        // ADR-165: a result-caused failure emits `run.failed`, not the clean
-        // exit's `run.done` — the outcome the coordinator must react to is the
-        // FAILURE, and a `run.done` here would wake it into believing the child
-        // succeeded.
-        kind:
-          resultDecision.kind === "invalid"
-            ? "run.failed"
-            : DOMAIN_KIND_BY_OUTCOME[outcome],
         projectId: row.projectId,
         taskId: row.taskId,
         runId,
-        actor: { type: "agent", id: row.agentId },
+        actor: { type: "agent" as const, id: row.agentId },
         parentRunId: row.parentRunId,
         payload: {
           runKind: "agent",
@@ -686,7 +719,23 @@ async function prepareAgentFinalization(
             : {}),
           ...(resultStatus ? { resultStatus } : {}),
         },
-      });
+      };
+
+      if (kind === "run.done") await emitDomainEvent({ ...event, kind });
+      else
+        await emitDomainEvent({
+          ...event,
+          kind,
+          cause: agentTerminalCause(
+            outcome,
+            opts.causeReason ?? opts.reason,
+            resultDecision.kind === "invalid"
+              ? resultDecision.reason === "result_missing"
+                ? "result_missing"
+                : "result_invalid"
+              : null,
+          ),
+        });
     }
 
     return { finalized: true, status: effectiveStatus, endedAt };

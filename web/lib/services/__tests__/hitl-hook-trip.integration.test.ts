@@ -248,6 +248,11 @@ describe("respondToHitl hook_trip integration", () => {
 
     expect(events).toHaveLength(1);
     expect((events[0].payload as any)?.reason).toBe("hook_trip_abandoned");
+    expect((events[0].payload as any)?.cause).toEqual({
+      code: "PRECONDITION",
+      reason: "hook_trip_abandoned",
+      source: "hitl",
+    });
   });
 
   it("flow resume → 202, runFlow scheduled, assignment cancelled, hitl responded", async () => {
