@@ -39,6 +39,7 @@ import {
   type BudgetState,
 } from "@/lib/runs/execution-policy";
 import { effectiveLimit, isSetLimit } from "@/lib/runs/keepalive-sweeper";
+import { withProjectRunKind } from "@/lib/runs/run-kind-invariants";
 
 const {
   gateResults,
@@ -569,7 +570,7 @@ async function loadPendingBudgetBreach(
   if (!row) return null;
 
   return {
-    ...row,
+    ...withProjectRunKind(row),
     budgetState: row.budgetState ?? null,
   };
 }

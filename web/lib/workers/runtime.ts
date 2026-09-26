@@ -19,6 +19,7 @@ import { startPromptOwnerWorker } from "@/lib/execution-host/prompt-owner-recove
 import { startFlowContinuationWorker } from "@/lib/flows/graph/continuation-worker";
 import { consensusDraftPromptOwners } from "@/lib/flows/graph/consensus/draft-prompt-owner";
 import { flowPromptOwners } from "@/lib/flows/graph/prompt-owner";
+import { librarianPromptOwners } from "@/lib/librarian/prompt-owner";
 import { scratchPromptOwners } from "@/lib/scratch-runs/prompt-owner";
 import { syncPromptOwners } from "@/lib/runs/sync-prompt-owner";
 import { gateChatPromptOwners } from "@/lib/services/gate-chat-prompt-owner";
@@ -34,7 +35,7 @@ import { isApplicationStopping } from "@/lib/server-lifecycle";
 // the health surface free of this file's domain graph.
 
 /**
- * The five production owner registries, one per `PromptOwnerSchema` kind.
+ * The six production owner registries, one per `PromptOwnerSchema` kind.
  *
  * `agent_turn` is served by `consensusDraftPromptOwners`, NOT by
  * `agentPromptOwners`: the draft registry routes a `consensus_draft` variant to
@@ -49,6 +50,7 @@ export const PRODUCTION_PROMPT_OWNER_REGISTRIES = [
   scratchPromptOwners,
   syncPromptOwners,
   gateChatPromptOwners,
+  librarianPromptOwners,
 ] as const;
 
 const EXPECTED_OWNER_KINDS = new Set(

@@ -35,34 +35,34 @@ described piece is **Designed**.
 
 | Requirement | Contract/schema | Enforcement/task | Primary test | Status |
 | --- | --- | --- | --- | --- |
-| LCV-01 | UNIQUE librarian_conversations_user_uq; getOrCreateConversation | T2.1, T2.4 | IT-LCV-01 | Planned |
-| LCV-02 | partial UNIQUE librarian_messages_client_id_uq; appendOwnerMessage dedup | T2.1, T2.4 | IT-LCV-02 | Planned |
-| LCV-03 | partial UNIQUE librarian_turns_one_active_uq under the conversation row lock; withdrawMessage queued only | T2.1, T2.4, T2.5 | IT-LCV-03 | Planned |
-| LCV-04 | CHECK runs_run_kind_check and runs_librarian_shape_check; execution_commands_prompt_owner_required with owner kind librarian_turn; workspaceSpecFor librarian directory arm, reserved projectSlug _librarian | T2.2, T2.3, T2.10, T2.14 | IT-LCV-04 | Planned |
-| LCV-05 | tryStartRun librarian pool arm, MAISTER_MAX_CONCURRENT_LIBRARIAN_TURNS; persistent=true keep-alive Pass2 exemption; applyLibrarianPark and claimLibrarianResumeInTransaction | T2.5, T2.9 | IT-LCV-05 | Planned |
-| LCV-06 | composer guard over run_sessions.librarian_context_epoch and librarian_turns.runner_snapshot | T2.2, T2.6 | IT-LCV-06 | Planned |
-| LCV-07 | CHECK librarian_turns_running_has_snapshot_check; librarian_context_snapshots incl. instructions version | T2.1, T2.6, T2.7 | IT-LCV-07 | Planned |
-| LCV-08 | POST /api/librarian/turns/current/stop; BoundClient prompt cancel plus token revoke | T2.11 | IT-LCV-08 | Planned |
-| LCV-09 | reconcile librarian arm, turn failed host_lost, run parked | T2.3, T2.10, T2.11 | IT-LCV-09 | Planned |
-| LCV-10 | MAISTER_LIBRARIAN_TURN_MAX_MINUTES, MAISTER_LIBRARIAN_CONTEXT_MAX_CHARS, MAISTER_LIBRARIAN_DAILY_TURNS_PER_USER; BUDGET_EXCEEDED; composer keeps the latest owner message | T2.5, T2.6, T2.11, T2.16 | IT-LCV-10 | Planned |
-| LCV-11 | platform_runtime_settings.librarian_enabled and librarian_runner_id; PATCH /api/admin/platform/librarian; CONFIG and EXECUTOR_UNAVAILABLE admission refusals | T2.5, T2.13 | IT-LCV-11 | Planned |
-| LCV-12 | GET /api/librarian/stream, librarian-stream AsyncAPI, lastEventId replay by seq; run stream authz created_by_user_id | T2.12 | IT-LCV-12 | Planned |
-| EDGE-LCV-01 | librarian_messages_client_id_uq dedup across concurrent tabs | T2.4 | IT-EDGE-LCV-01 | Planned |
-| EDGE-LCV-02 | queued delivery_state, FIFO by seq, admitted after the active turn | T2.5 | IT-EDGE-LCV-02 | Planned |
-| EDGE-LCV-03 | admission runner-ready check, EXECUTOR_UNAVAILABLE, queue kept | T2.5 | IT-EDGE-LCV-03 | Planned |
-| EDGE-LCV-04 | deadline watchdog, token revoke, operation settles by reconcile lookup | T2.11 | IT-EDGE-LCV-04 | Planned |
-| EDGE-LCV-05 | keep-alive Pass2 persistent exemption for a parked librarian run | T2.3 | IT-EDGE-LCV-05 | Planned |
-| LAU-01 | ADR-184 route identifier table; owner from auth-context only | T2.12 | IT-LAU-01 | Planned |
-| LAU-02 | CHECK project_tokens_kind_check and project_tokens_librarian_check; issueLibrarianTurnToken and revokeLibrarianTurnToken | T1.1, T1.2, T2.10 | IT-LAU-02 | Partial (turn-end revoke: T2.10) |
-| LAU-03 | handleExt librarian arm; requireProjectActionForUser per request; turn running check | T1.3, T2.10, T2.11 | IT-LAU-03 | Partial (turn running check: T2.10, T2.11) |
+| LCV-01 | UNIQUE librarian_conversations_user_uq; getOrCreateConversation | T2.1, T2.4 | IT-LCV-01 | Implemented |
+| LCV-02 | partial UNIQUE librarian_messages_client_id_uq; appendOwnerMessage dedup | T2.1, T2.4 | IT-LCV-02 | Implemented |
+| LCV-03 | partial UNIQUE librarian_turns_one_active_uq under the conversation row lock; withdrawMessage queued only | T2.1, T2.4, T2.5 | IT-LCV-03 | Implemented |
+| LCV-04 | CHECK runs_run_kind_check and runs_librarian_shape_check; execution_commands_prompt_owner_required with owner kind librarian_turn; workspaceSpecFor librarian directory arm, reserved projectSlug _librarian | T2.2, T2.3, T2.10, T2.14 | IT-LCV-04 | Implemented |
+| LCV-05 | tryStartRun librarian pool arm, MAISTER_MAX_CONCURRENT_LIBRARIAN_TURNS; persistent=true keep-alive Pass2 exemption; applyLibrarianPark and claimLibrarianResumeInTransaction | T2.5, T2.9 | IT-LCV-05 | Implemented |
+| LCV-06 | composer guard over run_sessions.librarian_context_epoch and librarian_turns.runner_snapshot | T2.2, T2.6 | IT-LCV-06 | Implemented |
+| LCV-07 | CHECK librarian_turns_running_has_snapshot_check; librarian_context_snapshots incl. instructions version | T2.1, T2.6, T2.7 | IT-LCV-07 | Implemented |
+| LCV-08 | POST /api/librarian/turns/current/stop; BoundClient prompt cancel plus token revoke | T2.11 | IT-LCV-08 | Implemented |
+| LCV-09 | reconcile librarian arm, turn failed host_lost, run parked | T2.3, T2.10, T2.11 | IT-LCV-09 | Implemented |
+| LCV-10 | MAISTER_LIBRARIAN_TURN_MAX_MINUTES, MAISTER_LIBRARIAN_CONTEXT_MAX_CHARS, MAISTER_LIBRARIAN_DAILY_TURNS_PER_USER; BUDGET_EXCEEDED; composer keeps the latest owner message | T2.5, T2.6, T2.11, T2.16 | IT-LCV-10 | Implemented |
+| LCV-11 | platform_runtime_settings.librarian_enabled and librarian_runner_id; PATCH /api/admin/platform/librarian; CONFIG and EXECUTOR_UNAVAILABLE admission refusals | T2.5, T2.13 | IT-LCV-11 | Implemented |
+| LCV-12 | GET /api/librarian/stream, librarian-stream AsyncAPI, lastEventId replay by seq; run stream authz created_by_user_id | T2.12 | IT-LCV-12 | Implemented |
+| EDGE-LCV-01 | librarian_messages_client_id_uq dedup across concurrent tabs | T2.4 | IT-EDGE-LCV-01 | Implemented |
+| EDGE-LCV-02 | queued delivery_state, FIFO by seq, admitted after the active turn | T2.5 | IT-EDGE-LCV-02 | Implemented |
+| EDGE-LCV-03 | admission runner-ready check, EXECUTOR_UNAVAILABLE, queue kept | T2.5 | IT-EDGE-LCV-03 | Implemented |
+| EDGE-LCV-04 | deadline watchdog, token revoke, operation settles by reconcile lookup | T2.11 | IT-EDGE-LCV-04 | Implemented |
+| EDGE-LCV-05 | keep-alive Pass2 persistent exemption for a parked librarian run | T2.3 | IT-EDGE-LCV-05 | Implemented |
+| LAU-01 | ADR-184 route identifier table; owner from auth-context only | T2.12 | IT-LAU-01 | Implemented |
+| LAU-02 | CHECK project_tokens_kind_check and project_tokens_librarian_check; issueLibrarianTurnToken and revokeLibrarianTurnToken | T1.1, T1.2, T2.10 | IT-LAU-02 | Implemented |
+| LAU-03 | handleExt librarian arm; requireProjectActionForUser per request; turn running check | T1.3, T2.10, T2.11 | IT-LAU-03 | Implemented |
 | LAU-04 | deny-by-default admitLibrarian opt-in; LIBRARIAN_TOKEN_SCOPES exclusions; agent-token refusal on /ext/librarian routes | T1.3, T3.9 | IT-LAU-04 | Partial (agent token on /ext/librarian: T3.9) |
 | LAU-05 | LIBRARIAN_READ_SCOPES for explain turns | T1.3, T5.3 | IT-LAU-05 | Partial (Explain turn wiring: T5.3) |
 | LAU-06 | getVisibleProjects before aggregation in ext projects, directory, task search, work, activity feed and decisions; librarian MCP toolset | T1.5, T1.6 | IT-LAU-06 | Implemented |
 | LAU-07 | token_audit_log on_behalf_of_user_id, librarian_turn_id, operation_id via recordRequiredTokenAudit | T1.4 | IT-LAU-07 | Partial (operation_id: T3.2) |
 | LAU-08 | socialActorForToken returns the owner; via_operation_id; session card decide for human-only actions | T3.6, T3.9 | IT-LAU-08 | Planned |
-| LAU-09 | owner-only server-state in every /api/librarian route; no admin inspection route | T2.12 | IT-LAU-09 | Planned |
-| LAU-10 | verifyToken owner-active checks; per-request RBAC; admission-time owner check | T1.2, T1.3, T2.5 | IT-LAU-10 | Partial (queued-turn admission: T2.5) |
-| LAU-11 | SessionEnforcementProfileSchema librarian profile; permissions auto_approve; adapter-home L2 deny settings; readOnlyCapable runner guard | T2.8, T2.10 | IT-LAU-11 | Planned |
+| LAU-09 | owner-only server-state in every /api/librarian route; no admin inspection route | T2.12 | IT-LAU-09 | Implemented |
+| LAU-10 | verifyToken owner-active checks; per-request RBAC; admission-time owner check | T1.2, T1.3, T2.5 | IT-LAU-10 | Implemented |
+| LAU-11 | SessionEnforcementProfileSchema librarian profile; permissions auto_approve; adapter-home L2 deny settings; readOnlyCapable runner guard | T2.8, T2.10 | IT-LAU-11 | Implemented |
 | EDGE-LAU-01 | verifyToken refuses revoked or expired turn tokens with 401 | T1.2 | IT-EDGE-LAU-01 | Implemented |
 | EDGE-LAU-02 | owner-resolved conversation; 404 on a foreign id | T2.12 | IT-EDGE-LAU-02 | Planned |
 | EDGE-LAU-03 | handleExt archived-project 404; operation not_applied reconcile | T1.3, T1.5, T3.2 | IT-EDGE-LAU-03 | Planned |
@@ -119,15 +119,15 @@ described piece is **Designed**.
 | LMM-12 | snapshot memory_item_revisions rendered as used-in-this-reply chips | T6.2 | IT-LMM-12 | Planned |
 | EDGE-LMM-01 | fenced summary CAS after a reset acknowledgement | T6.3 | IT-EDGE-LMM-01 | Planned |
 | EDGE-LMM-02 | tombstone plus epoch bump during a running owner turn | T6.6 | IT-EDGE-LMM-02 | Planned |
-| LUI-01 | librarian-trigger.tsx in top-nav.tsx; indicator from read_through_seq and pending owner cards | T2.15, T5.3 | UT-LUI-01 plus E2E-LUI-01 | Planned |
-| LUI-02 | librarian-panel.tsx mounted in the authenticated app layout | T2.15 | E2E-LUI-02 | Planned |
-| LUI-03 | panel breakpoints xl and md; 390 px viewport | T2.15 | E2E-LUI-03 | Planned |
-| LUI-04 | librarian_messages.subject written at send | T2.4 | IT-LUI-04 | Planned |
-| LUI-05 | useModalFocusTrap; focus restore to the invoker | T2.15 | E2E-LUI-05 | Planned |
-| LUI-06 | message list scroll anchoring and jump-to-latest | T2.15 | UT-LUI-06 | Planned |
-| LUI-07 | distinct Stop response and Stop run controls; disabled reasons | T2.15 | UT-LUI-07 | Planned |
-| LUI-08 | librarian i18n namespace in web/messages en.json and ru.json | T2.15, T3.10, T4.7 | UT-LUI-08 | Planned |
-| LUI-09 | no Cmd/Ctrl+K binding; scratch shortcut intact | T2.15 | E2E-LUI-09 | Planned |
+| LUI-01 | librarian-trigger.tsx in top-nav.tsx; indicator from read_through_seq and pending owner cards | T2.15, T5.3 | UT-LUI-01 plus E2E-LUI-01 | Partial (action_required from pending owner cards: T5.3) |
+| LUI-02 | librarian-panel.tsx mounted in the authenticated app layout | T2.15 | E2E-LUI-02 | Implemented |
+| LUI-03 | panel breakpoints xl and md; 390 px viewport | T2.15 | E2E-LUI-03 | Implemented |
+| LUI-04 | librarian_messages.subject written at send | T2.4 | IT-LUI-04 | Implemented |
+| LUI-05 | useModalA11y in the modal presentations; focus restore to the invoker | T2.15 | E2E-LUI-05 | Implemented |
+| LUI-06 | message list scroll anchoring and jump-to-latest | T2.15 | UT-LUI-06 | Implemented |
+| LUI-07 | distinct Stop response and Stop run controls; disabled reasons | T2.15, T3.10 | UT-LUI-07 | Partial (Stop run on a run chip: T3.10) |
+| LUI-08 | librarian i18n namespace in web/messages en.json and ru.json | T2.15, T3.10, T4.7 | UT-LUI-08 | Partial (card and clarification keys: T3.10, T4.7) |
+| LUI-09 | no Cmd/Ctrl+K binding; scratch shortcut intact | T2.15 | E2E-LUI-09 | Implemented |
 | LUI-10 | getLinkedWork live region | T3.10 | IT-LUI-10 | Planned |
 
 ## Brief traceability

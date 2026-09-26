@@ -1511,7 +1511,11 @@ export function createFakeExecutionHost(
           }
           if (
             typeof payload.projectSlug !== "string" ||
-            !KEBAB.test(payload.projectSlug)
+            !(
+              KEBAB.test(payload.projectSlug) ||
+              // ADR-183: the supervisor's one reserved non-kebab slug.
+              payload.projectSlug === "_librarian"
+            )
           ) {
             throw precondition("projectSlug must be kebab-case", {});
           }

@@ -103,6 +103,12 @@ const scratchRefs = [
     .strict(),
   z.object({ ...packageTurn, variant: z.literal("package_recovery") }).strict(),
 ] as const;
+// ADR-183: one prompt per librarian turn; the turn row is the ledger.
+const librarianRefs = [
+  z.object({ ...turn, variant: z.literal("owner_message") }).strict(),
+  z.object({ ...turn, variant: z.literal("explain") }).strict(),
+  z.object({ ...turn, variant: z.literal("summary") }).strict(),
+] as const;
 const gateRef = z
   .object({
     ...common,
@@ -145,6 +151,12 @@ export const PromptOwnerSchema = z.discriminatedUnion("kind", [
     .strict(),
   z.object({ kind: z.literal("gate_chat"), ref: gateRef }).strict(),
   z.object({ kind: z.literal("sync_resolution"), ref: syncRef }).strict(),
+  z
+    .object({
+      kind: z.literal("librarian_turn"),
+      ref: z.discriminatedUnion("variant", librarianRefs),
+    })
+    .strict(),
 ]);
 
 export type PromptOwner = z.infer<typeof PromptOwnerSchema>;
@@ -163,6 +175,7 @@ export const PROMPT_OWNER_SHAPES = [
   ...scratchRefs.map((ref) => ({ kind: "scratch_message", ref })),
   { kind: "gate_chat", ref: gateRef },
   { kind: "sync_resolution", ref: syncRef },
+  ...librarianRefs.map((ref) => ({ kind: "librarian_turn", ref })),
 ].map(({ kind, ref }) => ({
   kind,
   variant: ref.shape.variant.value,

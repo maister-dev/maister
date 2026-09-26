@@ -1,7 +1,5 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
-import { randomUUID } from "node:crypto";
-
 import { sql } from "drizzle-orm";
 import { NextRequest } from "next/server";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -12,6 +10,7 @@ import { seedProjectRow } from "@/test-support/execution-host-seed";
 import {
   addProjectMember,
   seedActiveUser,
+  seedLibrarianTurn,
 } from "@/test-support/librarian-seed";
 import {
   startMainPostgresTestDb,
@@ -79,7 +78,7 @@ afterAll(async () => {
 
 describe("IT-LAU-07: librarian requests are attributed and fail closed on audit", () => {
   it("records the owner and the turn on the success audit of a task create", async () => {
-    const turnId = randomUUID();
+    const turnId = await seedLibrarianTurn(db, ownerId);
     const res = await tasks.POST(
       request(await turnToken(turnId), { title: "Attributed", prompt: "p" }),
       { params: Promise.resolve({ slug: project.slug }) },
@@ -105,7 +104,7 @@ describe("IT-LAU-07: librarian requests are attributed and fail closed on audit"
   });
 
   it("fails the request and leaves no task when the audit write fails", async () => {
-    const turnId = randomUUID();
+    const turnId = await seedLibrarianTurn(db, ownerId);
     const title = `unaudited-${turnId}`;
 
     await db.execute(

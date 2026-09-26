@@ -5,6 +5,9 @@ import { getTranslations } from "next-intl/server";
 import { redirect } from "next/navigation";
 
 import { AttentionLiveRefresh } from "@/components/attention/attention-live-refresh";
+import { LibrarianPanel } from "@/components/librarian/librarian-panel";
+import { LibrarianProvider } from "@/components/librarian/librarian-provider";
+import { LibrarianTrigger } from "@/components/librarian/librarian-trigger";
 import { LeftRail } from "@/components/chrome/left-rail";
 import { NavCrumb } from "@/components/chrome/nav-crumb";
 import { buildLeftRailSections } from "@/components/chrome/left-rail-sections";
@@ -13,6 +16,8 @@ import { TopNav } from "@/components/chrome/top-nav";
 import { summarizeAdapterReadiness } from "@/lib/acp-runners/readiness-summary";
 import { loadRunnerReadinessRows } from "@/lib/acp-runners/runner-readiness-rows";
 import { getSessionUser } from "@/lib/authz";
+import { getDb } from "@/lib/db/client";
+import { readLibrarianIndicator } from "@/lib/librarian/view";
 import { getDecisionsCount } from "@/lib/queries/decisions";
 import { getUpdatesCount } from "@/lib/queries/updates";
 import { getRailWorkspaceGroups } from "@/lib/queries/portfolio";
@@ -61,6 +66,7 @@ export default async function AppLayout({
     runnerRows,
     decisions,
     updates,
+    librarianIndicator,
   ] = await Promise.all([
     sessionUser ? getRailWorkspaceGroups(sessionUser.id, sessionUser.role) : [],
     getPlatformStatus(),
@@ -68,6 +74,12 @@ export default async function AppLayout({
     loadRunnerReadinessRows(),
     sessionUser ? getDecisionsCount(sessionUser.id, sessionUser.role) : 0,
     sessionUser ? getUpdatesCount(sessionUser.id, sessionUser.role) : 0,
+    // ADR-189 D2: a state, computed once here like the counters.
+    sessionUser
+      ? readLibrarianIndicator(sessionUser.id, getDb() as never).catch(
+          () => "none" as const,
+        )
+      : ("none" as const),
   ]);
 
   const runnersReadiness = summarizeAdapterReadiness({
@@ -107,7 +119,7 @@ export default async function AppLayout({
     },
   };
 
-  return (
+  const shell = (
     <div className="flex min-h-screen flex-col bg-paper-warm pb-9">
       <TopNav
         badges={railBadges}
@@ -119,13 +131,14 @@ export default async function AppLayout({
             )}
           />
         }
+        librarianEntry={sessionUser ? <LibrarianTrigger /> : undefined}
         sections={railSections}
         user={navUser}
       />
 
       <div
         data-shell
-        className="grid flex-1 grid-cols-1 md:grid-cols-[auto_1fr]"
+        className="grid flex-1 grid-cols-1 md:grid-cols-[auto_1fr] xl:grid-cols-[auto_1fr_auto]"
         data-density="comfy"
       >
         <LeftRail
@@ -137,6 +150,7 @@ export default async function AppLayout({
           workspaceGroups={railWorkspaceGroups}
         />
         <main className="min-w-0 px-4 pb-12 pt-7 md:px-9">{children}</main>
+        {sessionUser ? <LibrarianPanel /> : null}
       </div>
 
       <StatusBar
@@ -159,5 +173,18 @@ export default async function AppLayout({
         platformStatus={platformStatus}
       />
     </div>
+  );
+
+  // ADR-189 D3: one provider around the trigger and the panel, so a route
+  // change remounts neither.
+  return sessionUser ? (
+    <LibrarianProvider
+      initialIndicator={librarianIndicator}
+      ownerId={sessionUser.id}
+    >
+      {shell}
+    </LibrarianProvider>
+  ) : (
+    shell
   );
 }

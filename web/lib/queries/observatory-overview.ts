@@ -333,8 +333,16 @@ function scopePredicate(
   return includePlatform ? sql`(${inScope} OR r.project_id IS NULL)` : inScope;
 }
 
+// "all" means every DELIVERY kind: a librarian run is its owner's private
+// conversation (ADR-183), and the project-less platform group would otherwise
+// count it.
 function runKindPredicate(runKind: ObservatoryRunKind): SQL {
-  return runKind === "all" ? sql`TRUE` : sql`r.run_kind = ${runKind}`;
+  return runKind === "all"
+    ? sql`r.run_kind IN (${sql.join(
+        DELIVERY_RUN_KINDS.map((kind) => sql`${kind}`),
+        sql`, `,
+      )})`
+    : sql`r.run_kind = ${runKind}`;
 }
 
 function bucketExpression(): SQL {

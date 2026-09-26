@@ -1432,7 +1432,7 @@ expression is wrong once `webhook_events.project_id` can be NULL — see
 [ADR-173](decisions.md#adr-173) D3 and
 [`db/webhooks.md`](db/webhooks.md).
 
-## Personal librarian tables (Designed — ADR-183..188, migrations `0181`–`0188`)
+## Personal librarian tables (`0181`–`0183` Implemented; `0184`–`0188` Designed — ADR-183..188)
 
 The persistence of the personal librarian: one conversation per user on a
 project-less `run_kind='librarian'` run ([ADR-183](decisions.md#adr-183)),
@@ -1467,7 +1467,7 @@ and the librarian documents it links.
 The `runs` and `tasks` constraint changes sit in migrations of their own
 (`0183`, `0184`), so each is reviewable and revertable alone.
 
-### `0181_librarian_token_kind` (Designed — ADR-184)
+### `0181_librarian_token_kind` (Implemented — ADR-184)
 
 A librarian token is a `project_tokens` row minted for one turn when the
 librarian run flips `Running`, named `librarian-turn:<turnId>` (a reserved
@@ -1503,7 +1503,7 @@ over one turn's audit rows is that turn's project set, which the reply's
 `source_project_ids` records. `project_tokens.librarian_turn_id` gains its FK
 in `0182`, once `librarian_turns` exists; the audit columns stay plain text.
 
-### `0182_librarian_conversations` (Designed — ADR-183, ADR-188)
+### `0182_librarian_conversations` (Implemented — ADR-183, ADR-188)
 
 ```sql
 CREATE TABLE librarian_conversations (
@@ -1514,17 +1514,19 @@ CREATE TABLE librarian_conversations (
   forget_generation           integer     NOT NULL DEFAULT 0,
   history_generation          integer     NOT NULL DEFAULT 0,
   current_segment_id          text,
-  reset_state                 text        NOT NULL DEFAULT 'none'
-                                          CHECK (reset_state IN ('none', 'resetting')),
+  reset_state                 text        NOT NULL DEFAULT 'none',
   subject                     jsonb,
   read_through_seq            bigint      NOT NULL DEFAULT 0,
+  last_seq                    bigint      NOT NULL DEFAULT 0,
   memory_enabled_next_segment boolean     NOT NULL DEFAULT true,
   daily_turn_date             date,
   daily_turn_count            integer     NOT NULL DEFAULT 0,
   created_at                  timestamptz NOT NULL DEFAULT now(),
   updated_at                  timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT librarian_conversations_user_uq UNIQUE (user_id),
-  CONSTRAINT librarian_conversations_run_uq  UNIQUE (run_id)
+  CONSTRAINT librarian_conversations_run_uq  UNIQUE (run_id),
+  CONSTRAINT librarian_conversations_reset_state_check
+    CHECK (reset_state IN ('none', 'resetting', 'clearing'))
 );
 
 CREATE TABLE librarian_segments (
@@ -1541,21 +1543,23 @@ CREATE TABLE librarian_messages (
   conversation_id    text        NOT NULL REFERENCES librarian_conversations(id) ON DELETE CASCADE,
   segment_id         text        NOT NULL REFERENCES librarian_segments(id),
   seq                bigint      NOT NULL,
-  author_kind        text        NOT NULL
-                                 CHECK (author_kind IN ('owner', 'librarian', 'update', 'system')),
+  author_kind        text        NOT NULL,
   client_message_id  text,
   body               text        NOT NULL,
   body_tsv           tsvector    GENERATED ALWAYS AS (to_tsvector('simple', body)) STORED,
   subject            jsonb,
-  delivery_state     text        NOT NULL DEFAULT 'accepted'
-                                 CHECK (delivery_state IN ('accepted', 'queued', 'withdrawn',
-                                                           'withdrawn_by_reset', 'processed')),
+  delivery_state     text        NOT NULL DEFAULT 'accepted',
   turn_id            text,
   source_project_ids text[]      NOT NULL DEFAULT '{}',
   card_id            text,
   update_id          text,
   created_at         timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT librarian_messages_seq_uq UNIQUE (conversation_id, seq)
+  CONSTRAINT librarian_messages_seq_uq UNIQUE (conversation_id, seq),
+  CONSTRAINT librarian_messages_author_kind_check
+    CHECK (author_kind IN ('owner', 'librarian', 'update', 'system')),
+  CONSTRAINT librarian_messages_delivery_state_check
+    CHECK (delivery_state IN ('accepted', 'queued', 'withdrawn',
+                              'withdrawn_by_reset', 'processed'))
 );
 CREATE UNIQUE INDEX librarian_messages_client_id_uq
   ON librarian_messages (conversation_id, client_message_id)
@@ -1567,20 +1571,23 @@ CREATE TABLE librarian_turns (
   conversation_id     text        NOT NULL REFERENCES librarian_conversations(id) ON DELETE CASCADE,
   segment_id          text        NOT NULL REFERENCES librarian_segments(id),
   message_id          text        REFERENCES librarian_messages(id) ON DELETE SET NULL,
-  variant             text        NOT NULL
-                                  CHECK (variant IN ('owner_message', 'explain', 'summary')),
-  status              text        NOT NULL
-                                  CHECK (status IN ('queued', 'admitted', 'running', 'completed',
-                                                    'stopped', 'failed', 'withdrawn')),
+  variant             text        NOT NULL,
+  status              text        NOT NULL,
   failure_reason      text,
   context_snapshot_id text,
   runner_snapshot     jsonb,
   token_id            text,
+  start_attempts      integer     NOT NULL DEFAULT 0,
   deadline_at         timestamptz,
   admitted_at         timestamptz,
   started_at          timestamptz,
   ended_at            timestamptz,
   created_at          timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT librarian_turns_variant_check
+    CHECK (variant IN ('owner_message', 'explain', 'summary')),
+  CONSTRAINT librarian_turns_status_check
+    CHECK (status IN ('queued', 'admitted', 'running', 'completed',
+                      'stopped', 'failed', 'withdrawn')),
   CONSTRAINT librarian_turns_running_has_snapshot_check
     CHECK (status <> 'running' OR context_snapshot_id IS NOT NULL),
   CONSTRAINT librarian_turns_failed_has_reason_check
@@ -1588,6 +1595,11 @@ CREATE TABLE librarian_turns (
 );
 CREATE UNIQUE INDEX librarian_turns_one_active_uq
   ON librarian_turns (conversation_id) WHERE status IN ('admitted', 'running');
+CREATE UNIQUE INDEX librarian_turns_one_summary_uq
+  ON librarian_turns (segment_id)
+  WHERE variant = 'summary' AND status IN ('queued', 'admitted', 'running');
+CREATE INDEX librarian_turns_conversation_status_idx
+  ON librarian_turns (conversation_id, status);
 
 CREATE TABLE librarian_context_snapshots (
   id                    text        PRIMARY KEY,
@@ -1602,6 +1614,8 @@ CREATE TABLE librarian_context_snapshots (
   truncated             boolean     NOT NULL,
   created_at            timestamptz NOT NULL DEFAULT now()
 );
+CREATE INDEX librarian_context_snapshots_turn_idx
+  ON librarian_context_snapshots (turn_id);
 
 ALTER TABLE platform_runtime_settings
   ADD COLUMN librarian_enabled   boolean NOT NULL DEFAULT false,
@@ -1625,7 +1639,9 @@ ALTER TABLE project_tokens ADD CONSTRAINT project_tokens_librarian_turn_fk
   It is allocated under the conversation row lock, strictly increases, and is
   never reused — not after a history clear or the retention purge, both of
   which delete rows, so the allocator cannot derive it from the surviving
-  `max(seq)` alone. `read_through_seq` only moves forward (`GREATEST`).
+  `max(seq)` alone: `librarian_conversations.last_seq` is the allocator
+  (`last_seq + 1` under the row lock). `read_through_seq` only moves forward
+  (`GREATEST`) and is clamped to `last_seq` (`LEAST`).
   `turn_id`, `card_id` and `update_id` are plain references without FK.
   `body_tsv` serves the history-search route (at most 20 hits, older segments
   included).
@@ -1633,7 +1649,13 @@ ALTER TABLE project_tokens ADD CONSTRAINT project_tokens_librarian_turn_fk
   whose message the owner withdrew or the reset barrier withdrew (the message's
   `delivery_state` becomes `withdrawn` / `withdrawn_by_reset`); it never held a
   slot or a token. `failure_reason` is a closed, application-enforced
-  vocabulary: `start_failed`, `host_lost`, `deadline`, `capability_trip`. `context_snapshot_id` and
+  vocabulary: `start_failed`, `host_lost`, `deadline`, `capability_trip`.
+  `start_attempts` counts restarts of a turn whose host was lost before any
+  prompt command was queued; the recovery pass restarts at most three times,
+  then fails the turn `host_lost`. `reset_state = 'clearing'` is the history
+  clear's own barrier ([ADR-188](decisions.md#adr-188)), distinct from a
+  context reset's `resetting`; both refuse admission with `CONFLICT`
+  `reset_in_progress`. `context_snapshot_id` and
   `token_id` carry no FK — the snapshot and the token each reference their
   turn. `runner_snapshot` records the runner the turn's ACP session was
   created under; `run_sessions.librarian_context_epoch` records the epoch.
@@ -1641,9 +1663,9 @@ ALTER TABLE project_tokens ADD CONSTRAINT project_tokens_librarian_turn_fk
   command is queued; the snapshot is what makes a reply reproducible and what
   "which memory this reply used" reads.
 - **`platform_runtime_settings`** — see
-  [Configuration](configuration.md#personal-librarian--platform_runtime_settings-designed--adr-183).
+  [Configuration](configuration.md#personal-librarian--platform_runtime_settings-implemented--adr-183).
 
-### `0183_librarian_run_kind` (Designed — ADR-183)
+### `0183_librarian_run_kind` (Implemented — ADR-183)
 
 `run_kind` has no DB CHECK before this migration (TypeScript enum only). A
 librarian run is created on the conversation's first turn with
@@ -1659,7 +1681,8 @@ ALTER TABLE runs ADD CONSTRAINT runs_run_kind_check
 ALTER TABLE runs ADD CONSTRAINT runs_librarian_shape_check
   CHECK (run_kind <> 'librarian' OR (
     project_id IS NULL AND task_id IS NULL AND persistent = true
-    AND created_by_user_id IS NOT NULL AND agent_workspace = 'none'));
+    AND created_by_user_id IS NOT NULL
+    AND agent_workspace IS NOT DISTINCT FROM 'none'));
 ALTER TABLE runs ADD COLUMN librarian_operation_id text;
 ALTER TABLE runs ADD CONSTRAINT runs_librarian_operation_uq UNIQUE (librarian_operation_id);
 
@@ -1706,6 +1729,15 @@ The two generated CHECKs of the command ledger regenerate from their sources:
 
 `execution_commands_prompt_owner_required` is unchanged: a librarian prompt
 without an owner is refused like any other.
+
+`runs_librarian_shape_check` compares `agent_workspace` NULL-safely: the column
+is nullable and NULL on flow and scratch rows, and a plain `= 'none'` would
+evaluate to NULL — which a CHECK accepts — letting a librarian row through with
+no workspace axis at all. The create-intent CHECK's closing `nodeAttemptId`
+clause treats `agent` and `librarian` alike (neither carries a node attempt in
+its canonical payload). `run_sessions.runner_resolution_tier` gains the value
+`librarianDefault`: the runner came from
+`platform_runtime_settings.librarian_runner_id`, never from the flow chain.
 
 ### `0184_task_revision_launch_intent` (Designed — ADR-185, ADR-186)
 
@@ -2454,7 +2486,8 @@ stop, gate-chat, and diagnostics still target the correct ACP session).
                                  //   stepTarget | binding | autoMatch |
                                  //   projectFlowDefault | platformFlowDefault |
                                  //   projectDefault | platformDefault |
-                                 //   agentLinkOverride | agentDefault)
+                                 //   agentLinkOverride | agentDefault |
+                                 //   librarianDefault)
   capabilityAgent?,              // ADAPTER_IDS
   runnerSnapshot?,               // jsonb frozen launch profile (RunnerSnapshot)
   acpSessionId?,                 // per-session ACP session/resume handle

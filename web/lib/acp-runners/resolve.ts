@@ -118,7 +118,7 @@ function formatCandidate(candidate: Candidate): string {
   return `${candidate.tier}:${candidate.runnerId ?? "<unset>"}`;
 }
 
-function snapshotRunner(runner: RunnerCatalogEntry): RunnerSnapshot {
+export function snapshotRunner(runner: RunnerCatalogEntry): RunnerSnapshot {
   return {
     id: runner.id,
     adapter: runner.adapter,

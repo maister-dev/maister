@@ -22,6 +22,8 @@ import {
 import {
   executionCommands,
   gateResults,
+  librarianConversations,
+  librarianTurns,
   nodeAttempts,
   runs,
   agentTurns,
@@ -69,6 +71,14 @@ const SessionCreateOwnerSchema = z.discriminatedUnion("variant", [
       promptOrdinal: z.number().int().nonnegative(),
     })
     .strict(),
+  // ADR-183: a librarian turn opens its own session on the conversation run.
+  z
+    .object({
+      variant: z.literal("librarian"),
+      turnId: id,
+      promptOrdinal: z.number().int().nonnegative(),
+    })
+    .strict(),
 ]);
 
 export type SessionCreateOwner = z.infer<typeof SessionCreateOwnerSchema>;
@@ -100,6 +110,8 @@ export function createIntentError(invariant: string): MaisterError {
 export function createOperationKey(owner: SessionCreateOwner): string {
   if (owner.variant === "agent")
     return `agent-create:${owner.turnId}:${owner.promptOrdinal}`;
+  if (owner.variant === "librarian")
+    return `librarian-create:${owner.turnId}:${owner.promptOrdinal}`;
 
   return owner.variant === "node"
     ? `flow-create:node:${owner.nodeAttemptId}:${owner.promptOrdinal}`
@@ -176,7 +188,7 @@ export function readCreateIntent(
     envelope.fence.assignmentId !== row.executionAssignmentId ||
     envelope.fence.assignmentEpoch !== row.assignmentEpoch ||
     (envelope.payload?.nodeAttemptId ?? null) !==
-      (intent.owner.variant === "agent" ? null : intent.owner.nodeAttemptId) ||
+      ("nodeAttemptId" in intent.owner ? intent.owner.nodeAttemptId : null) ||
     canonicalCommandJson(redactPayload("session.create", envelope.payload)) !==
       canonicalCommandJson(row.payload)
   )
@@ -243,6 +255,31 @@ export async function lockCreateOwner(
   if (!assignment) return false;
   const [run] = await tx.select().from(runs).where(eq(runs.id, input.runId));
 
+  if (input.owner.variant === "librarian") {
+    // A librarian run never pauses holding a session: it runs a turn or it is
+    // parked with its session deleted, so only `Running` owns a create.
+    const [turn] = await tx
+      .select()
+      .from(librarianTurns)
+      .where(eq(librarianTurns.id, input.owner.turnId))
+      .for("update");
+    const [conversation] = turn
+      ? await tx
+          .select({ runId: librarianConversations.runId })
+          .from(librarianConversations)
+          .where(eq(librarianConversations.id, turn.conversationId))
+      : [];
+
+    return (
+      run?.runKind === "librarian" &&
+      run.status === "Running" &&
+      conversation?.runId === run.id &&
+      turn?.status === "running" &&
+      // 0 = the turn's session (a resume when the context still matches);
+      // 1 = the fresh session that replaces a refused resume.
+      input.owner.promptOrdinal <= 1
+    );
+  }
   if (input.owner.variant === "agent") {
     const [turn] = await tx
       .select()

@@ -15,6 +15,7 @@ import {
   isNotNull,
   isNull,
   lt,
+  ne,
   notExists,
   notInArray,
   or,
@@ -1012,6 +1013,9 @@ async function fetchBudgetCandidates(db: Db): Promise<BudgetCandidate[]> {
     .where(
       and(
         inArray(runs.status, ["Running", "WaitingOnChildren"]),
+        // ADR-183: a librarian turn owns its own deadline watchdog and carries
+        // no execution policy; the budget breach dispositions do not apply.
+        ne(runs.runKind, "librarian"),
         excludeActiveSyncAttempt(db),
       ),
     )

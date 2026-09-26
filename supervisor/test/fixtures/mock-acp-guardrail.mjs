@@ -9,6 +9,9 @@
 //   --scenario path_guard_kindonly --count N → N write requests with NO locations
 //   --scenario no_progress         --count M → M non-write tool_call turns
 //   --scenario no_progress_reset   --count M → (M-1) idle, one write (reset), (M-1) idle
+//   --scenario librarian_mcp_only           → Read + WebFetch denied, a maister
+//                                              facade tool allowed (ADR-183 D5)
+//   --scenario librarian_builtin_repeat     → 4 built-in calls; the 3rd deny halts
 //   --scenario deferred_cancel     --count M → open a real HITL deferred, then trip
 //                                              no_progress (M idle turns) → cancel it
 // Most scenarios run with autoApprovePermissions=true (an unattended run), so
@@ -268,6 +271,23 @@ class GuardrailAgent {
       for (let i = 0; i < count; i += 1) {
         await this.requestTool(sessionId, "WebFetch", `tc-cap-rep-${i}`);
       }
+    } else if (scenario === "librarian_mcp_only") {
+      // ADR-183 D5: a librarian turn's MCP-only profile. A built-in file read
+      // and a web fetch are denied; the maister facade tool is allowed inline.
+      await this.requestTool(sessionId, "Read", "tc-lib-read", "read");
+      await this.requestTool(sessionId, "WebFetch", "tc-lib-fetch", "fetch");
+      await this.requestTool(
+        sessionId,
+        "mcp__maister__task_get",
+        "tc-lib-mcp",
+        "other",
+      );
+    } else if (scenario === "librarian_builtin_repeat") {
+      // Three consecutive built-in calls: the third denial halts the session.
+      await this.requestTool(sessionId, "Read", "tc-lib-r1", "read");
+      await this.requestTool(sessionId, "Bash", "tc-lib-r2", "execute");
+      await this.requestTool(sessionId, "WebSearch", "tc-lib-r3", "fetch");
+      await this.requestTool(sessionId, "Glob", "tc-lib-r4", "search");
     } else if (scenario === "capability_sentinel") {
       // A WRITE that executes (tool_call_update) after being announced (pending)
       // but with no requestPermission in between → sentinel halt.

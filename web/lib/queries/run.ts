@@ -67,7 +67,10 @@ import {
   type ConsensusRecoverEvidence,
 } from "@/lib/runs/recover-classify";
 import { loadConsensusRecoveryEvidence } from "@/lib/flows/graph/consensus/recovery-evidence";
-import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
+import {
+  requireRunProjectId,
+  withProjectRunKind,
+} from "@/lib/runs/run-kind-invariants";
 import * as schema from "@/lib/db/schema";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import {
@@ -540,9 +543,9 @@ export const getRunDetail = cache(async function getRunDetail(
     .leftJoin(tasks, eq(tasks.id, runs.taskId))
     .leftJoin(flows, eq(flows.id, runs.flowId))
     .where(eq(runs.id, runId));
-  const row = rows[0];
 
-  if (!row) return null;
+  if (!rows[0]) return null;
+  const row = withProjectRunKind(rows[0]);
 
   const branch = row.branch ?? row.agentId ?? row.projectMainBranch;
   const worktreePath = row.worktreePath ?? row.projectRepoPath;

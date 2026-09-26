@@ -1254,6 +1254,20 @@
       "when": 1790586271260,
       "tag": "0182_execution_host_pressure",
       "breakpoints": true
+    },
+    {
+      "idx": 182,
+      "version": "7",
+      "when": 1790445656763,
+      "tag": "0182_librarian_conversations",
+      "breakpoints": true
+    },
+    {
+      "idx": 183,
+      "version": "7",
+      "when": 1790448109130,
+      "tag": "0183_librarian_run_kind",
+      "breakpoints": true
     }
   ]
 }

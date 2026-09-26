@@ -14,7 +14,7 @@ import {
 import { seedProjectRow, seedRun } from "@/test-support/execution-host-seed";
 import {
   addProjectMember,
-  librarianTurnIdForToken,
+  seedLibrarianTurn,
   removeProjectMember,
   seedActiveUser,
 } from "@/test-support/librarian-seed";
@@ -78,7 +78,7 @@ async function turnToken(scopes: readonly string[]): Promise<string> {
   const issued = await issueLibrarianTurnToken(
     {
       ownerUserId: fx.ownerId,
-      turnId: librarianTurnIdForToken(),
+      turnId: await seedLibrarianTurn(db, fx.ownerId),
       scopes,
       expiresAt: new Date(Date.now() + 10 * 60_000),
     },

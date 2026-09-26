@@ -15,7 +15,8 @@ import {
   verifyToken,
 } from "@/lib/tokens/verify";
 import {
-  librarianTurnIdForToken,
+  endLibrarianTurn,
+  seedLibrarianTurn,
   seedActiveUser,
 } from "@/test-support/librarian-seed";
 import {
@@ -53,7 +54,7 @@ afterAll(async () => {
 describe("IT-LAU-02 part 2: a turn token is owner-bound and dies with its turn", () => {
   it("verifies as the owner acting through the librarian", async () => {
     const ownerId = await seedActiveUser(db);
-    const turnId = librarianTurnIdForToken();
+    const turnId = await seedLibrarianTurn(db, ownerId);
     const issued = await issueLibrarianTurnToken(
       {
         ownerUserId: ownerId,
@@ -90,7 +91,7 @@ describe("IT-LAU-02 part 2: a turn token is owner-bound and dies with its turn",
 
   it("IT-EDGE-LAU-01: a revoked turn token is refused on its next request", async () => {
     const ownerId = await seedActiveUser(db);
-    const turnId = librarianTurnIdForToken();
+    const turnId = await seedLibrarianTurn(db, ownerId);
     const issued = await issueLibrarianTurnToken(
       {
         ownerUserId: ownerId,
@@ -107,9 +108,27 @@ describe("IT-LAU-02 part 2: a turn token is owner-bound and dies with its turn",
     expect(await refusal(issued.secret)).toBe("revoked");
   });
 
+  it("IT-LAU-03: refuses a token whose turn ended by any path, even unrevoked", async () => {
+    const ownerId = await seedActiveUser(db);
+    const turnId = await seedLibrarianTurn(db, ownerId);
+    const issued = await issueLibrarianTurnToken(
+      {
+        ownerUserId: ownerId,
+        turnId,
+        scopes: ["tasks:read"],
+        expiresAt: new Date(Date.now() + 60_000),
+      },
+      db,
+    );
+
+    expect(await refusal(issued.secret)).toBeNull();
+    await endLibrarianTurn(db, turnId, "stopped");
+    expect(await refusal(issued.secret)).toBe("revoked");
+  });
+
   it("refuses an expired turn token", async () => {
     const ownerId = await seedActiveUser(db);
-    const turnId = librarianTurnIdForToken();
+    const turnId = await seedLibrarianTurn(db, ownerId);
     const issued = await issueLibrarianTurnToken(
       {
         ownerUserId: ownerId,
@@ -136,7 +155,7 @@ describe("IT-LAU-02 part 2: a turn token is owner-bound and dies with its turn",
         issueLibrarianTurnToken(
           {
             ownerUserId: ownerId,
-            turnId: librarianTurnIdForToken(),
+            turnId: await seedLibrarianTurn(db, ownerId),
             scopes,
             expiresAt: new Date(Date.now() + 60_000),
           },
@@ -153,7 +172,7 @@ describe("IT-LAU-10 part 1: owner deactivation applies to a live turn token", ()
     const issued = await issueLibrarianTurnToken(
       {
         ownerUserId: ownerId,
-        turnId: librarianTurnIdForToken(),
+        turnId: await seedLibrarianTurn(db, ownerId),
         scopes: ["tasks:read"],
         expiresAt: new Date(Date.now() + 60_000),
       },

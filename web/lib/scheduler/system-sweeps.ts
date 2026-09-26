@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { LibrarianSweepSummary } from "@/lib/librarian/turn-recovery";
 import type { EphemeralAgentGcSummary } from "@/lib/gc/ephemeral-agent-gc";
 import type { ContextMountGcSummary } from "@/lib/gc/context-mount-gc";
 import type { AgentMaterializationGcSummary } from "@/lib/gc/agent-materialization-gc";
@@ -87,6 +88,9 @@ export type SystemSweepSummary = GcCompatibilitySummary & {
   // recovery + the W5 active-time duration cap. null when it threw before
   // returning a summary.
   syncRecovery: Awaited<ReturnType<typeof runSyncRecoverySweep>> | null;
+  // ADR-183 (D19/D20): the librarian's turn deadlines, lost starts, queued
+  // turns nothing admitted and its pool promotion.
+  librarian: LibrarianSweepSummary | null;
   cost: Awaited<ReturnType<typeof reconcileTerminalCostRollups>> | null;
   // ADR-166 D5/D8: execution-command crash-window recovery (W1/W2/W4 with the
   // 60 s in-flight grace), the stale-active-assignment backstop, and the 7-day
@@ -340,6 +344,7 @@ export async function runSystemSweep(
   let keepalive: SystemSweepSummary["keepalive"] = null;
   let reconcile: SystemSweepSummary["reconcile"] = null;
   let syncRecovery: SystemSweepSummary["syncRecovery"] = null;
+  let librarian: SystemSweepSummary["librarian"] = null;
   let cost: SystemSweepSummary["cost"] = null;
   let executionEventPlane: SystemSweepSummary["executionEventPlane"] = null;
   let streamHealth: SystemSweepSummary["streamHealth"] = null;
@@ -376,6 +381,20 @@ export async function runSystemSweep(
     errors.push(`sync recovery sweep failed: ${message}`);
     bundleErrors.push(`sync recovery sweep failed: ${message}`);
     log.error({ err: message }, "system_sweep sync recovery threw");
+  }
+
+  try {
+    const { runLibrarianTurnSweep } = await import(
+      "@/lib/librarian/turn-recovery"
+    );
+
+    librarian = await runLibrarianTurnSweep();
+  } catch (err) {
+    const message = errorMessage(err);
+
+    errors.push(`librarian sweep failed: ${message}`);
+    bundleErrors.push(`librarian sweep failed: ${message}`);
+    log.error({ err: message }, "system_sweep librarian threw");
   }
 
   try {
@@ -567,6 +586,7 @@ export async function runSystemSweep(
     keepalive,
     reconcile,
     syncRecovery,
+    librarian,
     cost,
     executionEventPlane,
     streamHealth,

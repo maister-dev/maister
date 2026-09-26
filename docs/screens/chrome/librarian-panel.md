@@ -6,9 +6,14 @@
   `web/app/(app)/layout.tsx`, so it survives route changes.
 - **Status:** Designed (ADR-189; runtime ADR-183, authority ADR-184,
   operations ADR-185, memory and reset ADR-188).
-- **Source (planned):** `web/components/librarian/librarian-trigger.tsx`,
+- **Source:** `web/components/librarian/librarian-trigger.tsx`,
   `web/components/librarian/librarian-panel.tsx`,
+  `web/components/librarian/librarian-provider.tsx` (open state, indicator, the
+  librarian stream), `web/components/librarian/panel-mode.ts` (the D4 rule),
   `web/components/chrome/top-nav.tsx` (right group), `web/app/(app)/layout.tsx`.
+  The shell (entry, panel, composer, queued chips, subject chip, presentation
+  modes, focus) ships with T2.15; cards, the Related work strip, memory and
+  reset arrive with their phases.
 
 ## JTBD
 

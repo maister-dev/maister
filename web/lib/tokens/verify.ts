@@ -9,7 +9,8 @@ import * as schemaModule from "@/lib/db/schema";
 import { hashToken, safeEqualHex, tokenPrefix } from "@/lib/tokens/secret";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { projectTokens, users } = schemaModule as unknown as Record<string, any>;
+const { librarianTurns, projectTokens, users } =
+  schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -147,6 +148,24 @@ export async function verifyToken(
       throw new TokenAuthError("owner-unavailable", "token owner unavailable", {
         tokenId: row.id,
         projectId: row.project_id ?? null,
+      });
+    }
+  }
+
+  // ADR-184: a turn token is good only while its turn runs. The turn-end
+  // transaction revokes it; this is the backstop for a stop, a deadline or a
+  // host loss that ended the turn by another path.
+  if (tokenKind === "librarian") {
+    const turnRows = await d
+      .select({ status: librarianTurns.status })
+      .from(librarianTurns)
+      .where(eq(librarianTurns.id, row.librarian_turn_id))
+      .limit(1);
+
+    if (turnRows[0]?.status !== "running") {
+      throw new TokenAuthError("revoked", "librarian turn is not running", {
+        tokenId: row.id,
+        projectId: null,
       });
     }
   }

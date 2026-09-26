@@ -20,6 +20,8 @@ export interface TopNavProps {
   logoSize?: number;
   badges?: RailBadges;
   sections?: readonly LeftRailNavSection[];
+  /** ADR-189 D1: the librarian entry, first in the right group. */
+  librarianEntry?: ReactNode;
 }
 
 export async function TopNav({
@@ -28,6 +30,7 @@ export async function TopNav({
   logoSize = 22,
   badges,
   sections = [],
+  librarianEntry,
 }: TopNavProps): Promise<ReactElement> {
   const t = await getTranslations("nav");
 
@@ -58,7 +61,10 @@ export async function TopNav({
           ) : null}
           {/* The logo means HOME and keeps targeting `/` (ADR-172 D3). */}
           <Link className="shrink-0 cursor-pointer" href="/">
-            <Logo size={logoSize} />
+            {/* ADR-189 D1: below `md` the wordmark is visual-only room the
+                librarian entry needs to keep the header inside 390px
+                (`E2E-NAV-07`); it stays the link's accessible name. */}
+            <Logo size={logoSize} wordmarkClassName="sr-only md:not-sr-only" />
           </Link>
           {/* The explicit control for the two meanings `/` used to carry: Desk
               is `/`, Projects is `/projects` (ADR-172 D3). It is a switch, not
@@ -77,6 +83,7 @@ export async function TopNav({
           </span>
         </div>
         <div className="flex min-w-0 items-center gap-2 md:gap-2.5">
+          {librarianEntry}
           <LangSwitch />
           <ThemeSwitch />
           {user ? <UserMenu user={user} /> : null}

@@ -411,11 +411,21 @@ const runIdSchema = z
   .max(128)
   .regex(SAFE_PATH_SEGMENT, safeSegmentMessage("runId"));
 
+// ADR-183: the personal librarian's project-less conversation workspaces live
+// under the ONE reserved slug `_librarian`, which no kebab-case project slug
+// can collide with.
+export const LIBRARIAN_PROJECT_SLUG = "_librarian";
+
 const projectSlugSchema = z
   .string()
   .min(1)
   .max(64)
-  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "projectSlug must be kebab-case");
+  .refine(
+    (slug) =>
+      slug === LIBRARIAN_PROJECT_SLUG ||
+      /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug),
+    "projectSlug must be kebab-case",
+  );
 
 // ADR-166 (strict): a session addresses its workspace ONLY through the opaque
 // handle minted by `POST /workspaces/adopt`. The pre-ADR-166 path fields are
