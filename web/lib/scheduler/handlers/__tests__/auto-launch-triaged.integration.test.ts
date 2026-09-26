@@ -432,6 +432,25 @@ describe("auto_launch_triaged tick", () => {
     expect(calls).toEqual([]);
   });
 
+  it("does NOT select a task with an outstanding C2 claim — another admitter owns it", async () => {
+    const taskId = await seedTriagedAutoTask();
+
+    // The slot-free gate claimed it and is mid-launch: no run row exists yet. A
+    // second launchRun would refuse on the claimer's worktree (PRECONDITION)
+    // and give up a task whose launch is fine.
+    await pool.query(
+      `UPDATE "tasks" SET "queue_claimed_at" = now() WHERE "id" = $1`,
+      [taskId],
+    );
+
+    const { fn, calls } = recordingLaunch();
+    const summary = await runAutoLaunchTriagedJob({ launch: fn });
+
+    expect(calls).toEqual([]);
+    expect(summary.candidates).toBe(0);
+    expect(await launchModeOf(taskId)).toBe("auto");
+  });
+
   it("cap-hit (launch returns Pending) is transient — launch_mode stays auto, retried next tick", async () => {
     const taskId = await seedTriagedAutoTask();
     const capped = recordingLaunch({

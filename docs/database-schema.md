@@ -1157,7 +1157,10 @@ draft updates increment `draft_version` and stale callers receive `CONFLICT`.
                                  //   task-level C2 admission claim (launchRun is
                                  //   worktree-first → no run row exists at claim time):
                                  //   CAS-set under the scheduler lock by the slot-free
-                                 //   gate, reconcile-swept if the claimer crashes.
+                                 //   gate — the CAS also requires no live or unseen
+                                 //   flow run for the task — and, while set, excludes
+                                 //   the task from both C2 candidate queries;
+                                 //   reconcile-swept if the claimer crashes.
   createdByUserId?,              // nullable FK -> users.id; user-token owner
   createdAt, updatedAt
 }

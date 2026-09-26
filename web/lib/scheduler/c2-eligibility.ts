@@ -5,12 +5,16 @@ import {
   asc,
   count,
   eq,
+  exists,
+  gt,
   gte,
   inArray,
   isNotNull,
   isNull,
   notInArray,
+  or,
   sql,
+  type SQL,
 } from "drizzle-orm";
 import pino from "pino";
 
@@ -87,6 +91,13 @@ export async function loadC2CandidateRows(db: Db): Promise<C2CandidateRow[]> {
         eq(tasks.launchMode, "auto"),
         // ADR-121 (INV-10): a paused task is never auto-admitted (C2) or polled.
         eq(tasks.queuePaused, false),
+        // An outstanding admission claim means another admitter owns the task
+        // right now, before its run row exists. Neither consumer may select it:
+        // a later gate admission would otherwise CAS after the claimer cleared
+        // its claim (the AC-F1-claim double launch), and the poll's launchRun
+        // would refuse on the claimer's worktree (PRECONDITION) and give up a
+        // task whose launch is fine.
+        isNull(tasks.queueClaimedAt),
         // flow_id present → a triaged-enqueue task, not an as-plan one.
         sql`${tasks.flowId} IS NOT NULL`,
         // DISJOINT from auto_launch_run_plan: an as-plan task carries a
@@ -129,21 +140,49 @@ export async function countOutstandingC2Claims(db: Db): Promise<number> {
   return Number(rows[0]?.n ?? 0);
 }
 
-// True when the task already has a NON-terminal flow run (one flow run at a time).
-export async function hasLiveFlowRun(db: Db, taskId: string): Promise<boolean> {
-  const rows = await db
+function taskFlowRuns(db: Db, taskId: string, condition?: SQL) {
+  return db
     .select({ id: runs.id })
     .from(runs)
-    .where(
-      and(
-        eq(runs.taskId, taskId),
-        eq(runs.runKind, "flow"),
-        notInArray(runs.status, [...TERMINAL_RUN_STATUSES]),
-      ),
-    )
-    .limit(1);
+    .where(and(eq(runs.taskId, taskId), eq(runs.runKind, "flow"), condition));
+}
+
+// The one definition of a LIVE flow run, shared by the eligibility read and the
+// admission claim CAS so the two can never drift apart.
+function liveFlowRunCondition(): SQL {
+  return notInArray(runs.status, [...TERMINAL_RUN_STATUSES]);
+}
+
+// True when the task already has a NON-terminal flow run (one flow run at a time).
+export async function hasLiveFlowRun(db: Db, taskId: string): Promise<boolean> {
+  const rows = await taskFlowRuns(db, taskId, liveFlowRunCondition()).limit(1);
 
   return rows.length > 0;
+}
+
+// The claim-time re-check of an `eligible` verdict, for a CAS that runs after the
+// verdict's reads. Admitters that hold no claim — the poll backstop, a manual
+// Launch, a crash recover — run outside the scheduler lock, so a flow run can
+// land in between: a live one, or one started after the latest run the verdict
+// saw, whatever its status — the verdict's failure cap and backoff never counted
+// it. `null` means the verdict saw no flow run, so any flow run is unseen.
+export function unseenOrLiveFlowRunExists(
+  db: Db,
+  taskId: string,
+  latestFlowRunStartedAt: Date | null,
+): SQL {
+  return exists(
+    taskFlowRuns(
+      db,
+      taskId,
+      latestFlowRunStartedAt === null
+        ? undefined
+        : or(
+            liveFlowRunCondition(),
+            gt(runs.startedAt, latestFlowRunStartedAt),
+          ),
+    ),
+  );
 }
 
 // Count of FAILED flow-run attempts (Failed/Abandoned) for the task, SCOPED to the
@@ -219,7 +258,9 @@ export type C2GiveUp = {
 };
 
 export type C2Eligibility =
-  | { kind: "eligible" }
+  // `latestFlowRunStartedAt` fingerprints the flow runs the verdict counted, for
+  // `unseenOrLiveFlowRunExists` at claim time.
+  | { kind: "eligible"; latestFlowRunStartedAt: Date | null }
   | { kind: "skip" }
   | ({ kind: "give-up" } & C2GiveUp);
 
@@ -295,7 +336,10 @@ export async function evaluateC2Candidate(
     return { kind: "skip" };
   }
 
-  return { kind: "eligible" };
+  return {
+    kind: "eligible",
+    latestFlowRunStartedAt: latestRun?.startedAt ?? null,
+  };
 }
 
 // A terminal, non-retryable launchRun refusal HOLDS the task (give-up), never

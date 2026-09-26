@@ -12,6 +12,7 @@ import {
   isNull,
   lt,
   ne,
+  not,
   sql,
 } from "drizzle-orm";
 import pino from "pino";
@@ -43,6 +44,7 @@ import {
   giveUpC2TaskInTransaction,
   isTerminalLaunchRefusal,
   loadC2CandidateRows,
+  unseenOrLiveFlowRunExists,
   type C2CandidateRow,
 } from "@/lib/scheduler/c2-eligibility";
 import {
@@ -1033,11 +1035,31 @@ export async function promoteNextPending(
         .update(tasks)
         .set({ queueClaimedAt: now })
         .where(
-          and(eq(tasks.id, candidate.taskId), isNull(tasks.queueClaimedAt)),
+          and(
+            eq(tasks.id, candidate.taskId),
+            isNull(tasks.queueClaimedAt),
+            // Claimless admitters (poll backstop, manual Launch, crash recover)
+            // run outside the scheduler lock, so the task's flow runs can change
+            // between the verdict's reads and this write: re-check them against
+            // what the verdict saw.
+            not(
+              unseenOrLiveFlowRunExists(
+                tx,
+                candidate.taskId,
+                eligibility.latestFlowRunStartedAt,
+              ),
+            ),
+          ),
         )
         .returning({ id: tasks.id });
 
-      if (claimed.length === 0) continue; // concurrent admission claimed it first
+      if (claimed.length === 0) {
+        log.info(
+          { taskId: candidate.taskId, projectId: candidate.projectId },
+          "[FIX:c2-claim] promoteNextPending → C2 claim refused — the task's flow runs changed since the eligibility read",
+        );
+        continue;
+      }
 
       log.info(
         { taskId: candidate.taskId, projectId: candidate.projectId },
