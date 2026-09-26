@@ -32,8 +32,9 @@ reconciliation on host or process restart.
   project default -> launch override -> promote-time override. It supersedes
   `promotion_mode` for new Flow runs while preserving legacy compatibility:
   `local_merge` maps to `strategy=merge`, `pull_request` maps to
-  `strategy=pull_request`. Scratch runs keep the legacy promotion semantics
-  (ADR-058) in this slice.
+  `strategy=pull_request`. Scratch runs keep their target-locked promotion
+  (ADR-058) — since ADR-181 in all three modes, targeted at
+  `scratch_runs.target_branch ?? base_branch`.
 - **Durable promotion claim (Implemented)** — the serialization point for
   idempotent promotion, held on the workspace row (1:1 with the run):
   - `promotion_state` — `none | claiming | done | failed | reopened`. CAS'd to `claiming`
@@ -193,7 +194,10 @@ introduces a **shared `promoteRun` service** that drives **both** scratch and
 flow run kinds for `local_merge`; the `pull_request` mode
 ([ADR-049](../decisions.md#adr-049-pr-promotion-via-a-hybrid-provider-pradapter-credential-model-b-reverses-the-gh-is-never-invoked-invariant))
 is **Implemented**. Both modes terminate at the existing
-`Done` (no new `runs.status`). The service is retry-safe through a **durable
+`Done` (no new `runs.status`). Since ADR-181 a PR can also be opened BEFORE any
+promotion and a PR-backed run parked in `Crashed | Failed | Abandoned` finalized
+through the same PR finalize (`POST /api/runs/{runId}/pr` and `/pr/finalize`,
+[`workbench-git.md`](workbench-git.md)). The service is retry-safe through a **durable
 promotion claim**: a fresh `promotion_attempt_id` is minted and
 `promotion_state` is CAS'd to `claiming` in a short transaction **committed
 BEFORE any git/PR side-effect**, then the side-effect runs with **no lock
@@ -256,6 +260,16 @@ sequenceDiagram
     Note over W,DB: Claim tx (mints attempt token, commits BEFORE side-effect)
     W->>DB: SELECT workspace FOR UPDATE, assert status/readiness/drift/no-active-claim
     W->>DB: mint promotion_attempt_id, CAS promotion_state=claiming, COMMIT
+    opt a PR is recorded (ADR-181)
+        W->>PA: getPrState(pr_number)
+        alt merged on the provider, at the worktree HEAD
+            W->>DB: finalize as it stands (no squash, push or second PR)
+            W-->>U: 200 Done
+        else merged without the worktree HEAD
+            W->>DB: promotion_state=failed (token-matched)
+            W-->>U: 409 PRECONDITION merged_pr_behind
+        end
+    end
     Note over W,PA: Side-effect (NO lock held)
     W->>PA: preflight by provider (CLI on PATH or token set, remote configured)
     alt provider generic or preflight fails
@@ -288,6 +302,9 @@ sequenceDiagram
 | PR preflight fail (CLI/token/remote missing, `generic` provider) | 409 `PRECONDITION` | `promotion_state = failed`; run stays `Review` |
 | Concurrent promote (a fresh active `claiming` already present) | 409 `CONFLICT` | unchanged; wait for the in-flight promotion |
 | Push rejected / PR-API 5xx (transient) | **503 `EXECUTOR_UNAVAILABLE`** | leaves `claiming`; run stays `Review`, **no `pr_url`**; idempotently retryable |
+| Recorded PR already merged on the provider, at the worktree `HEAD` (ADR-181) | 200 | finalized as it stands: `Done`, no squash, push or second PR |
+| Recorded PR merged without the worktree's `HEAD` (ADR-181) | 409 `PRECONDITION` `merged_pr_behind` | `promotion_state = failed`; run stays `Review` |
+| Provider unreadable while the scan saw the PR merged (ADR-181) | **503 `EXECUTOR_UNAVAILABLE`** | leaves `claiming`; nothing pushed |
 | Finalize superseded by a same-user stale reclaim | 409 `CONFLICT` | superseded attempt writes NOTHING; the reclaiming attempt owns finalize |
 | Already `Done` / non-`Review` (retry after success) | 409 | terminal — no re-attempt |
 
@@ -540,7 +557,8 @@ flowchart LR
 - Full Flow reconciliation across Next.js boot, supervisor boot, git worktrees,
   and live sessions is designed. Scratch recovery is implemented through the
   explicit recover route for crashed scratch sessions.
-- GC removes worktrees of runs in `Done | Abandoned` older than 7 d;
+- GC removes worktrees of runs in `Done | Abandoned | Failed` (`Failed` since
+  ADR-181) older than 7 d, preserving each first;
   GC failures log and continue without setting `removed_at`.
 - **(Implemented)** GC MUST select terminal candidates by
   `COALESCE(workspaces.scheduled_removal_at, runs.ended_at + MAISTER_GC_AGE_DAYS) <= now()`
@@ -552,10 +570,13 @@ flowchart LR
   archive branch (+ optional push when `MAISTER_GC_ARCHIVE_PUSH=true`, default
   `false`) only.
 - **(Implemented)** Operator archive/drop/export/snapshot/handoff actions
-  use the same workspace row and preserve/remove helpers but are explicit UI
-  lifecycle actions, not background GC. Their allow-list, durable operation
-  claim, and trust boundary live in
-  [`workbench-lifecycle.md`](workbench-lifecycle.md).
+  — and, since ADR-181, the run git panel's publish, discard, update, PR and
+  re-attach — use the same workspace row and preserve/remove helpers but are
+  explicit UI actions, not background GC; an operator archive/drop pushes its
+  archive ref only when `MAISTER_GC_ARCHIVE_PUSH=true`. Their allow-list,
+  durable operation claim, and trust boundary live in
+  [`workbench-lifecycle.md`](workbench-lifecycle.md) and
+  [`workbench-git.md`](workbench-git.md).
 - Workspace lifecycle ends at `Removed`; rows are NEVER hard-deleted —
   `removed_at` is set instead.
 - Active workspace rail groups MUST include both `flow` and `scratch` runs
@@ -563,7 +584,7 @@ flowchart LR
   `runs.run_kind = 'flow'`.
 - Active workspace status labels MUST distinguish `Running`,
   `WaitingForUser`, `NeedsInput`, `NeedsInputIdle`, `HumanWorking`, `Review`,
-  and `Crashed`; `WaitingForUser` is scratch-specific and maps from
+  `Crashed` and (ADR-181, a parked workbench) `Failed`; `WaitingForUser` is scratch-specific and maps from
   `scratch_runs.dialog_status` while `runs.status = 'Running'`.
 - Each project group MUST expose a scratch launch `+` action with that project
   preselected and MUST show launched-by display when `runs.created_by_user_id`

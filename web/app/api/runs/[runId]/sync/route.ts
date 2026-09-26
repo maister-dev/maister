@@ -5,6 +5,11 @@ import { eq } from "drizzle-orm";
 import pino from "pino";
 import { z } from "zod";
 
+import {
+  maisterErrorBody,
+  pushConflictFields,
+} from "../workbench-lifecycle/route-utils";
+
 import { loadRunnerCatalog } from "@/lib/acp-runners/catalog";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
@@ -21,9 +26,20 @@ const log = pino({
 
 const syncBodySchema = z
   .object({
+    // ADR-181 D9: what the branch is updated onto (default the target).
+    onto: z.enum(["target", "base", "published"]).optional(),
     strategy: z.enum(["rebase", "merge"]).optional(),
     agent: z.boolean().optional(),
     push: z.boolean().optional(),
+    // ADR-181 (C): the publication head the operator confirmed replacing — the
+    // `remoteHead` of a `publication_diverged` refusal, a full SHA.
+    expectedRemoteHead: z
+      .string()
+      .regex(
+        /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/,
+        "expectedRemoteHead must be a full SHA",
+      )
+      .optional(),
     runnerId: z.string().min(1).max(255).optional(),
   })
   .strict();
@@ -52,7 +68,7 @@ function httpStatusForCode(code: string): number {
 function errorResponse(err: unknown, runId: string): NextResponse {
   if (isMaisterError(err)) {
     return NextResponse.json(
-      { code: err.code, message: err.message },
+      { ...maisterErrorBody(err), ...pushConflictFields(err) },
       { status: httpStatusForCode(err.code) },
     );
   }
@@ -126,9 +142,13 @@ export async function POST(
 
     const result = await syncRunTarget({
       runId,
+      onto: body.onto,
+      // C17: the panel's update is admitted by the workbench git policy.
+      admission: "workbench",
       strategy: body.strategy,
       agent: body.agent,
       push: body.push,
+      expectedRemoteHead: body.expectedRemoteHead,
       runnerId: body.runnerId,
       actor: { type: "user", id: sessionUser.id },
     });
@@ -139,6 +159,7 @@ export async function POST(
         outcome: result.outcome,
         behind: result.behind,
         pushed: result.pushed,
+        conflictedFiles: result.conflictedFiles,
       },
       { status: result.outcome === "agent_launched" ? 202 : 200 },
     );

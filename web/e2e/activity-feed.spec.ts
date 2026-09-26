@@ -19,6 +19,13 @@ import { loadFixtures, type E2EUserFixture } from "./_seed/fixtures";
 // away for it. A member view needs its OWN context, started from empty storage.
 const EMPTY_STORAGE = { cookies: [], origins: [] };
 
+// Page content is read inside <main>: for a moment after a load the page can be
+// in the document twice (web/CLAUDE.md, "A freshly loaded page can be in the
+// DOM twice"). The rail's badges are the layout's and stay page-level.
+function feed(page: Page) {
+  return page.getByRole("main");
+}
+
 async function pageAs(browser: Browser, user: E2EUserFixture): Promise<Page> {
   const context = await browser.newContext({ storageState: EMPTY_STORAGE });
   const page = await context.newPage();
@@ -57,18 +64,18 @@ test("E2E-ATN-10 the divider marks the last visit, and clearing it leaves the de
   try {
     await page.goto("/activity");
 
-    const rows = page.getByTestId("activity-row");
-    const unreadRows = page.locator(
+    const rows = feed(page).getByTestId("activity-row");
+    const unreadRows = feed(page).locator(
       '[data-testid="activity-row"][data-activity-unread="true"]',
     );
-    const divider = page.getByTestId("activity-divider");
+    const divider = feed(page).getByTestId("activity-divider");
     const decisionsBadge = page.getByTestId("inbox-nav-badge");
     const updatesBadge = page.getByTestId("activity-nav-badge");
 
     await expect(rows).toHaveCount(4);
     await expect(divider).toBeVisible();
     await expect(unreadRows).toHaveCount(fx.unread);
-    await expect(page.getByTestId("activity-caught-up")).toHaveCount(0);
+    await expect(feed(page).getByTestId("activity-caught-up")).toHaveCount(0);
 
     // Distinct numbers in ONE render is already half the proof: a single value
     // rendered twice could not disagree with itself. The leading digit is the
@@ -81,11 +88,11 @@ test("E2E-ATN-10 the divider marks the last visit, and clearing it leaves the de
     await expect(decisionsBadge).toHaveClass(/bg-amber/);
     await expect(updatesBadge).not.toHaveClass(/amber/);
 
-    await page.getByTestId("activity-mark-read").click();
+    await feed(page).getByTestId("activity-mark-read").click();
 
     // The cursor POST moved `seen_through` past the newest rendered row, so the
     // divider has nothing left to separate and the neutral population is empty.
-    await expect(page.getByTestId("activity-caught-up")).toBeVisible({
+    await expect(feed(page).getByTestId("activity-caught-up")).toBeVisible({
       timeout: 30_000,
     });
     await expect(divider).toHaveCount(0);
@@ -100,7 +107,7 @@ test("E2E-ATN-10 the divider marks the last visit, and clearing it leaves the de
 
     // Monotonic: a reload does not resurrect the divider.
     await page.reload();
-    await expect(page.getByTestId("activity-divider")).toHaveCount(0);
+    await expect(feed(page).getByTestId("activity-divider")).toHaveCount(0);
     await expect(page.getByTestId("activity-nav-badge")).toHaveCount(0);
 
     // And the decision is still there to be made.

@@ -10,16 +10,22 @@ import {
   projects as projectsTable,
   runs as runsTable,
   scratchRuns as scratchRunsTable,
+  tasks as tasksTable,
   workspaces as workspacesTable,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { assertEvidenceReady } from "@/lib/flows/graph/evidence-readiness";
-import { selectPrAdapter } from "@/lib/runs/pr-adapter";
+import { getPrState, selectPrAdapter } from "@/lib/runs/pr-adapter";
+import {
+  assertPushKeepsPublication,
+  PublicationDivergedError,
+} from "@/lib/runs/publication-guard";
 import {
   branchExists,
   headCommit,
   promoteLocalMerge,
   pushBranch,
+  remoteBranchHead,
   resolveBaseCommit,
   squashRunBranch,
 } from "@/lib/worktree";
@@ -55,17 +61,28 @@ type Tables = {
   scratch_runs: Row[];
   workspaces: Row[];
   projects: Row[];
+  // ADR-181 D5: the public name's `{task_key}` / `{slug}` come from the task.
+  tasks: Row[];
 };
 
-const dbState: { tables: Tables } = {
-  tables: { runs: [], scratch_runs: [], workspaces: [], projects: [] },
-};
+function emptyTables(): Tables {
+  return {
+    runs: [],
+    scratch_runs: [],
+    workspaces: [],
+    projects: [],
+    tasks: [],
+  };
+}
+
+const dbState: { tables: Tables } = { tables: emptyTables() };
 
 function tableOf(t: unknown): keyof Tables {
   if (t === runsTable) return "runs";
   if (t === scratchRunsTable) return "scratch_runs";
   if (t === workspacesTable) return "workspaces";
   if (t === projectsTable) return "projects";
+  if (t === tasksTable) return "tasks";
   throw new Error("unknown table");
 }
 
@@ -89,10 +106,18 @@ function selectChain() {
 function updateChain(table: unknown) {
   return {
     set: (vals: Row) => ({
-      where: async (_pred?: unknown) => {
-        for (const row of dbState.tables[tableOf(table)]) {
+      // Awaitable as-is, and `.returning()` for a CAS writer (ADR-181's
+      // `recordPublished` counts the rows its fence matched).
+      where: (_pred?: unknown) => {
+        const rows = dbState.tables[tableOf(table)];
+
+        for (const row of rows) {
           Object.assign(row, vals);
         }
+
+        return Object.assign(Promise.resolve(undefined), {
+          returning: async () => rows.map((row) => ({ id: row.id })),
+        });
       },
     }),
   };
@@ -128,8 +153,20 @@ const createOrUpdatePr = vi.fn(async () => ({
 }));
 const preflight = vi.fn(async () => undefined);
 
+// The provider's view of a recorded PR. The default is an open PR at the
+// run's head, so a re-promote reads as it did before any PR was merged.
+const OPEN_AT_HEAD = {
+  kind: "state" as const,
+  state: "open" as const,
+  mergedAt: null,
+  mergeCommitSha: null,
+  hasConflicts: false,
+  headSha: "source-head-000",
+};
+
 vi.mock("@/lib/runs/pr-adapter", () => ({
   selectPrAdapter: vi.fn(() => ({ preflight, createOrUpdatePr })),
+  getPrState: vi.fn(async () => OPEN_AT_HEAD),
 }));
 
 vi.mock("@/lib/worktree", () => ({
@@ -141,12 +178,23 @@ vi.mock("@/lib/worktree", () => ({
   })),
   findTargetMergeByRunId: vi.fn(async () => null),
   headCommit: vi.fn(async () => "source-head-000"),
+  // ADR-181 D4: no upstream yet → the template names the PR branch; no remote
+  // head yet → the lease expects the ref absent.
+  branchUpstream: vi.fn(async () => null),
+  remoteBranchHead: vi.fn(async () => null),
   promoteLocalMerge: vi.fn(async () => "merged00"),
   promoteRebaseMerge: vi.fn(async () => "rebased00"),
   pushBranch: vi.fn(async () => undefined),
   resolveBaseCommit: vi.fn(async () => "tip00000"),
   resolveBaseRef: vi.fn(async () => "base0000"),
   squashRunBranch: vi.fn(async () => ({ squashed: false, collapsed: 0 })),
+}));
+
+// ADR-181 (C): the guard's own git behaviour is proven against real git in the
+// sync suite; here only its wiring into the squash PR promotion is observed.
+vi.mock("@/lib/runs/publication-guard", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/runs/publication-guard")>()),
+  assertPushKeepsPublication: vi.fn(async () => undefined),
 }));
 
 vi.mock("@/lib/flows/graph/evidence-readiness", () => ({
@@ -199,9 +247,11 @@ function seedGithubFlowRun(
     currentStepId: "review-node",
     endedAt: null,
   });
+  dbState.tables.tasks.push({ id: "task-1", number: 5, title: "Ship it" });
   dbState.tables.projects.push({
     id: "project-1",
     slug: "demo",
+    taskKey: "DEMO",
     mainBranch: "main",
     provider: overrides.provider ?? "github",
     repoUrl:
@@ -245,11 +295,15 @@ async function expectMaisterCode(p: Promise<unknown>, code: string) {
 }
 
 beforeEach(() => {
-  dbState.tables = { runs: [], scratch_runs: [], workspaces: [], projects: [] };
+  dbState.tables = emptyTables();
   vi.mocked(branchExists).mockReset().mockResolvedValue(true);
   vi.mocked(headCommit).mockReset().mockResolvedValue("source-head-000");
   vi.mocked(promoteLocalMerge).mockReset().mockResolvedValue("merged00");
   vi.mocked(pushBranch).mockReset().mockResolvedValue(undefined);
+  vi.mocked(remoteBranchHead).mockReset().mockResolvedValue(null);
+  vi.mocked(assertPushKeepsPublication)
+    .mockReset()
+    .mockResolvedValue(undefined);
   vi.mocked(resolveBaseCommit).mockReset().mockResolvedValue("tip00000");
   vi.mocked(squashRunBranch)
     .mockReset()
@@ -261,6 +315,7 @@ beforeEach(() => {
     .mockReset()
     .mockReturnValue({ preflight, createOrUpdatePr } as never);
   preflight.mockReset().mockResolvedValue(undefined);
+  vi.mocked(getPrState).mockReset().mockResolvedValue(OPEN_AT_HEAD);
   createOrUpdatePr.mockReset().mockResolvedValue({
     url: "https://github.com/org/repo/pull/77",
     number: 77,
@@ -306,23 +361,33 @@ describe("promoteRun — pull_request happy path (github)", () => {
     expect(selectPrAdapter).toHaveBeenCalledWith("github", expect.anything());
     expect(preflight).toHaveBeenCalledTimes(1);
 
-    // Branch pushed before the PR is opened.
+    // Branch pushed before the PR is opened — under its PUBLIC name (ADR-181
+    // D4), with an upstream so a later panel publish keeps the same name.
     expect(pushBranch).toHaveBeenCalledWith({
       projectRepoPath: "/repos/demo",
       remote: "origin",
       branch: "maister/flow-1",
+      remoteBranch: "feature/DEMO-5-ship-it",
+      setUpstream: true,
+    });
+    expect(dbState.tables.workspaces[0]).toMatchObject({
+      publishedBranch: "feature/DEMO-5-ship-it",
+      publishedRemote: "origin",
     });
     const pushOrder = vi.mocked(pushBranch).mock.invocationCallOrder[0];
     const prOrder = createOrUpdatePr.mock.invocationCallOrder[0];
 
     expect(pushOrder).toBeLessThan(prOrder);
 
-    // createOrUpdatePr received the source/target branches.
+    // createOrUpdatePr received the source/target branches — the PR head is
+    // the public name the push created. A promotion opens a ready PR (ADR-181
+    // D11: the panel's Open PR is where a draft is asked for).
     expect(createOrUpdatePr).toHaveBeenCalledWith(
       expect.objectContaining({
         repoPath: "/repos/demo",
-        sourceBranch: "maister/flow-1",
+        sourceBranch: "feature/DEMO-5-ship-it",
         targetBranch: "main",
+        draft: false,
       }),
     );
 
@@ -374,6 +439,258 @@ describe("promoteRun — pull_request happy path (github)", () => {
 
     // The PR url/number is captured in the recorded artifact (no new kind — Q3).
     expect(serialized).toContain("https://github.com/org/repo/pull/77");
+  });
+});
+
+// =============================================================================
+// ADR-181 D13 (RED 22): a scratch run promotes through a PR — the same publish
+// and open cores, onto its locked target, and the scratch dialog settles Done.
+// =============================================================================
+
+function seedGithubScratchRun(): string {
+  const runId = "run-scratch-pr";
+
+  dbState.tables.runs.push({
+    id: runId,
+    runKind: "scratch",
+    projectId: "project-1",
+    taskId: null,
+    status: "Review",
+    acpSessionId: "acp-2",
+    currentStepId: "scratch-dialog",
+    endedAt: null,
+  });
+  dbState.tables.scratch_runs.push({
+    runId,
+    projectId: "project-1",
+    baseBranch: "main",
+    baseCommit: "abc1234",
+    targetBranch: null,
+    dialogStatus: "Review",
+    supervisorSessionId: "sup-1",
+    updatedAt: null,
+  });
+  dbState.tables.projects.push({
+    id: "project-1",
+    slug: "demo",
+    taskKey: "DEMO",
+    mainBranch: "main",
+    provider: "github",
+    repoUrl: "https://github.com/org/repo.git",
+  });
+  dbState.tables.workspaces.push({
+    id: "workspace-2",
+    runId,
+    projectId: "project-1",
+    branch: "scratch/demo",
+    worktreePath: "/wt/scratch-demo",
+    parentRepoPath: "/repos/demo",
+    removedAt: null,
+    baseBranch: "main",
+    baseCommit: "abc1234",
+    targetBranch: "main",
+    promotionMode: "local_merge",
+    promotionState: "none",
+    promotionAttemptId: null,
+    promotionClaimedAt: null,
+    promotionOwnerUserId: null,
+    prUrl: null,
+    prNumber: null,
+    promotedAt: null,
+    scheduledRemovalAt: null,
+  });
+
+  return runId;
+}
+
+describe("promoteRun — scratch pull_request (ADR-181 D13)", () => {
+  it("publishes under the public name, opens the PR onto the locked target, and settles the dialog Done", async () => {
+    const runId = seedGithubScratchRun();
+    // A task-less run's `{task_key}` falls back to its run id.
+    const publicBranch = `feature/run-${runId.slice(0, 8)}`;
+
+    const res = await callPromote(runId, { mode: "pull_request" });
+
+    expect(res).toMatchObject({
+      ok: true,
+      mode: "pull_request",
+      pullRequestUrl: "https://github.com/org/repo/pull/77",
+      prNumber: 77,
+    });
+    expect(assertEvidenceReady).toHaveBeenCalledWith(
+      runId,
+      "merge",
+      expect.anything(),
+    );
+    expect(pushBranch).toHaveBeenCalledWith({
+      projectRepoPath: "/repos/demo",
+      remote: "origin",
+      branch: "scratch/demo",
+      remoteBranch: publicBranch,
+      setUpstream: true,
+    });
+    expect(createOrUpdatePr).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceBranch: publicBranch,
+        targetBranch: "main",
+        draft: false,
+      }),
+    );
+    expect(promoteLocalMerge).not.toHaveBeenCalled();
+    expect(dbState.tables.scratch_runs[0]).toMatchObject({
+      dialogStatus: "Done",
+      targetBranch: "main",
+      supervisorSessionId: null,
+    });
+    expect(dbState.tables.runs[0]).toMatchObject({
+      status: "Done",
+      promotedHeadSha: "source-head-000",
+      mergeCommitSha: null,
+    });
+    expect(dbState.tables.workspaces[0]).toMatchObject({
+      promotionState: "done",
+      prUrl: "https://github.com/org/repo/pull/77",
+      prNumber: 77,
+      publishedBranch: publicBranch,
+      publishedRemote: "origin",
+    });
+    expect(
+      emitWebhookEventMock.mock.calls.map(
+        (c) => (c[0] as { type: string }).type,
+      ),
+    ).toEqual(["run.promoted", "run.done"]);
+  });
+
+  it("refuses a scratch PR onto a target other than the locked one before any push", async () => {
+    const runId = seedGithubScratchRun();
+
+    await expectMaisterCode(
+      callPromote(runId, { mode: "pull_request", targetBranch: "release" }),
+      "PRECONDITION",
+    );
+
+    expect(pushBranch).not.toHaveBeenCalled();
+    expect(createOrUpdatePr).not.toHaveBeenCalled();
+  });
+});
+
+// =============================================================================
+// a recorded PR the provider reports merged — it IS the delivery
+// =============================================================================
+
+// The PR was merged on the provider before the run was promoted or finalized.
+// Squashing or pushing now would rewrite a branch the provider already merged,
+// and the adapters find only open PRs, so a second PR would be attempted. The
+// merged PR is finalized as it stands, when it carries the run's head.
+describe("promoteRun — a recorded PR the provider reports merged", () => {
+  const MERGED_AT_HEAD = {
+    ...OPEN_AT_HEAD,
+    state: "merged" as const,
+    mergedAt: "2026-09-26T08:00:00Z",
+    mergeCommitSha: "m".repeat(40),
+  };
+
+  it("finalizes it as it stands: no squash, no push, no new PR", async () => {
+    const runId = seedGithubFlowRun({
+      prUrl: "https://github.com/org/repo/pull/77",
+      prNumber: 77,
+    });
+
+    dbState.tables.runs[0].executionPolicy = { preset: "unattended" };
+    vi.mocked(getPrState).mockResolvedValue(MERGED_AT_HEAD);
+
+    await callPromote(runId, {
+      mode: "pull_request",
+      reviewedTargetCommit: "tip00000",
+    });
+
+    expect(squashRunBranch).not.toHaveBeenCalled();
+    expect(pushBranch).not.toHaveBeenCalled();
+    expect(createOrUpdatePr).not.toHaveBeenCalled();
+    expect(dbState.tables.runs[0]).toMatchObject({
+      status: "Done",
+      promotedHeadSha: "source-head-000",
+    });
+    expect(dbState.tables.workspaces[0]).toMatchObject({
+      promotionState: "done",
+      prUrl: "https://github.com/org/repo/pull/77",
+      prNumber: 77,
+    });
+  });
+
+  it("refuses, rewriting nothing, when the worktree moved past the merged head", async () => {
+    const runId = seedGithubFlowRun({
+      prUrl: "https://github.com/org/repo/pull/77",
+      prNumber: 77,
+    });
+
+    vi.mocked(getPrState).mockResolvedValue({
+      ...MERGED_AT_HEAD,
+      headSha: "older-head-00",
+    });
+
+    await expect(
+      callPromote(runId, {
+        mode: "pull_request",
+        reviewedTargetCommit: "tip00000",
+      }),
+    ).rejects.toMatchObject({
+      code: "PRECONDITION",
+      details: { reason: "merged_pr_behind" },
+    });
+    expect(pushBranch).not.toHaveBeenCalled();
+    expect(createOrUpdatePr).not.toHaveBeenCalled();
+    expect(dbState.tables.runs[0].status).toBe("Review");
+    expect(dbState.tables.workspaces[0].promotionState).toBe("failed");
+  });
+
+  // The scan saw it merged and the provider cannot be asked now: pushing again
+  // is the one thing that must not happen, so the retry waits for the provider.
+  it("pushes nothing when the scan saw the PR merged and the provider cannot be read", async () => {
+    const runId = seedGithubFlowRun({
+      prUrl: "https://github.com/org/repo/pull/77",
+      prNumber: 77,
+    });
+
+    dbState.tables.workspaces[0].prState = "merged";
+    vi.mocked(getPrState).mockResolvedValue({
+      kind: "skip",
+      transient: true,
+      reason: "gh CLI not available",
+    });
+
+    await expectMaisterCode(
+      callPromote(runId, {
+        mode: "pull_request",
+        reviewedTargetCommit: "tip00000",
+      }),
+      "EXECUTOR_UNAVAILABLE",
+    );
+    expect(pushBranch).not.toHaveBeenCalled();
+    expect(createOrUpdatePr).not.toHaveBeenCalled();
+    expect(dbState.tables.runs[0].status).toBe("Review");
+    expect(dbState.tables.workspaces[0].promotionState).toBe("claiming");
+  });
+
+  // No scan tracks a scratch PR, so only the provider can say it was merged.
+  it("finalizes a scratch run's merged PR the same way, settling the dialog", async () => {
+    const runId = seedGithubScratchRun();
+
+    Object.assign(dbState.tables.workspaces[0], {
+      prUrl: "https://github.com/org/repo/pull/77",
+      prNumber: 77,
+    });
+    vi.mocked(getPrState).mockResolvedValue(MERGED_AT_HEAD);
+
+    await callPromote(runId, { mode: "pull_request" });
+
+    expect(pushBranch).not.toHaveBeenCalled();
+    expect(createOrUpdatePr).not.toHaveBeenCalled();
+    expect(dbState.tables.scratch_runs[0].dialogStatus).toBe("Done");
+    expect(dbState.tables.runs[0]).toMatchObject({
+      status: "Done",
+      promotedHeadSha: "source-head-000",
+    });
   });
 });
 
@@ -594,10 +911,93 @@ describe("promoteRun — pull_request + commits=squash_rework (C2)", () => {
 
     // A rewrite happened → the (possibly already-pushed) PR branch is forced.
     expect(pushBranch).toHaveBeenCalledWith(
-      expect.objectContaining({ branch: "maister/flow-1", force: true }),
+      expect.objectContaining({
+        branch: "maister/flow-1",
+        force: true,
+        // ADR-181 D4: an explicit lease read BEFORE the push (the remote ref
+        // is absent here, so the lease expects it absent).
+        leaseSha: null,
+      }),
     );
     expect(res.ok).toBe(true);
     expect(dbState.tables.runs[0].status).toBe("Done");
+  });
+
+  // ADR-181 (C): the forced PR update would drop commits only the PR branch
+  // has, so the guard runs BEFORE the squash rewrites anything, keeps the
+  // target's commits, and the push leases exactly the head it checked — one
+  // read, no second look.
+  it("asks the publication guard before the squash, and leases exactly the head it checked", async () => {
+    const runId = seedGithubFlowRun();
+    const head = "f".repeat(40);
+
+    dbState.tables.runs[0].executionPolicy = { preset: "unattended" };
+    vi.mocked(remoteBranchHead).mockResolvedValue(head);
+    vi.mocked(squashRunBranch).mockResolvedValueOnce({
+      squashed: true,
+      collapsed: 2,
+    });
+
+    await callPromote(runId, {
+      mode: "pull_request",
+      reviewedTargetCommit: "tip00000",
+    });
+
+    expect(assertPushKeepsPublication).toHaveBeenCalledWith(
+      expect.objectContaining({
+        localBranch: "maister/flow-1",
+        remote: "origin",
+        remoteHead: head,
+        keptRefs: ["main", "refs/remotes/origin/main"],
+      }),
+    );
+    const guardOrder = vi.mocked(assertPushKeepsPublication).mock
+      .invocationCallOrder[0];
+    const squashOrder = vi.mocked(squashRunBranch).mock.invocationCallOrder[0];
+
+    expect(guardOrder).toBeLessThan(squashOrder);
+    expect(remoteBranchHead).toHaveBeenCalledTimes(1);
+    expect(pushBranch).toHaveBeenCalledWith(
+      expect.objectContaining({ force: true, leaseSha: head }),
+    );
+  });
+
+  it("rewrites nothing and releases the claim when the guard refuses", async () => {
+    const runId = seedGithubFlowRun();
+
+    dbState.tables.runs[0].executionPolicy = { preset: "unattended" };
+    vi.mocked(remoteBranchHead).mockResolvedValue("f".repeat(40));
+    vi.mocked(assertPushKeepsPublication).mockRejectedValueOnce(
+      new PublicationDivergedError({
+        remoteHead: "f".repeat(40),
+        remoteRef: "origin/feature/DEMO-5-ship-it",
+        remoteOnlyCommits: 1,
+      }),
+    );
+
+    await expect(
+      callPromote(runId, {
+        mode: "pull_request",
+        reviewedTargetCommit: "tip00000",
+      }),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "publication_diverged" },
+    });
+    expect(squashRunBranch).not.toHaveBeenCalled();
+    expect(pushBranch).not.toHaveBeenCalled();
+    expect(dbState.tables.workspaces[0].promotionState).toBe("failed");
+  });
+
+  it("asks nothing for a promotion that does not force (keep_all)", async () => {
+    const runId = seedGithubFlowRun();
+
+    await callPromote(runId, {
+      mode: "pull_request",
+      reviewedTargetCommit: "tip00000",
+    });
+
+    expect(assertPushKeepsPublication).not.toHaveBeenCalled();
   });
 
   it("still force-pushes when this attempt's squash is a no-op under a squash policy (retry-stable)", async () => {

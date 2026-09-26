@@ -5,7 +5,8 @@ import { loadFixtures } from "./_seed/fixtures";
 // ADR-141 — PR reopen composition proof against the seeded harness.
 // The fixture is a Done run whose PR is open + unmergeable (exactly what
 // pr_state_scan records). The board surfaces the conflicts chip; reopening
-// returns the run to Review, where the sync dialog is reachable to resolve it.
+// returns the run to Review, where the run git panel's Update section (ADR-181
+// D9) is reachable to resolve it.
 // No live gh/glab: the PR state is seeded, never fetched.
 
 // The run-detail route is one of the heaviest in the app; under `next dev` its
@@ -48,9 +49,9 @@ test.describe("PR reopen (ADR-141)", () => {
       timeout: 60_000,
     });
 
-    // (4) The sync dialog is reachable so the reviewer can resolve the conflict
+    // (4) The update is reachable so the reviewer can resolve the conflict
     //     that made the PR unmergeable in the first place.
     await page.getByTestId("review-sync-open").first().click();
-    await expect(page.getByTestId("review-sync-dialog")).toBeVisible();
+    await expect(page.getByTestId("git-panel-section-update")).toBeVisible();
   });
 });

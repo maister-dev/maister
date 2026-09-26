@@ -26,7 +26,11 @@ imports; they are not canonical execution-runtime state transitions.
 
 The behavior below is the shipped baseline. ADR-148 changes only the
 workspace cleanup boundary: automatic row-backed GC selects the disposable
-set `{Done, Abandoned}` and never selects `Review`, `Crashed`, or `Failed`.
+set `{Done, Abandoned}` and never selects `Review` or `Crashed`. ADR-181 (owner,
+2026-09-23) adds `Failed` to the worktree set (`WORKTREE_TTL_RUN_STATUSES`) — a
+failed attempt's worktree expires like a finished one, preserved first and
+re-attachable from `maister/archive/<runId>` — while runtime-object retention
+keeps reading `{Done, Abandoned}`, so a failed run's evidence is not collected.
 All row-backed removal paths use a renewable lifecycle claim that fences every
 irreversible Git/filesystem step and the final transaction. A persisted result
 records `removal_kind` independently from `preservation_outcome`; a path absent
@@ -180,6 +184,7 @@ stateDiagram-v2
         Countdown --> Pruned: nothing to preserve<br/>(clean + merged)
         Pruned --> [*]
         Pruned --> [*]: reopen (Done only, ADR-141)<br/>re-attach worktree, clear scheduled_removal_at/archived_at/removed_at
+        Pruned --> Countdown: reattach (ADR-181)<br/>removed_at cleared, fresh scheduled_removal_at
     }
 ```
 
@@ -370,9 +375,14 @@ run the same classifier, the same Phase-1 CAS + cap re-admission, and the same
 success `runStatus` reports the run's COMMITTED status rather than a constant —
 so a second concurrent call is `409` and a cap-full recover queues rather than
 over-spawning, and the queued promotion reaches the same graph re-entry through
-`driveResume`. The three `409` outcomes are machine-distinguishable on
-`details.reason` (`discard_only`, `recover_cas_lost`, `workspace_removed`), which
-is what makes the operation safe for an unattended caller. See
+`driveResume`. The four `409` outcomes are machine-distinguishable on
+`details.reason` (`discard_only`, `recover_cas_lost`, `workspace_removed`, and
+ADR-181's retryable `busy` — a live workbench claim owns the worktree), which is
+what makes the operation safe for an unattended caller. One writer per worktree
+holds in the recover direction too: the Phase-1 transaction reads the
+workspace's lifecycle and promotion claims after it takes the run row, and every
+claim decides on the run's status under that same row lock, so a recover and a
+git panel operation can never both own the tree. See
 [external-operations.md](external-operations.md).
 
 ### Automated crash-recover re-entry (Implemented — ADR-176)
@@ -464,7 +474,10 @@ promotion service).
 flowchart TD
     Start([GC candidate: terminal run,<br/>effective deadline reached,<br/>removed_at IS NULL]) --> Porcelain[statusPorcelain --untracked-files=all]
     Porcelain --> Dirty{dirty?}
-    Dirty -- yes --> Snap[git add -A &&<br/>git commit --no-verify<br/>maister: GC snapshot of runId]
+    Dirty -- yes --> Staged{staged work the<br/>snapshot overwrites?}
+    Staged -- yes --> Rescue[writeRescueRef: rescue ref,<br/>the index as its second parent]
+    Staged -- no --> Snap[git add -A &&<br/>git commit --no-verify<br/>maister: GC snapshot of runId]
+    Rescue --> Snap
     Dirty -- no --> DivCheck{logRange base..branch<br/>non-empty?}
     Snap --> Arch[git branch -f maister/archive/runId HEAD]
     DivCheck -- yes --> Arch
@@ -579,7 +592,7 @@ A flow run that finishes `Running → Done` by result-only completion stamps
 `workspaces.scheduled_removal_at = now + MAISTER_GC_AGE_DAYS` in the same
 terminal transaction, exactly like a promoted run. GC needs no new branch: the
 row is already `Done` with a deadline, which is what
-`DISPOSABLE_WORKSPACE_RUN_STATUSES` collects. See
+the worktree GC collects (`WORKTREE_TTL_RUN_STATUSES`). See
 [`run-results.md`](run-results.md) and [`workspaces.md`](workspaces.md).
 
 ## Expectations
@@ -652,6 +665,9 @@ row is already `Done` with a deadline, which is what
   untracked changes are snapshot-committed and pointed at archive branch
   `maister/archive/<runId>`; removal MUST be gated on preserve success and a
   preserve failure MUST skip the row (never force-remove unpreserved state).
+  A path staged and then changed again in the tree MUST first be kept as a
+  rescue ref whose second parent is the index (ADR-181 D8), since the
+  snapshot's `add -A` overwrites the only copy of the staged version.
 - Operator archive/drop actions reuse the same preserve-before-remove
   invariant immediately from the workbench lifecycle UI. Background GC remains
   schedule-driven; user-initiated drop is claim-serialized through

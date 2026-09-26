@@ -23,7 +23,11 @@ import { MaisterError } from "@/lib/errors";
 //       repoPath: string; remote: string;
 //       sourceBranch: string; targetBranch: string;
 //       title: string; body: string;
-//     }): Promise<{ url: string; number: number }>;
+//       draft?: boolean;      // ADR-181: gh/glab --draft on CREATE; the Gitea
+//                             // family a `WIP: ` title prefix
+//     }): Promise<{ url: string; number: number; reused: boolean }>;
+//                             // reused (C18): an open PR for the head/base was
+//                             // returned untouched — nothing was applied
 //   }
 //
 //   export function selectPrAdapter(
@@ -409,6 +413,7 @@ describe("GhCliAdapter — createOrUpdatePr happy path (no existing PR)", () => 
     expect(result).toEqual({
       url: "https://github.com/org/repo/pull/42",
       number: 42,
+      reused: false,
     });
 
     // A `gh pr list` (detect) preceded `gh pr create` (no blind create).
@@ -450,6 +455,7 @@ describe("GlabCliAdapter — createOrUpdatePr happy path (no existing MR)", () =
     expect(result).toEqual({
       url: "https://gitlab.com/org/repo/-/merge_requests/7",
       number: 7,
+      reused: false,
     });
   });
 });
@@ -486,6 +492,7 @@ describe("GiteaApiAdapter — createOrUpdatePr happy path (no existing PR)", () 
     expect(result).toEqual({
       url: "https://gitea.example.com/org/repo/pulls/13",
       number: 13,
+      reused: false,
     });
 
     // Bearer token carried on the request; the body has head/base.
@@ -529,6 +536,7 @@ describe("GiteaApiAdapter — createOrUpdatePr happy path (no existing PR)", () 
     expect(result).toEqual({
       url: "https://gitverse.ru/org/repo/pulls/3",
       number: 3,
+      reused: false,
     });
 
     const post = fetchCalls.find(
@@ -575,6 +583,7 @@ describe("GhCliAdapter — idempotent (existing PR for the head branch)", () => 
     expect(result).toEqual({
       url: "https://github.com/org/repo/pull/9",
       number: 9,
+      reused: true,
     });
 
     // No `gh pr create` was issued (update path).
@@ -621,6 +630,7 @@ describe("GiteaApiAdapter — idempotent (existing open PR for the head branch)"
     expect(result).toEqual({
       url: "https://gitea.example.com/org/repo/pulls/5",
       number: 5,
+      reused: true,
     });
 
     const created = fetchCalls.some(
@@ -682,6 +692,7 @@ describe("GhCliAdapter — does NOT match an existing PR for a different base", 
     expect(result).toEqual({
       url: "https://github.com/org/repo/pull/12",
       number: 12,
+      reused: false,
     });
 
     const created = execCalls.some(
@@ -738,6 +749,7 @@ describe("GlabCliAdapter — does NOT match an existing MR for a different base"
     expect(result).toEqual({
       url: "https://gitlab.com/org/repo/-/merge_requests/5",
       number: 5,
+      reused: false,
     });
 
     const created = execCalls.some(
@@ -936,6 +948,7 @@ describe("GiteaApiAdapter — paginates the open-PR lookup", () => {
     expect(result).toEqual({
       url: "https://gitea.example.com/org/repo/pulls/200",
       number: 200,
+      reused: true,
     });
 
     const gets = fetchCalls.filter(
@@ -1026,5 +1039,166 @@ describe("no shell — execFile-style array args (no shell interpolation)", () =
         true,
       );
     }
+  });
+});
+
+// =============================================================================
+// ADR-181 D11 (RED 18): `draft` opens the PR as a draft — gh/glab `--draft` on
+// create only, the Gitea family a `WIP: ` title prefix (its API has no draft
+// flag) — and `reused` (C18) says whether an existing open PR was returned
+// untouched, so the caller never claims the request's title/draft were applied.
+// =============================================================================
+
+describe("createOrUpdatePr — draft and reused (ADR-181)", () => {
+  function ghCreates(url: string): void {
+    execImpls["gh"] = async (args) => {
+      const argv = args as readonly string[];
+
+      if (argv.includes("list")) return { stdout: "[]", stderr: "" };
+      if (argv.includes("create")) return { stdout: `${url}\n`, stderr: "" };
+
+      return { stdout: "", stderr: "" };
+    };
+  }
+
+  function argvOf(file: string, verb: string): string[] {
+    const call = execCalls.find(
+      (c) => c.file === file && (c.args as string[]).includes(verb),
+    );
+
+    expect(call, `${file} ${verb}`).toBeDefined();
+
+    return call!.args as string[];
+  }
+
+  it("gh: passes --draft on create exactly when requested, and reports the PR as not reused", async () => {
+    const { selectPrAdapter } = await loadAdapter();
+
+    ghCreates("https://github.com/org/repo/pull/42");
+    const adapter = selectPrAdapter("github", {
+      remoteUrl: "https://github.com/org/repo.git",
+    });
+
+    await expect(
+      adapter.createOrUpdatePr({ ...PR_ARGS, draft: true }),
+    ).resolves.toEqual({
+      url: "https://github.com/org/repo/pull/42",
+      number: 42,
+      reused: false,
+    });
+    expect(argvOf("gh", "create")).toContain("--draft");
+    expect(argvOf("gh", "list")).not.toContain("--draft");
+
+    execCalls.length = 0;
+    await adapter.createOrUpdatePr({ ...PR_ARGS });
+    expect(argvOf("gh", "create")).not.toContain("--draft");
+  });
+
+  it("gh: an existing open PR is returned untouched and reported as reused", async () => {
+    const { selectPrAdapter } = await loadAdapter();
+
+    execImpls["gh"] = async (args) => {
+      const argv = args as readonly string[];
+
+      if (argv.includes("list")) {
+        return {
+          stdout: JSON.stringify([
+            { number: 9, url: "https://github.com/org/repo/pull/9" },
+          ]),
+          stderr: "",
+        };
+      }
+      throw new Error("an existing PR must never be re-created or edited");
+    };
+    const adapter = selectPrAdapter("github", {
+      remoteUrl: "https://github.com/org/repo.git",
+    });
+
+    await expect(
+      adapter.createOrUpdatePr({ ...PR_ARGS, draft: true }),
+    ).resolves.toEqual({
+      url: "https://github.com/org/repo/pull/9",
+      number: 9,
+      reused: true,
+    });
+  });
+
+  it("glab: passes --draft on mr create exactly when requested", async () => {
+    const { selectPrAdapter } = await loadAdapter();
+
+    execImpls["glab"] = async (args) => {
+      const argv = args as readonly string[];
+
+      if (argv.includes("list")) return { stdout: "[]", stderr: "" };
+
+      return {
+        stdout: "https://gitlab.com/org/repo/-/merge_requests/7\n",
+        stderr: "",
+      };
+    };
+    const adapter = selectPrAdapter("gitlab", {
+      remoteUrl: "https://gitlab.com/org/repo.git",
+    });
+
+    await expect(
+      adapter.createOrUpdatePr({ ...PR_ARGS, draft: true }),
+    ).resolves.toMatchObject({ number: 7, reused: false });
+    expect(argvOf("glab", "create")).toContain("--draft");
+  });
+
+  it("gitea: a draft is a WIP: title, and the open PR is still found by head/base", async () => {
+    process.env.GITEA_TOKEN = "tkn-gitea";
+    const { selectPrAdapter } = await loadAdapter();
+    let created: Record<string, unknown> | null = null;
+
+    fetchHandler = (_url, init) => {
+      if ((init?.method ?? "GET").toUpperCase() === "POST") {
+        created = JSON.parse(String(init?.body));
+
+        return {
+          status: 201,
+          json: {
+            html_url: "https://gitea.example.com/org/repo/pulls/6",
+            number: 6,
+          },
+        };
+      }
+
+      return { status: 200, json: [] };
+    };
+    const adapter = selectPrAdapter("gitea", {
+      remoteUrl: "https://gitea.example.com/org/repo.git",
+    });
+
+    await expect(
+      adapter.createOrUpdatePr({ ...PR_ARGS, draft: true }),
+    ).resolves.toEqual({
+      url: "https://gitea.example.com/org/repo/pulls/6",
+      number: 6,
+      reused: false,
+    });
+    expect(created).toMatchObject({
+      head: PR_ARGS.sourceBranch,
+      base: PR_ARGS.targetBranch,
+      title: `WIP: ${PR_ARGS.title}`,
+    });
+
+    // The lookup matches head/base only, so the WIP PR is found — not
+    // re-created — on the next call.
+    fetchHandler = () => ({
+      status: 200,
+      json: [
+        {
+          html_url: "https://gitea.example.com/org/repo/pulls/6",
+          number: 6,
+          title: `WIP: ${PR_ARGS.title}`,
+          head: { ref: PR_ARGS.sourceBranch },
+          base: { ref: PR_ARGS.targetBranch },
+        },
+      ],
+    });
+    await expect(
+      adapter.createOrUpdatePr({ ...PR_ARGS, draft: true }),
+    ).resolves.toMatchObject({ number: 6, reused: true });
   });
 });

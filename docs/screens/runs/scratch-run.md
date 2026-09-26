@@ -104,7 +104,10 @@ The scratch screen uses the conversation as the primary center:
    time (both refresh during a live run), action shortcuts including the merge-
    mode promote selector and a red terminate (Stop) action, attachments,
    capability profile, and promotion state. Base/target branch fall back to the
-   scratch metadata when the workspace row's columns are null.
+   scratch metadata when the workspace row's columns are null. (ADR-181 —
+   Implemented) The same lifecycle actions open the run git panel
+   ([`git-panel.md`](git-panel.md)); a scratch PR's chip reads "open (not
+   tracked)" because `pr_state_scan` skips scratch runs.
 6. **Secondary workbench** - Timeline and Evidence are available as lightweight
    secondary tabs. Files and Diff are grouped inside one collapsed-by-default
    **Files / Diff** disclosure below the run interaction surface, and deep links
@@ -186,7 +189,14 @@ stateDiagram-v2
 - `POST /api/scratch-runs/{runId}/discard` abandons a scratch workspace.
 - `POST /api/runs/{runId}/promote` promotes the branch; the inspector exposes a
   merge-mode selector — `local_merge` (`--no-ff`), `rebase_merge`, or
-  `pull_request`.
+  `pull_request`. (ADR-181 — Implemented) The server honours all three,
+  target-locked to `scratch_runs.target_branch ?? base_branch` (another target
+  is `PRECONDITION`): a rebase lands by fast-forward (no merge commit), and a PR
+  goes through the workspace run's publish and open cores and settles the
+  dialog `Done`.
+- (ADR-181 — Implemented) The git panel's routes (`git-state`, `discard-changes`,
+  `export-branch`, `pr`, `pr/finalize`, `reattach`) serve scratch runs too; see
+  [`git-panel.md`](git-panel.md).
 - `GET /api/runs/{runId}/diff` and `GET /api/runs/{runId}/change-summary` render
   the scratch changes as base commit → working tree (committed, uncommitted, and
   untracked files), since a scratch agent edits files without committing.

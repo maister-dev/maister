@@ -172,8 +172,12 @@ the row only when attention is required):
 | NeedsInput / NeedsInputIdle | amber (`--attention`, new) | no | yes |
 | Review | teal (`--accent-3`) | no | yes |
 | Crashed | red (`--danger`) | no | yes |
+| Failed (ADR-181) | red (`--danger`) | no | no — tooltip only (a git decision, not an attention item) |
 | HumanWorking | neutral (`--ink-2`) | no | no — tooltip only |
 | Done / Abandoned (TTL) | dim (`--mute-2`) | no | no — tooltip only |
+
+`Failed`, `Done` and `Abandoned` rows carry the TTL badge while their worktree
+counts down to the GC sweep (a `Failed` one since ADR-181, owner 2026-09-23).
 
 ## Data & APIs
 

@@ -508,10 +508,11 @@ describe("runWorkspaceGcSweep (integration)", () => {
     expect((await readWorkspace(workspaceId)).removedAt).toBeNull();
   }, 60_000);
 
+  // ADR-181 (owner, 2026-09-23): `Failed` left this list — a failed attempt's
+  // worktree expires like a finished one (the two cases below).
   for (const protectedStatus of [
     "Review",
     "Crashed",
-    "Failed",
     "NeedsInput",
     "NeedsInputIdle",
   ]) {
@@ -529,6 +530,45 @@ describe("runWorkspaceGcSweep (integration)", () => {
       expect((await readWorkspace(workspaceId)).removedAt).toBeNull();
     }, 60_000);
   }
+
+  it("ADR-181: collects a Failed workspace past its TTL — preserved first, then removed", async () => {
+    const ageMs = gcAgeDays() * 86_400_000;
+    const { runId, workspaceId } = await seed({
+      runStatus: "Failed",
+      scheduledRemovalAt: null,
+      endedAt: new Date(Date.now() - ageMs - 86_400_000),
+    });
+
+    const { opts, preserveWorktree, removeOwnedWorktree } = makeOpts();
+    const summary = await runWorkspaceGcSweep(opts);
+
+    expect(summary.pruned).toBe(1);
+    expect(preserveWorktree).toHaveBeenCalledTimes(1);
+    expect(preserveWorktree.mock.invocationCallOrder[0]).toBeLessThan(
+      removeOwnedWorktree.mock.invocationCallOrder[0],
+    );
+
+    const ws = await readWorkspace(workspaceId);
+
+    expect(ws.removedAt).not.toBeNull();
+    // Re-attachable: Reattach resolves `archived_branch` among its sources.
+    expect(ws.archivedBranch).toBe(`maister/archive/${runId}`);
+  }, 60_000);
+
+  it("ADR-181: does NOT collect a Failed workspace inside its TTL", async () => {
+    const { workspaceId } = await seed({
+      runStatus: "Failed",
+      scheduledRemovalAt: null,
+      endedAt: new Date(),
+    });
+
+    const { opts, removeOwnedWorktree } = makeOpts();
+    const summary = await runWorkspaceGcSweep(opts);
+
+    expect(summary.scanned).toBe(0);
+    expect(removeOwnedWorktree).not.toHaveBeenCalled();
+    expect((await readWorkspace(workspaceId)).removedAt).toBeNull();
+  }, 60_000);
 
   it("holds launched-participant workspaces while the study is non-terminal and releases them after it is decided", async () => {
     const { runId, taskId, workspaceId } = await seed({

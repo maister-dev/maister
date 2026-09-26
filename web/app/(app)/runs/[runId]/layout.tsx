@@ -126,6 +126,7 @@ import {
   getRunCapabilityProfiles,
   getRunCostSummary,
   getRunDetail,
+  lifecycleActionsForViewer,
   getRunResolvedCapabilitySet,
   getRunSettings,
   getRunTimeline,
@@ -139,6 +140,7 @@ import {
   statusPorcelain,
 } from "@/lib/worktree";
 import { buildRunSyncPanelData } from "@/lib/runs/sync-panel-data";
+import { gitPanelHref } from "@/lib/workbench-git/panel-link";
 import { deliveryPolicyFromLegacyPromotionMode } from "@/lib/runs/delivery-policy";
 import {
   computeDirtySummary,
@@ -448,6 +450,7 @@ export default async function RunDetailLayout({
   const tEvidence = await getTranslations("evidence");
   const tReadiness = await getTranslations("readiness");
   const tWorkbench = await getTranslations("workbench");
+  const tLifecycle = await getTranslations("workbenchLifecycle");
 
   const evidenceLabels: EvidenceGraphLabels = {
     title: tEvidence("title"),
@@ -813,9 +816,7 @@ export default async function RunDetailLayout({
         parentRepoPath: detail.parentRepoPath,
         branch: detail.branch,
         targetBranch: reviewData.targetBranch,
-        syncStrategyDefault: detail.syncStrategyDefault,
         syncRunnerId: detail.syncRunnerId,
-        prUrl: detail.prUrl,
       });
     }
   }
@@ -843,16 +844,6 @@ export default async function RunDetailLayout({
         })
       : "",
     syncBranch: t("syncBranch"),
-    syncTitle: t("syncTitle"),
-    syncStrategy: t("syncStrategy"),
-    syncStrategyRebase: t("syncStrategyRebase"),
-    syncStrategyMerge: t("syncStrategyMerge"),
-    syncRunner: t("syncRunner"),
-    syncRunnerDefault: t("syncRunnerDefault"),
-    syncPush: t("syncPush"),
-    syncResolveWithAgent: t("syncResolveWithAgent"),
-    syncStart: t("syncStart"),
-    syncCancel: t("syncCancel"),
     syncInProgress: syncPanel?.sync.inProgress
       ? t("syncInProgress", { phase: syncPanel.sync.inProgress.phase })
       : "",
@@ -1220,6 +1211,12 @@ export default async function RunDetailLayout({
     snapshotCommit: t("inspectorActionSnapshotCommit"),
     exportBranch: t("inspectorActionExportBranch"),
     handoffBranch: t("inspectorActionHandoffBranch"),
+    // ADR-181 D16: the git panel's ids share the ONE lifecycle label set.
+    discardChanges: tLifecycle("action.discardChanges"),
+    update: tLifecycle("action.update"),
+    openPr: tLifecycle("action.openPr"),
+    finalizePr: tLifecycle("action.finalizePr"),
+    reattach: tLifecycle("action.reattach"),
     promote: t("inspectorActionPromote"),
     promotePullRequest: t("inspectorActionPromotePullRequest"),
     archive: t("inspectorActionArchive"),
@@ -1232,12 +1229,17 @@ export default async function RunDetailLayout({
         ? "local"
         : null;
   const isCutoverHistory = detail.cutoverFailure !== null;
+  // ADR-181 D2: the viewer's own set — the claim owner of an open rework claim
+  // gets the git set; `detail.lifecycleActions` is the viewer-less projection.
+  const viewerLifecycleActions = lifecycleActionsForViewer(detail, user.id);
   const policyActions = deriveInspectorActions({
     runId: detail.runId,
     runKind: detail.runKind,
     runStatus: workbenchRunStatus(detail.status),
     scratchDialogStatus: null,
-    hasWorkspace: Boolean(detail.worktreePath),
+    // ADR-181 D2: the ROW decides, not the display path (which falls back to
+    // the project repo when there is no workspace).
+    hasWorkspace: detail.lifecycleFacts.hasWorkspace,
     workspaceRemoved: detail.pruned,
     workspaceArchived: detail.archived,
     recoverable: detail.recoverable,
@@ -1247,9 +1249,14 @@ export default async function RunDetailLayout({
     diffTruncated: reviewData?.diff.truncated ?? false,
     reviewedTargetCommit: reviewData?.reviewedTargetCommit ?? null,
     deliveryMode,
+    reworkClaimOwnerUserId: detail.claimOwnerUserId,
+    viewerUserId: user.id,
   }).map<RunInspectorAction>((action) => ({
     id: action.id,
     label: inspectorActionLabels[action.id],
+    // ADR-181 C34: the deep link into the git panel; the inspector lists only
+    // href-bearing items.
+    href: action.href,
     disabled: !action.enabled,
     disabledReason: action.enabled ? null : t("inspectorDisabled"),
   }));
@@ -1518,11 +1525,16 @@ export default async function RunDetailLayout({
             />
           ) : null}
 
-          {detail.lifecycleActions.length > 0 ? (
+          {viewerLifecycleActions.length > 0 ? (
             <WorkbenchLifecycleActions
-              actions={detail.lifecycleActions}
+              actions={viewerLifecycleActions}
               runId={detail.runId}
               runKind={detail.runKind}
+              syncDefaults={{
+                strategy: detail.syncStrategyDefault,
+                runnerOptions: syncPanel?.sync.runnerOptions ?? [],
+                defaultRunnerId: syncPanel?.sync.defaultRunnerId ?? null,
+              }}
               variant="detail"
               workspaceAvailable={
                 Boolean(detail.worktreePath) && !detail.pruned
@@ -2053,6 +2065,11 @@ export default async function RunDetailLayout({
               runId={detail.runId}
               sync={syncPanel?.sync ?? null}
               targetBranch={reviewData.targetBranch}
+              updateHref={gitPanelHref({
+                runId: detail.runId,
+                runKind: detail.runKind,
+                actionId: "update",
+              })}
             />
           ) : null}
 

@@ -725,3 +725,112 @@ describe("resumeCrashedRun — unresumable dispatch", () => {
     expect(runFlow).not.toHaveBeenCalled();
   }, 60_000);
 });
+
+// ADR-181 C26 in the recover direction (the plan's Follow-up "Recover does not
+// respect the workspace lifecycle slot"): a live workbench claim owns the
+// worktree — a git panel operation under its lease, or a parked PR finalize
+// under its promotion claim — so a recover that would put an agent back into
+// that tree is refused before any state moves. A lapsed lease owns nothing.
+describe("resumeCrashedRun — one writer per worktree (ADR-181)", () => {
+  async function holdLifecycleClaim(runId: string, leaseMs: number) {
+    const claimedAt = new Date();
+
+    await db
+      .update(workspaces)
+      .set({
+        lifecycleOperationState: "claiming",
+        lifecycleOperationName: "discardChanges",
+        lifecycleOperationAttemptId: randomUUID(),
+        lifecycleOperationExpectedRunStatus: "Crashed",
+        lifecycleOperationClaimedAt: claimedAt,
+        lifecycleOperationLeaseExpiresAt: new Date(
+          claimedAt.getTime() + leaseMs,
+        ),
+      })
+      .where(eq(workspaces.runId, runId));
+  }
+
+  async function expectUntouched(runId: string) {
+    const row = await readRun(runId);
+
+    expect(row.status).toBe("Crashed");
+    expect(row.resumeStartedAt).toBeNull();
+    // No `recover` generation was minted for a refused recover.
+    expect(
+      await db
+        .select({ id: schema.executionAssignments.id })
+        .from(schema.executionAssignments)
+        .where(eq(schema.executionAssignments.runId, runId)),
+    ).toHaveLength(0);
+  }
+
+  it("refuses while a live lifecycle claim holds the worktree → {state:'workspace-busy'}, nothing moves", async () => {
+    const runId = await seedRun({
+      status: "Crashed",
+      currentStepId: "verify",
+      acpSessionId: null,
+    });
+
+    await holdLifecycleClaim(runId, 60_000);
+    const runFlow = vi.fn(async () => {});
+
+    const result = await resumeCrashedRun(runId, {
+      db,
+      executionHosts: hosts,
+      runFlow,
+    });
+
+    expect(result).toEqual({ state: "workspace-busy" });
+    expect(runFlow).not.toHaveBeenCalled();
+    await expectUntouched(runId);
+  }, 60_000);
+
+  it("refuses while a parked PR finalize holds the promotion claim", async () => {
+    const runId = await seedRun({
+      status: "Crashed",
+      currentStepId: "verify",
+      acpSessionId: null,
+    });
+
+    await db
+      .update(workspaces)
+      .set({
+        promotionState: "claiming",
+        promotionAttemptId: randomUUID(),
+        promotionClaimedAt: new Date(),
+      })
+      .where(eq(workspaces.runId, runId));
+    const runFlow = vi.fn(async () => {});
+
+    const result = await resumeCrashedRun(runId, {
+      db,
+      executionHosts: hosts,
+      runFlow,
+    });
+
+    expect(result).toEqual({ state: "workspace-busy" });
+    expect(runFlow).not.toHaveBeenCalled();
+    await expectUntouched(runId);
+  }, 60_000);
+
+  it("a lapsed lease owns nothing: the recover proceeds", async () => {
+    const runId = await seedRun({
+      status: "Crashed",
+      currentStepId: "verify",
+      acpSessionId: null,
+    });
+
+    await holdLifecycleClaim(runId, -1_000);
+    const runFlow = vi.fn(async () => {});
+
+    const result = await resumeCrashedRun(runId, {
+      db,
+      executionHosts: hosts,
+      runFlow,
+    });
+
+    expect(result).toEqual({ state: "redispatched" });
+    expect(runFlow).toHaveBeenCalledTimes(1);
+    expect((await readRun(runId)).status).toBe("Running");
+  }, 60_000);
+});

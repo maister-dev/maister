@@ -222,6 +222,7 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-178](#adr-178-observatory-overview-table-day-aligned-period-url-views-and-auto-apply-filters) | Observatory overview table, day-aligned period, URL views, and auto-apply filters | Implemented (2026-09-21) | 2026-09-21 |
 | [ADR-179](#adr-179-mcp-configuration-values--literal-or-reference-envheader-maps-a-bearer-token-field-value-replacing-project-overlays-host-env-ref-readiness-and-an-adapter-transport-gate) | MCP configuration values — literal-or-reference env/header maps, a bearer token field, value-replacing project overlays, host env-ref readiness, and an adapter transport gate | Implemented | 2026-09-21 |
 | [ADR-180](#adr-180-permission-deadline-has-one-owner) | Permission deadline has one owner | Implemented | 2026-09-22 |
+| [ADR-181](#adr-181-run-git-panel-status-independent-worktree-git-operations-public-branch-names-and-pr-before-promotion) | Run git panel: status-independent worktree git operations, public branch names, and PR before promotion | Implemented | 2026-09-22 |
 
 ---
 
@@ -1834,6 +1835,15 @@ Full record: [`decisions/adr-180.md`](decisions/adr-180.md)
 
 ---
 
+### ADR-181: Run git panel: status-independent worktree git operations, public branch names, and PR before promotion
+
+**Status:** Implemented
+**Date:** 2026-09-22
+
+Full record: [`decisions/adr-181.md`](decisions/adr-181.md)
+
+---
+
 ## Template for New Decisions
 
 ```markdown
@@ -1990,3 +2000,44 @@ properties/lastAction` sets `nullable: true` beside an `allOf` with no sibling
   other 21 is a separate piece of work, and so is deciding whether a second test
   should gate that copy too. Left alone because R9 forbids touching an unrelated
   section in passing.
+- **`configuration.md` documents two `project.*` fields the loader never keeps
+  (found 2026-09-23, ADR-181 T0.8).** The optional-field table lists
+  `project.repo_path` and `project.default_branch`, and the example block uses
+  both. `projectBlockSchema` (`web/lib/config.schema.ts`) accepts only `name |
+  main_branch | branch_prefix | promotion | default_runner` and is not
+  `.strict()`, so both keys are silently stripped at parse. ADR-181 added its
+  `public_branch_template` row beside them without touching them; left alone
+  because R9 forbids fixing an unrelated section in passing.
+- **`configuration.md` calls `promotion.remote` Implemented, but nothing reads it
+  (found 2026-09-23, ADR-181 T0.8).** The row says "Remote name used by
+  `pull_request` mode (the `git push` target and the PR base remote)", while
+  `config.schema.ts` records that `remote` "is parsed now but consumed only in
+  Phase 3". In fact `promote.ts` pushes and opens pull requests on a hard-coded
+  `origin`. The example also places `promotion:` at the top level, whereas the
+  schema nests it under `project`. ADR-181 depends only on the code's actual
+  behaviour (Open PR requires the publication on `origin`); the row is left
+  alone (R9).
+- **`docs/db/runs-domain.md` WORKSPACES block is behind `schema.ts` (found
+  2026-09-23, ADR-181 T0.8).** It omits `archived_commit`,
+  `preservation_outcome`, `removal_kind`, `lifecycle_operation_lease_expires_at`
+  and `lifecycle_operation_expected_run_status`, and its
+  `lifecycle_operation_name` comment lacks the existing `discard`,
+  `retention_gc` and `reconciliation` values (`schema.ts`
+  `WorkspaceLifecycleOperationName`). ADR-181 added only its own columns and op
+  names. Left alone because R9 forbids touching an unrelated section in
+  passing.
+- **`web.openapi.yaml` now carries eight `nullable-type-sibling` Redocly errors,
+  not two (found 2026-09-23, ADR-181 T0.1).** The 2026-07-11 entry above counted
+  two. `master` @ `c36ff5b1` reports eight (plus 46 warnings), all in schemas
+  ADR-181 does not touch; ADR-181's own additions add none, measured by linting
+  the branch file and `master`'s side by side. `pnpm validate:contracts`
+  passes. Left alone (R9).
+- **`DataRunPromoted` forbids fields the emitter sends (found 2026-09-23,
+  ADR-181 T0.2).** `outbound-webhooks.asyncapi.yaml` declares
+  `additionalProperties: false`, `mode: enum [local_merge, pull_request]`.
+  `promote.ts` emits `run.promoted` with `data.deliveryPolicy`, and with
+  `data.mode` = the response mode (`merge`, `rebase_merge`,
+  `ai_rebase_merge` are reachable). The webhook outbox stores `data` verbatim,
+  so a strict consumer validating against the spec rejects real payloads.
+  ADR-181 added only its optional `source`; re-syncing the schema to the emitter
+  (or projecting the payload) is separate work (R9).

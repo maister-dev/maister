@@ -14,7 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 //   export type PrStateReadResult =
 //     | { kind: "state"; state: "open" | "merged" | "closed";
 //         mergedAt: string | null; mergeCommitSha: string | null;
-//         hasConflicts: boolean | null }
+//         hasConflicts: boolean | null; headSha: string | null }
 //     | { kind: "skip"; transient: boolean; reason: string }
 //     | { kind: "unsupported" };
 //
@@ -160,6 +160,7 @@ describe("getPrState — github (gh CLI)", () => {
       state: "open",
       mergedAt: null,
       mergeCommitSha: null,
+      headSha: null,
       hasConflicts: null,
     });
   });
@@ -170,6 +171,7 @@ describe("getPrState — github (gh CLI)", () => {
         state: "MERGED",
         mergedAt: "2026-07-14T10:00:00Z",
         mergeCommit: { oid: "abc123def456" },
+        headRefOid: "0123456789abcdef0123456789abcdef01234567",
         mergeable: "MERGEABLE",
         mergeStateStatus: "CLEAN",
       }),
@@ -188,6 +190,7 @@ describe("getPrState — github (gh CLI)", () => {
       state: "merged",
       mergedAt: "2026-07-14T10:00:00Z",
       mergeCommitSha: "abc123def456",
+      headSha: "0123456789abcdef0123456789abcdef01234567",
       hasConflicts: false,
     });
   });
@@ -216,6 +219,7 @@ describe("getPrState — github (gh CLI)", () => {
       state: "closed",
       mergedAt: null,
       mergeCommitSha: null,
+      headSha: null,
       hasConflicts: null,
     });
   });
@@ -244,6 +248,7 @@ describe("getPrState — github (gh CLI)", () => {
       state: "open",
       mergedAt: null,
       mergeCommitSha: null,
+      headSha: null,
       hasConflicts: true,
     });
   });
@@ -280,7 +285,7 @@ describe("getPrState — github (gh CLI)", () => {
     // silently disabled PR-conflict detection with every test still green.
     expect(argv).toContain("--json");
     expect(argv[argv.indexOf("--json") + 1]).toBe(
-      "state,mergedAt,mergeCommit,mergeable,mergeStateStatus",
+      "state,mergedAt,mergeCommit,mergeable,mergeStateStatus,headRefOid",
     );
 
     const env = (call?.opts as { env?: Record<string, string> }).env;
@@ -380,6 +385,7 @@ describe("getPrState — gitlab (glab CLI)", () => {
       state: "open",
       mergedAt: null,
       mergeCommitSha: null,
+      headSha: null,
       hasConflicts: false,
     });
   });
@@ -390,6 +396,7 @@ describe("getPrState — gitlab (glab CLI)", () => {
         state: "merged",
         merged_at: "2026-07-14T09:00:00Z",
         merge_commit_sha: "cafebabe00",
+        sha: "1111111111111111111111111111111111111111",
         has_conflicts: false,
       }),
       stderr: "",
@@ -407,6 +414,7 @@ describe("getPrState — gitlab (glab CLI)", () => {
       state: "merged",
       mergedAt: "2026-07-14T09:00:00Z",
       mergeCommitSha: "cafebabe00",
+      headSha: "1111111111111111111111111111111111111111",
       hasConflicts: false,
     });
   });
@@ -433,6 +441,7 @@ describe("getPrState — gitlab (glab CLI)", () => {
       state: "closed",
       mergedAt: null,
       mergeCommitSha: null,
+      headSha: null,
       hasConflicts: null,
     });
   });
@@ -460,6 +469,7 @@ describe("getPrState — gitlab (glab CLI)", () => {
       state: "open",
       mergedAt: null,
       mergeCommitSha: null,
+      headSha: null,
       hasConflicts: true,
     });
   });
@@ -583,6 +593,7 @@ describe("getPrState — gitea / gitverse (REST)", () => {
       state: "open",
       mergedAt: null,
       mergeCommitSha: null,
+      headSha: null,
       hasConflicts: false,
     });
 
@@ -604,6 +615,7 @@ describe("getPrState — gitea / gitverse (REST)", () => {
         merged: true,
         merged_at: "2026-07-14T08:00:00Z",
         merge_commit_sha: "feed1234ab",
+        head: { sha: "2222222222222222222222222222222222222222" },
       },
     });
 
@@ -619,6 +631,7 @@ describe("getPrState — gitea / gitverse (REST)", () => {
       state: "merged",
       mergedAt: "2026-07-14T08:00:00Z",
       mergeCommitSha: "feed1234ab",
+      headSha: "2222222222222222222222222222222222222222",
       hasConflicts: null,
     });
   });
@@ -647,6 +660,7 @@ describe("getPrState — gitea / gitverse (REST)", () => {
       state: "closed",
       mergedAt: null,
       mergeCommitSha: null,
+      headSha: null,
       hasConflicts: null,
     });
   });
@@ -674,6 +688,7 @@ describe("getPrState — gitea / gitverse (REST)", () => {
       state: "open",
       mergedAt: null,
       mergeCommitSha: null,
+      headSha: null,
       hasConflicts: true,
     });
   });

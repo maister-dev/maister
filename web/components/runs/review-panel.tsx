@@ -3,8 +3,9 @@
 import type { ReadinessDTO } from "@/lib/queries/readiness";
 import type { Key, ReactElement } from "react";
 
-import { ArrowPathIcon, XMarkIcon } from "@heroicons/react/24/outline";
+import { ArrowPathIcon } from "@heroicons/react/24/outline";
 import { Button, Input, ListBox, Select } from "@heroui/react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useId, useState } from "react";
 import { useTranslations } from "next-intl";
@@ -18,6 +19,8 @@ import {
 import { resolveUiErrorMessageKey } from "@/lib/ui-error-message";
 import {
   buildPromotionRequestBody,
+  isMergedPrBehindResponse,
+  isPublicationDivergedResponse,
   isTargetDriftResponse,
   promotionBlockReason,
   type PromotionDeliveryPolicy,
@@ -64,29 +67,15 @@ export type ReviewPanelLabels = {
   // function across the boundary — every label here must stay a plain string.
   behindAhead: string;
   syncBranch: string;
-  syncTitle: string;
-  syncStrategy: string;
-  syncStrategyRebase: string;
-  syncStrategyMerge: string;
-  syncRunner: string;
-  syncRunnerDefault: string;
-  syncPush: string;
-  syncResolveWithAgent: string;
-  syncStart: string;
-  syncCancel: string;
   syncInProgress: string;
   resolveWithAgent: string;
   autoFinalize: string;
   autoFinalizeHint: string;
 };
 
-// ADR-141: the branch-sync dialog seed data (project defaults + the
-// resolver runner chain) plus the live in-progress state off the latest attempt.
+// ADR-141: the live sync state off the latest attempt. The update itself lives
+// in the run git panel (ADR-181 D9); this panel only links into it.
 export type ReviewPanelSync = {
-  strategyDefault: "rebase" | "merge";
-  runnerOptions: { id: string; label: string }[];
-  defaultRunnerId: string | null;
-  published: boolean;
   // Non-null ⇒ a sync claim is live (phase from the latest attempt); the panel
   // shows the phase and disables both promote and a second sync launch.
   inProgress: { phase: string } | null;
@@ -128,13 +117,18 @@ export interface ReviewPanelProps {
   // the count could not be derived); branch-sync dialog seed + in-progress state.
   aheadBehind?: { ahead: number; behind: number } | null;
   sync?: ReviewPanelSync | null;
-  // Seeds the initial sync-dialog-open state (like `driftDetected`), so the
-  // dialog form renders deterministically under renderToStaticMarkup.
-  syncDialogOpen?: boolean;
+  // ADR-181 D9: the run git panel's Update section (`?git=update`) — every
+  // sync entry point here links into it rather than owning a dialog.
+  updateHref?: string | null;
 }
 
 const shell =
   "rounded-[14px] border border-line bg-[color-mix(in_oklab,var(--ivory)_35%,var(--paper))]";
+
+// A sync entry point is a link into the git panel's Update section, styled as
+// the small outline button it replaced.
+const syncLink =
+  "inline-flex items-center gap-1.5 rounded-md border border-line bg-paper px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-ink-2 hover:border-mute";
 
 function selectionKey(key: Key | null, fallback: PromotionMode): PromotionMode {
   if (key === null) return fallback;
@@ -165,7 +159,7 @@ export function ReviewPanel({
   canPromote = true,
   aheadBehind = null,
   sync = null,
-  syncDialogOpen = false,
+  updateHref = null,
 }: ReviewPanelProps): ReactElement {
   const t = useTranslations("run");
   const tWorkbench = useTranslations("workbench");
@@ -174,21 +168,11 @@ export function ReviewPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [drift, setDrift] = useState(driftDetected);
+  // ADR-181 (C): the last Promote was refused — the PR branch holds commits
+  // the run does not.
+  const [diverged, setDiverged] = useState(false);
   const [truncationAck, setTruncationAck] = useState(false);
   const [autoFinalize, setAutoFinalize] = useState(false);
-  // ADR-141: branch-sync dialog. Agent-on is the default (matches the
-  // syncRunTarget contract + the OpenAPI `agent` "(default)").
-  const [syncOpen, setSyncOpen] = useState(syncDialogOpen);
-  const [syncStrategy, setSyncStrategy] = useState<"rebase" | "merge">(
-    sync?.strategyDefault ?? "rebase",
-  );
-  const [syncRunnerId, setSyncRunnerId] = useState<string>(
-    sync?.defaultRunnerId ?? "",
-  );
-  const [syncPush, setSyncPush] = useState(sync?.published ?? false);
-  const [syncAgent, setSyncAgent] = useState(true);
-  const [syncBusy, setSyncBusy] = useState(false);
-  const [syncError, setSyncError] = useState<string | null>(null);
   const syncClaimed = sync?.inProgress != null;
   const [conflictState, setConflictState] =
     useState<ReviewPanelConflict | null>(
@@ -201,8 +185,6 @@ export function ReviewPanel({
         : null,
     );
   const modeLabelId = useId();
-  const syncStrategyLabelId = useId();
-  const syncRunnerLabelId = useId();
   const readinessReady = readiness?.readiness === "ready";
   const promotionInput = {
     targetBranch,
@@ -218,47 +200,6 @@ export function ReviewPanel({
   };
   const blockedPromotion = promotionBlockReason(promotionInput);
 
-  function openSyncDialog(agentPreset: boolean): void {
-    setSyncAgent(agentPreset);
-    setSyncError(null);
-    setSyncOpen(true);
-  }
-
-  async function startSync(): Promise<void> {
-    setSyncBusy(true);
-    setSyncError(null);
-
-    try {
-      const res = await fetch(`/api/runs/${runId}/sync`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          strategy: syncStrategy,
-          agent: syncAgent,
-          push: syncPush,
-          ...(syncRunnerId ? { runnerId: syncRunnerId } : {}),
-        }),
-      });
-
-      if (res.ok) {
-        setSyncOpen(false);
-        router.refresh();
-
-        return;
-      }
-
-      const data = (await res.json().catch(() => null)) as {
-        code?: string;
-      } | null;
-
-      setSyncError(t(resolveUiErrorMessageKey(data?.code)));
-    } catch {
-      setSyncError(t("error.generic"));
-    } finally {
-      setSyncBusy(false);
-    }
-  }
-
   async function promote(allowTargetDrift: boolean): Promise<void> {
     const body = buildPromotionRequestBody(promotionInput, allowTargetDrift);
 
@@ -266,6 +207,7 @@ export function ReviewPanel({
 
     setBusy(true);
     setError(null);
+    setDiverged(false);
 
     try {
       const res = await fetch(`/api/runs/${runId}/promote`, {
@@ -288,6 +230,18 @@ export function ReviewPanel({
       if (isTargetDriftResponse(data)) {
         setDrift(true);
         router.refresh();
+
+        return;
+      }
+
+      if (isPublicationDivergedResponse(data)) {
+        setDiverged(true);
+
+        return;
+      }
+
+      if (isMergedPrBehindResponse(data)) {
+        setError(t("mergedPrBehind"));
 
         return;
       }
@@ -369,18 +323,16 @@ export function ReviewPanel({
           {/* Gated at the ROUTE's granularity: sync is `promoteRun` (member),
               while this surface is `readBoard` (viewer). Offering it to a viewer
               only buys them a 403. */}
-          {sync && !syncClaimed && canPromote ? (
-            <Button
-              className="font-mono text-[10px] font-bold uppercase tracking-[0.06em]"
+          {sync && !syncClaimed && canPromote && updateHref ? (
+            <Link
+              className={syncLink}
               data-testid="review-sync-open"
-              size="sm"
-              type="button"
-              variant="outline"
-              onClick={() => openSyncDialog(true)}
+              href={updateHref}
+              scroll={false}
             >
               <ArrowPathIcon aria-hidden="true" className="h-3.5 w-3.5" />
               {labels.syncBranch}
-            </Button>
+            </Link>
           ) : null}
         </div>
       ) : null}
@@ -394,151 +346,6 @@ export function ReviewPanel({
         >
           {labels.syncInProgress}
         </p>
-      ) : null}
-
-      {/* ADR-141: branch-sync dialog (inline, deterministic for SSR tests) */}
-      {syncOpen && sync ? (
-        <div
-          className="mb-4 flex flex-col gap-3 rounded-[10px] border border-line bg-paper p-4"
-          data-testid="review-sync-dialog"
-        >
-          <p className="font-sans text-[12px] font-bold text-ink">
-            {labels.syncTitle}
-          </p>
-          <label className="flex flex-col gap-1">
-            <span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.06em] text-mute">
-              {labels.syncStrategy}
-            </span>
-            <span className="sr-only" id={syncStrategyLabelId}>
-              {labels.syncStrategy}
-            </span>
-            <Select
-              aria-labelledby={syncStrategyLabelId}
-              className="w-full max-w-[260px]"
-              data-testid="review-sync-strategy"
-              selectedKey={syncStrategy}
-              variant="secondary"
-              onSelectionChange={(key) =>
-                setSyncStrategy(
-                  key === null
-                    ? syncStrategy
-                    : (String(key) as "rebase" | "merge"),
-                )
-              }
-            >
-              <Select.Trigger className="h-9 rounded-md border-line bg-paper px-2 font-mono text-[11px] text-ink">
-                <Select.Value />
-                <Select.Indicator />
-              </Select.Trigger>
-              <Select.Popover className="rounded-md border border-line bg-paper p-1 shadow-lg">
-                <ListBox aria-label={labels.syncStrategy}>
-                  <ListBox.Item
-                    id="rebase"
-                    textValue={labels.syncStrategyRebase}
-                  >
-                    {labels.syncStrategyRebase}
-                  </ListBox.Item>
-                  <ListBox.Item id="merge" textValue={labels.syncStrategyMerge}>
-                    {labels.syncStrategyMerge}
-                  </ListBox.Item>
-                </ListBox>
-              </Select.Popover>
-            </Select>
-          </label>
-          {sync.runnerOptions.length > 0 ? (
-            <label className="flex flex-col gap-1">
-              <span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.06em] text-mute">
-                {labels.syncRunner}
-              </span>
-              <span className="sr-only" id={syncRunnerLabelId}>
-                {labels.syncRunner}
-              </span>
-              <Select
-                aria-labelledby={syncRunnerLabelId}
-                className="w-full max-w-[260px]"
-                data-testid="review-sync-runner"
-                selectedKey={syncRunnerId}
-                variant="secondary"
-                onSelectionChange={(key) =>
-                  setSyncRunnerId(key === null ? "" : String(key))
-                }
-              >
-                <Select.Trigger className="h-9 rounded-md border-line bg-paper px-2 font-mono text-[11px] text-ink">
-                  <Select.Value />
-                  <Select.Indicator />
-                </Select.Trigger>
-                <Select.Popover className="rounded-md border border-line bg-paper p-1 shadow-lg">
-                  <ListBox aria-label={labels.syncRunner}>
-                    <ListBox.Item id="" textValue={labels.syncRunnerDefault}>
-                      {labels.syncRunnerDefault}
-                    </ListBox.Item>
-                    {sync.runnerOptions.map((opt) => (
-                      <ListBox.Item
-                        key={opt.id}
-                        id={opt.id}
-                        textValue={opt.label}
-                      >
-                        {opt.label}
-                      </ListBox.Item>
-                    ))}
-                  </ListBox>
-                </Select.Popover>
-              </Select>
-            </label>
-          ) : null}
-          <label className="flex items-center gap-2 font-mono text-[11px] text-ink-2">
-            <input
-              checked={syncPush}
-              data-testid="review-sync-push"
-              type="checkbox"
-              onChange={(e) => setSyncPush(e.target.checked)}
-            />
-            {labels.syncPush}
-          </label>
-          <label className="flex items-center gap-2 font-mono text-[11px] text-ink-2">
-            <input
-              checked={syncAgent}
-              data-testid="review-sync-agent"
-              type="checkbox"
-              onChange={(e) => setSyncAgent(e.target.checked)}
-            />
-            {labels.syncResolveWithAgent}
-          </label>
-          {syncError ? (
-            <p
-              aria-live="polite"
-              className="font-mono text-[10.5px] text-[#d9534f]"
-              role="alert"
-            >
-              {syncError}
-            </p>
-          ) : null}
-          <div className="flex items-center gap-2">
-            <Button
-              className="bg-amber font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-white hover:bg-amber-2"
-              data-testid="review-sync-start"
-              isDisabled={syncBusy}
-              size="sm"
-              type="button"
-              variant="primary"
-              onClick={() => void startSync()}
-            >
-              <ArrowPathIcon aria-hidden="true" className="h-3.5 w-3.5" />
-              {labels.syncStart}
-            </Button>
-            <Button
-              className="font-mono text-[10px] font-bold uppercase tracking-[0.06em]"
-              isDisabled={syncBusy}
-              size="sm"
-              type="button"
-              variant="outline"
-              onClick={() => setSyncOpen(false)}
-            >
-              <XMarkIcon aria-hidden="true" className="h-3.5 w-3.5" />
-              {labels.syncCancel}
-            </Button>
-          </div>
-        </div>
       ) : null}
 
       {/* readiness summary */}
@@ -638,17 +445,15 @@ export function ReviewPanel({
               <dd className="inline font-bold">{conflictState.command}</dd>
             </div>
           </dl>
-          {sync && !syncClaimed ? (
-            <Button
-              className="mt-3 font-mono text-[10px] font-bold uppercase tracking-[0.06em]"
+          {sync && !syncClaimed && updateHref ? (
+            <Link
+              className={clsx(syncLink, "mt-3")}
               data-testid="review-conflict-resolve-agent"
-              size="sm"
-              type="button"
-              variant="outline"
-              onClick={() => openSyncDialog(true)}
+              href={updateHref}
+              scroll={false}
             >
               {labels.resolveWithAgent}
-            </Button>
+            </Link>
           ) : null}
         </div>
       ) : null}
@@ -757,17 +562,18 @@ export function ReviewPanel({
                 {labels.targetDrift}
               </p>
               <div className="flex items-center gap-2">
-                {sync && !syncClaimed ? (
-                  <Button
-                    className="border-amber bg-amber font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-white hover:bg-amber-2"
+                {sync && !syncClaimed && updateHref ? (
+                  <Link
+                    className={clsx(
+                      syncLink,
+                      "border-amber bg-amber text-white hover:bg-amber-2",
+                    )}
                     data-testid="review-drift-sync"
-                    size="sm"
-                    type="button"
-                    variant="primary"
-                    onClick={() => openSyncDialog(true)}
+                    href={updateHref}
+                    scroll={false}
                   >
                     {labels.syncBranch}
-                  </Button>
+                  </Link>
                 ) : null}
                 <Button
                   className={clsx(
@@ -809,6 +615,29 @@ export function ReviewPanel({
             type="hidden"
             value={reviewedTargetCommit ?? ""}
           />
+
+          {diverged ? (
+            <div
+              className="rounded-[10px] border border-amber-line bg-amber-soft p-4"
+              data-testid="review-publication-diverged"
+              role="alert"
+            >
+              <p className="mb-3 font-mono text-[11px] leading-[1.5] text-amber">
+                {t("publicationDiverged")}
+              </p>
+              {updateHref ? (
+                <Link
+                  className={syncLink}
+                  data-testid="review-publication-diverged-update"
+                  href={updateHref}
+                  scroll={false}
+                >
+                  <ArrowPathIcon aria-hidden="true" className="h-3.5 w-3.5" />
+                  {labels.syncBranch}
+                </Link>
+              ) : null}
+            </div>
+          ) : null}
 
           {error ? (
             <p

@@ -196,11 +196,15 @@ describe("workbench lifecycle route wrappers", () => {
       runId: "run-1",
       branch: "maister/run-1",
       remote: "origin",
-      pushedRef: "origin/maister/run-1",
+      pushedRef: "origin/feature/ABC-1-x",
+      publishedBranch: "feature/ABC-1-x",
+      publishedRemote: "origin",
+      publishedRef: "origin/feature/ABC-1-x",
+      nameSource: "request",
       snapshotCreated: true,
       checkoutCommands: [
-        "git -C /repo fetch origin maister/run-1",
-        "git -C /repo switch maister/run-1",
+        "git -C /repo fetch origin feature/ABC-1-x",
+        "git -C /repo switch --track origin/feature/ABC-1-x",
       ],
     });
 
@@ -208,9 +212,12 @@ describe("workbench lifecycle route wrappers", () => {
     const res = await POST(
       postRequest({
         remote: "origin",
+        // ADR-181 D4: the public name the dialog carries.
+        branchName: "feature/ABC-1-x",
         snapshotDirty: true,
         commitMessage: "maister: hand off run-1",
         force: true,
+        expectedHead: "a".repeat(40),
       }),
       { params: Promise.resolve({ runId: "run-1" }) },
     );
@@ -225,12 +232,36 @@ describe("workbench lifecycle route wrappers", () => {
       "run-1",
       {
         remote: "origin",
+        branchName: "feature/ABC-1-x",
         snapshotDirty: true,
         commitMessage: "maister: hand off run-1",
         force: true,
+        expectedHead: "a".repeat(40),
       },
     );
   });
+
+  // ADR-181 D4: a force is bound to one confirmed head — never sent without it,
+  // and a head is meaningless without a force.
+  it.each([
+    ["a force without expectedHead", { force: true }],
+    ["expectedHead without a force", { expectedHead: "a".repeat(40) }],
+    ["an abbreviated expectedHead", { force: true, expectedHead: "abc1234" }],
+  ])(
+    "POST /api/runs/[runId]/export-branch refuses %s",
+    async (_label, body) => {
+      const { POST } = await import(
+        "@/app/api/runs/[runId]/export-branch/route"
+      );
+      const res = await POST(postRequest({ remote: "origin", ...body }), {
+        params: Promise.resolve({ runId: "run-1" }),
+      });
+
+      expect(res.status).toBe(400);
+      expect(await json(res)).toMatchObject({ code: "CONFIG" });
+      expect(lifecycleService.exportWorkbenchBranch).not.toHaveBeenCalled();
+    },
+  );
 
   it.each(["workspace_preservation_failed", "workspace_git_identity_invalid"])(
     "POST /api/runs/[runId]/drop returns typed reason %s",
@@ -246,10 +277,13 @@ describe("workbench lifecycle route wrappers", () => {
       });
 
       expect(res.status).toBe(409);
+      // ADR-181 D24: the reason token also rides `details`; every other
+      // `details` field stays server-side.
       expect(await json(res)).toEqual({
         code: "CONFLICT",
         message: "could not preserve worktree",
         reason,
+        details: { reason },
       });
     },
   );
@@ -265,6 +299,8 @@ describe("workbench lifecycle route wrappers", () => {
           pushRejected: "non_fast_forward",
           canForce: true,
           retryHint: "Remote branch has newer commits.",
+          remoteHead: "d".repeat(40),
+          remoteRef: "origin/feature/ABC-1-x",
         },
       ),
     );
@@ -285,6 +321,8 @@ describe("workbench lifecycle route wrappers", () => {
       pushRejected: "non_fast_forward",
       canForce: true,
       retryHint: "Remote branch has newer commits.",
+      remoteHead: "d".repeat(40),
+      remoteRef: "origin/feature/ABC-1-x",
     });
   });
 
@@ -483,5 +521,45 @@ describe("workbench lifecycle route wrappers", () => {
       expect(res.status).toBe(item.status);
       expect(await json(res)).toMatchObject({ code: item.code });
     }
+  });
+
+  // ADR-181 D24: a policy refusal's token reaches the client under
+  // `details.reason` (the UI's only branch key besides `code`).
+  it("forwards details.reason on a refusal, and nothing else from details", async () => {
+    vi.mocked(lifecycleService.dropWorkbench).mockRejectedValueOnce(
+      new MaisterError("CONFLICT", "busy", {
+        details: { reason: "busy", attemptId: "server-only" },
+      }),
+    );
+    const { POST } = await import("@/app/api/runs/[runId]/drop/route");
+    const res = await POST(postRequest({}), {
+      params: Promise.resolve({ runId: "run-1" }),
+    });
+
+    expect(res.status).toBe(409);
+    expect(await json(res)).toEqual({
+      code: "CONFLICT",
+      message: "busy",
+      details: { reason: "busy" },
+    });
+  });
+
+  // C29: the shared loader tags an unknown run; every family-A route answers 404.
+  it("maps run_not_found to 404", async () => {
+    vi.mocked(lifecycleService.dropWorkbench).mockRejectedValueOnce(
+      new MaisterError("PRECONDITION", "run not found: run-x", {
+        details: { reason: "run_not_found" },
+      }),
+    );
+    const { POST } = await import("@/app/api/runs/[runId]/drop/route");
+    const res = await POST(postRequest({}), {
+      params: Promise.resolve({ runId: "run-x" }),
+    });
+
+    expect(res.status).toBe(404);
+    expect(await json(res)).toMatchObject({
+      code: "PRECONDITION",
+      details: { reason: "run_not_found" },
+    });
   });
 });

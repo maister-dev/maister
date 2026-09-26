@@ -28,6 +28,11 @@ import { test, expect } from "@playwright/test";
 
 const execFileAsync = promisify(execFile);
 
+// The fresh-review wait below allows 45 s, but the 30 s default test budget cut
+// it off first: the loop takes ~7 s on a quiet host and ran out of budget in a
+// loaded lane (29.8 s, 2026-09-23). The run-detail specs' 120 s budget.
+test.setTimeout(120_000);
+
 type FixtureRecord = {
   runId: string;
   projectSlug: string;

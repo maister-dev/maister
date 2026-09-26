@@ -61,6 +61,8 @@ Postgres lag collector. No client polling.
 `AttentionLiveRefresh` owns one `GET /api/attention/stream` connection in this
 persistent footer. Its ticks refresh the shared sidebar counters and the current
 page, including Inbox; see [attention behavior](../../system-analytics/attention.md).
+The first connect carries the layout render's cursor and counters (ADR-171 D7),
+so a page that is already current gets no tick and is not refreshed.
 
 ## i18n
 

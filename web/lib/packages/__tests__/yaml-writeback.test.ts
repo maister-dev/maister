@@ -5,7 +5,12 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
 
-import { writeBackPackagesPin } from "@/lib/packages/yaml-writeback";
+import { loadProjectConfig } from "@/lib/config";
+import { MaisterError } from "@/lib/errors";
+import {
+  serializeProjectConfig,
+  writeBackPackagesPin,
+} from "@/lib/packages/yaml-writeback";
 
 let workDir: string;
 let yamlPath: string;
@@ -143,5 +148,60 @@ describe("writeBackPackagesPin", () => {
 
     expect(result).toBe("skipped");
     expect(await readFile(yamlPath, "utf8")).toBe(before);
+  });
+});
+
+// ADR-181 (RED 5): `project.public_branch_template` round-trips between the
+// manifest and `projects.public_branch_template`. The default is omitted, like
+// `branch_prefix`; a non-default value is emitted and survives the schema.
+describe("serializeProjectConfig — project.public_branch_template", () => {
+  const base = {
+    name: "myapp",
+    mainBranch: "main",
+    branchPrefix: "maister/",
+    defaultRunnerId: null,
+    promotionMode: null,
+  };
+
+  it("omits the key when the column holds the default", () => {
+    const doc = parseYaml(
+      serializeProjectConfig({
+        ...base,
+        publicBranchTemplate: "feature/{task_key}-{slug}",
+      }),
+    );
+
+    expect(doc.project).not.toHaveProperty("public_branch_template");
+  });
+
+  it("emits a non-default template, and it round-trips through the loader", async () => {
+    const text = serializeProjectConfig({
+      ...base,
+      publicBranchTemplate: "wip/{task_key}-a{attempt}",
+    });
+
+    expect(parseYaml(text).project.public_branch_template).toBe(
+      "wip/{task_key}-a{attempt}",
+    );
+
+    await writeFile(yamlPath, text);
+    const cfg = await loadProjectConfig(yamlPath);
+
+    expect(cfg.project.public_branch_template).toBe(
+      "wip/{task_key}-a{attempt}",
+    );
+  });
+
+  it("refuses an invalid template at load with CONFIG, before anything is registered", async () => {
+    await writeFile(
+      yamlPath,
+      "schemaVersion: 2\nproject:\n  name: myapp\n  public_branch_template: feature/{bogus}\nflows: []\n",
+    );
+
+    const err = await loadProjectConfig(yamlPath).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(MaisterError);
+    expect((err as MaisterError).code).toBe("CONFIG");
+    expect((err as MaisterError).message).toContain("public_branch_template");
   });
 });

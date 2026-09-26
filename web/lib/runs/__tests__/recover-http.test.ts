@@ -30,6 +30,13 @@ const REFUSALS = [
     code: "PRECONDITION",
     reason: "workspace_removed",
   },
+  // ADR-181: a live workbench claim owns the worktree — the one-writer token.
+  {
+    state: "workspace-busy",
+    httpStatus: 409,
+    code: "CONFLICT",
+    reason: "busy",
+  },
   { state: "unresumable", httpStatus: 410, code: "CHECKPOINT", reason: null },
   {
     state: "transient",

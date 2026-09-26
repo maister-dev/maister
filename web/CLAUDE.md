@@ -382,6 +382,32 @@ for compilation — the failure is warm-up, not behaviour.
   into a strict-mode violation, which reads like a missing element but is the
   opposite.
 
+  **A freshly loaded page can be in the DOM twice.** Every `(app)` page
+  streams behind `app/(app)/loading.tsx`. React 19.2 reveals a finished
+  boundary on a throttle (`$RC` queues it, `$RV` swaps it in up to ~300 ms
+  later), and until then the server's copy waits in a hidden
+  `<div id="S:0">` at the end of `<body>`. An update that reaches the
+  still-dehydrated boundary, such as an attention tick's `router.refresh()`,
+  makes React client-render the page into `<main>`. Until ADR-171 D7 every
+  load got that tick (the connect-time snapshot). Now only a page that
+  something moved under does, so the window is rarer but not gone. For that
+  window a page-level `getByTestId` or CSS locator matches
+  both copies (role locators skip the hidden one). The signature is
+  `strict mode violation: getByTestId('<page test id>') resolved to 2
+  elements`, the second one outside `<main>`, often after a `Received: hidden`
+  poll; a one-shot `count()` reads double. Measured on the Desk on 2026-09-26: the
+  refresh's RSC request at 308 ms, both copies at 487 ms, the hidden one
+  `display: none` under `div#S:0`. Read page content inside
+  `page.getByRole("main")`, as `desk.spec.ts` does. Its race test holds the
+  reveal (`holdStreamedReveal`) and pushes a tick once the copy is parked, so
+  it fails if the scoping regresses. Scoping has one cost: a one-shot `count()` taken before the page
+  reaches `<main>` now reads 0, where it used to count the parked copy, so wait
+  for the region to be visible first. The same signature showed on
+  `push-notifications:103/218` (`notifications-panel`), `work-table:97`
+  (`work-empty`) and `activity-feed:51`, and those specs now read page content
+  inside `<main>` too. `outbound-webhooks:363`'s violation was different: two
+  visible rows left by a failed first attempt, i.e. a retry that lied.
+
   **Assume things are collapsed.** Much of this UI now hides content behind a
   disclosure, a non-default tab, or a collapsed tree folder — the workbench
   Files/Diff tabs, the package viewer's raw YAML, the composition Files tab and
@@ -432,6 +458,25 @@ for compilation — the failure is warm-up, not behaviour.
   roots, was not listed in `AUTHED_SPEC`, and so ran UNAUTHENTICATED in the
   default `chromium` project where it cannot pass. The default config now
   ignores `execution-ab-*.spec.ts` the same way it already ignored `live-*`.
+
+**Measured 2026-09-23 (ADR-181 branch, this Mac): two more load-sensitive
+integration names, both in code that branch does not touch.**
+`lib/flows/graph/__tests__/permission-resume.integration.test.ts`
+"owner-flow-repeated-permission" failed once in a lane that started at load 157
+and passed in every re-run — re-run a hit idle before reading anything into it.
+`lib/__tests__/permission-deadline.integration.test.ts` RED 13/14 (red at load
+≥ 28, green at ≤ 20) was not load noise but a product bug the load exposed:
+the resumable mock answered the cap's cancelled permission with `end_turn`,
+which under load beat the SIGTERM, so the prompt settled `succeeded` and the
+agent grant took `kind: "result"` — marking the operator's stored answer
+delivered although no `session.input` ever carried it. Master's ADR-180
+correction (`04a3a39a`) fixed it: a checkpointed permission without confirmed
+input resumes as `continue` whatever the prompt's outcome — 12/12 at load
+75-278 after the fix, with the succeeded-prompt race firing in 7 of 12 cases.
+The tell was a stable red rate with one wrong VALUE and no timeout: a load
+flake does not pick an answer. Ask whether the "by-rule" outcome tells the
+operator the truth before blaming the fixture. The lane totals were 511 files
+/ 4544 tests.
 
 **Budget ~25 min for the integration lane and do not mistake it for a hang.** It
 is gated by two very slow files — `lib/flows/graph/__tests__/prompt-owners.integration.test.ts`
@@ -502,6 +547,29 @@ implementing or exercising the suggestion list is byte-identical between the
 two trees. Run the spec on `master` before attributing a name like this to a
 branch — after a rebase, "a NEW name" no longer implies "this branch's",
 because `master` moved too.
+
+**Measured 2026-09-23 (ADR-181 branch; its merge base `c36ff5b1` reproduced in
+a detached worktree on this Mac).** Three names had joined the set on `master`
+itself. `flow-target-delegation.spec.ts:36` was a deterministic race, not load:
+its two-node cli flow children reached `Review` before the coordinator's turn
+ended, so the coordinator — correctly — completed without parking and the wake
+the spec proves never ran. The children now wait at their first node for a file
+the spec creates after it sees the park (`e2e/_seed/delegated-release.ts`).
+`orchestrator-loop.spec.ts:56` and `m11b-takeover.spec.ts:67` were
+budget-bound: ~19 s and ~22 s on a quiet host against the 30 s default, out of
+budget at load 40-72 with `--workers=2`; both now carry 120 s (m11b also waits
+15 s for the claim's refresh and 60 s for the post-return resume).
+`push-notifications.spec.ts:103` was intermittent here under either config
+(`Notification.permission === "denied"` at mount). Measured 2026-09-26: this
+headless Chromium reads it as "denied" whatever the context grants,
+context-wide or origin-scoped. The panel hides the other-browsers count in
+that state, so "1 other browser" was only ever read off the server's markup
+before the panel mounted. The test now pins the permission "Allow" produces. What found the race was the
+dev server's own log — temporarily set `webServer.stdout: "pipe"` in
+`playwright.config.ts` ("orchestrator turn ended with no pending children").
+That log also showed the observatory fixture's task-less `Pending` flow run
+being promoted whenever a slot freed (`promoteNextPending runFlow dispatch
+failed — task not found`); the fixture seeds no queued run any more.
 
 **`pnpm lint` on `master` c4216cd5 is RED: 3 errors**, all
 `react/no-children-prop` in `components/observatory/__tests__/` — 2 in
@@ -630,7 +698,7 @@ add`, supervisor `POST /sessions` — body carries `taskId` and optional
   `application/octet-stream` and gated by `readRepoFiles` like the direct
   content route; always a sandboxed no-store attachment — AB-12;
   path-confined to the run dir)
-- `GET /api/cron/gc` (Abandoned/Done worktrees + checkpointed sessions >7d,
+- `GET /api/cron/gc` (Abandoned/Done/Failed worktrees + checkpointed sessions >7d,
   all projects)
 
 Primary nav is the role-driven left rail (`components/chrome/left-rail.tsx`):

@@ -83,11 +83,41 @@ export function buildPromotionRequestBody(
 export function isTargetDriftResponse(value: unknown): boolean {
   if (!value || typeof value !== "object") return false;
 
-  const response = value as { code?: unknown; message?: unknown };
+  const response = value as {
+    code?: unknown;
+    message?: unknown;
+    details?: { reason?: unknown };
+  };
+
+  if (response.code !== "PRECONDITION") return false;
+  // ADR-181: the typed token first; the message match serves a body without one.
+  if (response.details?.reason === "target_drift") return true;
 
   return (
-    response.code === "PRECONDITION" &&
     typeof response.message === "string" &&
     /target advanced/i.test(response.message)
+  );
+}
+
+// ADR-181 (C): a squashing PR promotion refused because the PR branch holds
+// commits the run does not. It is a CONFLICT, but no merge conflict — the way
+// out is updating onto the publication, not resolving a merge.
+export function isPublicationDivergedResponse(value: unknown): boolean {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    (value as { details?: { reason?: unknown } }).details?.reason ===
+      "publication_diverged"
+  );
+}
+
+// ADR-181 (Codex F4): the recorded PR was merged on the provider without the
+// run's later commits. Nothing was changed; they need a PR of their own.
+export function isMergedPrBehindResponse(value: unknown): boolean {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    (value as { details?: { reason?: unknown } }).details?.reason ===
+      "merged_pr_behind"
   );
 }

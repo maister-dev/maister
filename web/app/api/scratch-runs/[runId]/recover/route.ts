@@ -31,6 +31,7 @@ import {
 } from "@/lib/scratch-runs/events";
 import { scratchStepId } from "@/lib/scratch-runs/launch";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
+import { workbenchClaimHoldsTree } from "@/lib/runs/lifecycle-claim";
 import {
   assertLocalPackageAssistantActor,
   markScratchCrashed,
@@ -106,10 +107,23 @@ function httpStatusForCode(code: string): number {
   }
 }
 
+// ADR-181 C26: the one reason token this route's body carries — `busy`, a
+// live workbench claim owning the worktree. Every other typed error keeps the
+// documented `{code, message}` body.
+const FORWARDED_REASONS: ReadonlySet<string> = new Set(["busy"]);
+
 function errorResponse(err: unknown, runId: string): NextResponse {
   if (isMaisterError(err)) {
+    const reason = (err.details as { reason?: unknown } | undefined)?.reason;
+
     return NextResponse.json(
-      { code: err.code, message: err.message },
+      {
+        code: err.code,
+        message: err.message,
+        ...(typeof reason === "string" && FORWARDED_REASONS.has(reason)
+          ? { details: { reason } }
+          : {}),
+      },
       { status: httpStatusForCode(err.code) },
     );
   }
@@ -441,6 +455,29 @@ export async function POST(
         .returning({ id: runs.id });
 
       if (rows.length === 0) return null;
+
+      // ADR-181 C26, the recover direction: one writer per worktree. The CAS
+      // above holds the run row, so a workbench claim committed before it is
+      // visible here, and one still in flight waits for this transaction and
+      // then sees `Running`. Throwing rolls the flip back.
+      const [workspace] = await tx
+        .select({
+          lifecycleOperationState: workspaces.lifecycleOperationState,
+          lifecycleOperationLeaseExpiresAt:
+            workspaces.lifecycleOperationLeaseExpiresAt,
+          promotionState: workspaces.promotionState,
+          promotionClaimedAt: workspaces.promotionClaimedAt,
+        })
+        .from(workspaces)
+        .where(eq(workspaces.runId, runId));
+
+      if (workspace && workbenchClaimHoldsTree(workspace)) {
+        throw new MaisterError(
+          "CONFLICT",
+          `a workbench operation owns scratch run ${runId}'s worktree — retry once it finishes`,
+          { details: { reason: "busy" } },
+        );
+      }
 
       return mintPlacement(tx as unknown as ExecutionDb, {
         runId,

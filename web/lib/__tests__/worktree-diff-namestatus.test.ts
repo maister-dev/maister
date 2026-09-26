@@ -406,3 +406,23 @@ describe("diffNameStatus / diffRunWorkspace — base not an ancestor of branch (
     expect(diff.text).toContain("+v0");
   });
 });
+
+// ADR-181: a worktree whose directory vanished while its row is live (the
+// `worktree-gone` state the run git panel's Reattach exists for) must fail
+// every working-tree read as a typed refusal. The run layout renders any
+// `MaisterError` from its change summary as "unavailable" and rethrows the
+// rest — so a raw git failure here took the whole run page down.
+describe("diffWorkingTreeChangeStats on a vanished worktree", () => {
+  it("refuses with a typed CONFLICT, never a raw git failure", async () => {
+    const gone = join(
+      await mkdtemp(join(tmpdir(), "worktree-gone-")),
+      "vanished",
+    );
+    const failure = await diffWorkingTreeChangeStats(gone).catch(
+      (err: unknown) => err,
+    );
+
+    expect(failure).toBeInstanceOf(MaisterError);
+    expect((failure as MaisterError).code).toBe("CONFLICT");
+  });
+});

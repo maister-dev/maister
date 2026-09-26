@@ -2227,6 +2227,13 @@ paths:
         shared-tree / experiment / scratch run.
 
         Writes a `token_audit_log` row with scope `runs:sync` after success.
+
+        **(ADR-181 — Implemented) A push never drops the publication's own
+        commits.** When the push would drop commits only the run's publication
+        has (a reviewer's fixup, a suggestion committed on the PR), the sync is
+        refused `409 CONFLICT` before anything moves. This surface cannot
+        confirm the drop; an operator brings those commits in, or confirms
+        replacing them, from the run git panel.
       operationId: extSyncRun
       security:
         - projectToken: []
@@ -2418,11 +2425,15 @@ paths:
         can never double-spawn, and a cap-full recover queues to `Pending`
         rather than exceeding `MAISTER_MAX_CONCURRENT_RUNS`.
 
-        **Retry semantics.** Only `503` is retryable. `409` and `410` are
-        terminal classifications — this run cannot continue, and the caller
-        should `POST /api/v1/ext/runs/{runId}/discard` instead. (ADR-175) The
-        three `409` outcomes are machine-distinguishable on `details.reason`:
-        `discard_only`, `recover_cas_lost`, `workspace_removed`.
+        **Retry semantics.** `503` is retryable, and so is a `409` whose
+        `details.reason` is `busy` (ADR-181): a live workbench claim — a git
+        panel operation inside its lease, or a parked PR finalize — owns the
+        worktree, nothing moved, and the recover succeeds once it finishes.
+        Every other `409`, and `410`, is a terminal classification — this run
+        cannot continue, and the caller should
+        `POST /api/v1/ext/runs/{runId}/discard` instead. (ADR-175) The four
+        `409` outcomes are machine-distinguishable on `details.reason`:
+        `discard_only`, `recover_cas_lost`, `workspace_removed`, `busy`.
 
         **Identifiers (trust contour).** The `projectId` is derived SERVER-SIDE
         from the run row, existence-hidden `404` on mismatch. The body is empty

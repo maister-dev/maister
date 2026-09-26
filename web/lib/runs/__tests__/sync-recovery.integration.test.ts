@@ -615,6 +615,41 @@ describe("runSyncRecoverySweep — W1/W4 orphan + skip-vs-abort discriminant", (
     // the rebased commit, so resetting the worktree would manufacture divergence.
     expect(restoreWorktreeToCommit).not.toHaveBeenCalled();
   });
+
+  // ADR-181 D7: the live path pushes to the PUBLICATION, so the proof that an
+  // orphaned push landed must be read there — `origin` under the internal name
+  // never received it, and reading it would fail a push that did land.
+  it("settles a landed push FORWARD from the publication, not origin/<internal>", async () => {
+    const landed = "d".repeat(40);
+    const { workspaceId, attemptId } = await seedRunAttempt({
+      status: "Review",
+      mode: "mechanical",
+      phase: "pushing",
+      headShaBefore: "b".repeat(40),
+    });
+
+    await pool.query(
+      `update workspaces set published_branch = 'feature/PUB-9', published_remote = 'fork', published_at = now() where id = $1`,
+      [workspaceId],
+    );
+    vi.mocked(headCommit).mockResolvedValue(landed);
+    vi.mocked(remoteBranchHead).mockImplementation(async (args) =>
+      args.remote === "fork" && args.branch === "feature/PUB-9" ? landed : null,
+    );
+
+    const summary = await runSyncRecoverySweep({
+      db,
+    });
+
+    expect(summary.orphanOperationsAborted).toBe(1);
+    expect(await readAttempt(attemptId)).toEqual({
+      phase: "succeeded",
+      pushed: true,
+      headShaAfter: landed,
+    });
+    expect(await readClaim(workspaceId)).toEqual({ state: "none", name: null });
+    expect(restoreWorktreeToCommit).not.toHaveBeenCalled();
+  });
 });
 
 // #C4: `recoverSyncAttemptOnReconcile` was invoked exactly once in the whole suite,
@@ -662,6 +697,34 @@ describe("recoverSyncAttemptOnReconcile — W3 no live session", () => {
     expect(restoreWorktreeToCommit).toHaveBeenCalledWith(
       expect.any(String),
       "b".repeat(40),
+    );
+  });
+
+  // ADR-181 D9: an update onto base|published records its OWN `target_ref`,
+  // and a resolver may run for it in Review — so a crashed resolver is
+  // re-verified against that ref, never against the promotion target.
+  it("re-verifies against the attempt's recorded target_ref", async () => {
+    const { runId, attemptId } = await seedW3();
+
+    await pool.query(
+      `update run_sync_attempts set target_ref = 'develop' where id = $1`,
+      [attemptId],
+    );
+    vi.mocked(localBranchHead).mockImplementation(async (args) =>
+      args.branch === "develop" ? "d".repeat(40) : "7".repeat(40),
+    );
+    vi.mocked(headCommit).mockResolvedValue("e".repeat(40));
+
+    await recoverSyncAttemptOnReconcile({
+      runId,
+      liveSessionId: null,
+      db,
+    });
+
+    expect(verifySyncGate).toHaveBeenCalledWith(
+      expect.any(String),
+      "d".repeat(40),
+      "maister/rec",
     );
   });
 

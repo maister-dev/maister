@@ -243,7 +243,9 @@ function seedFlowRun(
   return runId;
 }
 
-function seedScratchRun(): string {
+function seedScratchRun(
+  overrides: Partial<{ targetBranch: string | null }> = {},
+): string {
   const runId = "run-scratch-promote";
 
   dbState.tables.runs.push({
@@ -261,7 +263,7 @@ function seedScratchRun(): string {
     projectId: "project-1",
     baseBranch: "main",
     baseCommit: "abc1234",
-    targetBranch: null,
+    targetBranch: overrides.targetBranch ?? null,
     dialogStatus: "Review",
     supervisorSessionId: null,
     updatedAt: null,
@@ -1112,16 +1114,87 @@ describe("promoteRun — scratch dispatch (behavior preserved)", () => {
     expect(promoteLocalMerge).not.toHaveBeenCalled();
   });
 
-  it("rejects rebase_merge for scratch runs before touching git", async () => {
+  // ADR-181 D13 (RED 22): a scratch run promotes in all three modes, still
+  // target-locked — to `scratch_runs.target_branch`, else its base.
+  it("admits rebase_merge for a scratch run: the rebase side effect onto its locked target", async () => {
     const runId = seedScratchRun();
 
-    await expectMaisterCode(
+    const res = await callPromote(runId, { mode: "rebase_merge" });
+
+    expect(res).toMatchObject({ ok: true, commit: "rebased00" });
+    expect(promoteRebaseMerge).toHaveBeenCalledWith({
+      projectRepoPath: "/repos/demo",
+      sourceBranch: "scratch/demo",
+      targetBranch: "main",
+      worktreePath: "/wt/scratch-demo",
+    });
+    expect(promoteLocalMerge).not.toHaveBeenCalled();
+    expect(dbState.tables.scratch_runs[0]).toMatchObject({
+      dialogStatus: "Done",
+      targetBranch: "main",
+    });
+    // A rebase lands the target by fast-forward: the head is delivered, and
+    // there is no merge commit — exactly as a flow run's rebase_merge records.
+    expect(dbState.tables.runs[0]).toMatchObject({
+      status: "Done",
+      promotedHeadSha: "rebased00",
+      mergeCommitSha: null,
+    });
+    expect(dbState.tables.workspaces[0]).toMatchObject({
+      promotionState: "done",
+      promotionMode: "rebase_merge",
+    });
+    expect(
+      emitWebhookEventMock.mock.calls.map(
+        (c) => (c[0] as { type: string }).type,
+      ),
+    ).toEqual(["run.promoted", "run.done"]);
+    expect(emitWebhookEventMock.mock.calls[0][0]).toMatchObject({
+      data: { mode: "rebase_merge", target: "main", pullRequestUrl: null },
+    });
+  });
+
+  it("takes a scratch target from scratch_runs.target_branch before the base", async () => {
+    const runId = seedScratchRun({ targetBranch: "release" });
+
+    await expect(
       callPromote(runId, { mode: "rebase_merge" }),
+    ).resolves.toMatchObject({ ok: true });
+
+    expect(promoteRebaseMerge).toHaveBeenCalledWith(
+      expect.objectContaining({ targetBranch: "release" }),
+    );
+  });
+
+  // C26 for a scratch tree: its rebase and its PR push are writers now, so a
+  // live workbench op (a discard, a publish) refuses the promotion.
+  it("refuses a scratch promotion while a workbench operation holds the tree", async () => {
+    const runId = seedScratchRun();
+
+    Object.assign(dbState.tables.workspaces[0], {
+      lifecycleOperationState: "claiming",
+      lifecycleOperationName: "discardChanges",
+      lifecycleOperationLeaseExpiresAt: new Date(Date.now() + 60_000),
+    });
+
+    await expectMaisterCode(
+      callPromote(runId, { mode: "local_merge" }),
+      "CONFLICT",
+    );
+
+    expect(promoteLocalMerge).not.toHaveBeenCalled();
+    expect(dbState.tables.workspaces[0].promotionState).toBe("none");
+  });
+
+  it("still refuses a scratch target other than its locked one, in every mode", async () => {
+    const runId = seedScratchRun({ targetBranch: "release" });
+
+    await expectMaisterCode(
+      callPromote(runId, { mode: "rebase_merge", targetBranch: "main" }),
       "PRECONDITION",
     );
 
     expect(promoteRebaseMerge).not.toHaveBeenCalled();
-    expect(promoteLocalMerge).not.toHaveBeenCalled();
     expect(dbState.tables.workspaces[0].promotionState).toBe("none");
   });
 });

@@ -31,6 +31,7 @@ import {
   ACTIVE_RUN_STATUSES,
   type PortfolioWorkspace,
   lifecycleActionsForWorkspace,
+  presenceForRows,
   relativeTime,
   runStatusToWorkspace,
   scratchActionForWorkspace,
@@ -341,8 +342,12 @@ export async function getProjectPageData(
           runnerSnapshot: activeSessionRunnerSnapshot(runs.id),
           workspaceId: workspaces.id,
           branch: workspaces.branch,
+          worktreePath: workspaces.worktreePath,
           archivedBranch: workspaces.archivedBranch,
           removedAt: workspaces.removedAt,
+          publishedBranch: workspaces.publishedBranch,
+          prUrl: workspaces.prUrl,
+          promotionState: workspaces.promotionState,
           promotionLane: workspaces.promotionLane,
           prState: workspaces.prState,
           prHasConflicts: workspaces.prHasConflicts,
@@ -465,6 +470,7 @@ export async function getProjectPageData(
     client,
     activeRunRows.map((row) => row.runId),
   );
+  const presence = await presenceForRows(activeRunRows);
   const activeWorkspaces: PortfolioWorkspace[] = activeRunRows.map((row) => ({
     runId: row.runId,
     runKind: row.runKind as RunKind,
@@ -496,6 +502,15 @@ export async function getProjectPageData(
       hasWorkspace: Boolean(row.workspaceId),
       removedAt: row.removedAt,
       archivedBranch: row.archivedBranch,
+      claimOwnerUserId: null,
+      viewerUserId: null,
+      worktreePresent: row.worktreePath
+        ? (presence.get(row.worktreePath) ?? false)
+        : null,
+      publishedBranch: row.workspaceId ? row.publishedBranch : undefined,
+      prUrl: row.workspaceId ? row.prUrl : undefined,
+      prState: row.prState ?? null,
+      promotionState: row.promotionState,
     }),
     // ACTIVE_RUN_STATUSES excludes Done/Abandoned; a gate-less run → "ready".
     readiness: readinessByRun.get(row.runId) ?? "ready",

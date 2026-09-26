@@ -90,6 +90,15 @@ The board is a horizontally scrollable set of columns:
   angle brackets) and keeps what the renderer shows literally — an intra-word
   `_`, and a raw HTML tag such as `<div>`, which this app renders as text and
   never as markup.
+- **Parked-run menu on a Backlog card (ADR-181).** When the task's
+  latest run is `Failed` or `Abandoned` and that run's worktree is still usable,
+  the Backlog card also carries the run's lifecycle menu (`⋯`) beside Launch.
+  Its git items (commit, discard, publish, update, open/finalize PR) are deep
+  links into the run git panel (`/runs/{runId}?git=<section>`,
+  [`../runs/git-panel.md`](../runs/git-panel.md)); archive and drop open their
+  usual confirmations. A failed attempt's work is therefore reachable from the
+  board, and Launch still starts attempt N+1. The card derives this from the
+  latest run's workspace facts, never from `tasks.status`.
 - **Full card editor** opens from the card edit icon. It follows an issue-detail
   layout: title and description on the left; persisted first-level task
   properties on the right (`flowId`, `runnerId`, `baseBranch`,

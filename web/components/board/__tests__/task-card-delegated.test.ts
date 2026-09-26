@@ -55,6 +55,8 @@ function card(over: Partial<BacklogCard> = {}): BacklogCard {
     relations: [],
     childTasks: [],
     parentTask: { keyRef: "MAI-3", number: 3, projectSlug: "maister" },
+    // ADR-181 D14: no latest run with a usable worktree.
+    latestRun: null,
     ...over,
   };
 }

@@ -24,6 +24,13 @@ import { loadFixtures, type E2EUserFixture } from "./_seed/fixtures";
 
 const EMPTY_STORAGE = { cookies: [], origins: [] };
 
+// The panel is page content, read inside <main>: for a moment after a load the
+// page can be in the document twice (web/CLAUDE.md, "A freshly loaded page
+// can be in the DOM twice").
+function panel(page: Page) {
+  return page.getByRole("main").getByTestId("notifications-panel");
+}
+
 async function signIn(
   browser: Browser,
   user: Pick<E2EUserFixture, "email" | "password">,
@@ -106,9 +113,21 @@ test("E2E-NTF opt in stores the endpoint for the session user, and revoking remo
   const fx = loadFixtures().byKey.activityFeed;
   const page = await signIn(browser, fx.member);
 
+  // Measured 2026-09-26: this headless Chromium reads `Notification.permission`
+  // as "denied" whatever the context grants (context-wide or origin-scoped),
+  // and the panel hides the other-browsers count in that state. The count was
+  // only ever seen on the server's markup, before the panel mounted. Pin the
+  // value "Allow" produces, so the reader-visible panel is what is asserted.
+  await page.addInitScript(() => {
+    Object.defineProperty(Notification, "permission", {
+      configurable: true,
+      get: () => "granted",
+    });
+  });
+
   try {
     await page.goto("/account");
-    await expect(page.getByTestId("notifications-panel")).toBeVisible();
+    await expect(panel(page)).toBeVisible();
 
     const endpoints = [
       `https://push.e2e.invalid/${Date.now()}-a`,
@@ -139,9 +158,7 @@ test("E2E-NTF opt in stores the endpoint for the session user, and revoking remo
     // The page reads the stored endpoints back: two browsers registered means
     // one "other" besides this one.
     await page.reload();
-    await expect(page.getByTestId("notifications-panel")).toContainText(
-      "1 other browser",
-    );
+    await expect(panel(page)).toContainText("1 other browser");
 
     // Re-registering the same endpoint is idempotent, not cumulative.
     const again = await page.evaluate(async (endpoint: string) => {
@@ -159,9 +176,7 @@ test("E2E-NTF opt in stores the endpoint for the session user, and revoking remo
 
     expect(again).toBe(201);
     await page.reload();
-    await expect(page.getByTestId("notifications-panel")).toContainText(
-      "1 other browser",
-    );
+    await expect(panel(page)).toContainText("1 other browser");
 
     // REVOKE both.
     const removed = await page.evaluate(async (urls: string[]) => {
@@ -182,9 +197,7 @@ test("E2E-NTF opt in stores the endpoint for the session user, and revoking remo
 
     expect(removed).toEqual([204, 204]);
     await page.reload();
-    await expect(page.getByTestId("notifications-panel")).not.toContainText(
-      "other browser",
-    );
+    await expect(panel(page)).not.toContainText("other browser");
   } finally {
     await page.context().close();
   }
@@ -223,12 +236,10 @@ test("E2E-NTF a member sees their own panel and no one else's subscriptions", as
 
   try {
     await page.goto("/account");
-    await expect(page.getByTestId("notifications-panel")).toBeVisible();
+    await expect(panel(page)).toBeVisible();
 
     // The panel is per-reader: it never names another account's browsers.
-    await expect(page.getByTestId("notifications-panel")).not.toContainText(
-      "other browser",
-    );
+    await expect(panel(page)).not.toContainText("other browser");
   } finally {
     await page.context().close();
   }

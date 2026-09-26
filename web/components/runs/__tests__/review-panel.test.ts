@@ -88,29 +88,16 @@ const LABELS = {
   // component) — the test supplies the already-composed string.
   behindAhead: "run.behindAhead:3:2",
   syncBranch: "run.syncBranch",
-  syncTitle: "run.syncTitle",
-  syncStrategy: "run.syncStrategy",
-  syncStrategyRebase: "run.syncStrategyRebase",
-  syncStrategyMerge: "run.syncStrategyMerge",
-  syncRunner: "run.syncRunner",
-  syncRunnerDefault: "run.syncRunnerDefault",
-  syncPush: "run.syncPush",
-  syncResolveWithAgent: "run.syncResolveWithAgent",
-  syncStart: "run.syncStart",
-  syncCancel: "run.syncCancel",
   syncInProgress: "run.syncInProgress:agent_running",
   resolveWithAgent: "run.resolveWithAgent",
   autoFinalize: "run.autoFinalize",
   autoFinalizeHint: "run.autoFinalizeHint",
 };
 
-const SYNC = {
-  strategyDefault: "rebase" as const,
-  runnerOptions: [{ id: "runner-1", label: "claude · sonnet" }],
-  defaultRunnerId: null,
-  published: false,
-  inProgress: null,
-};
+const SYNC = { inProgress: null };
+
+// ADR-181 D9: where every sync entry point links (`gitPanelHref`).
+const UPDATE_HREF = "/runs/run-1?git=update";
 
 type ReviewPanelProps = Parameters<typeof ReviewPanel>[0];
 
@@ -292,11 +279,18 @@ describe("ReviewPanel — base→run→target review surface (M18 T4.2)", () => 
 // ---------------------------------------------------------------------------
 describe("ReviewPanel — branch sync (ADR-141)", () => {
   it("renders the behind/ahead chip when the run branch is behind its target", () => {
-    const html = render({ sync: SYNC, aheadBehind: { ahead: 2, behind: 3 } });
+    const html = render({
+      sync: SYNC,
+      aheadBehind: { ahead: 2, behind: 3 },
+      updateHref: UPDATE_HREF,
+    });
 
     expect(html).toContain('data-testid="review-ahead-behind"');
-    // The chip exposes the Sync-branch entry point when a sync bundle is present.
-    expect(html).toContain('data-testid="review-sync-open"');
+    // ADR-181 D9 (contract moved): the Sync-branch entry point is a LINK into
+    // the run git panel's Update section, not a dialog of its own.
+    expect(html).toMatch(
+      /<a[^>]*data-testid="review-sync-open"[^>]*href="\/runs\/run-1\?git=update"|<a[^>]*href="\/runs\/run-1\?git=update"[^>]*data-testid="review-sync-open"/,
+    );
     expect(html).toContain("run.syncBranch");
   });
 
@@ -330,42 +324,6 @@ describe("ReviewPanel — branch sync (ADR-141)", () => {
     const html = render({ sync: SYNC, aheadBehind: null });
 
     expect(html).not.toContain('data-testid="review-ahead-behind"');
-  });
-
-  it("renders the sync dialog form with strategy, runner, push, and AI-agent controls", () => {
-    const html = render({
-      sync: SYNC,
-      aheadBehind: { ahead: 0, behind: 1 },
-      syncDialogOpen: true,
-    } as Partial<ReviewPanelProps>);
-
-    expect(html).toContain('data-testid="review-sync-dialog"');
-    expect(html).toContain('data-testid="review-sync-strategy"');
-    expect(html).toContain('data-testid="review-sync-runner"');
-    expect(html).toContain('data-testid="review-sync-push"');
-    // "resolve with AI agent" checkbox is present and checked by default.
-    expect(html).toContain('data-testid="review-sync-agent"');
-    expect(html).toContain("run.syncResolveWithAgent");
-    expect(html).toContain('data-testid="review-sync-start"');
-  });
-
-  it("the AI-agent checkbox defaults to ON (checked)", () => {
-    const html = render({
-      sync: SYNC,
-      aheadBehind: { ahead: 0, behind: 1 },
-      syncDialogOpen: true,
-    } as Partial<ReviewPanelProps>);
-
-    // Isolate the agent checkbox's own <input> element and assert it is checked
-    // (attribute order under SSR is not guaranteed, so span the whole tag).
-    const marker = 'data-testid="review-sync-agent"';
-    const idx = html.indexOf(marker);
-    const el = html.slice(
-      html.lastIndexOf("<input", idx),
-      html.indexOf(">", idx),
-    );
-
-    expect(el).toContain("checked");
   });
 
   it("shows the in-progress status and freezes promote while a sync is claimed", () => {
@@ -402,6 +360,7 @@ describe("ReviewPanel — branch sync (ADR-141)", () => {
   it("surfaces a Resolve-with-agent affordance on the merge-conflict card", () => {
     const html = render({
       sync: SYNC,
+      updateHref: UPDATE_HREF,
       conflict: {
         parentRepoPath: "/repos/app",
         targetBranch: "release",
@@ -413,5 +372,6 @@ describe("ReviewPanel — branch sync (ADR-141)", () => {
     expect(html).toContain('data-testid="review-conflict"');
     expect(html).toContain('data-testid="review-conflict-resolve-agent"');
     expect(html).toContain("run.resolveWithAgent");
+    expect(html).toContain('href="/runs/run-1?git=update"');
   });
 });

@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
+import { gcAgeDays } from "@/lib/instance-config";
 import {
   testPlatformRunnerRow,
   testRunnerSnapshot,
@@ -405,6 +406,97 @@ describe("portfolio queries (integration)", () => {
     expect(ws?.agent).toBe("dev");
     expect(ws?.status).toBe("needs");
     expect(portfolio.totalActiveWorkspaces).toBeGreaterThanOrEqual(1);
+  });
+
+  // ADR-181 D2 (RED 3): a Failed run owes a git decision, so it is listed
+  // wherever a Crashed one is — but it is NOT an attention item.
+  it("lists a Failed run as an active workspace on the portfolio, rail and project page, never as a decision", async () => {
+    const user = await createUser("failed-parked@test.com");
+    const project = await createProject("Failed Project");
+    const flow = await createFlow(project);
+    const executorId = await createExecutor(project);
+
+    await addProjectMember(user, project, "member");
+
+    const taskId = await createTask(project, flow, "Failed Task");
+    const runId = randomUUID();
+
+    const endedAt = new Date();
+
+    await db.insert(schema.runs).values({
+      id: runId,
+      taskId,
+      projectId: project,
+      flowId: flow,
+      status: "Failed",
+      flowVersion: "v1.0.0",
+      startedAt: new Date(),
+      endedAt,
+    });
+    await db.insert(schema.runSessions).values({
+      id: randomUUID(),
+      runId,
+      sessionName: "default",
+      runnerId: executorId,
+      capabilityAgent: "claude",
+      runnerSnapshot: testRunnerSnapshot(executorId),
+    });
+    await db.insert(schema.workspaces).values({
+      id: randomUUID(),
+      runId,
+      projectId: project,
+      branch: "maister/failed-parked",
+      worktreePath: `/wt/${runId}`,
+      parentRepoPath: "/repos/failed",
+    });
+
+    const portfolio = await getPortfolio(user, "member");
+    const proj = portfolio.projects.find((p) => p.id === project);
+    const ws = proj?.activeWorkspaces.find((w) => w.runId === runId);
+
+    expect(ws).toBeDefined();
+
+    const railRow = (await getRailWorkspaceGroups(user, "member"))
+      .flatMap((group) => group.workspaces)
+      .find((row) => row.runId === runId);
+
+    expect(railRow).toBeDefined();
+    // A failed workbench reads as a failure, not as the green "Running" an
+    // unmapped status used to fall through to.
+    expect(railRow).toMatchObject({
+      statusLabel: "Failed",
+      statusTone: "crashed",
+    });
+    // ADR-181 (owner, 2026-09-23): the worktree counts down from `ended_at` like
+    // a Done/Abandoned one — a fresh failure is well inside its window.
+    expect(railRow?.ttlState).toBe("active");
+    expect(railRow?.effectiveRemovalAt).toEqual(
+      new Date(endedAt.getTime() + gcAgeDays() * 86_400_000),
+    );
+
+    const { getProjectBySlug, getProjectPageData } = await import(
+      "@/lib/queries/project"
+    );
+    const projectRow = await getProjectBySlug(`proj-${project.slice(0, 8)}`);
+
+    expect(projectRow).not.toBeNull();
+    const page = await getProjectPageData(projectRow!);
+
+    expect(page.activeWorkspaces.some((w) => w.runId === runId)).toBe(true);
+
+    // Attention counters are unchanged: the run is not a crashed decision and
+    // adds nothing to the decisions count.
+    const { listCrashedForProjects } = await import(
+      "@/lib/queries/decision-sources"
+    );
+    const { getDecisionsCount } = await import("@/lib/queries/decisions");
+
+    expect(
+      (await listCrashedForProjects([project], { db })).map((i) => i.runId),
+    ).not.toContain(runId);
+    expect(
+      await getDecisionsCount(user, "member", { projectId: project }),
+    ).toBe(0);
   });
 
   it("shows scratch runs as active workspaces linked to the scratch dialog", async () => {

@@ -4,7 +4,11 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { RELEASED_LIFECYCLE_CLAIM } from "@/lib/runs/lifecycle-claim";
+import {
+  RELEASED_LIFECYCLE_CLAIM,
+  workbenchClaimHolder,
+  workbenchClaimHoldsTree,
+} from "@/lib/runs/lifecycle-claim";
 
 // `workspaces_lifecycle_claim_shape_check` (migration 0116) makes a lifecycle
 // claim a SHAPE: for state 'none' every claim column must be NULL. A release
@@ -52,5 +56,68 @@ describe("RELEASED_LIFECYCLE_CLAIM", () => {
     for (const column of requiredNull) {
       expect(released).toContain(column);
     }
+  });
+});
+
+// ADR-181 C26: the one rule for "a live workbench claim owns the tree", which
+// the git facts (`busy`) and both recovers read — so none can disagree.
+describe("workbenchClaimHolder", () => {
+  const now = Date.now();
+  const recent = new Date(now - 1_000);
+  const leaseAhead = new Date(now + 60_000);
+  const leaseLapsed = new Date(now - 1_000);
+
+  it("names a lifecycle operation inside its lease", () => {
+    const workspace = {
+      lifecycleOperationState: "claiming",
+      lifecycleOperationName: "exportBranch",
+      lifecycleOperationClaimedAt: recent,
+      lifecycleOperationLeaseExpiresAt: leaseAhead,
+    };
+
+    expect(workbenchClaimHolder(workspace)).toEqual({
+      name: "exportBranch",
+      claimedAt: recent,
+    });
+    expect(workbenchClaimHoldsTree(workspace)).toBe(true);
+  });
+
+  it("names a promotion inside its window when no lifecycle operation holds", () => {
+    const workspace = {
+      lifecycleOperationState: "claiming",
+      lifecycleOperationName: "sync",
+      lifecycleOperationLeaseExpiresAt: leaseLapsed,
+      promotionState: "claiming",
+      promotionClaimedAt: recent,
+    };
+
+    expect(workbenchClaimHolder(workspace)).toEqual({
+      name: "promotion",
+      claimedAt: recent,
+    });
+    expect(workbenchClaimHoldsTree(workspace)).toBe(true);
+  });
+
+  it("answers null for a free slot, a lapsed lease and a stale promotion", () => {
+    const workspace = {
+      lifecycleOperationState: "claiming",
+      lifecycleOperationName: "sync",
+      lifecycleOperationLeaseExpiresAt: leaseLapsed,
+      promotionState: "claiming",
+      promotionClaimedAt: new Date(0),
+    };
+
+    expect(workbenchClaimHolder({})).toBeNull();
+    expect(workbenchClaimHolder(workspace)).toBeNull();
+    expect(workbenchClaimHoldsTree(workspace)).toBe(false);
+  });
+
+  it("names an unnamed live lifecycle claim as unknown", () => {
+    expect(
+      workbenchClaimHolder({
+        lifecycleOperationState: "claiming",
+        lifecycleOperationLeaseExpiresAt: leaseAhead,
+      }),
+    ).toEqual({ name: "unknown", claimedAt: null });
   });
 });

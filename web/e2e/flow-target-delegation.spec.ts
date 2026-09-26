@@ -18,9 +18,13 @@
 // CI-ONLY: requires a free :3100 (the playwright webServer). It cannot run while
 // a `next dev` holds the Next 16 single-dev lock on the same project dir.
 
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import path from "node:path";
+
 import { test, expect } from "@playwright/test";
 
 import { singleValue, withE2EDb } from "./_seed/db";
+import { DELEGATED_FLOW_RELEASE } from "./_seed/delegated-release";
 import { loadFixtures } from "./_seed/fixtures";
 import { readLaunchResult } from "./_seed/launch-stream";
 
@@ -49,10 +53,24 @@ test("flow-target delegation: launch → flow children in Review → the parked 
           WHERE job_kind = 'domain_event_dispatch'`,
       ),
     );
-    await request.post("/api/cron/tick?jobKind=domain_event_dispatch", {
-      headers: { [CRON_HEADER]: CRON_TOKEN },
+    // The request context reuses a keep-alive socket the dev server may have
+    // closed an instant earlier (`read ECONNRESET`, seen under load): the tick
+    // is idempotent, so one retry on a fresh connection.
+    const tick = () =>
+      request.post("/api/cron/tick?jobKind=domain_event_dispatch", {
+        headers: { [CRON_HEADER]: CRON_TOKEN },
+      });
+
+    await tick().catch((err: unknown) => {
+      if (!/ECONNRESET|socket hang up/.test(String(err))) throw err;
+
+      return tick();
     });
   };
+
+  // The children wait at their first node for this file (see
+  // `_seed/delegated-release.ts`) — cleared here so a retry holds them too.
+  rmSync(DELEGATED_FLOW_RELEASE, { force: true });
 
   // Seed the consumer cursors BEFORE ANYTHING RUNS.
   //
@@ -120,6 +138,11 @@ test("flow-target delegation: launch → flow children in Review → the parked 
       { timeout: 30_000 },
     )
     .toBe("WaitingOnChildren");
+
+  // The coordinator parked with its children held; release them, so they reach
+  // `Review` only after the park — the order the wake below exists to prove.
+  mkdirSync(path.dirname(DELEGATED_FLOW_RELEASE), { recursive: true });
+  writeFileSync(DELEGATED_FLOW_RELEASE, "");
 
   // Every child is a run_kind='flow' run with a carrier task — the thing that
   // did not exist before ADR-163.

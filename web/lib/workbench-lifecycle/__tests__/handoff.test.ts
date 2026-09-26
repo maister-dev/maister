@@ -74,7 +74,8 @@ function context(over: Partial<LifecycleContext> = {}): LifecycleContext {
 
 function deps(ctx: LifecycleContext = context()): HandoffDeps {
   return {
-    requireActiveSession: vi.fn(async () => undefined),
+    // ADR-181 D2: the binding returns the authenticated user (the viewer).
+    requireActiveSession: vi.fn(async () => ({ id: "user-1" })),
     loadContext: vi.fn(async () => ctx),
     authorize: vi.fn(async () => undefined),
     executionHosts: memoryExecutionHosts(createFakeExecutionHost()),
@@ -100,6 +101,8 @@ function deps(ctx: LifecycleContext = context()): HandoffDeps {
     statusPorcelain: vi.fn(async () => ""),
     snapshotDirtyWorktree: vi.fn(async () => false),
     pushBranch: vi.fn(async () => undefined),
+    branchUpstream: vi.fn(async () => null),
+    recordPublished: vi.fn(async () => undefined),
     claimLifecycleOperation: vi.fn(async () => ({
       attemptId: "lifecycle-attempt-1",
       leaseExpiresAt: new Date("2026-06-09T08:05:00.000Z"),
@@ -178,6 +181,7 @@ describe("workbench lifecycle handoff services", () => {
       workspaceId: "workspace-1",
       operation: "snapshotCommit",
       expectedRunStatus: "Review",
+      actorUserId: "user-1",
     });
     expect(d.snapshotDirtyWorktree).toHaveBeenCalledWith({
       worktreePath: "/tmp/maister/worktrees/run-1",
@@ -382,6 +386,7 @@ describe("workbench lifecycle handoff services", () => {
       workspaceId: "workspace-1",
       operation: "handoffBranch",
       expectedRunStatus: "Review",
+      actorUserId: "user-1",
     });
     expect(d.createBranchAtHead).toHaveBeenCalledWith({
       worktreePath: "/tmp/maister/worktrees/run-1",

@@ -35,9 +35,13 @@ export type CreateOrUpdatePrArgs = {
   targetBranch: string;
   title: string;
   body: string;
+  // ADR-181 D11: open the PR as a draft. Applied on CREATE only.
+  draft?: boolean;
 };
 
-export type PrResult = { url: string; number: number };
+// `reused` (C18): an open PR for the same head/base already existed and was
+// returned UNTOUCHED — the request's title, body and draft were not applied.
+export type PrResult = { url: string; number: number; reused: boolean };
 
 export interface PrAdapter {
   preflight(): Promise<void>;
@@ -211,6 +215,7 @@ export class GhCliAdapter extends CliPrAdapter {
           args.title,
           "--body",
           args.body,
+          ...(args.draft ? ["--draft"] : []),
           "--end-of-options",
         ],
         args.repoPath,
@@ -271,6 +276,7 @@ export class GlabCliAdapter extends CliPrAdapter {
           args.title,
           "--description",
           args.body,
+          ...(args.draft ? ["--draft"] : []),
           "--end-of-options",
         ],
         args.repoPath,
@@ -434,7 +440,7 @@ export class GiteaApiAdapter implements PrAdapter {
           typeof pr.html_url === "string" &&
           typeof pr.number === "number"
         ) {
-          return { url: pr.html_url, number: pr.number };
+          return { url: pr.html_url, number: pr.number, reused: true };
         }
       }
 
@@ -459,7 +465,10 @@ export class GiteaApiAdapter implements PrAdapter {
         body: JSON.stringify({
           head: args.sourceBranch,
           base: args.targetBranch,
-          title: args.title,
+          // The Gitea family's API has no draft flag: a `WIP: ` title is its
+          // draft convention, and `findOpenPr` matches head/base only, so the
+          // PR is still found on the next call.
+          title: args.draft ? `WIP: ${args.title}` : args.title,
           body: args.body,
         }),
       },
@@ -481,7 +490,7 @@ export class GiteaApiAdapter implements PrAdapter {
       );
     }
 
-    return { url: created.html_url, number: created.number };
+    return { url: created.html_url, number: created.number, reused: false };
   }
 
   private async fetchOrThrow(
@@ -577,7 +586,7 @@ function parsePrList(stdout: string, expectedBase: string): PrResult | null {
     const number = entry.number ?? entry.iid;
 
     if (typeof url === "string" && typeof number === "number") {
-      return { url, number };
+      return { url, number, reused: true };
     }
   }
 
@@ -597,7 +606,7 @@ function parseCreatedPrUrl(stdout: string): PrResult {
     );
   }
 
-  return { url, number: Number.parseInt(match[1], 10) };
+  return { url, number: Number.parseInt(match[1], 10), reused: false };
 }
 
 // ---- dispatch -------------------------------------------------------------
@@ -641,6 +650,10 @@ export function selectPrAdapter(
 //                       unparseable remote). Still not a statement about the PR.
 // `generic` has no PR-state support → `unsupported` (mirrors selectPrAdapter's
 // unsupported-provider path as a typed result, not a throw).
+//
+// `headSha` is the commit the PR itself carries (ADR-181), which a merged PR
+// keeps after its branch is deleted: a finalize binds to it, never to whatever
+// was published last.
 
 export type PrStateReadResult =
   | {
@@ -649,6 +662,7 @@ export type PrStateReadResult =
       mergedAt: string | null;
       mergeCommitSha: string | null;
       hasConflicts: boolean | null;
+      headSha: string | null;
     }
   | { kind: "skip"; transient: boolean; reason: string }
   | { kind: "unsupported" };
@@ -793,7 +807,7 @@ async function githubPrState(args: GetPrStateArgs): Promise<PrStateReadResult> {
         "--repo",
         `${parsed.owner}/${parsed.repo}`,
         "--json",
-        "state,mergedAt,mergeCommit,mergeable,mergeStateStatus",
+        "state,mergedAt,mergeCommit,mergeable,mergeStateStatus,headRefOid",
       ],
       {
         signal: AbortSignal.timeout(EXEC_TIMEOUT_MS),
@@ -811,6 +825,7 @@ async function githubPrState(args: GetPrStateArgs): Promise<PrStateReadResult> {
     mergeCommit?: { oid?: string | null } | null;
     mergeable?: string;
     mergeStateStatus?: string;
+    headRefOid?: string | null;
   };
 
   try {
@@ -831,6 +846,7 @@ async function githubPrState(args: GetPrStateArgs): Promise<PrStateReadResult> {
     mergedAt: isoTimestamp(payload.mergedAt),
     mergeCommitSha: nonEmptyString(payload.mergeCommit?.oid),
     hasConflicts: githubConflicts(payload.mergeable, payload.mergeStateStatus),
+    headSha: nonEmptyString(payload.headRefOid),
   };
 }
 
@@ -899,6 +915,8 @@ async function gitlabPrState(args: GetPrStateArgs): Promise<PrStateReadResult> {
     merge_commit_sha?: string | null;
     has_conflicts?: boolean;
     detailed_merge_status?: string;
+    sha?: string | null;
+    diff_refs?: { head_sha?: string | null } | null;
   };
 
   try {
@@ -919,6 +937,9 @@ async function gitlabPrState(args: GetPrStateArgs): Promise<PrStateReadResult> {
     mergedAt: isoTimestamp(payload.merged_at),
     mergeCommitSha: nonEmptyString(payload.merge_commit_sha),
     hasConflicts: gitlabConflicts(payload),
+    headSha:
+      nonEmptyString(payload.sha) ??
+      nonEmptyString(payload.diff_refs?.head_sha),
   };
 }
 
@@ -997,6 +1018,7 @@ async function giteaPrState(
     merged_at?: string | null;
     merge_commit_sha?: string | null;
     mergeable?: boolean;
+    head?: { sha?: string | null } | null;
   };
 
   try {
@@ -1019,6 +1041,7 @@ async function giteaPrState(
     mergeCommitSha: nonEmptyString(payload.merge_commit_sha),
     hasConflicts:
       typeof payload.mergeable === "boolean" ? !payload.mergeable : null,
+    headSha: nonEmptyString(payload.head?.sha),
   };
 }
 

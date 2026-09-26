@@ -52,6 +52,8 @@ const card: BacklogCard = {
   relations: [],
   childTasks: [],
   parentTask: null,
+  // ADR-181 D14: no latest run with a usable worktree.
+  latestRun: null,
 };
 
 describe("TaskCard launch incompatibility", () => {

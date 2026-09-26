@@ -2,7 +2,7 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, or } from "drizzle-orm";
 import pino from "pino";
 
 import {
@@ -17,8 +17,12 @@ import { isMaisterError, MaisterError } from "@/lib/errors";
 import { isLaunchedLineageRun } from "@/lib/evaluations/membership";
 import { recordArtifact } from "@/lib/flows/graph/artifact-store";
 import { assertEvidenceReady } from "@/lib/flows/graph/evidence-readiness";
-import { gcAgeDays, promotionClaimTimeoutSeconds } from "@/lib/instance-config";
-import { lifecycleClaimIsStale } from "@/lib/runs/lifecycle-claim";
+import { gcAgeDays } from "@/lib/instance-config";
+import {
+  canReclaimLifecycle,
+  lifecycleClaimIsStale,
+  promotionClaimIsLive,
+} from "@/lib/runs/lifecycle-claim";
 import { type SyncActor } from "@/lib/runs/sync-target";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import {
@@ -33,15 +37,14 @@ import {
   type LegacyPromotionMode,
   type StoredDeliveryPolicy,
 } from "@/lib/runs/delivery-policy";
-import { selectPrAdapter } from "@/lib/runs/pr-adapter";
 import {
   countFailureTerminalSharedSiblings,
   countUnsettledSharedSiblings,
   resolveSharedTreeWorkspaceForUpdate,
 } from "@/lib/runs/shared-tree";
-import { detectProvider, readRemoteOrigin } from "@/lib/repo-source";
 import {
   branchExists,
+  branchUpstream,
   deliveryCommitStats,
   deliveryHistoryStats,
   findTargetMergeByRunId,
@@ -49,11 +52,27 @@ import {
   promoteLocalMerge,
   promoteRebaseMerge,
   pushBranch,
+  remoteBranchHead,
   resolveBaseCommit,
   squashRunBranch,
 } from "@/lib/worktree";
+import {
+  recordPublished,
+  resolvePublishName,
+} from "@/lib/workbench-git/publication";
+import { WORKTREE_ACTION_STATUSES } from "@/lib/workbench-git/policy";
+import {
+  mergedPullRequestBehind,
+  preflightedPrAdapter,
+  readRecordedPullRequest,
+  type RecordedPullRequest,
+} from "@/lib/workbench-git/pull-request";
 import { readWorktreeProvenanceForPromotion } from "@/lib/worktree-provenance";
 import { commitsFromSnapshot } from "@/lib/runs/execution-policy";
+import {
+  assertPushKeepsPublication,
+  PublicationDivergedError,
+} from "@/lib/runs/publication-guard";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import {
   resolveAutoPromotionConfig,
@@ -61,7 +80,7 @@ import {
 } from "@/lib/auto-promotion/config";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { runs, scratchRuns, workspaces, projects } =
+const { runs, scratchRuns, tasks, workspaces, projects } =
   schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): route + tests pass a minimal drizzle-like fake / a Testcontainers
@@ -166,6 +185,13 @@ export type PromoteRunResult = {
   resolverLaunched?: boolean;
 };
 
+// ADR-181 D12: the statuses a parked finalize takes to Done — every status the
+// tree may be operated in except Review (a finalize there IS `promoteRun`) and
+// Done (already finalized). One source with the git policy.
+const PARKED_FINALIZE_STATUSES: ReadonlySet<string> = new Set(
+  [...WORKTREE_ACTION_STATUSES].filter((s) => s !== "Review" && s !== "Done"),
+);
+
 // Workspace states that may be (re)claimed by a fresh promote attempt. A
 // `claiming` state is reclaimable only once its claim has gone stale (handled
 // separately, see canReclaim).
@@ -181,18 +207,48 @@ function canReclaim(workspace: {
 
   if (RECLAIMABLE_STATES.has(state)) return true;
 
-  if (state === "claiming") {
-    const claimedAt = workspace.promotionClaimedAt
-      ? new Date(workspace.promotionClaimedAt)
-      : null;
-
-    if (!claimedAt) return true;
-    const cutoffMs = Date.now() - promotionClaimTimeoutSeconds() * 1000;
-
-    return claimedAt.getTime() < cutoffMs;
-  }
+  if (state === "claiming") return !promotionClaimIsLive(workspace);
 
   return false;
+}
+
+// The promotion side of "one writer per worktree", under the workspace row lock
+// every caller already holds.
+function assertNoLiveWorkbenchClaim(workspace: any): void {
+  // ADR-141 reverse fence (the sync↔promotion double fence): refuse while a
+  // branch sync holds the shared workspace lifecycle slot. The forward fence
+  // lives in syncRunTarget (refuses when promotion_state is claiming/done), so
+  // the two are mutually exclusive under the same FOR UPDATE workspace lock.
+  //
+  // The staleness carve-out mirrors `canReclaimLifecycle` (and `canReclaim`),
+  // and is the belt-and-braces recovery for a claim that was stranded
+  // rather than held: an unbounded fence turns one crash between a sync's
+  // terminal-phase write and its claim release into a PERMANENT refusal of
+  // promotion and every other lifecycle op, with no exit but hand-written SQL.
+  if (
+    workspace.lifecycleOperationName === "sync" &&
+    workspace.lifecycleOperationState === "claiming" &&
+    !lifecycleClaimIsStale(workspace)
+  ) {
+    throw new MaisterError(
+      "CONFLICT",
+      "a branch sync is in progress for this run",
+    );
+  }
+
+  // ADR-181 C26: one writer per worktree covers promotion too — a live claim
+  // of ANY workbench op (publish, discard, re-attach, …) owns the tree, by the
+  // same lease rule the lifecycle service reclaims by.
+  if (
+    workspace.lifecycleOperationName !== "sync" &&
+    workspace.lifecycleOperationState === "claiming" &&
+    !canReclaimLifecycle(workspace)
+  ) {
+    throw new MaisterError(
+      "CONFLICT",
+      `a workbench ${workspace.lifecycleOperationName ?? "operation"} is in progress for this run`,
+    );
+  }
 }
 
 async function loadRun(db: Db, runId: string): Promise<any> {
@@ -204,6 +260,20 @@ async function loadRun(db: Db, runId: string): Promise<any> {
   }
 
   return run;
+}
+
+async function loadRunForUpdate(db: Db, runId: string): Promise<any> {
+  const rows = await db
+    .select()
+    .from(runs)
+    .where(eq(runs.id, runId))
+    .for("update");
+
+  if (!rows[0]) {
+    throw new MaisterError("PRECONDITION", `run not found: ${runId}`);
+  }
+
+  return rows[0];
 }
 
 async function loadWorkspaceForUpdate(db: Db, runId: string): Promise<any> {
@@ -442,6 +512,57 @@ function resolvePromotionPolicy(args: {
     },
   });
 }
+
+// ADR-181 D11 step 2 — the ONE rule a promotion target passes, for a promotion
+// and for the run git panel's Open PR: it resolves to a commit in the parent
+// checkout. Returns that commit, the target's live tip.
+export async function resolvePromotionTarget(args: {
+  projectRepoPath: string;
+  targetBranch: string;
+}): Promise<string> {
+  try {
+    return await resolveBaseCommit({
+      projectRepoPath: args.projectRepoPath,
+      baseRef: args.targetBranch,
+    });
+  } catch (err) {
+    if (isMaisterError(err) && err.code === "PRECONDITION") {
+      throw new MaisterError("PRECONDITION", err.message, {
+        cause: err,
+        details: { reason: "target_branch_unknown" },
+      });
+    }
+
+    throw err;
+  }
+}
+
+// ADR-181 D13: a scratch run is target-locked (no flow relaxation, no drift) —
+// to its recorded target, else its base — for a promotion and for Open PR.
+export function scratchPromotionTarget(
+  scratch: { baseBranch: string; targetBranch: string | null },
+  requested: string | null | undefined,
+): string {
+  const locked = scratch.targetBranch ?? scratch.baseBranch;
+  const target = requested ?? locked;
+
+  if (target !== locked) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `promotion target branch is outside project policy: ${target}`,
+      { details: { reason: "target_locked" } },
+    );
+  }
+
+  return target;
+}
+
+// ADR-181 C5: what a `run.promoted` event is attributed to. `pr_finalize` is
+// minted only by the parked finalize (`finalizeParkedPullRequest`), which never
+// enters `promoteRun`, so `PromoteRunInput.attribution` keeps its one value.
+type PromotionAttribution =
+  | NonNullable<PromoteRunInput["attribution"]>
+  | { source: "pr_finalize" };
 
 function promotionModeForEffectiveMode(
   mode: EffectivePromotionMode,
@@ -751,9 +872,9 @@ async function promoteWorkspaceRun(
       );
     }
 
-    const liveTip = await resolveBaseCommit({
+    const liveTip = await resolvePromotionTarget({
       projectRepoPath: workspace.parentRepoPath,
-      baseRef: resolvedTarget,
+      targetBranch: resolvedTarget,
     });
 
     if (
@@ -770,32 +891,15 @@ async function promoteWorkspaceRun(
         },
         "promote target-drift refusal",
       );
+      // ADR-181: the token the git panel's "Finalize anyway" branches on.
       throw new MaisterError(
         "PRECONDITION",
         "target advanced since review — re-review or override",
+        { details: { reason: "target_drift" } },
       );
     }
 
-    // ADR-141 reverse fence (the sync↔promotion double fence): refuse while a
-    // branch sync holds the shared workspace lifecycle slot. The forward fence
-    // lives in syncRunTarget (refuses when promotion_state is claiming/done), so
-    // the two are mutually exclusive under the same FOR UPDATE workspace lock.
-    //
-    // The staleness carve-out mirrors `canReclaimLifecycle` (and `canReclaim`
-    // below), and is the belt-and-braces recovery for a claim that was stranded
-    // rather than held: an unbounded fence turns one crash between a sync's
-    // terminal-phase write and its claim release into a PERMANENT refusal of
-    // promotion and every other lifecycle op, with no exit but hand-written SQL.
-    if (
-      workspace.lifecycleOperationName === "sync" &&
-      workspace.lifecycleOperationState === "claiming" &&
-      !lifecycleClaimIsStale(workspace)
-    ) {
-      throw new MaisterError(
-        "CONFLICT",
-        "a branch sync is in progress for this run",
-      );
-    }
+    assertNoLiveWorkbenchClaim(workspace);
 
     if (!canReclaim(workspace)) {
       throw new MaisterError(
@@ -849,6 +953,28 @@ async function promoteWorkspaceRun(
     );
   }
 
+  if (claim.resolvedMode === "pull_request") {
+    const delivered = await finalizeMergedRecordedPullRequest({
+      runId,
+      ctx,
+      db,
+      claim,
+      attribution: input.attribution ?? null,
+    });
+
+    if (delivered !== null) return delivered;
+  }
+
+  // ADR-181 (C): a squash PR promotion force-updates the PR branch, so commits
+  // only that branch has (a suggestion committed on the PR) would leave it. It
+  // is refused BEFORE the squash rewrites anything; the run's own pre-squash
+  // commits (a reclaim after a transient push failure) stay the branch's
+  // through its reflog, and the push leases exactly the head checked here.
+  const forcedPr =
+    claim.resolvedMode === "pull_request" && squashesRunHistory(claim)
+      ? await guardForcedPrPush(db, claim, runId)
+      : null;
+
   // C2 (execution-policy commits): collapse the run branch's history (base..HEAD)
   // into one commit pre-promotion for squash_rework / squash_on_promote, BEFORE
   // either side-effect so it applies to merge AND PR promotions. Tree-preserving
@@ -866,8 +992,8 @@ async function promoteWorkspaceRun(
       // from the immutable policy, NOT this attempt's squash result, so a reclaim
       // after a transient push failure still force-updates the already-rewritten
       // branch onto a remote that may hold the old history (no non-fast-forward).
-      forcePush: squashesRunHistory(claim),
-      promotionLane: input.attribution?.laneClass ?? null,
+      forcedPr,
+      attribution: input.attribution ?? null,
     });
   }
 
@@ -1333,6 +1459,120 @@ type FlowClaim = {
   baseCommit: string | null;
 };
 
+// ADR-181 (C): read the PR branch's head once and ask the publication guard
+// whether a forced update would drop commits only it has. A refusal releases
+// the claim (terminal: nothing moved, the operator updates onto the
+// publication first); a transient read leaves it `claiming` for the retry.
+async function guardForcedPrPush(
+  db: Db,
+  claim: FlowClaim,
+  runId: string,
+): Promise<{ publicBranch: string; leaseSha: string | null }> {
+  const project = await loadProject(db, claim.run.projectId);
+  const publicBranch = await publicBranchForPromotion(db, claim, project);
+  const leaseSha = await remoteBranchHead({
+    projectRepoPath: claim.workspace.parentRepoPath,
+    remote: "origin",
+    branch: publicBranch,
+  });
+
+  try {
+    await assertPushKeepsPublication({
+      runId,
+      repo: claim.workspace.parentRepoPath,
+      localBranch: claim.workspace.branch,
+      remote: "origin",
+      remoteBranch: publicBranch,
+      remoteHead: leaseSha,
+      keptRefs: [
+        claim.resolvedTarget,
+        `refs/remotes/origin/${claim.resolvedTarget}`,
+      ],
+      fetchRemotes: ["origin"],
+    });
+  } catch (err) {
+    if (err instanceof PublicationDivergedError) {
+      await markPromotionFailed(db, claim.workspace.id, claim.attemptId);
+    }
+    throw err;
+  }
+
+  return { publicBranch, leaseSha };
+}
+
+// ADR-181 (Codex F4): the adapters find only OPEN pull requests, so a recorded
+// PR the provider already merged would be pushed to (squashed first) and a
+// second PR attempted. A merged PR IS the delivery, finalized as it stands at
+// the head it carries, which must be the worktree's HEAD, or the commits after
+// it would read as delivered (refused, the claim released). Null: the ordinary
+// PR path applies (no PR recorded, or open or closed on the provider). An
+// unreadable PR is that path's to meet too, unless the scan already saw it
+// merged, when pushing again is the one thing that must not happen.
+async function finalizeMergedRecordedPullRequest(args: {
+  runId: string;
+  ctx: PromoteRunContext;
+  db: Db;
+  claim: FlowClaim;
+  attribution: PromotionAttribution | null;
+}): Promise<PromoteRunResult | null> {
+  const { runId, db, claim } = args;
+  const prNumber: number | null = claim.workspace.prNumber ?? null;
+
+  if (prNumber === null) return null;
+
+  let pr: RecordedPullRequest;
+
+  try {
+    pr = await readRecordedPullRequest({
+      project: await loadProject(db, claim.run.projectId),
+      parentRepoPath: claim.workspace.parentRepoPath,
+      prNumber,
+    });
+  } catch (err) {
+    if (claim.workspace.prState !== "merged") return null;
+    // Transient: the claim stays `claiming` for the retry, as a push does.
+    if (!(isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE")) {
+      await markPromotionFailed(db, claim.workspace.id, claim.attemptId);
+    }
+    throw err;
+  }
+
+  if (pr.state !== "merged") return null;
+
+  const head = await headCommit({
+    worktreePath: claim.workspace.worktreePath,
+  });
+
+  if (pr.headSha !== head) {
+    log.info(
+      { runId, prNumber, prHead: pr.headSha, head },
+      "promotion refused — the recorded PR was merged without the worktree's HEAD",
+    );
+    await markPromotionFailed(db, claim.workspace.id, claim.attemptId);
+    throw mergedPullRequestBehind({
+      runId,
+      prNumber,
+      prHead: pr.headSha,
+      head,
+    });
+  }
+
+  log.info(
+    { runId, prNumber, headSha: head },
+    "recorded PR already merged on the provider — finalized as it stands",
+  );
+
+  return finalizePullRequest({
+    runId,
+    ctx: args.ctx,
+    db,
+    claim,
+    pr: { url: claim.workspace.prUrl, number: prNumber },
+    sourceHead: head,
+    attribution: args.attribution,
+  });
+}
+
 // PR-mode side-effect (§3.2 step 4/5): preflight → push → createOrUpdatePr →
 // finalize. Classification mirrors the table in §3.2:
 //   - preflight / unsupported-provider → PRECONDITION: terminal-config, the
@@ -1345,25 +1585,31 @@ async function promotePullRequestSideEffect(args: {
   db: Db;
   claim: FlowClaim;
   // C2: the run branch was squash-rewritten pre-push, so an existing PR branch
-  // must be force-updated (--force-with-lease). False when no squash ran.
-  forcePush?: boolean;
+  // must be force-updated (--force-with-lease) — with the public name and the
+  // lease head the publication guard checked (ADR-181 C). Null: no force.
+  forcedPr: { publicBranch: string; leaseSha: string | null } | null;
   // ADR-126 T11: threaded to finalize for the workspaces.promotion_lane write.
-  promotionLane: LaneClass | null;
+  attribution: PromotionAttribution | null;
 }): Promise<PromoteRunResult> {
   const { runId, ctx, db, claim } = args;
   const project = await loadProject(db, claim.run.projectId);
-  const remoteUrl =
-    project?.repoUrl ??
-    (await readRemoteOrigin(claim.workspace.parentRepoPath));
-  const provider =
-    project?.provider ?? (remoteUrl ? detectProvider(remoteUrl) : "generic");
 
   // Preflight / dispatch failures are terminal-config (PRECONDITION): mark the
   // claim failed (token-scoped) so a later attempt can reclaim, then rethrow.
   try {
-    const adapter = selectPrAdapter(provider, { remoteUrl });
+    // ADR-181 D11: the ONE provider resolution, shared with the git panel's
+    // Open PR.
+    const adapter = await preflightedPrAdapter({
+      project,
+      parentRepoPath: claim.workspace.parentRepoPath,
+    });
 
-    await adapter.preflight();
+    // ADR-181 D4/D11: the PR branch is the PUBLIC name — the same core the run
+    // git panel's publish uses, so a promotion and a panel publish → open PR →
+    // finalize converge on identical rows.
+    const publicBranch =
+      args.forcedPr?.publicBranch ??
+      (await publicBranchForPromotion(db, claim, project));
 
     // Push then open/update the PR — both are transient on failure (the helpers
     // throw EXECUTOR_UNAVAILABLE), so the claim is intentionally LEFT claiming.
@@ -1371,21 +1617,36 @@ async function promotePullRequestSideEffect(args: {
       projectRepoPath: claim.workspace.parentRepoPath,
       remote: "origin",
       branch: claim.workspace.branch,
+      remoteBranch: publicBranch,
+      setUpstream: true,
       // Only force when a squash rewrote base..HEAD — keeps a plain (keep_all)
-      // PR push a non-forced fast-forward.
-      ...(args.forcePush ? { force: true } : {}),
+      // PR push a non-forced fast-forward. The lease is the head the
+      // publication guard checked BEFORE the squash (ADR-141 + ADR-181 C).
+      ...(args.forcedPr
+        ? { force: true, leaseSha: args.forcedPr.leaseSha }
+        : {}),
+    });
+    await recordPublished({
+      database: db,
+      workspaceId: claim.workspace.id,
+      remote: "origin",
+      branch: publicBranch,
+      at: new Date(),
+      fence: { kind: "promotion", attemptId: claim.attemptId },
     });
     const sourceHead = await headCommit({
       worktreePath: claim.workspace.worktreePath,
     });
 
+    // A promotion opens a ready PR; a draft is the panel's Open PR choice.
     const pr = await adapter.createOrUpdatePr({
       repoPath: claim.workspace.parentRepoPath,
       remote: "origin",
-      sourceBranch: claim.workspace.branch,
+      sourceBranch: publicBranch,
       targetBranch: claim.resolvedTarget,
       title: prTitle(claim),
       body: prBody(claim),
+      draft: false,
     });
 
     return finalizePullRequest({
@@ -1395,7 +1656,7 @@ async function promotePullRequestSideEffect(args: {
       claim,
       pr,
       sourceHead,
-      promotionLane: args.promotionLane,
+      attribution: args.attribution,
     });
   } catch (err) {
     if (isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE") {
@@ -1410,6 +1671,54 @@ async function promotePullRequestSideEffect(args: {
   }
 }
 
+// ADR-181 D4 step 2 for a promotion: an existing publication on origin fixes
+// the name, else the project template renders it (a promotion never takes a
+// request). The name belongs to the WORKSPACE's run — a shared tree's branch is
+// the allocator's, whichever sibling promotes it.
+async function publicBranchForPromotion(
+  db: Db,
+  claim: FlowClaim,
+  project: any,
+): Promise<string> {
+  const ownerRunId: string = claim.workspace.runId ?? claim.run.id;
+  const ownerTaskId: string | null =
+    ownerRunId === claim.run.id
+      ? (claim.run.taskId ?? null)
+      : ((
+          await db
+            .select({ taskId: runs.taskId })
+            .from(runs)
+            .where(eq(runs.id, ownerRunId))
+        )[0]?.taskId ?? null);
+  const taskRows = ownerTaskId
+    ? await db
+        .select({ number: tasks.number, title: tasks.title })
+        .from(tasks)
+        .where(eq(tasks.id, ownerTaskId))
+    : [];
+  const task = taskRows[0] ?? null;
+
+  return resolvePublishName({
+    runId: ownerRunId,
+    internalBranch: claim.workspace.branch,
+    remote: "origin",
+    requested: null,
+    template: project?.publicBranchTemplate,
+    taskKey:
+      task && project?.taskKey ? `${project.taskKey}-${task.number}` : null,
+    taskTitle: task?.title ?? null,
+    recordedBranch: claim.workspace.publishedBranch ?? null,
+    recordedRemote: claim.workspace.publishedRemote ?? null,
+    legacyPrHead:
+      (claim.workspace.prUrl ?? null) !== null &&
+      (claim.workspace.publishedBranch ?? null) === null,
+    upstream: await branchUpstream(
+      claim.workspace.parentRepoPath,
+      claim.workspace.branch,
+    ),
+  }).name;
+}
+
 function prTitle(claim: FlowClaim): string {
   return `MAIster: promote ${claim.workspace.branch} → ${claim.resolvedTarget}`;
 }
@@ -1418,16 +1727,21 @@ function prBody(claim: FlowClaim): string {
   return `Promotes \`${claim.workspace.branch}\` into \`${claim.resolvedTarget}\` (run ${claim.workspace.runId}).`;
 }
 
+// ADR-181 D12: ONE finalize for a PR-backed run, reached from a `pull_request`
+// promotion (Review) and from the parked finalize (Crashed | Failed |
+// Abandoned). It is DB-only and keyed on the promotion claim's attempt token.
 async function finalizePullRequest(args: {
   runId: string;
   ctx: PromoteRunContext;
   db: Db;
   claim: FlowClaim;
-  pr: { url: string; number: number };
+  pr: { url: string; number: number | null };
   sourceHead: string;
-  promotionLane: LaneClass | null;
+  attribution: PromotionAttribution | null;
 }): Promise<PromoteRunResult> {
-  const { runId, ctx, db, claim, pr, sourceHead, promotionLane } = args;
+  const { runId, ctx, db, claim, pr, sourceHead, attribution } = args;
+  const promotionLane =
+    attribution?.source === "auto_promotion" ? attribution.laneClass : null;
 
   const result = await db.transaction(async (tx: Db) => {
     const ws = await loadPromotionWorkspaceForUpdate(tx, claim.run);
@@ -1529,7 +1843,9 @@ async function finalizePullRequest(args: {
             eq(runs.rootRunId, claim.run.rootRunId),
             eq(runs.workspaceMode, "shared"),
             eq(runs.agentWorkspace, "worktree"),
-            eq(runs.status, "Review"),
+            // The tree's Review siblings — and the finalized run itself, which
+            // a parked finalize (ADR-181 D12) reaches outside Review.
+            or(eq(runs.status, "Review"), eq(runs.id, runId)),
           ),
         )
         .returning({
@@ -1574,6 +1890,20 @@ async function finalizePullRequest(args: {
       ];
     }
 
+    // ADR-181 D13: a scratch run's dialog settles with it, onto the target the
+    // PR was opened against.
+    if (claim.run.runKind === "scratch") {
+      await tx
+        .update(scratchRuns)
+        .set({
+          dialogStatus: "Done",
+          targetBranch: claim.resolvedTarget,
+          supervisorSessionId: null,
+          updatedAt: now,
+        })
+        .where(eq(scratchRuns.runId, runId));
+    }
+
     await tx
       .update(workspaces)
       .set({
@@ -1602,6 +1932,11 @@ async function finalizePullRequest(args: {
         target: claim.resolvedTarget,
         deliveryPolicy: claim.policy,
         pullRequestUrl: pr.url,
+        // C5: only a parked finalize carries a source — no readiness was
+        // asserted, the operator's click was the decision.
+        ...(attribution?.source === "pr_finalize"
+          ? { source: attribution.source }
+          : {}),
       },
     });
 
@@ -1644,6 +1979,7 @@ async function finalizePullRequest(args: {
         prUrl: pr.url,
         prNumber: pr.number,
         targetBranch: claim.resolvedTarget,
+        source: attribution?.source ?? null,
       },
       "workspace run promoted to Done via pull request",
     );
@@ -1675,13 +2011,143 @@ async function finalizePullRequest(args: {
   return result;
 }
 
+// ADR-181 D12 — finalize a PR-backed run parked OUTSIDE Review (Crashed |
+// Failed | Abandoned). There is no graph readiness to assert: the operator's
+// click is the decision. The promotion claim is minted as a promotion mints it
+// — fenced against a live workbench claim, a concurrent promotion and an
+// unsettled shared tree, all under the workspace row lock — and then the ONE PR
+// finalize runs, attributed `pr_finalize`. `sourceHead` is the published head,
+// which the caller proved equal to the worktree's HEAD.
+export async function finalizeParkedPullRequest(args: {
+  runId: string;
+  ctx: PromoteRunContext;
+  sourceHead: string;
+  db?: Db;
+}): Promise<PromoteRunResult> {
+  const { runId, ctx, sourceHead } = args;
+  const db = (args.db ?? getDb()) as Db;
+
+  const claim: FlowClaim = await db.transaction(async (tx: Db) => {
+    const run = await loadRun(tx, runId);
+    const workspace = await loadPromotionWorkspaceForUpdate(tx, run);
+
+    await ctx.authorize(run.projectId);
+    assertNoLiveWorkbenchClaim(workspace);
+
+    if (!canReclaim(workspace)) {
+      throw new MaisterError(
+        "CONFLICT",
+        "promotion already in progress for this run",
+      );
+    }
+
+    // The status the caller admitted may have moved: read it under the run's
+    // own lock, the one a recover holds while it flips `Crashed -> Running`.
+    // Workspace then run, as the lifecycle and sync claims take them, and only
+    // once the tree is known free.
+    const liveRun = await loadRunForUpdate(tx, runId);
+
+    if (!PARKED_FINALIZE_STATUSES.has(liveRun.status)) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `${run.runKind} run ${runId} is ${liveRun.status}; a parked finalize needs Crashed, Failed or Abandoned`,
+        { details: { reason: "unsupported_status" } },
+      );
+    }
+    if (!workspace.prUrl) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `no pull request is recorded for run ${runId}`,
+        { details: { reason: "pr_missing" } },
+      );
+    }
+    if (workspace.prState === "closed") {
+      throw new MaisterError(
+        "PRECONDITION",
+        `the pull request of run ${runId} is closed`,
+        { details: { reason: "pr_closed" } },
+      );
+    }
+    if (run.workspaceMode === "shared" && run.agentWorkspace === "worktree") {
+      const unsettled = await countUnsettledSharedSiblings(tx, run.rootRunId);
+
+      if (unsettled > 0) {
+        throw new MaisterError(
+          "CONFLICT",
+          `shared-tree finalize blocked — ${unsettled} shared sibling(s) of the tree still writable`,
+          { details: { reason: "busy" } },
+        );
+      }
+    }
+
+    const project = await loadProject(tx, run.projectId);
+    const resolvedTarget: string =
+      workspace.targetBranch ?? project?.mainBranch ?? "main";
+    const attemptId = randomUUID();
+
+    await tx
+      .update(workspaces)
+      .set({
+        promotionState: "claiming",
+        promotionAttemptId: attemptId,
+        promotionClaimedAt: new Date(),
+        promotionOwnerUserId: resolvePromotionOwnerUserId(ctx),
+        promotionMode: "pull_request",
+        targetBranch: resolvedTarget,
+      })
+      .where(eq(workspaces.id, workspace.id));
+
+    log.info(
+      {
+        runId,
+        attemptId,
+        runStatus: liveRun.status,
+        targetBranch: resolvedTarget,
+      },
+      "parked PR finalize claim minted",
+    );
+
+    return {
+      attemptId,
+      run: liveRun,
+      workspace,
+      resolvedMode: "pull_request",
+      responseMode: "pull_request",
+      promotionMode: "pull_request",
+      resolvedTarget,
+      policy: deliveryPolicyFromLegacyPromotionMode({
+        projectPromotionMode: "pull_request",
+        projectMainBranch: resolvedTarget,
+      }),
+      baseCommit: workspace.baseCommit ?? null,
+    };
+  });
+
+  const result = await finalizePullRequest({
+    runId,
+    ctx,
+    db,
+    claim,
+    pr: {
+      url: claim.workspace.prUrl,
+      number: claim.workspace.prNumber ?? null,
+    },
+    sourceHead,
+    attribution: { source: "pr_finalize" },
+  });
+
+  await releaseTerminalRunMounts(runId, db);
+
+  return result;
+}
+
 // Best-effort PR-evidence artifact carrying pr_url/pr_number in its payload (no
 // new artifact kind — Q3). Never fails the finalize.
 async function recordPrArtifact(args: {
   db: Db;
   run: any;
   workspace: any;
-  pr: { url: string; number: number };
+  pr: { url: string; number: number | null };
 }): Promise<void> {
   try {
     await recordArtifact(
@@ -1747,9 +2213,15 @@ async function promoteScratchRun(
   ctx: PromoteRunContext,
   db: Db,
 ): Promise<PromoteRunResult> {
-  // Scratch runs are ephemeral and target-locked to their base branch; PR mode
-  // is a flow-run promotion only (§3.2). Refuse before minting a claim.
-  if (input.mode !== "local_merge") {
+  // ADR-181 D13: a scratch run promotes in the three modes a promotion knows —
+  // still target-locked (below). Anything else is refused before a claim.
+  const mode = input.mode;
+
+  if (
+    mode !== "local_merge" &&
+    mode !== "rebase_merge" &&
+    mode !== "pull_request"
+  ) {
     throw new MaisterError(
       "PRECONDITION",
       `${input.mode} promotion is not supported for scratch runs`,
@@ -1781,15 +2253,7 @@ async function promoteScratchRun(
 
     await ctx.authorize(run.projectId);
 
-    // Target locked to the scratch base branch (no flow relaxation, no drift).
-    const targetBranch = input.targetBranch ?? scratch.baseBranch;
-
-    if (targetBranch !== scratch.baseBranch) {
-      throw new MaisterError(
-        "PRECONDITION",
-        `promotion target branch is outside project policy: ${targetBranch}`,
-      );
-    }
+    const targetBranch = scratchPromotionTarget(scratch, input.targetBranch);
 
     // M15 merge-readiness guard on scratch promote (preserved across the M18
     // refactor-to-service): refuse a not-ready scratch run BEFORE minting the
@@ -1802,6 +2266,9 @@ async function promoteScratchRun(
         `merge refused: evidence not ready — ${readiness.reasons.join("; ")}`,
       );
     }
+
+    // C26 for a scratch tree too: a rebase or a PR push is a second writer.
+    assertNoLiveWorkbenchClaim(workspace);
 
     if (!canReclaim(workspace)) {
       throw new MaisterError(
@@ -1819,13 +2286,50 @@ async function promoteScratchRun(
         promotionAttemptId: attemptId,
         promotionClaimedAt: new Date(),
         promotionOwnerUserId: ctx.sessionUser.id,
-        promotionMode: "local_merge",
+        promotionMode: mode,
         targetBranch,
       })
       .where(eq(workspaces.id, workspace.id));
 
     return { attemptId, run, workspace, scratch, targetBranch };
   });
+
+  // D13: a scratch PR is the workspace run's — the same publish and open cores
+  // and the ONE PR finalize (its scratch arm settles the dialog).
+  if (mode === "pull_request") {
+    const prClaim: FlowClaim = {
+      attemptId: claim.attemptId,
+      run: claim.run,
+      workspace: claim.workspace,
+      resolvedMode: "pull_request",
+      responseMode: "pull_request",
+      promotionMode: "pull_request",
+      resolvedTarget: claim.targetBranch,
+      policy: deliveryPolicyFromLegacyPromotionMode({
+        projectPromotionMode: "pull_request",
+        projectMainBranch: claim.targetBranch,
+      }),
+      baseCommit: claim.scratch.baseCommit ?? null,
+    };
+    const delivered = await finalizeMergedRecordedPullRequest({
+      runId,
+      ctx,
+      db,
+      claim: prClaim,
+      attribution: null,
+    });
+
+    if (delivered !== null) return delivered;
+
+    return promotePullRequestSideEffect({
+      runId,
+      ctx,
+      db,
+      claim: prClaim,
+      forcedPr: null,
+      attribution: null,
+    });
+  }
 
   const targetExists = await branchExists({
     projectRepoPath: claim.workspace.parentRepoPath,
@@ -1853,20 +2357,24 @@ async function promoteScratchRun(
       worktreePath: claim.workspace.worktreePath,
     });
 
+    // A merge commit carries the run's trailer; a rebase fast-forwards and
+    // leaves none to recover by.
     const recoveredCommit =
-      provenance === null
-        ? null
-        : await findTargetMergeByRunId({
+      mode === "local_merge" && provenance !== null
+        ? await findTargetMergeByRunId({
             projectRepoPath: claim.workspace.parentRepoPath,
             targetBranch: claim.targetBranch,
             runId: provenance.runId,
-          });
+          })
+        : null;
 
     commit =
       recoveredCommit ??
-      (await promoteLocalMerge({
+      (await promoteMergeSideEffect({
+        mode,
         projectRepoPath: claim.workspace.parentRepoPath,
         sourceBranch: claim.workspace.branch,
+        sourceWorktreePath: claim.workspace.worktreePath,
         targetBranch: claim.targetBranch,
         provenance: provenance ?? undefined,
       }));
@@ -1955,7 +2463,8 @@ async function promoteScratchRun(
         currentStepId: null,
         endedAt: now,
         promotedHeadSha: commit,
-        mergeCommitSha: commit,
+        // A rebase fast-forwards the target: no merge commit (as a flow run's).
+        mergeCommitSha: mode === "local_merge" ? commit : null,
         diffStat,
       })
       .where(eq(runs.id, runId));
@@ -1983,7 +2492,7 @@ async function promoteScratchRun(
       projectId: claim.run.projectId,
       runId,
       data: {
-        mode: "local_merge",
+        mode,
         target: claim.targetBranch,
         pullRequestUrl: null,
       },
@@ -2013,7 +2522,7 @@ async function promoteScratchRun(
 
     return {
       ok: true as const,
-      mode: "local_merge" as const,
+      mode,
       commit,
       pullRequestUrl: null,
       prNumber: null,
@@ -2042,17 +2551,23 @@ export async function promoteRun(
       ? await promoteScratchRun(runId, input, ctx, d)
       : await promoteWorkspaceRun(runId, input, ctx, d);
 
-  // ADR-157 (T32): a promoted run is terminal, so release its read-only sibling
-  // mounts. Status-gated inside — a `pull_request` promotion that leaves the run
-  // in `Review`, or an `ai_rebase_merge` deferred to the AI resolver, keeps them.
-  //
-  // LAZY import, matching `markAbandoned`: a static one widens this module's
-  // graph into the agent/social modules (via `quarantineAgentInTx`), which
-  // breaks callers that partially mock `@/lib/worktree` — promote.ts is reached
-  // by suites that mock only the two exports they use.
+  await releaseTerminalRunMounts(runId, d);
+
+  return result;
+}
+
+// ADR-157 (T32): a promoted run is terminal, so release its read-only sibling
+// mounts. Status-gated inside — a `pull_request` promotion that leaves the run
+// in `Review`, or an `ai_rebase_merge` deferred to the AI resolver, keeps them.
+//
+// LAZY import, matching `markAbandoned`: a static one widens this module's
+// graph into the agent/social modules (via `quarantineAgentInTx`), which
+// breaks callers that partially mock `@/lib/worktree` — promote.ts is reached
+// by suites that mock only the two exports they use.
+async function releaseTerminalRunMounts(runId: string, db: Db): Promise<void> {
   await import("@/lib/context-mounts/terminal")
     .then(({ releaseRunContextMounts }) =>
-      releaseRunContextMounts({ runId, db: d }),
+      releaseRunContextMounts({ runId, db }),
     )
     .catch((err: unknown) => {
       log.warn(
@@ -2060,8 +2575,6 @@ export async function promoteRun(
         "context mount release after promotion failed — left to the GC backstop",
       );
     });
-
-  return result;
 }
 
 // M37 (ADR-100): orchestrator-driven promotion of a reviewed child. Used by the

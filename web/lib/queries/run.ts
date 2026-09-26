@@ -89,10 +89,12 @@ import {
   getGraphOnlyCutoverFailure,
   type GraphOnlyCutoverFailure,
 } from "@/lib/queries/run-cutover";
+import { type WorkbenchLifecycleAction } from "@/lib/queries/portfolio";
+import { loadWorkbenchGitFacts } from "@/lib/workbench-git/facts";
 import {
-  lifecycleActionsForWorkspace,
-  type WorkbenchLifecycleAction,
-} from "@/lib/queries/portfolio";
+  deriveWorkbenchGitActions,
+  type WorkbenchGitPolicyInput,
+} from "@/lib/workbench-git/policy";
 import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
 import { loadRunManifest } from "@/lib/queries/run-manifest";
 import {
@@ -237,7 +239,14 @@ export interface RunDetail {
   effectiveRemovalAt: Date | null;
   archived: boolean;
   pruned: boolean;
+  // Viewer-less: the ADR-160 carve-out is shut here (this row is `cache()`d
+  // per runId, so it cannot depend on who asks). The run-detail layout derives
+  // the viewer's set with `lifecycleActionsForViewer`.
   lifecycleActions: WorkbenchLifecycleAction[];
+  // ADR-181 D2: the open rework claim's owner, and every other fact the git
+  // policy reads — from the ONE fact loader.
+  claimOwnerUserId: string | null;
+  lifecycleFacts: Omit<WorkbenchGitPolicyInput, "viewerUserId">;
   // ADR-126 §4.8: the auto-promotion verdict panel object, embedded server-side
   // for first paint. `evaluation` is non-null only for Review flow runs; the GET
   // route computes the SAME object so the panel is byte-identical (INV-10).
@@ -500,6 +509,18 @@ export const getRunDetail = cache(async function getRunDetail(
       scheduledRemovalAt: workspaces.scheduledRemovalAt,
       archivedBranch: workspaces.archivedBranch,
       removedAt: workspaces.removedAt,
+      // ADR-181 D1a: the git fact loader's workspace inputs.
+      agentWorkspace: runs.agentWorkspace,
+      rootRunId: runs.rootRunId,
+      publishedBranch: workspaces.publishedBranch,
+      publishedRemote: workspaces.publishedRemote,
+      promotionState: workspaces.promotionState,
+      promotionClaimedAt: workspaces.promotionClaimedAt,
+      lifecycleOperationState: workspaces.lifecycleOperationState,
+      lifecycleOperationName: workspaces.lifecycleOperationName,
+      lifecycleOperationClaimedAt: workspaces.lifecycleOperationClaimedAt,
+      lifecycleOperationLeaseExpiresAt:
+        workspaces.lifecycleOperationLeaseExpiresAt,
     })
     .from(runs)
     .innerJoin(projects, eq(projects.id, runs.projectId))
@@ -774,6 +795,39 @@ export const getRunDetail = cache(async function getRunDetail(
     );
   }
 
+  const gitFacts = await loadWorkbenchGitFacts({
+    db: client,
+    run: {
+      id: row.runId,
+      runKind: row.runKind,
+      status: row.status,
+      workspaceMode: row.workspaceMode,
+      agentWorkspace: row.agentWorkspace,
+      rootRunId: row.rootRunId,
+      parentRunId: row.parentRunId,
+    },
+    workspace: row.workspaceId
+      ? {
+          branch: row.branch!,
+          worktreePath: row.worktreePath!,
+          parentRepoPath: row.parentRepoPath!,
+          removedAt: row.removedAt,
+          archivedBranch: row.archivedBranch,
+          lifecycleOperationState: row.lifecycleOperationState,
+          lifecycleOperationName: row.lifecycleOperationName,
+          lifecycleOperationClaimedAt: row.lifecycleOperationClaimedAt,
+          lifecycleOperationLeaseExpiresAt:
+            row.lifecycleOperationLeaseExpiresAt,
+          promotionState: row.promotionState,
+          promotionClaimedAt: row.promotionClaimedAt,
+          prUrl: row.prUrl,
+          prState: row.prState,
+          publishedBranch: row.publishedBranch,
+          publishedRemote: row.publishedRemote,
+        }
+      : null,
+  });
+
   // ADR-160: server-owned continuation availability. The eligibility + re-entry
   // resolution are only meaningful for a flow run that is in Review (claimable)
   // or already HumanWorking (claimed), so the manifest parse and the
@@ -837,14 +891,12 @@ export const getRunDetail = cache(async function getRunDetail(
     archived: ttl.archived,
     pruned: ttl.pruned,
     continuation,
-    lifecycleActions: lifecycleActionsForWorkspace({
-      runKind: row.runKind,
-      runStatus: row.status,
-      dialogStatus: null,
-      hasWorkspace: Boolean(row.workspaceId),
-      removedAt: row.removedAt,
-      archivedBranch: row.archivedBranch,
-    }),
+    lifecycleActions: lifecycleActionsForViewer(
+      { lifecycleFacts: gitFacts.policy },
+      null,
+    ),
+    claimOwnerUserId: gitFacts.claimOwnerUserId,
+    lifecycleFacts: gitFacts.policy,
     runnerResolutionWarnings: runnerResolutionWarningRows.map((warningRow) => ({
       sessionName: warningRow.sessionName,
       warning: warningRow.warning as RunnerResolutionWarning,
@@ -854,6 +906,17 @@ export const getRunDetail = cache(async function getRunDetail(
     pendingHitls: orderedPendingHitls,
   };
 });
+
+// ADR-181 D2: the viewer-dependent projection of a run's git actions. The same
+// predicate as every other surface, one level above the `cache()`d loader.
+export function lifecycleActionsForViewer(
+  detail: Pick<RunDetail, "lifecycleFacts">,
+  viewerUserId: string | null,
+): WorkbenchLifecycleAction[] {
+  return deriveWorkbenchGitActions({ ...detail.lifecycleFacts, viewerUserId })
+    .filter((action) => action.enabled)
+    .map((action) => action.id);
+}
 
 // --- M37 Phase 6 (ADR-098): orchestrator run-tree children -----------------
 

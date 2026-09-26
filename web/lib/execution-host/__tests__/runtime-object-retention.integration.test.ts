@@ -412,6 +412,28 @@ describe("fair runtime object retention (AT-14)", () => {
     expect((await stateOf(required)).state).toBe("available");
   });
 
+  // ADR-181 (owner, 2026-09-23): a Failed worktree expires by the workspace
+  // TTL, but its run's evidence is not part of that decision — the objects a
+  // failed attempt produced stay past the workspace deadline a Done run's go at.
+  it("keeps a Failed run's run-class objects past the workspace deadline", async () => {
+    const { project, runId, hosts, client } = await runWithHost("Failed");
+
+    await fairDb.insert(schema.workspaces).values({
+      id: randomUUID(),
+      runId,
+      projectId: project.id,
+      branch: "maister/gc-failed",
+      worktreePath: `/tmp/maister-gc-${runId}`,
+      parentRepoPath: project.repoPath,
+      baseBranch: "main",
+      scheduledRemovalAt: new Date("2026-09-04T00:00:00.000Z"),
+    });
+    const plain = await publish(client, "failure-log.txt", "run");
+
+    await sweepUntilWrapped(hosts, 100);
+    expect((await stateOf(plain)).state).toBe("available");
+  });
+
   it("keeps a lost delete retrying through recovery without a second claim", async () => {
     const { hosts, fake, client } = await runWithHost();
     const objectId = await publish(client, "lost.txt");

@@ -36,6 +36,10 @@ export default async function AppLayout({
 }: {
   children: ReactNode;
 }): Promise<ReactElement> {
+  // ADR-171 D7: the render's cursor, taken before any read. Everything this
+  // render shows was read at or after it, so the attention stream's scan from
+  // here misses nothing the page could be stale about.
+  const renderedAt = Date.now();
   const sessionUser = await getSessionUser();
 
   if (sessionUser && sessionUser.accountStatus !== "active") {
@@ -145,6 +149,7 @@ export default async function AppLayout({
                 reconnect: tRun("streamReconnect"),
                 reconnecting: tRun("streamReconnecting"),
               }}
+              since={{ cursor: String(renderedAt), decisions, updates }}
             />
           ) : null
         }

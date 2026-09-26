@@ -94,6 +94,7 @@ erDiagram
     PROJECTS {
         text sync_strategy_default "rebase|merge, default rebase (ADR-141, 0106)"
         text sync_runner_id FK "platform_acp_runners(id) ON DELETE SET NULL, nullable (ADR-141)"
+        text public_branch_template "NOT NULL default feature/{task_key}-{slug} (ADR-181, 0179)"
     }
 
     TASKS {
@@ -251,7 +252,10 @@ erDiagram
         text lifecycle_operation_state "0032 none|claiming|failed (NOT NULL DEFAULT none)"
         timestamp lifecycle_operation_claimed_at "0032 durable lifecycle claim timestamp"
         text lifecycle_operation_attempt_id "0032 per-attempt CAS token"
-        text lifecycle_operation_name "0032 archive|drop|exportBranch|snapshotCommit|handoffBranch|sync (sync: ADR-141 sync claim, app-level, no CHECK)"
+        text lifecycle_operation_name "0032 archive|drop|exportBranch|snapshotCommit|handoffBranch|sync|discardChanges|reattach|prOpen (sync: ADR-141 sync claim; discardChanges|reattach|prOpen: ADR-181, a PR finalize takes the promotion claim; app-level, no CHECK)"
+        text published_branch "ADR-181 (0179): public branch name on the remote, nullable"
+        text published_remote "ADR-181 (0179): remote it was published to; all three published_* co-null (CHECK)"
+        timestamp published_at "ADR-181 (0179): written only after a successful push"
     }
 
     RUN_SYNC_ATTEMPTS {

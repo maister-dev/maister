@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { squashRunBranch } from "@/lib/worktree";
+import { remoteOnlyCommitCount, squashRunBranch } from "@/lib/worktree";
 
 const exec = promisify(execFile);
 
@@ -68,6 +68,49 @@ describe("squashRunBranch (C2 — squash-on-promote, tree-preserving)", () => {
     // ...and the file contents are intact.
     expect(await git(["show", "HEAD:a.txt"])).toBe("two");
     expect(await git(["show", "HEAD:b.txt"])).toBe("three");
+  });
+
+  // ADR-181 (C): a squash PR promotion whose push did not land is reclaimed
+  // against a remote that still holds the pre-squash history. Those are the
+  // run's own commits — the branch's reflog keeps the head the squash replaced
+  // — so the publication check does not count them; a commit only the remote
+  // has still counts.
+  it("leaves the commits it replaced the branch's own to the publication check", async () => {
+    const base = await git(["rev-parse", "HEAD"]);
+
+    await commit("a.txt", "one\n", "c1");
+    await commit("a.txt", "two\n", "c2");
+    const published = await git(["rev-parse", "HEAD"]);
+
+    expect(
+      (
+        await squashRunBranch({
+          worktreePath: repo,
+          baseCommit: base,
+          message: "maister squashed",
+        })
+      ).squashed,
+    ).toBe(true);
+    expect(
+      await remoteOnlyCommitCount({
+        projectRepoPath: repo,
+        localBranch: "main",
+        remoteSha: published,
+      }),
+    ).toBe(0);
+
+    await git(["checkout", "-q", "-b", "reviewer", published]);
+    await commit("b.txt", "fixup\n", "reviewer fixup");
+    const foreign = await git(["rev-parse", "HEAD"]);
+
+    await git(["checkout", "-q", "main"]);
+    expect(
+      await remoteOnlyCommitCount({
+        projectRepoPath: repo,
+        localBranch: "main",
+        remoteSha: foreign,
+      }),
+    ).toBe(1);
   });
 
   it("is a no-op when the branch has <=1 commit beyond base", async () => {

@@ -7,19 +7,34 @@ import type { CSSProperties, ReactElement, ReactNode } from "react";
 import {
   ArchiveBoxArrowDownIcon,
   ArchiveBoxIcon,
+  ArrowPathIcon,
   ArrowTopRightOnSquareIcon,
+  ArrowUpTrayIcon,
+  CheckIcon,
+  CodeBracketIcon,
   PencilSquareIcon,
   StopIcon,
   TrashIcon,
 } from "@heroicons/react/24/outline";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
+import { useRunPageStream } from "@/components/runs/run-stream-provider";
+import {
+  WorkbenchGitPanel,
+  type WorkbenchGitSyncDefaults,
+} from "@/components/workbench/git-panel";
 import { isMaisterErrorCode } from "@/lib/errors-core";
+import {
+  gitPanelHref,
+  gitPanelSectionFor,
+  isGitPanelSection,
+  type GitPanelSection,
+} from "@/lib/workbench-git/panel-link";
 
 export interface WorkbenchLifecycleActionsProps {
   runId: string;
@@ -34,11 +49,12 @@ export interface WorkbenchLifecycleActionsProps {
   taskNumber?: number | null;
   runLabel?: string;
   workspaceAvailable?: boolean;
+  // Detail variant: the git panel's update seeds (ADR-181 D9).
+  syncDefaults?: WorkbenchGitSyncDefaults | null;
 }
 
 type UiActionId =
   | WorkbenchLifecycleActionId
-  | "snapshotCommit"
   | "open"
   | "rename"
   | "stopArchive"
@@ -46,6 +62,16 @@ type UiActionId =
   | "menu";
 
 type CombinedActionId = "stopArchive" | "stopDrop";
+
+// The ids this component POSTs itself; every other id is a git action, which is
+// only ever a way INTO the run git panel (ADR-181 D16).
+type OwnActionId = "stop" | "archive" | "drop";
+
+const OWN_ACTIONS: readonly OwnActionId[] = ["stop", "archive", "drop"];
+
+function isOwnAction(id: WorkbenchLifecycleActionId): id is OwnActionId {
+  return (OWN_ACTIONS as readonly string[]).includes(id);
+}
 
 // Small leading glyph per rail-menu item.
 const MENU_ICON: Partial<Record<UiActionId, typeof TrashIcon>> = {
@@ -56,52 +82,26 @@ const MENU_ICON: Partial<Record<UiActionId, typeof TrashIcon>> = {
   archive: ArchiveBoxIcon,
   stopDrop: TrashIcon,
   drop: TrashIcon,
+  snapshotCommit: CheckIcon,
+  discardChanges: TrashIcon,
+  exportBranch: ArrowUpTrayIcon,
+  update: ArrowPathIcon,
+  openPr: CodeBracketIcon,
+  finalizePr: CheckIcon,
+  reattach: ArrowPathIcon,
 };
 
-type HandoffMetadata = {
-  ok: true;
-  runId: string;
-  branch: string;
-  dirty: boolean;
-  remotes: string[];
-  defaultRemote: string | null;
-  suggestedHandoffBranch: string;
-  checkoutCommands: string[];
+// ADR-181 D17: the slice of git-state the archive/drop guard renders.
+type GuardState = {
+  publishedRemote: string | null;
+  publicBranch: string | null;
+  dirty: { tracked: number; untracked: number } | null;
+  unpushedCommits: number | null;
+  aheadBehind: {
+    base: { ahead: number } | null;
+    target: { ahead: number } | null;
+  };
 };
-
-type SnapshotResult = {
-  ok: true;
-  runId: string;
-  branch: string;
-  commit: string;
-  snapshotCreated: boolean;
-};
-
-type HandoffResult = {
-  ok: true;
-  runId: string;
-  branch: string;
-  handoffBranch: string;
-  remote: string;
-  pushedRef: string;
-  headCommit: string;
-  checkoutCommands: string[];
-};
-
-type ExportResult = {
-  ok: true;
-  runId: string;
-  branch: string;
-  remote: string;
-  pushedRef: string;
-  snapshotCreated: boolean;
-  checkoutCommands: string[];
-};
-
-type ActionResult =
-  | { kind: "snapshot"; data: SnapshotResult }
-  | { kind: "export"; data: ExportResult }
-  | { kind: "handoff"; data: HandoffResult };
 
 type LifecycleErrorBody = {
   code?: string;
@@ -121,11 +121,10 @@ type LifecycleErrorState = {
   canForce: boolean;
 };
 
-const ACTION_PATH: Record<WorkbenchLifecycleActionId, string> = {
+const ACTION_PATH: Record<OwnActionId, string> = {
   stop: "stop",
   archive: "archive",
   drop: "drop",
-  exportBranch: "export-branch",
 };
 
 const buttonBase =
@@ -134,30 +133,10 @@ const buttonBase =
 const inputClass =
   "min-h-[34px] rounded-md border border-line bg-paper px-2.5 font-mono text-[11px] text-ink outline-none focus:border-amber";
 
-function isValidHandoffBranch(value: string): boolean {
-  return (
-    /^[A-Za-z0-9_./-]+$/.test(value) &&
-    value.length <= 255 &&
-    !value.startsWith("-") &&
-    !value.includes("..") &&
-    !value.includes("@{") &&
-    !value.endsWith("/") &&
-    !value.endsWith(".lock")
-  );
-}
-
-function isValidRemoteName(value: string): boolean {
-  return (
-    /^[A-Za-z0-9_./-]+$/.test(value) &&
-    value.length <= 255 &&
-    !value.startsWith("-")
-  );
-}
-
 function endpointFor(input: {
   runId: string;
   runKind: RunKind;
-  action: WorkbenchLifecycleActionId | CombinedActionId;
+  action: OwnActionId | CombinedActionId;
 }): string {
   if (input.action === "stop" && input.runKind === "scratch") {
     return `/api/scratch-runs/${input.runId}/stop`;
@@ -174,18 +153,29 @@ function endpointFor(input: {
   return `/api/runs/${input.runId}/${ACTION_PATH[input.action]}`;
 }
 
-function renderActions(
-  actions: WorkbenchLifecycleActionId[],
-): (WorkbenchLifecycleActionId | "snapshotCommit")[] {
-  return actions.flatMap((action) =>
-    action === "exportBranch" ? ["snapshotCommit", "exportBranch"] : [action],
-  );
+// ADR-181 D17: what exists on NO remote — commits past the publication (or
+// past the base when never published) and uncommitted files.
+function unpushedCounts(state: GuardState | null): {
+  commits: number;
+  files: number;
+} {
+  if (!state) return { commits: 0, files: 0 };
+
+  const commits =
+    state.unpushedCommits ??
+    (state.publicBranch === null
+      ? (state.aheadBehind.base?.ahead ?? state.aheadBehind.target?.ahead ?? 0)
+      : 0);
+  const files = state.dirty ? state.dirty.tracked + state.dirty.untracked : 0;
+
+  return { commits, files };
 }
 
 // Rail `menu` variant: the ordered action-sheet items per run state. Plain Stop
-// stops the run and leaves the worktree; snapshot/push/handoff stay in the run
-// card. Writable agent workspaces use the same combined actions; no-workspace
-// agents keep plain Stop because there is no worktree to preserve or remove.
+// stops the run and leaves the worktree. Writable agent workspaces use the same
+// combined actions; no-workspace agents keep plain Stop because there is no
+// worktree to preserve or remove. ADR-181 D16: every enabled git action is a
+// DEEP LINK into the run git panel, never a blind mutation from a menu.
 function railMenuItems(
   actions: WorkbenchLifecycleActionId[],
   runKind: RunKind,
@@ -209,6 +199,9 @@ function railMenuItems(
     return items;
   }
 
+  for (const id of actions) {
+    if (!isOwnAction(id)) items.push(id);
+  }
   if (actions.includes("archive")) items.push("archive");
   if (actions.includes("drop")) items.push("drop");
 
@@ -436,6 +429,66 @@ function compactErrorText(
   return t("error");
 }
 
+// ADR-181 D16: the run detail's entry into the git panel. Its own component so
+// that ONLY the detail surface subscribes to the URL (`?git=<section>` opens the
+// panel on load) and to the run stream — a rail row or a card never re-renders
+// on a query change.
+function DetailGitHost({
+  runId,
+  runKind,
+  label,
+  syncDefaults,
+}: {
+  runId: string;
+  runKind: RunKind;
+  label: string;
+  syncDefaults: WorkbenchGitSyncDefaults | null;
+}): ReactElement {
+  const searchParams = useSearchParams();
+  const urlSection = searchParams?.get("git") ?? null;
+  const initialSection: GitPanelSection | null = isGitPanelSection(urlSection)
+    ? urlSection
+    : null;
+  const [open, setOpen] = useState(initialSection !== null);
+
+  // A deep link on the same page (the review panel's "Sync branch") changes the
+  // query without remounting this host, so the section it names opens here.
+  useEffect(() => {
+    if (initialSection !== null) setOpen(true);
+  }, [initialSection]);
+  // The run page's stream ticks re-read git-state (debounced in the panel).
+  const { eventCount } = useRunPageStream(runId, false);
+
+  return (
+    <>
+      <button
+        aria-expanded={open}
+        className={clsx(
+          buttonBase,
+          "gap-1.5 border-line bg-paper px-3 py-1.5 text-[10.5px] text-mute hover:border-mute hover:text-ink-2",
+        )}
+        data-testid="workbench-git-open"
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+      >
+        <CodeBracketIcon aria-hidden="true" className="h-3.5 w-3.5" />
+        {label}
+      </button>
+      {open ? (
+        <div className="w-full">
+          <WorkbenchGitPanel
+            initialSection={initialSection}
+            refreshTick={eventCount}
+            runId={runId}
+            runKind={runKind}
+            syncDefaults={syncDefaults}
+          />
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 export function WorkbenchLifecycleActions({
   runId,
   runKind,
@@ -447,8 +500,10 @@ export function WorkbenchLifecycleActions({
   taskNumber,
   runLabel,
   workspaceAvailable = false,
+  syncDefaults = null,
 }: WorkbenchLifecycleActionsProps): ReactElement | null {
   const t = useTranslations("workbenchLifecycle");
+  const tg = useTranslations("workbenchGit");
   // The rename modal reuses the existing portfolio.rename copy.
   const tp = useTranslations("portfolio");
   const router = useRouter();
@@ -457,15 +512,7 @@ export function WorkbenchLifecycleActions({
   const [errorState, setErrorState] = useState<LifecycleErrorState | null>(
     null,
   );
-  const [metadata, setMetadata] = useState<HandoffMetadata | null>(null);
-  const [commitMessage, setCommitMessage] = useState(
-    t("defaultCommitMessage", { runId }),
-  );
-  const [remote, setRemote] = useState("origin");
-  const [handoffBranch, setHandoffBranch] = useState(
-    `maister/handoff/${runId}`,
-  );
-  const [result, setResult] = useState<ActionResult | null>(null);
+  const [guard, setGuard] = useState<GuardState | null>(null);
   const [renameValue, setRenameValue] = useState(runLabel ?? "");
   const renameInputRef = useRef<HTMLInputElement>(null);
   // `menu` variant: the `⋯` trigger lives inside the row's `focus-within` group,
@@ -483,33 +530,18 @@ export function WorkbenchLifecycleActions({
   // with no lifecycle actions; other variants hide when there is nothing to do.
   if (variant !== "menu" && actions.length === 0) return null;
 
-  async function loadMetadata(): Promise<void> {
-    setErrorState(null);
+  // ADR-181 D17: the archive/drop confirmation shows what exists on no remote.
+  // Best effort: a failed read just leaves the plain confirmation.
+  async function loadGuard(): Promise<void> {
+    setGuard(null);
 
     try {
-      const res = await fetch(`/api/runs/${runId}/handoff-metadata`);
+      const res = await fetch(`/api/runs/${runId}/git-state`);
 
-      if (!res.ok) {
-        const body = await readJson<LifecycleErrorBody>(res);
-
-        setErrorState(errorStateFromBody(body));
-
-        return;
-      }
-
-      const body = await readJson<HandoffMetadata>(res);
-
-      if (!body) {
-        setErrorState(errorStateFromBody(null));
-
-        return;
-      }
-
-      setMetadata(body);
-      setRemote(body.defaultRemote ?? "");
-      setHandoffBranch(body.suggestedHandoffBranch);
+      if (!res.ok) return;
+      setGuard(await readJson<GuardState>(res));
     } catch {
-      setErrorState(networkErrorState());
+      /* no guard — the destructive op still preserves the work locally */
     }
   }
 
@@ -519,11 +551,9 @@ export function WorkbenchLifecycleActions({
     }
     setDialogAction(action);
     setErrorState(null);
-    setResult(null);
+    setGuard(null);
 
-    if (action === "snapshotCommit" || action === "exportBranch") {
-      void loadMetadata();
-    }
+    if (action === "archive" || action === "drop") void loadGuard();
   }
 
   function closeDialog(): void {
@@ -531,11 +561,49 @@ export function WorkbenchLifecycleActions({
 
     setDialogAction(null);
     setErrorState(null);
-    setResult(null);
+  }
+
+  // D17 "Publish, then archive/drop": the destructive op runs only after the
+  // publish answered 200 — a refused publish leaves the worktree untouched.
+  async function publishThenRemove(action: "archive" | "drop"): Promise<void> {
+    const { files } = unpushedCounts(guard);
+
+    setBusyAction("exportBranch");
+    setErrorState(null);
+
+    try {
+      const res = await fetch(`/api/runs/${runId}/export-branch`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          remote: guard?.publishedRemote ?? "origin",
+          snapshotDirty: files > 0,
+          commitMessage:
+            files > 0 ? t("defaultCommitMessage", { runId }) : null,
+          force: false,
+        }),
+      });
+
+      if (!res.ok) {
+        setErrorState(
+          errorStateFromBody(await readJson<LifecycleErrorBody>(res)),
+        );
+
+        return;
+      }
+    } catch {
+      setErrorState(networkErrorState());
+
+      return;
+    } finally {
+      setBusyAction(null);
+    }
+
+    await postAction(action);
   }
 
   async function postAction(
-    action: WorkbenchLifecycleActionId | CombinedActionId,
+    action: OwnActionId | CombinedActionId,
   ): Promise<void> {
     setBusyAction(action);
     setErrorState(null);
@@ -606,129 +674,13 @@ export function WorkbenchLifecycleActions({
     }
   }
 
-  async function snapshotCommit(): Promise<void> {
-    setBusyAction("snapshotCommit");
-    setErrorState(null);
-
-    try {
-      const res = await fetch(`/api/runs/${runId}/snapshot-commit`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ commitMessage }),
-      });
-
-      if (!res.ok) {
-        const body = await readJson<LifecycleErrorBody>(res);
-
-        setErrorState(errorStateFromBody(body));
-
-        return;
-      }
-
-      const body = await readJson<SnapshotResult>(res);
-
-      if (!body) {
-        setErrorState(errorStateFromBody(null));
-
-        return;
-      }
-
-      setResult({ kind: "snapshot", data: body });
-      void loadMetadata();
-      router.refresh();
-    } catch {
-      setErrorState(networkErrorState());
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
-  async function pushRunBranch(force: boolean): Promise<void> {
-    setBusyAction("exportBranch");
-    setErrorState(null);
-
-    try {
-      const res = await fetch(`/api/runs/${runId}/export-branch`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          remote,
-          snapshotDirty: false,
-          commitMessage: null,
-          force,
-        }),
-      });
-
-      if (!res.ok) {
-        const body = await readJson<LifecycleErrorBody>(res);
-
-        setErrorState(errorStateFromBody(body));
-
-        return;
-      }
-
-      const body = await readJson<ExportResult>(res);
-
-      if (!body) {
-        setErrorState(errorStateFromBody(null));
-
-        return;
-      }
-
-      setResult({ kind: "export", data: body });
-      void loadMetadata();
-      router.refresh();
-    } catch {
-      setErrorState(networkErrorState());
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
-  async function createHandoffBranch(): Promise<void> {
-    setBusyAction("exportBranch");
-    setErrorState(null);
-
-    try {
-      const res = await fetch(`/api/runs/${runId}/handoff-branch`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ remote, handoffBranch }),
-      });
-
-      if (!res.ok) {
-        const body = await readJson<LifecycleErrorBody>(res);
-
-        setErrorState(errorStateFromBody(body));
-
-        return;
-      }
-
-      const body = await readJson<HandoffResult>(res);
-
-      if (!body) {
-        setErrorState(errorStateFromBody(null));
-
-        return;
-      }
-
-      setResult({ kind: "handoff", data: body });
-      router.refresh();
-    } catch {
-      setErrorState(networkErrorState());
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
-  const displayActions = variant === "menu" ? [] : renderActions(actions);
+  const displayActions =
+    variant === "menu" ? [] : actions.filter((id) => isOwnAction(id));
+  const gitActions = actions.filter((id) => !isOwnAction(id));
   const menuItems = railMenuItems(actions, runKind, workspaceAvailable);
   const error = compactErrorText(t, errorState);
-  const handoffBranchValid = isValidHandoffBranch(handoffBranch);
-  const remoteValid = isValidRemoteName(remote);
-  const forcePushAvailable =
-    errorState?.pushRejected === "non_fast_forward" && errorState.canForce;
-  const exportDirty = metadata?.dirty === true;
+  const unpushed = unpushedCounts(guard);
+  const guardShown = unpushed.commits > 0 || unpushed.files > 0;
 
   return (
     <div
@@ -792,6 +744,33 @@ export function WorkbenchLifecycleActions({
           </button>
         );
       })}
+      {variant === "detail" && gitActions.length > 0 ? (
+        <DetailGitHost
+          label={tg("title")}
+          runId={runId}
+          runKind={runKind}
+          syncDefaults={syncDefaults}
+        />
+      ) : null}
+      {variant === "compact"
+        ? gitActions.map((id) => {
+            const href = gitPanelHref({ runId, runKind, actionId: id });
+
+            return href ? (
+              <Link
+                key={id}
+                className={clsx(
+                  buttonBase,
+                  "border-line bg-paper px-2 py-1 text-[9.5px] text-mute hover:border-mute hover:text-ink-2",
+                )}
+                data-testid={`card-git-${id}`}
+                href={href}
+              >
+                {t(`action.${id}`)}
+              </Link>
+            ) : null;
+          })
+        : null}
       {error ? (
         <span
           aria-live="assertive"
@@ -816,6 +795,19 @@ export function WorkbenchLifecycleActions({
               >
                 {t("dialog.cancel")}
               </button>
+              {(dialogAction === "archive" || dialogAction === "drop") &&
+              guardShown &&
+              actions.includes("exportBranch") ? (
+                <button
+                  className="rounded-md border border-amber bg-amber px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-white hover:bg-amber-2 disabled:opacity-60"
+                  data-testid="lifecycle-publish-then-remove"
+                  disabled={busyAction !== null}
+                  type="button"
+                  onClick={() => void publishThenRemove(dialogAction)}
+                >
+                  {tg(`guard.publishThen.${dialogAction}`)}
+                </button>
+              ) : null}
               {dialogAction === "stop" ||
               dialogAction === "archive" ||
               dialogAction === "drop" ||
@@ -843,61 +835,6 @@ export function WorkbenchLifecycleActions({
                   {tp("rename.confirm")}
                 </button>
               ) : null}
-              {dialogAction === "snapshotCommit" ? (
-                <button
-                  className="rounded-md border border-amber bg-amber px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-white hover:bg-amber-2 disabled:opacity-60"
-                  disabled={
-                    busyAction !== null ||
-                    !commitMessage.trim() ||
-                    metadata?.dirty === false
-                  }
-                  type="button"
-                  onClick={() => void snapshotCommit()}
-                >
-                  {t("dialog.commit")}
-                </button>
-              ) : null}
-              {dialogAction === "exportBranch" ? (
-                <>
-                  {exportDirty ? (
-                    <button
-                      className="rounded-md border border-amber bg-amber px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-white hover:bg-amber-2 disabled:opacity-60"
-                      disabled={busyAction !== null || !commitMessage.trim()}
-                      type="button"
-                      onClick={() => void snapshotCommit()}
-                    >
-                      {t("dialog.commit")}
-                    </button>
-                  ) : (
-                    <button
-                      className="rounded-md border border-amber bg-amber px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-white hover:bg-amber-2 disabled:opacity-60"
-                      disabled={
-                        busyAction !== null || !remoteValid || metadata === null
-                      }
-                      type="button"
-                      onClick={() => void pushRunBranch(forcePushAvailable)}
-                    >
-                      {forcePushAvailable
-                        ? t("dialog.forcePush")
-                        : t("dialog.push")}
-                    </button>
-                  )}
-                  <button
-                    className="rounded-md border border-line bg-paper px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-mute hover:border-mute hover:text-ink-2 disabled:opacity-60"
-                    disabled={
-                      busyAction !== null ||
-                      !remoteValid ||
-                      !handoffBranchValid ||
-                      exportDirty ||
-                      metadata === null
-                    }
-                    type="button"
-                    onClick={() => void createHandoffBranch()}
-                  >
-                    {t("dialog.handoff")}
-                  </button>
-                </>
-              ) : null}
             </>
           }
           title={
@@ -915,6 +852,18 @@ export function WorkbenchLifecycleActions({
             dialogAction === "stopDrop" ? (
               <p>{t(`dialog.body.${dialogAction}`)}</p>
             ) : null}
+            {(dialogAction === "archive" || dialogAction === "drop") &&
+            guardShown ? (
+              <p
+                className="rounded-md border border-amber-line bg-amber-soft px-3 py-2 font-mono text-[10px] text-amber"
+                data-testid="lifecycle-unpushed"
+              >
+                {tg("guard.unpushed", {
+                  commits: unpushed.commits,
+                  files: unpushed.files,
+                })}
+              </p>
+            ) : null}
             {dialogAction === "menu" ? (
               <div className="flex flex-col" data-testid="rail-action-sheet">
                 {menuItems.map((item) => {
@@ -926,6 +875,30 @@ export function WorkbenchLifecycleActions({
                       ? "text-amber hover:bg-amber-soft"
                       : "text-ink-2 hover:bg-ivory hover:text-ink",
                   );
+
+                  const gitHref =
+                    item === "open" || item === "rename" || item === "menu"
+                      ? null
+                      : gitPanelSectionFor(item) !== null
+                        ? gitPanelHref({ runId, runKind, actionId: item })
+                        : null;
+
+                  if (gitHref) {
+                    return (
+                      <Link
+                        key={item}
+                        className={itemClass}
+                        data-testid={`menu-${item}`}
+                        href={gitHref}
+                        role="menuitem"
+                      >
+                        {Icon ? (
+                          <Icon className="h-3.5 w-3.5 shrink-0" />
+                        ) : null}
+                        {t(`action.${item}`)}
+                      </Link>
+                    );
+                  }
 
                   return item === "open" ? (
                     <Link
@@ -985,157 +958,6 @@ export function WorkbenchLifecycleActions({
                   />
                 </label>
               </>
-            ) : null}
-            {dialogAction === "snapshotCommit" ? (
-              <>
-                {metadata?.dirty === false ? (
-                  <p className="rounded-md border border-line bg-ivory px-3 py-2 font-mono text-[10px] text-mute">
-                    {t("dialog.clean")}
-                  </p>
-                ) : null}
-                <label className="flex flex-col gap-1">
-                  <span className="font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-mute">
-                    {t("dialog.commitMessage")}
-                  </span>
-                  <textarea
-                    className={clsx(inputClass, "min-h-[90px] py-2")}
-                    value={commitMessage}
-                    onChange={(event) => setCommitMessage(event.target.value)}
-                  />
-                </label>
-              </>
-            ) : null}
-            {dialogAction === "exportBranch" ? (
-              <>
-                {metadata?.dirty ? (
-                  <p className="rounded-md border border-amber-line bg-amber-soft px-3 py-2 font-mono text-[10px] text-amber">
-                    {t("dialog.dirty")}
-                  </p>
-                ) : null}
-                {metadata?.dirty ? (
-                  <label className="flex flex-col gap-1">
-                    <span className="font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-mute">
-                      {t("dialog.commitMessage")}
-                    </span>
-                    <textarea
-                      className={clsx(inputClass, "min-h-[90px] py-2")}
-                      value={commitMessage}
-                      onChange={(event) => setCommitMessage(event.target.value)}
-                    />
-                  </label>
-                ) : null}
-                {metadata ? (
-                  <p className="rounded-md border border-line bg-ivory px-3 py-2 font-mono text-[10px] text-mute">
-                    {t("dialog.runBranch", { branch: metadata.branch })}
-                  </p>
-                ) : null}
-                <label className="flex flex-col gap-1">
-                  <span className="font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-mute">
-                    {t("dialog.remote")}
-                  </span>
-                  <select
-                    className={inputClass}
-                    value={remote}
-                    onChange={(event) => {
-                      setErrorState(null);
-                      setRemote(event.target.value);
-                    }}
-                  >
-                    {(metadata?.remotes ?? [remote]).map((item) => (
-                      <option key={item} value={item}>
-                        {item}
-                      </option>
-                    ))}
-                  </select>
-                  {remote && !remoteValid ? (
-                    <span className="font-mono text-[10px] text-amber">
-                      {t("dialog.invalidRemote")}
-                    </span>
-                  ) : null}
-                </label>
-                <label className="flex flex-col gap-1">
-                  <span className="font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-mute">
-                    {t("dialog.handoffBranch")}
-                  </span>
-                  <input
-                    className={inputClass}
-                    value={handoffBranch}
-                    onChange={(event) => {
-                      setErrorState(null);
-                      setHandoffBranch(event.target.value);
-                    }}
-                  />
-                  {handoffBranch && !handoffBranchValid ? (
-                    <span className="font-mono text-[10px] text-amber">
-                      {t("dialog.invalidBranch")}
-                    </span>
-                  ) : null}
-                  <span className="font-mono text-[10px] text-mute">
-                    {t("dialog.handoffHelp")}
-                  </span>
-                </label>
-              </>
-            ) : null}
-            {result?.kind === "snapshot" ? (
-              <p className="rounded-md border border-line bg-ivory px-3 py-2 font-mono text-[10px] text-mute">
-                {t("dialog.snapshotDone", { commit: result.data.commit })}
-              </p>
-            ) : null}
-            {result?.kind === "export" ? (
-              <div className="rounded-md border border-line bg-ivory p-3">
-                <div className="mb-2 font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-mute">
-                  {result.data.pushedRef}
-                </div>
-                <div className="flex flex-col gap-1">
-                  {result.data.checkoutCommands.map((command) => (
-                    <div
-                      key={command}
-                      className="flex items-center gap-2 rounded-md border border-line bg-paper px-2 py-1"
-                    >
-                      <code className="min-w-0 flex-1 truncate font-mono text-[10px] text-ink">
-                        {command}
-                      </code>
-                      <button
-                        className="font-mono text-[9px] font-bold uppercase tracking-[0.06em] text-amber"
-                        type="button"
-                        onClick={() =>
-                          void navigator.clipboard?.writeText(command)
-                        }
-                      >
-                        {t("dialog.copy")}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-            {result?.kind === "handoff" ? (
-              <div className="rounded-md border border-line bg-ivory p-3">
-                <div className="mb-2 font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-mute">
-                  {result.data.pushedRef}
-                </div>
-                <div className="flex flex-col gap-1">
-                  {result.data.checkoutCommands.map((command) => (
-                    <div
-                      key={command}
-                      className="flex items-center gap-2 rounded-md border border-line bg-paper px-2 py-1"
-                    >
-                      <code className="min-w-0 flex-1 truncate font-mono text-[10px] text-ink">
-                        {command}
-                      </code>
-                      <button
-                        className="font-mono text-[9px] font-bold uppercase tracking-[0.06em] text-amber"
-                        type="button"
-                        onClick={() =>
-                          void navigator.clipboard?.writeText(command)
-                        }
-                      >
-                        {t("dialog.copy")}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
             ) : null}
             {error ? (
               <div className="flex flex-col gap-1 font-mono text-[10px] font-semibold text-amber">

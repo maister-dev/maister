@@ -128,6 +128,11 @@ export async function SettingsPanel({
       d: tBoard("branchPrefixDesc"),
       v: project.branchPrefix,
     },
+    {
+      k: tBoard("publicBranchTemplate"),
+      d: tBoard("publicBranchTemplateDesc"),
+      v: project.publicBranchTemplate,
+    },
   ];
 
   return (

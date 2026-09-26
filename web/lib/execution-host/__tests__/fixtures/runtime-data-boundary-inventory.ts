@@ -1464,18 +1464,6 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       ],
     ),
     ...classified(
-      "lib/runs/promote.ts",
-      "repository-worktree",
-      "promotion writes its delivery record beside the run's manager state and drives the worktree merge — Stage C delivery boundary",
-      [
-        [
-          "promotePullRequestSideEffect",
-          "lib/repo-source.ts#readRemoteOrigin",
-          "wrapper",
-        ],
-      ],
-    ),
-    ...classified(
       "lib/scheduler/handlers/command.ts",
       "manager-flow-state",
       "scheduler console command jobs (fixed host tools with validated arguments)",
@@ -1613,6 +1601,66 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "worktree, repository, package and capability materialization on the shared checkout — Stage C repository cut",
       [["worktreeExists", "node:fs/promises.access", "stat"]],
     ),
+    // ADR-181 D14: "the worktree is usable" — a stat of the run's own
+    // worktree path (from `workspaces.worktree_path`), never git state.
+    ...classified(
+      "lib/workbench-git/presence.ts",
+      "repository-worktree",
+      "worktree presence of a run's recorded worktree path — Stage C repository cut",
+      [["worktreePresence", "node:fs/promises.stat", "stat"]],
+    ),
+    ...classified(
+      "lib/workbench-git/facts.ts",
+      "repository-worktree",
+      "the git policy's facts stat the run's recorded worktree path — Stage C repository cut",
+      [
+        [
+          "loadWorkbenchGitFacts",
+          "lib/workbench-git/presence.ts#worktreePresence",
+          "wrapper",
+        ],
+      ],
+    ),
+    // ADR-181 D11: the ONE PR provider resolution (Open PR and pull_request
+    // promotion) reads the parent checkout's origin when no remote is recorded.
+    ...classified(
+      "lib/workbench-git/pull-request.ts",
+      "repository-worktree",
+      "the PR provider is resolved from the parent checkout's origin — Stage C delivery boundary",
+      [
+        [
+          "pullRequestProvider",
+          "lib/repo-source.ts#readRemoteOrigin",
+          "wrapper",
+        ],
+      ],
+    ),
+    // ADR-181 C31: a reattach first asks whether its own worktree path is
+    // occupied (by its own crashed attempt, or by anything else).
+    ...classified(
+      "lib/workbench-git/service.ts",
+      "repository-worktree",
+      "a reattach stats the run's recorded worktree path before re-creating it — Stage C repository cut",
+      [
+        [
+          "adoptsOwnAttempt",
+          "lib/workbench-git/presence.ts#worktreePresence",
+          "wrapper",
+        ],
+      ],
+    ),
+    ...classified(
+      "lib/queries/portfolio.ts",
+      "repository-worktree",
+      "a page of workspace rows stats their recorded worktree paths — Stage C repository cut",
+      [
+        [
+          "presenceForRows",
+          "lib/workbench-git/presence.ts#worktreePresence",
+          "wrapper",
+        ],
+      ],
+    ),
     ...classified(
       "lib/worktree-provenance.ts",
       "repository-worktree",
@@ -1676,15 +1724,19 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ["logRange", "node:child_process.execFile", "spawn", "git"],
         ["diffRange", "node:child_process.execFile", "spawn", "git"],
         ["streamGitTruncatedTo", "node:child_process.spawn", "spawn", "git"],
-        ["withIntentToAddTempIndex", "node:fs/promises.mkdtemp", "write"],
+        ["withTempIndexCopy", "node:fs/promises.mkdtemp", "write"],
+        ["withTempIndexCopy", "node:child_process.execFile", "spawn", "git"],
+        ["withTempIndexCopy", "node:fs/promises.copyFile", "write"],
+        ["withTempIndexCopy", "node:fs/promises.rm", "remove"],
         [
           "withIntentToAddTempIndex",
           "node:child_process.execFile",
           "spawn",
           "git",
         ],
-        ["withIntentToAddTempIndex", "node:fs/promises.copyFile", "write"],
-        ["withIntentToAddTempIndex", "node:fs/promises.rm", "remove"],
+        // ADR-181 D8: the rescue commit is staged through a COPY of the index.
+        ["writeRescueRef", "node:child_process.execFile", "spawn", "git"],
+        ["commitTree", "node:child_process.execFile", "spawn", "git"],
         ["diffWorkingTree", "node:child_process.execFile", "spawn", "git"],
         [
           "diffWorkingTreeChangeStats",
@@ -1698,7 +1750,6 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ["readBlob", "node:child_process.execFile", "spawn", "git"],
         ["pathExists", "node:fs/promises.access", "stat"],
         ["hasConflictMarkers", "node:child_process.execFile", "spawn", "git"],
-        ["forceWithLeasePush", "node:child_process.execFile", "spawn", "git"],
       ],
     ),
     ...classified(
@@ -2285,6 +2336,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["assertBaseCommitReachable", false],
     ["branchExists", false],
     ["branchHasUpstream", false],
+    ["branchUpstream", false],
     ["commitFile", false],
     ["createBranchAtHead", false],
     ["createLocalBranchAt", false],
@@ -2299,6 +2351,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["diffWorkingTree", false],
     ["diffWorkingTreeChangeStats", false],
     ["discardWorktree", false],
+    ["discardWorktreeChanges", false],
     ["fastForwardWorktreeToRef", false],
     ["fetchRemote", false],
     ["ffUpdateLocalBranch", false],
@@ -2313,6 +2366,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["listBranches", false],
     ["listRemoteUrls", false],
     ["listRemotes", false],
+    ["listRescueRefs", false],
     ["listTree", false],
     ["listWorktrees", false],
     ["localBranchExists", false],
@@ -2330,6 +2384,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["remoteAdd", false],
     ["remoteBranchExists", false],
     ["remoteBranchHead", false],
+    ["remoteOnlyCommitCount", false],
     ["remoteRemove", false],
     ["remoteSetUrl", false],
     ["remoteTrackingBranchHead", false],
@@ -2341,11 +2396,18 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["resolveBaseRef", false],
     ["resolveRefSha", false],
     ["restoreWorktreeToCommit", false],
+    ["setBranchUpstream", false],
     ["showFileAtHead", false],
     ["snapshotDirtyWorktree", false],
     ["squashRunBranch", false],
     ["statusPorcelain", false],
     ["syncOperationInProgress", false],
+    ["writeRescueRef", false],
+  ]),
+  // ADR-181 D14: path-generic — the caller chooses which recorded paths to
+  // stat, so each caller is enumerated above.
+  ...wrappers("lib/workbench-git/presence.ts", "repository-worktree", [
+    ["worktreePresence", true],
   ]),
   ...wrappers("scripts/legacy-import/inventory.ts", "operator-import", [
     ["inventoryLegacyRun", true],

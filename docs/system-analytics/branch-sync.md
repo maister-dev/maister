@@ -82,6 +82,10 @@ sequenceDiagram
     Op->>Route: sync {strategy, agent, push}
     Route->>Svc: eligibility + double fence
     Svc->>Git: ls-remote origin refs/heads/<branch> (capture remote_sha_before, published branch only)
+    Svc->>Git: fetch + count commits only the publication has (push onto target/base only)
+    alt some would be dropped and no human confirmed exactly remote_sha_before
+        Svc-->>Op: 409 CONFLICT publication_diverged {remoteHead, remoteRef, remoteOnlyCommits}
+    end
     Svc->>Svc: one tx {attempt#, starting row, "sync" claim}
     Svc->>Git: fetch origin (all refs — refreshes origin/<branch> too)
     Svc->>Git: ff local target from origin/<target>
@@ -156,7 +160,9 @@ sequenceDiagram
 
 - Mechanical sync on a clean-rebase branch MUST complete synchronously, update the
   behind indicator, clear the drift warning, push with `--force-with-lease` iff
-  published, and leave `runs.status='Review'`.
+  published, and leave `runs.status` unchanged — `Review` on the ADR-141 arm, the
+  run's own parked status for an ADR-181 workbench update (whose admission is the
+  workbench git policy; the ext twin keeps `status='Review'`).
 - The local target MUST fast-forward from `origin/<target>` when FF-able; any
   divergence MUST refuse with `PRECONDITION` naming both SHAs.
 - The attempt-number allocation, the durable `starting` row (`run_sync_attempts.phase`
@@ -176,13 +182,26 @@ sequenceDiagram
 - The verification gate MUST require: no rebase/merge in progress, clean tree,
   zero `git diff --check` conflict markers across the whole worktree, and target is
   an ancestor of the new HEAD — before any push or finalize.
-- `agent=false` + conflict MUST abort cleanly, restore the pre-sync SHA, and return
-  `outcome:'conflict'` with no change.
-- `--force-with-lease` MUST use the run branch's remote SHA captured via
-  `git ls-remote origin refs/heads/<branch>` BEFORE the fetch (never the post-fetch
-  local tracking ref); an indeterminate SHA with `pr_url` set MUST refuse the push,
-  and a lease rejection MUST fail the attempt (`CONFLICT`) while keeping the local
-  rebase result (see ADR-141).
+- `agent=false` + conflict MUST abort cleanly, restore the pre-sync SHA (a reset,
+  so it holds even when the operation's own state is gone), and return
+  `outcome:'conflict'` with the conflicted paths (`conflictedFiles`) and no change.
+- `--force-with-lease` MUST use the remote SHA of the branch's publication — the
+  recorded `<published_remote>/<published_branch>`, else `origin/<internal>` —
+  captured via `git ls-remote` BEFORE the fetch (never the post-fetch local
+  tracking ref), and push the internal branch under that public name; an
+  indeterminate SHA with `pr_url` set MUST refuse the push, and a lease rejection
+  MUST fail the attempt (`CONFLICT`) while keeping the local rebase result (see
+  ADR-141, ADR-181). Before the claim, a push onto the target or base MUST NOT
+  drop commits only the publication has — commits the run branch never had
+  (its reflog keeps the heads a rebase or a squash replaced), counted by patch,
+  excluding the update's ref and every merge that is exactly what git makes of
+  its two parents (one that resolved a conflict or carries an edit of its own
+  counts) — unless a human confirmed exactly
+  `remote_sha_before`
+  through the web route's `expectedRemoteHead`; otherwise it is `CONFLICT`
+  `publication_diverged` with nothing moved, for every caller (the ext API, the
+  resolver-backed `ai_rebase_merge` and the panel alike; enforced by
+  `assertPushKeepsPublication`).
 - The agent path MUST hold its run-kind slot while `Running` or `NeedsInput`, MUST be
   cap-gated on `Review→Running` (refuse `CONFLICT` at cap, no queue), and MUST call
   `promoteNextPending` on finalize.
@@ -209,6 +228,16 @@ sequenceDiagram
 - **Verification failure** (markers, incomplete rebase, non-ancestor) → attempt
   `failed`; deterministic abort.
 - **Push lease rejected** (branch moved remotely) → `CONFLICT`; local result kept.
+- **Publication has commits the push would drop** (a reviewer's fixup, a
+  suggestion committed on the PR, a conflict resolved in an "Update branch"
+  merge) → `CONFLICT` `publication_diverged` before the
+  claim, nothing moved; the operator updates onto the publication or confirms
+  that head in the git panel. The resolver's finalize and the recovery sweep
+  push on the lease the admission checked. A retry after a lease rejection
+  keeps the run's own commits its kept rebase replaced — the run branch's
+  reflog records them; once it no longer does (expired, or
+  `core.logAllRefUpdates` off), a clean rebase's copies still match by patch
+  and anything else is refused, never guessed.
 - **W1–W7 crash windows** → recovered by reconcile/sweep per the predicate table in
   ADR-141; a sync row never enters the flow reattach/redispatch arms, and is
   classified before the `worktree-gone → Crashed` arm.
@@ -229,6 +258,9 @@ sequenceDiagram
   [scheduler](scheduler.md), [workbench-lifecycle](workbench-lifecycle.md),
   [tasks](tasks.md), [external-operations](external-operations.md),
   [error taxonomy](../error-taxonomy.md).
+- Generalisation (ADR-181): [`workbench-git.md`](workbench-git.md) —
+  `sync` admitted from every parked status with `onto: target | base | published`;
+  the AI resolver stays `Review`-only.
 - Source: `web/lib/runs/sync-target.ts`, `web/lib/runs/pr-adapter.ts`,
   `web/lib/runs/state-transitions.ts`, `web/lib/reconcile.ts`,
   `web/lib/scheduler/handlers/pr-state-scan.ts`, `web/lib/worktree.ts`.

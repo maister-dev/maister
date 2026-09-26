@@ -316,6 +316,9 @@ describe("POST /api/v1/ext/runs/sync", () => {
       // an actor row claiming a human did it while naming nobody is a corrupt
       // audit trail, indistinguishable from a genuine user-attributed sync.
       actor: { type: "system", id: null },
+      // ADR-181 C17: the ext surface keeps ADR-141's Review-only admission;
+      // only the web route admits the git policy's wider set.
+      admission: "review",
     });
 
     const rows = await auditRows();
@@ -377,6 +380,27 @@ describe("POST /api/v1/ext/runs/sync", () => {
 
     expect(res.status).toBe(409);
     expect((await res.json()).code).toBe("CONFLICT");
+  });
+
+  // ADR-181 (C): only a human in the panel may confirm dropping commits only
+  // the publication has — the ext body has no field for it.
+  it("refuses a confirmed head in the body → 422, the core never called", async () => {
+    const { projectId, executorId } = await seedProject(
+      `ext-sync-head-${randomUUID().slice(0, 8)}`,
+    );
+    const runId = await seedReviewRun(projectId, executorId);
+    const token = await issueToken(
+      { projectId, name: "ok", scopes: ["runs:sync"] },
+      db,
+    );
+    const req = makeReq("sync", { runId, expectedRemoteHead: "a".repeat(40) });
+
+    req.headers.set("authorization", `Bearer ${token.secret}`);
+
+    const res = await syncPOST(req);
+
+    expect(res.status).toBe(422);
+    expect(syncRunTargetMock).not.toHaveBeenCalled();
   });
 
   it("EXECUTOR_UNAVAILABLE → 503", async () => {

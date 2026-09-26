@@ -18,12 +18,19 @@ import { branchHasUpstream } from "@/lib/worktree";
 // must degrade rather than fail (recovery, panel rendering) apply their own
 // `.catch` — the live sync path deliberately does NOT, since silently deciding
 // "not published" would turn a missed push into a reported success.
+//
+// ADR-181 D7: `workspaces.published_branch` is the durable record of a publish
+// under a public name, so it counts on its own too and is read BEFORE the
+// upstream probe — a recovered or re-attached worktree may lack the config.
 export async function isBranchPublished(args: {
   prUrl: string | null;
+  publishedBranch: string | null;
   repo: string;
   branch: string;
 }): Promise<boolean> {
   return (
-    args.prUrl != null || (await branchHasUpstream(args.repo, args.branch))
+    args.prUrl != null ||
+    args.publishedBranch != null ||
+    (await branchHasUpstream(args.repo, args.branch))
   );
 }

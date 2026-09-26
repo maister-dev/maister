@@ -1,4 +1,41 @@
 import { MaisterError } from "@/lib/errors-core";
+import { REVIEW_REWORK_CLAIM_DECISION } from "@/lib/flows/graph/attempt-decisions";
+import { getActiveTakeover } from "@/lib/flows/graph/ledger";
+
+// ADR-181 D2: "who owns the OPEN rework claim on this run?" — one predicate for
+// the lifecycle service, the run detail and the git read model. An ADR-030
+// takeover writes no `decision`, so it never matches and opens no carve-out.
+export async function openReworkClaimOwnerUserId(
+  runId: string,
+  db?: Parameters<typeof getActiveTakeover>[1],
+): Promise<string | null> {
+  const claim = await getActiveTakeover(runId, db);
+
+  return claim?.decision === REVIEW_REWORK_CLAIM_DECISION
+    ? claim.ownerUserId
+    : null;
+}
+
+// ADR-181 D2: a `HumanWorking` git operation was admitted for the claim's
+// owner. Its claim re-checks, inside the tx that holds the run's row lock, that
+// the actor STILL owns it — a return and a re-claim in between leave the status
+// `HumanWorking` and hand the tree to someone else, which a status re-check
+// cannot see.
+export async function requireReworkClaimOwner(
+  runId: string,
+  actorUserId: string | null | undefined,
+  tx: Parameters<typeof getActiveTakeover>[1],
+): Promise<void> {
+  const owner = await openReworkClaimOwnerUserId(runId, tx);
+
+  if (owner !== null && owner === actorUserId) return;
+
+  throw new MaisterError(
+    "PRECONDITION",
+    `run ${runId} is claimed by another operator`,
+    { details: { reason: "human_owned" } },
+  );
+}
 
 // ADR-160: the readiness contract for taking a finished `Review` run back for
 // rework. Deliberately NOT shared with ADR-141's `assertSyncEligible`, whose

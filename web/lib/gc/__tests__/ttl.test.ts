@@ -49,7 +49,6 @@ describe("deriveTtlInfo — live (non-terminal) runs never count down", () => {
     "NeedsInputIdle",
     "Review",
     "Crashed",
-    "Failed",
   ])("non-terminal status %s → active, effectiveRemovalAt null", (status) => {
     const info = deriveTtlInfo(
       args({ status, scheduledRemovalAt: new Date(NOW - DAY_MS) }),
@@ -157,6 +156,31 @@ describe("deriveTtlInfo — endedAt + ageDays fallback when scheduledRemovalAt i
 
     expect(info.ttlState).toBe("active");
     expect(info.effectiveRemovalAt?.getTime()).toBe(scheduled.getTime());
+  });
+});
+
+// ADR-181 (owner, 2026-09-23): a failed attempt's worktree expires like a
+// finished one, so `Failed` counts down on the same `ended_at` fallback.
+describe("deriveTtlInfo — Failed counts down like Done/Abandoned", () => {
+  it("Failed past endedAt + ageDays → due at that instant", () => {
+    const endedAt = new Date(NOW - (AGE_DAYS + 1) * DAY_MS);
+    const info = deriveTtlInfo(args({ status: "Failed", endedAt }));
+
+    expect(info.ttlState).toBe("due");
+    expect(info.effectiveRemovalAt).toEqual(
+      new Date(endedAt.getTime() + AGE_DAYS * DAY_MS),
+    );
+  });
+
+  it("Failed inside the warning window → warning", () => {
+    const info = deriveTtlInfo(
+      args({
+        status: "Failed",
+        endedAt: new Date(NOW - (AGE_DAYS - 1) * DAY_MS),
+      }),
+    );
+
+    expect(info.ttlState).toBe("warning");
   });
 });
 

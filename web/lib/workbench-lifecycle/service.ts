@@ -15,16 +15,17 @@ import { access } from "node:fs/promises";
 import { and, eq, gt, inArray, isNull, notInArray } from "drizzle-orm";
 import pino from "pino";
 
-import { RELEASED_LIFECYCLE_CLAIM } from "@/lib/runs/lifecycle-claim";
-import { systemCloseActiveAssignmentsForRun } from "@/lib/assignments/service";
 import {
-  REVIEW_REWORK_CLAIM_DECISION,
-  getActiveTakeover,
-} from "@/lib/flows/graph/ledger";
+  RELEASED_LIFECYCLE_CLAIM,
+  canReclaimLifecycle,
+  promotionClaimIsLive,
+} from "@/lib/runs/lifecycle-claim";
+import { systemCloseActiveAssignmentsForRun } from "@/lib/assignments/service";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { emitDelegatedReviewIfChild } from "@/lib/runs/delegated-review-emit";
+import { requireReworkClaimOwner } from "@/lib/runs/rework-claim";
 import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
 import { DISPOSABLE_WORKSPACE_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 import {
@@ -33,6 +34,7 @@ import {
 } from "@/lib/runs/state-transitions";
 import { preserveWorktree, type PreserveResult } from "@/lib/gc/preserve";
 import {
+  gcArchivePush,
   promotionClaimTimeoutSeconds,
   worktreesRoot,
 } from "@/lib/instance-config";
@@ -46,7 +48,9 @@ import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import {
   branchNameSchema,
+  branchUpstream,
   createBranchAtHead,
+  GitPushRejectedError,
   headCommit,
   listRemotes,
   localBranchHead,
@@ -56,14 +60,30 @@ import {
   removeOwnedWorktree,
   snapshotDirtyWorktree,
   statusPorcelain,
+  type BranchUpstream,
+  type PushBranchArgs,
 } from "@/lib/worktree";
 import {
-  deriveWorkbenchLifecycleActions,
+  loadWorkbenchGitFacts,
+  type WorkbenchGitFacts,
+} from "@/lib/workbench-git/facts";
+import {
+  deriveWorkbenchGitActions,
+  gitActionRefusal,
+  type WorkbenchGitPolicyInput,
+} from "@/lib/workbench-git/policy";
+import {
+  recordPublished,
+  resolvePublishName,
+  type PublishNameSource,
+  type RecordPublishedInput,
+} from "@/lib/workbench-git/publication";
+import {
   type WorkbenchLifecycleActionId,
   type WorkbenchRunStatus,
 } from "@/lib/workbench-lifecycle/policy";
 
-const { projects, runs, scratchRuns, workspaces } = schema;
+const { projects, runs, scratchRuns, tasks, workspaces } = schema;
 
 const log = pino({
   name: "workbench-lifecycle",
@@ -88,7 +108,12 @@ export type LifecycleOperationName =
   | "handoffBranch"
   // ADR-141: branch sync claims the SAME workspace lifecycle slot, so it is
   // mutually exclusive with the other five (and with a concurrent sync) for free.
-  | "sync";
+  | "sync"
+  // ADR-181: the run git panel's operations take the same slot (a PR finalize
+  // takes the PROMOTION claim instead, so it has no name here).
+  | "discardChanges"
+  | "reattach"
+  | "prOpen";
 
 export type LifecycleOperationClaim = {
   attemptId: string;
@@ -98,6 +123,14 @@ export type LifecycleOperationClaim = {
 export type LifecycleProject = {
   id: string;
   mainBranch: string;
+  // ADR-181 D5: the public-name template and the `{task_key}` prefix; absent on
+  // a hand-built context (the template default applies).
+  publicBranchTemplate?: string;
+  taskKey?: string | null;
+  // ADR-181 D11: the recorded remote and provider Open PR resolves its adapter
+  // from (else the parent checkout's origin and the provider it names).
+  repoUrl?: string | null;
+  provider?: string | null;
 };
 
 export type LifecycleRun = {
@@ -132,6 +165,21 @@ export type LifecycleWorkspace = {
   removalKind?: WorkspaceRemovalKind | null;
   baseBranch: string | null;
   baseCommit: string | null;
+  // ADR-181: publication, PR and claim fields the git ops and the fact loader
+  // read; optional so a hand-built context stays valid.
+  targetBranch?: string | null;
+  publishedBranch?: string | null;
+  publishedRemote?: string | null;
+  publishedAt?: Date | null;
+  prUrl?: string | null;
+  prNumber?: number | null;
+  prState?: string | null;
+  promotionState?: string | null;
+  promotionClaimedAt?: Date | null;
+  lifecycleOperationState?: string | null;
+  lifecycleOperationName?: string | null;
+  lifecycleOperationClaimedAt?: Date | null;
+  lifecycleOperationLeaseExpiresAt?: Date | null;
 };
 
 export type LifecycleContext = {
@@ -144,6 +192,12 @@ export type LifecycleContext = {
   reworkClaimOwnerUserId?: string | null;
   // The acting user, for the owner comparison in the policy.
   viewerUserId?: string | null;
+  // The launching task (`{task_key}` and `{slug}` of the public name); null for
+  // a task-less run, absent on a hand-built context.
+  task?: { number: number; title: string } | null;
+  // ADR-181 D1a: the loader's facts. Absent on a hand-built context, where the
+  // policy treats every fact as "not probed".
+  facts?: WorkbenchGitFacts;
 };
 
 export type RecordArchiveInput = {
@@ -173,10 +227,11 @@ export type RecordDropInput = {
 };
 
 export type WorkbenchLifecycleDeps = {
-  // Returns the authenticated user when the binding has one. ADR-160 uses it
-  // as the `viewerUserId` for the lifecycle owner carve-out, so the session is
-  // read exactly once, at the boundary that already authenticates.
-  requireActiveSession: () => Promise<{ id: string } | void>;
+  // Returns the authenticated user. ADR-160 uses it as the `viewerUserId` for
+  // the lifecycle owner carve-out, so the session is read exactly once, at the
+  // boundary that already authenticates (ADR-181 D2: it used to be discarded,
+  // which kept the carve-out shut in production).
+  requireActiveSession: () => Promise<{ id: string }>;
   loadContext: (runId: string) => Promise<LifecycleContext>;
   authorize: (projectId: string, action: LifecycleAction) => Promise<void>;
   // ADR-166: the host the stop tears live sessions down through (a fenced
@@ -210,6 +265,7 @@ export type WorkbenchLifecycleDeps = {
     branch: string;
     baseRef: string;
     runId: string;
+    archivePush?: boolean;
   }) => Promise<PreserveResult>;
   worktreeExists: (worktreePath: string) => Promise<boolean>;
   recordArchive: (args: RecordArchiveInput) => Promise<void>;
@@ -226,17 +282,22 @@ export type WorkbenchLifecycleDeps = {
     worktreePath: string;
     commitMessage: string;
   }) => Promise<boolean>;
-  pushBranch: (args: {
-    projectRepoPath: string;
-    remote: string;
-    branch: string;
-    force?: boolean;
-  }) => Promise<void>;
+  pushBranch: (args: PushBranchArgs) => Promise<void>;
+  // ADR-181 D4: the internal branch's upstream (the fixed public name) and the
+  // one writer of `published_*`.
+  branchUpstream: (
+    repo: string,
+    branch: string,
+  ) => Promise<BranchUpstream | null>;
+  recordPublished: (args: RecordPublishedInput) => Promise<void>;
   claimLifecycleOperation: (args: {
     runId: string;
     workspaceId: string;
     operation: LifecycleOperationName;
     expectedRunStatus: WorkbenchRunStatus;
+    // Every workbench operation is a user's; a missing viewer (null) is
+    // refused on a HumanWorking run, never treated as a system caller.
+    actorUserId: string | null;
   }) => Promise<LifecycleOperationClaim>;
   renewLifecycleOperationLease: (args: {
     workspaceId: string;
@@ -300,17 +361,29 @@ export type DropWorkbenchResult = {
 
 export type ExportWorkbenchBranchInput = {
   remote: string;
+  // ADR-181 D4: the public name, when no upstream fixes it yet; null → template.
+  branchName?: string | null;
   snapshotDirty: boolean;
   commitMessage: string | null;
-  force?: boolean;
-};
+} & (
+  | { force?: false; expectedHead?: undefined }
+  // ADR-181 D4: a force replaces exactly the remote head the operator
+  // confirmed (a refusal's `remoteHead`), never one re-read at retry time.
+  | { force: true; expectedHead: string }
+);
 
 export type ExportWorkbenchBranchResult = {
   ok: true;
   runId: string;
+  // The internal branch — the run's identity; never renamed.
   branch: string;
   remote: string;
+  // Kept equal to `publishedRef` for the existing callers.
   pushedRef: string;
+  publishedBranch: string;
+  publishedRemote: string;
+  publishedRef: string;
+  nameSource: PublishNameSource;
   snapshotCreated: boolean;
   checkoutCommands: string[];
 };
@@ -390,47 +463,49 @@ const STOP_STATUSES: WorkbenchRunStatus[] = [
   "NeedsInputIdle",
 ];
 
-const LIFECYCLE_RECLAIMABLE_STATES = new Set(["none", "failed"]);
-
-function depsFromOptions(
+// Exported with `requireWorkspace` and `markLifecycleClaimFailed` for the run
+// git panel's ops (`lib/workbench-git/service.ts`): ONE claim machinery.
+export function depsFromOptions(
   options: WorkbenchLifecycleOptions | undefined,
 ): WorkbenchLifecycleDeps {
   return options?.deps ?? defaultWorkbenchLifecycleDeps();
+}
+
+// ADR-181 D1: the loader's facts when present, else the context's own row
+// (a hand-built context: every git-probed fact reads "not probed").
+function lifecyclePolicyInput(ctx: LifecycleContext): WorkbenchGitPolicyInput {
+  return {
+    runKind: ctx.run.runKind,
+    runStatus: ctx.run.status,
+    scratchDialogStatus: null,
+    hasWorkspace: ctx.workspace !== null,
+    workspaceRemoved: ctx.workspace?.removedAt !== null,
+    workspaceArchived: ctx.workspace?.archivedBranch !== null,
+    ...ctx.facts?.policy,
+    claimOwnerUserId: ctx.reworkClaimOwnerUserId ?? null,
+    viewerUserId: ctx.viewerUserId ?? null,
+  };
 }
 
 function isEnabled(
   ctx: LifecycleContext,
   id: WorkbenchLifecycleActionId,
 ): boolean {
-  const action = deriveWorkbenchLifecycleActions({
-    runKind: ctx.run.runKind,
-    runStatus: ctx.run.status,
-    scratchDialogStatus: null,
-    hasWorkspace: ctx.workspace !== null,
-    workspaceRemoved: ctx.workspace?.removedAt !== null,
-    workspaceArchived: ctx.workspace?.archivedBranch !== null,
-    claimOwnerUserId: ctx.reworkClaimOwnerUserId ?? null,
-    viewerUserId: ctx.viewerUserId ?? null,
-  }).find((candidate) => candidate.id === id);
+  const action = deriveWorkbenchGitActions(lifecyclePolicyInput(ctx)).find(
+    (candidate) => candidate.id === id,
+  );
 
   return action?.enabled === true;
 }
 
-function requireActionAllowed(
+export function requireActionAllowed(
   ctx: LifecycleContext,
   id: WorkbenchLifecycleActionId,
   options?: { allowPausedBudgetRun?: boolean },
 ): void {
-  const action = deriveWorkbenchLifecycleActions({
-    runKind: ctx.run.runKind,
-    runStatus: ctx.run.status,
-    scratchDialogStatus: null,
-    hasWorkspace: ctx.workspace !== null,
-    workspaceRemoved: ctx.workspace?.removedAt !== null,
-    workspaceArchived: ctx.workspace?.archivedBranch !== null,
-    claimOwnerUserId: ctx.reworkClaimOwnerUserId ?? null,
-    viewerUserId: ctx.viewerUserId ?? null,
-  }).find((candidate) => candidate.id === id);
+  const action = deriveWorkbenchGitActions(lifecyclePolicyInput(ctx)).find(
+    (candidate) => candidate.id === id,
+  );
 
   if (action?.enabled) return;
 
@@ -444,9 +519,10 @@ function requireActionAllowed(
     return;
   }
 
-  throw new MaisterError(
-    "PRECONDITION",
-    `workbench action ${id} is not allowed for run ${ctx.run.id}: ${action?.disabledReason ?? "unknown"}`,
+  throw gitActionRefusal(
+    ctx.run.id,
+    id,
+    action?.disabledReason ?? "unsupported-status",
   );
 }
 
@@ -461,7 +537,7 @@ function requireWorkspaceRecord(ctx: LifecycleContext): LifecycleWorkspace {
   return ctx.workspace;
 }
 
-function requireWorkspace(ctx: LifecycleContext): LifecycleWorkspace {
+export function requireWorkspace(ctx: LifecycleContext): LifecycleWorkspace {
   const workspace = requireWorkspaceRecord(ctx);
 
   if (workspace.removedAt !== null) {
@@ -537,27 +613,6 @@ function defaultRemoteFor(remotes: string[]): string | null {
   return remotes[0] ?? null;
 }
 
-function canReclaimLifecycle(workspace: {
-  lifecycleOperationState?: string | null;
-  lifecycleOperationLeaseExpiresAt?: Date | null;
-}): boolean {
-  const state = workspace.lifecycleOperationState ?? "none";
-
-  if (LIFECYCLE_RECLAIMABLE_STATES.has(state)) return true;
-
-  if (state === "claiming") {
-    const leaseExpiresAt = workspace.lifecycleOperationLeaseExpiresAt
-      ? new Date(workspace.lifecycleOperationLeaseExpiresAt)
-      : null;
-
-    if (!leaseExpiresAt) return true;
-
-    return leaseExpiresAt.getTime() <= Date.now();
-  }
-
-  return false;
-}
-
 function baseRefFor(
   ctx: LifecycleContext,
   workspace: LifecycleWorkspace,
@@ -598,6 +653,9 @@ async function preservePresentWorkspace(
     branch: workspace.branch,
     baseRef: baseRefFor(ctx, workspace),
     runId,
+    // ADR-181 D17: operator archive/drop honour MAISTER_GC_ARCHIVE_PUSH exactly
+    // like GC — the archive ref stays local unless the operator opted in.
+    archivePush: gcArchivePush(),
   });
 
   if (!result.ok) {
@@ -659,7 +717,7 @@ function requirePersistedPreservation(
   };
 }
 
-async function markLifecycleClaimFailed(args: {
+export async function markLifecycleClaimFailed(args: {
   deps: WorkbenchLifecycleDeps;
   workspaceId: string;
   attemptId: string;
@@ -835,7 +893,7 @@ export async function archiveWorkbench(
 
   const ctx = await deps.loadContext(runId);
 
-  ctx.viewerUserId = sessionUser?.id ?? null;
+  ctx.viewerUserId = sessionUser.id;
 
   await deps.authorize(ctx.run.projectId, "recoverRun");
 
@@ -889,6 +947,7 @@ async function archiveWorkbenchForCtx(
     workspaceId: workspace.id,
     operation: "archive",
     expectedRunStatus: ctx.run.status,
+    actorUserId: ctx.viewerUserId ?? null,
   });
 
   try {
@@ -997,7 +1056,7 @@ export async function getWorkbenchHandoffMetadata(
 
   const ctx = await deps.loadContext(runId);
 
-  ctx.viewerUserId = sessionUser?.id ?? null;
+  ctx.viewerUserId = sessionUser.id;
 
   await deps.authorize(ctx.run.projectId, "promoteRun");
   requireActionAllowed(ctx, "exportBranch", {
@@ -1051,10 +1110,12 @@ export async function snapshotWorkbenchCommit(
 
   const ctx = await deps.loadContext(runId);
 
-  ctx.viewerUserId = sessionUser?.id ?? null;
+  ctx.viewerUserId = sessionUser.id;
 
   await deps.authorize(ctx.run.projectId, "promoteRun");
-  requireActionAllowed(ctx, "exportBranch", {
+  // Its own id, as the panel shows it: a commit is local, and the publish id
+  // (`exportBranch`) refuses a repo with no remote.
+  requireActionAllowed(ctx, "snapshotCommit", {
     allowPausedBudgetRun: args.allowPausedBudgetRun,
   });
 
@@ -1075,6 +1136,7 @@ export async function snapshotWorkbenchCommit(
     workspaceId: workspace.id,
     operation: "snapshotCommit",
     expectedRunStatus: ctx.run.status,
+    actorUserId: ctx.viewerUserId ?? null,
   });
 
   try {
@@ -1135,7 +1197,7 @@ export async function createWorkbenchHandoffBranch(
 
   const ctx = await deps.loadContext(runId);
 
-  ctx.viewerUserId = sessionUser?.id ?? null;
+  ctx.viewerUserId = sessionUser.id;
 
   await deps.authorize(ctx.run.projectId, "promoteRun");
   requireActionAllowed(ctx, "exportBranch", {
@@ -1227,6 +1289,7 @@ export async function createWorkbenchHandoffBranch(
     workspaceId: workspace.id,
     operation: "handoffBranch",
     expectedRunStatus: ctx.run.status,
+    actorUserId: ctx.viewerUserId ?? null,
   });
 
   try {
@@ -1332,7 +1395,7 @@ async function removeWorkbench(
 
   const ctx = await deps.loadContext(runId);
 
-  ctx.viewerUserId = sessionUser?.id ?? null;
+  ctx.viewerUserId = sessionUser.id;
 
   await deps.authorize(ctx.run.projectId, "recoverRun");
 
@@ -1386,6 +1449,7 @@ async function removeWorkbenchForCtx(
     workspaceId: workspace.id,
     operation,
     expectedRunStatus: ctx.run.status,
+    actorUserId: ctx.viewerUserId ?? null,
   });
 
   try {
@@ -1482,6 +1546,25 @@ async function removeWorkbenchForCtx(
   }
 }
 
+// D4: a non-fast-forward names what a force would replace — the remote head the
+// push observed and its ref — which the forced retry leases back exactly.
+function namingRemoteHead(
+  err: unknown,
+  remoteHead: string | null,
+  remoteRef: string,
+): unknown {
+  if (!(err instanceof GitPushRejectedError)) return err;
+
+  return new GitPushRejectedError(err.message, {
+    cause: err,
+    pushRejected: err.pushRejected,
+    canForce: err.canForce,
+    retryHint: err.retryHint,
+    remoteHead,
+    remoteRef,
+  });
+}
+
 export async function exportWorkbenchBranch(
   runId: string,
   args: ExportWorkbenchBranchInput & WorkbenchLifecycleOptions,
@@ -1492,7 +1575,7 @@ export async function exportWorkbenchBranch(
 
   const ctx = await deps.loadContext(runId);
 
-  ctx.viewerUserId = sessionUser?.id ?? null;
+  ctx.viewerUserId = sessionUser.id;
 
   await deps.authorize(ctx.run.projectId, "promoteRun");
   requireActionAllowed(ctx, "exportBranch");
@@ -1510,6 +1593,31 @@ export async function exportWorkbenchBranch(
     );
   }
 
+  // ADR-181 D4 step 2: the public name, decided before anything is claimed so a
+  // refused rename (`public_name_fixed`) writes nothing.
+  const publication = resolvePublishName({
+    runId,
+    internalBranch: workspace.branch,
+    remote,
+    requested: args.branchName ?? null,
+    template: ctx.project.publicBranchTemplate,
+    taskKey:
+      ctx.task && ctx.project.taskKey
+        ? `${ctx.project.taskKey}-${ctx.task.number}`
+        : null,
+    taskTitle: ctx.task?.title ?? null,
+    recordedBranch: workspace.publishedBranch ?? null,
+    recordedRemote: workspace.publishedRemote ?? null,
+    legacyPrHead:
+      (workspace.prUrl ?? null) !== null &&
+      (workspace.publishedBranch ?? null) === null,
+    upstream: await deps.branchUpstream(
+      workspace.parentRepoPath,
+      workspace.branch,
+    ),
+  });
+  const publicBranch = publication.name;
+
   const porcelain = await deps.statusPorcelain({
     worktreePath: workspace.worktreePath,
   });
@@ -1519,6 +1627,7 @@ export async function exportWorkbenchBranch(
     throw new MaisterError(
       "PRECONDITION",
       `dirty worktree for run ${runId}; enable snapshotDirty to export`,
+      { details: { reason: "dirty_worktree" } },
     );
   }
 
@@ -1530,6 +1639,7 @@ export async function exportWorkbenchBranch(
     workspaceId: workspace.id,
     operation: "exportBranch",
     expectedRunStatus: ctx.run.status,
+    actorUserId: ctx.viewerUserId ?? null,
   });
 
   try {
@@ -1549,11 +1659,56 @@ export async function exportWorkbenchBranch(
       });
     }
 
-    await deps.pushBranch({
+    // D4 step 4 — the remote head right before the push: a refusal names it,
+    // so the operator confirms what a force would replace.
+    const observedHead = await deps.remoteBranchHead({
       projectRepoPath: workspace.parentRepoPath,
       remote,
-      branch: workspace.branch,
-      force: args.force,
+      branch: publicBranch,
+    });
+
+    log.info(
+      {
+        runId,
+        workspaceId: workspace.id,
+        remote,
+        branch: workspace.branch,
+        publicBranch,
+        nameSource: publication.source,
+        force: args.force === true,
+        expectedHead: args.expectedHead ?? null,
+        observedHead,
+      },
+      "workbench publish",
+    );
+    // Nothing undoes the push: re-prove the slot after the snapshot and the
+    // network read, so a publish whose lease lapsed never pushes.
+    await deps.renewLifecycleOperationLease({
+      workspaceId: workspace.id,
+      attemptId: claim.attemptId,
+    });
+    try {
+      await deps.pushBranch({
+        projectRepoPath: workspace.parentRepoPath,
+        remote,
+        branch: workspace.branch,
+        remoteBranch: publicBranch,
+        setUpstream: true,
+        force: args.force,
+        // The explicit-SHA lease is the confirmed head: a remote that moved on
+        // since is refused, naming its new head for a fresh confirmation.
+        ...(args.force ? { leaseSha: args.expectedHead } : {}),
+      });
+    } catch (err) {
+      throw namingRemoteHead(err, observedHead, `${remote}/${publicBranch}`);
+    }
+    // D4 step 6: recorded only AFTER the push landed, under this claim.
+    await deps.recordPublished({
+      workspaceId: workspace.id,
+      remote,
+      branch: publicBranch,
+      at: new Date(),
+      fence: { kind: "lifecycle", attemptId: claim.attemptId },
     });
     await deps.renewLifecycleOperationLease({
       workspaceId: workspace.id,
@@ -1570,12 +1725,17 @@ export async function exportWorkbenchBranch(
       runId,
       branch: workspace.branch,
       remote,
-      pushedRef: `${remote}/${workspace.branch}`,
+      pushedRef: `${remote}/${publicBranch}`,
+      publishedBranch: publicBranch,
+      publishedRemote: remote,
+      publishedRef: `${remote}/${publicBranch}`,
+      nameSource: publication.source,
       snapshotCreated,
-      checkoutCommands: [
-        `git -C ${workspace.parentRepoPath} fetch ${remote} ${workspace.branch}`,
-        `git -C ${workspace.parentRepoPath} switch ${workspace.branch}`,
-      ],
+      checkoutCommands: checkoutCommands({
+        projectRepoPath: workspace.parentRepoPath,
+        remote,
+        branch: publicBranch,
+      }),
     };
   } catch (err) {
     await markLifecycleClaimFailed({
@@ -1599,7 +1759,7 @@ export async function stopFlowWorkbench(
 
   const ctx = await deps.loadContext(runId);
 
-  ctx.viewerUserId = sessionUser?.id ?? null;
+  ctx.viewerUserId = sessionUser.id;
 
   await deps.authorize(ctx.run.projectId, "recoverRun");
 
@@ -1802,7 +1962,7 @@ export async function stopWorkbenchRun(
 
   const ctx = await deps.loadContext(runId);
 
-  ctx.viewerUserId = sessionUser?.id ?? null;
+  ctx.viewerUserId = sessionUser.id;
 
   await deps.authorize(ctx.run.projectId, "recoverRun");
 
@@ -1942,7 +2102,7 @@ export async function stopThenArchive(
 
   const ctx = await deps.loadContext(runId);
 
-  ctx.viewerUserId = sessionUser?.id ?? null;
+  ctx.viewerUserId = sessionUser.id;
 
   await deps.authorize(ctx.run.projectId, "recoverRun");
 
@@ -1964,7 +2124,7 @@ export async function stopThenDrop(
 
   const ctx = await deps.loadContext(runId);
 
-  ctx.viewerUserId = sessionUser?.id ?? null;
+  ctx.viewerUserId = sessionUser.id;
 
   await deps.authorize(ctx.run.projectId, "recoverRun");
 
@@ -1979,8 +2139,9 @@ function defaultWorkbenchLifecycleDeps(): WorkbenchLifecycleDeps {
   return {
     requireActiveSession: async () => {
       const { requireActiveSession } = await import("@/lib/authz");
+      const user = await requireActiveSession();
 
-      await requireActiveSession();
+      return { id: user.id };
     },
     loadContext: loadLifecycleContext,
     authorize: async (projectId, action) => {
@@ -2036,6 +2197,8 @@ function defaultWorkbenchLifecycleDeps(): WorkbenchLifecycleDeps {
     statusPorcelain,
     snapshotDirtyWorktree,
     pushBranch,
+    branchUpstream,
+    recordPublished,
     claimLifecycleOperation,
     renewLifecycleOperationLease,
     finalizeLifecycleOperation,
@@ -2068,17 +2231,24 @@ async function loadLifecycleContext(runId: string): Promise<LifecycleContext> {
   const run = runRows[0];
 
   if (!run) {
-    throw new MaisterError("PRECONDITION", `run not found: ${runId}`);
+    // C29: an unknown run is a 404 at every family-A route, not a 409.
+    throw new MaisterError("PRECONDITION", `run not found: ${runId}`, {
+      details: { reason: "run_not_found" },
+    });
   }
   // Workbench lifecycle ops act on a project worktree; a project-less
   // local-package assistant run (ADR-097) has none and is not a valid target.
   const projectId = requireRunProjectId(run.projectId, runId);
 
-  const [projectRows, workspaceRows] = await Promise.all([
+  const [projectRows, workspaceRows, taskRows] = await Promise.all([
     client
       .select({
         id: projects.id,
         mainBranch: projects.mainBranch,
+        publicBranchTemplate: projects.publicBranchTemplate,
+        taskKey: projects.taskKey,
+        repoUrl: projects.repoUrl,
+        provider: projects.provider,
       })
       .from(projects)
       .where(eq(projects.id, projectId)),
@@ -2098,9 +2268,31 @@ async function loadLifecycleContext(runId: string): Promise<LifecycleContext> {
         removalKind: workspaces.removalKind,
         baseBranch: workspaces.baseBranch,
         baseCommit: workspaces.baseCommit,
+        targetBranch: workspaces.targetBranch,
+        publishedBranch: workspaces.publishedBranch,
+        publishedRemote: workspaces.publishedRemote,
+        publishedAt: workspaces.publishedAt,
+        prUrl: workspaces.prUrl,
+        prNumber: workspaces.prNumber,
+        prState: workspaces.prState,
+        promotionState: workspaces.promotionState,
+        promotionClaimedAt: workspaces.promotionClaimedAt,
+        lifecycleOperationState: workspaces.lifecycleOperationState,
+        lifecycleOperationName: workspaces.lifecycleOperationName,
+        lifecycleOperationClaimedAt: workspaces.lifecycleOperationClaimedAt,
+        lifecycleOperationLeaseExpiresAt:
+          workspaces.lifecycleOperationLeaseExpiresAt,
       })
       .from(workspaces)
       .where(eq(workspaces.runId, runId)),
+    // C2: `{task_key}` is `<projects.task_key>-<tasks.number>` — no column
+    // holds it, so the loader reads both.
+    run.taskId
+      ? client
+          .select({ number: tasks.number, title: tasks.title })
+          .from(tasks)
+          .where(eq(tasks.id, run.taskId))
+      : Promise.resolve([]),
   ]);
   const project = projectRows[0];
 
@@ -2111,14 +2303,22 @@ async function loadLifecycleContext(runId: string): Promise<LifecycleContext> {
     );
   }
 
-  // ADR-160: an OPEN rework claim opens the owner carve-out in the policy. An
-  // ADR-030 takeover writes no `decision`, so it never matches and keeps
-  // today's all-actions-disabled behaviour.
-  const activeClaim = await getActiveTakeover(runId, client);
-  const reworkClaimOwnerUserId =
-    activeClaim?.decision === REVIEW_REWORK_CLAIM_DECISION
-      ? activeClaim.ownerUserId
-      : null;
+  const workspace = workspaceRows[0] ?? null;
+  // ADR-181 D1a: the ONE fact loader — the ADR-160 claim owner, a live shared
+  // sibling, the lifecycle slot, presence, and re-attach sources.
+  const facts = await loadWorkbenchGitFacts({
+    db: client,
+    run: {
+      id: run.id,
+      runKind: run.runKind,
+      status: run.status,
+      workspaceMode: run.workspaceMode,
+      agentWorkspace: run.agentWorkspace,
+      rootRunId: run.rootRunId,
+      parentRunId: run.parentRunId,
+    },
+    workspace,
+  });
 
   // `viewerUserId` is deliberately NOT read here: a DB loader must not reach
   // for the request session. Entry points attach it from the user their own
@@ -2126,8 +2326,10 @@ async function loadLifecycleContext(runId: string): Promise<LifecycleContext> {
   return {
     project,
     run: { ...run, projectId },
-    workspace: workspaceRows[0] ?? null,
-    reworkClaimOwnerUserId,
+    workspace,
+    reworkClaimOwnerUserId: facts.claimOwnerUserId,
+    task: taskRows[0] ?? null,
+    facts,
   };
 }
 
@@ -2383,6 +2585,10 @@ export async function claimLifecycleOperation(args: {
   workspaceId: string;
   operation: LifecycleOperationName;
   expectedRunStatus: WorkbenchRunStatus;
+  // The acting user, whose `HumanWorking` claim must still be theirs under the
+  // run lock; omitted by a system caller (GC, the reconciler recording a
+  // vanished tree), which the policy never gated on the claim's owner.
+  actorUserId?: string | null;
 }): Promise<LifecycleOperationClaim> {
   const client = args.database ?? db();
 
@@ -2393,6 +2599,8 @@ export async function claimLifecycleOperation(args: {
         lifecycleOperationState: workspaces.lifecycleOperationState,
         lifecycleOperationLeaseExpiresAt:
           workspaces.lifecycleOperationLeaseExpiresAt,
+        promotionState: workspaces.promotionState,
+        promotionClaimedAt: workspaces.promotionClaimedAt,
       })
       .from(workspaces)
       .where(eq(workspaces.id, args.workspaceId))
@@ -2410,7 +2618,52 @@ export async function claimLifecycleOperation(args: {
       throw new MaisterError(
         "CONFLICT",
         `lifecycle operation already in progress for run ${args.runId}`,
+        { details: { reason: "busy" } },
       );
+    }
+
+    // ADR-181 C26: a live PROMOTION claim owns the tree too (a rebase_merge
+    // rebasing it, a PR push) — one writer per worktree, both directions.
+    if (promotionClaimIsLive(workspace)) {
+      throw new MaisterError(
+        "CONFLICT",
+        `a promotion is in progress for run ${args.runId}`,
+        { details: { reason: "busy" } },
+      );
+    }
+
+    // The operation was admitted on the status its caller read; decide on the
+    // status under the run's own lock, or a recover that flipped `Crashed ->
+    // Running` in between hands the tree to an agent AND this operation. Taken
+    // only once the slot is known free, workspace then run — the sync claim's
+    // order — so it never waits on a holder's `recordDrop` (run, then workspace).
+    const runRows = await tx
+      .select({ status: runs.status })
+      .from(runs)
+      .where(eq(runs.id, args.runId))
+      .for("update");
+    const runStatus = runRows[0]?.status ?? null;
+
+    if (runStatus !== args.expectedRunStatus) {
+      log.warn(
+        {
+          runId: args.runId,
+          operation: args.operation,
+          expectedRunStatus: args.expectedRunStatus,
+          runStatus,
+        },
+        "workbench lifecycle claim refused: the run's status moved",
+      );
+
+      throw new MaisterError(
+        "CONFLICT",
+        `run ${args.runId} is ${runStatus ?? "missing"}, not ${args.expectedRunStatus} — another operation moved it`,
+        { details: { reason: "busy" } },
+      );
+    }
+
+    if (runStatus === "HumanWorking" && args.actorUserId !== undefined) {
+      await requireReworkClaimOwner(args.runId, args.actorUserId, tx);
     }
 
     const attemptId = randomUUID();

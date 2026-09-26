@@ -72,9 +72,11 @@ function renderInspector(): string {
           label: "Open review",
           href: "/runs/run-1?wb=diff",
         },
+        // ADR-181 C34: a listed action carries its target; disabled keeps it.
         {
-          id: "promote",
-          label: "Promote",
+          id: "openPr",
+          label: "Open PR",
+          href: "/runs/run-1?git=pr",
           disabled: true,
           disabledReason: "Review first",
         },
@@ -206,9 +208,10 @@ describe("RunInspector", () => {
         labels: LABELS,
         facts: [],
         changeSummary: null,
+        // ADR-181 C34: only href-bearing items are listed at all.
         actions: [
-          { id: "promote", label: "Promote" },
-          { id: "drop", label: "Discard" },
+          { id: "promote", label: "Promote", href: "/runs/run-1?wb=diff" },
+          { id: "drop", label: "Discard", href: "/runs/run-1?git=tree" },
         ],
       }),
     );
@@ -216,5 +219,71 @@ describe("RunInspector", () => {
     expect(html).toContain('data-testid="run-inspector-danger-actions"');
     // Both the normal (promote) and danger (drop) actions render as items.
     expect(html.split('data-testid="run-inspector-action"').length - 1).toBe(2);
+  });
+
+  // ADR-181 D16 (RED 12): the Actions tab lists only href-bearing items, every
+  // one of them a link — the inert `<span>` label an action without a target
+  // used to render is gone. A disabled item keeps its reason beside the link.
+  it("lists only actions with a target, each as a link, disabled ones with their reason", () => {
+    const html = renderToStaticMarkup(
+      createElement(RunInspector, {
+        runId: "run-1",
+        labels: LABELS,
+        facts: [],
+        changeSummary: null,
+        actions: [
+          {
+            id: "exportBranch",
+            label: "Publish",
+            href: "/runs/run-1?git=publish",
+          },
+          {
+            id: "update",
+            label: "Update",
+            href: "/runs/run-1?git=update",
+            disabled: true,
+            disabledReason: "Another operation owns the worktree",
+          },
+          { id: "stop", label: "Terminate", href: null },
+        ],
+      }),
+    );
+
+    expect(html.split('data-testid="run-inspector-action"').length - 1).toBe(2);
+    expect(html).toContain('href="/runs/run-1?git=publish"');
+    expect(html).toContain('href="/runs/run-1?git=update"');
+    expect(html).toContain("Another operation owns the worktree");
+    expect(html).not.toContain("Terminate");
+    expect(html).not.toMatch(/<span[^>]*>Publish<\/span>/);
+  });
+
+  // A disabled item's link still opens its panel section (C34), so it must not
+  // announce itself as disabled: its reason describes it instead.
+  it("never marks a working link aria-disabled; the reason describes it", () => {
+    const html = renderToStaticMarkup(
+      createElement(RunInspector, {
+        runId: "run-1",
+        labels: LABELS,
+        facts: [],
+        changeSummary: null,
+        actions: [
+          {
+            id: "update",
+            label: "Update",
+            href: "/runs/run-1?git=update",
+            disabled: true,
+            disabledReason: "Another operation owns the worktree",
+          },
+        ],
+      }),
+    );
+
+    expect(html).not.toContain("aria-disabled");
+    expect(html).toMatch(
+      /<a aria-describedby="run-inspector-action-update-reason"[^>]*href="\/runs\/run-1\?git=update"/,
+    );
+    expect(html).toMatch(
+      /<p[^>]*id="run-inspector-action-update-reason"[^>]*>Another operation owns the worktree<\/p>/,
+    );
   });
 });

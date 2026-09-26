@@ -48,6 +48,7 @@ import * as schema from "@/lib/db/schema";
 import { computeReadinessByRun } from "@/lib/queries/readiness-batch";
 import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
 import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
+import { worktreePresence } from "@/lib/workbench-git/presence";
 import {
   deriveWorkbenchLifecycleActions,
   type WorkbenchLifecycleActionId,
@@ -87,6 +88,11 @@ export const ACTIVE_RUN_STATUSES = [
   // M37 (ADR-098): a parked orchestrator (checkpointed, slot released) still
   // holds a worktree → counts as an active workspace.
   "WaitingOnChildren",
+  // ADR-181 D14: a failed run's worktree is still the operator's work (commit,
+  // publish, discard, re-attach) — listed, with its worktree TTL countdown
+  // (the GC collects it like a Done one, preserved first — owner, 2026-09-23)
+  // and no decision count (decision sources are unchanged).
+  "Failed",
 ] as const;
 const ACTIONABLE_ASSIGNMENT_RUN_STATUSES = [
   "NeedsInput",
@@ -95,8 +101,9 @@ const ACTIONABLE_ASSIGNMENT_RUN_STATUSES = [
   "Review",
 ] as const;
 
-// M19 Phase 5: terminal run statuses whose surviving workspace still shows a GC
-// removal countdown in the left rail until the sweeper prunes it.
+// M19 Phase 5: terminal run statuses the left rail lists ONLY while their
+// surviving workspace carries a GC removal date (`Failed` is listed through
+// ACTIVE_RUN_STATUSES; every countdown comes from `deriveTtlInfo`).
 export const RAIL_TTL_STATUSES = ["Abandoned", "Done"] as const;
 
 export type PortfolioStatus = "running" | "idle";
@@ -267,6 +274,18 @@ export function lifecycleActionsForWorkspace(input: {
   hasWorkspace: boolean;
   removedAt: Date | null;
   archivedBranch: string | null;
+  // ADR-181 D2: explicit, so no caller can forget who is asking. The ADR-160
+  // carve-out is a run-detail affordance: the rail, portfolio and board pass
+  // `null, null` and keep showing no actions for a HumanWorking row.
+  claimOwnerUserId: string | null;
+  viewerUserId: string | null;
+  // ADR-181 D14 / C32: the row's own facts. Absent = not loaded, which never
+  // hides an action; the git panel re-derives with every fact.
+  worktreePresent?: boolean | null;
+  publishedBranch?: string | null;
+  prUrl?: string | null;
+  prState?: "open" | "merged" | "closed" | null;
+  promotionState?: string | null;
 }): WorkbenchLifecycleAction[] {
   return deriveWorkbenchLifecycleActions({
     runKind: input.runKind,
@@ -275,13 +294,31 @@ export function lifecycleActionsForWorkspace(input: {
     hasWorkspace: input.hasWorkspace,
     workspaceRemoved: input.removedAt !== null,
     workspaceArchived: input.archivedBranch !== null,
-    // ADR-160: the owner carve-out is a run-detail affordance, not a portfolio
-    // one — the rail keeps showing no actions for a HumanWorking row.
-    claimOwnerUserId: null,
-    viewerUserId: null,
+    claimOwnerUserId: input.claimOwnerUserId,
+    viewerUserId: input.viewerUserId,
+    worktreePresent: input.worktreePresent,
+    publishedBranch: input.publishedBranch,
+    prUrl: input.prUrl,
+    prState: input.prState,
+    promotionState: input.promotionState,
   })
     .filter((action) => action.enabled)
     .map((action) => action.id);
+}
+
+// ADR-181 D14: presence for one page of rows — only rows whose workspace row is
+// not removed are stat'ed (a removed row is not usable whatever the disk says).
+export async function presenceForRows(
+  rows: readonly {
+    worktreePath: string | null;
+    removedAt: Date | null;
+  }[],
+): Promise<Map<string, boolean>> {
+  return worktreePresence(
+    rows
+      .filter((row) => row.removedAt === null && row.worktreePath !== null)
+      .map((row) => row.worktreePath as string),
+  );
 }
 
 const ACCENTS: readonly (1 | 2 | 3 | 4)[] = [1, 3, 2, 4];
@@ -379,8 +416,12 @@ export async function getPortfolio(
         runnerSnapshot: activeSessionRunnerSnapshot(runs.id),
         workspaceId: workspaces.id,
         branch: workspaces.branch,
+        worktreePath: workspaces.worktreePath,
         archivedBranch: workspaces.archivedBranch,
         removedAt: workspaces.removedAt,
+        publishedBranch: workspaces.publishedBranch,
+        prUrl: workspaces.prUrl,
+        promotionState: workspaces.promotionState,
         promotionLane: workspaces.promotionLane,
         prState: workspaces.prState,
         prHasConflicts: workspaces.prHasConflicts,
@@ -565,6 +606,7 @@ export async function getPortfolio(
   const readinessByRun = await computeReadinessByRun(client, activeRunIds);
 
   const workspacesByProject = new Map<string, PortfolioWorkspace[]>();
+  const presence = await presenceForRows(activeRunRows);
 
   for (const row of activeRunRows) {
     // The query filters by inArray(runs.projectId, projectIds), so a
@@ -613,6 +655,15 @@ export async function getPortfolio(
         hasWorkspace: Boolean(row.workspaceId),
         removedAt: row.removedAt,
         archivedBranch: row.archivedBranch,
+        claimOwnerUserId: null,
+        viewerUserId: null,
+        worktreePresent: row.worktreePath
+          ? (presence.get(row.worktreePath) ?? false)
+          : null,
+        publishedBranch: row.workspaceId ? row.publishedBranch : undefined,
+        prUrl: row.workspaceId ? row.prUrl : undefined,
+        prState: row.prState ?? null,
+        promotionState: row.promotionState,
       }),
       // ACTIVE_RUN_STATUSES excludes Done/Abandoned, so every workspace here is
       // non-terminal; a run with no gates/artifacts rolls up to "ready".
@@ -831,6 +882,9 @@ function railStatus(input: {
   if (input.runStatus === "Crashed") {
     return { label: "Crashed", tone: "crashed" };
   }
+  // ADR-181 D14: a listed Failed workbench reads as a failure; it owes a git
+  // decision, not an answer, so it stays out of the rail's attention labels.
+  if (input.runStatus === "Failed") return { label: "Failed", tone: "crashed" };
   // M19 Phase 5: terminal workspaces awaiting GC surface their own (dimmed)
   // status so they read as "winding down", not "Running".
   if (input.runStatus === "Abandoned" || input.runStatus === "Done") {
@@ -925,6 +979,11 @@ export async function getRailWorkspaceGroups(
       scheduledRemovalAt: workspaces.scheduledRemovalAt,
       archivedBranch: workspaces.archivedBranch,
       removedAt: workspaces.removedAt,
+      worktreePath: workspaces.worktreePath,
+      publishedBranch: workspaces.publishedBranch,
+      prUrl: workspaces.prUrl,
+      prState: workspaces.prState,
+      promotionState: workspaces.promotionState,
     })
     .from(runs)
     .innerJoin(projects, eq(projects.id, runs.projectId))
@@ -985,6 +1044,7 @@ export async function getRailWorkspaceGroups(
   const nowMs = now.getTime();
   const ageDays = gcAgeDays();
   const warningDays = gcWarningDays();
+  const presence = await presenceForRows(rows);
 
   for (const row of rows) {
     const status = railStatus({
@@ -1042,6 +1102,13 @@ export async function getRailWorkspaceGroups(
         hasWorkspace: Boolean(row.workspaceId),
         removedAt: row.removedAt,
         archivedBranch: row.archivedBranch,
+        claimOwnerUserId: null,
+        viewerUserId: null,
+        worktreePresent: presence.get(row.worktreePath) ?? false,
+        publishedBranch: row.publishedBranch,
+        prUrl: row.prUrl,
+        prState: row.prState ?? null,
+        promotionState: row.promotionState,
       }),
       flowRefLabel: row.flowRefId ?? null,
       flowVersion: row.flowRefId !== null ? row.flowVersion : null,

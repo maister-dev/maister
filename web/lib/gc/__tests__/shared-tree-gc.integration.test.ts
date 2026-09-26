@@ -265,6 +265,27 @@ describe("ADR-102 T16 — workspace GC is shared-tree-aware", () => {
     }, 60_000);
   }
 
+  // ADR-181 (owner, 2026-09-23): a `Failed` ALLOCATOR's worktree expires like a
+  // finished one, so the allocator must not count as a live sibling of its own
+  // tree. A `Failed` REUSER still holds it (the loop above): it has no row of
+  // its own to count a TTL down on.
+  it("ADR-181: a Failed allocator past its deadline does not hold its own tree", async () => {
+    const root = await seedRoot();
+    const { workspaceId } = await seedAllocator({
+      rootRunId: root,
+      status: "Failed",
+    });
+
+    await seedSibling({ rootRunId: root, status: "Done" });
+
+    const { opts, removeOwnedWorktree } = makeOpts();
+    const summary = await runWorkspaceGcSweep(opts);
+
+    expect(summary.pruned).toBe(1);
+    expect(removeOwnedWorktree).toHaveBeenCalledTimes(1);
+    expect((await readWorkspace(workspaceId)).removedAt).not.toBeNull();
+  }, 60_000);
+
   it("DOES collect once ALL shared siblings are disposable", async () => {
     const root = await seedRoot();
     const { workspaceId } = await seedAllocator({

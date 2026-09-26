@@ -7,6 +7,7 @@ import { isSeq, parseDocument, stringify } from "yaml";
 
 import { atomicWriteText } from "@/lib/atomic";
 import { maisterYamlV2Schema } from "@/lib/config.schema";
+import { DEFAULT_PUBLIC_BRANCH_TEMPLATE } from "@/lib/workbench-git/public-branch-name";
 
 const log = pino({
   name: "package-yaml-writeback",
@@ -119,6 +120,8 @@ export type SerializeProjectInput = {
   name: string;
   mainBranch: string;
   branchPrefix: string;
+  // ADR-181: absent = the column default, like an absent YAML key.
+  publicBranchTemplate?: string;
   defaultRunnerId: string | null;
   promotionMode: string | null;
 };
@@ -143,6 +146,12 @@ export function serializeProjectConfig(
   }
   if (project.branchPrefix !== "maister/") {
     projectBlock.branch_prefix = project.branchPrefix;
+  }
+  if (
+    project.publicBranchTemplate !== undefined &&
+    project.publicBranchTemplate !== DEFAULT_PUBLIC_BRANCH_TEMPLATE
+  ) {
+    projectBlock.public_branch_template = project.publicBranchTemplate;
   }
   if (project.defaultRunnerId) {
     projectBlock.default_runner = project.defaultRunnerId;

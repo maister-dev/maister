@@ -16,6 +16,13 @@ import { loadFixtures, type E2EUserFixture } from "./_seed/fixtures";
 // away for it. A member view needs its OWN context, started from empty storage.
 const EMPTY_STORAGE = { cookies: [], origins: [] };
 
+// Page content is read inside <main>: for a moment after a load the page can be
+// in the document twice (web/CLAUDE.md, "A freshly loaded page can be in the
+// DOM twice"). Role locators already skip the hidden copy.
+function work(page: Page) {
+  return page.getByRole("main");
+}
+
 async function pageAs(browser: Browser, user: E2EUserFixture): Promise<Page> {
   const context = await browser.newContext({ storageState: EMPTY_STORAGE });
   const page = await context.newPage();
@@ -53,7 +60,7 @@ test("E2E-STG-09 admin reads rows from every visible project; a member only thei
 
   // The project filter can only offer what the reader can already reach.
   await expect(
-    memberPage.locator('select[name="project"] option', {
+    work(memberPage).locator('select[name="project"] option', {
       hasText: fx.betaName,
     }),
   ).toHaveCount(0);
@@ -75,8 +82,8 @@ test("filters and grouping round-trip through the URL", async ({ page }) => {
   const fx = loadFixtures().byKey.workTable;
 
   await page.goto("/work");
-  await page.selectOption('select[name="project"]', fx.alphaSlug);
-  await page.selectOption('select[name="stage"]', "Ready");
+  await work(page).locator('select[name="project"]').selectOption(fx.alphaSlug);
+  await work(page).locator('select[name="stage"]').selectOption("Ready");
   await page.getByRole("button", { name: "Apply" }).click();
 
   await page.waitForURL(/\/work\?.*project=/);
@@ -89,9 +96,11 @@ test("filters and grouping round-trip through the URL", async ({ page }) => {
 
   // A deep link reconstructs the same view without touching the form.
   await page.goto(`/work?project=${fx.alphaSlug}&group=stage`);
-  await expect(page.locator('tbody[data-group="Ready"]')).toHaveCount(1);
-  await expect(page.locator('tbody[data-group="Executing"]')).toHaveCount(1);
-  await expect(page.locator('select[name="group"]')).toHaveValue("stage");
+  await expect(work(page).locator('tbody[data-group="Ready"]')).toHaveCount(1);
+  await expect(work(page).locator('tbody[data-group="Executing"]')).toHaveCount(
+    1,
+  );
+  await expect(work(page).locator('select[name="group"]')).toHaveValue("stage");
 });
 
 test("E2E-STG-09 an unreachable project filter is dropped, not refused", async ({
@@ -102,7 +111,7 @@ test("E2E-STG-09 an unreachable project filter is dropped, not refused", async (
   const response = await memberPage.goto(`/work?project=${fx.betaSlug}`);
 
   expect(response?.status()).toBe(200);
-  await expect(memberPage.getByTestId("work-empty")).toBeVisible();
+  await expect(work(memberPage).getByTestId("work-empty")).toBeVisible();
   await expect(keyCell(memberPage, fx.betaKeyRef)).toHaveCount(0);
   await memberPage.context().close();
 });
@@ -111,7 +120,7 @@ test("a saved view restores its filters", async ({ page }) => {
   const fx = loadFixtures().byKey.workTable;
 
   await page.goto(`/work?project=${fx.alphaSlug}&stage=Ready`);
-  await page.getByLabel("Name this view").fill("Alpha ready");
+  await work(page).getByLabel("Name this view").fill("Alpha ready");
   await page.getByRole("button", { name: "Save this view" }).click();
 
   await page.goto("/work");

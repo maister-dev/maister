@@ -79,9 +79,11 @@ export type StateTransitionResult =
 //
 // `name='sync'` is a sufficient guard HERE (unlike in the recovery sweeps, which
 // must fence on the claim token): this runs inside the tx that just terminalized
-// the run's attempts, and — now that the claim tx re-validates the run as `Review`
-// under its own row lock — a sync can only ever be claimed by a
-// `Review` run — so no newer sync can hold this slot.
+// the run's attempts, and the sync claim tx re-validates the run's status under
+// the same row lock this terminalization holds. The sync holding the slot was
+// therefore admitted for the run's pre-terminal status — `Review`, or since
+// ADR-181 (C25) any parked status an update may run in — and is exactly the one
+// this terminalization cancels; no newer sync can hold it.
 async function releaseSyncClaimOnTerminal(
   tx: Db,
   runId: string,
@@ -119,8 +121,8 @@ async function releaseSyncClaimOnTerminal(
   //
   // The release is therefore driven by the WORKSPACE's own sync claim, not by
   // whether we won the attempt write. `name='sync'` remains a sufficient fence: the
-  // claim tx now re-validates the run as `Review` under its row lock, so no newer
-  // sync can hold this slot behind a run we are terminalizing right here.
+  // claim tx re-validates the run's status under its row lock (C25, above), so no
+  // newer sync can hold this slot behind a run we are terminalizing right here.
   const released = await tx
     .update(workspaces)
     .set(RELEASED_LIFECYCLE_CLAIM)

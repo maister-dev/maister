@@ -130,16 +130,19 @@ body values. JSONL and other runtime-artifact retention are unchanged.
 | `Done`                                                                      | no                   | yes until pruned          | yes, status remains `Done` | yes    |
 | `Abandoned` / `Failed`                                                      | no                   | yes while worktree exists | yes                        | yes    |
 
-The matrix is implemented as an allow-list in
-`web/lib/workbench-lifecycle/policy.ts`. Unknown future statuses expose no
-actions until deliberately added. Commit and handoff branch creation are not
-policy-level read-model actions; they are sub-actions inside the Export dialog
-and routes, gated by handoff metadata and lifecycle claims. Branch **sync**
-(Implemented, ADR-141) is likewise not a policy-level read-model action and takes no
-matrix column — it is a `Review`-run operation (top-level `flow`/`agent`,
-`workspace_mode <> 'shared'`, non-experiment) launched from the ReviewPanel,
-target-drift, and PR-conflict surfaces and gated by the shared lifecycle claim;
-see [`branch-sync.md`](branch-sync.md). The combined
+The matrix is implemented as an allow-list in the ONE workbench git policy
+(`web/lib/workbench-git/policy.ts`, which `web/lib/workbench-lifecycle/policy.ts`
+re-exports). Unknown future statuses expose no actions until deliberately
+added. Since ADR-181 the git actions are policy actions beside these four —
+commit (`snapshotCommit`), `discardChanges`, publish (`exportBranch`),
+`update`, `openPr`, `finalizePr` and `reattach` — and the run git panel
+([`workbench-git.md`](workbench-git.md)) replaces the Export dialog; the
+handoff branch form lives in its Publish section, and snapshot, handoff and
+their metadata read still gate on `exportBranch`. Branch **sync** (ADR-141) is
+the panel's `update`: the web route admits it in every parked status through
+the policy, while the ext twin keeps its `Review`-only arm (top-level
+`flow`/`agent`, `workspace_mode <> 'shared'`, non-experiment); see
+[`branch-sync.md`](branch-sync.md). The combined
 **Stop & archive** / **Stop & drop** below are not new policy actions either:
 they compose the existing `stop` (live) and `archive`/`drop` (parked) actions
 server-side so the operator clicks once.
@@ -151,9 +154,11 @@ ADR-160 rework claim pokes exactly one hole in that, and only for one actor:
 
 - **Scope.** When `runStatus === 'HumanWorking'` **and** the viewer matches the
   claim's `owner_user_id` **and** the workspace is present and not removed,
-  `exportBranch` is enabled. `stop`, `archive`, and `drop` stay `human-owned`
-  for the owner too — the run is mid-handoff, and removing its worktree under
-  the operator editing it is never the right default.
+  the owner gets the git set (ADR-181: publish, commit, discard, update, open
+  PR, reattach). `stop`, `archive`, `drop` and `finalizePr` stay `human-owned`
+  for the owner too — the run is mid-handoff, and removing its worktree or
+  changing its status under the operator editing it is never the right
+  default.
 - **Why one flag opens four surfaces.** `snapshotWorkbenchCommit`,
   `createWorkbenchHandoffBranch`, and `getWorkbenchHandoffMetadata` all gate on
   `requireActionAllowed(ctx, "exportBranch")`, so enabling that single action is
@@ -240,7 +245,7 @@ is preserved, only same-payload completion is allowed.
 | `POST /api/runs/{runId}/stop-drop`       | Stop then drop a live flow run (Implemented); scratch reuses `/discard`                                                | `runId` is URL-param; body empty; project, session, and paths are DB state                  |
 | `POST /api/runs/{runId}/archive`         | Preserve worktree into `maister/archive/{runId}`                                                                       | branch, paths, base ref, and project are DB state                                           |
 | `POST /api/runs/{runId}/drop`            | Preserve then remove an owned worktree                                                                                 | worktree path and allowed root are server state                                             |
-| `POST /api/runs/{runId}/export-branch`   | Push the run branch; optional force-with-lease retry                                                                   | remote and force are body-controlled; branch and paths are DB state                         |
+| `POST /api/runs/{runId}/export-branch`   | Push the run branch; optional force-with-lease retry                                                                   | remote, force and `expectedHead` are body-controlled; branch and paths are DB state         |
 | `GET /api/runs/{runId}/handoff-metadata` | Read dirty state, remotes, suggested branch, and checkout preview                                                      | runId is URL-param; branch and paths are DB state                                           |
 | `POST /api/runs/{runId}/snapshot-commit` | Commit dirty work on the run branch                                                                                    | commit message is body-controlled; branch and paths are DB state                            |
 | `POST /api/runs/{runId}/handoff-branch`  | Create and push a continuation branch                                                                                  | remote and handoff branch are body-controlled; current branch, HEAD, and paths are DB state |
@@ -263,6 +268,13 @@ single-owner claim on `workspaces.lifecycle_operation_state`,
 effects and finalized only by the same attempt token. Stale `claiming` rows are
 reclaimable using the same timeout as promotion claims. Transient push failures
 leave the claim retryable; non-transient failures finalize as `failed`.
+**(Implemented, ADR-181)** The claim also DECIDES on the status its operation
+was admitted with (`lifecycle_operation_expected_run_status`): once the slot is
+known free it locks the `runs` row (workspace row first, then run — the sync
+claim's order) and refuses `CONFLICT` `details.reason: busy` unless
+`runs.status` still equals it, so a recover that flipped `Crashed → Running`
+after the admission wins; the recovers in turn refuse while a claim is live
+([`workbench-git.md`](workbench-git.md)).
 
 **(Implemented, ADR-141)** Branch **sync** adds a sixth `lifecycle_operation_name`
 value `"sync"` (TS-only — `lifecycle_operation_name` is plain `text` with no
@@ -270,9 +282,10 @@ CHECK). It claims the SAME `lifecycle_operation_*` slot, so it is mutually
 exclusive with `archive | drop | exportBranch | snapshotCommit | handoffBranch`
 for free: a held `"sync"` claim blocks archive/drop/export/snapshot/handoff and
 vice versa, with no extra wiring. Beyond that shared slot, sync adds an explicit
-**cross-column double fence with promotion** — the lifecycle claim and the
-`promoteRun` claim do NOT otherwise cross-guard (only a shared `FOR UPDATE`
-workspace row-lock serializes them): the sync-claim transaction refuses when
+**cross-column double fence with promotion** (since ADR-181 C26 every
+lifecycle claim refuses a live promotion claim and `promoteRun` refuses any live
+lifecycle claim, under the same `FOR UPDATE` workspace row lock): the
+sync-claim transaction refuses when
 `promotion_state ∈ {claiming, done}` (unless `reopened`), and `promoteRun`'s
 claim transaction refuses when an active `lifecycle_operation_name='sync'` claim
 exists. Both directions are matrix-tested. See [`branch-sync.md`](branch-sync.md).
@@ -307,9 +320,10 @@ exists. Both directions are matrix-tested. See [`branch-sync.md`](branch-sync.md
 - Export refuses dirty work unless `snapshotDirty=true` and `commitMessage` is
   non-empty. The UI normally commits first through `snapshot-commit`, then pushes
   a clean run branch. Non-fast-forward push rejection is `409 CONFLICT` with
-  `pushRejected=non_fast_forward`, `canForce=true`, and a retry hint; retrying
-  with force uses `git push --force-with-lease`. Other transient push failures
-  are `503 EXECUTOR_UNAVAILABLE`.
+  `pushRejected=non_fast_forward`, `canForce=true`, a retry hint and the
+  observed `remoteHead` + `remoteRef`; a forced retry sends `force=true` with
+  that `expectedHead` and leases exactly it (ADR-181). Other transient push
+  failures are `503 EXECUTOR_UNAVAILABLE`.
 - Handoff metadata lists server-discovered remotes. `origin` is only the
   default when it exists; otherwise the first validated remote is the default.
 - Snapshot commit refuses clean worktrees and returns the new HEAD commit when
@@ -390,6 +404,9 @@ exists. Both directions are matrix-tested. See [`branch-sync.md`](branch-sync.md
   [`reconciliation-gc.md`](reconciliation-gc.md), and
   [`branch-sync.md`](branch-sync.md) (the `sync` lifecycle op + promotion double
   fence).
+- Successor for the git actions (ADR-181): [`workbench-git.md`](workbench-git.md)
+  — one status-independent policy, publish under a public name, update, PR
+  before promotion, discard, re-attach; archive/drop stay here.
 - Source: `web/lib/workbench-lifecycle/*`,
   `web/components/workbench/lifecycle-actions.tsx`,
   `web/lib/worktree.ts`.

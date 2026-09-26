@@ -53,6 +53,12 @@ function releaseAllChildSessions(seenRunIds: Set<string>): string[] {
   return released;
 }
 
+// ~19 s on a quiet host; in a loaded lane (load 40-72, --workers=2,
+// 2026-09-23) the 30 s default expired while the held children finalized, on
+// `master` too. Each step keeps its own 30 s poll; the budget only stops the
+// sum from being bound to the default.
+test.setTimeout(120_000);
+
 test("orchestrator loop: launch → park with child subtree → resume to terminal", async ({
   page,
   request,
@@ -72,8 +78,18 @@ test("orchestrator loop: launch → park with child subtree → resume to termin
           WHERE job_kind = 'domain_event_dispatch'`,
       ),
     );
-    await request.post("/api/cron/tick?jobKind=domain_event_dispatch", {
-      headers: { [CRON_HEADER]: CRON_TOKEN },
+    // The request context reuses a keep-alive socket the dev server may have
+    // closed an instant earlier (`read ECONNRESET`, seen under load): the tick
+    // is idempotent, so one retry on a fresh connection.
+    const tick = () =>
+      request.post("/api/cron/tick?jobKind=domain_event_dispatch", {
+        headers: { [CRON_HEADER]: CRON_TOKEN },
+      });
+
+    await tick().catch((err: unknown) => {
+      if (!/ECONNRESET|socket hang up/.test(String(err))) throw err;
+
+      return tick();
     });
   };
 

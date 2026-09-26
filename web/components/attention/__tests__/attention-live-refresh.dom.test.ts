@@ -114,6 +114,43 @@ describe("app attention refresh", () => {
     expect(router.refresh).toHaveBeenCalledTimes(2);
   });
 
+  // ADR-171 D7: the render is the first cursor. The page's own cursor and
+  // counters ride the first connect, so the server can stay silent when the
+  // page is current instead of answering with a snapshot this component would
+  // refresh on; a reconnect carries the last tick's.
+  it("connects with the render's cursor and counters, and reconnects with the last tick's", () => {
+    act(() => root.unmount());
+    AttentionEventSource.sources = [];
+    root = createRoot(container);
+    act(() =>
+      root.render(
+        createElement(AttentionLiveRefresh, {
+          labels,
+          since: { cursor: "1789387100000", decisions: 2, updates: 5 },
+        }),
+      ),
+    );
+
+    const first = new URL(AttentionEventSource.sources[0].url).searchParams;
+
+    expect(first.get("lastEventId")).toBe("1789387100000");
+    expect(first.get("decisions")).toBe("2");
+    expect(first.get("updates")).toBe("5");
+    act(() => AttentionEventSource.sources[0].onopen?.());
+    expect(router.refresh).not.toHaveBeenCalled();
+
+    act(() => AttentionEventSource.sources[0].tick(["decisions"]));
+    expect(router.refresh).toHaveBeenCalledOnce();
+    act(() => AttentionEventSource.sources[0].onerror?.());
+    act(() => vi.advanceTimersByTime(500));
+
+    const again = new URL(AttentionEventSource.sources[1].url).searchParams;
+
+    expect(again.get("lastEventId")).toBe("1789387200000");
+    expect(again.get("decisions")).toBe("1");
+    expect(again.get("updates")).toBe("0");
+  });
+
   it("does not refresh or resubscribe when props or liveness change without a tick", () => {
     const source = AttentionEventSource.sources[0];
 

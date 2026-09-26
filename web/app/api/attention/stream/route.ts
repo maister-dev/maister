@@ -98,6 +98,34 @@ function parseLastEventId(req: NextRequest): number | null {
   return parsed > 0 ? parsed : null;
 }
 
+/**
+ * ADR-171 D7: the counters the reader's page shows — the render's on the
+ * first connect, the last tick's on a reconnect. With a cursor they seed the
+ * values this stream counts as already sent, so a reader who is current gets
+ * no tick instead of one that refreshes an unchanged page. A count that does
+ * not parse is no baseline at all: the stream never trusts half of one.
+ */
+const COUNTER_PATTERN = /^(?:0|[1-9][0-9]{0,8})$/;
+
+function parseBaseline(
+  req: NextRequest,
+): { decisions: number; updates: number } | null {
+  const params = new URL(req.url).searchParams;
+  const decisions = params.get("decisions");
+  const updates = params.get("updates");
+
+  if (
+    decisions === null ||
+    updates === null ||
+    !COUNTER_PATTERN.test(decisions) ||
+    !COUNTER_PATTERN.test(updates)
+  ) {
+    return null;
+  }
+
+  return { decisions: Number(decisions), updates: Number(updates) };
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -244,6 +272,7 @@ export async function GET(req: NextRequest): Promise<Response> {
   }
 
   const resumeFrom = parseLastEventId(req);
+  const baseline = resumeFrom === null ? null : parseBaseline(req);
   const encoder = new TextEncoder();
   const startedAt = Date.now();
 
@@ -253,9 +282,9 @@ export async function GET(req: NextRequest): Promise<Response> {
       let watermark = new Date(watermarkMs).toISOString();
       // Sentinel rather than `null`: a count is never negative, so "-1" reads
       // as "not sent yet" without a nullable that has to be re-narrowed on
-      // every comparison.
-      let sentDecisions = -1;
-      let sentUpdates = -1;
+      // every comparison. A reader's baseline counts as sent (D7).
+      let sentDecisions = baseline?.decisions ?? -1;
+      let sentUpdates = baseline?.updates ?? -1;
       let lastCounterCheckAt = 0;
       let lastChangeAt = Date.now();
       let closed = false;

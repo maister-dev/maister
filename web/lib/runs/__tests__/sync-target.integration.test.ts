@@ -33,12 +33,14 @@ const execFileAsync = promisify(execFile);
 // the real impl). Both double as deterministic seams for injecting a concurrent
 // abandon at an EXACT point in the sync — the only way to test the abandon↔sync
 // race without racing real threads and hoping for the interleave:
-//   - `remoteBranchHead` is the network ls-remote read at sync-target.ts:633,
-//     inside the window between the unlocked eligibility read and the claim tx.
-//     (It also lets the lease-fail test force a stale `remoteShaBefore` capture.)
-//   - `aheadBehindCounts` FIRST runs at sync-target.ts:760 — after the claim
-//     commits, before the rebase. Its other call site (:240, inside
-//     `verifySyncGate`) runs later, so a `...Once` impl always lands on :760.
+//   - `remoteBranchHead` is the network ls-remote read of `syncRunTarget`'s
+//     step 2 (the lease capture), inside the window between the unlocked
+//     eligibility read and the claim tx. (It also lets the lease-fail test force
+//     a stale `remoteShaBefore` capture.) The workbench admission's fact loader
+//     reads only local refs, so it never consumes a `...Once`.
+//   - `aheadBehindCounts` FIRST runs at step 5 (the behind/ahead count) — after
+//     the claim commits, before the rebase. Its other call site (inside
+//     `verifySyncGate`) runs later, so a `...Once` impl always lands on step 5.
 vi.mock("@/lib/worktree", async (orig) => {
   const actual = await orig<typeof import("@/lib/worktree")>();
 
@@ -46,6 +48,8 @@ vi.mock("@/lib/worktree", async (orig) => {
     ...actual,
     remoteBranchHead: vi.fn(actual.remoteBranchHead),
     aheadBehindCounts: vi.fn(actual.aheadBehindCounts),
+    // The seam for losing the operation's own state inside a conflict (C3).
+    rebaseOntoRef: vi.fn(actual.rebaseOntoRef),
   };
 });
 
@@ -56,6 +60,7 @@ vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 const {
   addWorktree,
   aheadBehindCounts,
+  rebaseOntoRef,
   remoteBranchHead,
   syncOperationInProgress,
 } = await import("@/lib/worktree");
@@ -137,6 +142,18 @@ async function identity(repo: string): Promise<void> {
 
 async function headSha(cwd: string, rev = "HEAD"): Promise<string> {
   return (await git(cwd, ["rev-parse", rev])).stdout.trim();
+}
+
+// What `--cherry-pick` compares: two commits are "the same change" only when
+// their patch ids match.
+async function patchId(cwd: string, rev: string): Promise<string> {
+  const { stdout } = await execFileAsync(
+    "sh",
+    ["-c", 'git show "$1" | git patch-id --stable', "patch-id", rev],
+    { cwd },
+  );
+
+  return stdout.split(" ")[0] ?? "";
 }
 
 // A bare remote + a working parent clone with `base` committed on main and
@@ -263,6 +280,10 @@ type SeedRunOpts = {
   lifecycleOperationLeaseExpiresAt?: Date;
   lifecycleOperationExpectedRunStatus?: string | null;
   lifecycleOperationAttemptId?: string;
+  // ADR-181: the run's base branch (null = unknown) and its publication.
+  baseBranch?: string | null;
+  published?: { branch: string; remote: string; at?: Date } | null;
+  removedAt?: Date | null;
 };
 
 async function seedRun(opts: SeedRunOpts): Promise<{
@@ -300,8 +321,17 @@ async function seedRun(opts: SeedRunOpts): Promise<{
     branch: opts.branch,
     worktreePath: opts.worktreePath,
     parentRepoPath: opts.parentRepoPath,
-    baseBranch: "main",
+    baseBranch: opts.baseBranch === undefined ? "main" : opts.baseBranch,
     baseCommit: opts.baseCommit,
+    removedAt: opts.removedAt ?? null,
+    removalKind: opts.removedAt ? "drop" : null,
+    ...(opts.published
+      ? {
+          publishedBranch: opts.published.branch,
+          publishedRemote: opts.published.remote,
+          publishedAt: opts.published.at ?? new Date(),
+        }
+      : {}),
     targetBranch: opts.targetBranch ?? "main",
     prUrl: opts.prUrl ?? null,
     promotionState: opts.promotionState ?? "none",
@@ -1312,9 +1342,24 @@ describe("pushWithLease + published push", () => {
       baseCommit: baseSha,
     });
 
-    // Simulate "the branch moved remotely after we captured its head": the
-    // captured remoteShaBefore is stale, so the force-with-lease is rejected.
-    vi.mocked(remoteBranchHead).mockResolvedValueOnce("0".repeat(40));
+    // "The branch moved remotely after we captured its head": the capture is
+    // the real head, then someone else pushes before our push lands, so the
+    // force-with-lease is rejected. (The ADR-181 guard passes: the captured
+    // head holds only the run's own commit.)
+    vi.mocked(remoteBranchHead).mockImplementationOnce(async (args) => {
+      const captured = await actualWorktree.remoteBranchHead(args);
+      const c = join(root, `mv-${randomUUID()}`);
+
+      await git(root, ["clone", "-b", "sync/g-lease", remote, c]);
+      await identity(c);
+      await writeFile(join(c, "moved.txt"), "moved\n");
+      await git(c, ["add", "moved.txt"]);
+      await git(c, ["commit", "-m", "moved"]);
+      await git(c, ["push", "origin", "sync/g-lease"]);
+      await rm(c, { recursive: true, force: true });
+
+      return captured;
+    });
 
     await expect(
       syncRunTarget({ runId, actor: actor(), db }),
@@ -1326,6 +1371,38 @@ describe("pushWithLease + published push", () => {
       (await aheadBehindCounts(parent, "main", "sync/g-lease")).behind,
     ).toBe(0);
     expect((await attemptRows(runId))[0].phase).toBe("failed");
+  });
+
+  // ADR-181 (C): a captured head the object store does not have (the remote
+  // rewrote history after the read) is refused before the claim, nothing moved.
+  it("refuses a lease head it cannot find after the fetch, before the claim", async () => {
+    const { remote, parent, baseSha } = await initRepoWithRemote();
+    const wt = await addRunWorktree(parent, "sync/g-gone");
+
+    await git(wt, ["push", "-u", "origin", "sync/g-gone"]);
+    await advanceOriginMain(remote);
+    const { projectId, flowId } = await seedGraph(parent);
+    const { runId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch: "sync/g-gone",
+      parentRepoPath: parent,
+      baseCommit: baseSha,
+    });
+    const head = await headSha(wt);
+
+    vi.mocked(remoteBranchHead).mockResolvedValueOnce("0".repeat(40));
+
+    await expect(
+      syncRunTarget({ runId, actor: actor(), db }),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "publication_diverged" },
+      remoteHead: null,
+    });
+    expect(await headSha(wt)).toBe(head);
+    expect(await attemptRows(runId)).toHaveLength(0);
   });
 });
 
@@ -1424,6 +1501,888 @@ describe("verifySyncGate", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// ADR-181 D9 (RED 14–16): Update is the ADR-141 sync admitted by the ONE git
+// policy (any parked status, not Review only), with an explicit `onto` —
+// target (default), base, or the run's own publication.
+// ---------------------------------------------------------------------------
+
+describe("ADR-181 — update onto base | target | published", () => {
+  // Push one commit to `branch` on the remote from a throwaway clone.
+  async function advanceRemote(
+    remote: string,
+    branch: string,
+    file: string,
+  ): Promise<string> {
+    const c = join(root, `adv-${randomUUID()}`);
+
+    await git(root, ["clone", "-b", branch, remote, c]);
+    await identity(c);
+    await writeFile(join(c, file), `${file}\n`);
+    await git(c, ["add", file]);
+    await git(c, ["commit", "-m", `advance ${file}`]);
+    await git(c, ["push", "origin", branch]);
+    const sha = await headSha(c);
+
+    await rm(c, { recursive: true, force: true });
+
+    return sha;
+  }
+
+  async function isAncestor(
+    wt: string,
+    ancestor: string,
+    ref = "HEAD",
+  ): Promise<boolean> {
+    return git(wt, ["merge-base", "--is-ancestor", ancestor, ref]).then(
+      () => true,
+      () => false,
+    );
+  }
+
+  async function refusal(p: Promise<unknown>): Promise<MaisterError> {
+    const err = await p.then(
+      () => {
+        throw new Error("expected a refusal");
+      },
+      (e: unknown) => e,
+    );
+
+    expect(err).toBeInstanceOf(MaisterError);
+
+    return err as MaisterError;
+  }
+
+  it("onto base rebases onto the run's base branch and records it as target_ref", async () => {
+    const { remote, parent, baseSha } = await initRepoWithRemote();
+
+    await git(parent, ["branch", "develop", "main"]);
+    await git(parent, ["push", "-u", "origin", "develop"]);
+    const wt = await addRunWorktree(parent, "sync/onto-base");
+    const developTip = await advanceRemote(remote, "develop", "dev.txt");
+    const { projectId, flowId } = await seedGraph(parent);
+    const { runId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch: "sync/onto-base",
+      parentRepoPath: parent,
+      baseCommit: baseSha,
+      baseBranch: "develop",
+      status: "Failed",
+    });
+
+    const out = await syncRunTarget({
+      runId,
+      actor: actor(),
+      onto: "base",
+      admission: "workbench",
+      db,
+    });
+
+    expect(out).toMatchObject({ outcome: "synced", behind: 1 });
+    expect(await isAncestor(wt, developTip)).toBe(true);
+    expect((await attemptRows(runId))[0].targetRef).toBe("develop");
+  });
+
+  it("onto published brings the operator's pushes to the public branch back", async () => {
+    const { remote, parent, baseSha } = await initRepoWithRemote();
+    const wt = await addRunWorktree(parent, "sync/onto-pub");
+
+    await git(wt, [
+      "push",
+      "--set-upstream",
+      "origin",
+      "refs/heads/sync/onto-pub:refs/heads/feature/PUB-1",
+    ]);
+    const laptop = await advanceRemote(remote, "feature/PUB-1", "laptop.txt");
+    const { projectId, flowId } = await seedGraph(parent);
+    const { runId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch: "sync/onto-pub",
+      parentRepoPath: parent,
+      baseCommit: baseSha,
+      status: "Failed",
+      published: { branch: "feature/PUB-1", remote: "origin" },
+    });
+
+    const out = await syncRunTarget({
+      runId,
+      actor: actor(),
+      onto: "published",
+      admission: "workbench",
+      push: false,
+      db,
+    });
+
+    expect(out).toMatchObject({ outcome: "synced", behind: 1 });
+    expect(await headSha(wt)).toBe(laptop);
+    expect((await attemptRows(runId))[0].targetRef).toBe(
+      "origin/feature/PUB-1",
+    );
+  });
+
+  it("onto base refuses a run that records no base branch", async () => {
+    const { parent, baseSha } = await initRepoWithRemote();
+    const wt = await addRunWorktree(parent, "sync/no-base");
+    const { projectId, flowId } = await seedGraph(parent);
+    const { runId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch: "sync/no-base",
+      parentRepoPath: parent,
+      baseCommit: baseSha,
+      baseBranch: null,
+      status: "Failed",
+    });
+
+    const err = await refusal(
+      syncRunTarget({
+        runId,
+        actor: actor(),
+        onto: "base",
+        admission: "workbench",
+        db,
+      }),
+    );
+
+    expect(err.code).toBe("PRECONDITION");
+    expect(err.details?.reason).toBe("base_branch_unknown");
+    expect(await attemptRows(runId)).toHaveLength(0);
+  });
+
+  it("onto published refuses an unpublished run", async () => {
+    const { parent, baseSha } = await initRepoWithRemote();
+    const wt = await addRunWorktree(parent, "sync/unpub");
+    const { projectId, flowId } = await seedGraph(parent);
+    const { runId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch: "sync/unpub",
+      parentRepoPath: parent,
+      baseCommit: baseSha,
+      status: "Failed",
+    });
+
+    const err = await refusal(
+      syncRunTarget({
+        runId,
+        actor: actor(),
+        onto: "published",
+        admission: "workbench",
+        db,
+      }),
+    );
+
+    expect(err.code).toBe("PRECONDITION");
+    expect(err.details?.reason).toBe("not_published");
+    expect(await attemptRows(runId)).toHaveLength(0);
+  });
+
+  it("refuses the AI resolver outside Review, before any attempt", async () => {
+    const { remote, parent, baseSha } = await initRepoWithRemote();
+    const wt = await addRunWorktree(parent, "sync/agent-failed");
+
+    await advanceOriginMain(remote);
+    const { projectId, flowId } = await seedGraph(parent);
+    const { runId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch: "sync/agent-failed",
+      parentRepoPath: parent,
+      baseCommit: baseSha,
+      status: "Failed",
+    });
+
+    const err = await refusal(
+      syncRunTarget({
+        runId,
+        actor: actor(),
+        agent: true,
+        admission: "workbench",
+        db,
+      }),
+    );
+
+    expect(err.code).toBe("PRECONDITION");
+    expect(err.details?.reason).toBe("agent_requires_review");
+    expect(await attemptRows(runId)).toHaveLength(0);
+  });
+
+  it("updates a Failed run onto its target", async () => {
+    const { remote, parent, baseSha } = await initRepoWithRemote();
+    const wt = await addRunWorktree(parent, "sync/failed");
+
+    await advanceOriginMain(remote);
+    const { projectId, flowId } = await seedGraph(parent);
+    const { runId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch: "sync/failed",
+      parentRepoPath: parent,
+      baseCommit: baseSha,
+      status: "Failed",
+    });
+
+    const out = await syncRunTarget({
+      runId,
+      actor: actor(),
+      admission: "workbench",
+      db,
+    });
+
+    expect(out).toMatchObject({ outcome: "synced", behind: 1 });
+    expect((await attemptRows(runId))[0].targetRef).toBe("main");
+    // The status is untouched: an update is not a status transition.
+    expect(await readRun(runId)).toMatchObject({ status: "Failed" });
+  });
+
+  // C17: the ext API keeps ADR-141's Review-only admission verbatim.
+  it("keeps the Review-only admission for the ext surface", async () => {
+    const { remote, parent, baseSha } = await initRepoWithRemote();
+    const wt = await addRunWorktree(parent, "sync/ext-failed");
+
+    await advanceOriginMain(remote);
+    const { projectId, flowId } = await seedGraph(parent);
+    const { runId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch: "sync/ext-failed",
+      parentRepoPath: parent,
+      baseCommit: baseSha,
+      status: "Failed",
+    });
+
+    const err = await refusal(
+      syncRunTarget({ runId, actor: actor(), admission: "review", db }),
+    );
+
+    expect(err.code).toBe("PRECONDITION");
+    expect(err.message).toMatch(/must be Review/);
+  });
+
+  // The five shape arms and the removed arm survive the status arm's move.
+  it("still refuses a scratch run, an orchestrator child, a shared tree and a removed workspace", async () => {
+    const { parent, baseSha } = await initRepoWithRemote();
+    const { projectId, flowId } = await seedGraph(parent);
+    const parentRun = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: join(root, `p-${randomUUID()}`),
+      branch: `sync/parent-${randomUUID().slice(0, 6)}`,
+      parentRepoPath: parent,
+      baseCommit: baseSha,
+      status: "Failed",
+    });
+    const shapes: Partial<SeedRunOpts>[] = [
+      { runKind: "scratch" },
+      { parentRunId: parentRun.runId },
+      { workspaceMode: "shared" },
+      { removedAt: new Date() },
+    ];
+
+    for (const shape of shapes) {
+      const branch = `sync/shape-${randomUUID().slice(0, 8)}`;
+      const wt = await addRunWorktree(parent, branch);
+      const { runId } = await seedRun({
+        projectId,
+        flowId,
+        worktreePath: wt,
+        branch,
+        parentRepoPath: parent,
+        baseCommit: baseSha,
+        status: "Failed",
+        ...shape,
+      });
+
+      const err = await refusal(
+        syncRunTarget({ runId, actor: actor(), admission: "workbench", db }),
+      );
+
+      expect(err.code, JSON.stringify(shape)).toBe("PRECONDITION");
+      expect(await attemptRows(runId)).toHaveLength(0);
+    }
+  });
+
+  // RED 15 (C3): a mechanical conflict aborts AND restores the pre-update
+  // HEAD, leaves the tree clean, and names the conflicted paths.
+  it("restores HEAD and names the conflicted paths on a conflict", async () => {
+    const { remote, parent, baseSha } = await initRepoWithRemote();
+    const wt = await addRunWorktree(parent, "sync/conflict-failed", {
+      feature: false,
+    });
+
+    await writeFile(join(wt, "conf.txt"), "run side\n");
+    await git(wt, ["add", "conf.txt"]);
+    await git(wt, ["commit", "-m", "run edits conf"]);
+    const before = await headSha(wt);
+    const c = join(root, `conf-${randomUUID()}`);
+
+    await git(root, ["clone", remote, c]);
+    await identity(c);
+    await writeFile(join(c, "conf.txt"), "main side\n");
+    await git(c, ["add", "conf.txt"]);
+    await git(c, ["commit", "-m", "main edits conf"]);
+    await git(c, ["push", "origin", "main"]);
+    await rm(c, { recursive: true, force: true });
+
+    const { projectId, flowId } = await seedGraph(parent);
+    const { runId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch: "sync/conflict-failed",
+      parentRepoPath: parent,
+      baseCommit: baseSha,
+      status: "Failed",
+    });
+
+    // No `agent` flag: outside Review the default is mechanical.
+    const out = await syncRunTarget({
+      runId,
+      actor: actor(),
+      admission: "workbench",
+      db,
+    });
+
+    expect(out).toMatchObject({
+      outcome: "conflict",
+      pushed: false,
+      conflictedFiles: ["conf.txt"],
+    });
+    expect(await headSha(wt)).toBe(before);
+    expect(await syncOperationInProgress(wt)).toBe(false);
+    expect((await git(wt, ["status", "--porcelain"])).stdout.trim()).toBe("");
+  });
+
+  // ADR-181 D9: the workbench admission IS the git policy. The status arm alone
+  // admits `HumanWorking` (for the rework-claim owner), so only the policy stops
+  // everyone else from rewriting a tree a human has claimed.
+  it("refuses a HumanWorking run to anyone but the rework claim's owner", async () => {
+    const { parent, baseSha } = await initRepoWithRemote();
+    const wt = await addRunWorktree(parent, "sync/human");
+    const { projectId, flowId } = await seedGraph(parent);
+    const { runId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch: "sync/human",
+      parentRepoPath: parent,
+      baseCommit: baseSha,
+      status: "HumanWorking",
+    });
+
+    const err = await refusal(
+      syncRunTarget({
+        runId,
+        actor: actor(),
+        agent: false,
+        admission: "workbench",
+        db,
+      }),
+    );
+
+    expect(err.code).toBe("PRECONDITION");
+    expect(err.details?.reason).toBe("human_owned");
+    expect(await attemptRows(runId)).toHaveLength(0);
+  });
+
+  // C3, falsifiable: when the operation's own state is gone by the time the
+  // update aborts (an operator's `git rebase --quit` in the window), `--abort`
+  // finds nothing to undo — only the reset returns the pre-update HEAD.
+  it("restores the pre-update HEAD even when the rebase state is gone", async () => {
+    const { remote, parent, baseSha } = await initRepoWithRemote();
+    const wt = await addRunWorktree(parent, "sync/conflict-quit", {
+      feature: false,
+    });
+
+    await writeFile(join(wt, "conf.txt"), "run side\n");
+    await git(wt, ["add", "conf.txt"]);
+    await git(wt, ["commit", "-m", "run edits conf"]);
+    const before = await headSha(wt);
+    const c = join(root, `conf-${randomUUID()}`);
+
+    await git(root, ["clone", remote, c]);
+    await identity(c);
+    await writeFile(join(c, "conf.txt"), "main side\n");
+    await git(c, ["add", "conf.txt"]);
+    await git(c, ["commit", "-m", "main edits conf"]);
+    await git(c, ["push", "origin", "main"]);
+    await rm(c, { recursive: true, force: true });
+
+    const { projectId, flowId } = await seedGraph(parent);
+    const { runId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch: "sync/conflict-quit",
+      parentRepoPath: parent,
+      baseCommit: baseSha,
+      status: "Failed",
+    });
+
+    vi.mocked(rebaseOntoRef).mockImplementationOnce(async (worktree, ref) => {
+      const applied = await actualWorktree.rebaseOntoRef(worktree, ref);
+
+      await git(worktree, ["rebase", "--quit"]);
+
+      return applied;
+    });
+
+    const out = await syncRunTarget({
+      runId,
+      actor: actor(),
+      admission: "workbench",
+      db,
+    });
+
+    expect(out).toMatchObject({
+      outcome: "conflict",
+      conflictedFiles: ["conf.txt"],
+    });
+    expect(await headSha(wt)).toBe(before);
+    expect((await git(wt, ["status", "--porcelain"])).stdout.trim()).toBe("");
+  });
+
+  // RED 16 — a GUARD on the Phase-1 tree (T1.7 already moved the push, and a
+  // `Review` run is admitted by both arms): the update's push leases and
+  // pushes the PUBLIC name and records the publication; the internal name
+  // never reaches the remote.
+  it("pushes the update under the public name and records it", async () => {
+    const { remote, parent, baseSha } = await initRepoWithRemote();
+    const wt = await addRunWorktree(parent, "sync/push-pub");
+
+    await git(wt, [
+      "push",
+      "--set-upstream",
+      "origin",
+      "refs/heads/sync/push-pub:refs/heads/feature/PUB-2",
+    ]);
+    await advanceOriginMain(remote);
+    const { projectId, flowId } = await seedGraph(parent);
+    const stale = new Date(Date.now() - 3_600_000);
+    const { runId, workspaceId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch: "sync/push-pub",
+      parentRepoPath: parent,
+      baseCommit: baseSha,
+      status: "Review",
+      published: { branch: "feature/PUB-2", remote: "origin", at: stale },
+    });
+
+    const out = await syncRunTarget({
+      runId,
+      actor: actor(),
+      admission: "workbench",
+      db,
+    });
+
+    expect(out).toMatchObject({ outcome: "synced", pushed: true });
+    expect(
+      (
+        await git(remote, ["rev-parse", "refs/heads/feature/PUB-2"])
+      ).stdout.trim(),
+    ).toBe(await headSha(wt));
+    await expect(
+      git(remote, ["rev-parse", "--verify", "refs/heads/sync/push-pub"]),
+    ).rejects.toThrow();
+    expect(remoteBranchHead).toHaveBeenCalledWith(
+      expect.objectContaining({ remote: "origin", branch: "feature/PUB-2" }),
+    );
+
+    const [ws] = await db
+      .select()
+      .from(workspaces)
+      .where(eq(workspaces.id, workspaceId));
+
+    expect(ws.publishedBranch).toBe("feature/PUB-2");
+    expect((ws.publishedAt as Date).getTime()).toBeGreaterThan(stale.getTime());
+  });
+
+  // ADR-181 (C, owner 2026-09-25): an update's push is a force-with-lease, so
+  // commits only the publication has (a reviewer's fixup, a suggestion) would
+  // leave the branch. The core refuses that BEFORE anything moves, naming the
+  // head and the count; only the panel may confirm, and only that exact head.
+  describe("a push that would drop the publication's own commits", () => {
+    async function divergedRun(tag: string, status = "Failed") {
+      const { remote, parent, baseSha } = await initRepoWithRemote();
+      const wt = await addRunWorktree(parent, `sync/div-${tag}`);
+      const publicName = `feature/DIV-${tag}`;
+
+      await git(wt, [
+        "push",
+        "--set-upstream",
+        "origin",
+        `refs/heads/sync/div-${tag}:refs/heads/${publicName}`,
+      ]);
+      await advanceOriginMain(remote);
+      const foreign = await advanceRemote(
+        remote,
+        publicName,
+        `review-${tag}.txt`,
+      );
+      const { projectId, flowId } = await seedGraph(parent);
+      const { runId } = await seedRun({
+        projectId,
+        flowId,
+        worktreePath: wt,
+        branch: `sync/div-${tag}`,
+        parentRepoPath: parent,
+        baseCommit: baseSha,
+        status,
+        published: { branch: publicName, remote: "origin" },
+      });
+
+      return { remote, parent, wt, runId, publicName, foreign };
+    }
+
+    async function remoteRef(remote: string, name: string): Promise<string> {
+      return (
+        await git(remote, ["rev-parse", `refs/heads/${name}`])
+      ).stdout.trim();
+    }
+
+    it("refuses before anything moves, naming the head and the commits it would drop", async () => {
+      const run = await divergedRun("a");
+      const head = await headSha(run.wt);
+
+      const err = (await refusal(
+        syncRunTarget({
+          runId: run.runId,
+          actor: actor(),
+          admission: "workbench",
+          db,
+        }),
+      )) as MaisterError & Record<string, unknown>;
+
+      expect(err).toMatchObject({
+        code: "CONFLICT",
+        details: { reason: "publication_diverged" },
+        remoteHead: run.foreign,
+        remoteRef: `origin/${run.publicName}`,
+        remoteOnlyCommits: 1,
+      });
+      expect(await headSha(run.wt)).toBe(head);
+      expect(await remoteRef(run.remote, run.publicName)).toBe(run.foreign);
+      expect(await attemptRows(run.runId)).toHaveLength(0);
+    });
+
+    it("overwrites exactly the head the operator confirmed", async () => {
+      const run = await divergedRun("b");
+
+      const out = await syncRunTarget({
+        runId: run.runId,
+        actor: actor(),
+        admission: "workbench",
+        expectedRemoteHead: run.foreign,
+        db,
+      });
+
+      expect(out).toMatchObject({ outcome: "synced", pushed: true });
+      expect(await remoteRef(run.remote, run.publicName)).toBe(
+        await headSha(run.wt),
+      );
+    });
+
+    it("refuses again, naming the new head, when the publication moved past the confirmed one", async () => {
+      const run = await divergedRun("c");
+      const newer = await advanceRemote(
+        run.remote,
+        run.publicName,
+        "review-c2.txt",
+      );
+
+      const err = (await refusal(
+        syncRunTarget({
+          runId: run.runId,
+          actor: actor(),
+          admission: "workbench",
+          expectedRemoteHead: run.foreign,
+          db,
+        }),
+      )) as MaisterError & Record<string, unknown>;
+
+      expect(err).toMatchObject({
+        details: { reason: "publication_diverged" },
+        remoteHead: newer,
+        remoteOnlyCommits: 2,
+      });
+      expect(await remoteRef(run.remote, run.publicName)).toBe(newer);
+    });
+
+    it("never asks when the update brings those commits in, or does not push", async () => {
+      const onto = await divergedRun("d");
+
+      await expect(
+        syncRunTarget({
+          runId: onto.runId,
+          actor: actor(),
+          admission: "workbench",
+          onto: "published",
+          db,
+        }),
+      ).resolves.toMatchObject({ outcome: "synced", pushed: true });
+      expect(await isAncestor(onto.wt, onto.foreign, "HEAD")).toBe(true);
+
+      const local = await divergedRun("e");
+
+      await expect(
+        syncRunTarget({
+          runId: local.runId,
+          actor: actor(),
+          admission: "workbench",
+          push: false,
+          db,
+        }),
+      ).resolves.toMatchObject({ outcome: "synced", pushed: false });
+      expect(await remoteRef(local.remote, local.publicName)).toBe(
+        local.foreign,
+      );
+    });
+
+    // The panel's primary way out, one step further: once the publication's
+    // commits are in, the update onto the target asks nothing and keeps them.
+    it("then updates onto the target without asking, the publication's commits kept", async () => {
+      const run = await divergedRun("g");
+
+      await syncRunTarget({
+        runId: run.runId,
+        actor: actor(),
+        admission: "workbench",
+        onto: "published",
+        db,
+      });
+
+      await expect(
+        syncRunTarget({
+          runId: run.runId,
+          actor: actor(),
+          admission: "workbench",
+          db,
+        }),
+      ).resolves.toMatchObject({ outcome: "synced", pushed: true });
+      expect(await remoteRef(run.remote, run.publicName)).toBe(
+        await headSha(run.wt),
+      );
+      await expect(
+        git(run.remote, [
+          "cat-file",
+          "-e",
+          `refs/heads/${run.publicName}:review-g.txt`,
+        ]),
+      ).resolves.toBeDefined();
+    });
+
+    // An update whose push never landed leaves the branch rewritten over the
+    // run's own published commits. A rebase that moved their context changed
+    // their patch, so only the branch's own record says they were the run's.
+    it("does not count the run's own commits a rewrite replaced, whatever it did to their patch", async () => {
+      const { remote, parent } = await initRepoWithRemote();
+
+      await writeFile(join(parent, "ctx.txt"), "a\nb\nc\nd\ne\n");
+      await git(parent, ["add", "ctx.txt"]);
+      await git(parent, ["commit", "-m", "context"]);
+      await git(parent, ["push", "origin", "main"]);
+      const baseSha = await headSha(parent);
+      const wt = await addRunWorktree(parent, "sync/div-rewrite", {
+        feature: false,
+      });
+
+      await writeFile(join(wt, "ctx.txt"), "a\nb\nc\nD-run\ne\n");
+      await git(wt, ["commit", "-am", "run change"]);
+      const published = await headSha(wt);
+
+      await git(wt, [
+        "push",
+        "--set-upstream",
+        "origin",
+        "refs/heads/sync/div-rewrite:refs/heads/feature/DIV-rewrite",
+      ]);
+      await advanceOriginMain(remote, "ctx.txt", "a\nB-target\nc\nd\ne\n");
+      await git(parent, ["fetch", "origin"]);
+      await git(wt, ["rebase", "origin/main"]);
+      expect(await patchId(wt, "HEAD")).not.toBe(await patchId(wt, published));
+      await advanceOriginMain(remote, "adv2.txt", "adv2\n");
+      const { projectId, flowId } = await seedGraph(parent);
+      const { runId } = await seedRun({
+        projectId,
+        flowId,
+        worktreePath: wt,
+        branch: "sync/div-rewrite",
+        parentRepoPath: parent,
+        baseCommit: baseSha,
+        status: "Failed",
+        published: { branch: "feature/DIV-rewrite", remote: "origin" },
+      });
+
+      await expect(
+        syncRunTarget({ runId, actor: actor(), admission: "workbench", db }),
+      ).resolves.toMatchObject({ outcome: "synced", pushed: true });
+    });
+
+    // Once the branch no longer records a replaced head (reflogs expired or
+    // off), a clean rebase's copies are still recognised by their patch.
+    it("recognises the run's own rebased commits by their patch when the branch no longer records them", async () => {
+      const { remote, parent, baseSha } = await initRepoWithRemote();
+      const wt = await addRunWorktree(parent, "sync/div-own");
+
+      await git(wt, [
+        "push",
+        "--set-upstream",
+        "origin",
+        "refs/heads/sync/div-own:refs/heads/feature/DIV-own",
+      ]);
+      await advanceOriginMain(remote);
+      await git(parent, ["fetch", "origin"]);
+      await git(wt, ["rebase", "origin/main"]);
+      await git(parent, ["reflog", "expire", "--expire=now", "--all"]);
+      expect(
+        (
+          await git(parent, [
+            "log",
+            "--walk-reflogs",
+            "--format=%H",
+            "refs/heads/sync/div-own",
+          ])
+        ).stdout.trim(),
+      ).toBe("");
+      await advanceOriginMain(remote, "adv2.txt", "adv2\n");
+      const { projectId, flowId } = await seedGraph(parent);
+      const { runId } = await seedRun({
+        projectId,
+        flowId,
+        worktreePath: wt,
+        branch: "sync/div-own",
+        parentRepoPath: parent,
+        baseCommit: baseSha,
+        status: "Failed",
+        published: { branch: "feature/DIV-own", remote: "origin" },
+      });
+
+      await expect(
+        syncRunTarget({ runId, actor: actor(), admission: "workbench", db }),
+      ).resolves.toMatchObject({ outcome: "synced", pushed: true });
+    });
+
+    // A provider's "Update branch" merges the target INTO the publication. Its
+    // target commits are in the update's result anyway, and the merge authors
+    // nothing — so nothing is lost and nothing is asked.
+    it("does not count target commits a merge brought onto the publication", async () => {
+      const { remote, parent, baseSha } = await initRepoWithRemote();
+      const wt = await addRunWorktree(parent, "sync/div-merge");
+
+      await git(wt, [
+        "push",
+        "--set-upstream",
+        "origin",
+        "refs/heads/sync/div-merge:refs/heads/feature/DIV-merge",
+      ]);
+      await advanceOriginMain(remote);
+      const c = join(root, `upd-${randomUUID()}`);
+
+      await git(root, ["clone", "-b", "feature/DIV-merge", remote, c]);
+      await identity(c);
+      await git(c, [
+        "merge",
+        "--no-ff",
+        "-m",
+        "Merge main into feature",
+        "origin/main",
+      ]);
+      await git(c, ["push", "origin", "feature/DIV-merge"]);
+      await rm(c, { recursive: true, force: true });
+      const { projectId, flowId } = await seedGraph(parent);
+      const { runId } = await seedRun({
+        projectId,
+        flowId,
+        worktreePath: wt,
+        branch: "sync/div-merge",
+        parentRepoPath: parent,
+        baseCommit: baseSha,
+        status: "Failed",
+        published: { branch: "feature/DIV-merge", remote: "origin" },
+      });
+
+      await expect(
+        syncRunTarget({ runId, actor: actor(), admission: "workbench", db }),
+      ).resolves.toMatchObject({ outcome: "synced", pushed: true });
+    });
+
+    // The same merge carrying an edit of its own holds a change neither
+    // parent has: dropping it is dropping the reviewer's work.
+    it("counts a merge onto the publication that carries an edit of its own", async () => {
+      const { remote, parent, baseSha } = await initRepoWithRemote();
+      const wt = await addRunWorktree(parent, "sync/div-evil");
+
+      await git(wt, [
+        "push",
+        "--set-upstream",
+        "origin",
+        "refs/heads/sync/div-evil:refs/heads/feature/DIV-evil",
+      ]);
+      await advanceOriginMain(remote);
+      const c = join(root, `upd-${randomUUID()}`);
+
+      await git(root, ["clone", "-b", "feature/DIV-evil", remote, c]);
+      await identity(c);
+      await git(c, ["merge", "--no-ff", "--no-commit", "origin/main"]);
+      await writeFile(join(c, "fixup.txt"), "reviewer\n");
+      await git(c, ["add", "fixup.txt"]);
+      await git(c, ["commit", "-m", "Merge main into feature, with a fixup"]);
+      await git(c, ["push", "origin", "feature/DIV-evil"]);
+      await rm(c, { recursive: true, force: true });
+      const { projectId, flowId } = await seedGraph(parent);
+      const { runId } = await seedRun({
+        projectId,
+        flowId,
+        worktreePath: wt,
+        branch: "sync/div-evil",
+        parentRepoPath: parent,
+        baseCommit: baseSha,
+        status: "Failed",
+        published: { branch: "feature/DIV-evil", remote: "origin" },
+      });
+
+      const err = (await refusal(
+        syncRunTarget({ runId, actor: actor(), admission: "workbench", db }),
+      )) as MaisterError & Record<string, unknown>;
+
+      expect(err).toMatchObject({
+        details: { reason: "publication_diverged" },
+        remoteOnlyCommits: 1,
+      });
+    });
+
+    // Automation (the ext API, ai_rebase_merge, the resolver) has no human to
+    // confirm with: the refusal stands whatever it passes.
+    it("refuses the review admission even with a head it never had confirmed", async () => {
+      const run = await divergedRun("f", "Review");
+
+      const err = (await refusal(
+        syncRunTarget({
+          runId: run.runId,
+          actor: actor(),
+          expectedRemoteHead: run.foreign,
+          agent: false,
+          db,
+        }),
+      )) as MaisterError & Record<string, unknown>;
+
+      expect(err.details?.reason).toBe("publication_diverged");
+      expect(await remoteRef(run.remote, run.publicName)).toBe(run.foreign);
+    });
+  });
+});
+
 describe("POST /api/runs/[runId]/sync route", () => {
   // Captured so the authorization CONTRACT can be asserted. The stub used to be
   // anonymous and nothing checked its arguments, so rebinding the route to
@@ -1480,6 +2439,89 @@ describe("POST /api/runs/[runId]/sync route", () => {
       projectId,
       "promoteRun",
     );
+  });
+
+  // ADR-181 D9: the route takes `onto` and forwards the refusal token.
+  it("accepts onto and forwards details.reason on a refusal", async () => {
+    const { parent, baseSha } = await initRepoWithRemote();
+    const wt = await addRunWorktree(parent, "sync/route-onto");
+    const { projectId, flowId } = await seedGraph(parent);
+    const { runId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch: "sync/route-onto",
+      parentRepoPath: parent,
+      baseCommit: baseSha,
+      status: "Failed",
+    });
+
+    const res = await invokePost(runId, { onto: "published" });
+
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as any).details).toEqual({
+      reason: "not_published",
+    });
+  });
+
+  // ADR-181 (C): the refusal carries what the panel's confirmation names, and
+  // the route takes the confirmed head back — a full SHA, nothing shorter.
+  it("returns the publication's head and count on a refusal, and takes the confirmed head back", async () => {
+    const { remote, parent, baseSha } = await initRepoWithRemote();
+    const wt = await addRunWorktree(parent, "sync/route-div");
+
+    await git(wt, [
+      "push",
+      "--set-upstream",
+      "origin",
+      "refs/heads/sync/route-div:refs/heads/feature/ROUTE-DIV",
+    ]);
+    await advanceOriginMain(remote);
+    const c = join(root, `rv-${randomUUID()}`);
+
+    await git(root, ["clone", "-b", "feature/ROUTE-DIV", remote, c]);
+    await identity(c);
+    await writeFile(join(c, "review.txt"), "review\n");
+    await git(c, ["add", "review.txt"]);
+    await git(c, ["commit", "-m", "review"]);
+    await git(c, ["push", "origin", "feature/ROUTE-DIV"]);
+    const foreign = await headSha(c);
+
+    await rm(c, { recursive: true, force: true });
+    const { projectId, flowId } = await seedGraph(parent);
+    const { runId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch: "sync/route-div",
+      parentRepoPath: parent,
+      baseCommit: baseSha,
+      status: "Failed",
+      published: { branch: "feature/ROUTE-DIV", remote: "origin" },
+    });
+
+    const refused = await invokePost(runId, {});
+
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "publication_diverged" },
+      remoteHead: foreign,
+      remoteRef: "origin/feature/ROUTE-DIV",
+      remoteOnlyCommits: 1,
+    });
+    expect(
+      (await invokePost(runId, { expectedRemoteHead: foreign.slice(0, 12) }))
+        .status,
+    ).toBe(422);
+
+    const confirmed = await invokePost(runId, { expectedRemoteHead: foreign });
+
+    expect(confirmed.status).toBe(200);
+    expect(await confirmed.json()).toMatchObject({
+      outcome: "synced",
+      pushed: true,
+    });
   });
 
   it("(j) 422 on an invalid body", async () => {

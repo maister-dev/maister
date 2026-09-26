@@ -103,6 +103,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       try {
         const result = await syncRunTarget({
           runId: body.runId,
+          // ADR-181 C17: the ext surface keeps ADR-141's Review-only admission.
+          admission: "review",
           strategy: body.strategy,
           agent: body.agent,
           push: body.push,

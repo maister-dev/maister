@@ -265,6 +265,9 @@ namespace: the behind/ahead and PR-state chips, the Sync branch dialog
 labels and Stop, the drift-card Sync branch action, the Reopen action, and the
 `ai_rebase_merge` auto-finalize checkbox. EN + RU parity required.
 
+ADR-181 adds `run.recoverBusy` (the recover panel's notice for a worktree a
+workbench operation still owns). EN + RU parity required.
+
 ADR-125 adds budget-breach labels under the existing run/HITL namespaces:
 progress metrics, `Raise & continue`, `Restart fresh`, `Park the result`,
 snapshot/export mode labels, branch-name validation text, discard/drop
@@ -295,6 +298,9 @@ this screen owns only the surface. All copy comes from the `run` namespace.
   (`rebase` / `merge`, defaulting to the project `sync_strategy_default`), a
   resolver-runner select (defaulting through the sync-runner chain), a **push**
   toggle, and a "resolve conflicts with AI agent" checkbox **default ON**.
+  (ADR-181 — Implemented) This inline dialog is removed: `review-sync-open` and
+  the drift card's Sync branch open the run git panel's Update section
+  (`?git=update`, [`git-panel.md`](git-panel.md)).
 - **Sync-in-progress panel** — while an attempt runs it shows the durable
   `run_sync_attempts` phase (`starting → rebasing → agent_running → verifying →
   pushing`), resolved server-side by `buildRunSyncPanelData`. It is TEXT ONLY —
@@ -306,10 +312,42 @@ this screen owns only the surface. All copy comes from the `run` namespace.
   today offering only **Promote anyway**) gains **Sync branch** as a primary
   action beside **Promote anyway** in `web/components/runs/review-panel.tsx`.
   `run-header-promotion-action.tsx` carries NO sync affordance.
+- **Diverged-publication notice** (ADR-181 — Implemented) — a squashing PR
+  promotion refused because the PR branch holds commits the run does not
+  (`CONFLICT` `details.reason: publication_diverged`) is NOT the merge-conflict
+  card: the review panel shows `review-publication-diverged`
+  (`run.publicationDiverged`) with **Sync branch** into the git panel's Update,
+  where the operator updates onto the publication first; the header's one-click
+  Promote reports the same copy. Any other `CONFLICT` keeps the conflict card.
+- **Merged-PR refusal** (ADR-181 — Implemented) — a `pull_request` promotion
+  whose recorded PR the provider already merged without the run's later
+  commits (`PRECONDITION` `details.reason: merged_pr_behind`) shows
+  `run.mergedPrBehind` in the review panel's alert line, and the header's
+  Promote reports the same copy: nothing changed, open a new PR for those
+  commits in the git panel. A PR merged at the run's head needs no copy — the
+  promotion finalizes it as it stands.
 - **`ai_rebase_merge` promote dialog** — when the resolved promotion mode is
   `ai_rebase_merge`, the promote dialog gains an **auto-finalize after resolve**
   checkbox, **default OFF** (two-step default: a resolved conflict returns the run
   to `Review` for a clean re-promote; checked finalizes to `Done` best-effort).
+
+## Run git panel (ADR-181)
+
+For every parked run — `Review | Crashed | Failed | Done | Abandoned`, and
+`HumanWorking` for the open rework claim's owner — the lifecycle actions open
+the run git panel ([`git-panel.md`](git-panel.md)). It covers commit,
+discard, publish under a public branch name, update onto base / target /
+published, open and finalize a PR, and re-attach a removed worktree. It
+replaces the Export dialog and absorbs the review panel's Sync branch dialog.
+Promote, the readiness and drift chips and the ahead/behind chip stay on the
+review panel. A `Failed` run stays listed wherever a `Crashed` one is — the
+portfolio, the project workspace list, the rail and the board's Backlog card
+menu — so its git actions are reachable without knowing its URL. One writer
+per worktree holds for Recover too: while a git panel operation or a parked PR
+finalize owns a `Crashed` run's tree, Recover is refused `busy` and the recover
+panel shows the retryable `run.recoverBusy` notice ("retry once it finishes")
+rather than the discard advice every other refusal carries. Behavior:
+[`../../system-analytics/workbench-git.md`](../../system-analytics/workbench-git.md).
 
 ## Budget-breach panel
 

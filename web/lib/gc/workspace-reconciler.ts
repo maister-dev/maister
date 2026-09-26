@@ -30,6 +30,8 @@ import {
   type ReconciliationObservation,
 } from "@/lib/gc/workspace-reconciliation-findings";
 import { gcAgeDays, worktreesRoot } from "@/lib/instance-config";
+import { canReclaimLifecycle } from "@/lib/runs/lifecycle-claim";
+import { recordReattached } from "@/lib/workbench-git/service";
 import {
   createExecutionHosts,
   getLatestAssignment,
@@ -569,6 +571,11 @@ async function processTrustedCandidate(args: {
       worktreePath: workspaces.worktreePath,
       parentRepoPath: workspaces.parentRepoPath,
       removedAt: workspaces.removedAt,
+      lifecycleOperationState: workspaces.lifecycleOperationState,
+      lifecycleOperationName: workspaces.lifecycleOperationName,
+      lifecycleOperationAttemptId: workspaces.lifecycleOperationAttemptId,
+      lifecycleOperationLeaseExpiresAt:
+        workspaces.lifecycleOperationLeaseExpiresAt,
     })
     .from(workspaces)
     .where(eq(workspaces.runId, provenance.runId));
@@ -602,6 +609,69 @@ async function processTrustedCandidate(args: {
         resultCode: "workspace_present",
         now: args.now(),
       });
+      args.summary.resolved += 1;
+
+      return;
+    }
+
+    // ADR-181 C31: a reattach adds the worktree BEFORE it clears `removed_at`,
+    // so "removed row + present worktree" is also a reattach in flight, or one
+    // that crashed before its last write. Read the claim before deleting: a
+    // live claim owns the tree (hold until its lease lapses), a stale or failed
+    // reattach gets that last write completed, and anything else is the orphan
+    // this arm always removed.
+    if (
+      workspace.lifecycleOperationState === "claiming" &&
+      !canReclaimLifecycle(workspace)
+    ) {
+      await holdReconciliationFinding({
+        database: args.database,
+        claim: args.claim,
+        resultCode: "lifecycle_operation_live",
+        now: args.now(),
+        retryAt: workspace.lifecycleOperationLeaseExpiresAt ?? undefined,
+      });
+      args.summary.retained += 1;
+
+      return;
+    }
+
+    if (
+      workspace.lifecycleOperationName === "reattach" &&
+      workspace.lifecycleOperationAttemptId !== null
+    ) {
+      const completed = await recordReattached({
+        database: args.database,
+        workspaceId: workspace.id,
+        attemptId: workspace.lifecycleOperationAttemptId,
+        liveLease: false,
+      });
+
+      // Lost the fence: a retry claimed the slot since the read above. Never
+      // fall through to the removal — hold, and re-decide on the next sweep.
+      if (!completed) {
+        await holdReconciliationFinding({
+          database: args.database,
+          claim: args.claim,
+          resultCode: "lifecycle_operation_live",
+          now: args.now(),
+        });
+        args.summary.retained += 1;
+
+        return;
+      }
+
+      await resolveReconciliationFinding({
+        database: args.database,
+        claim: args.claim,
+        resultCode: "workspace_reattached",
+        now: args.now(),
+      });
+      log.info(
+        { runId: provenance.runId, workspaceId: workspace.id },
+        "workspace reconciliation completed a crashed reattach",
+      );
+      args.summary.recovered += 1;
       args.summary.resolved += 1;
 
       return;

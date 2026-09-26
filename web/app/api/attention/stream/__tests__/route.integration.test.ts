@@ -173,11 +173,16 @@ function movedFrames(frames: Frame[]): Frame[] {
 function streamRequest(
   controller: AbortController,
   lastEventId?: string,
+  baseline?: { decisions: string; updates: string },
 ): NextRequest {
   const url = new URL("http://localhost/api/attention/stream");
 
   if (lastEventId !== undefined)
     url.searchParams.set("lastEventId", lastEventId);
+  if (baseline !== undefined) {
+    url.searchParams.set("decisions", baseline.decisions);
+    url.searchParams.set("updates", baseline.updates);
+  }
 
   return new NextRequest(url, { signal: controller.signal });
 }
@@ -449,6 +454,90 @@ describe("IT-EDGE-ATN-04 lastEventId replays the tail once", () => {
       const snapshot = frames.find((frame) => frame.event === "attention.tick");
 
       expect(snapshot?.data?.changed, `cursor ${raw}`).toEqual([]);
+    }
+  }, 60_000);
+});
+
+// ADR-171 D7: the render is the first cursor. A connect without one answers
+// with the snapshot, and the client refreshes on it even when the page is
+// already current; with the render's cursor and counters the stream stays
+// silent until something moves. The reader has no project, so no row of
+// another test can move under the cursor — only the counters are in play.
+describe("IT-ATN-17 a render that is current gets no tick", () => {
+  async function rendered(): Promise<{
+    cursor: string;
+    decisions: number;
+    updates: number;
+  }> {
+    const controller = new AbortController();
+    const frames = await collect(
+      await GET(streamRequest(controller)),
+      controller,
+      1200,
+    );
+    const snapshot = frames.find((frame) => frame.event === "attention.tick");
+
+    expect(snapshot).toBeDefined();
+
+    return {
+      cursor: snapshot?.data?.id as string,
+      decisions: snapshot?.data?.decisions as number,
+      updates: snapshot?.data?.updates as number,
+    };
+  }
+
+  function ticks(frames: Frame[]): Frame[] {
+    return frames.filter((frame) => frame.event === "attention.tick");
+  }
+
+  beforeEach(() => {
+    session = { id: fx.other, role: "member" };
+  });
+
+  it("stays silent for a reader whose render is current", async () => {
+    const render = await rendered();
+    const controller = new AbortController();
+    const response = await GET(
+      streamRequest(controller, render.cursor, {
+        decisions: String(render.decisions),
+        updates: String(render.updates),
+      }),
+    );
+
+    expect(ticks(await collect(response, controller, 3000))).toEqual([]);
+  }, 30_000);
+
+  it("still ticks, naming the counter, when the render's count is stale", async () => {
+    const render = await rendered();
+    const controller = new AbortController();
+    const response = await GET(
+      streamRequest(controller, render.cursor, {
+        decisions: String(render.decisions + 1),
+        updates: String(render.updates),
+      }),
+    );
+    const moved = ticks(await collect(response, controller, 3000));
+
+    expect(moved).toHaveLength(1);
+    expect(moved[0].data?.changed).toEqual(["decisions"]);
+  }, 30_000);
+
+  it("ignores a baseline it cannot read, and ticks as a resume always did", async () => {
+    const render = await rendered();
+
+    for (const bad of ["-1", "one", "9".repeat(12)]) {
+      const controller = new AbortController();
+      const response = await GET(
+        streamRequest(controller, render.cursor, {
+          decisions: bad,
+          updates: String(render.updates),
+        }),
+      );
+
+      expect(
+        ticks(await collect(response, controller, 3000)),
+        `decisions=${bad}`,
+      ).toHaveLength(1);
     }
   }, 60_000);
 });

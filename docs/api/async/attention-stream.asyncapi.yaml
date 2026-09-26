@@ -1,7 +1,7 @@
 asyncapi: 2.6.0
 info:
   title: MAIster Web — user-scoped attention stream
-  version: "1.0.0"
+  version: "1.1.0"
   description: |
     Browser-safe attention notifications delivered by
     `GET /api/attention/stream` (ADR-171).
@@ -55,6 +55,15 @@ channels:
         refused, and the tail is replayed from durable rows — there is no
         in-memory replay buffer, so a server restart costs a reader only a
         reconnect.
+
+        (ADR-171 D7) The first connect after a render carries the render's
+        cursor as `lastEventId`. Beside it go the two counts the page shows, as
+        `decisions` and `updates` query parameters (non-negative integers). The
+        server scans from that cursor as for any resume and treats the counts
+        as already sent, so a reader whose render is current receives no tick.
+        A reconnect sends the last tick's cursor and counts. A count that does
+        not parse is ignored. Without a cursor the stream opens with a snapshot
+        tick whose `changed` is empty.
 
         A quiet stream emits `attention.heartbeat`; a stream that stays quiet
         past the module-level cap is closed with `attention.stream_timeout`

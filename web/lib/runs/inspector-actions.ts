@@ -4,6 +4,7 @@ import type {
   WorkbenchRunStatus,
 } from "@/lib/workbench-lifecycle/policy";
 
+import { gitPanelHref } from "@/lib/workbench-git/panel-link";
 import { deriveWorkbenchLifecycleActions } from "@/lib/workbench-lifecycle/policy";
 
 export type InspectorActionGroup =
@@ -18,6 +19,12 @@ export type InspectorActionId =
   | "snapshotCommit"
   | "exportBranch"
   | "handoffBranch"
+  // ADR-181: the run git panel's operations, reached by deep link.
+  | "discardChanges"
+  | "update"
+  | "openPr"
+  | "finalizePr"
+  | "reattach"
   | "promote"
   | "promotePullRequest"
   | "archive"
@@ -38,6 +45,10 @@ export interface InspectorActionDto {
   group: InspectorActionGroup;
   endpoint: string | null;
   method: "POST" | null;
+  // ADR-181 C34: the deep link into the run git panel section; null for an
+  // action whose control lives on the page itself (stop, recover, promote,
+  // archive, drop). The inspector lists only href-bearing items.
+  href: string | null;
   enabled: boolean;
   disabledReason: InspectorActionDisabledReason | null;
 }
@@ -81,6 +92,11 @@ function endpointFor(input: {
     snapshotCommit: "snapshot-commit",
     exportBranch: "export-branch",
     handoffBranch: "handoff-branch",
+    discardChanges: "discard-changes",
+    update: "sync",
+    openPr: "pr",
+    finalizePr: "pr/finalize",
+    reattach: "reattach",
     promote: "promote",
     promotePullRequest: "promote",
     archive: "archive",
@@ -104,6 +120,11 @@ function action(input: {
     group: input.group,
     endpoint: endpointFor(input),
     method: "POST",
+    href: gitPanelHref({
+      runId: input.runId,
+      runKind: input.runKind,
+      actionId: input.id,
+    }),
     enabled: input.enabled,
     disabledReason: input.enabled ? null : input.disabledReason,
   };
@@ -160,6 +181,28 @@ export function deriveInspectorActions(
   const canPreserveBranch = exportBranch?.enabled === true;
   const branchDisabledReason =
     exportBranch?.disabledReason ?? "unsupported-status";
+  // One policy entry per git id (ADR-181 D1), each deep-linked into the panel.
+  const gitAction = (
+    id:
+      | "snapshotCommit"
+      | "discardChanges"
+      | "update"
+      | "openPr"
+      | "finalizePr"
+      | "reattach",
+    group: InspectorActionGroup,
+  ): InspectorActionDto => {
+    const policy = lifecycleById.get(id);
+
+    return lifecycleAction({
+      runId: input.runId,
+      runKind: input.runKind,
+      id,
+      group,
+      enabled: policy?.enabled === true,
+      disabledReason: policy?.disabledReason ?? "unsupported-status",
+    });
+  };
   const deliveryReason = deliveryDisabledReason(input);
   const deliveryEnabled =
     input.runStatus === "Review" &&
@@ -186,14 +229,8 @@ export function deriveInspectorActions(
       disabledReason:
         input.runStatus === "Crashed" ? "recover-unavailable" : "not-crashed",
     }),
-    action({
-      runId: input.runId,
-      runKind: input.runKind,
-      id: "snapshotCommit",
-      group: "branch",
-      enabled: canPreserveBranch,
-      disabledReason: branchDisabledReason,
-    }),
+    gitAction("snapshotCommit", "branch"),
+    gitAction("discardChanges", "branch"),
     lifecycleAction({
       runId: input.runId,
       runKind: input.runKind,
@@ -210,6 +247,9 @@ export function deriveInspectorActions(
       enabled: canPreserveBranch,
       disabledReason: branchDisabledReason,
     }),
+    gitAction("update", "branch"),
+    gitAction("openPr", "delivery"),
+    gitAction("finalizePr", "delivery"),
     action({
       runId: input.runId,
       runKind: input.runKind,
@@ -237,5 +277,6 @@ export function deriveInspectorActions(
       enabled: drop?.enabled === true,
       disabledReason: drop?.disabledReason ?? "unsupported-status",
     }),
+    gitAction("reattach", "cleanup"),
   ];
 }

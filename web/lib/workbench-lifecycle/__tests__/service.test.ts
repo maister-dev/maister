@@ -18,6 +18,7 @@ import {
   type LifecycleContext,
   type WorkbenchLifecycleDeps,
 } from "@/lib/workbench-lifecycle/service";
+import { GitPushRejectedError } from "@/lib/worktree";
 
 function context(over: Partial<LifecycleContext> = {}): LifecycleContext {
   return {
@@ -76,7 +77,8 @@ function deps(ctx: LifecycleContext): WorkbenchLifecycleDeps {
   fake = createFakeExecutionHost();
 
   return {
-    requireActiveSession: vi.fn(async () => undefined),
+    // ADR-181 D2: the binding returns the authenticated user (the viewer).
+    requireActiveSession: vi.fn(async () => ({ id: "user-1" })),
     loadContext: vi.fn(async () => ctx),
     authorize: vi.fn(async () => undefined),
     executionHosts: memoryExecutionHosts(fake),
@@ -103,6 +105,8 @@ function deps(ctx: LifecycleContext): WorkbenchLifecycleDeps {
     statusPorcelain: vi.fn(async () => ""),
     snapshotDirtyWorktree: vi.fn(async () => false),
     pushBranch: vi.fn(async () => undefined),
+    branchUpstream: vi.fn(async () => null),
+    recordPublished: vi.fn(async () => undefined),
     claimLifecycleOperation: vi.fn(async () => ({
       attemptId: "lifecycle-attempt-1",
       leaseExpiresAt: new Date("2026-06-09T08:05:00.000Z"),
@@ -150,12 +154,15 @@ describe("workbench lifecycle service", () => {
       branch: "maister/run-1",
       baseRef: "abc1234",
       runId: "run-1",
+      // ADR-181 D17: MAISTER_GC_ARCHIVE_PUSH unset in this suite → local only.
+      archivePush: false,
     });
     expect(d.claimLifecycleOperation).toHaveBeenCalledWith({
       runId: "run-1",
       workspaceId: "workspace-1",
       operation: "archive",
       expectedRunStatus: "Review",
+      actorUserId: "user-1",
     });
     expect(d.recordArchive).toHaveBeenCalledWith({
       workspaceId: "workspace-1",
@@ -270,6 +277,7 @@ describe("workbench lifecycle service", () => {
       workspaceId: "workspace-1",
       operation: "discard",
       expectedRunStatus: "Crashed",
+      actorUserId: "user-1",
     });
     expect(d.recordDrop).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -453,8 +461,17 @@ describe("workbench lifecycle service", () => {
     expect(d.pushBranch).not.toHaveBeenCalled();
   });
 
+  // ADR-181 D4: the run branch is published under the PUBLIC name the project
+  // template renders from the task, with an upstream set; the lease (read
+  // before the push) is only sent on a forced publish.
+  const taskContext = () =>
+    context({
+      project: { id: "project-1", mainBranch: "main", taskKey: "ABC" },
+      task: { number: 7, title: "Fix it" },
+    });
+
   it("export snapshots dirty work before pushing when explicitly requested", async () => {
-    const d = deps(context());
+    const d = deps(taskContext());
 
     vi.mocked(d.statusPorcelain).mockResolvedValueOnce("?? file.ts\n");
     vi.mocked(d.snapshotDirtyWorktree).mockResolvedValueOnce(true);
@@ -474,13 +491,24 @@ describe("workbench lifecycle service", () => {
       projectRepoPath: "/tmp/repo",
       remote: "origin",
       branch: "maister/run-1",
+      remoteBranch: "feature/ABC-7-fix-it",
+      setUpstream: true,
       force: undefined,
     });
+    expect(d.recordPublished).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: "workspace-1",
+        remote: "origin",
+        branch: "feature/ABC-7-fix-it",
+        fence: { kind: "lifecycle", attemptId: "lifecycle-attempt-1" },
+      }),
+    );
     expect(d.claimLifecycleOperation).toHaveBeenCalledWith({
       runId: "run-1",
       workspaceId: "workspace-1",
       operation: "exportBranch",
       expectedRunStatus: "Review",
+      actorUserId: "user-1",
     });
     expect(d.finalizeLifecycleOperation).toHaveBeenCalledWith({
       workspaceId: "workspace-1",
@@ -491,23 +519,32 @@ describe("workbench lifecycle service", () => {
       ok: true,
       branch: "maister/run-1",
       remote: "origin",
-      pushedRef: "origin/maister/run-1",
+      pushedRef: "origin/feature/ABC-7-fix-it",
+      publishedBranch: "feature/ABC-7-fix-it",
+      publishedRemote: "origin",
+      publishedRef: "origin/feature/ABC-7-fix-it",
+      nameSource: "template",
       snapshotCreated: true,
       checkoutCommands: [
-        "git -C /tmp/repo fetch origin maister/run-1",
-        "git -C /tmp/repo switch maister/run-1",
+        "git -C /tmp/repo fetch origin feature/ABC-7-fix-it",
+        "git -C /tmp/repo switch --track origin/feature/ABC-7-fix-it",
       ],
     });
   });
 
-  it("export forwards force-with-lease intent to git push", async () => {
-    const d = deps(context());
+  // ADR-181 D4: the operator confirmed one head; the lease is that head, never
+  // the one the retry re-reads (which may be someone else's newer work).
+  it("export leases exactly the confirmed head on a forced push, not the one it re-reads", async () => {
+    const d = deps(taskContext());
+
+    vi.mocked(d.remoteBranchHead).mockResolvedValueOnce("a".repeat(40));
 
     await exportWorkbenchBranch("run-1", {
       remote: "origin",
       snapshotDirty: false,
       commitMessage: null,
       force: true,
+      expectedHead: "b".repeat(40),
       deps: d,
     });
 
@@ -515,8 +552,68 @@ describe("workbench lifecycle service", () => {
       projectRepoPath: "/tmp/repo",
       remote: "origin",
       branch: "maister/run-1",
+      remoteBranch: "feature/ABC-7-fix-it",
+      setUpstream: true,
       force: true,
+      leaseSha: "b".repeat(40),
     });
+  });
+
+  it("export names the remote head and ref it observed on a non-fast-forward refusal", async () => {
+    const d = deps(taskContext());
+
+    vi.mocked(d.remoteBranchHead).mockResolvedValueOnce("a".repeat(40));
+    vi.mocked(d.pushBranch).mockRejectedValueOnce(
+      new GitPushRejectedError(
+        "git push origin maister/run-1:feature/ABC-7-fix-it rejected",
+      ),
+    );
+
+    await expect(
+      exportWorkbenchBranch("run-1", {
+        remote: "origin",
+        snapshotDirty: false,
+        commitMessage: null,
+        deps: d,
+      }),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      pushRejected: "non_fast_forward",
+      canForce: true,
+      remoteHead: "a".repeat(40),
+      remoteRef: "origin/feature/ABC-7-fix-it",
+    });
+    expect(d.recordPublished).not.toHaveBeenCalled();
+  });
+
+  // The push is the one step nothing undoes: the lease is re-proven between the
+  // network read and it, so a publish that lost its slot never pushes.
+  it("export renews its lease after the remote read and never pushes on a lost one", async () => {
+    const d = deps(taskContext());
+
+    vi.mocked(d.renewLifecycleOperationLease).mockRejectedValueOnce(
+      new MaisterError(
+        "CONFLICT",
+        "lifecycle operation lease lost for workspace workspace-1",
+      ),
+    );
+
+    await expect(
+      exportWorkbenchBranch("run-1", {
+        remote: "origin",
+        snapshotDirty: false,
+        commitMessage: null,
+        deps: d,
+      }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+
+    expect(
+      vi.mocked(d.remoteBranchHead).mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      vi.mocked(d.renewLifecycleOperationLease).mock.invocationCallOrder[0],
+    );
+    expect(d.pushBranch).not.toHaveBeenCalled();
+    expect(d.recordPublished).not.toHaveBeenCalled();
   });
 
   it("export leaves transient push failures retryable", async () => {
@@ -762,5 +859,55 @@ describe("workbench lifecycle service", () => {
       expect.objectContaining({ removalKind: "drop" }),
     );
     expect(result).toMatchObject({ ok: true, workspaceRemoved: true });
+  });
+
+  // ADR-181 D17 (RED 13): operator archive/drop honour MAISTER_GC_ARCHIVE_PUSH
+  // exactly like the GC preserve path — today they pass nothing, so the knob
+  // silently never applies to an operator removal.
+  describe("archive push knob", () => {
+    const original = process.env.MAISTER_GC_ARCHIVE_PUSH;
+
+    function restore(): void {
+      if (original === undefined) delete process.env.MAISTER_GC_ARCHIVE_PUSH;
+      else process.env.MAISTER_GC_ARCHIVE_PUSH = original;
+    }
+
+    it.each([
+      ["true", true],
+      ["false", false],
+      [undefined, false],
+    ] as const)(
+      "archive passes archivePush=%s → %s into preservation",
+      async (env, expected) => {
+        try {
+          if (env === undefined) delete process.env.MAISTER_GC_ARCHIVE_PUSH;
+          else process.env.MAISTER_GC_ARCHIVE_PUSH = env;
+          const d = deps(context());
+
+          await archiveWorkbench("run-1", { deps: d });
+
+          expect(d.preserveWorktree).toHaveBeenCalledWith(
+            expect.objectContaining({ archivePush: expected }),
+          );
+        } finally {
+          restore();
+        }
+      },
+    );
+
+    it("drop passes the same knob into preservation", async () => {
+      try {
+        process.env.MAISTER_GC_ARCHIVE_PUSH = "true";
+        const d = deps(context());
+
+        await dropWorkbench("run-1", { deps: d });
+
+        expect(d.preserveWorktree).toHaveBeenCalledWith(
+          expect.objectContaining({ archivePush: true }),
+        );
+      } finally {
+        restore();
+      }
+    });
   });
 });

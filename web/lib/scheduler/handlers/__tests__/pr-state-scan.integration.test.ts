@@ -87,6 +87,7 @@ const OPEN: PrStateReadResult = {
   mergedAt: null,
   mergeCommitSha: null,
   hasConflicts: null,
+  headSha: null,
 };
 
 describe("runPrStateScanJob", () => {
@@ -122,6 +123,7 @@ describe("runPrStateScanJob", () => {
           mergedAt: "2026-07-14T00:00:00.000Z",
           mergeCommitSha: "merge-sha-101",
           hasConflicts: false,
+          headSha: null,
         },
         102: {
           kind: "state",
@@ -129,6 +131,7 @@ describe("runPrStateScanJob", () => {
           mergedAt: null,
           mergeCommitSha: null,
           hasConflicts: null,
+          headSha: null,
         },
         103: {
           kind: "state",
@@ -136,6 +139,7 @@ describe("runPrStateScanJob", () => {
           mergedAt: null,
           mergeCommitSha: null,
           hasConflicts: true,
+          headSha: null,
         },
       }),
     });
@@ -235,6 +239,7 @@ describe("runPrStateScanJob", () => {
         mergedAt: "2026-07-14T00:00:00.000Z",
         mergeCommitSha: "merge-sha-201",
         hasConflicts: false,
+        headSha: null,
       },
       202: {
         kind: "state",
@@ -242,6 +247,7 @@ describe("runPrStateScanJob", () => {
         mergedAt: null,
         mergeCommitSha: null,
         hasConflicts: null,
+        headSha: null,
       },
       203: {
         kind: "state",
@@ -249,6 +255,7 @@ describe("runPrStateScanJob", () => {
         mergedAt: null,
         mergeCommitSha: null,
         hasConflicts: true,
+        headSha: null,
       },
     });
 
@@ -404,6 +411,64 @@ describe("runPrStateScanJob", () => {
 
     // A short (< batch cap) sweep resets the cursor so the next tick wraps.
     expect(await storedCursor(projectId)).toBeNull();
+  });
+
+  // ADR-181 D21 (RED 23, a guard): Open PR widens WHO has a PR — a parked
+  // Failed/Crashed/Abandoned run — not the scan. Its candidate predicate never
+  // read a run status, so this passes on the unchanged scan and proves the
+  // widened population is tracked.
+  it("scans a PR opened on a parked run, whatever its status", async () => {
+    const projectId = await seedProject();
+
+    await ensurePrStateScanSeed();
+
+    const failed = await seedCandidate({
+      projectId,
+      prNumber: 701,
+      status: "Failed",
+    });
+    const crashed = await seedCandidate({
+      projectId,
+      prNumber: 702,
+      status: "Crashed",
+    });
+    const abandoned = await seedCandidate({
+      projectId,
+      prNumber: 703,
+      status: "Abandoned",
+    });
+
+    // A merged read, so the whole edge applies — not only the read.
+    const reader = vi.fn(
+      async (args: { prNumber: number }): Promise<PrStateReadResult> => ({
+        kind: "state",
+        state: "merged",
+        mergedAt: "2026-09-23T00:00:00.000Z",
+        mergeCommitSha: `merge-sha-${args.prNumber}`,
+        hasConflicts: null,
+        headSha: null,
+      }),
+    );
+    const summary = await runPrStateScanJob({
+      projectId,
+      db,
+      getPrState: reader as unknown as typeof getPrState,
+    });
+
+    expect(summary.scanned).toBe(3);
+    expect(reader.mock.calls.map((call) => call[0].prNumber).sort()).toEqual([
+      701, 702, 703,
+    ]);
+    for (const [candidate, prNumber] of [
+      [failed, 701],
+      [crashed, 702],
+      [abandoned, 703],
+    ] as const) {
+      expect(await workspace(candidate.workspaceId)).toMatchObject({
+        prState: "merged",
+        prMergeCommitSha: `merge-sha-${prNumber}`,
+      });
+    }
   });
 
   it("advances the cursor across a full batch and resumes past it on the next sweep", async () => {
@@ -570,6 +635,7 @@ describe("runPrStateScanJob", () => {
       mergedAt: "2026-07-14T00:00:00.000Z",
       mergeCommitSha: "merge-sha-701",
       hasConflicts: false,
+      headSha: null,
     });
 
     const tick = await runSchedulerTick({ jobKind: "pr_state_scan" });
@@ -647,6 +713,7 @@ async function seedCandidate(opts: {
   workspaceId?: string;
   withTask?: boolean;
   runKind?: "flow" | "scratch" | "agent";
+  status?: "Review" | "Failed" | "Crashed" | "Abandoned";
   prState?: "open" | "merged" | "closed" | null;
   prUrl?: string | null;
 }): Promise<{ runId: string; workspaceId: string; taskId: string | null }> {
@@ -670,7 +737,7 @@ async function seedCandidate(opts: {
     projectId: opts.projectId,
     taskId,
     runKind: opts.runKind ?? "flow",
-    status: "Review",
+    status: opts.status ?? "Review",
     flowVersion: "v1.0.0",
     startedAt: new Date(),
   });

@@ -10,12 +10,20 @@ import {
   type RouteParams,
 } from "../workbench-lifecycle/route-utils";
 
-import { remoteNameSchema } from "@/lib/worktree";
-import { exportWorkbenchBranch } from "@/lib/workbench-lifecycle/service";
+import { branchNameSchema, remoteNameSchema } from "@/lib/worktree";
+import {
+  exportWorkbenchBranch,
+  type ExportWorkbenchBranchInput,
+} from "@/lib/workbench-lifecycle/service";
 
 const exportBodySchema = z
   .object({
     remote: remoteNameSchema.default("origin"),
+    // ADR-181 D4: the public name; refused once an upstream fixes it.
+    branchName: branchNameSchema
+      .nullable()
+      .optional()
+      .transform((value) => value ?? null),
     snapshotDirty: z.boolean().default(false),
     commitMessage: z
       .string()
@@ -25,8 +33,28 @@ const exportBodySchema = z
       .optional()
       .transform((value) => value ?? null),
     force: z.boolean().default(false),
+    // ADR-181 D4: the remote head a force replaces — the `remoteHead` of the
+    // refusal the operator confirmed. Exactly with `force`, a full SHA.
+    expectedHead: z
+      .string()
+      .regex(
+        /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/,
+        "expectedHead must be a full SHA",
+      )
+      .optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((body, ctx) => {
+    if (body.force !== (body.expectedHead !== undefined)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["expectedHead"],
+        message: body.force
+          ? "a forced publish needs expectedHead — the remote head it replaces"
+          : "expectedHead applies only to a forced publish",
+      });
+    }
+  });
 
 export async function POST(
   req: Request,
@@ -36,12 +64,16 @@ export async function POST(
 
   try {
     const parsed = parseRouteBody(exportBodySchema, await parseJsonBody(req));
-    const body = {
+    const common = {
       remote: parsed.remote ?? "origin",
+      branchName: parsed.branchName ?? null,
       snapshotDirty: parsed.snapshotDirty ?? false,
       commitMessage: parsed.commitMessage ?? null,
-      force: parsed.force ?? false,
     };
+    const body: ExportWorkbenchBranchInput =
+      parsed.force && parsed.expectedHead !== undefined
+        ? { ...common, force: true, expectedHead: parsed.expectedHead }
+        : { ...common, force: false };
 
     return NextResponse.json(await exportWorkbenchBranch(runId, body));
   } catch (err) {

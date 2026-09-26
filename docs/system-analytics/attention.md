@@ -94,10 +94,10 @@ sequenceDiagram
     participant Client
     participant Stream as GET /api/attention/stream
     participant DB as Postgres read models
-    Client->>Stream: EventSource, Last-Event-ID
+    Client->>Stream: EventSource, cursor and counts (the render's on first connect)
     Stream->>DB: replay tail from the cursor
     DB-->>Stream: rows
-    Stream-->>Client: frames with monotonic id
+    Stream-->>Client: a tick only if something moved since the cursor
     loop while open
         Stream->>DB: poll read models
         DB-->>Stream: changed rows or none
@@ -111,8 +111,10 @@ sequenceDiagram
 
 - **One subscription in the shared shell.** The persistent status bar owns
   `AttentionLiveRefresh` on every app page. Each tick refreshes the current
-  page and shared badges, including the initial snapshot: a decision may become
-  visible between server rendering and opening the stream. Page navigation does
+  page and shared badges. The first connect carries the render's cursor and
+  counts (ADR-171 D7), so the stream scans the gap between rendering and
+  subscribing itself. A page that is current is not refreshed at all, and a
+  decision that became visible in that gap still ticks. Page navigation does
   not create duplicate attention connections.
 - **Invalidate after a form becomes actionable.** The scan includes the
   `run.needs_input` row in `webhook_events`, which commits with the run's parked
@@ -170,6 +172,7 @@ sequenceDiagram
 - **EDGE-ATN-05:** A project VIEWER MUST receive an empty decision queue for a project full of decisions: they can read the board and can perform none of the four actions the queue asks for, so an entry would be a badge over an action that answers 403. A global admin, who acts everywhere by role, MUST still receive them.
 - **EDGE-ATN-07:** A project VIEWER, whose `decisions` count is always zero, MUST still be told that `/work` moved. The counter poll cannot serve them — nothing they see moves a number — so the changed-project scan reads the UNION `ATTENTION_PLANE_EVENT_KINDS` plus `node_attempts` of in-flight runs; borrowing the `updates` taxonomy left their page stale while the connection reported Live.
 - **EDGE-ATN-06:** Revocation MUST reach a stream that is already open. Demoting a connected admin ends the see-every-project bypass on the next poll, and an account that stops being active closes the stream with `attention.stream_timeout` / `access_revoked` — neither is bounded by the quiet cap while events keep arriving.
+- **EDGE-ATN-08:** The first connection after a render MUST carry the render's cursor and its `decisions`/`updates` counts, and the stream MUST send no tick to a reader whose render is current. A count that moved, or a row the scan sees past the cursor, MUST still tick. A baseline that does not parse MUST be ignored rather than trusted (ADR-171 D7).
 
 ## Linked artifacts
 

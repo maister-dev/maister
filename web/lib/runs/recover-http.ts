@@ -36,6 +36,7 @@ function statusForState(state: RecoverState): number {
     case "discard-only":
     case "conflict":
     case "workspace-removed":
+    case "workspace-busy":
       return 409;
     case "unresumable":
       return 410;
@@ -66,7 +67,7 @@ function runStatusForState(
 // Non-success states are typed MaisterError codes (ADR-008 closed union) so API
 // clients can branch on `code` per docs/error-taxonomy.md — not just the HTTP
 // status. The codes match the OpenAPI 409/410/503 entries (MaisterErrorBody).
-// ADR-175: three outcomes answer 409 and two of them share `CONFLICT`, so an
+// ADR-175: four outcomes answer 409 and three of them share `CONFLICT`, so an
 // unattended caller could not tell "retry later" from "this run is
 // unrecoverable". `details.reason` is the sanctioned discriminator (the UI still
 // branches on `code`); the tokens are registered in docs/error-taxonomy.md.
@@ -95,6 +96,15 @@ function errorBodyForState(state: RecoverRefusalState): {
         message:
           "run workspace was removed; archived history cannot be recovered",
         details: { reason: "workspace_removed" },
+      };
+    // ADR-181: the one-writer token every workbench claim answers with, so a
+    // caller retries here exactly as it retries a busy git panel operation.
+    case "workspace-busy":
+      return {
+        code: "CONFLICT",
+        message:
+          "a workbench operation owns the run's worktree — retry once it finishes",
+        details: { reason: "busy" },
       };
     case "unresumable":
       return {

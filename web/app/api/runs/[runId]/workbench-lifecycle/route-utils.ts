@@ -14,7 +14,11 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-function httpStatusForCode(code: string): number {
+function httpStatusForCode(code: string, reason?: unknown): number {
+  // C29: an unknown run is a 404 on every family-A route (the shared loader
+  // tags it), not the 409 its PRECONDITION code would otherwise map to.
+  if (code === "PRECONDITION" && reason === "run_not_found") return 404;
+
   switch (code) {
     case "UNAUTHENTICATED":
       return 401;
@@ -35,12 +39,59 @@ function httpStatusForCode(code: string): number {
   }
 }
 
-function errorPayload(err: MaisterError): Record<string, unknown> {
-  const details = err as MaisterError & {
+// ADR-181 D24: the body every run workbench route answers a typed error with —
+// the code, the message and the `details.reason` token the UI branches on, and
+// ONLY that token: other `details` fields are server-side context and never
+// cross this boundary. The sync and promote routes keep their own status maps
+// and share this body.
+export function maisterErrorBody(err: MaisterError): {
+  code: string;
+  message: string;
+  details?: { reason: string };
+} {
+  return {
+    code: err.code,
+    message: err.message,
+    ...(typeof err.details?.reason === "string"
+      ? { details: { reason: err.details.reason } }
+      : {}),
+  };
+}
+
+// ADR-181 D4 / C: what a refused push names — the rejection, whether a force
+// is on offer, and what a force would replace (the remote head, its ref, the
+// commits only it has). The panel confirms exactly that head and sends it back.
+export function pushConflictFields(err: MaisterError): Record<string, unknown> {
+  const fields = err as MaisterError & {
     pushRejected?: unknown;
     canForce?: unknown;
-    retryHint?: unknown;
+    remoteHead?: unknown;
+    remoteRef?: unknown;
+    remoteOnlyCommits?: unknown;
   };
+
+  return {
+    ...(typeof fields.pushRejected === "string"
+      ? { pushRejected: fields.pushRejected }
+      : {}),
+    ...(typeof fields.canForce === "boolean"
+      ? { canForce: fields.canForce }
+      : {}),
+    ...(typeof fields.remoteHead === "string" || fields.remoteHead === null
+      ? { remoteHead: fields.remoteHead }
+      : {}),
+    ...(typeof fields.remoteRef === "string"
+      ? { remoteRef: fields.remoteRef }
+      : {}),
+    ...(typeof fields.remoteOnlyCommits === "number" ||
+    fields.remoteOnlyCommits === null
+      ? { remoteOnlyCommits: fields.remoteOnlyCommits }
+      : {}),
+  };
+}
+
+function errorPayload(err: MaisterError): Record<string, unknown> {
+  const details = err as MaisterError & { retryHint?: unknown };
   const retryHint =
     typeof details.retryHint === "string"
       ? details.retryHint
@@ -48,20 +99,19 @@ function errorPayload(err: MaisterError): Record<string, unknown> {
         ? "Check executor or remote availability, then retry."
         : null;
 
+  const body = maisterErrorBody(err);
+
   return {
-    code: err.code,
-    message: err.message,
+    code: body.code,
+    message: body.message,
     ...(err.details?.reason === "workspace_preservation_failed" ||
     err.details?.reason === "workspace_git_identity_invalid"
       ? { reason: err.details.reason }
       : {}),
-    ...(typeof details.pushRejected === "string"
-      ? { pushRejected: details.pushRejected }
-      : {}),
-    ...(typeof details.canForce === "boolean"
-      ? { canForce: details.canForce }
-      : {}),
+    ...pushConflictFields(err),
     ...(retryHint ? { retryHint } : {}),
+    // The top-level `reason` enum above is untouched.
+    ...(body.details ? { details: body.details } : {}),
   };
 }
 
@@ -70,7 +120,7 @@ export function errorResponse(
   ctx: { runId: string; route: string },
 ): NextResponse {
   if (isMaisterError(err)) {
-    const status = httpStatusForCode(err.code);
+    const status = httpStatusForCode(err.code, err.details?.reason);
 
     log.warn(
       {

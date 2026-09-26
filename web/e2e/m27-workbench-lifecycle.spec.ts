@@ -21,23 +21,34 @@ function lifecycleActions(page: Page): Locator {
   return page
     .locator("main")
     .getByTestId("workbench-lifecycle-actions")
-    .filter({ has: page.getByRole("button", { name: "Commit" }) })
+    .filter({ has: page.getByRole("button", { name: "Archive" }) })
     .first();
 }
 
-async function expectLifecycleActions(page: Page): Promise<void> {
+// ADR-181 D16: a card keeps Archive/Drop and deep-links the git actions into
+// the run's git panel; the run and scratch detail host the panel itself (Commit
+// and the handoff branch live there now — the Export dialog is gone).
+async function expectLifecycleActions(
+  page: Page,
+  surface: "card" | "detail",
+): Promise<void> {
   const actions = lifecycleActions(page);
 
   await expect(actions).toBeVisible();
   await expect(actions.getByRole("button", { name: "Archive" })).toBeVisible();
   await expect(actions.getByRole("button", { name: "Drop" })).toBeVisible();
-  await expect(actions.getByRole("button", { name: "Commit" })).toBeVisible();
-  // Handoff-branch creation lives INSIDE the Export dialog (no standalone
-  // Handoff button since the export/handoff consolidation).
-  await expect(actions.getByRole("button", { name: "Export" })).toBeVisible();
+  if (surface === "card") {
+    await expect(actions.getByTestId("card-git-snapshotCommit")).toBeVisible();
+    await expect(actions.getByTestId("card-git-exportBranch")).toBeVisible();
+  } else {
+    await expect(actions.getByTestId("workbench-git-open")).toBeVisible();
+  }
 }
 
-test.describe.configure({ mode: "serial" });
+// Five surfaces plus commit, handoff and archive through the run git panel:
+// the run-detail route's cold `next dev` compile alone can take most of the
+// 30s default (as in run-sync.spec.ts).
+test.describe.configure({ mode: "serial", timeout: 120_000 });
 
 test("workbench lifecycle actions render across surfaces and execute handoff flow", async ({
   page,
@@ -50,65 +61,68 @@ test("workbench lifecycle actions render across surfaces and execute handoff flo
   await expect(
     page.getByRole("link", { name: "MAIster E2E M27 Lifecycle" }),
   ).toBeVisible();
-  await expectLifecycleActions(page);
+  await expectLifecycleActions(page, "card");
 
   await page.goto(`/projects/${fx.projectSlug}`);
   await expect(
     page.getByRole("heading", { name: /M27 Lifecycle/i }),
   ).toBeVisible();
-  await expectLifecycleActions(page);
+  await expectLifecycleActions(page, "card");
 
   await page.goto(`/scratch-runs/${fx.scratchRunId}`);
   await expect(page).toHaveURL(new RegExp(`/scratch-runs/${fx.scratchRunId}$`));
-  await expectLifecycleActions(page);
+  await expectLifecycleActions(page, "detail");
 
   await page.goto(`/runs/${fx.flowRunId}`);
-  await expectLifecycleActions(page);
+  await expectLifecycleActions(page, "detail");
   await testInfo.attach("m27-run-detail-desktop", {
     body: await page.screenshot({ fullPage: true }),
     contentType: "image/png",
   });
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await expectLifecycleActions(page);
+  await expectLifecycleActions(page, "detail");
   await testInfo.attach("m27-run-detail-mobile", {
     body: await page.screenshot({ fullPage: true }),
     contentType: "image/png",
   });
   await page.setViewportSize({ width: 1280, height: 900 });
 
-  await lifecycleActions(page).getByRole("button", { name: "Commit" }).click();
-  let dialog = page.getByRole("dialog", { name: "Snapshot commit" });
-
-  await expect(dialog).toBeVisible();
+  // Commit and the handoff branch go through the run's git panel.
+  await lifecycleActions(page).getByTestId("workbench-git-open").click();
+  await expect(page.getByTestId("git-panel")).toBeVisible();
+  await page.getByTestId("git-panel-action-snapshotCommit").click();
+  await page
+    .getByTestId("git-panel-commit-message")
+    .fill("snapshot before handoff");
   await Promise.all([
     page.waitForResponse(
       (response) =>
         response.url().endsWith(`/api/runs/${fx.flowRunId}/snapshot-commit`) &&
         response.status() === 200,
     ),
-    dialog.getByRole("button", { name: "Commit" }).click(),
+    page.getByTestId("git-panel-commit-submit").click(),
   ]);
-  await expect(dialog).toContainText("Snapshot commit");
-  await dialog.getByText("Cancel", { exact: true }).click();
 
-  await lifecycleActions(page).getByRole("button", { name: "Export" }).click();
-  dialog = page.getByRole("dialog", { name: "Export branch" });
-  await expect(dialog).toBeVisible();
-  await expect(dialog.locator("select")).toHaveValue("origin");
+  await page.getByTestId("git-panel-handoff-open").click();
+
+  const handoff = page.getByTestId("git-panel-handoff");
+
+  await expect(handoff).toBeVisible();
+  await expect(handoff.locator("select")).toHaveValue("origin");
   await Promise.all([
     page.waitForResponse(
       (response) =>
         response.url().endsWith(`/api/runs/${fx.flowRunId}/handoff-branch`) &&
         response.status() === 200,
     ),
-    dialog.getByRole("button", { name: "Create branch" }).click(),
+    handoff.getByRole("button", { name: "Create branch" }).click(),
   ]);
-  await expect(dialog).toContainText("git -C");
-  await dialog.getByText("Cancel", { exact: true }).click();
+  await expect(handoff).toContainText("git -C");
 
   await lifecycleActions(page).getByRole("button", { name: "Archive" }).click();
-  dialog = page.getByRole("dialog", { name: "Archive workbench" });
+  let dialog = page.getByRole("dialog", { name: "Archive workbench" });
+
   await expect(dialog).toBeVisible();
   await Promise.all([
     page.waitForResponse(
@@ -120,7 +134,7 @@ test("workbench lifecycle actions render across surfaces and execute handoff flo
   ]);
 
   await page.goto(`/scratch-runs/${fx.scratchRunId}`);
-  await expectLifecycleActions(page);
+  await expectLifecycleActions(page, "detail");
   await lifecycleActions(page).getByRole("button", { name: "Drop" }).click();
   dialog = page.getByRole("dialog", { name: "Drop workbench" });
   await expect(dialog).toBeVisible();

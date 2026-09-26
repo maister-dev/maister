@@ -330,6 +330,15 @@ sequenceDiagram
     end
 ```
 
+Promotion (ADR-181) takes the inspector's mode — `local_merge`, `rebase_merge`
+or `pull_request` — target-locked to `scratch_runs.target_branch ??
+base_branch` (another target is `409 PRECONDITION`). A rebase lands the target
+by fast-forward and records no merge commit; a PR goes through the workspace
+run's publish and open cores (public branch name, find-or-create by head/base)
+and the PR finalize settles the dialog `Done`. The scratch claim refuses while
+any workbench operation holds the tree. `pr_state_scan` does not track scratch
+PRs, so the git panel shows their state as not tracked.
+
 Discard removes the worktree but does not delete uploaded run artifacts in V1.
 Uploaded artifact retention is part of future typed artifact/blob-store policy.
 
