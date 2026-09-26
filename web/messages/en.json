@@ -3168,7 +3168,11 @@
       "subtitle": "Current manager counts, per-host host-span settlements over the window in each label, and the latest scheduler impasse observation.",
       "latestSweep": "Impasse sampled {sampledAt}",
       "hostSpan": "Host-span settlements · {host}",
-      "hostSpanEmpty": "No host-span settlements to show: no active host, and none settled in the last {days} d."
+      "hostSpanEmpty": "No host-span settlements to show: no active host, and none settled in the last {days} d.",
+      "strandedTitle": "Stranded agent messages",
+      "strandedHelp": "Queued agent messages older than 10 minutes on a run with nothing in flight that would deliver them. Read-only: open the run to act.",
+      "strandedEmpty": "No stranded agent messages.",
+      "strandedRow": "message #{ordinal} · queued {age}"
     },
     "clock": {
       "title": "Scheduler clock",

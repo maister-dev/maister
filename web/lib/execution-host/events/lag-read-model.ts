@@ -19,6 +19,11 @@ import pino from "pino";
 
 import { calculateStreamLag } from "./lag";
 
+import {
+  mapStrandedAgentTurns,
+  strandedAgentTurnsQuery,
+  type StrandedAgentTurnsQueryRow,
+} from "@/lib/agents/stranded-turns";
 import { OPEN_COMMAND_STATES } from "@/lib/execution-host/types";
 import {
   HOST_SPAN_ANOMALY_WINDOW_DAYS,
@@ -595,6 +600,9 @@ function mapConsumer(row: ConsumerJsonRow, now: Date): ExecutionConsumerLag {
   };
 }
 
+// The admin page lists the oldest few; the count covers them all.
+const STRANDED_AGENT_TURN_LIMIT = 20;
+
 export async function collectExecutionEventLag(input: {
   db: Db;
   health: PlatformStatus;
@@ -637,6 +645,10 @@ export async function collectExecutionEventLag(input: {
       const hostSpanResult = await tx.execute<HostSpanQueryRow>(
         hostSpanQuery(sampledAt),
       );
+      const strandedResult = await tx.execute<StrandedAgentTurnsQueryRow>(
+        strandedAgentTurnsQuery(sampledAt, STRANDED_AGENT_TURN_LIMIT),
+      );
+      const stranded = strandedResult.rows[0];
       const consumer = consumerResult.rows[0];
       const poison = poisonResult.rows[0];
       const commands = commandResult.rows[0];
@@ -701,6 +713,11 @@ export async function collectExecutionEventLag(input: {
             hostSpanSettled1h: row.host_span_settled_1h,
             postHocConflicts: row.post_hoc_conflicts,
           })),
+          strandedAgentTurns: stranded?.total ?? 0,
+          strandedAgentTurnRows: mapStrandedAgentTurns(
+            stranded?.rows ?? [],
+            sampledAt,
+          ),
         },
       } satisfies ExecutionEventLagReadModel;
     });

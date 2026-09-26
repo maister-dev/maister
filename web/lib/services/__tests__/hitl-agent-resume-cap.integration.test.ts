@@ -13,7 +13,7 @@ import { Pool } from "pg";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
-import { claimAgentResumeSlot } from "@/lib/services/hitl";
+import { claimAgentResumeSlot, respondToHitl } from "@/lib/services/hitl";
 import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
@@ -27,6 +27,7 @@ let container: StartedPostgresTestDb["container"];
 let testDatabase: StartedPostgresTestDb;
 let pool: Pool;
 let db: NodePgDatabase;
+let hosts: Awaited<ReturnType<typeof fakeExecutionHosts>>["hosts"];
 
 beforeAll(async () => {
   testDatabase = await startMainPostgresTestDb({
@@ -39,7 +40,7 @@ beforeAll(async () => {
   // Engage the real pg_advisory_xact_lock (only active for a postgres DB_URL).
   process.env.DB_URL = container.getConnectionUri();
   // ADR-166: the idle wake mints its driver generation on the local host.
-  await fakeExecutionHosts(db);
+  hosts = (await fakeExecutionHosts(db)).hosts;
 }, 180_000);
 
 afterAll(async () => {
@@ -49,6 +50,7 @@ afterAll(async () => {
 
 afterEach(async () => {
   delete process.env.MAISTER_MAX_CONCURRENT_AGENTS;
+  await pool.query(`DELETE FROM "hitl_requests"`);
   await pool.query(`DELETE FROM "runs"`);
   await pool.query(`DELETE FROM "projects"`);
 });
@@ -191,5 +193,91 @@ describe("claimAgentResumeSlot — agent idle-resume cap-gate (INV-1)", () => {
 
     expect(await claimAgentResumeSlot(db, done)).toEqual({ outcome: "noop" });
     expect((await rowOf(done)).status).toBe("Done");
+  });
+});
+
+// D-M4 (ADR-182): `resume_requested_at` is the C3 gate's FIFO key. Every writer
+// coalesces it, so a run that re-enters the deferral keeps its place — the
+// continuation worker re-selects a parked run on every pass, and an operator
+// may answer again while the pool is still full.
+describe("the C3 FIFO key is kept across repeated deferrals (D-M4)", () => {
+  async function parkedWithPermission(
+    projectId: string,
+    requestedAt: Date,
+  ): Promise<{ runId: string; hitlId: string }> {
+    const runId = await seedAgentRun(projectId, "NeedsInputIdle", {
+      resumeRequestedAt: requestedAt,
+    });
+    const hitlId = randomUUID();
+
+    await db.insert(schema.hitlRequests).values({
+      id: hitlId,
+      runId,
+      stepId: "agent",
+      kind: "permission",
+      prompt: "allow the tool?",
+      schema: {
+        requestId: `req-${hitlId}`,
+        supervisorSessionId: `sess-${hitlId}`,
+        options: [{ optionId: "allow" }, { optionId: "deny" }],
+      },
+    });
+
+    return { runId, hitlId };
+  }
+
+  it("keeps both parked runs' keys through three worker passes and a repeated answer at cap", async () => {
+    process.env.MAISTER_MAX_CONCURRENT_AGENTS = "1";
+    const projectId = await seedProject();
+
+    await seedAgentRun(projectId, "Running"); // fills the pool
+    const first = await parkedWithPermission(
+      projectId,
+      new Date("2026-09-26T10:00:00.000Z"),
+    );
+    const second = await parkedWithPermission(
+      projectId,
+      new Date("2026-09-26T10:05:00.000Z"),
+    );
+    const keys = async () => [
+      (await rowOf(first.runId)).resumeRequestedAt?.toISOString(),
+      (await rowOf(second.runId)).resumeRequestedAt?.toISOString(),
+    ];
+    const before = await keys();
+
+    // The continuation worker's re-selection (`claimAgentResumeSlot`).
+    for (let pass = 0; pass < 3; pass += 1) {
+      expect(await claimAgentResumeSlot(db, second.runId)).toEqual({
+        outcome: "queued",
+      });
+      expect(await claimAgentResumeSlot(db, first.runId)).toEqual({
+        outcome: "queued",
+      });
+    }
+    expect(await keys()).toEqual(before);
+
+    // A repeated operator answer at cap (`runAgentIdleResume`'s deferral).
+    const actor = {
+      kind: "user" as const,
+      userId: "fifo-operator",
+      label: "Operator",
+      preauthorizedProjectId: projectId,
+    };
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const response = await respondToHitl(
+        {
+          runId: second.runId,
+          hitlRequestId: second.hitlId,
+          body: { optionId: "allow" },
+        },
+        actor,
+        { db, executionHosts: hosts },
+      );
+
+      expect(response.status).toBe(202);
+    }
+    expect(await keys()).toEqual(before);
+    expect((await rowOf(second.runId)).status).toBe("NeedsInputIdle");
   });
 });

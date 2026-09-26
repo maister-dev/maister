@@ -20,7 +20,7 @@ import {
 import pino from "pino";
 
 import { startAgentSession } from "./launch";
-import { OWNED_TURN_VARIANTS } from "./turn-variants";
+import { GENERATION_TURN_VARIANTS, OWNED_TURN_VARIANTS } from "./turn-variants";
 import { AgentPromptContinuationPending } from "./prompt-owner";
 
 import {
@@ -185,11 +185,20 @@ export function startAgentContinuationWorker(input: {
                   and(
                     eq(runs.runKind, "agent"),
                     eq(runs.status, "Running"),
+                    // No GENERATION turn — a message accepted in the launch
+                    // window is not one, and must not hide the run (D-M2).
                     notExists(
                       tx
                         .select({ id: agentTurns.id })
                         .from(agentTurns)
-                        .where(eq(agentTurns.runId, runs.id)),
+                        .where(
+                          and(
+                            eq(agentTurns.runId, runs.id),
+                            inArray(agentTurns.variant, [
+                              ...GENERATION_TURN_VARIANTS,
+                            ]),
+                          ),
+                        ),
                     ),
                     exists(
                       tx

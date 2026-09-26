@@ -35,7 +35,8 @@ const ACCEPTS_MESSAGE = {
 
 // A message turn on a run in these statuses can never be dispatched: the claim
 // supersedes it, and a steer converted after the run closed leaves no queued
-// successor behind (ADR-182).
+// successor behind (ADR-182). `Crashed` is among them: an agent run has no
+// Recover, so nothing would ever re-enter it (D-M1).
 export const CLOSES_MESSAGE_TURNS = {
   Pending: false,
   Running: false,
@@ -47,7 +48,7 @@ export const CLOSES_MESSAGE_TURNS = {
   Done: true,
   Failed: true,
   Abandoned: true,
-  Crashed: false,
+  Crashed: true,
 } satisfies Record<RunStatus, boolean>;
 
 export function messageLogicalKey(requestKey: string | undefined): string {

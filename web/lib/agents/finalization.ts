@@ -28,7 +28,13 @@ import {
 import { revokeAgentRunTokensForRun } from "./tokens";
 
 import { getDb } from "@/lib/db/client";
-import { hitlRequests, projects, runs, workspaces } from "@/lib/db/schema";
+import {
+  agentTurns,
+  hitlRequests,
+  projects,
+  runs,
+  workspaces,
+} from "@/lib/db/schema";
 import { releaseRunContextMounts } from "@/lib/context-mounts/terminal";
 import {
   cancelActiveAssignmentsForRun,
@@ -500,6 +506,33 @@ async function prepareAgentFinalization(
     // ADR-166 D7: the terminal status ends the run's driver generation (a
     // Review child re-enters through a NEW generation on rework/re-message).
     await releaseAssignmentForRun(tx, runId, "run_terminal");
+
+    // D-M1 (ADR-182): a message queued behind the ending turn can never be
+    // dispatched now. Superseded in THIS transaction, so a same-key retry
+    // answers `superseded` rather than finding it queued forever.
+    if (
+      effectiveStatus === "Failed" ||
+      effectiveStatus === "Crashed" ||
+      effectiveStatus === "Abandoned"
+    ) {
+      const superseded = await tx
+        .update(agentTurns)
+        .set({ state: "superseded", completedAt: endedAt, updatedAt: endedAt })
+        .where(
+          and(
+            eq(agentTurns.runId, runId),
+            eq(agentTurns.state, "queued"),
+            inArray(agentTurns.variant, ["live_message", "persistent_message"]),
+          ),
+        )
+        .returning({ id: agentTurns.id });
+
+      if (superseded.length > 0)
+        log.info(
+          { runId, status: effectiveStatus, count: superseded.length },
+          "agent-queued-turns-superseded",
+        );
+    }
 
     // ADR-165 (D9/W3): the result row commits in THIS transaction — the same one
     // that flips the status and emits the wake — so a woken parent's

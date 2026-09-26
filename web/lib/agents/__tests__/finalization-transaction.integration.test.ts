@@ -10,7 +10,13 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { prepareAgentRunFinalization } from "@/lib/agents/finalization";
 import { agentWorkdirPath } from "@/lib/agents/workspace-paths";
-import { domainEvents, projects, runResults, runs } from "@/lib/db/schema";
+import {
+  agentTurns,
+  domainEvents,
+  projects,
+  runResults,
+  runs,
+} from "@/lib/db/schema";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -164,6 +170,67 @@ describe("Agent terminal application transaction", () => {
       events: 1,
     });
     await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  // D-M1 (ADR-182): a message queued behind the ending turn can never be
+  // dispatched once the run is terminal, so the finalization closes it in its
+  // OWN transaction — a rollback must leave it queued, a commit superseded.
+  it("a Crashed finalization supersedes queued messages atomically with the status flip", async () => {
+    const { runId } = await seedRun();
+    const queued = randomUUID();
+    const running = randomUUID();
+
+    await db.insert(agentTurns).values([
+      {
+        id: running,
+        runId,
+        ordinal: 0,
+        variant: "initial",
+        logicalKey: `initial:${running}`,
+        prompt: "work",
+        state: "queued",
+      },
+      {
+        id: queued,
+        runId,
+        ordinal: 1,
+        variant: "live_message",
+        logicalKey: `message:auto:${queued}`,
+        prompt: "also this",
+        state: "queued",
+      },
+    ]);
+    const prepared = await prepareAgentRunFinalization(runId, "Crashed", {
+      db,
+      reason: "agent_turn_lost",
+    });
+    const states = async () =>
+      Object.fromEntries(
+        (
+          await db
+            .select({ id: agentTurns.id, state: agentTurns.state })
+            .from(agentTurns)
+            .where(eq(agentTurns.runId, runId))
+        ).map((row) => [row.id, row.state]),
+      );
+    const rollback = new Error("rollback");
+
+    await expect(
+      db.transaction(async (tx) => {
+        await prepared.apply(tx);
+        throw rollback;
+      }),
+    ).rejects.toBe(rollback);
+    expect(await states()).toEqual({ [running]: "queued", [queued]: "queued" });
+
+    const committed = await db.transaction(prepared.apply);
+
+    expect(committed).toMatchObject({ finalized: true, status: "Crashed" });
+    // Only the message: a generation turn is not the queue's to close.
+    expect(await states()).toEqual({
+      [running]: "queued",
+      [queued]: "superseded",
+    });
   });
 
   it("refuses a result contract changed after preparation", async () => {

@@ -16,6 +16,7 @@ import type {
 import pino from "pino";
 
 import { runEventStreamHealthSweep } from "@/lib/execution-host/events/stream-health";
+import { reportStrandedAgentTurns } from "@/lib/agents/stranded-turns";
 import { runBrainDecaySweep } from "@/lib/brain/decay";
 import { runBrainReindexSweep } from "@/lib/brain/reindex";
 import { runCapabilitiesCleanupSweep } from "@/lib/capabilities/cleanup";
@@ -59,6 +60,10 @@ export type GcCompatibilitySummary = {
 
 export type SystemSweepSummary = GcCompatibilitySummary & {
   streamHealth: Awaited<ReturnType<typeof runEventStreamHealthSweep>> | null;
+  // D-M3 (ADR-182): queued agent messages that nothing will ever deliver — the
+  // queue invariant's alarm. Read-only; the owners are finalization and the
+  // continuation worker's arms.
+  strandedAgentTurns: number;
   // Service-level failures mean the scheduler bundle did not complete and must
   // consume the scheduler attempt's retry budget. Candidate failures remain in
   // `errors` only because their own durable rows carry retry/quarantine state.
@@ -308,6 +313,7 @@ export async function runSystemSweep(
   let cost: SystemSweepSummary["cost"] = null;
   let executionEventPlane: SystemSweepSummary["executionEventPlane"] = null;
   let streamHealth: SystemSweepSummary["streamHealth"] = null;
+  let strandedAgentTurns = 0;
   let digest: SystemSweepSummary["digest"] = null;
   let executionObservability: ExecutionObservabilitySummary | null = null;
 
@@ -388,6 +394,12 @@ export async function runSystemSweep(
     bundleErrors.push(`event stream health pass failed: ${message}`);
     log.error({ err: message }, "system_sweep event stream health threw");
   }
+
+  // Never throws: a failed read is an `errors` entry.
+  const stranded = await reportStrandedAgentTurns({ db: getDb(), logger: log });
+
+  strandedAgentTurns = stranded.count;
+  errors.push(...stranded.errors);
 
   try {
     executionHost = await executionCommandReconcilePass();
@@ -517,6 +529,7 @@ export async function runSystemSweep(
     cost,
     executionEventPlane,
     streamHealth,
+    strandedAgentTurns,
     executionHost,
     brain,
     brainReindex,

@@ -248,7 +248,9 @@ async function claimGraphResumeSlot(
     if ((await countLiveRuns(tx, "flow")) >= capForPool("flow")) {
       await tx
         .update(runs)
-        .set({ resumeRequestedAt: new Date() })
+        .set({
+          resumeRequestedAt: sql`coalesce(${runs.resumeRequestedAt}, clock_timestamp())`,
+        })
         .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInputIdle")));
 
       return "queued";
@@ -367,7 +369,9 @@ export async function claimAgentResumeSlot(
       if ((await countLiveRuns(tx, "agent")) >= capForPool("agent")) {
         await tx
           .update(runs)
-          .set({ resumeRequestedAt: new Date() })
+          .set({
+            resumeRequestedAt: sql`coalesce(${runs.resumeRequestedAt}, clock_timestamp())`,
+          })
           .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInputIdle")));
 
         return { outcome: "queued" };
@@ -1303,7 +1307,9 @@ async function handlePermissionResponse(
       if (live >= capForPool("agent")) {
         await tx
           .update(runs)
-          .set({ resumeRequestedAt: new Date() })
+          .set({
+            resumeRequestedAt: sql`coalesce(${runs.resumeRequestedAt}, clock_timestamp())`,
+          })
           .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInputIdle")));
         await args.recordSuccessAudit?.(tx, 202);
 

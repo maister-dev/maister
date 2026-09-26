@@ -9,6 +9,7 @@ import type {
   ExecutionEventStreamLag,
   HostSpanSettlementCounts,
   PoisonedExecutionConsumer,
+  StrandedAgentTurnRow,
 } from "@/types/execution-host-observability";
 import type { SchedulerClockStatus } from "@/types/scheduler";
 import type { DurableWorkerState } from "@/lib/workers/health";
@@ -618,6 +619,63 @@ function HostSpanCounts({
   );
 }
 
+// D-M3 (ADR-182): the queue invariant's alarm. Read-only — the run page is
+// where the operator acts on it.
+function StrandedAgentTurns({
+  count,
+  rows,
+  format,
+}: {
+  count: number;
+  rows: readonly StrandedAgentTurnRow[];
+  format: Format;
+}): ReactElement {
+  const { t } = format;
+
+  return (
+    <section
+      aria-labelledby="stranded-agent-turns"
+      className="border-t border-line px-5 py-4 text-sm"
+    >
+      <div className="flex items-baseline justify-between gap-4">
+        <h3
+          className="m-0 text-sm font-semibold text-ink"
+          id="stranded-agent-turns"
+        >
+          {t("commands.strandedTitle")}
+        </h3>
+        <Badge tone={count > 0 ? "warn" : "good"}>{count}</Badge>
+      </div>
+      <p className="mt-1 text-xs leading-[1.5] text-mute">
+        {t("commands.strandedHelp")}
+      </p>
+      {rows.length === 0 ? (
+        <p className="mt-3 text-xs text-mute">{t("commands.strandedEmpty")}</p>
+      ) : (
+        <ul className="mt-3 flex flex-col gap-2">
+          {rows.map((row) => (
+            <li key={row.turnId} className="flex flex-wrap items-center gap-2">
+              <Link
+                className="font-mono text-xs underline"
+                href={`/runs/${row.runId}`}
+              >
+                {row.runId}
+              </Link>
+              <span className="text-xs text-mute">{row.runStatus}</span>
+              <span className="text-xs text-mute">
+                {t("commands.strandedRow", {
+                  ordinal: row.ordinal,
+                  age: format.span(row.ageMs),
+                })}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 export async function ExecutionHostStatus({
   status,
   poisonCursor,
@@ -718,6 +776,11 @@ export async function ExecutionHostStatus({
                 </div>
               </dl>
               <HostSpanCounts format={format} hosts={lag.commands.hostSpan} />
+              <StrandedAgentTurns
+                count={lag.commands.strandedAgentTurns}
+                format={format}
+                rows={lag.commands.strandedAgentTurnRows}
+              />
             </>
           )}
           <p className="border-t border-line px-5 py-3 text-xs text-mute">

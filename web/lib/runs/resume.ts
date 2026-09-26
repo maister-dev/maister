@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
 import {
@@ -308,7 +308,9 @@ export async function resumeRun(
       if (live >= cap) {
         await tx
           .update(runs)
-          .set({ resumeRequestedAt: new Date() })
+          .set({
+            resumeRequestedAt: sql`coalesce(${runs.resumeRequestedAt}, clock_timestamp())`,
+          })
           .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInputIdle")));
 
         return { kind: "queued" };
