@@ -398,9 +398,10 @@ describe("P0-2 durable workers in the production web boot", () => {
         ...new Set(PROMPT_OWNER_SHAPES.map((shape) => shape.kind)),
       ];
 
-      expect(kinds).toHaveLength(5);
-      // Drop exactly one family: the composition must refuse rather than start
-      // a worker that owns four of five kinds.
+      // ADR-183 added `librarian_turn` as the sixth kind.
+      expect(kinds).toHaveLength(6);
+      // Drop every family but one: the composition must refuse rather than
+      // start a worker that owns one of six kinds.
       const { flowPromptOwners } = await import(
         "@/lib/flows/graph/prompt-owner"
       );
