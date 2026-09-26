@@ -3265,6 +3265,12 @@ export async function listRescueRefs(args: {
 // as it was if the reset below never runs. `<n>` is max+1 and the ref is
 // created only if absent: a retry after a crash writes `#n+1`, never over a
 // rescue that already holds the only copy of the work.
+//
+// The index as the operator left it is kept too, as the rescue's second parent
+// (stash-style), whenever it holds something the rescued tree does not: a file
+// staged at one version and edited to another, a staged file since deleted.
+// Written before `add -A` rewrites the copy. An unmerged index has no tree to
+// write, and its stages are the commits being merged.
 export async function writeRescueRef(args: {
   worktreePath: string;
   runId: string;
@@ -3283,41 +3289,78 @@ export async function writeRescueRef(args: {
     existing.reduce((max, r) => Math.max(max, rescueIndex(r.ref)), 0) + 1;
   const ref = `${RESCUE_REF_ROOT}/${runId}/${n}`;
   const identityArgs = await commitIdentityArgs(wt);
-  const sha = await withTempIndexCopy(wt, async (indexEnv) => {
+  const headTree = (
+    await runGit(wt, ["rev-parse", "--verify", `${head}^{tree}`])
+  ).stdout.trim();
+  const { sha, indexCommit } = await withTempIndexCopy(wt, async (indexEnv) => {
     const env = { ...indexEnv, LC_ALL: "C" };
     const opts = {
       signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
       maxBuffer: EXEC_MAX_BUFFER,
       env,
     };
+    const commitTree = async (
+      tree: string,
+      parents: string[],
+      message: string,
+    ): Promise<string> => {
+      const { stdout } = await execFileAsync(
+        "git",
+        [
+          "-C",
+          wt,
+          ...identityArgs,
+          "commit-tree",
+          tree,
+          ...parents.flatMap((parent) => ["-p", parent]),
+          "-m",
+          message,
+        ],
+        opts,
+      );
 
-    await execFileAsync("git", ["-C", wt, "add", "-A"], opts);
-    const { stdout: tree } = await execFileAsync(
+      return validate(gitCommitSchema, stdout.trim(), "commit");
+    };
+
+    const indexTree = await execFileAsync(
       "git",
       ["-C", wt, "write-tree"],
       opts,
-    );
-    const { stdout: commit } = await execFileAsync(
-      "git",
-      [
-        "-C",
-        wt,
-        ...identityArgs,
-        "commit-tree",
-        tree.trim(),
-        "-p",
-        head,
-        "-m",
-        `maister: rescue ${runId} #${n}`,
-      ],
-      opts,
+    ).then(
+      ({ stdout }) => stdout.trim(),
+      () => null,
     );
 
-    return validate(gitCommitSchema, commit.trim(), "commit");
+    await execFileAsync("git", ["-C", wt, "add", "-A"], opts);
+    const workTree = (
+      await execFileAsync("git", ["-C", wt, "write-tree"], opts)
+    ).stdout.trim();
+    const index =
+      indexTree !== null && indexTree !== headTree && indexTree !== workTree
+        ? await commitTree(
+            indexTree,
+            [head],
+            `maister: rescue ${runId} #${n} (index)`,
+          )
+        : null;
+
+    return {
+      indexCommit: index,
+      sha: await commitTree(
+        workTree,
+        index === null ? [head] : [head, index],
+        index === null
+          ? `maister: rescue ${runId} #${n}`
+          : `maister: rescue ${runId} #${n} (the index is its second parent)`,
+      ),
+    };
   });
 
   await runGit(wt, ["update-ref", "-m", "maister: rescue", ref, sha, ""]);
-  log.info({ worktreePath: wt, runId, ref, sha, head }, "rescue ref written");
+  log.info(
+    { worktreePath: wt, runId, ref, sha, head, indexCommit },
+    "rescue ref written",
+  );
 
   return { ref, sha };
 }

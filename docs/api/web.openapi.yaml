@@ -9871,7 +9871,10 @@ paths:
         — the worktree's real index is never touched — to
         `refs/maister/rescue/<runId>/<n>` (`n` = the next free index), and only
         then does the service run `git reset --hard HEAD` followed by
-        `git clean -fd` (ignored files are kept). The rescue ref is
+        `git clean -fd` (ignored files are kept). When the index held something
+        the rescued tree does not (a file staged at one version and edited to
+        another, a staged file since deleted), the index as it stood is the
+        rescue commit's second parent (`<rescueRef>^2`). The rescue ref is
         repository-scoped and survives archive and drop. A crash between the
         ref and the reset leaves the tree dirty; the retry writes `<n+1>` and
         never loses a ref.

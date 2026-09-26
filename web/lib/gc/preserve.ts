@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import pino from "pino";
 
 import { isMaisterError, MaisterError } from "@/lib/errors";
-import { logRange, statusPorcelain } from "@/lib/worktree";
+import { logRange, statusPorcelain, writeRescueRef } from "@/lib/worktree";
 
 const execFileAsync = promisify(execFile);
 
@@ -51,6 +51,22 @@ async function git(
   return stdout;
 }
 
+// A path staged against HEAD and then changed again in the tree: its staged
+// version exists only in the index, and the snapshot's `add -A` overwrites it.
+async function stagedWorkTheSnapshotOverwrites(
+  worktreePath: string,
+): Promise<boolean> {
+  const names = async (args: string[]): Promise<string[]> =>
+    (await git(worktreePath, ["diff", "--name-only", "-z", ...args]))
+      .split("\0")
+      .filter(Boolean);
+  const staged = new Set(await names(["--cached"]));
+
+  if (staged.size === 0) return false;
+
+  return (await names([])).some((path) => staged.has(path));
+}
+
 // Codex F1: preserve EVERYTHING (tracked + untracked + committed divergence)
 // BEFORE any removal, and NEVER throw. Any git failure in the preserve steps →
 // {ok:false} so the caller skips removeOwnedWorktree. NEVER merges to
@@ -80,6 +96,17 @@ export async function preserveWorktree(
             cause,
             details: { reason: "workspace_git_identity_invalid" },
           },
+        );
+      }
+      // ADR-181 D8: staged work the snapshot would overwrite is kept first, as
+      // a rescue ref whose second parent is the index as it stood. Every
+      // removal (GC, archive, drop, scratch discard) preserves through here.
+      if (await stagedWorkTheSnapshotOverwrites(worktreePath)) {
+        const rescue = await writeRescueRef({ worktreePath, runId });
+
+        log.info(
+          { runId, worktreePath, rescueRef: rescue.ref },
+          "preserve kept the index as a rescue ref",
         );
       }
       // Capture tracked + untracked into a snapshot commit on the worktree's

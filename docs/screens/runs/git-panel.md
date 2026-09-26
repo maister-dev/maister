@@ -80,8 +80,10 @@ An unknown value opens the default section.
 2. **Tree** — dirty counts (tracked / untracked). **Commit** opens the existing
    snapshot-commit form. **Discard** opens the shared destructive confirmation,
    which says every change is saved to a rescue ref first; after success the
-   section names that ref and shows the copyable restore command. Rescue refs
-   already written are listed newest first.
+   section names that ref and shows the copyable restore command, which brings
+   back the working tree. Staged work that differed from it is the ref's
+   second parent (`<ref>^2`). Rescue refs already written are listed newest
+   first.
 3. **Publish** — a remote select (from `remotes`), and a name field pre-filled
    from the project template. The field is hidden when an upstream already
    fixes the name, and the chip says so. A `non_fast_forward` refusal opens the

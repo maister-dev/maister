@@ -1736,6 +1736,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ],
         // ADR-181 D8: the rescue commit is staged through a COPY of the index.
         ["writeRescueRef", "node:child_process.execFile", "spawn", "git"],
+        ["commitTree", "node:child_process.execFile", "spawn", "git"],
         ["diffWorkingTree", "node:child_process.execFile", "spawn", "git"],
         [
           "diffWorkingTreeChangeStats",

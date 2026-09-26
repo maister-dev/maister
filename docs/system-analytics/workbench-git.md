@@ -49,8 +49,13 @@ re-entry ([`run-continuation.md`](run-continuation.md)).
   both with a task and without one, or registration refuses it
   (`public_branch_template_invalid`); attempts of one task share their name.
 - **Rescue ref** — `refs/maister/rescue/<runId>/<n>`: a detached snapshot commit
-  of the dirty tree written before any discard. Repo-scoped, survives
-  archive/drop, not garbage-collected by this domain.
+  of the dirty tree written before any discard, and by the preserve step of
+  every removal (GC, archive, drop) when a path is staged and then changed
+  again in the tree. When the index held something
+  that tree does not (a file staged at one version and edited to another, a
+  staged file since deleted), the index as it stood is the commit's second
+  parent (`<ref>^2`), stash-style. Repo-scoped, survives archive/drop, not
+  garbage-collected by this domain.
 - **Lifecycle operation** — the shared `workspaces.lifecycle_operation_*` claim
   (see [`workbench-lifecycle.md`](workbench-lifecycle.md)). TS-only names
   `exportBranch` (publish), `sync` (update), `discardChanges`, `reattach` and
@@ -237,7 +242,7 @@ sequenceDiagram
     participant DB as workspaces
     Op->>D: {}
     D->>Git: status --porcelain (clean -> PRECONDITION)
-    D->>Git: temp index: add -A, write-tree, commit-tree -> refs/maister/rescue/runId/n
+    D->>Git: temp index: write-tree (the index), add -A, write-tree, commit-tree -> refs/maister/rescue/runId/n
     D->>Git: reset --hard HEAD, then clean -fd
     D-->>Op: 200 {rescueRef, sha, restoreCommand}
     Op->>R: {}
@@ -336,7 +341,9 @@ is `CONFLICT`, the rest `PRECONDITION`), and an unknown run is 404 with
   `PRECONDITION` (enforced by `finalizePullRequestRun` and
   `finalizeParkedPullRequest`, under the promotion claim CAS).
 - Discard MUST write the rescue ref before `reset --hard` + `clean -fd` without
-  touching the worktree's real index, MUST refuse a clean tree with
+  touching the worktree's real index, MUST keep the index as it stood as the
+  rescue's second parent whenever it differs from both `HEAD` and the rescued
+  tree, MUST refuse a clean tree with
   `PRECONDITION`, and the ref MUST survive archive/drop of the workspace
   (enforced by `discardWorkbenchChanges` and `writeRescueRef`).
 - Reattach MUST be admitted only while the worktree is not usable, MUST try the

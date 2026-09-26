@@ -473,7 +473,10 @@ promotion service).
 flowchart TD
     Start([GC candidate: terminal run,<br/>effective deadline reached,<br/>removed_at IS NULL]) --> Porcelain[statusPorcelain --untracked-files=all]
     Porcelain --> Dirty{dirty?}
-    Dirty -- yes --> Snap[git add -A &&<br/>git commit --no-verify<br/>maister: GC snapshot of runId]
+    Dirty -- yes --> Staged{staged work the<br/>snapshot overwrites?}
+    Staged -- yes --> Rescue[writeRescueRef: rescue ref,<br/>the index as its second parent]
+    Staged -- no --> Snap[git add -A &&<br/>git commit --no-verify<br/>maister: GC snapshot of runId]
+    Rescue --> Snap
     Dirty -- no --> DivCheck{logRange base..branch<br/>non-empty?}
     Snap --> Arch[git branch -f maister/archive/runId HEAD]
     DivCheck -- yes --> Arch
@@ -661,6 +664,9 @@ the worktree GC collects (`WORKTREE_TTL_RUN_STATUSES`). See
   untracked changes are snapshot-committed and pointed at archive branch
   `maister/archive/<runId>`; removal MUST be gated on preserve success and a
   preserve failure MUST skip the row (never force-remove unpreserved state).
+  A path staged and then changed again in the tree MUST first be kept as a
+  rescue ref whose second parent is the index (ADR-181 D8), since the
+  snapshot's `add -A` overwrites the only copy of the staged version.
 - Operator archive/drop actions reuse the same preserve-before-remove
   invariant immediately from the workbench lifecycle UI. Background GC remains
   schedule-driven; user-initiated drop is claim-serialized through

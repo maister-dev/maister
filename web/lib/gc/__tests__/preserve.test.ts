@@ -13,6 +13,7 @@
 // Real-git harness mirrors web/lib/__tests__/worktree-range.test.ts.
 
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -153,6 +154,57 @@ describe("preserveWorktree (real git)", () => {
     );
 
     expect(archived).toContain("scratch work");
+  });
+
+  // ADR-181 D8 at the removal choke point: GC, archive, drop and scratch
+  // discard all preserve through here, and the snapshot's `add -A` overwrites a
+  // file staged at one version and edited to another.
+  it("keeps staged work the snapshot overwrites as a rescue ref, the index as its second parent", async () => {
+    const { repo, baseSha, branch } = await makeRepo();
+    const runId = randomUUID();
+
+    await track(repo);
+    await writeFile(join(repo, "base.txt"), "staged\n");
+    await git(repo, "add", "base.txt");
+    await writeFile(join(repo, "base.txt"), "working\n");
+
+    const result = await preserveWorktree({
+      worktreePath: repo,
+      parentRepoPath: repo,
+      branch,
+      baseRef: baseSha,
+      runId,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(await git(repo, "show", `maister/archive/${runId}:base.txt`)).toBe(
+      "working\n",
+    );
+    expect(
+      await git(repo, "show", `refs/maister/rescue/${runId}/1^2:base.txt`),
+    ).toBe("staged\n");
+  });
+
+  it("writes no rescue ref when the snapshot holds every staged change", async () => {
+    const { repo, baseSha, branch } = await makeRepo();
+    const runId = randomUUID();
+
+    await track(repo);
+    await writeFile(join(repo, "base.txt"), "staged\n");
+    await git(repo, "add", "base.txt");
+    await writeFile(join(repo, "other.txt"), "unstaged\n");
+
+    await preserveWorktree({
+      worktreePath: repo,
+      parentRepoPath: repo,
+      branch,
+      baseRef: baseSha,
+      runId,
+    });
+
+    expect(
+      await git(repo, "for-each-ref", `refs/maister/rescue/${runId}/`),
+    ).toBe("");
   });
 
   it("committed divergence on a clean tree → archive branch, no snapshot (snapshotted:false)", async () => {
