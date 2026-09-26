@@ -190,6 +190,10 @@ afterAll(async () => {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
   }
+  // A scratch launch returns once its first prompt binds the ingested terminal
+  // event directly, while the fake's canonical delivery is still projecting it.
+  // Drain it before the pool ends, or the late projection meets an ended pool.
+  await fake?.waitForCanonicalEvents();
   await testDatabase?.stop();
   await rm(tmpRoot, { recursive: true, force: true }).catch(() => undefined);
 });
