@@ -34,7 +34,12 @@ details. There is no API or mutation route for this screen.
    subscriber pauses and closes by reason (disconnect/protocol/floor/shutdown;
    "unavailable" when the host does not report them — Implemented, ADR-167
    amendment 2026-09-25), last error, claim owner/expiry and separately labeled lag
-   verdict.
+   verdict. The pressure cell (Implemented — ADR-183) renders the host's
+   pressure episode — since, duration, unacknowledged rows at its start and the
+   episode count — in a warning tone while the host is pressured, and "No" in
+   the neutral tone otherwise (`adminExecutionHost.pressure.*`). Pressure is
+   the manager being behind (unacknowledged rows at the soft budget), never a
+   lag verdict.
 3. Top 20 eligible consumer/run backlogs with exact totals and truncation.
 4. Stable poison pagination, including terminal runs. A complete row exposes a
    copy-only, shell-quoted `execution:projection:rearm` command containing

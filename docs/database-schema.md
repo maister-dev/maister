@@ -1846,8 +1846,18 @@ execution_hosts {
                                   //   timeout | http | malformed
   lastBootId?, lastSeenAt?,       // supervisor per-process bootId + last health
   registeredAt, updatedAt,
-  retiredAt?                      // partial UNIQUE (kind) WHERE
+  retiredAt?,                     // partial UNIQUE (kind) WHERE
                                   //   kind='local_direct' AND retired_at IS NULL
+  pressuredSince?,                // ADR-183, migration 0182: the host's outbox
+                                  //   pressure record — set by a health sample with
+                                  //   stream.pressured=true (keeps an earlier value)
+                                  //   or by an event_outbox_backpressure refusal
+                                  //   (WHERE NULL); cleared by a pressured=false sample
+  pressureUnacknowledgedAtStart?  // integer CHECK >= 0; copied from
+                                  //   stream.pressure.unacknowledgedCountAtStart;
+                                  //   NULL when a refusal set the record. CHECK
+                                  //   execution_hosts_pressure_start_requires_since:
+                                  //   IS NULL OR pressured_since IS NOT NULL
 }
 
 execution_assignments {
@@ -2484,7 +2494,9 @@ agent path drives `Review→Running→…→Review`. Behavior:
               | 'Review' | 'Crashed' | 'Done' | 'Abandoned',
   errorCode?,
   errorMessage?,
-  errorMetadata?,
+  errorMetadata?,                // jsonb; {cause: "host_pressure"} when the
+                                 //   execution host parked the turn under outbox
+                                 //   pressure (ADR-183 — no migration, unconstrained)
   createdByUserId,               // FK -> users.id
   lastUserMessageAt?,
   lastAgentMessageAt?,
@@ -3401,6 +3413,14 @@ resumed scratch turn completed without asking again) or `delivery_rejected`
 (the flow or agent permission rejection). The respond route refuses an
 identical retry of a `_closed` row with that reason's refusal instead of `200`
 — see [`api/web.openapi.yaml`](api/web.openapi.yaml).
+
+A `node_interrupt` row's server-owned `schema` (the static interrupt schema)
+carries `cause: "operator" | "host_pressure"` and `actor: {type: "user", id} |
+{type: "system"}`; a `resume` answer's `response` is `{optionId: "resume",
+actor, cause}` — the provenance of the system answer the `system_sweep` gives
+when the execution host recovers (Implemented — ADR-183). The option matrix is
+still computed on read; the keys add no column, constraint or migration, and
+`actor` is never a request body field.
 
 `kind=permission` is binary approve/deny (delivered via ACP
 `session/request_permission`). `kind=form` is a structured payload defined
@@ -4579,7 +4599,7 @@ explicitly held for repair. They cannot be backfilled from redacted payloads.
 | `node_attempts.finish_continuation` | Nullable version-1 JSONB (`0144`) | Selected outgoing target, private injected context, resolved session policy and retry marker. The source close and cursor move commit together; recovery restores this decision without recalculating or granting an ACP turn. |
 | `execution_commands.create_intent` | Nullable private version-1 JSONB (`0146`, expanded by `0154`) | Exact Flow node ordinal, gate evaluation or agent turn ID/ordinal, create generation/source, canonical original envelope and SHA-256. Unique run/assignment/operation/generation; no prompt-owner or application fields are repurposed. Recovery preserves command ID and issue time. Payload bytes stay outside DTOs/logs. Agent creation does not use the Flow-specific fresh-session fallback on CHECKPOINT refusal. |
 | `gate_results.prompt_ordinal`, `gate_results.permission_resume` | Nonnegative integer default 0 / nullable version-1 JSONB (`0150`, expanded by `0151`–`0152`) | The existing gate evaluation owns its resumed prompt ordinal. The capacity claim records exact source/receiving assignments, command/incarnation/request/HITL/choice and ACP handle, plus a SHA-256 of the nullable parent action snapshot. It rebinds the same parent attempt and clears its obsolete action-turn authorization while preserving its action ordinal/result. A positive gate ordinal requires resume authority. Unavailable ACP handles fail without a fresh session; restart reuses the persisted turn. `kind: permission_result` instead preserves the ordinal (including 0) and complete verified verdict, with original input/checkpoint/incarnation lineage and a verdict digest. Its claim atomically settles the HITL; later graph reads validate both digests and historical authority before consuming the result. `kind: permission_continue` retains the same input/checkpoint lineage for a confirmed input interrupted by checkpoint, advances the gate ordinal, clears its unfinished verdict and preserves the parent action digest. |
-| `node_attempts.action_resume` | Nullable version-1 JSONB (`0145`, expanded by `0147`–`0149` and `0152`) | Source command/assignment, admitted current assignment and ordinal, retained ACP resume handle. `kind: orchestrator` and `kind: permission` authorize a new turn under their capacity claims; permission also binds HITL/request/choice. They advance the ordinal and clear the old action snapshot atomically. `kind: permission_result` instead retains the original ordinal and verified action snapshot, with the original input, checkpoint command and incarnation IDs. Its CHECK binds the snapshot command to the source command. Historical owners remain fenced; only the current assignment can consume this handoff. An orchestrator wake after a handoff retains its full `permissionResult` source authorization, including the receiving assignment, through pre-prompt rollback/reclaim. The nested CHECK binds its source IDs, ACP handle and prior ordinal to the new turn. `kind: permission_continue` advances the ordinal after confirmed input and acknowledged checkpoint interruption, preserving the input/checkpoint/incarnation IDs and original ACP handle. Its claim settles the original HITL; later permissions require independent responses. |
+| `node_attempts.action_resume` | Nullable version-1 JSONB (`0145`, expanded by `0147`–`0149`, `0152` and `0182`) | Source command/assignment, admitted current assignment and ordinal, retained ACP resume handle. `kind: orchestrator` and `kind: permission` authorize a new turn under their capacity claims; permission also binds HITL/request/choice. They advance the ordinal and clear the old action snapshot atomically. `kind: permission_result` instead retains the original ordinal and verified action snapshot, with the original input, checkpoint command and incarnation IDs. Its CHECK binds the snapshot command to the source command. Historical owners remain fenced; only the current assignment can consume this handoff. An orchestrator wake after a handoff retains its full `permissionResult` source authorization, including the receiving assignment, through pre-prompt rollback/reclaim. The nested CHECK binds its source IDs, ACP handle and prior ordinal to the new turn. `kind: permission_continue` advances the ordinal after confirmed input and acknowledged checkpoint interruption, preserving the input/checkpoint/incarnation IDs and original ACP handle. Its claim settles the original HITL; later permissions require independent responses. `kind: interrupt` (Implemented — ADR-183, CHECK widened by `0182`) is written by every `node_interrupt` park that finds a live session — operator or host-pressure (`cause`) — and carries the ACP resume handle of the parked attempt, so a `resume` answer re-enters the node with `session/resume` instead of a fresh session. |
 | `execution_commands.retirement_state` | `text`, `retained` | CHECK `retained|eligible|host_confirmed|tombstone`; eligible requires terminal evidence, owner disposition and run/delivery/ACK/grace predicates. |
 | `execution_commands.retirement_eligible_at` | `timestamptz`, null | Immutable time at eligibility-generation admission. |
 | `execution_commands.retirement_receipt` | `jsonb`, null | Exact host-confirmed eligibility identity; no compaction before confirmation. |

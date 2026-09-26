@@ -208,6 +208,10 @@ blocked, unconfigured, Done, and Abandoned targets terminalize with an
 actionable safe refusal instead of forcing a concurrent attempt. A full global
 cap is not a refusal: normal launch creates the linked `Pending` Run.
 
+Host outbox pressure is not a refusal either (Implemented — ADR-183): the
+launch creates the run `Pending` with `queueReason: "host_pressured"`, the task
+stays `InFlight`, and the run starts when the host recovers.
+
 The intent preserves a task key/number/title audit snapshot when task deletion
 sets its FK to null. It never changes existing recurring schedule overlap
 semantics. Full state, recovery, and retry details live in

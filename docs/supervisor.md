@@ -104,6 +104,10 @@ and `oldestUnacknowledgedAgeMs`, plus (Implemented — ADR-167 amendment 2026-09
 legacy response for rolling upgrades. Empty, repeated, and non-literal values
 return `409 PRECONDITION {reason: health_query_invalid}`. A negotiated snapshot
 read failure returns `503`; it is never disguised as an older host.
+(Implemented — ADR-183) `pressured` is the unacknowledged-lane outbox bit — the
+manager is behind — and nothing else, and the block also carries `pressure:
+{since, unacknowledgedCountAtStart, unacknowledgedBytesAtStart, episodes}` while
+pressured (`null` otherwise), read from the v14 `runtime_event_pressure` row.
 
 ### `POST /sessions`
 
@@ -575,6 +579,18 @@ Prompt admission and completion emit durable `session.command` events
 to the host outbox. The manager assigns canonical run order during ingestion;
 no lifecycle consumer reads a per-run event file.
 
+**Outbox admission by kind (Implemented — ADR-183).** Every receipt names one
+admission class — `new_work` (`session.prompt`, `workspace.adopt`,
+runtime-object reserve/upload), `producer` (`session.create`, which also
+reserves the producer wallet), `resolve` (`session.input`, `session.steer`) or
+`teardown` (`session.cancel`/`checkpoint`/`delete` whatever the record's
+liveness, `workspace.release`, `runtime_object.delete`). Outbox pressure
+(unacknowledged rows at the soft budget) refuses `new_work` and `producer` only;
+the hard budget (retained rows) also refuses `resolve`; nothing refuses a
+teardown. A refusal is `409 PRECONDITION {reason: event_outbox_backpressure}`
+with no receipt, logged `outbox-admission-refused`. The table is in
+[execution-event-plane.md](system-analytics/execution-event-plane.md#outbox-partitions-and-producer-pressure-implemented--adr-183).
+
 ### `DELETE /sessions/:id`
 
 Stop a running session: `SIGTERM` → grace (`MAISTER_KILL_GRACE_MS`,
@@ -669,10 +685,13 @@ Status codes:
 
 The web sweeper calls this endpoint when a `NeedsInput` run's
 `keepalive_until` expires. The **host** runs the same teardown without any
-endpoint when a pending permission outlives `MAISTER_PERMISSION_MAX_HOURS`
-(Implemented — ADR-180): no `command.id`, no fence, no ledger row, no receipt,
-and a throwing teardown is logged at `error` rather than returned to anyone. The
-steps are identical from here on:
+endpoint for two causes: a pending permission outlives
+`MAISTER_PERMISSION_MAX_HOURS` (`cause: "permission_cap"`, Implemented —
+ADR-180), or a producer's frames stay paused by outbox pressure for
+`PRODUCER_PAUSE_MAX_MS` (5 min; `cause: "outbox_pressure"`, Implemented —
+ADR-183, logged `producer-pause-exceeded`). Neither has a `command.id`, fence,
+ledger row or receipt, and a throwing teardown is logged at `error` rather than
+returned to anyone. The steps are identical from here on:
 
 1. Cancels every pending permission with `reason="checkpoint"`. The
    agent observes `{outcome:"cancelled"}` at the ACP layer and records
@@ -683,12 +702,15 @@ steps are identical from here on:
 2. Marks the session intentional with reason `"checkpoint"`. Heartbeat
    reads this on the child exit and emits
    `session.exited { reason: "checkpoint" }` (optional field —
-   see AsyncAPI spec). A cap-initiated terminal additionally carries
-   `cause: "permission_cap"` on the payload — **diagnostic only**, read by
-   nothing for control flow, and deliberately not spelled as a new `reason`
-   value, because the web's SSE decoder validates
+   see AsyncAPI spec). A host-initiated terminal additionally carries
+   `cause: "permission_cap" | "outbox_pressure"` on the payload — **diagnostic
+   only**, read by nothing for control flow, and deliberately not spelled as a
+   new `reason` value, because the web's SSE decoder validates
    `reason ∈ {checkpoint, intentional, fenced}` and drops the whole terminal
-   event otherwise.
+   event otherwise. A prompt in flight when the session is checkpointed is
+   rejected after that terminal with `details: {reason:
+   "session_checkpointed", cause}` — the manager's signal to park, not fail
+   (ADR-183).
 3. SIGTERMs the child with `MAISTER_KILL_GRACE_MS` grace.
 4. On 200 the web sweeper runs `markCheckpointed(runId)` →
    `NeedsInputIdle` and `releaseSlotOnIdle` → `promoteNextPending`.
@@ -778,7 +800,10 @@ held by the supervisor's `PendingPermissionRegistry` with
   is. Once the registry entry is removed after its 30 s terminal grace the
   same answer gets the retryable 503 below.
 - `409 { code: "PRECONDITION" }` — Zod validation failure on the
-  request body (e.g. `action="select"` with no `optionId`).
+  request body (e.g. `action="select"` with no `optionId`); or (ADR-183)
+  `event_outbox_backpressure` while retained outbox rows are at the hard
+  budget. An answer is a `resolve` admission: soft outbox pressure never
+  refuses it.
 
 The supervisor never writes input artifacts: durable form / human
 responses are written by the web tier's
@@ -926,6 +951,15 @@ issue path), and never throws.
 The in-memory per-session SSE ring remains a local diagnostic surface only; it is neither browser replay nor
 run-state authority. The supervisor no longer writes `run.events.jsonl`.
 
+Pruning (Implemented — ADR-183) removes only confirmed-ACKed rows, oldest
+first and never at or beyond an unsettled v2 command's span. The 24 h replay
+grace (`MAISTER_EVENT_ACK_GRACE_MS`) is the retention target: the hourly pass
+prunes rows past it, and a `retained_pressure` pass — kicked after any
+committed ACK, append or receipt that finds retained rows at the soft budget —
+prunes ACKed rows before their grace until retained rows fall below the low
+budget, 100 rows / 1 MiB per page with a yield between pages. Retained rows
+never set `pressured`; only unacknowledged rows do.
+
 ### Execution-host state store _(Implemented — ADR-166)_
 
 The supervisor keeps a private `node:sqlite` database at
@@ -953,9 +987,10 @@ Version 8 stores new ACK timestamps as compact contiguous ranges; the stream
 watermark and partition counters commit with each range. Legacy per-row ACK
 timestamps remain readable without rewriting retained event bodies. Pruning
 deletes only the oldest eligible prefix, at most 100 rows and 1 MiB per
-transaction, and never bypasses replay grace.
+transaction; since ADR-183 the grace is cut short while retained rows are at
+the soft budget (never for an unacknowledged row).
 Runtime writes also pass the physical guard described in
-[configuration](configuration.md#a-b-stabilization-resource-budget-designed).
+[configuration](configuration.md#a-b-stabilization-resource-budget-implemented).
 A native SQLite/filesystem capacity or I/O failure stops live producers and
 latches `GET /health` to `503 EXECUTOR_UNAVAILABLE` with
 `runtime_storage_unavailable`. Existing receipts/events and unfinished captured
@@ -974,14 +1009,19 @@ buffers. Unknown files remain preserved and charged; a reservation overrun
 refuses startup. File pressure shares producer pause/wake and credited teardown
 with event pressure. ACK alone releases no file capacity. Size limits and the
 remaining immutable-output sealing work are described in the canonical
-[resource budget](configuration.md#a-b-stabilization-resource-budget-designed).
+[resource budget](configuration.md#a-b-stabilization-resource-budget-implemented).
 Version 13 adds host-private `runtime_objects.producer_path`, `sealed_device` and
 `sealed_inode`.
+Version 14 (Implemented — ADR-183) adds the pressure episode to
+`runtime_event_pressure`: `since_ms`, `unacknowledged_count_at_start`,
+`unacknowledged_bytes_at_start` (set on the 0→1 flip, cleared on 1→0) and
+`episodes` (incremented on 1→0); a CHECK keeps `since_ms` non-null exactly while
+`pressured = 1`.
 The [object read contract](system-analytics/execution-runtime-objects.md#host-descriptor-verification-implemented)
 requires a distinct producer seal, a full descriptor hash and a bounded response
 spool before successful content delivery; missing/corrupt state commits with its
 outbox event. Existing version-12 seals acquire identity through verified copying.
-The file carries a `PRAGMA user_version` (currently 13)
+The file carries a `PRAGMA user_version` (currently 14)
 that gates in-place migrations at open: a version-0 store (inline
 `UNIQUE (run_id, real_path)`, which blocked re-adoption after a release) is
 rebuilt under the partial index with every row kept; a fresh store starts at
@@ -1253,7 +1293,12 @@ opaque object ID: the supervisor verifies its run and assignment epoch, resolves
 the host-private file internally, and forwards only the resulting confined ACP
 resource link. The manager never receives that path. Other ACP blocks are
 forwarded unchanged after session-bound URI confinement. `prompt` stays the
-plain-text equivalent. Response:
+plain-text equivalent. (Implemented — ADR-183) A prompt is a `new_work`
+admission, refused `409 PRECONDITION {reason: event_outbox_backpressure}` under
+outbox pressure. A prompt whose session the host checkpoints mid-turn — the
+producer pause bound below — settles `rejected` with `code: ACP_PROTOCOL` and
+`details: {reason: "session_checkpointed", cause}`, written after the
+session's `session.exited`. Response:
 
 ```json
 { "stopReason": "end_turn", "meta": null }
@@ -1352,4 +1397,4 @@ operator runbook: [`deployment.md`](deployment.md#14-stage-b-execution-data-cut-
 - ACP Spike Findings — adapter package versions and cross-process resume cost; summary in root `CLAUDE.md` §ACP Spike Findings
 - [Architecture](../.ai-factory/ARCHITECTURE.md) — dependency rules; the supervisor↔web wire contract
 
-Supervisor boot requires Node >=24.15.0 <25. Runtime pressure and projection settings have their canonical defaults in [configuration](configuration.md#ab-stabilization-resource-budget-designed). SIGTERM/SIGINT stops admission and waits for child exit, pipe drain and durable terminal evidence before closing SQLite. Unconfirmed drain exits nonzero and leaves durable receipts for recovery.
+Supervisor boot requires Node >=24.15.0 <25. Runtime pressure and projection settings have their canonical defaults in [configuration](configuration.md#ab-stabilization-resource-budget-implemented). SIGTERM/SIGINT stops admission and waits for child exit, pipe drain and durable terminal evidence before closing SQLite. Unconfirmed drain exits nonzero and leaves durable receipts for recovery.

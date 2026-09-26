@@ -51,12 +51,15 @@ manager-side [execution event plane](execution-event-plane.md),
 {protocolVersion, supervisorVersion, adapters[]}`. The supervisor URL is
   transport configuration (`MAISTER_SUPERVISOR_URL`) read at call time by the
   local-direct transport — never stored on the row.
+  The host's outbox-pressure record — `pressured_since` and
+  `pressure_unacknowledged_at_start` (migration `0182`) — is the manager's copy
+  of the host's pressure episode (Implemented — ADR-183).
 - **Host state store** — the supervisor-private `node:sqlite` file
   `<MAISTER_EXECUTION_HOST_STATE_DIR>/state.sqlite` (default
   `<MAISTER_RUNTIME_ROOT>/.maister/execution-host/`) holding
   `host_identity`, `run_fences`, `workspaces`, `command_receipts`, durable
   runtime-event streams/outbox, and the private runtime-object registry
-  (schema `user_version` 8 with guarded in-place upgrades). The web tier never
+  (schema `user_version` 14 with guarded in-place upgrades). The web tier never
   reads it.
 - **Execution assignment** — one row in `execution_assignments` per
   `(run, epoch)`: `state ∈ {active, superseded, released}`,
@@ -158,6 +161,15 @@ draining, and why its connections closed, counted since boot. The host always
 emits both inside the block; the web parser treats them as optional so an older
 host still parses, and reads their absence as unknown. They are transport
 telemetry — no lag verdict or lifecycle decision reads them.
+
+`pressured` is the unacknowledged-lane outbox bit and nothing else — the
+manager is behind (Implemented — ADR-183); runtime-file and physical storage
+pressure refuse admissions on their own and never set it. The block also
+carries `pressure: {since, unacknowledgedCountAtStart,
+unacknowledgedBytesAtStart, episodes}` while `pressured` is true and `null`
+otherwise — the host's own episode record (SQLite v14). The web parser treats
+`pressure` as optional (an older host omits it); the `system_sweep` observation
+copies it into the manager's pressure record.
 `headSequence` is the last committed sequence (`next_sequence - 1`), encoded as
 a canonical nonnegative decimal string bounded by signed BIGINT, and is `null`
 only for a never-written stream. Purging ACKed rows cannot reduce it. Counts and
@@ -625,6 +637,9 @@ token, never the message.
 | input: no pending deferred, the session parked intentionally (checkpoint) | 410 `HITL_TIMEOUT` | `session_checkpointed` (ADR-180) | the web parks the run through the shared CAS and resumes it (202); the answer is kept |
 | input: no pending deferred, the entry is `crashed` or `exited` and not parking (inside the 30 s removal grace) | 410 `HITL_TIMEOUT` | `session_ended` | the web keeps the answer, writes no run state and answers 409 `CONFLICT {reason:"session_ended"}` (ADR-177 2026-09-26) |
 | input: no pending deferred for `requestId` on a `live` entry          | 410 `HITL_TIMEOUT` | `permission_not_pending` | the web closes the HITL row and its response assignment in one transaction and answers 410 (409 `session_ended` instead over a dead incarnation); the run is untouched |
+| `new_work` / `producer` admission (`session.create`, `session.prompt`, `workspace.adopt`, runtime-object reserve/upload) while unACKed rows are at the soft budget, or retained rows at the hard budget | 409 `PRECONDITION` | `event_outbox_backpressure` | `failed{event_outbox_backpressure}`; the manager sets its pressure record and yields `EXECUTOR_UNAVAILABLE {reason: "host_pressured"}` — a create or prompt parks the run (ADR-183) |
+| `resolve` admission (`session.input`, `session.steer`) while retained rows are at the hard budget — never at soft | 409 `PRECONDITION` | `event_outbox_backpressure` | `failed`; a permission answer stays retryable (`respondedAt` NULL, 503 to the operator) |
+| `teardown` admission (`session.cancel`/`checkpoint`/`delete`, `workspace.release`, `runtime_object.delete`) | — | never refused by outbox pressure | — |
 
 The first four rows are the fence, evaluated in that order: the run binding
 is checked BEFORE the epoch, so a wrong-run fence can never advance or evict
@@ -648,9 +663,50 @@ ADR-182). The tokens the web mints itself
 | 409 `FENCED`                                                                 | terminal                                                                                                                                                                                                                                                                                                                           | `fenced`               | `CONFLICT {details.reason:"assignment_fenced"}`                                                                                            |
 | 404 / 410 / 409 `PRECONDITION` (any reason)                                  | terminal                                                                                                                                                                                                                                                                                                                           | `failed`               | existing per-endpoint mapping, `details` passed through                                                                                    |
 | 409 `PRECONDITION unknown_workspace` / `workspace_released` on create        | terminal for this command                                                                                                                                                                                                                                                                                                          | `failed`               | one re-adopt + a NEW create                                                                                                                |
+| 409 `PRECONDITION event_outbox_backpressure` (host pressure, ADR-183)        | terminal for this command; BEFORE the rethrow the deliverer sets `execution_hosts.pressured_since = now()` where it is NULL (`isHostPressureRefusal`) | `failed`               | the original error, `details.reason` intact; drivers map it to the host-pressure park |
 | driverless kind (`session.delete`, `workspace.release`), ONE unknown outcome | the row stays `queued` for the recovery pass — the caller is not held through the retry budget                                                                                                                                                                                                                                     | `queued`               | `EXECUTOR_UNAVAILABLE {details.reason:"delivery_deferred"}`                                                                                |
 | prompt after `accepted`: transport failure                                   | receipt lookup retried up to 5× (0.5 s·2ⁿ), `failed{receipt_lookup_failed}` after that; `completed` → `succeeded{stopReason}`; `rejected` → `failed` / `fenced`; `accepted` + `inflight:true` → the SAME id is re-sent ONCE to join the turn; `accepted` + `inflight:false` → `failed{turn_lost}`; 404 → `failed{receipt_missing}` | as looked up           | `stopReason` when completed; `EXECUTOR_UNAVAILABLE` (`receipt_lookup_failed`) or `ACP_PROTOCOL` (`turn_lost`, `receipt_missing`) otherwise |
 | ledger write fails mid-turn                                                  | logged `command-ledger-write-failed`; the turn's outcome still reaches the driver; the next recovery pass folds the row from the host receipt                                                                                                                                                                                      | unchanged until folded | the turn's own outcome; `ACP_PROTOCOL {details.reason:"ledger_write_failed"}` only when the ledger error is the first settling signal      |
+
+## Host pressure on the manager (Implemented — ADR-183)
+
+The manager keeps one durable record of the host's outbox pressure on the host
+row, `execution_hosts.pressured_since` (+ `pressure_unacknowledged_at_start`,
+which requires it — CHECK `execution_hosts_pressure_start_requires_since`).
+
+| Writer | When | Effect |
+| --- | --- | --- |
+| `system_sweep` observation step | health sample with `stream.pressured: true` | `pressured_since = coalesce(pressured_since, stream.pressure.since)`, `pressure_unacknowledged_at_start` from the sample; logs `execution-host-pressured` on the NULL → set edge |
+| command deliverer (`isHostPressureRefusal`) | a `PRECONDITION` refusal whose `details.reason` is `event_outbox_backpressure` | `pressured_since = now()` WHERE it is NULL, outside any domain transaction, before the rethrow |
+| `system_sweep` observation step | health sample with `stream.pressured: false` while the record is set | clears both columns, logs `execution-host-pressure-cleared`, auto-resumes host-pressure interrupts, then calls `promoteNextPending` per pool |
+
+A successful ACK never clears the record: the host is the authority, sampled
+once per sweep (60 s). The readers:
+
+- **Admission fence.** `effectivePoolCap(tx, pool)` is the only reader of the
+  concurrency cap (`capForPool`) and answers `{cap: 0, fence: "host_pressured"}`
+  while the record is set. Every admission edge — launch, promotion, the resume
+  claims (`claimGraphResumeSlot`, `claimAgentResumeSlot`), turn claims,
+  rework/sync claims — goes through it, so new work queues (`Pending`,
+  `queueReason: "host_pressured"`) and parked work stays parked. The
+  upgrade-maintenance fence is separate and unchanged.
+- **Stall class.** The stream-health pass reports a silent stream on a
+  pressured `ready` host as `pressured`, never repairs or degrades it
+  ([event plane](execution-event-plane.md#stream-liveness)).
+- **Park owner per run kind.** A prompt rejected `ACP_PROTOCOL {reason:
+  "session_checkpointed"}` (the host's pause bound) or a create/prompt refused
+  `event_outbox_backpressure` is a park, not a failure: a flow node parks on a
+  system `node_interrupt` and resumes itself on the same ACP session
+  ([run continuation](run-continuation.md#host-pressure-park-implemented--adr-183));
+  an agent run parks with its turn re-queued as a successor
+  ([agents](agents.md)); a scratch dialog stays retryable with a host-paused
+  notice ([scratch runs](scratch-runs.md)).
+- **Admin.** `/admin/execution-host` renders the episode (since, duration,
+  unacknowledged rows at start, episodes) in the stream row.
+
+The manager's own token for this state is `host_pressured`
+(`EXECUTOR_UNAVAILABLE`, non-terminal); the host's refusal token stays
+`event_outbox_backpressure` ([error taxonomy](../error-taxonomy.md)).
 
 ## Workspace adoption kinds
 
@@ -721,7 +777,7 @@ specification aliases until mapped to an executable file and case.
 | Requirement | Enforcing correction | Owner; dependency | Primary discriminating acceptance | Status |
 | --- | --- | --- | --- | --- |
 | **R01 / AB-01** Safe bounded ACP output (EVT-02/08/09) | Byte framing and bounded publisher boundary; preserve semantic/raw bytes in immutable command-bound objects; publish bounded summaries/references; explicit producer-local terminal error for nonrepresentable output. No catch-and-ignore. | E; S0 | **AT-01**, real child emits 65,536/65,537 and 1 MiB boundaries including multibyte text/tool results while a sibling works. Process survives; no sequence gap; full required bytes or typed incomplete-output failure. | Designed |
-| **R02 / AB-02** Consistent outbox pressure (EVT-09/12) | One budget/accounting function and durable control credits; retained and unACKed row/byte limits; bounded pipe backpressure, hysteresis and terminal/control reserve. | E; AB-01 | **AT-02**, fill retained and unACKed partitions separately; refuse new effects before overflow, pause/resume existing producers, allow credited teardown, preserve every committed event. | Designed |
+| **R02 / AB-02** Consistent outbox pressure (EVT-09/12) | One budget/accounting function and durable control credits; pressure on unACKed rows only, retained rows pruned before grace at soft and bounded at hard; bounded pipe backpressure with a pause bound, hysteresis and terminal/control reserve. | E; AB-01 | **AT-02**, fill retained and unACKed partitions separately: retained-only → prune, no refusal below hard; unACKed-only → refusal of new work; teardown and input admitted; pause/resume existing producers, preserve every committed event. | Implemented (amended 2026-09-26 — ADR-183) |
 | **R03 / AB-03** Autonomous bounded projection (EVT-07/10, PRM-11) | Durable worker over registered consumer/run pairs; boot backfill, fair claims, due timers and commit-driven hints; ACK independent of projection. | E; S0, AB-04 | **AT-03**, >250 events, terminal after event 200, process restart and no new ingest; transient last-event retry and two-run gap promotion all finish without stream completion. | Designed |
 | **R04 / AB-04** Durable first-batch failure (EVT-10) | Commit cursor/claim before apply; savepoint failure recording or exact-claim/cursor CAS in separate failure transaction; no stale failure overwrite. | E; S0 | **AT-04**, absent cursor + deterministic/transient failure preserves original sanitized error, event ID, attempts, deadline/poison; a delayed recorder cannot poison an advanced cursor. | Designed |
 | **R05 / AB-05** Durable prompt owners/request/output (PRM-02/04/11) | Typed durable owner subvariants; immutable private request; command-scoped output reference and terminal application under the owning row/fence. Reuse existing domain ledgers and driver entrypoints. | C; S1 | **AT-05**, parameterized owner matrix below: restart before terminal and after terminal before apply; exactly one domain application, no new prompt, original complete output. Every origin runs as its own case. | Designed |
@@ -864,6 +920,8 @@ Preserve `MaisterError`/`SupervisorError` conventions. Add a strict reason union
 | X-EH-21 | Host receipt write fails after executing                                                                                                     | 500 `ACP_PROTOCOL`; the effect may exist; reconcile catches an orphan session (accepted residual)                                                                                                                                                                                  | R5                                                                 |
 | X-EH-22 | Host unreachable at Web boot                                                                                                                 | readiness unavailable; legacy runs still reported (`legacy-runs-unplaced`, once per run); the resolver retries on the next command / sweep (accepted residual)                                                                                                                     | G5, Y4                                                             |
 | X-EH-23 | Upgrade to ADR-166 with live pre-ADR-166 sessions                                                                                            | the sessions die with the old supervisor — restart the supervisor first (drain recommended); in-flight runs follow the supervisor-restart semantics, no backfill                                                                                                                   | — (operational; [`../deployment.md`](../deployment.md#11-updates)) |
+| X-EH-24 | Host outbox pressured (unACKed at soft) while the manager launches or prompts | host 409 `PRECONDITION event_outbox_backpressure`; the manager sets `pressured_since`, queues launches `Pending{queueReason: host_pressured}` and parks drivers `EXECUTOR_UNAVAILABLE {reason: "host_pressured"}` until a sample reports `pressured: false` (ADR-183) | T3.3, T4.1 |
+| X-EH-25 | Host pressured and silent for longer than the stall window | stream classified `pressured`, never repaired or degraded to `lost` (ADR-183) | T3.1 |
 
 ## Linked artifacts
 

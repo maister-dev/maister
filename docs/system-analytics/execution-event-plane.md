@@ -43,7 +43,7 @@ stateDiagram-v2
   skipped_unknown_run --> [*]
   emitted --> skipped_payload_unstorable: PostgreSQL cannot represent the payload
   skipped_payload_unstorable --> [*]
-  acknowledged --> pruned: ACK plus replay grace
+  acknowledged --> pruned: ACK plus replay grace, or ACK while retained rows are at soft
 ```
 
 ## An event for a run this manager does not own
@@ -127,6 +127,17 @@ in complete silence. (Implemented — ADR-167 amendment 2026-09-25.) Every commi
 ingest batch advances `last_seen_at` too, and a batch is cut at most 100 ms
 after its first row arrives, so batching never manufactures silence.
 
+Host pressure is not a stall (Implemented — ADR-183). While the host is
+pressured every producer's next frame waits, so a healthy host goes silent
+for its open commands. The stall pass reads the manager's pressure record
+(`execution_hosts.pressured_since`) from the same join that checks `readiness =
+'ready'`: a silent stream with open commands on a pressured `ready` host is
+counted `pressured` in the stream-health summary, logged
+`runtime-event-stream-pressured`, and neither repaired nor degraded —
+`last_error` and `state` stay as they are. Once the record clears, the next pass
+judges the stream by the stall rule again. An unreachable host is not `ready`
+and never enters this branch.
+
 ### Lag versus stall (Implemented — P0-7, 2026-09-22)
 
 Lag is computed observability and is never an `execution_event_streams.state`
@@ -190,6 +201,11 @@ defined by the table below, evaluated top to bottom.
 | No manager watermark progress while backlog remains | `not_advancing`, streak 0; an open incident is retained and never recovered. |
 | Backlog above threshold but not yet aged past the window | `observing`, streak 0; the above-threshold start is preserved so the age keeps accruing. |
 | Progressing, eligible sample | Streak increments, saturating at 3. At 3 the verdict is `lagging` and the incident opens; the `lagging` transition is emitted only on the sweep that opens it. |
+
+`stream.pressured` is not an input to this reducer (Implemented — ADR-183): a
+pressured host is reported beside the verdict as its own labelled pressure
+episode, and it is the stall pass, not the lag verdict, that treats a pressured
+host's silence as `pressured` instead of `lost`.
 
 A host whose consumers are not ALL inconsistent keeps a measurable projection
 lane: `maximumBacklog` is a maximum over the rows with a computable backlog, so
@@ -305,18 +321,71 @@ cannot advance the cursor. Full raw payloads never enter the canonical event
 table or a general metadata DTO. A browser read of reconstructed output uses
 the same repository-content permission as the corresponding object download.
 
-## Outbox partitions and producer pressure (Implemented)
+## Outbox partitions and producer pressure (Implemented — ADR-183)
 
 Logical admission and append accounting use the same transactional row/byte
-counters. ACKed rows continue to count until replay grace expires and pruning
-removes them. SQLite v8 records ACK timestamps in compact contiguous ranges
-without updating payload rows; duplicate ACKs preserve the original grace
-start. Existing v7 row timestamps remain readable. Pruning removes only an
-eligible contiguous prefix, bounded to 100 rows and 1 MiB per transaction,
-then yields before the next page. A backward clock cannot skip a protected
-range and advance the replay floor over retained evidence. Low/soft/hard hysteresis prevents repeated admission at the soft
-boundary. Regular storage is separate from control and the emergency floor;
-the exact validated defaults are owned by [configuration](../configuration.md).
+counters, kept per partition in two lanes: **unacknowledged** (rows the manager
+has not ACKed) and **retained** (every row still on disk). The two lanes mean
+different things ([ADR-183](../decisions.md#adr-183-outbox-pressure-means-the-manager-is-behind)):
+
+- **Pressure is the unacknowledged lane — the manager is behind.**
+  `refreshOutboxPressure` sets `runtime_event_pressure.pressured` when
+  unacknowledged rows plus reserved frame rows reach `eventSoftRows`, or the
+  same bytes reach `eventSoftBytes`, and clears it only when both lanes are
+  below `eventLowRows` / `eventLowBytes`. Relief comes from ACKs, never from a
+  prune. Runtime-file pressure and physical SQLite headroom keep their own
+  refusals and never set the bit.
+- **Retained is housekeeping.** ACKed rows stay on disk for the replay grace
+  (`MAISTER_EVENT_ACK_GRACE_MS`, 24 h), which is the retention *target*. When
+  retained rows reach the soft budget in either lane, the pruner runs a
+  `retained_pressure` pass that prunes confirmed-ACKed rows before their grace
+  until retained rows are below the low budget in both lanes. Only the hard
+  budget bounds retained rows as capacity.
+
+SQLite v8 records ACK timestamps in compact contiguous ranges without updating
+payload rows; duplicate ACKs preserve the original grace start. Existing v7 row
+timestamps remain readable. Both prune modes remove only an eligible
+contiguous prefix — confirmed-ACKed, oldest-first, and below the smallest
+`accepted_sequence` of a v2 command whose terminal is not yet ACKed — bounded
+to 100 rows and 1 MiB per `BEGIN IMMEDIATE` page, then yield (`setImmediate`)
+before the next page, so an ACK or an append commits between pages. The grace
+pass runs hourly and after its own full pages; a `retained_pressure` pass is
+kicked after every committed capacity change (ACK, append, receipt) that finds
+retained rows at soft, and kicks coalesce to one pass in flight. The replay
+floor advances only over rows a page deleted, so it never passes the manager's
+confirmed watermark. A backward clock cannot skip a protected range and advance
+the replay floor over retained evidence. Low/soft/hard hysteresis prevents
+repeated admission at the soft boundary. Regular storage is separate from
+control and the emergency floor; the exact validated defaults are owned by
+[configuration](../configuration.md).
+
+The pressure episode is host state (SQLite v14): `runtime_event_pressure`
+records `since_ms`, `unacknowledged_count_at_start` and
+`unacknowledged_bytes_at_start` on the 0→1 flip, clears them on the 1→0 flip
+and increments `episodes`; `since_ms` is non-null exactly while `pressured = 1`.
+`/health?includeStream=true` reports it as `stream.pressure` (`null` when not
+pressured). Each flip logs `outbox-pressure-changed`; a retained-pressure
+episode logs `outbox-retained-pressure-prune` once when it ends and
+`outbox-retained-pressure-prune-stalled` once when a pass could prune nothing.
+
+Every command receipt names its admission (a closed enum; there is no
+default). The soft gate refuses new work and never an answer or a teardown:
+
+| Command / receipt | Admission | Soft (unACKed pressure) | Hard (retained ≥ hard) | Physical / file pressure |
+| --- | --- | --- | --- | --- |
+| `session.create` | `producer` (wallet) | refuse | refuse | refuse |
+| `session.prompt` | `new_work` | refuse | refuse | refuse |
+| `workspace.adopt`, `runtime_object.reserve`, `runtime_object.upload` | `new_work` | refuse | refuse | refuse |
+| `session.input`, `session.steer` | `resolve` | **admit** | refuse | refuse |
+| `session.cancel`, `session.checkpoint`, `session.delete` (live or not) | `teardown` | admit | admit | admit |
+| `workspace.release`, `runtime_object.delete` | `teardown` | admit | admit | admit |
+| producer frame (`beforeFrame`) | `producer` | pause, bounded | refuse the reservation → drain / terminal wallet | — |
+
+A refusal is `409 PRECONDITION {details.reason: "event_outbox_backpressure"}`,
+writes no receipt and logs `outbox-admission-refused`. A teardown of a session
+that still owns an open producer wallet takes that wallet's terminal credit; a
+teardown with no open wallet is admitted without credit. A `resolve` command's
+events are funded from the regular partition, never from the producer wallet.
 
 Accepting a session create reserves `(18 + output binding count)` control rows
 with its receipt, before spawning. Each control row is at most 16 KiB. A
@@ -332,6 +401,20 @@ guardrail event. Captured partial frames stay on disk; capacity waits hold no
 decoder permit. Commit-driven notifications wake paused readers after capacity
 returns below the low watermark. This does not poll runtime files.
 
+A paused producer is bounded (Implemented — ADR-183). The first time a
+producer waits for frame capacity it records `outputPausedSince` and arms one
+unreferenced timer of `PRODUCER_PAUSE_MAX_MS` (5 min, a code constant); a wake
+that admits the frame clears both. If the producer is still paused when the
+timer fires, the host checkpoints the session exactly as the ADR-180 permission
+cap does, with `cause: "outbox_pressure"`: pending deferreds are cancelled as
+`checkpoint`, output teardown drains the captured frames onto the credited
+wallet, SIGTERM, then `session.exited{reason: "checkpoint", cause:
+"outbox_pressure"}`, and only after that the interrupted prompt's rejection,
+which keeps `code: "ACP_PROTOCOL"` and carries `details: {reason:
+"session_checkpointed", cause}`. SIGKILL follows only an expired kill grace. The
+manager parks the run and resumes it when pressure clears (see
+[execution-hosts](execution-hosts.md#host-pressure-on-the-manager-implemented--adr-183)).
+
 An independent checkpoint/delete can stop a producer whose shared stdout pipe
 is paused. Before its terminal evidence, the host seals the captured unsequenced
 bytes into one immutable `raw_transcript` object named `stdout-overflow.ndjson`,
@@ -345,7 +428,7 @@ prefix is retained even when draining exceeds its bound or ends mid-frame.
 The interrupted prompt fails with `required_output_incomplete`; raw preservation
 does not claim that skipped semantic callbacks completed successfully.
 
-SQLite admission measures DB/WAL/SHM size, page/free-page counters and disk free space. Pending object copies, logs, spools and producer/frame promises are durably charged before host-managed writes; startup inventories retained files before admission. Native storage failures latch unavailable readiness and preserve evidence. Host, pressure/restart, pinned-reader, maximum-output and 20-producer memory tests exercise these paths. Exact defaults and physical headroom arithmetic live in [configuration](../configuration.md#ab-stabilization-resource-budget-designed). These are application admission bounds; arbitrary same-UID agent writes are not an operating-system disk quota. Immutable sealing and retirement of agent output writers remain S3 work.
+SQLite admission measures DB/WAL/SHM size, page/free-page counters and disk free space. Pending object copies, logs, spools and producer/frame promises are durably charged before host-managed writes; startup inventories retained files before admission. Native storage failures latch unavailable readiness and preserve evidence. Host, pressure/restart, pinned-reader, maximum-output and 20-producer memory tests exercise these paths. Exact defaults and physical headroom arithmetic live in [configuration](../configuration.md#ab-stabilization-resource-budget-implemented). These are application admission bounds; arbitrary same-UID agent writes are not an operating-system disk quota. Immutable sealing and retirement of agent output writers remain S3 work.
 
 ## Durable bounded projection and reconciliation workers
 
@@ -746,10 +829,10 @@ implementation plan's results table.
 - **EVT-06:** A persisted gap blocks ACK/projection past the contiguous prefix and replays or fails explicitly at the replay floor; ingest commits one bounded batch per transaction and ACKs at most once per batch, and the contiguity walk reads pending rows in bounded pages (Implemented — ADR-167 amendment 2026-09-25).
 - **EVT-07:** Host and manager restarts resume from durable outbox/watermark state, and lost ACKs cause harmless replay; a slow subscriber is paused and served from the durable outbox on the same connection, and the host never closes a stream on backpressure or at a page boundary (Implemented — ADR-167 amendment 2026-09-25).
 - **EVT-08:** Only negotiated type/schema pairs persist after deterministic redaction, and unsafe raw payloads are neither stored nor logged.
-- **EVT-09:** Bounded outbox pressure rejects new mutating admissions before existing session events are lost.
+- **EVT-09:** Outbox pressure — unacknowledged rows at the soft budget — refuses new work (`session.create`, `session.prompt`, `workspace.adopt`, runtime-object reserve/upload, producer frames) and never an answer (`session.input`, `session.steer`) or a teardown; enforced by `admitReceipt`'s admission table and the host admission suite (Implemented — ADR-183).
 - **EVT-10:** Each projector owns a durable per-run cursor and poison state independent of accepted ingest.
 - **EVT-11:** Browser replay is authorized, exclusive-after-cursor, bounded, and sourced only from canonical user-safe rows.
-- **EVT-12:** Canonical events retain with the run while host outbox rows prune only after confirmed ACK and grace; the read-only span route neither ACKs nor prunes (Implemented).
+- **EVT-12:** Canonical events retain with the run while host outbox rows prune only after confirmed ACK; the 24 h replay grace is the retention target and is cut short, oldest-first and outside protected spans, while retained rows are at the soft budget; enforced by `pruneAcknowledgedRuntimeEvents` modes and the outbox-pressure suite; the read-only span route neither ACKs nor prunes (Implemented — ADR-183).
 
 ## Edge cases
 
@@ -763,6 +846,9 @@ implementation plan's results table.
 - **EDGE-EVT-07:** Release or checkpoint may race terminal publication; the manager accepts the late event only when all durable command and fence fields match, and continues to quarantine an unrelated stale event (`IT-EVT-05`).
 - **EDGE-EVT-09 (Implemented — ADR-167 amendment 2026-09-25):** A subscriber whose socket stops draining is paused, not closed. The host stops paging for that connection until `drain`, resumes from the last sequence written to the socket (the frame whose `write()` returned `false` was buffered and counts as written), and goes live at an empty page. The manager's claim and pass are unaffected (`H1`, `H2`). No `MaisterError` is raised: nothing failed.
 - **EDGE-EVT-10 (Implemented — ADR-167 amendment 2026-09-25):** A catch-up read that falls below the replay floor mid-stream closes the connection `floor`; a page read that finds the stream replaced or corrupt, or a live event naming another stream, closes it `protocol`. The manager reconnects from its durable cursor: after a lost floor the next open answers `409 PRECONDITION/replay_floor_lost` (EDGE-EVT-03); after a replacement the open serves the new stream and its first envelope reaches ingest, which degrades the host as `CONFLICT/event_stream_mismatch` (EDGE-EVT-04).
+- **EDGE-EVT-11 (Implemented — ADR-183):** A producer paused past `PRODUCER_PAUSE_MAX_MS` is checkpointed with `cause: "outbox_pressure"`; its prompt is rejected `ACP_PROTOCOL {reason: "session_checkpointed"}`, which the manager reads as a park (`EXECUTOR_UNAVAILABLE {reason: "host_pressured"}`), and the run resumes on the same ACP session when pressure clears.
+- **EDGE-EVT-12 (Implemented — ADR-183):** A retained-pressure pass that can prune nothing because a protected command span or an unacknowledged prefix pins the oldest rows logs `outbox-retained-pressure-prune-stalled` once per episode; the hard budget (`event_outbox_backpressure` at `retained ≥ hard`) stays the last line. No `MaisterError` is raised by the prune itself.
+- **EDGE-EVT-13 (Implemented — ADR-183):** A silent stream with open commands on a pressured, `ready` host is classified `pressured`, never `lost`; an unreachable host keeps the stall rules, and a record cleared by the next health sample returns the stream to them.
 
 ## Linked artifacts
 

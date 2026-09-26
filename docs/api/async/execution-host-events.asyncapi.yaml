@@ -15,6 +15,12 @@ info:
     are host-derived durable outbox fields. The manager never accepts a client
     filesystem path, prompt, attachment bytes, environment value, or secret in
     this stream. Payloads are redacted before publication and capped at 1 MiB.
+
+    v1 payloads are open JSON; the session payload fields (`session.exited`
+    `reason`/`cause`, a prompt rejection's `details.reason`) are defined by
+    `supervisor-sse.asyncapi.yaml` — including the ADR-183 `cause:
+    outbox_pressure` and the prompt rejection `details: {reason:
+    session_checkpointed, cause}` of a host park under outbox pressure.
   contact:
     name: MAIster maintainers
   license:

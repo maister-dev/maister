@@ -74,6 +74,8 @@ erDiagram
         timestamptz registered_at "DEFAULT now()"
         timestamptz updated_at "DEFAULT now()"
         timestamptz retired_at "nullable; partial UNIQUE (kind) WHERE kind='local_direct' AND retired_at IS NULL"
+        timestamptz pressured_since "nullable (0182, ADR-183); host outbox pressure record"
+        integer pressure_unacknowledged_at_start "nullable; CHECK >= 0; requires pressured_since"
     }
 
     EXECUTION_ASSIGNMENTS {

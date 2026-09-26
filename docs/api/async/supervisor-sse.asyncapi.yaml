@@ -531,13 +531,18 @@ components:
                 completion on its own).
             cause:
               type: string
-              const: permission_cap
+              enum: [permission_cap, outbox_pressure]
               description: |
-                (Implemented — ADR-180) Diagnostic only. Present exactly when
-                the terminal was started by the host's own absolute
-                `MAISTER_PERMISSION_MAX_HOURS` cap on a pending permission,
-                alongside `reason: checkpoint`. Nothing branches on it, and it
-                is deliberately NOT a new `reason` value: the web SSE decoder
+                (Implemented — ADR-180; `outbox_pressure` ADR-183) Diagnostic
+                only. Present exactly when the terminal was started by the host
+                itself, alongside `reason: checkpoint`: `permission_cap` = the
+                absolute `MAISTER_PERMISSION_MAX_HOURS` cap on a pending
+                permission; `outbox_pressure` = a producer whose frames stayed
+                paused by outbox pressure for `PRODUCER_PAUSE_MAX_MS` (5 min).
+                Nothing branches on it — the manager recognises an
+                `outbox_pressure` park from the interrupted prompt's rejection
+                (`details.reason: session_checkpointed`) — and it is
+                deliberately NOT a new `reason` value: the web SSE decoder
                 validates `reason` against the three-value enum above and drops
                 the whole terminal event for anything else.
     SessionCrashedEvent:

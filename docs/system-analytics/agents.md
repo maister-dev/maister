@@ -85,6 +85,11 @@ not restated here).
   steer-mode message to a `NeedsInputIdle` run finds no running turn and is
   queued
   ([steering contract](execution-prompt-lifecycle.md#steering-a-running-turn-implemented--adr-182)).
+  A turn whose prompt the execution host parked under outbox pressure (the
+  rejection names `session_checkpointed`) is superseded the same way — its
+  successor keeps the parent's variant and prompt, keyed
+  `message:requeue:<turnId>` — and the run parks through the agent park
+  (Implemented — ADR-183).
 - **`agents`** (Implemented) — catalog projection over
   `maister-agents/<stem>.md` inside the providing package's NEWEST Installed
   revision: `{ id (PK, package-qualified <packageName>:<stem>), package_name
@@ -755,6 +760,22 @@ flowchart TD
   ADR-106.)*
 - **Agent budget full** → run enters `Pending` with a per-kind queue position; the
   flow pool is unaffected.
+- **Execution host pressured while an agent turn runs** → the host checkpoints the
+  paused producer (`cause: "outbox_pressure"`) and rejects the prompt
+  `ACP_PROTOCOL {reason: "session_checkpointed"}`. In the same transaction as the
+  ledger write, the owner application supersedes the dispatched turn with a
+  successor carrying the SAME variant and prompt (`request_key =
+  message:requeue:<turnId>`) and parks the run through `applyAgentPark` —
+  `NeedsInputIdle`, `resume_requested_at` set, assignment released `parked` —
+  for one-shot and persistent runs alike; never `Failed{agent_prompt_failed}`.
+  Once the host-pressure fence lifts, the agent continuation worker claims it
+  through `claimAgentResumeSlot` and the park-recovery branch binds the
+  successor to `session/resume` on the same ACP session. The message is
+  therefore delivered **at least once** (as ADR-182 EDGE-STR-09); a same-key
+  retry of the superseded message answers with the successor. A create refused
+  `event_outbox_backpressure` at dispatch returns the claimed turn to `queued`
+  and parks the run with no successor (the turn never ran). *(Implemented —
+  ADR-183, recovery window W8.)*
 - **Crash between claim and spawn** → the run row is `Pending`;
   `promoteNextPending(kind='agent')` on the next tick recovers it.
 - **Human edits the parent checkout during a `repo_read` run** → possible

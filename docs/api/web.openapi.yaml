@@ -17016,6 +17016,14 @@ components:
           type: integer
           minimum: 1
           description: Present when queued over the agent budget.
+        queueReason:
+          type: string
+          enum: [host_pressured]
+          description: |
+            (Implemented — ADR-183) Present iff the run was queued because the
+            execution host reports outbox pressure (the manager's pressure
+            record is set); absent when it was queued by the budget alone. The
+            run starts when the host recovers.
     PostTaskBody:
       type: object
       required: [title, prompt]
@@ -17778,6 +17786,15 @@ components:
           type: integer
           minimum: 1
           description: Present iff `status == "Pending"`.
+        queueReason:
+          type: string
+          enum: [host_pressured]
+          description: |
+            (Implemented — ADR-183) Present iff the run was queued because the
+            execution host reports outbox pressure (the manager's pressure
+            record is set) — the launch is still created and answered 201,
+            never 503; absent when it was queued by the concurrency cap alone.
+            The run starts when a health sample reports the host recovered.
     RecoverQueuedResponse:
       type: object
       description: |
