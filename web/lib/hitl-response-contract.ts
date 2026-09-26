@@ -9,6 +9,8 @@ export const HITL_RESPOND_REASONS = [
   "agent_session_ended",
   "delivery_unavailable",
   "permission_delivery_rejected",
+  "session_ended",
+  "permission_not_pending",
 ] as const;
 
 export type HitlRespondReason = (typeof HITL_RESPOND_REASONS)[number];

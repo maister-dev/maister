@@ -1693,7 +1693,7 @@ on terminal transitions (`Review` / `Failed`). Scratch dialog state is stored in
 write the authenticated caller for active-workspace launched-by display and
 audit; v1 authorization remains project-role based, not owner-exclusive.
 
-**(Designed, migration `0015`, additive.)** `resumeStartedAt`
+**(Implemented, migration `0015`, additive.)** `resumeStartedAt`
 (`timestamptz`, nullable) is the durable Recover in-flight marker and the
 reconcile grace anchor. The Recover path stamps it in the same transaction
 that flips `Crashed -> Running` (or `Crashed -> Pending` when the
@@ -1703,8 +1703,15 @@ sweep treats a no-live-session agent run as in-flight (skips it) while
 `resumeStartedAt` (or the latest `node_attempts.started_at`) is within
 `MAISTER_RECONCILE_GRACE_SECONDS`, and only crashes it past the grace window.
 The runner clears it to `NULL` on first progress; `crashRunningRun` also clears
-it so a re-crashed row stays clean. Cascade: lives on `runs`, dropped with the
-run row.
+it so a re-crashed row stays clean. **(Implemented — ADR-175 2026-09-26
+amendment)** A scratch run writes it at every host effect, in the transaction
+that commits the intent — the launch insert, a send's and the queued
+dispatch's dialog flip to `Running`, the Recover claim and the idle-resume
+claim — and clears it on turn completion and in `markScratchCrashed`; a
+retryable prompt failure leaves it. The scratch grace anchor is the newer of it
+and the newest `role = 'user'` `run_messages.created_at`. Only a flow run's
+value counts as a Recover resume for the budget-breach progress read
+(`resumeCount`). Cascade: lives on `runs`, dropped with the run row.
 
 **(Implemented, migration `0016`, additive.)** `resumeTargetStepId`
 (`text`, nullable) is the node id retained at crash time for operator Recover.
@@ -2619,7 +2626,12 @@ row per message) and every other recorded dispatch prompt
 (`prompt_dispatch_key = agent_turn:<variant>:<turnId>:<ordinal>`,
 `delivery = 'prompted'`). NULL on rows written before
 `0180`, on non-user rows, and on a scratch dialog's launch prompt (it is the
-launch turn itself, never queued or steered). `run_messages_queued_idx` (partial, `(run_id,
+launch turn itself, never queued or steered) until that prompt fails
+retryably. **(Implemented — ADR-182 A4 closed 2026-09-26)** A retryable
+failure of a scratch turn returns its row to the queue in the transaction that
+sets the dialog `WaitingForUser`: `prompted → queued`, and the launch row
+`NULL → queued`, keeping its `sequence`; the agent continuation worker's
+scratch arm re-drives it. A definitive failure leaves the row `prompted`. `run_messages_queued_idx` (partial, `(run_id,
 sequence) WHERE delivery = 'queued'`) serves the FIFO dispatcher;
 `run_messages_steer_command_uq` (partial unique on `steer_command_id`) lets
 recovery find the scratch row by its steer command.
@@ -3828,12 +3840,13 @@ only). No UPDATE/DELETE application paths; future pruning MUST honor
 {
   id,                              // bigint GENERATED ALWAYS AS IDENTITY PK —
                                    //   dispatch ordering key
-  kind,                            // one of 13 taxonomy kinds (CHECK):
+  kind,                            // one of 15 taxonomy kinds (CHECK):
                                    //   task.created | task.comment_added |
                                    //   task.triage_requeued |
                                    //   task.clarification_answered |
                                    //   run.done | run.failed | run.crashed |
                                    //   run.abandoned | run.review |
+                                   //   run.review_opened | run.needs_input |
                                    //   run.escalated | run.rework_claimed |
                                    //   run.rework_returned | gate.failed
                                    //   run.review added by migration 0060
@@ -3860,10 +3873,15 @@ only). No UPDATE/DELETE application paths; future pruning MUST honor
 }
 ```
 
-No secondary indexes by design — dispatch reads are PK-range scans
-(`id > cursor ORDER BY id`), gated by the xid8 horizon
-(`tx_id < pg_snapshot_xmin(pg_current_snapshot())`) so a late-committing lower
-`id` is never skipped.
+Dispatch reads are PK-range scans (`id > cursor ORDER BY id`), gated by the
+xid8 horizon (`tx_id < pg_snapshot_xmin(pg_current_snapshot())`) so a
+late-committing lower `id` is never skipped. **(Implemented, migration
+`0181`)** One secondary index serves the run terminal-cause read:
+`domain_events_run_terminal_idx` on `(run_id, occurred_at DESC, id DESC) WHERE
+kind IN ('run.done', 'run.failed', 'run.crashed', 'run.abandoned')` — the
+newest terminal event of a run, kind-matched to its status. The `cause` block
+on `run.failed | run.crashed | run.abandoned` payloads is described in
+[domain events](system-analytics/domain-events.md#terminal-cause-implemented).
 
 ### `domain_event_consumers`
 

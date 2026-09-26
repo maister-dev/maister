@@ -109,9 +109,10 @@ test("HITL refusal examples satisfy real JSON Schema validation", () => {
     const document = readContract(file);
     const responses = document.paths[route].post.responses;
     const examples = [
-      ["410", "agent-session-ended", `${prefix}TerminalError`],
+      ["410", "permission-not-pending", `${prefix}TerminalError`],
       ["410", "permission-delivery-rejected", `${prefix}TerminalError`],
       ["503", "answer-saved", `${prefix}SavedError`],
+      ["409", "session-ended", `${prefix}ErrorBody`],
     ];
 
     if (namespace === "web")

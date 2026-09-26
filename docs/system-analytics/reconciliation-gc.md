@@ -92,11 +92,18 @@ without changing the original attempt, HITL intent, or deleting its session.
   (allow-list). It can transition a run to `Crashed`; GC reads terminal
   runs (`Abandoned`/`Done`). See [`runs.md`](runs.md).
 - **Resume-in-flight marker** — `runs.resume_started_at` (timestamptz, null
-  by default; **Designed**, migration 0015). Stamped by Recover before
-  the supervisor side-effect; anchors the reconcile grace window. Cleared on
-  first progress, on terminal write, or by the runner's single-winner CAS-clear
-  (`UPDATE runs SET resume_started_at = NULL WHERE id = ? AND resume_started_at
-  IS NOT NULL`).
+  by default; **Implemented**, migration 0015). Stamped by Recover before
+  the supervisor side-effect, and by every scratch host effect (launch, send,
+  queued dispatch, Recover claim, idle-resume claim) in the transaction that
+  commits its intent; it anchors the reconcile grace window. Cleared on
+  first progress (a scratch turn's completion), on terminal write, or by the
+  runner's single-winner CAS-clear (`UPDATE runs SET resume_started_at = NULL
+  WHERE id = ? AND resume_started_at IS NOT NULL`).
+- **Grace anchor** (Implemented) — chosen per `runs.run_kind`: `agent` →
+  `runs.started_at`; `scratch` (project or project-less) → the newer of the
+  newest `role = 'user'` `run_messages.created_at` and
+  `runs.resume_started_at`, falling back to `runs.started_at`; `flow` → the
+  latest `node_attempts.started_at`. `resume_started_at` counts for every kind.
 - **Recover target node** — `runs.resume_target_step_id` (text, null by
   default; **Implemented**, migration 0016). The node id retained at crash
   time: `crashRunningRun` copies `current_step_id → resume_target_step_id` and
@@ -242,7 +249,7 @@ at-cap idle run records `resume_requested_at` for normal scheduler admission.
 flowchart TD
     Tick([interval tick]) --> Candidates[load Running candidates per project]
     Candidates --> Grace{agent node,<br/>no live session?}
-    Grace -- within grace --> SkipG[SKIP<br/>resume_started_at OR latest<br/>node_attempts.started_at < grace]
+    Grace -- within grace --> SkipG[SKIP<br/>resume_started_at OR the per-kind<br/>anchor < grace]
     Grace -- past grace --> CrashG[CRASH agent-session-gone]
     Candidates --> Worktree{worktree present?}
     Worktree -- no --> CrashW[CRASH worktree-gone]
@@ -602,8 +609,10 @@ the worktree GC collects (`WORKTREE_TTL_RUN_STATUSES`). See
 - A `Running` run whose `workspaces.worktree_path` is absent from
   `listWorktrees` MUST be crashed (reason `worktree-gone`) via
   `crashRunningRun`.
-- A `Running` agent run with no live session MUST be SKIPPED while
-  `resume_started_at` OR the latest `node_attempts.started_at` is within
+- A `Running` agent-node, agent or scratch run with no live session MUST be
+  SKIPPED while `resume_started_at` OR its per-kind grace anchor (flow: the
+  latest `node_attempts.started_at`; agent: `runs.started_at`; scratch: the
+  newest user `run_messages.created_at`) is within
   `MAISTER_RECONCILE_GRACE_SECONDS` (default 90); only past grace MUST it be
   crashed (reason `agent-session-gone`). A `Running` run with no live session
   whose current node is a read-only gate eval (`check`/`judge`) MUST be
@@ -751,7 +760,7 @@ was before ADR-177.
 | `Running`, `runKind='flow'` | current node **`consensus`**, live session or not, and a `consensus_verifier` / `consensus_synthesis` command of the current open attempt is poisoned or quarantined | `quarantined` ∨ `poisoned` (`resolveConsensusPoisonEvidence`) | **CRASH** (evidence boundary, reason `owner-poisoned`) | P0-5 v2: a poisoned or quarantined consensus generation is a terminal owner refusal even while its supervisor session lives, so this arm precedes the live-session arms (after the sync arm). The row is classified by `classifyPromptEvidence`, so a conflict found AFTER application (`application_state='applied'` with `application_error.reason='prompt_terminal_conflict'`) counts. Only the current open attempt's commands are read; an older or closed attempt's generation cannot crash a new attempt. Recover then follows the consensus table in [`runs.md`](runs.md) |
 | `Running`, `runKind='flow'` | worktree present, `liveSession` present | — | **RE-ATTACH** (`scheduleResumedSessionDrive`) or re-dispatch `runFlow` | live agent session with no attached runner (post web restart) — not crashed |
 | `Running`, `runKind='agent'` | worktree present, `liveSession` present, an in-process observer holds the host session | — | **SKIP** (reason `agent-observer-live`) | the run's single reader of its canonical stream is alive here — healthy |
-| `Running`, `runKind='scratch'` | worktree present, `liveSession` present | — | **SKIP** (reason `live-scratch-session`) | a scratch dialog between turns is healthy; its continuation owner is the next user message, and a continuation prompt it cannot satisfy would be crashed by the watchdog |
+| `Running`, `runKind='scratch'` | worktree present, `liveSession` present | — | **SKIP** (reason `live-scratch-session`) | a scratch dialog between turns is healthy; its continuation owner is the next user message (or, for a `queued` row, the agent continuation worker's scratch arm), and a continuation prompt it cannot satisfy would be crashed by the watchdog |
 | `Running`, `runKind='agent'` | worktree present, `liveSession` present, NO in-process observer | — | **RE-OBSERVE** (`reobserveAgentSession`, counted as `reobserved`) | an agent run has no continuation driver — its live path is ONE in-process observer (`consumeAgentSession`). A web restart, or an observer whose supervisor exhausted its retries, leaves a live session nobody reads; this arm used to classify RE-ATTACH and was then refused ("refusing reattach for non-flow run"), so the run held an unread session until it died and the sweep crashed it as `agent-session-gone`. The re-observe binds the run's ACTIVE assignment, writes NO run state, and yields on a fenced assignment |
 | `Running` | worktree present, no `acpSessionId` match but a LIVE session exists for this `(runId, currentStepId)` | — | **SKIP** (reason `live-session-by-step`) | an agent node's prompt is in-flight — `acp_session_id` persists only AFTER it returns, so the active `run_sessions` row's is still null; the node is genuinely running and must NOT be crashed (the bug this guards) or re-attached (double-drive) |
 | `Running` | worktree present, no live session, current node is a **retry-safe gate eval** (`check`/`judge`/`guard`/`human`/`form`/null — read-only) | — (arm 9 reads no evidence) | **RE-DISPATCH** `runFlow` (CAS-guarded) | safe re-run of a read-only evaluation; avoids the forbidden false-positive crash on a gate executing between sessions |
@@ -766,7 +775,8 @@ was before ADR-177.
 | `Running`, `runKind='flow'` | worktree present, no live session, current node is **agent**, the application is quarantined or poisoned | `quarantined` ∨ `poisoned` | **CRASH** (`applyTurnLostBoundary`, reason `owner-poisoned`) | ADR-177: an operator owns the follow-up; Recover follows ADR-175's quarantine rule and never re-prompts from disagreeing evidence. The sub-reason rides `node_attempts.error_code` and the structured log field `applicationErrorReason` |
 | `Running` | worktree present, no live session, current node is **agent**, **recently started** (`resume_started_at` OR latest `node_attempts.started_at` within `MAISTER_RECONCILE_GRACE_SECONDS`) | `none` | **SKIP** (grace window) | a launch/recover is still spinning its ACP session up — do NOT crash an in-flight session |
 | `Running` | worktree present, no live session, current node is **agent**, **past grace** | `none` | **CRASH** (`crashRunningRun`, reason `agent-session-gone`) | recoverability computed at UI render from `acpSessionId` presence; auto-resume of a mid-turn agent is unsafe → an explicit Recover call (operator or token, never the reconciler itself) |
-| `Running`, `runKind='scratch'` | session gone, past grace | — | **CRASH** via `markScratchCrashed` (sets both `runs.status` and `scratchRuns.dialogStatus`) | scratch parity |
+| `Running`, `runKind='scratch'` | session gone, **within grace** (`resume_started_at` OR the newest user `run_messages.created_at`, else `started_at`) | — | **SKIP** (grace window) | a launch, send, queued dispatch, Recover or idle resume is still binding its session; project and project-less runs alike (Implemented) |
+| `Running`, `runKind='scratch'` | session gone, past grace | — | **CRASH** via `markScratchCrashed` (sets both `runs.status` and `scratchRuns.dialogStatus`, closes the run's open permission rows; counted and promoted only when its CAS applied) | scratch parity; Recover is then a CAS on `Crashed` ([`scratch-runs.md`](scratch-runs.md#reconciliation-grace-and-recover-implemented)) |
 
 ### Evidence classes (ADR-177, Implemented)
 

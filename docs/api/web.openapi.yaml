@@ -5702,9 +5702,28 @@ paths:
             worktree — a git panel operation inside its lease, or a scratch
             promotion inside its claim: the run stays `Crashed`, no generation
             is minted, and the recover is retryable once that operation ends.
+            **(Implemented — ADR-175 2026-09-26 amendment)** Recover is a CAS on
+            `runs.status = 'Crashed'`: any other status answers `CONFLICT` with
+            `details.reason: scratch_not_recoverable`, `details.status` (the
+            observed `runs.status`) and, for `NeedsInputIdle`,
+            `details.next: respond` (answer the pending permission instead). A
+            `Failed` (budget) run is terminal; a `Running`, `NeedsInput` or
+            `Pending` run whose host session is dead waits for the reconcile
+            sweep to crash it. Nothing is written and no placement is minted.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+              examples:
+                scratch-not-recoverable-failed:
+                  value:
+                    code: CONFLICT
+                    message: scratch run is not recoverable (status Failed)
+                    details: { reason: scratch_not_recoverable, status: Failed }
+                scratch-not-recoverable-parked:
+                  value:
+                    code: CONFLICT
+                    message: scratch run is parked on a permission; answer it to resume
+                    details: { reason: scratch_not_recoverable, status: NeedsInputIdle, next: respond }
         "503":
           description: |
             The execution host is unavailable retryably (`code:
@@ -7697,7 +7716,15 @@ paths:
             fresh rework also returns `PRECONDITION` when its review source or
             feedback packet changed, when a gate-chat turn is live, or when the
             pinned graph cannot prove the declared target consumes feedback;
-            no response/artifact/runner wake is written.
+            no response/artifact/runner wake is written. **(Implemented —
+            ADR-177 2026-09-26 amendment)** `CONFLICT` with
+            `details.reason: session_ended` when the host answered 410
+            `session_ended` — or any 410, including a reason-less one, while the
+            run session's newest incarnation is `crashed`, `exited` or `lost`:
+            the answer stays stored (`respondedAt` NULL), no run state or event
+            is written, and the crash boundary that settles the run closes the
+            row. A same-payload retry asks the host again and lands in the same
+            arm.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/HitlRespondErrorBody" }
@@ -7707,6 +7734,12 @@ paths:
                     code: CONFLICT
                     message: this permission answer is already being delivered by a resume
                     details: { reason: permission_resume_in_flight }
+                session-ended:
+                  summary: The agent session ended before the answer arrived; nothing was written to the run
+                  value:
+                    code: CONFLICT
+                    message: The agent session ended before your answer arrived, so it was not delivered.
+                    details: { reason: session_ended }
         "202":
           description: |
             Idle-branch: a capacity claim authorizes resume. Owned graph node
@@ -7714,8 +7747,10 @@ paths:
             An answer the host refused with `410 session_checkpointed` (the
             session was parked with its deferreds cancelled — Implemented,
             ADR-180) is parked through the shared CAS and resumed on this same
-            branch for every run kind, never failed; an agent run takes its
-            own idle claim. A delivery intent the host refused outright (503,
+            branch for every run kind, never failed; a flow, agent or scratch
+            run each takes its own idle claim (Implemented — a scratch run
+            respawns with `session/resume`, re-prompts its interrupted turn and
+            answers the re-raised permission from the stored row). A delivery intent the host refused outright (503,
             the command never admitted) is withdrawn by the idle resume and
             the stored answer is re-delivered to the resumed session.
             A confirmed original-input/result handoff instead retains the
@@ -7746,13 +7781,16 @@ paths:
                     minimum: 0
         "410":
           description: |
-            Either (M7) permission deferred released terminally before
-            delivery (`HITL_TIMEOUT` without `details.reason:
-            session_checkpointed`) — flow runs transition to `Failed`, while
-            scratch runs transition to `Crashed` and record
-            `scratch_runs.error_code = HITL_TIMEOUT`; a host 410 that carries
-            `session_checkpointed` is NOT this arm — it parks and resumes with
-            202 (ADR-180); or (M8 idle branch)
+            Either the host answered 410 `permission_not_pending` — the
+            session is live but the request is no longer pending (answered,
+            cancelled or never raised): `HITL_TIMEOUT` with
+            `details.reason: permission_not_pending`, the HITL row is closed
+            (`respondedAt` set) and the run is untouched (Implemented — ADR-177
+            2026-09-26 amendment; the respond route never writes `Failed` or
+            `Crashed`, and `agent_session_ended` has no producer since and is
+            deprecated); a host 410 that carries `session_checkpointed` is NOT
+            this arm — it parks and resumes with 202 (ADR-180), and
+            `session_ended` answers 409 above; or (M8 idle branch)
             `resumeRun` failed terminally (`CHECKPOINT`) — supervisor
             400 / 404 / 201-with-empty-acpSessionId. The idle-branch
             response includes `terminal: true`.
@@ -7763,12 +7801,12 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/HitlRespondErrorBody" }
               examples:
-                agent-session-ended:
-                  summary: Terminal HITL_TIMEOUT example; validated against HitlRespondTerminalError
+                permission-not-pending:
+                  summary: HITL_TIMEOUT on a live session; validated against HitlRespondTerminalError
                   value:
                     code: HITL_TIMEOUT
-                    message: The agent session ended before your answer arrived. Relaunch the run.
-                    details: { reason: agent_session_ended }
+                    message: This request is no longer pending; the run has moved on.
+                    details: { reason: permission_not_pending }
                 permission-delivery-rejected:
                   value:
                     code: HITL_TIMEOUT
@@ -19633,8 +19671,20 @@ components:
           attachments,
           capabilityProfile,
           pendingHitl,
+          terminalCause,
         ]
       properties:
+        terminalCause:
+          type: object
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/TerminalCause"
+          description: |
+            (Implemented) Why the run ended `Failed | Crashed | Abandoned`: the
+            `cause` of the newest terminal domain event whose kind matches
+            `run.status`, falling back to `{code: scratch.errorCode, source:
+            scratch}` when no event exists (a project-less run). Null for any
+            other status.
         run:
           type: object
           required:
@@ -19781,6 +19831,40 @@ components:
           nullable: true
           allOf:
             - $ref: "#/components/schemas/ScratchPendingHitl"
+    TerminalCause:
+      type: object
+      additionalProperties: false
+      required: [code, source]
+      description: |
+        (Implemented) A run's terminal cause, read from its terminal domain
+        event (`run.failed | run.crashed | run.abandoned` payload `cause`).
+        Tokens only — never a message. `source: legacy` marks an event written
+        before `cause` existed, synthesized from its `reason` / `errorCode`.
+      properties:
+        code:
+          type: string
+          nullable: true
+          description: A `MaisterErrorCode`, or null when the cause has none (an abandon).
+        reason:
+          type: string
+          description: The emitter's reason token (snake_case where MAIster mints it).
+        source:
+          type: string
+          enum:
+            [
+              graph,
+              hitl,
+              sweeper,
+              scratch,
+              agent,
+              reconcile,
+              consensus,
+              resume,
+              operator,
+              orchestrator,
+              workbench,
+              legacy,
+            ]
     ScratchMessageResponse:
       type: object
       required: [ok, messageId, sequence, dialogStatus]
@@ -21869,6 +21953,12 @@ components:
         - agent_session_ended
         - delivery_unavailable
         - permission_delivery_rejected
+        - session_ended
+        - permission_not_pending
+      description: |
+        `agent_session_ended` is deprecated: it has no producer since
+        2026-09-26 (a dead session answers 409 `session_ended`) and stays in the
+        enum for clients that still branch on it.
     HitlAnswerState:
       type: string
       enum: [open, answer_stored]
@@ -21912,7 +22002,7 @@ components:
               required: [reason]
               additionalProperties: false
               properties:
-                reason: { type: string, enum: [agent_session_ended, permission_delivery_rejected] }
+                reason: { type: string, enum: [permission_not_pending, permission_delivery_rejected, agent_session_ended] }
     HitlRespondSavedError:
       allOf:
         - { $ref: "#/components/schemas/HitlRespondErrorBody" }

@@ -1230,7 +1230,10 @@ already-inserted run) — never an orphan worktree or live ACP session.
   `Crashed`, not `Failed`. The runner accumulates the highest-severity
   error observed across the step loop in a local `runErrorCode`
   carrier so the terminal write can branch
-  `CRASH → Crashed | other failure → Failed | success → Review`.
+  `CRASH → Crashed | other failure → Failed | success → Review`, and the
+  terminal event names its cause (`cause.code = runErrorCode`, `cause.reason`
+  from the error's `details.reason`), which the run page renders
+  ([terminal cause](domain-events.md#terminal-cause-implemented)).
 - **(Implemented)** Promotion is the product action after Review through the
   shared `promoteRun` service, which promotes both **scratch** and **flow** runs
   via `local_merge` or `pull_request`. Promotion

@@ -216,14 +216,14 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-172](#adr-172-desk-home-information-architecture-and-the-member-default-route) | Desk home information architecture and the member default route | Accepted; D1 partially superseded by ADR-174 | 2026-09-10 |
 | [ADR-173](#adr-173-user-notification-subscriptions-and-web-push-over-the-widened-outbound-webhook-engine) | User notification subscriptions and web push over the widened outbound-webhook engine | Accepted | 2026-09-10 |
 | [ADR-174](#adr-174-the-desk-renders-one-object-per-work-item) | The Desk renders one object per work item | Accepted | 2026-09-17 |
-| [ADR-175](#adr-175-operator-recover-of-a-crashed-agent-node-re-enters-the-flow-graph) | Operator Recover of a crashed agent node re-enters the flow graph | Accepted; amended by ADR-176 | 2026-09-18 |
+| [ADR-175](#adr-175-operator-recover-of-a-crashed-agent-node-re-enters-the-flow-graph) | Operator Recover of a crashed agent node re-enters the flow graph | Accepted; amended by ADR-176 and ADR-177; amended 2026-09-26 | 2026-09-18 |
 | [ADR-176](#adr-176-automated-crash-recover-re-entry--the-flow-continuation-worker-owns-the-committed-intent-under-a-bounded-per-run-budget) | Automated crash-recover re-entry — the flow continuation worker owns the committed intent under a bounded per-run budget | Implemented | 2026-09-21 |
-| [ADR-177](#adr-177-evidence-first-crash-classification) | Evidence-first crash classification | Implemented; amended 2026-09-23 | 2026-09-21 |
+| [ADR-177](#adr-177-evidence-first-crash-classification) | Evidence-first crash classification | Implemented; amended 2026-09-23, 2026-09-26 | 2026-09-21 |
 | [ADR-178](#adr-178-observatory-overview-table-day-aligned-period-url-views-and-auto-apply-filters) | Observatory overview table, day-aligned period, URL views, and auto-apply filters | Implemented (2026-09-21) | 2026-09-21 |
 | [ADR-179](#adr-179-mcp-configuration-values--literal-or-reference-envheader-maps-a-bearer-token-field-value-replacing-project-overlays-host-env-ref-readiness-and-an-adapter-transport-gate) | MCP configuration values — literal-or-reference env/header maps, a bearer token field, value-replacing project overlays, host env-ref readiness, and an adapter transport gate | Implemented | 2026-09-21 |
-| [ADR-180](#adr-180-permission-deadline-has-one-owner) | Permission deadline has one owner | Implemented | 2026-09-22 |
+| [ADR-180](#adr-180-permission-deadline-has-one-owner) | Permission deadline has one owner | Implemented; amended 2026-09-26 | 2026-09-22 |
 | [ADR-181](#adr-181-run-git-panel-status-independent-worktree-git-operations-public-branch-names-and-pr-before-promotion) | Run git panel: status-independent worktree git operations, public branch names, and PR before promotion | Implemented | 2026-09-22 |
-| [ADR-182](#adr-182-steering-a-running-agent-turn-as-a-durable-fenced-command) | Steering a running agent turn as a durable fenced command | Implemented | 2026-09-25 |
+| [ADR-182](#adr-182-steering-a-running-agent-turn-as-a-durable-fenced-command) | Steering a running agent turn as a durable fenced command | Implemented; amended 2026-09-26 | 2026-09-25 |
 
 ---
 
@@ -1777,7 +1777,7 @@ Full record: [`decisions/adr-174.md`](decisions/adr-174.md)
 
 ### ADR-175: Operator Recover of a crashed agent node re-enters the flow graph
 
-**Status:** Accepted; amended by ADR-176 and ADR-177
+**Status:** Accepted; amended by ADR-176 and ADR-177; amended 2026-09-26
 **Date:** 2026-09-18
 
 Full record: [`decisions/adr-175.md`](decisions/adr-175.md)
@@ -1795,7 +1795,7 @@ Full record: [`decisions/adr-176.md`](decisions/adr-176.md)
 
 ### ADR-177: Evidence-first crash classification
 
-**Status:** Implemented; amended 2026-09-23 (host-evidence settlement; the current turn across `node`, `permission_resume` and gate variants; the boundary re-reads its command under lock)
+**Status:** Implemented; amended 2026-09-23 (host-evidence settlement; the current turn across `node`, `permission_resume` and gate variants; the boundary re-reads its command under lock); amended 2026-09-26 (the crash boundary owns a dead session's answer)
 **Date:** 2026-09-21
 
 The reconcile sweep classifies a sessionless `Running` flow run from the current
@@ -1829,7 +1829,7 @@ Full record: [`decisions/adr-179.md`](decisions/adr-179.md)
 
 ### ADR-180: Permission deadline has one owner
 
-**Status:** Implemented
+**Status:** Implemented; amended 2026-09-26
 **Date:** 2026-09-22
 
 Full record: [`decisions/adr-180.md`](decisions/adr-180.md)
@@ -1847,7 +1847,7 @@ Full record: [`decisions/adr-181.md`](decisions/adr-181.md)
 
 ### ADR-182: Steering a running agent turn as a durable fenced command
 
-**Status:** Implemented
+**Status:** Implemented; amended 2026-09-26
 **Date:** 2026-09-25
 
 Full record: [`decisions/adr-182.md`](decisions/adr-182.md)
@@ -2051,3 +2051,23 @@ properties/lastAction` sets `nullable: true` beside an `allOf` with no sibling
   so a strict consumer validating against the spec rejects real payloads.
   ADR-181 added only its optional `source`; re-syncing the schema to the emitter
   (or projecting the payload) is separate work (R9).
+- **The external respond route maps a thrown `HITL_TIMEOUT` to 500 (found
+  2026-09-26, ownership residuals C16).** `httpStatusForExtCode`
+  (`web/lib/tokens/ext-handler.ts`) has no `HITL_TIMEOUT` case, so a *thrown*
+  `HITL_TIMEOUT` becomes 500 on `/api/v1/ext/runs/{runId}/hitl/{hitlRequestId}/respond`.
+  The respond service returns its 410 bodies instead of throwing them, and the
+  new 409 `session_ended` is a mapped `CONFLICT`, so no reachable path hits the
+  gap today. Adding the case is separate work (R9).
+- **Scratch Recover leaks a just-created session when the sweep crashes the
+  run inside its window (found 2026-09-26, ownership residuals C20).** If the
+  reconcile sweep crashes a scratch run between Recover's claim and its second
+  transaction, `assertCurrentSessionBinding` throws `CONFLICT` and the session
+  Recover just created is not deleted (the rollback covers only a
+  `createSession` failure). The Recover CAS on `Crashed` does not change this
+  window; the orphaned host session is reaped by the host's own lifecycle, not
+  by Recover (R9).
+- **External `RunDTO` drifts from the route (found 2026-09-26, ownership
+  residuals T0.5).** `operations.openapi.yaml` `RunDTO` requires `executorId`,
+  but the route serializes `getRunDTO` verbatim, which carries `runnerId` and
+  no `executorId`; its `status` enum also lacks `WaitingOnChildren`. The branch added only `terminalCause`; re-syncing the
+  schema is separate work (R9).

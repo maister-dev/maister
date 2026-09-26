@@ -178,11 +178,12 @@ The run-page card shows the chosen option read-only and an authorized,
 single identical-payload “Retry delivery” action; 202 resume/delivery states
 show that view immediately and refresh keeps it. Localized refusal copy uses
 `code` and `details.reason`, with prompt-owner `causeCode` as a monospaced
-diagnostic. Terminal 410 says the agent session ended before delivery and asks
-the operator to relaunch. This feedback survives card removal, but the fresh
-terminal run page can still lack a persisted failure cause: B6 remains a
-separate run-level cause follow-up, because this item does not write attempt
-failure metadata or change a state transition.
+diagnostic. A 409 `session_ended` says the agent session ended before the
+answer arrived, so it was not delivered, and that Recover will ask again if the
+run can be recovered; the card keeps the saved choice read-only with **no**
+retry control until the crash boundary closes the row. A 410
+`permission_not_pending` says the request is no longer pending and closes the
+card. This feedback survives card removal (Implemented).
 The replaceable budget-breach `stage: "failed"` is the exception: it retains
 the server-approved recovery controls instead of showing a delivery retry.
 
@@ -211,8 +212,16 @@ The landing focus follows state:
 | `WaitingOnChildren`             | Flow result with the parked orchestrator or consensus node selected; consensus shows draft child status and round progress |
 | `NeedsInput` / `NeedsInputIdle` | Flow result with the blocked HITL node selected; consensus no-agreement HITL shows the four resolution decisions           |
 | `Review`                        | Review-producing node or agent result with a prominent review action                                                       |
-| `Crashed`                       | Flow or agent result plus crash/recover panel                                                                              |
-| `Done` / `Failed` / `Abandoned` | Frozen result with Timeline and Evidence close at hand                                                                     |
+| `Crashed`                       | Flow or agent result plus crash/recover panel; the panel carries a cause line from the run's terminal cause               |
+| `Done` / `Failed` / `Abandoned` | Frozen result with Timeline and Evidence close at hand; `Failed` / `Abandoned` add a `TerminalCauseNotice` (icon + title + cause) |
+
+**Terminal cause (Implemented).** The page reads `run.terminalCause` (the
+[domain-event read rule](../../system-analytics/domain-events.md#terminal-cause-implemented))
+and renders a title per status, the code's localized copy
+(`run.failure.codes.<code>`) and the reason's localized copy
+(`run.terminalCause.reasons.<token>`); an unknown reason renders the code copy
+plus a muted `reason: <token>` line, never a raw code as the primary text. The
+`source` is not rendered.
 
 ## Data & APIs
 

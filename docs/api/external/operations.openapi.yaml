@@ -3289,7 +3289,8 @@ paths:
             `delivery-in-progress`. Plan-review `resume-queued` means the
             answer was recorded and the run's resume is queued; the card
             refreshes away without a delivery retry. The checkpointed-host 410 becomes 202
-            after web parks and schedules resume; session creation need not
+            after web parks and schedules resume — for a flow, agent or scratch
+            run alike, each through its own idle claim; session creation need not
             have completed. Identical retries remain safe until delivery is
             marked, then return 200 idempotent.
           content:
@@ -3306,28 +3307,44 @@ paths:
             `CONFLICT` or `PRECONDITION`. In addition to existing stale/claimed
             outcomes, every `schema.review === true` request is refused before
             response delivery; use the authenticated Review Workspace to view
-            code and preview verified feedback.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/ExtHitlRespondErrorBody" }
-        "410":
-          description: |
-            A terminal `HITL_TIMEOUT` means the agent session ended before
-            delivery (`details.reason: agent_session_ended`); relaunch the
-            flow run or Recover/relaunch scratch. Existing terminal idle
-            `CHECKPOINT` failures retain their body without this reason. A
-            rejected original permission delivery after checkpoint carries
-            `permission_delivery_rejected` and requires relaunch.
-            Host `410 session_checkpointed` instead becomes web 202.
+            code and preview verified feedback. **(Implemented — ADR-177
+            2026-09-26 amendment)** `CONFLICT` with `details.reason:
+            session_ended` when the agent session ended before the answer
+            arrived (host 410 `session_ended`, or any 410 while the run
+            session's incarnation is dead): the answer stays stored, nothing is
+            written to the run, and the crash boundary settles the run and
+            closes the request.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ExtHitlRespondErrorBody" }
               examples:
-                agent-session-ended:
+                session-ended:
+                  value:
+                    code: CONFLICT
+                    message: The agent session ended before your answer arrived, so it was not delivered.
+                    details: { reason: session_ended }
+        "410":
+          description: |
+            `HITL_TIMEOUT` with `details.reason: permission_not_pending` means
+            the session is live but the request is no longer pending
+            (answered, cancelled or never raised): the request is closed and
+            the run is untouched. The route never writes a terminal run status
+            (Implemented — ADR-177 2026-09-26 amendment); `agent_session_ended`
+            has no producer since and is deprecated. Existing terminal idle
+            `CHECKPOINT` failures retain their body without this reason. A
+            rejected original permission delivery after checkpoint carries
+            `permission_delivery_rejected` and requires relaunch.
+            Host `410 session_checkpointed` instead becomes web 202, and host
+            `410 session_ended` becomes 409 `session_ended`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtHitlRespondErrorBody" }
+              examples:
+                permission-not-pending:
                   value:
                     code: HITL_TIMEOUT
-                    message: The agent session ended before your answer arrived. Relaunch the run.
-                    details: { reason: agent_session_ended }
+                    message: This request is no longer pending; the run has moved on.
+                    details: { reason: permission_not_pending }
                 permission-delivery-rejected:
                   value:
                     code: HITL_TIMEOUT
@@ -3561,7 +3578,11 @@ components:
 
     HitlRespondReason:
       type: string
-      enum: [permission_resume_in_flight, assignment_fenced, prompt_owner_deferred, prompt_owner_invariant, already_delivered, option_mismatch, not_awaiting_input, agent_session_ended, delivery_unavailable, permission_delivery_rejected]
+      enum: [permission_resume_in_flight, assignment_fenced, prompt_owner_deferred, prompt_owner_invariant, already_delivered, option_mismatch, not_awaiting_input, agent_session_ended, delivery_unavailable, permission_delivery_rejected, session_ended, permission_not_pending]
+      description: |
+        `agent_session_ended` is deprecated: no producer since 2026-09-26 (a
+        dead session answers 409 `session_ended`); it stays for clients that
+        still branch on it.
     HitlRespondDetails:
       type: object
       required: [reason]
@@ -3590,7 +3611,7 @@ components:
               required: [reason]
               additionalProperties: false
               properties:
-                reason: { type: string, enum: [agent_session_ended, permission_delivery_rejected] }
+                reason: { type: string, enum: [permission_not_pending, permission_delivery_rejected, agent_session_ended] }
     ExtHitlRespondSavedError:
       allOf:
         - { $ref: "#/components/schemas/ExtHitlRespondErrorBody" }
@@ -4609,6 +4630,41 @@ components:
             errorCode:
               type: string
               nullable: true
+        terminalCause:
+          type: object
+          nullable: true
+          additionalProperties: false
+          required: [code, source]
+          description: |
+            (Implemented) Why the run ended `Failed | Crashed | Abandoned` — the
+            `cause` of its newest terminal domain event whose kind matches
+            `status`; null for any other status. Tokens only, never a message;
+            `source: legacy` marks an event written before `cause` existed.
+          properties:
+            code:
+              type: string
+              nullable: true
+              description: A `MaisterErrorCode`, or null when the cause has none (an abandon).
+            reason:
+              type: string
+              description: The emitter's reason token.
+            source:
+              type: string
+              enum:
+                [
+                  graph,
+                  hitl,
+                  sweeper,
+                  scratch,
+                  agent,
+                  reconcile,
+                  consensus,
+                  resume,
+                  operator,
+                  orchestrator,
+                  workbench,
+                  legacy,
+                ]
 
     ExtActivitySalience:
       type: string

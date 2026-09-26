@@ -767,9 +767,15 @@ held by the supervisor's `PendingPermissionRegistry` with
   `httpStatusForCode` is unchanged. An input that lands after the park
   cancelled the deferreds but before the child has exited waits for the exit
   (bounded by `MAISTER_KILL_GRACE_MS`) and gets the same arm; a park that
-  outlasts the grace answers the retryable 503 instead. Once the registry entry
-  is removed after its 30 s terminal grace the same answer gets the retryable
-  503 below.
+  outlasts the grace answers the retryable 503 instead. Otherwise the body
+  names why no deferred exists (Implemented — ADR-177 2026-09-26 amendment):
+  `details.reason: "session_ended"` when the entry is `crashed` or `exited`
+  (the child died, not a park) and `details.reason: "permission_not_pending"`
+  when the entry is `live` (the request was answered, cancelled or never
+  raised). The web never fails a run on either: `session_ended` keeps the
+  answer for the crash boundary, `permission_not_pending` closes only the HITL
+  row. Once the registry entry is removed after its 30 s terminal grace the
+  same answer gets the retryable 503 below.
 - `409 { code: "PRECONDITION" }` — Zod validation failure on the
   request body (e.g. `action="select"` with no `optionId`).
 
