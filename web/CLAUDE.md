@@ -305,7 +305,14 @@ tests, 0 failures**; the full integration lane was NOT re-run — the 21 files t
 round touched or depends on ran green (the steering, scratch-placement,
 local-package-assistant, migration, ext-message, recovery, deliverer, ledger
 and admission suites), and `ledger.integration`'s unhandled "pool after end"
-rejection is the one `8ff196d4` also shows.
+rejection is the one `8ff196d4` also shows. After the rebase onto `master`
+`b8003790` (the git-panel merge): unit **863 files / 8992 tests, 0 failures**;
+supervisor 76 files / 730 tests with one load-only red —
+`spawn.test.ts` "emits bounded session-line events" (`expected [] to deeply
+equal [1, 2, 3]`) failed while the unit lane ran beside it and passed 5/5
+alone, neither side having touched `spawn.ts`; the 10 steering, migration,
+scratch-placement, local-package-assistant, ext-message and turn-admission
+integration files **100/100**.
 
 **A first-hit Next-dev compile can exhaust a 10s e2e timeout.** Before calling
 such a failure a regression, re-run the spec in isolation and read the RETRY
