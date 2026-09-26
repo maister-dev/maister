@@ -1662,6 +1662,15 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       ],
     ),
     ...classified(
+      "lib/queries/project-directory.ts",
+      "repository-worktree",
+      "ADR-184 project directory: a bounded, symlink-refusing read of the registered repository's README first paragraph — Stage C repository cut",
+      [
+        ["readReadmePurpose", "node:fs/promises.lstat", "stat"],
+        ["readReadmePurpose", "node:fs/promises.open", "open"],
+      ],
+    ),
+    ...classified(
       "lib/worktree-provenance.ts",
       "repository-worktree",
       "git/worktree operations the manager keeps until the Stage C repository cut",
@@ -1965,6 +1974,9 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
   ]),
   ...wrappers("lib/agents/dirty-watchdog.ts", "repository-worktree", [
     ["materializeAgentReadOnlySettings", false],
+  ]),
+  ...wrappers("lib/queries/project-directory.ts", "repository-worktree", [
+    ["getProjectDirectory", false],
   ]),
   ...wrappers("lib/agents/effective.ts", "repository-worktree", [
     ["resolveEffectiveAgentDefinition", false],

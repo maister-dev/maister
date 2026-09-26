@@ -32,6 +32,7 @@ import { launchRun } from "@/lib/services/runs";
 import { resolveActiveBoundRun } from "@/lib/runs/bound-run";
 import { addTaskRelation } from "@/lib/social/relations";
 import { abandonUnlaunchedTasks, createTask } from "@/lib/services/tasks";
+import { tokenAuditIdentity } from "@/lib/tokens/audit";
 import {
   handleExt,
   httpStatusForExtCode,
@@ -667,9 +668,8 @@ export async function POST(
 
       await recordRequiredTokenAudit(
         {
-          tokenId: ctx.actor.tokenId,
+          ...tokenAuditIdentity(ctx.actor),
           projectId: ctx.projectId,
-          actorLabel: ctx.actor.actorLabel,
           scopeUsed: "runs:delegate",
           endpoint: ENDPOINT,
           method: "POST",

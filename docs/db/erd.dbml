@@ -1719,6 +1719,7 @@ table project_tokens {
   token_kind text [not null, default: 'project']
   owner_user_id text
   agent_id text
+  librarian_turn_id text
   prefix text [not null]
   token_hash text [not null]
   scopes jsonb [not null, default: `["*"]`]
@@ -1738,6 +1739,9 @@ table project_tokens {
 
 
 
+
+
+    librarian_turn_id [name: 'project_tokens_librarian_turn_idx']
   }
 }
 
@@ -2475,10 +2479,14 @@ table token_audit_log {
   method text [not null]
   result text [not null]
   status_code integer [not null]
+  on_behalf_of_user_id text
+  librarian_turn_id text
+  operation_id text
   created_at "timestamp with time zone" [not null, default: `now()`]
 
   indexes {
     token_id [name: 'token_audit_token_idx']
+    librarian_turn_id [name: 'token_audit_librarian_turn_idx']
     (project_id, created_at) [name: 'token_audit_project_created_idx']
   }
 }
@@ -3406,6 +3414,8 @@ ref tasks_created_by_user_id_users_id_fk: tasks.created_by_user_id > users.id [d
 ref token_audit_log_token_id_project_tokens_id_fk: token_audit_log.token_id > project_tokens.id [delete: cascade, update: no action]
 
 ref token_audit_log_project_id_projects_id_fk: token_audit_log.project_id > projects.id [delete: set null, update: no action]
+
+ref token_audit_log_on_behalf_of_user_id_users_id_fk: token_audit_log.on_behalf_of_user_id > users.id [delete: set null, update: no action]
 
 ref token_lifecycle_events_token_id_project_tokens_id_fk: token_lifecycle_events.token_id > project_tokens.id [delete: cascade, update: no action]
 

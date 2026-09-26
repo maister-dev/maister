@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireActiveUserById } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import { getDecisionsQueue } from "@/lib/queries/decisions";
+import { requirePersonalOrLibrarianActor } from "@/lib/tokens/personal-actor";
 import { handleExt } from "@/lib/tokens/ext-handler";
 
 const ENDPOINT = "GET /api/v1/ext/decisions";
@@ -41,6 +42,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       endpoint: ENDPOINT,
       method: "GET",
       allowGlobalActorWithoutProject: true,
+      admitLibrarian: true,
       auditProjectId: null,
       db,
     },
@@ -48,15 +50,15 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       // A decision queue is a PERSON's queue. A project token has no person, and
       // an agent token must never read one — so this is the narrowest of the ext
       // actors: a global personal token and nothing else.
-      if (
-        ctx.actor.tokenKind !== "user" ||
-        ctx.actor.ownerUserId === null ||
-        ctx.actor.projectId !== null
-      ) {
-        return NextResponse.json(
-          { code: "UNAUTHORIZED", message: "global personal token required" },
-          { status: 403 },
-        );
+      // ADR-184: the librarian reads its owner's queue with the owner's human
+      // authority; it never answers from it (human-only decisions become
+      // confirmation cards).
+      const refused = requirePersonalOrLibrarianActor(ctx.actor, {
+        allowLibrarian: true,
+      });
+
+      if (refused || ctx.actor.ownerUserId === null) {
+        return refused as NextResponse;
       }
 
       const owner = await requireActiveUserById(ctx.actor.ownerUserId);

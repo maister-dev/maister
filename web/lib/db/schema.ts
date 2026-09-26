@@ -7099,7 +7099,9 @@ export const projectTokens = pgTable(
       onDelete: "cascade",
     }),
     name: text("name").notNull(),
-    token_kind: text("token_kind", { enum: ["project", "user", "agent"] })
+    token_kind: text("token_kind", {
+      enum: ["project", "user", "agent", "librarian"],
+    })
       .notNull()
       .default("project"),
     owner_user_id: text("owner_user_id").references(() => users.id, {
@@ -7110,6 +7112,9 @@ export const projectTokens = pgTable(
     agent_id: text("agent_id").references(() => agents.id, {
       onDelete: "cascade",
     }),
+    // ADR-184: a librarian token is minted for exactly one librarian turn and
+    // revoked when that turn ends.
+    librarian_turn_id: text("librarian_turn_id"),
     prefix: text("prefix").notNull(),
     token_hash: text("token_hash").notNull(),
     scopes: jsonb("scopes").$type<string[]>().notNull().default(["*"]),
@@ -7151,6 +7156,18 @@ export const projectTokens = pgTable(
       "project_tokens_agent_kind_check",
       sql`(${t.token_kind} = 'agent') = (${t.agent_id} IS NOT NULL)`,
     ),
+    kindCheck: check(
+      "project_tokens_kind_check",
+      sql`${t.token_kind} IN ('project', 'user', 'agent', 'librarian')`,
+    ),
+    // ADR-184: owner-bound, project-less, agent-less, turn-bound, expiring.
+    librarianCheck: check(
+      "project_tokens_librarian_check",
+      sql`${t.token_kind} <> 'librarian' OR (${t.owner_user_id} IS NOT NULL AND ${t.project_id} IS NULL AND ${t.agent_id} IS NULL AND ${t.librarian_turn_id} IS NOT NULL AND ${t.expires_at} IS NOT NULL)`,
+    ),
+    idxLibrarianTurn: index("project_tokens_librarian_turn_idx").on(
+      t.librarian_turn_id,
+    ),
   }),
 );
 
@@ -7176,12 +7193,24 @@ export const tokenAuditLog = pgTable(
     method: text("method").notNull(),
     result: text("result", { enum: ["ok", "error"] }).notNull(),
     status_code: integer("status_code").notNull(),
+    // ADR-184: delegated-authority attribution. A librarian-token request names
+    // the human it acted for, the turn that issued it and, for an effect, the
+    // librarian operation it settled.
+    on_behalf_of_user_id: text("on_behalf_of_user_id").references(
+      () => users.id,
+      { onDelete: "set null" },
+    ),
+    librarian_turn_id: text("librarian_turn_id"),
+    operation_id: text("operation_id"),
     created_at: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
   },
   (t) => ({
     idxToken: index("token_audit_token_idx").on(t.token_id),
+    idxLibrarianTurn: index("token_audit_librarian_turn_idx").on(
+      t.librarian_turn_id,
+    ),
     idxProjectCreated: index("token_audit_project_created_idx").on(
       t.project_id,
       t.created_at,

@@ -15,6 +15,7 @@ import {
 import { createBrainProposalWithAutonomy } from "@/lib/brain/proposals";
 import { getDb } from "@/lib/db/client";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { tokenAuditIdentity } from "@/lib/tokens/audit";
 import {
   handleExt,
   httpStatusForExtCode,
@@ -160,9 +161,8 @@ export async function POST(
 
           await recordRequiredTokenAudit(
             {
-              tokenId: ctx.actor.tokenId,
+              ...tokenAuditIdentity(ctx.actor),
               projectId: ctx.projectId,
-              actorLabel: ctx.actor.actorLabel,
               scopeUsed: "memory:write",
               endpoint: ENDPOINT_POST,
               method: "POST",

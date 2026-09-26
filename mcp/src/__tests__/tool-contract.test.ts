@@ -210,7 +210,55 @@ const TOOL_OP: Record<string, { method: string; path: string }> = {
     method: "delete",
     path: "/api/v1/ext/projects/{slug}/tasks/{taskId}/relations",
   },
+  // ADR-184: the librarian's visibility-scoped discovery reads.
+  project_list: { method: "get", path: "/api/v1/ext/projects" },
+  project_get: {
+    method: "get",
+    path: "/api/v1/ext/projects/{slug}/directory",
+  },
+  task_search: { method: "get", path: "/api/v1/ext/tasks/search" },
+  work_list: { method: "get", path: "/api/v1/ext/work" },
+  decisions_list: { method: "get", path: "/api/v1/ext/decisions" },
+  activity_feed: { method: "get", path: "/api/v1/ext/activity/feed" },
 };
+
+// A spec field or parameter marked `x-maister-designed: true` is part of an
+// accepted contract whose implementation phase has not landed yet (docs R6
+// "Designed"). The facade mirrors it when the phase ships and removes the
+// marker; until then the tool must NOT advertise it, because the route would
+// refuse it. The marker is the honest seam between the two — never a silent
+// skip of an implemented field.
+function isDesigned(node: unknown): boolean {
+  return (
+    typeof node === "object" &&
+    node !== null &&
+    (node as Record<string, unknown>)["x-maister-designed"] === true
+  );
+}
+
+function implementedEntries(
+  props: Record<string, JsonSchema>,
+): Record<string, JsonSchema> {
+  return Object.fromEntries(
+    Object.entries(props).filter(([, schema]) => !isDesigned(schema)),
+  );
+}
+
+// ADR-185: the librarian's operation key rides the `Idempotency-Key` header.
+// The facade advertises it as the `operationKey` argument, so the header is
+// part of the tool's contract under that name.
+function headerParamNames(op: { parameters?: OpParameter[] }): string[] {
+  const out: string[] = [];
+
+  for (const raw of op.parameters ?? []) {
+    const p = deref(raw);
+
+    if (p.in === "header" && p.name === "Idempotency-Key" && !isDesigned(p))
+      out.push("operationKey");
+  }
+
+  return out;
+}
 
 function pathParams(pathTemplate: string): string[] {
   return [...pathTemplate.matchAll(/\{(\w+)\}/g)].map((m) => m[1]);
@@ -230,7 +278,8 @@ function requiredQueryParams(op: { parameters?: OpParameter[] }): string[] {
   for (const raw of op.parameters ?? []) {
     const p = deref(raw);
 
-    if (p.in === "query" && p.required === true && p.name) out.push(p.name);
+    if (p.in === "query" && p.required === true && p.name && !isDesigned(p))
+      out.push(p.name);
   }
 
   return out;
@@ -244,7 +293,7 @@ function queryParamSchemas(op: {
   for (const raw of op.parameters ?? []) {
     const p = deref(raw);
 
-    if (p.in === "query" && p.name)
+    if (p.in === "query" && p.name && !isDesigned(p))
       out[p.name] = (p.schema ?? {}) as JsonSchema;
   }
 
@@ -350,8 +399,11 @@ describe("TOOL_SPECS ↔ external OpenAPI contract", () => {
     const params = pathParams(path);
     const queryFields = queryParamSchemas(op);
     const body = bodySchema(op);
-    const bodyProps = body?.properties ?? {};
-    const bodyRequired = body?.required ?? [];
+    const bodyProps = implementedEntries(body?.properties ?? {});
+    const bodyRequired = (body?.required ?? []).filter((name) =>
+      Object.hasOwn(bodyProps, name),
+    );
+    const headerFields = headerParamNames(op);
 
     const spec = toolSpec(toolName);
     const toolProps = spec.properties ?? {};
@@ -362,6 +414,7 @@ describe("TOOL_SPECS ↔ external OpenAPI contract", () => {
         ...params,
         ...Object.keys(queryFields),
         ...Object.keys(bodyProps),
+        ...headerFields,
       ]);
 
       expect(new Set(Object.keys(toolProps))).toEqual(expected);

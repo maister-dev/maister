@@ -102,6 +102,10 @@ export interface TokenLabels {
   scopeMemoryRead: string;
   scopeMemoryWrite: string;
   scopeAgentMemoryWrite: string;
+  scopeProjectsRead: string;
+  scopeWorkRead: string;
+  scopeActivityRead: string;
+  scopeRunsMessage: string;
   errorGeneric: string;
 }
 
@@ -196,6 +200,14 @@ function scopeLabel(labels: TokenLabels, scope: string): string {
       return labels.scopeMemoryWrite;
     case "agent_memory:write":
       return labels.scopeAgentMemoryWrite;
+    case "projects:read":
+      return labels.scopeProjectsRead;
+    case "work:read":
+      return labels.scopeWorkRead;
+    case "activity:read":
+      return labels.scopeActivityRead;
+    case "runs:message":
+      return labels.scopeRunsMessage;
     default:
       return scope;
   }
@@ -433,6 +445,10 @@ export async function IntegrationsPanel({
     scopeMemoryRead: t("scopeMemoryRead"),
     scopeMemoryWrite: t("scopeMemoryWrite"),
     scopeAgentMemoryWrite: t("scopeAgentMemoryWrite"),
+    scopeProjectsRead: t("scopeProjectsRead"),
+    scopeWorkRead: t("scopeWorkRead"),
+    scopeActivityRead: t("scopeActivityRead"),
+    scopeRunsMessage: t("scopeRunsMessage"),
     errorGeneric: t("errorGeneric"),
   };
 

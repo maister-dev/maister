@@ -6,6 +6,7 @@ import { z } from "zod";
 import { getDb } from "@/lib/db/client";
 import { isMaisterError } from "@/lib/errors";
 import { getTaskDTO, updateTask } from "@/lib/services/tasks";
+import { tokenAuditIdentity } from "@/lib/tokens/audit";
 import {
   handleExt,
   httpStatusForExtCode,
@@ -39,6 +40,7 @@ export async function GET(
     {
       slug,
       scopeLabel: "tasks:read",
+      admitLibrarian: true,
       endpoint: ENDPOINT_TASK_GET,
       method: "GET",
       db,
@@ -70,6 +72,7 @@ export async function PATCH(
     {
       slug,
       scopeLabel: "tasks:update",
+      admitLibrarian: true,
       endpoint: ENDPOINT_TASK_PATCH,
       method: "PATCH",
       successAuditInWork: true,
@@ -107,9 +110,8 @@ export async function PATCH(
 
             await recordRequiredTokenAudit(
               {
-                tokenId: ctx.actor.tokenId,
+                ...tokenAuditIdentity(ctx.actor),
                 projectId: ctx.projectId,
-                actorLabel: ctx.actor.actorLabel,
                 scopeUsed: "tasks:update",
                 endpoint: ENDPOINT_TASK_PATCH,
                 method: "PATCH",

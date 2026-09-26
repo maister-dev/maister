@@ -120,6 +120,10 @@ const labels: TokenLabels = {
   scopeMemoryRead: "Read project memory",
   scopeMemoryWrite: "Write project memory",
   scopeAgentMemoryWrite: "Write agent memory",
+  scopeProjectsRead: "Read the projects you can see",
+  scopeWorkRead: "Read your cross-project work table",
+  scopeActivityRead: "Read your cross-project activity feed",
+  scopeRunsMessage: "Send operator messages to runs",
   errorGeneric: "Something went wrong",
 };
 

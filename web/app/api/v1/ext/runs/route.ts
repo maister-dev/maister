@@ -8,6 +8,7 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { launchRun } from "@/lib/services/runs";
+import { tokenAuditIdentity } from "@/lib/tokens/audit";
 import {
   handleExt,
   httpStatusForExtCode,
@@ -112,9 +113,8 @@ export async function POST(
             recordSuccessAudit: (tx) =>
               recordRequiredTokenAudit(
                 {
-                  tokenId: ctx.actor.tokenId,
+                  ...tokenAuditIdentity(ctx.actor),
                   projectId: ctx.projectId,
-                  actorLabel: ctx.actor.actorLabel,
                   scopeUsed: "runs:launch",
                   endpoint: ENDPOINT,
                   method: "POST",

@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { getDb } from "@/lib/db/client";
 import { getRunReadiness } from "@/lib/queries/readiness";
+import { runProjectResolver } from "@/lib/tokens/run-project";
 import { handleExt } from "@/lib/tokens/ext-handler";
 
 const ENDPOINT = "GET /api/v1/ext/runs/[runId]/readiness";
@@ -21,6 +22,8 @@ export async function GET(
     req,
     {
       scopeLabel: "readiness:read",
+      admitLibrarian: true,
+      resolveLibrarianProjectId: runProjectResolver(runId),
       endpoint: ENDPOINT,
       method: "GET",
       db,

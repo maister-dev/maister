@@ -19,6 +19,7 @@ import {
 } from "@/lib/notifications/subscriptions";
 import { getDb } from "@/lib/db/client";
 import { handleExt } from "@/lib/tokens/ext-handler";
+import { requirePersonalOrLibrarianActor } from "@/lib/tokens/personal-actor";
 import { isMaisterError } from "@/lib/errors";
 import { requireActiveUserById } from "@/lib/authz";
 
@@ -33,25 +34,12 @@ const NOT_FOUND = {
   message: "notification subscription not found",
 } as const;
 
+// A notification subscription is a PERSON's, and a librarian must never change
+// where its owner is told (ADR-173 D10, ADR-184).
 function refuseNonPersonal(ctx: {
-  actor: {
-    tokenKind: string;
-    ownerUserId: string | null;
-    projectId: string | null;
-  };
+  actor: Parameters<typeof requirePersonalOrLibrarianActor>[0];
 }): NextResponse | null {
-  if (
-    ctx.actor.tokenKind !== "user" ||
-    ctx.actor.ownerUserId === null ||
-    ctx.actor.projectId !== null
-  ) {
-    return NextResponse.json(
-      { code: "UNAUTHORIZED", message: "global personal token required" },
-      { status: 403 },
-    );
-  }
-
-  return null;
+  return requirePersonalOrLibrarianActor(ctx.actor, { allowLibrarian: false });
 }
 
 export async function PATCH(

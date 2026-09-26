@@ -18,6 +18,7 @@ import {
   resolveProjectTaskByNumber,
   resolveTaskByKeyRef,
 } from "@/lib/social/task-lookup";
+import { tokenAuditIdentity } from "@/lib/tokens/audit";
 import {
   handleExt,
   httpStatusForExtCode,
@@ -102,9 +103,8 @@ async function refuseCrossProjectTarget(
   const auditRefusal = (statusCode: number) =>
     recordRequiredTokenAudit(
       {
-        tokenId: ctx.actor.tokenId,
+        ...tokenAuditIdentity(ctx.actor),
         projectId: targetProjectId,
-        actorLabel: ctx.actor.actorLabel,
         scopeUsed: audit.scopeUsed,
         endpoint: audit.endpoint,
         method: audit.method,
@@ -293,6 +293,7 @@ export async function GET(
     {
       slug,
       scopeLabel: "relations:read",
+      admitLibrarian: true,
       endpoint: ENDPOINT_RELATIONS_GET,
       method: "GET",
       db,
@@ -351,6 +352,7 @@ async function handleMutation(
     {
       slug,
       scopeLabel,
+      admitLibrarian: true,
       endpoint,
       method,
       successAuditInWork: true,
@@ -441,9 +443,8 @@ async function handleMutation(
 
           await recordRequiredTokenAudit(
             {
-              tokenId: ctx.actor.tokenId,
+              ...tokenAuditIdentity(ctx.actor),
               projectId: ctx.projectId,
-              actorLabel: ctx.actor.actorLabel,
               scopeUsed: scopeLabel,
               endpoint,
               method,

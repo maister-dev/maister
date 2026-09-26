@@ -2,6 +2,7 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 import { type AuthContext, resolveAuthHeader } from "./auth";
 import { callExt, hitlRespondToolError, restResponseToToolError } from "./rest";
+import { isToolsetName, TOOLSETS } from "./toolsets";
 
 export type ToolSpec = {
   description: string;
@@ -19,6 +20,13 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
         title: { type: "string", minLength: 1 },
         prompt: { type: "string", minLength: 1 },
         flowId: { type: "string", minLength: 1 },
+        operationKey: {
+          type: "string",
+          minLength: 1,
+          maxLength: 128,
+          description:
+            "Idempotency key for this effect (sent as the Idempotency-Key header). Required when acting as the librarian: reuse the SAME key when retrying the same effect, and a new key for a new effect.",
+        },
       },
       required: ["slug", "title", "prompt"],
     },
@@ -256,6 +264,13 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
         taskId: { type: "string" },
         title: { type: "string", minLength: 1 },
         prompt: { type: "string", minLength: 1 },
+        operationKey: {
+          type: "string",
+          minLength: 1,
+          maxLength: 128,
+          description:
+            "Idempotency key for this effect (sent as the Idempotency-Key header). Required when acting as the librarian: reuse the SAME key when retrying the same effect, and a new key for a new effect.",
+        },
       },
       required: ["slug", "taskId"],
     },
@@ -271,6 +286,13 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
         executorOverrideId: { type: "string", minLength: 1 },
         baseBranch: { type: "string", minLength: 1 },
         targetBranch: { type: "string", minLength: 1 },
+        operationKey: {
+          type: "string",
+          minLength: 1,
+          maxLength: 128,
+          description:
+            "Idempotency key for this effect (sent as the Idempotency-Key header). Required when acting as the librarian: reuse the SAME key when retrying the same effect, and a new key for a new effect.",
+        },
       },
       required: ["taskId"],
     },
@@ -519,6 +541,13 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
         agent: { type: "boolean" },
         push: { type: "boolean" },
         runnerId: { type: "string" },
+        operationKey: {
+          type: "string",
+          minLength: 1,
+          maxLength: 128,
+          description:
+            "Idempotency key for this effect (sent as the Idempotency-Key header). Required when acting as the librarian: reuse the SAME key when retrying the same effect, and a new key for a new effect.",
+        },
       },
       required: ["runId"],
     },
@@ -530,6 +559,13 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       type: "object",
       properties: {
         runId: { type: "string", minLength: 1 },
+        operationKey: {
+          type: "string",
+          minLength: 1,
+          maxLength: 128,
+          description:
+            "Idempotency key for this effect (sent as the Idempotency-Key header). Required when acting as the librarian: reuse the SAME key when retrying the same effect, and a new key for a new effect.",
+        },
       },
       required: ["runId"],
     },
@@ -541,6 +577,13 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       type: "object",
       properties: {
         runId: { type: "string", minLength: 1 },
+        operationKey: {
+          type: "string",
+          minLength: 1,
+          maxLength: 128,
+          description:
+            "Idempotency key for this effect (sent as the Idempotency-Key header). Required when acting as the librarian: reuse the SAME key when retrying the same effect, and a new key for a new effect.",
+        },
       },
       required: ["runId"],
     },
@@ -653,6 +696,13 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
         slug: { type: "string" },
         taskId: { type: "string" },
         body: { type: "string", minLength: 1 },
+        operationKey: {
+          type: "string",
+          minLength: 1,
+          maxLength: 128,
+          description:
+            "Idempotency key for this effect (sent as the Idempotency-Key header). Required when acting as the librarian: reuse the SAME key when retrying the same effect, and a new key for a new effect.",
+        },
       },
       required: ["slug", "taskId", "body"],
     },
@@ -720,6 +770,13 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
         },
         toNumber: { type: "integer", minimum: 1 },
         toTaskKey: { type: "string" },
+        operationKey: {
+          type: "string",
+          minLength: 1,
+          maxLength: 128,
+          description:
+            "Idempotency key for this effect (sent as the Idempotency-Key header). Required when acting as the librarian: reuse the SAME key when retrying the same effect, and a new key for a new effect.",
+        },
       },
       required: ["slug", "taskId", "kind"],
     },
@@ -744,8 +801,63 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
         },
         toNumber: { type: "integer", minimum: 1 },
         toTaskKey: { type: "string" },
+        operationKey: {
+          type: "string",
+          minLength: 1,
+          maxLength: 128,
+          description:
+            "Idempotency key for this effect (sent as the Idempotency-Key header). Required when acting as the librarian: reuse the SAME key when retrying the same effect, and a new key for a new effect.",
+        },
       },
       required: ["slug", "taskId", "kind"],
+    },
+  },
+  project_list: {
+    description:
+      "List the projects the token's owner can see (id, slug, name). Nothing outside the owner's visibility is ever listed.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  project_get: {
+    description:
+      "A project's routing directory: purpose (first README paragraph, or null when the owner may not read repository files), launchable flows, default runner, whether a triager is configured, whether Project Brain is enabled, and `asOf`. A project the owner cannot see answers like a missing one (404).",
+    inputSchema: {
+      type: "object",
+      properties: { slug: { type: "string" } },
+      required: ["slug"],
+    },
+  },
+  task_search: {
+    description:
+      "Search tasks by title, prompt or key (`KEY-12`) across the owner's visible projects, 25 per page, newest first. `truncated: true` means more matches exist — pass `nextCursor` as `cursor` or narrow `q`; never treat a truncated page as the complete answer.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        q: { type: "string", minLength: 1 },
+        cursor: { type: "string" },
+      },
+      required: ["q"],
+    },
+  },
+  work_list: {
+    description:
+      "The owner's cross-project work table: every task in the owner's visible projects with its derived work stage, blocked flag, latest run, readiness and who it waits on.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  decisions_list: {
+    description:
+      "The owner's own decision queue (HITL questions, promotable, crashed and triage-flagged work). Read-only: a human-only decision is answered by the owner in the UI, never through this tool.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  activity_feed: {
+    description:
+      "The owner's cross-project activity feed, newest first. `projectId` narrows to one visible project (a project the owner cannot see yields an empty feed).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string" },
+        kind: { type: "string" },
+        limit: { type: "integer", minimum: 1, maximum: 200 },
+      },
     },
   },
 };
@@ -775,15 +887,30 @@ export async function dispatchTool(opts: {
     return { isError: true, status: 401, message: "Missing bearer token" };
   }
 
+  // ADR-185: the librarian's operation key rides the `Idempotency-Key` header,
+  // never the body — the ext routes validate their bodies strictly.
+  const { operationKey, ...routedArgs } = args;
   const { method, path, body } = resolveRouting(
     name,
-    coerceNumericArgs(name, args),
+    coerceNumericArgs(name, routedArgs),
   );
+  const headers =
+    typeof operationKey === "string" && operationKey.length > 0
+      ? { "Idempotency-Key": operationKey }
+      : undefined;
 
   let res: Response;
 
   try {
-    res = await callExt({ baseUrl, authHeader, method, path, body, signal });
+    res = await callExt({
+      baseUrl,
+      authHeader,
+      method,
+      path,
+      body,
+      headers,
+      signal,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
 
@@ -858,6 +985,47 @@ function resolveRouting(
   body?: unknown;
 } {
   switch (name) {
+    case "project_list":
+      return { method: "GET", path: `/api/v1/ext/projects` };
+    case "project_get": {
+      const { slug } = args as { slug: string };
+
+      return {
+        method: "GET",
+        path: `/api/v1/ext/projects/${slug}/directory`,
+      };
+    }
+    case "task_search": {
+      const { q, cursor } = args as { q: string; cursor?: string };
+      const sp = new URLSearchParams({ q });
+
+      if (cursor !== undefined) sp.set("cursor", cursor);
+
+      return {
+        method: "GET",
+        path: `/api/v1/ext/tasks/search?${sp.toString()}`,
+      };
+    }
+    case "work_list":
+      return { method: "GET", path: `/api/v1/ext/work` };
+    case "decisions_list":
+      return { method: "GET", path: `/api/v1/ext/decisions` };
+    case "activity_feed": {
+      const { projectId, kind, limit } = args as {
+        projectId?: string;
+        kind?: string;
+        limit?: number;
+      };
+      const sp = new URLSearchParams();
+
+      if (projectId !== undefined) sp.set("projectId", projectId);
+      if (kind !== undefined) sp.set("kind", kind);
+      if (limit !== undefined) sp.set("limit", String(limit));
+
+      const suffix = sp.size > 0 ? `?${sp.toString()}` : "";
+
+      return { method: "GET", path: `/api/v1/ext/activity/feed${suffix}` };
+    }
     case "task_create": {
       const { slug, title, prompt, flowId } = args as {
         slug: string;
@@ -1198,14 +1366,13 @@ function resolveRouting(
       };
     }
     case "run_message": {
-      const { addressableKey, childRunId, prompt, requestKey, mode } =
-        args as {
-          addressableKey?: string;
-          childRunId?: string;
-          prompt: string;
-          requestKey?: string;
-          mode?: "steer" | "queue";
-        };
+      const { addressableKey, childRunId, prompt, requestKey, mode } = args as {
+        addressableKey?: string;
+        childRunId?: string;
+        prompt: string;
+        requestKey?: string;
+        mode?: "steer" | "queue";
+      };
       const body: Record<string, unknown> = { prompt };
 
       if (addressableKey !== undefined) body.addressableKey = addressableKey;
@@ -1467,4 +1634,24 @@ function resolveRouting(
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
+}
+
+// The tools a facade process exposes. An unnamed or unknown toolset exposes
+// every registered tool — the default for project and agent tokens.
+export function toolNamesForToolset(toolset: string | undefined): string[] {
+  if (!isToolsetName(toolset)) return Object.keys(TOOL_SPECS);
+
+  const allowed = new Set<string>(TOOLSETS[toolset]);
+
+  return Object.keys(TOOL_SPECS).filter((name) => allowed.has(name));
+}
+
+export function isToolInToolset(
+  name: string,
+  toolset: string | undefined,
+): boolean {
+  return (
+    Object.hasOwn(TOOL_SPECS, name) &&
+    toolNamesForToolset(toolset).includes(name)
+  );
 }

@@ -54,11 +54,13 @@ describe("TOOL_SPECS registry", () => {
   it("registers every external tool", () => {
     expect(Object.keys(TOOL_SPECS).sort()).toEqual(
       [
+        "activity_feed",
         "activity_pulse",
         "agent_memory_write",
         "ask_human",
         "comment_create",
         "comment_list",
+        "decisions_list",
         "evaluation_context_get",
         "evaluation_evidence_list",
         "evaluation_evidence_read",
@@ -69,10 +71,12 @@ describe("TOOL_SPECS registry", () => {
         "hitl_inbox",
         "hitl_list",
         "hitl_respond",
-        "memory_recall",
         "memory_clusters",
         "memory_propose",
+        "memory_recall",
         "memory_retain",
+        "project_get",
+        "project_list",
         "readiness_get",
         "relation_add",
         "relation_list",
@@ -95,8 +99,10 @@ describe("TOOL_SPECS registry", () => {
         "task_create",
         "task_get",
         "task_list",
+        "task_search",
         "task_update",
         "triage_set",
+        "work_list",
       ].sort(),
     );
   });

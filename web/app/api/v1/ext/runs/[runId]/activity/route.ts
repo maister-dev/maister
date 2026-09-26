@@ -14,6 +14,7 @@ import {
   getRunActivityResponse,
   serializeRunActivityResponse,
 } from "@/lib/ext-activity/service";
+import { runProjectResolver } from "@/lib/tokens/run-project";
 import { handleExt, httpStatusForExtCode } from "@/lib/tokens/ext-handler";
 
 const ENDPOINT = "GET /api/v1/ext/runs/[runId]/activity";
@@ -46,6 +47,8 @@ export async function GET(
     req,
     {
       scopeLabel: "runs:read",
+      admitLibrarian: true,
+      resolveLibrarianProjectId: runProjectResolver(runId),
       endpoint: ENDPOINT,
       method: "GET",
       db,

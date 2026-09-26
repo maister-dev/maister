@@ -13,7 +13,11 @@ import { requireProjectActionForUser } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
-import { bumpTokenLastUsed, recordTokenAudit } from "@/lib/tokens/audit";
+import {
+  bumpTokenLastUsed,
+  recordTokenAudit,
+  tokenAuditIdentity,
+} from "@/lib/tokens/audit";
 import { tokenHasScope } from "@/lib/tokens/scopes";
 import {
   httpStatusForTokenAuth,
@@ -170,6 +174,102 @@ export function httpStatusForExtCode(code: string): number {
   }
 }
 
+type OwnerAdmissionOpts = {
+  scopeLabel: string;
+  endpoint: string;
+  method: string;
+};
+
+// A global token acts as its owner, so a project-addressed request is admitted
+// only when the owner's LIVE project role allows the scope's action (ADR-046
+// for personal tokens, ADR-184 for librarian tokens). A project the owner cannot
+// see answers exactly like a missing one. A librarian token whose owner CAN see
+// the project but lacks the action gets a 403 naming the action, so the
+// librarian can tell the owner why instead of claiming the project is absent.
+async function refuseGlobalOwnerAction(
+  actor: TokenActor,
+  projectId: string,
+  opts: OwnerAdmissionOpts,
+  auditProjectId: string | null,
+  notFoundMessage: string,
+  d: Db,
+): Promise<NextResponse | null> {
+  const action = projectActionForScope(opts.scopeLabel);
+  let decision: "allow" | "forbidden" | "hidden" = "hidden";
+
+  if (
+    (actor.tokenKind === "user" || actor.tokenKind === "librarian") &&
+    actor.ownerUserId
+  ) {
+    try {
+      await requireProjectActionForUser(actor.ownerUserId, projectId, action);
+      decision = "allow";
+    } catch (err) {
+      if (!isMaisterError(err)) throw err;
+
+      if (actor.tokenKind === "librarian" && action !== "readBoard") {
+        try {
+          await requireProjectActionForUser(
+            actor.ownerUserId,
+            projectId,
+            "readBoard",
+          );
+          decision = "forbidden";
+        } catch (visibilityErr) {
+          if (!isMaisterError(visibilityErr)) throw visibilityErr;
+        }
+      }
+    }
+  }
+
+  if (actor.tokenKind === "librarian") {
+    const entry = {
+      turnId: actor.librarianTurnId,
+      scope: opts.scopeLabel,
+      action,
+      projectId,
+      decision,
+    };
+
+    if (decision === "allow") {
+      log.debug(entry, "librarian owner admission");
+    } else {
+      log.warn(entry, "librarian owner admission refused");
+    }
+  }
+
+  if (decision === "allow") return null;
+
+  const statusCode = decision === "forbidden" ? 403 : 404;
+
+  await recordRequiredTokenAudit(
+    {
+      ...tokenAuditIdentity(actor),
+      projectId: auditProjectId,
+      scopeUsed: opts.scopeLabel,
+      endpoint: opts.endpoint,
+      method: opts.method,
+      result: "error",
+      statusCode,
+    },
+    d,
+  );
+
+  return decision === "forbidden"
+    ? NextResponse.json(
+        {
+          code: "UNAUTHORIZED",
+          message: `the owner's project role does not allow '${action}'`,
+          details: { requiredAction: action },
+        },
+        { status: 403 },
+      )
+    : NextResponse.json(
+        { code: "NOT_FOUND", message: notFoundMessage },
+        { status: 404 },
+      );
+}
+
 export async function handleExt(
   req: Request,
   opts: {
@@ -191,6 +291,17 @@ export async function handleExt(
     auditProjectId?: string | null;
     resolveProjectId?: (ctx: ResolveProjectCtx) => Promise<string | null>;
     resolveScopeLabel?: (ctx: ResolveScopeCtx) => Promise<string>;
+    // ADR-184: a librarian token is refused unless the route opts in. Opting in
+    // is a statement that the route is part of the owner's business-work
+    // surface; human-only and coordinator routes never set it.
+    admitLibrarian?: boolean;
+    // ADR-184: how a project-less librarian token finds the project a
+    // resource-addressed route acts in (the run's project, for example). Other
+    // kinds keep their existing admission, so a global personal token's answer
+    // on these routes does not change.
+    resolveLibrarianProjectId?: (
+      ctx: ResolveProjectCtx,
+    ) => Promise<string | null>;
   },
   work: (ctx: ExtCtx) => Promise<NextResponse>,
 ): Promise<NextResponse> {
@@ -251,6 +362,39 @@ export async function handleExt(
   let auditProjectId: string | null =
     "auditProjectId" in opts ? (opts.auditProjectId ?? null) : actor.projectId;
 
+  if (actor.tokenKind === "librarian" && !opts.admitLibrarian) {
+    await recordRequiredTokenAudit(
+      {
+        ...tokenAuditIdentity(actor),
+        projectId: auditProjectId,
+        scopeUsed: opts.scopeLabel,
+        endpoint: opts.endpoint,
+        method: opts.method,
+        result: "error",
+        statusCode: 403,
+      },
+      d,
+    );
+    log.warn(
+      {
+        turnId: actor.librarianTurnId,
+        endpoint: opts.endpoint,
+        scope: opts.scopeLabel,
+        decision: "not_admitted",
+      },
+      "librarian token refused on a route that does not admit it",
+    );
+
+    return NextResponse.json(
+      {
+        code: "UNAUTHORIZED",
+        message: "this endpoint does not admit a librarian token",
+        details: { reason: "librarian_not_admitted" },
+      },
+      { status: 403 },
+    );
+  }
+
   // 3. If slug provided: resolve project and validate token project ownership.
   if (opts.slug) {
     const rows = await d
@@ -262,9 +406,8 @@ export async function handleExt(
     if (!project || project.archivedAt) {
       await recordRequiredTokenAudit(
         {
-          tokenId: actor.tokenId,
+          ...tokenAuditIdentity(actor),
           projectId: actor.projectId,
-          actorLabel: actor.actorLabel,
           scopeUsed: opts.scopeLabel,
           endpoint: opts.endpoint,
           method: opts.method,
@@ -290,9 +433,8 @@ export async function handleExt(
     ) {
       await recordRequiredTokenAudit(
         {
-          tokenId: actor.tokenId,
+          ...tokenAuditIdentity(actor),
           projectId: auditProjectId,
-          actorLabel: actor.actorLabel,
           scopeUsed: opts.scopeLabel,
           endpoint: opts.endpoint,
           method: opts.method,
@@ -309,69 +451,33 @@ export async function handleExt(
     }
 
     if (actor.projectId === null) {
-      if (actor.tokenKind !== "user" || !actor.ownerUserId) {
-        await recordRequiredTokenAudit(
-          {
-            tokenId: actor.tokenId,
-            projectId: auditProjectId,
-            actorLabel: actor.actorLabel,
-            scopeUsed: opts.scopeLabel,
-            endpoint: opts.endpoint,
-            method: opts.method,
-            result: "error",
-            statusCode: 404,
-          },
-          d,
-        );
+      const refused = await refuseGlobalOwnerAction(
+        actor,
+        project.id,
+        opts,
+        auditProjectId,
+        "project not found",
+        d,
+      );
 
-        return NextResponse.json(
-          { code: "NOT_FOUND", message: "project not found" },
-          { status: 404 },
-        );
-      }
-
-      try {
-        await requireProjectActionForUser(
-          actor.ownerUserId,
-          project.id,
-          projectActionForScope(opts.scopeLabel),
-        );
-      } catch (err) {
-        if (isMaisterError(err)) {
-          await recordRequiredTokenAudit(
-            {
-              tokenId: actor.tokenId,
-              projectId: auditProjectId,
-              actorLabel: actor.actorLabel,
-              scopeUsed: opts.scopeLabel,
-              endpoint: opts.endpoint,
-              method: opts.method,
-              result: "error",
-              statusCode: 404,
-            },
-            d,
-          );
-
-          return NextResponse.json(
-            { code: "NOT_FOUND", message: "project not found" },
-            { status: 404 },
-          );
-        }
-
-        throw err;
-      }
+      if (refused) return refused;
     }
   }
 
-  if (!opts.slug && opts.resolveProjectId) {
-    const resolvedProjectId = await opts.resolveProjectId({ actor, db: d });
+  const resolveProjectId =
+    opts.resolveProjectId ??
+    (actor.tokenKind === "librarian"
+      ? opts.resolveLibrarianProjectId
+      : undefined);
+
+  if (!opts.slug && resolveProjectId) {
+    const resolvedProjectId = await resolveProjectId({ actor, db: d });
 
     if (resolvedProjectId === null) {
       await recordRequiredTokenAudit(
         {
-          tokenId: actor.tokenId,
+          ...tokenAuditIdentity(actor),
           projectId: auditProjectId,
-          actorLabel: actor.actorLabel,
           scopeUsed: opts.scopeLabel,
           endpoint: opts.endpoint,
           method: opts.method,
@@ -397,9 +503,8 @@ export async function handleExt(
     ) {
       await recordRequiredTokenAudit(
         {
-          tokenId: actor.tokenId,
+          ...tokenAuditIdentity(actor),
           projectId: auditProjectId,
-          actorLabel: actor.actorLabel,
           scopeUsed: opts.scopeLabel,
           endpoint: opts.endpoint,
           method: opts.method,
@@ -416,66 +521,24 @@ export async function handleExt(
     }
 
     if (actor.projectId === null) {
-      if (actor.tokenKind !== "user" || !actor.ownerUserId) {
-        await recordRequiredTokenAudit(
-          {
-            tokenId: actor.tokenId,
-            projectId: auditProjectId,
-            actorLabel: actor.actorLabel,
-            scopeUsed: opts.scopeLabel,
-            endpoint: opts.endpoint,
-            method: opts.method,
-            result: "error",
-            statusCode: 404,
-          },
-          d,
-        );
+      const refused = await refuseGlobalOwnerAction(
+        actor,
+        resolvedProjectId,
+        opts,
+        auditProjectId,
+        "resource not found",
+        d,
+      );
 
-        return NextResponse.json(
-          { code: "NOT_FOUND", message: "resource not found" },
-          { status: 404 },
-        );
-      }
-
-      try {
-        await requireProjectActionForUser(
-          actor.ownerUserId,
-          resolvedProjectId,
-          projectActionForScope(opts.scopeLabel),
-        );
-      } catch (err) {
-        if (isMaisterError(err)) {
-          await recordRequiredTokenAudit(
-            {
-              tokenId: actor.tokenId,
-              projectId: auditProjectId,
-              actorLabel: actor.actorLabel,
-              scopeUsed: opts.scopeLabel,
-              endpoint: opts.endpoint,
-              method: opts.method,
-              result: "error",
-              statusCode: 404,
-            },
-            d,
-          );
-
-          return NextResponse.json(
-            { code: "NOT_FOUND", message: "resource not found" },
-            { status: 404 },
-          );
-        }
-
-        throw err;
-      }
+      if (refused) return refused;
     }
   }
 
   if (targetProjectId === null && !opts.allowGlobalActorWithoutProject) {
     await recordRequiredTokenAudit(
       {
-        tokenId: actor.tokenId,
+        ...tokenAuditIdentity(actor),
         projectId: auditProjectId,
-        actorLabel: actor.actorLabel,
         scopeUsed: opts.scopeLabel,
         endpoint: opts.endpoint,
         method: opts.method,
@@ -512,9 +575,8 @@ export async function handleExt(
   if (opts.requireScope !== false && !tokenHasScope(actor.scopes, scopeLabel)) {
     await recordRequiredTokenAudit(
       {
-        tokenId: actor.tokenId,
+        ...tokenAuditIdentity(actor),
         projectId: auditProjectId,
-        actorLabel: actor.actorLabel,
         scopeUsed: scopeLabel,
         endpoint: opts.endpoint,
         method: opts.method,
@@ -551,9 +613,8 @@ export async function handleExt(
 
       await recordRequiredTokenAudit(
         {
-          tokenId: actor.tokenId,
+          ...tokenAuditIdentity(actor),
           projectId: auditProjectId,
-          actorLabel: actor.actorLabel,
           scopeUsed: scopeLabel,
           endpoint: opts.endpoint,
           method: opts.method,
@@ -578,9 +639,8 @@ export async function handleExt(
   if (!(opts.successAuditInWork && statusCode < 400)) {
     await recordRequiredTokenAudit(
       {
-        tokenId: actor.tokenId,
+        ...tokenAuditIdentity(actor),
         projectId: auditProjectId,
-        actorLabel: actor.actorLabel,
         scopeUsed: scopeLabel,
         endpoint: opts.endpoint,
         method: opts.method,

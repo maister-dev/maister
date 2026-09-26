@@ -44,7 +44,8 @@ vi.mock("@/lib/db/client", () => ({
   getDb: mocks.getDb,
 }));
 
-vi.mock("@/lib/tokens/audit", () => ({
+vi.mock("@/lib/tokens/audit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/tokens/audit")>()),
   bumpTokenLastUsed: mocks.bumpTokenLastUsed,
   recordTokenAudit: mocks.recordTokenAudit,
 }));

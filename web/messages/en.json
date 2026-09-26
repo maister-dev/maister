@@ -3928,6 +3928,10 @@
     "scopeMemoryRead": "Read project memory",
     "scopeMemoryWrite": "Write project memory",
     "scopeAgentMemoryWrite": "Write agent memory",
+    "scopeProjectsRead": "Read the projects you can see",
+    "scopeWorkRead": "Read your cross-project work table",
+    "scopeActivityRead": "Read your cross-project activity feed",
+    "scopeRunsMessage": "Send operator messages to runs",
     "audit": {
       "title": "Token activity",
       "description": "Actions performed through API tokens — calls to the external API, not from the web UI.",
