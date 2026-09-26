@@ -6507,6 +6507,15 @@ paths:
         On success all strategies terminate the run at `Done` (no new run
         status); `pull_request` additionally records `pullRequestUrl`/`prNumber`.
 
+        (ADR-181 — Implemented) A `pull_request` promotion whose recorded PR
+        (`pr_number`) the provider reports merged finalizes it as it stands —
+        no squash, push or second PR, since the adapters find open PRs only —
+        at the head the PR carries, which must equal the worktree's `HEAD`
+        (else `409 PRECONDITION` `merged_pr_behind`, the claim released). When
+        the provider cannot be read and `pr_state_scan` last saw the PR merged,
+        it is `503 EXECUTOR_UNAVAILABLE` and nothing is pushed. A scratch run's
+        PR, which no scan tracks, is read the same way.
+
         (ADR-181 — Implemented) A scratch run promotes in all three modes,
         target-locked to `scratch_runs.target_branch`, else its base branch (a
         `targetBranch` naming anything else is `PRECONDITION`): `rebase_merge`
@@ -6552,7 +6561,8 @@ paths:
             `target_branch_unknown` (the target does not resolve to a commit),
             `target_locked` (a scratch run promoted onto a branch other than its
             locked target), `provider_unsupported` (PR mode with no usable
-            provider) — the only `details` field forwarded.
+            provider), `merged_pr_behind` (the recorded PR was merged without
+            the worktree's later commits) — the only `details` field forwarded.
             (ADR-181 — Implemented) Also `CONFLICT` `details.reason:
             publication_diverged` when a squashing `pull_request` promotion's
             forced PR-branch update would drop commits only that branch has:
@@ -6564,7 +6574,9 @@ paths:
         "503":
           description: |
             Retryable transient failure (`EXECUTOR_UNAVAILABLE`) — a `git push`
-            rejection or a provider PR-API 5xx during `pull_request` promotion.
+            rejection or a provider PR-API 5xx during `pull_request` promotion,
+            or (ADR-181) an unreadable provider for a recorded PR the scan saw
+            merged, when nothing is pushed.
             No `pullRequestUrl` is stored; the run stays `Review` and the
             promotion is idempotent on retry. Reuses the closed `MaisterError`
             union (ADR-008) — `EXECUTOR_UNAVAILABLE` is an existing member, no
@@ -10045,7 +10057,10 @@ paths:
           the target-drift gate and every other promotion gate apply unchanged.
           `reviewedTargetCommit` (the target head the panel rendered —
           `git-state.targetHead`) is required there, and `allowTargetDrift`
-          is the explicit "Finalize anyway" override.
+          is the explicit "Finalize anyway" override. A recorded PR the
+          provider reports merged is finalized as it stands, at the head it
+          carries (`merged_pr_behind` when that is not the worktree's `HEAD`),
+          with no push and no second PR.
         - From `Crashed | Failed | Abandoned` there is no graph readiness to
           assert — the operator's click is the decision. The recorded PR
           (`pr_number`) is read from its provider first, and the finalize

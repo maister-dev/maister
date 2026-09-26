@@ -15,7 +15,7 @@ import {
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { assertEvidenceReady } from "@/lib/flows/graph/evidence-readiness";
-import { selectPrAdapter } from "@/lib/runs/pr-adapter";
+import { getPrState, selectPrAdapter } from "@/lib/runs/pr-adapter";
 import {
   assertPushKeepsPublication,
   PublicationDivergedError,
@@ -153,8 +153,20 @@ const createOrUpdatePr = vi.fn(async () => ({
 }));
 const preflight = vi.fn(async () => undefined);
 
+// The provider's view of a recorded PR. The default is an open PR at the
+// run's head, so a re-promote reads as it did before any PR was merged.
+const OPEN_AT_HEAD = {
+  kind: "state" as const,
+  state: "open" as const,
+  mergedAt: null,
+  mergeCommitSha: null,
+  hasConflicts: false,
+  headSha: "source-head-000",
+};
+
 vi.mock("@/lib/runs/pr-adapter", () => ({
   selectPrAdapter: vi.fn(() => ({ preflight, createOrUpdatePr })),
+  getPrState: vi.fn(async () => OPEN_AT_HEAD),
 }));
 
 vi.mock("@/lib/worktree", () => ({
@@ -303,6 +315,7 @@ beforeEach(() => {
     .mockReset()
     .mockReturnValue({ preflight, createOrUpdatePr } as never);
   preflight.mockReset().mockResolvedValue(undefined);
+  vi.mocked(getPrState).mockReset().mockResolvedValue(OPEN_AT_HEAD);
   createOrUpdatePr.mockReset().mockResolvedValue({
     url: "https://github.com/org/repo/pull/77",
     number: 77,
@@ -558,6 +571,126 @@ describe("promoteRun — scratch pull_request (ADR-181 D13)", () => {
 
     expect(pushBranch).not.toHaveBeenCalled();
     expect(createOrUpdatePr).not.toHaveBeenCalled();
+  });
+});
+
+// =============================================================================
+// a recorded PR the provider reports merged — it IS the delivery
+// =============================================================================
+
+// The PR was merged on the provider before the run was promoted or finalized.
+// Squashing or pushing now would rewrite a branch the provider already merged,
+// and the adapters find only open PRs, so a second PR would be attempted. The
+// merged PR is finalized as it stands, when it carries the run's head.
+describe("promoteRun — a recorded PR the provider reports merged", () => {
+  const MERGED_AT_HEAD = {
+    ...OPEN_AT_HEAD,
+    state: "merged" as const,
+    mergedAt: "2026-09-26T08:00:00Z",
+    mergeCommitSha: "m".repeat(40),
+  };
+
+  it("finalizes it as it stands: no squash, no push, no new PR", async () => {
+    const runId = seedGithubFlowRun({
+      prUrl: "https://github.com/org/repo/pull/77",
+      prNumber: 77,
+    });
+
+    dbState.tables.runs[0].executionPolicy = { preset: "unattended" };
+    vi.mocked(getPrState).mockResolvedValue(MERGED_AT_HEAD);
+
+    await callPromote(runId, {
+      mode: "pull_request",
+      reviewedTargetCommit: "tip00000",
+    });
+
+    expect(squashRunBranch).not.toHaveBeenCalled();
+    expect(pushBranch).not.toHaveBeenCalled();
+    expect(createOrUpdatePr).not.toHaveBeenCalled();
+    expect(dbState.tables.runs[0]).toMatchObject({
+      status: "Done",
+      promotedHeadSha: "source-head-000",
+    });
+    expect(dbState.tables.workspaces[0]).toMatchObject({
+      promotionState: "done",
+      prUrl: "https://github.com/org/repo/pull/77",
+      prNumber: 77,
+    });
+  });
+
+  it("refuses, rewriting nothing, when the worktree moved past the merged head", async () => {
+    const runId = seedGithubFlowRun({
+      prUrl: "https://github.com/org/repo/pull/77",
+      prNumber: 77,
+    });
+
+    vi.mocked(getPrState).mockResolvedValue({
+      ...MERGED_AT_HEAD,
+      headSha: "older-head-00",
+    });
+
+    await expect(
+      callPromote(runId, {
+        mode: "pull_request",
+        reviewedTargetCommit: "tip00000",
+      }),
+    ).rejects.toMatchObject({
+      code: "PRECONDITION",
+      details: { reason: "merged_pr_behind" },
+    });
+    expect(pushBranch).not.toHaveBeenCalled();
+    expect(createOrUpdatePr).not.toHaveBeenCalled();
+    expect(dbState.tables.runs[0].status).toBe("Review");
+    expect(dbState.tables.workspaces[0].promotionState).toBe("failed");
+  });
+
+  // The scan saw it merged and the provider cannot be asked now: pushing again
+  // is the one thing that must not happen, so the retry waits for the provider.
+  it("pushes nothing when the scan saw the PR merged and the provider cannot be read", async () => {
+    const runId = seedGithubFlowRun({
+      prUrl: "https://github.com/org/repo/pull/77",
+      prNumber: 77,
+    });
+
+    dbState.tables.workspaces[0].prState = "merged";
+    vi.mocked(getPrState).mockResolvedValue({
+      kind: "skip",
+      transient: true,
+      reason: "gh CLI not available",
+    });
+
+    await expectMaisterCode(
+      callPromote(runId, {
+        mode: "pull_request",
+        reviewedTargetCommit: "tip00000",
+      }),
+      "EXECUTOR_UNAVAILABLE",
+    );
+    expect(pushBranch).not.toHaveBeenCalled();
+    expect(createOrUpdatePr).not.toHaveBeenCalled();
+    expect(dbState.tables.runs[0].status).toBe("Review");
+    expect(dbState.tables.workspaces[0].promotionState).toBe("claiming");
+  });
+
+  // No scan tracks a scratch PR, so only the provider can say it was merged.
+  it("finalizes a scratch run's merged PR the same way, settling the dialog", async () => {
+    const runId = seedGithubScratchRun();
+
+    Object.assign(dbState.tables.workspaces[0], {
+      prUrl: "https://github.com/org/repo/pull/77",
+      prNumber: 77,
+    });
+    vi.mocked(getPrState).mockResolvedValue(MERGED_AT_HEAD);
+
+    await callPromote(runId, { mode: "pull_request" });
+
+    expect(pushBranch).not.toHaveBeenCalled();
+    expect(createOrUpdatePr).not.toHaveBeenCalled();
+    expect(dbState.tables.scratch_runs[0].dialogStatus).toBe("Done");
+    expect(dbState.tables.runs[0]).toMatchObject({
+      status: "Done",
+      promotedHeadSha: "source-head-000",
+    });
   });
 });
 

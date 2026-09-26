@@ -260,6 +260,16 @@ sequenceDiagram
     Note over W,DB: Claim tx (mints attempt token, commits BEFORE side-effect)
     W->>DB: SELECT workspace FOR UPDATE, assert status/readiness/drift/no-active-claim
     W->>DB: mint promotion_attempt_id, CAS promotion_state=claiming, COMMIT
+    opt a PR is recorded (ADR-181)
+        W->>PA: getPrState(pr_number)
+        alt merged on the provider, at the worktree HEAD
+            W->>DB: finalize as it stands (no squash, push or second PR)
+            W-->>U: 200 Done
+        else merged without the worktree HEAD
+            W->>DB: promotion_state=failed (token-matched)
+            W-->>U: 409 PRECONDITION merged_pr_behind
+        end
+    end
     Note over W,PA: Side-effect (NO lock held)
     W->>PA: preflight by provider (CLI on PATH or token set, remote configured)
     alt provider generic or preflight fails
@@ -292,6 +302,9 @@ sequenceDiagram
 | PR preflight fail (CLI/token/remote missing, `generic` provider) | 409 `PRECONDITION` | `promotion_state = failed`; run stays `Review` |
 | Concurrent promote (a fresh active `claiming` already present) | 409 `CONFLICT` | unchanged; wait for the in-flight promotion |
 | Push rejected / PR-API 5xx (transient) | **503 `EXECUTOR_UNAVAILABLE`** | leaves `claiming`; run stays `Review`, **no `pr_url`**; idempotently retryable |
+| Recorded PR already merged on the provider, at the worktree `HEAD` (ADR-181) | 200 | finalized as it stands: `Done`, no squash, push or second PR |
+| Recorded PR merged without the worktree's `HEAD` (ADR-181) | 409 `PRECONDITION` `merged_pr_behind` | `promotion_state = failed`; run stays `Review` |
+| Provider unreadable while the scan saw the PR merged (ADR-181) | **503 `EXECUTOR_UNAVAILABLE`** | leaves `claiming`; nothing pushed |
 | Finalize superseded by a same-user stale reclaim | 409 `CONFLICT` | superseded attempt writes NOTHING; the reclaiming attempt owns finalize |
 | Already `Done` / non-`Review` (retry after success) | 409 | terminal — no re-attempt |
 

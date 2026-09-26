@@ -117,6 +117,18 @@ describe("RunHeaderPromotionAction — a refused Promote", () => {
     );
   });
 
+  it("names a merged PR that lacks the run's later commits", async () => {
+    await promoteRefusedWith({
+      code: "PRECONDITION",
+      message: "server text",
+      details: { reason: "merged_pr_behind" },
+    });
+
+    expect(feedbackError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "run.mergedPrBehind" }),
+    );
+  });
+
   it("keeps the code's copy for any other CONFLICT", async () => {
     await promoteRefusedWith({ code: "CONFLICT", message: "merge conflict" });
 

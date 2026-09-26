@@ -110,3 +110,14 @@ export function isPublicationDivergedResponse(value: unknown): boolean {
       "publication_diverged"
   );
 }
+
+// ADR-181 (Codex F4): the recorded PR was merged on the provider without the
+// run's later commits. Nothing was changed; they need a PR of their own.
+export function isMergedPrBehindResponse(value: unknown): boolean {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    (value as { details?: { reason?: unknown } }).details?.reason ===
+      "merged_pr_behind"
+  );
+}

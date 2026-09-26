@@ -206,6 +206,21 @@ describe("ReviewPanel — a refused Promote", () => {
     expect(document.body.textContent).not.toContain("server text");
   });
 
+  it("says the merged PR lacks the run's later commits, not a generic refusal", async () => {
+    refuseWith({
+      code: "PRECONDITION",
+      message: "server text",
+      details: { reason: "merged_pr_behind" },
+    });
+    render();
+
+    await promote();
+
+    expect(document.body.textContent).toContain("run.mergedPrBehind");
+    expect(document.body.textContent).not.toContain("server text");
+    expect(byTestId("review-conflict")).toBeNull();
+  });
+
   it("still shows the merge-conflict card for any other CONFLICT", async () => {
     refuseWith({ code: "CONFLICT", message: "merge conflict" });
     render();

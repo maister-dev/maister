@@ -61,7 +61,12 @@ import {
   resolvePublishName,
 } from "@/lib/workbench-git/publication";
 import { WORKTREE_ACTION_STATUSES } from "@/lib/workbench-git/policy";
-import { preflightedPrAdapter } from "@/lib/workbench-git/pull-request";
+import {
+  mergedPullRequestBehind,
+  preflightedPrAdapter,
+  readRecordedPullRequest,
+  type RecordedPullRequest,
+} from "@/lib/workbench-git/pull-request";
 import { readWorktreeProvenanceForPromotion } from "@/lib/worktree-provenance";
 import { commitsFromSnapshot } from "@/lib/runs/execution-policy";
 import {
@@ -948,6 +953,18 @@ async function promoteWorkspaceRun(
     );
   }
 
+  if (claim.resolvedMode === "pull_request") {
+    const delivered = await finalizeMergedRecordedPullRequest({
+      runId,
+      ctx,
+      db,
+      claim,
+      attribution: input.attribution ?? null,
+    });
+
+    if (delivered !== null) return delivered;
+  }
+
   // ADR-181 (C): a squash PR promotion force-updates the PR branch, so commits
   // only that branch has (a suggestion committed on the PR) would leave it. It
   // is refused BEFORE the squash rewrites anything; the run's own pre-squash
@@ -1481,6 +1498,79 @@ async function guardForcedPrPush(
   }
 
   return { publicBranch, leaseSha };
+}
+
+// ADR-181 (Codex F4): the adapters find only OPEN pull requests, so a recorded
+// PR the provider already merged would be pushed to (squashed first) and a
+// second PR attempted. A merged PR IS the delivery, finalized as it stands at
+// the head it carries, which must be the worktree's HEAD, or the commits after
+// it would read as delivered (refused, the claim released). Null: the ordinary
+// PR path applies (no PR recorded, or open or closed on the provider). An
+// unreadable PR is that path's to meet too, unless the scan already saw it
+// merged, when pushing again is the one thing that must not happen.
+async function finalizeMergedRecordedPullRequest(args: {
+  runId: string;
+  ctx: PromoteRunContext;
+  db: Db;
+  claim: FlowClaim;
+  attribution: PromotionAttribution | null;
+}): Promise<PromoteRunResult | null> {
+  const { runId, db, claim } = args;
+  const prNumber: number | null = claim.workspace.prNumber ?? null;
+
+  if (prNumber === null) return null;
+
+  let pr: RecordedPullRequest;
+
+  try {
+    pr = await readRecordedPullRequest({
+      project: await loadProject(db, claim.run.projectId),
+      parentRepoPath: claim.workspace.parentRepoPath,
+      prNumber,
+    });
+  } catch (err) {
+    if (claim.workspace.prState !== "merged") return null;
+    // Transient: the claim stays `claiming` for the retry, as a push does.
+    if (!(isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE")) {
+      await markPromotionFailed(db, claim.workspace.id, claim.attemptId);
+    }
+    throw err;
+  }
+
+  if (pr.state !== "merged") return null;
+
+  const head = await headCommit({
+    worktreePath: claim.workspace.worktreePath,
+  });
+
+  if (pr.headSha !== head) {
+    log.info(
+      { runId, prNumber, prHead: pr.headSha, head },
+      "promotion refused — the recorded PR was merged without the worktree's HEAD",
+    );
+    await markPromotionFailed(db, claim.workspace.id, claim.attemptId);
+    throw mergedPullRequestBehind({
+      runId,
+      prNumber,
+      prHead: pr.headSha,
+      head,
+    });
+  }
+
+  log.info(
+    { runId, prNumber, headSha: head },
+    "recorded PR already merged on the provider — finalized as it stands",
+  );
+
+  return finalizePullRequest({
+    runId,
+    ctx: args.ctx,
+    db,
+    claim,
+    pr: { url: claim.workspace.prUrl, number: prNumber },
+    sourceHead: head,
+    attribution: args.attribution,
+  });
 }
 
 // PR-mode side-effect (§3.2 step 4/5): preflight → push → createOrUpdatePr →
@@ -2207,24 +2297,35 @@ async function promoteScratchRun(
   // D13: a scratch PR is the workspace run's — the same publish and open cores
   // and the ONE PR finalize (its scratch arm settles the dialog).
   if (mode === "pull_request") {
+    const prClaim: FlowClaim = {
+      attemptId: claim.attemptId,
+      run: claim.run,
+      workspace: claim.workspace,
+      resolvedMode: "pull_request",
+      responseMode: "pull_request",
+      promotionMode: "pull_request",
+      resolvedTarget: claim.targetBranch,
+      policy: deliveryPolicyFromLegacyPromotionMode({
+        projectPromotionMode: "pull_request",
+        projectMainBranch: claim.targetBranch,
+      }),
+      baseCommit: claim.scratch.baseCommit ?? null,
+    };
+    const delivered = await finalizeMergedRecordedPullRequest({
+      runId,
+      ctx,
+      db,
+      claim: prClaim,
+      attribution: null,
+    });
+
+    if (delivered !== null) return delivered;
+
     return promotePullRequestSideEffect({
       runId,
       ctx,
       db,
-      claim: {
-        attemptId: claim.attemptId,
-        run: claim.run,
-        workspace: claim.workspace,
-        resolvedMode: "pull_request",
-        responseMode: "pull_request",
-        promotionMode: "pull_request",
-        resolvedTarget: claim.targetBranch,
-        policy: deliveryPolicyFromLegacyPromotionMode({
-          projectPromotionMode: "pull_request",
-          projectMainBranch: claim.targetBranch,
-        }),
-        baseCommit: claim.scratch.baseCommit ?? null,
-      },
+      claim: prClaim,
       forcedPr: null,
       attribution: null,
     });

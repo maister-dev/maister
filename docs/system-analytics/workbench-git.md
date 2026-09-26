@@ -224,6 +224,7 @@ sequenceDiagram
     Fin->>Fin: policy(finalizePr) — pr_state must not be closed
     alt status Review
         Fin->>DB: promoteRun(mode=pull_request, reviewedTargetCommit) — readiness and drift apply
+        Fin->>PA: getPrState(pr_number) — merged at the worktree HEAD: finalized as it stands, no push or new PR
     else Crashed | Failed | Abandoned
         Fin->>PA: getPrState(pr_number) — the PR's own head, as the provider reports it
         Fin->>Fin: provider reports it closed -> pr_closed
@@ -336,7 +337,11 @@ is `CONFLICT`, the rest `PRECONDITION`), and an unknown run is 404 with
   `pr_state='open'` only after the provider answered (enforced by
   `openPullRequest`).
 - Finalize from `Review` MUST be `promoteRun(mode:'pull_request')` with the
-  operator's `reviewedTargetCommit`; from `Crashed | Failed | Abandoned` it MUST
+  operator's `reviewedTargetCommit`, which MUST finalize a recorded PR the
+  provider reports merged as it stands — no squash, push or second PR — and
+  refuse `merged_pr_behind` when it does not carry the worktree's `HEAD`
+  (enforced by `finalizeMergedRecordedPullRequest`, for scratch runs too); from
+  `Crashed | Failed | Abandoned` it MUST
   bind to the head the recorded PR carries as its provider reports it — never
   to the latest publication — refusing `publish_stale` for an open PR at
   another head, `merged_pr_behind` for a merged PR without the worktree's

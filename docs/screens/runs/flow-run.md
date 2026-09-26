@@ -319,6 +319,13 @@ this screen owns only the surface. All copy comes from the `run` namespace.
   (`run.publicationDiverged`) with **Sync branch** into the git panel's Update,
   where the operator updates onto the publication first; the header's one-click
   Promote reports the same copy. Any other `CONFLICT` keeps the conflict card.
+- **Merged-PR refusal** (ADR-181 — Implemented) — a `pull_request` promotion
+  whose recorded PR the provider already merged without the run's later
+  commits (`PRECONDITION` `details.reason: merged_pr_behind`) shows
+  `run.mergedPrBehind` in the review panel's alert line, and the header's
+  Promote reports the same copy: nothing changed, open a new PR for those
+  commits in the git panel. A PR merged at the run's head needs no copy — the
+  promotion finalizes it as it stands.
 - **`ai_rebase_merge` promote dialog** — when the resolved promotion mode is
   `ai_rebase_merge`, the promote dialog gains an **auto-finalize after resolve**
   checkbox, **default OFF** (two-step default: a resolved conflict returns the run

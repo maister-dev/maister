@@ -11,6 +11,7 @@ import { useFeedback } from "@/components/feedback/feedback-provider";
 import { resolveUiErrorMessageKey } from "@/lib/ui-error-message";
 import {
   buildPromotionRequestBody,
+  isMergedPrBehindResponse,
   isPublicationDivergedResponse,
   isTargetDriftResponse,
 } from "@/lib/runs/promotion-operation";
@@ -34,6 +35,16 @@ export function RunHeaderPromotionAction({
   const router = useRouter();
   const t = useTranslations("run");
   const [busy, setBusy] = useState(false);
+
+  // ADR-181: a refusal with a way out of its own reads as that, not as its
+  // code's copy — the PR branch keeps commits the run lacks (C), or the PR was
+  // merged without the run's later commits (Codex F4).
+  function refusalMessage(data: { code?: string } | null): string {
+    if (isPublicationDivergedResponse(data)) return t("publicationDiverged");
+    if (isMergedPrBehindResponse(data)) return t("mergedPrBehind");
+
+    return t(resolveUiErrorMessageKey(data?.code));
+  }
 
   async function promote(): Promise<void> {
     const body = buildPromotionRequestBody(operation);
@@ -76,11 +87,7 @@ export function RunHeaderPromotionAction({
 
       feedback.error({
         mutationId: `run-promote:${operation.runId}:failure`,
-        // ADR-181 (C): no merge conflict — the PR branch holds commits the run
-        // does not.
-        message: isPublicationDivergedResponse(data)
-          ? t("publicationDiverged")
-          : t(resolveUiErrorMessageKey(data?.code)),
+        message: refusalMessage(data),
       });
     } catch {
       feedback.error({

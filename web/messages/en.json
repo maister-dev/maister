@@ -2338,6 +2338,7 @@
     "prReopen": "Reopen pull request",
     "targetDrift": "The target branch advanced since this review. Re-review the updated diff, or promote anyway.",
     "publicationDiverged": "The pull request's branch has commits this run does not — promoting would drop them, so nothing was changed. Update onto the published branch in the git panel first, then promote again.",
+    "mergedPrBehind": "The pull request was merged without this run's latest commits, so nothing was changed. Open a new pull request for them in the git panel.",
     "promoteAnyway": "Promote anyway",
     "relaunchToPromote": "This run predates branch targeting and has no promotion metadata. Relaunch the task to promote it.",
     "diffTruncated": "This diff is too large to show in full (over 4 MiB) and was truncated. Review the complete change in the pull request or via `git diff` before promoting.",

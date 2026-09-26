@@ -19,6 +19,7 @@ import {
 import { resolveUiErrorMessageKey } from "@/lib/ui-error-message";
 import {
   buildPromotionRequestBody,
+  isMergedPrBehindResponse,
   isPublicationDivergedResponse,
   isTargetDriftResponse,
   promotionBlockReason,
@@ -235,6 +236,12 @@ export function ReviewPanel({
 
       if (isPublicationDivergedResponse(data)) {
         setDiverged(true);
+
+        return;
+      }
+
+      if (isMergedPrBehindResponse(data)) {
+        setError(t("mergedPrBehind"));
 
         return;
       }

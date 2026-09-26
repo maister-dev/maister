@@ -700,5 +700,39 @@ describe("POST /api/runs/{runId}/pr/finalize", () => {
 
       expect(promoted?.data).not.toHaveProperty("source");
     });
+
+    // Merged on the provider first: the adapters find open PRs only, and the
+    // branch may be gone. The merged PR is the delivery, finalized as it stands.
+    it.each([
+      ["kept", false],
+      ["deleted on merge", true],
+    ])(
+      "finalizes a PR merged on the provider, its branch %s, without pushing or opening another",
+      async (_label, deleted) => {
+        const run = await prRun({
+          status: "Review",
+          runKind: "agent",
+          prState: "merged",
+        });
+
+        providerState = "merged";
+        providerHead = run.head;
+        if (deleted) await gitIn(repo.remote, ["branch", "-D", PUBLIC]);
+
+        const res = await post(run.runId, {
+          reviewedTargetCommit: repo.baseSha,
+        });
+
+        expect(res.status).toBe(200);
+        expect(createOrUpdatePr).not.toHaveBeenCalled();
+        expect(await runRow(db, run.runId)).toMatchObject({
+          status: "Done",
+          promotedHeadSha: run.head,
+        });
+        await expect(
+          gitIn(repo.remote, ["rev-parse", "--verify", `refs/heads/${PUBLIC}`]),
+        )[deleted ? "rejects" : "resolves"].toBeDefined();
+      },
+    );
   });
 });
