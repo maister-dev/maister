@@ -2656,6 +2656,9 @@
       "not_awaiting_input": "This run is no longer waiting for this answer. Check the refreshed run.",
       "agent_session_ended": "The agent session ended before your answer arrived. Relaunch the run.",
       "agent_session_ended_scratch": "The agent session ended before your answer arrived. Recover the run or relaunch it.",
+      "session_ended": "The agent session ended before your answer arrived, so it was not delivered. The run is being reconciled; if it can be recovered, Recover will ask again.",
+      "session_ended_scratch": "The agent session ended before your answer arrived, so it was not delivered. The dialog is being reconciled; if it can be recovered, Recover will ask again.",
+      "permission_not_pending": "This request is no longer pending; the run has moved on.",
       "delivery_unavailable": "Your answer is saved; delivery is pending. Retry delivery to send it.",
       "permission_delivery_rejected": "The checkpointed permission could not accept your answer. Relaunch the run.",
       "permission_delivery_rejected_scratch": "The checkpointed permission could not accept your answer. Recover the run or relaunch it."

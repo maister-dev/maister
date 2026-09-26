@@ -38,7 +38,8 @@ const cases = [
   ["CONFLICT", "already_delivered"],
   ["CONFLICT", "option_mismatch"],
   ["CONFLICT", "not_awaiting_input"],
-  ["HITL_TIMEOUT", "agent_session_ended"],
+  ["CONFLICT", "session_ended"],
+  ["HITL_TIMEOUT", "permission_not_pending"],
   ["HITL_TIMEOUT", "permission_delivery_rejected"],
   ["EXECUTOR_UNAVAILABLE", "delivery_unavailable"],
 ] as const;
@@ -165,7 +166,8 @@ describe("RunHitlResponse operator reasons", () => {
     it(`${locale}: an unknown code or mismatched reason never exposes a token`, async () => {
       const responses = [
         { code: "FUTURE_CODE", details: { reason: "future_reason" } },
-        { code: "CONFLICT", details: { reason: "agent_session_ended" } },
+        // `permission_not_pending` belongs to HITL_TIMEOUT, not CONFLICT.
+        { code: "CONFLICT", details: { reason: "permission_not_pending" } },
       ];
 
       vi.stubGlobal(
@@ -185,7 +187,7 @@ describe("RunHitlResponse operator reasons", () => {
       expect(container.textContent).toContain(
         (locale === "en" ? en : ru).run.error.CONFLICT,
       );
-      expect(container.textContent).not.toContain("agent_session_ended");
+      expect(container.textContent).not.toContain("permission_not_pending");
     });
   }
 
@@ -287,6 +289,36 @@ describe("RunHitlResponse stored answer", () => {
 
     render("en", { hitlRequestId: "hitl-2", onRespond });
     expect(container.textContent).toContain("Deny");
+  });
+
+  // D-G2: the dead session's stored answer is evidence, not a pending
+  // delivery — offering a retry would loop the same 409.
+  it("a session_ended refusal on a stored answer leaves no retry control", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              code: "CONFLICT",
+              details: { reason: "session_ended" },
+            }),
+            { status: 409 },
+          ),
+      ),
+    );
+    render("en", {
+      answerState: "answer_stored",
+      storedResponse: { optionId: "allow" },
+    });
+    await click(en.run.retryDelivery);
+
+    expect(container.textContent).toContain(en.run.errorReasons.session_ended);
+    expect(
+      [...container.querySelectorAll("button")].some(
+        (button) => button.textContent === en.run.retryDelivery,
+      ),
+    ).toBe(false);
   });
 
   it("shows an authoritative stored choice to a read-only viewer", () => {
@@ -520,7 +552,7 @@ describe("RunHitlResponse stored answer", () => {
           new Response(
             JSON.stringify({
               code: "HITL_TIMEOUT",
-              details: { reason: "agent_session_ended" },
+              details: { reason: "permission_not_pending" },
             }),
             { status: 410 },
           ),
@@ -530,7 +562,7 @@ describe("RunHitlResponse stored answer", () => {
     await click("Allow");
 
     expect(feedbackError).toHaveBeenCalledWith({
-      message: en.run.errorReasons.agent_session_ended,
+      message: en.run.errorReasons.permission_not_pending,
       mutationId: expect.stringMatching(/^hitl-terminal:run-1:hitl-1:1$/),
     });
     act(() => root.unmount());
@@ -623,17 +655,17 @@ function renderInbox(item: HitlItem, expanded: boolean): void {
 }
 
 describe("inbox card response mounts", () => {
-  it("uses scratch recovery copy for an inbox scratch permission 410", async () => {
+  it("uses scratch recovery copy for an inbox scratch session_ended 409", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(
         async () =>
           new Response(
             JSON.stringify({
-              code: "HITL_TIMEOUT",
-              details: { reason: "agent_session_ended" },
+              code: "CONFLICT",
+              details: { reason: "session_ended" },
             }),
-            { status: 410 },
+            { status: 409 },
           ),
       ),
     );
@@ -641,10 +673,10 @@ describe("inbox card response mounts", () => {
     await click("Allow");
 
     expect(container.textContent).toContain(
-      en.run.errorReasons.agent_session_ended_scratch,
+      en.run.errorReasons.session_ended_scratch,
     );
     expect(container.textContent).not.toContain(
-      en.run.errorReasons.agent_session_ended,
+      en.run.errorReasons.session_ended,
     );
   });
 

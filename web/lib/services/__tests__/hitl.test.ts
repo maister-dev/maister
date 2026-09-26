@@ -13,6 +13,7 @@ import {
   domainEvents as domainEventsTable,
   projects as projectsTable,
   runs as runsTable,
+  runSessionIncarnations as runSessionIncarnationsTable,
   runSyncAttempts as runSyncAttemptsTable,
   scratchRuns as scratchRunsTable,
   webhookEvents as webhookEventsTable,
@@ -33,6 +34,7 @@ type Tables = {
   webhook_events: Row[];
   domain_events: Row[];
   gate_chat_turns: Row[];
+  run_session_incarnations: Row[];
 };
 
 const dbState: {
@@ -51,6 +53,7 @@ const dbState: {
     webhook_events: [],
     domain_events: [],
     gate_chat_turns: [],
+    run_session_incarnations: [],
   },
   updates: [],
 };
@@ -67,6 +70,7 @@ function tableOf(t: unknown): keyof Tables {
   if (t === webhookEventsTable) return "webhook_events";
   if (t === domainEventsTable) return "domain_events";
   if (t === gateChatTurnsTable) return "gate_chat_turns";
+  if (t === runSessionIncarnationsTable) return "run_session_incarnations";
   throw new Error("unknown table");
 }
 
@@ -86,6 +90,8 @@ const selectChain = (cols?: Row) => ({
 
     const query: any = {
       where: () => query,
+      orderBy: () => query,
+      limit: () => query,
       for: async () => project(),
       then: (
         onFulfilled?: ((value: Row[]) => unknown) | null,
@@ -318,6 +324,7 @@ beforeEach(async () => {
     webhook_events: [],
     domain_events: [],
     gate_chat_turns: [],
+    run_session_incarnations: [],
   };
   dbState.updates = [];
   deliverPermissionSpy.mockReset();
@@ -521,28 +528,82 @@ describe("respondToHitl service — kind=permission", () => {
     expect(deliverPermissionSpy).not.toHaveBeenCalled();
   });
 
-  it("HITL_TIMEOUT from supervisor → 410 + runs→Failed + respondedAt set", async () => {
-    const { runId, hitlRequestId } = seedPermissionRow();
-    const actor: HitlActor = {
-      kind: "user",
-      userId: "u-test",
-      label: "Test User",
-    };
+  // ADR-177 amendment 2026-09-26 (D-G2): the route dispatches on the host's
+  // reason plus the session's incarnation, and never writes a terminal run
+  // status — the crash boundary owns a dead session's run.
+  function incarnation(state: string): void {
+    dbState.tables.run_session_incarnations.push({
+      id: "inc-1",
+      runId: "run-perm",
+      hostSessionId: "sup-1",
+      state,
+    });
+  }
 
+  function hostRefusal(reason?: string): MaisterError {
+    return new MaisterError(
+      "HITL_TIMEOUT",
+      "no deferred",
+      reason === undefined ? {} : { details: { reason } },
+    );
+  }
+
+  it("permission_not_pending on a live session → 410, the row closes, the run is untouched", async () => {
+    const { runId, hitlRequestId } = seedPermissionRow();
+
+    incarnation("active");
     deliverPermissionSpy.mockRejectedValueOnce(
-      new MaisterError("HITL_TIMEOUT", "expired"),
+      hostRefusal("permission_not_pending"),
     );
 
     const res = await respondToHitl(
       { runId, hitlRequestId, body: { optionId: "allow" } },
-      actor,
+      { kind: "user", userId: "u-test", label: "Test User" },
       { db: fakeDb },
     );
 
     expect(res.status).toBe(410);
-    expect(dbState.tables.runs[0].status).toBe("Failed");
+    await expect(res.json()).resolves.toMatchObject({
+      code: "HITL_TIMEOUT",
+      details: { reason: "permission_not_pending" },
+    });
+    expect(dbState.tables.runs[0].status).toBe("NeedsInput");
     expect(dbState.tables.hitl_requests[0].respondedAt).toBeInstanceOf(Date);
+    expect(dbState.tables.domain_events).toHaveLength(0);
   });
+
+  it.each([
+    ["the host names session_ended", "session_ended", "active"],
+    ["the host names no reason (older host)", undefined, "active"],
+    ["the incarnation is crashed", "permission_not_pending", "crashed"],
+  ])(
+    "%s → 409 session_ended, the answer is kept, no run write",
+    async (_label, reason, incarnationState) => {
+      const { runId, hitlRequestId } = seedPermissionRow();
+
+      incarnation(incarnationState);
+      deliverPermissionSpy.mockRejectedValueOnce(hostRefusal(reason));
+
+      const res = await respondToHitl(
+        { runId, hitlRequestId, body: { optionId: "allow" } },
+        { kind: "user", userId: "u-test", label: "Test User" },
+        { db: fakeDb },
+      );
+
+      expect(res.status).toBe(409);
+      await expect(res.json()).resolves.toMatchObject({
+        code: "CONFLICT",
+        details: { reason: "session_ended" },
+      });
+      expect(dbState.tables.runs[0].status).toBe("NeedsInput");
+      expect(dbState.tables.hitl_requests[0].respondedAt).toBeNull();
+      expect(dbState.tables.hitl_requests[0].response).toEqual({
+        optionId: "allow",
+      });
+      expect(dbState.tables.domain_events).toHaveLength(0);
+      expect(dbState.tables.webhook_events).toHaveLength(0);
+    },
+  );
 
   it("EXECUTOR_UNAVAILABLE from supervisor → 503 + state preserved", async () => {
     const { runId, hitlRequestId } = seedPermissionRow();

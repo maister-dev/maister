@@ -749,6 +749,13 @@ export function ScratchConversation({
             canAct={canAct}
             pending={pendingHitlKey === currentHitlRequestKey}
             pendingHitl={visiblePendingHitl}
+            retryBlocked={
+              visibleHitlError !== null &&
+              ("descriptor" in visibleHitlError
+                ? visibleHitlError.descriptor.key
+                : visibleHitlError.key
+              ).startsWith("errorReasons.session_ended")
+            }
             onAnswer={(payload) => void answerHitl(payload)}
             onRefresh={() => void loadDetail()}
           />

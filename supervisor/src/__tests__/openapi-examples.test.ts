@@ -270,6 +270,34 @@ describe("supervisor OpenAPI 0.8.0 examples ↔ Zod", () => {
     expect(REASON_TOKENS.filter((token) => !documented.has(token))).toEqual([]);
   });
 
+  // ADR-177 2026-09-26 amendment (D-G1): the input route's 410 names why no
+  // deferred exists, one published reason per arm — the web dispatches on it.
+  it("input route 410 examples name every no-deferred arm with a published reason", () => {
+    const examples = openapi.paths["/sessions/{id}/input"].post.responses["410"]
+      .content["application/json"].examples as Record<
+      string,
+      { value: { code: string; details: { reason: string } } }
+    >;
+    const documented = new Set<string>(
+      openapi.components.schemas.ReasonToken.enum as string[],
+    );
+    const reasons = Object.values(examples).map((example) => {
+      expect(example.value.code).toBe("HITL_TIMEOUT");
+
+      return example.value.details.reason;
+    });
+
+    expect(reasons.sort()).toEqual([
+      "permission_not_pending",
+      "session_checkpointed",
+      "session_ended",
+    ]);
+    for (const reason of reasons) {
+      expect(documented.has(reason)).toBe(true);
+      expect(REASON_TOKENS as readonly string[]).toContain(reason);
+    }
+  });
+
   it("a deliberately broken fixture fails (harness proof)", () => {
     const broken = {
       ...(schemaExample("CommandEnvelope") as Record<string, unknown>),

@@ -349,8 +349,13 @@ const SCENARIOS: Array<{
       ),
   },
   {
-    name: "input with an unknown requestId on a live session → 410 HITL_TIMEOUT",
-    expected: { ok: false, code: "HITL_TIMEOUT", httpStatus: 410 },
+    name: "input with an unknown requestId on a live session → 410 HITL_TIMEOUT permission_not_pending",
+    expected: {
+      ok: false,
+      code: "HITL_TIMEOUT",
+      httpStatus: 410,
+      reason: "permission_not_pending",
+    },
     run: async (lab) => {
       const fence = newRun();
       const created = await liveSession(lab, fence);

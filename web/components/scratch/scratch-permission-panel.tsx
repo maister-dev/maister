@@ -22,6 +22,8 @@ export interface ScratchPermissionPanelProps {
   canAct: boolean;
   onAnswer: (payload: Record<string, unknown>) => void;
   onRefresh: () => void;
+  // D-G2: the session ended before the stored answer arrived — no retry.
+  retryBlocked?: boolean;
 }
 
 // The live HITL surface for a scratch run (M35 T3.2): a binary permission
@@ -34,6 +36,7 @@ export function ScratchPermissionPanel({
   canAct,
   onAnswer,
   onRefresh,
+  retryBlocked = false,
 }: ScratchPermissionPanelProps): ReactElement {
   const t = useTranslations("scratch");
   const tRun = useTranslations("run");
@@ -127,7 +130,7 @@ export function ScratchPermissionPanel({
               {tRun("refreshAnswer")}
             </Button>
           </>
-        ) : canAct ? (
+        ) : canAct && !retryBlocked ? (
           <Button
             ref={storedActionRef}
             className="mt-2 border-amber bg-amber text-sm text-white"

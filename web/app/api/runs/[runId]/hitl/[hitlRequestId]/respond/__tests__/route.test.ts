@@ -22,6 +22,7 @@ import {
   gateChatTurns as gateChatTurnsTable,
   hitlRequests as hitlRequestsTable,
   projects as projectsTable,
+  runSessionIncarnations as runSessionIncarnationsTable,
   runSessions as runSessionsTable,
   runSyncAttempts as runSyncAttemptsTable,
   runs as runsTable,
@@ -62,6 +63,7 @@ type Tables = {
   gate_chat_turns: Row[];
   workspaces: Row[];
   run_sessions: Row[];
+  run_session_incarnations: Row[];
   run_sync_attempts: Row[];
   tasks: Row[];
   evaluation_participants: Row[];
@@ -84,6 +86,7 @@ const dbState: {
     gate_chat_turns: [],
     workspaces: [],
     run_sessions: [],
+    run_session_incarnations: [],
     // ADR-141: the permission-respond path re-stamps an active branch-sync
     // resolver attempt. Empty here → the guard no-ops for every non-resolver run.
     run_sync_attempts: [],
@@ -109,6 +112,7 @@ function tableOf(t: unknown): keyof Tables {
   if (t === gateChatTurnsTable) return "gate_chat_turns";
   if (t === workspacesTable) return "workspaces";
   if (t === runSessionsTable) return "run_sessions";
+  if (t === runSessionIncarnationsTable) return "run_session_incarnations";
   if (t === runSyncAttemptsTable) return "run_sync_attempts";
   if (t === tasksTable) return "tasks";
   if (t === evaluationParticipantsTable) return "evaluation_participants";
@@ -450,6 +454,7 @@ beforeEach(async () => {
     gate_chat_turns: [],
     workspaces: [],
     run_sessions: [],
+    run_session_incarnations: [],
     run_sync_attempts: [],
     tasks: [],
     evaluation_participants: [],
@@ -934,7 +939,9 @@ describe("HITL respond route — kind=permission", () => {
     expect(deliverPermissionSpy).not.toHaveBeenCalled();
   });
 
-  it("HITL_TIMEOUT from supervisor → 410 + runs→Failed + respondedAt set", async () => {
+  // ADR-177 amendment 2026-09-26 (D-G2): a dead session's answer is never a
+  // terminal write — the crash boundary settles the run and closes the row.
+  it("a host 410 with no reason is unproven: 409 session_ended, nothing written", async () => {
     const { runId, hitlRequestId } = seedPermissionRow();
 
     deliverPermissionSpy.mockRejectedValueOnce(
@@ -943,24 +950,56 @@ describe("HITL respond route — kind=permission", () => {
 
     const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
 
-    expect(res.status).toBe(410);
+    expect(res.status).toBe(409);
     expect(await res.json()).toEqual({
-      code: "HITL_TIMEOUT",
+      code: "CONFLICT",
       message:
-        "The agent session ended before your answer arrived. Relaunch the run.",
-      details: { reason: "agent_session_ended" },
+        "The agent session ended before your answer arrived, so it was not delivered.",
+      details: { reason: "session_ended" },
     });
-    expect(dbState.tables.runs[0].status).toBe("Failed");
-    expect(dbState.tables.hitl_requests[0].respondedAt).toBeInstanceOf(Date);
+    expect(dbState.tables.runs[0].status).toBe("NeedsInput");
+    expect(dbState.tables.hitl_requests[0].respondedAt).toBeNull();
+    expect(dbState.tables.domain_events).toHaveLength(0);
   });
 
-  it("scratch HITL_TIMEOUT from supervisor → 410 + runs→Crashed + dialog Crashed", async () => {
+  it("scratch session_ended → 409, the dialog and the run are the boundary's to settle", async () => {
     const { runId, hitlRequestId } = seedPermissionRow({
       runKind: "scratch",
     });
 
     deliverPermissionSpy.mockRejectedValueOnce(
-      new MaisterError("HITL_TIMEOUT", "expired"),
+      new MaisterError("HITL_TIMEOUT", "session ended", {
+        details: { reason: "session_ended" },
+      }),
+    );
+
+    const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "session_ended" },
+    });
+    expect(dbState.tables.runs[0].status).toBe("NeedsInput");
+    expect(dbState.tables.scratch_runs[0]).toMatchObject({
+      dialogStatus: "NeedsInput",
+    });
+    expect(dbState.tables.hitl_requests[0].respondedAt).toBeNull();
+  });
+
+  it("permission_not_pending on a live session → 410, the row closes, the run is untouched", async () => {
+    const { runId, hitlRequestId } = seedPermissionRow();
+
+    dbState.tables.run_session_incarnations.push({
+      id: "inc-1",
+      runId,
+      hostSessionId: "sup-1",
+      state: "active",
+    });
+    deliverPermissionSpy.mockRejectedValueOnce(
+      new MaisterError("HITL_TIMEOUT", "not pending", {
+        details: { reason: "permission_not_pending" },
+      }),
     );
 
     const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
@@ -968,15 +1007,10 @@ describe("HITL respond route — kind=permission", () => {
     expect(res.status).toBe(410);
     expect(await res.json()).toEqual({
       code: "HITL_TIMEOUT",
-      message:
-        "The agent session ended before your answer arrived. Recover the run or relaunch it.",
-      details: { reason: "agent_session_ended" },
+      message: "This request is no longer pending; the run has moved on.",
+      details: { reason: "permission_not_pending" },
     });
-    expect(dbState.tables.runs[0].status).toBe("Crashed");
-    expect(dbState.tables.scratch_runs[0]).toMatchObject({
-      dialogStatus: "Crashed",
-      errorCode: "HITL_TIMEOUT",
-    });
+    expect(dbState.tables.runs[0].status).toBe("NeedsInput");
     expect(dbState.tables.hitl_requests[0].respondedAt).toBeInstanceOf(Date);
   });
 
@@ -1849,6 +1883,41 @@ describe("HITL respond route — NeedsInputIdle branch", () => {
     // checkpointed session, supervisor returns 404 HITL_TIMEOUT. The
     // route MUST recognize this as a likely in-flight resume and
     // return 202, NOT mark the run Failed.
+    //
+    // ADR-177 amendment 2026-09-26 (D-G2): the host names why no deferred
+    // exists — the stale request is not pending, and the parked incarnation it
+    // was raised on is not dead — so the idempotent arm still answers.
+    const { runId, hitlRequestId } = seedPermissionRow({
+      runStatus: "NeedsInput",
+      response: { optionId: "allow" } as Row,
+    });
+
+    dbState.tables.run_session_incarnations.push({
+      id: "inc-parked",
+      runId,
+      hostSessionId: "sup-1",
+      state: "checkpointed",
+    });
+    deliverPermissionSpy.mockRejectedValueOnce(
+      new MaisterError("HITL_TIMEOUT", "stale checkpointed deferred", {
+        details: { reason: "permission_not_pending" },
+      }),
+    );
+
+    const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
+
+    expect(res.status).toBe(202);
+    // Critical: the run must NOT be Failed.
+    expect(dbState.tables.runs[0].status).toBe("NeedsInput");
+    // Critical: respondedAt must NOT be set — the in-flight driver
+    // will set it once auto-delivery against the new requestId
+    // succeeds.
+    expect(dbState.tables.hitl_requests[0].respondedAt).toBeNull();
+  });
+
+  it("a same-payload retry refused with no reason is unproven: 409 session_ended, nothing written", async () => {
+    // A host older than D-G1 names nothing; unproven is never terminal, and
+    // never an in-flight resume either.
     const { runId, hitlRequestId } = seedPermissionRow({
       runStatus: "NeedsInput",
       response: { optionId: "allow" } as Row,
@@ -1860,12 +1929,8 @@ describe("HITL respond route — NeedsInputIdle branch", () => {
 
     const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
 
-    expect(res.status).toBe(202);
-    // Critical: the run must NOT be Failed.
+    expect(res.status).toBe(409);
     expect(dbState.tables.runs[0].status).toBe("NeedsInput");
-    // Critical: respondedAt must NOT be set — the in-flight driver
-    // will set it once auto-delivery against the new requestId
-    // succeeds.
     expect(dbState.tables.hitl_requests[0].respondedAt).toBeNull();
   });
 

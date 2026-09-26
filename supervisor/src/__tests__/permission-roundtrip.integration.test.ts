@@ -172,7 +172,9 @@ describe("POST /sessions/:id/input direct validation paths", () => {
     expect(body.code).toBe("EXECUTOR_UNAVAILABLE");
   });
 
-  it("known session with unknown requestId returns 410 HITL_TIMEOUT (terminal — deferred expired)", async () => {
+  // ADR-177 2026-09-26: the 410 names why no deferred exists. A LIVE session
+  // holds no such request — it was answered, cancelled or never raised.
+  it("known live session with unknown requestId returns 410 HITL_TIMEOUT permission_not_pending", async () => {
     booted = await bootBare();
     const sessionId = "00000000-0000-4000-8000-000000000011";
 
@@ -192,6 +194,66 @@ describe("POST /sessions/:id/input direct validation paths", () => {
 
     expect(body.code).toBe("HITL_TIMEOUT");
     expect(body.message).toContain("pending");
+    expect(res.body).toMatchObject({
+      details: { reason: "permission_not_pending" },
+    });
+  });
+
+  // The child died (not a park): its deferreds went with the process, and
+  // inside the 30 s removal grace the registry still knows it — the answer is
+  // `session_ended`, never an expired one the web would fail the run on.
+  it("a session whose child crashed answers 410 HITL_TIMEOUT session_ended inside the removal grace", async () => {
+    booted = await bootBare();
+    const sessionId = "00000000-0000-4000-8000-000000000013";
+    const child = makeParkableChild();
+
+    await registerFakeSession(
+      booted.registry,
+      booted.runtimeRoot,
+      sessionId,
+      child,
+    );
+    attachHeartbeat({
+      sessionId,
+      child,
+      registry: booted.registry,
+      logger: silentLogger,
+    });
+    const deferred = deferredCapture();
+
+    pendingPermissions.register(
+      sessionId,
+      "33333333-3333-4333-8333-333333333333",
+      {
+        resolve: deferred.resolve,
+        reject: deferred.reject,
+      },
+    );
+    (child as { exitCode: number | null }).exitCode = 1;
+    child.emit("exit", 1, null);
+    await expect
+      .poll(() => booted!.registry.get(sessionId)?.record.status, {
+        timeout: 5_000,
+        interval: 5,
+      })
+      .toBe("crashed");
+    await expect(deferred.promise).rejects.toMatchObject({ code: "CRASH" });
+
+    const res = await postJson(
+      `${booted.url}/sessions/${sessionId}/input`,
+      command("session.input", sessionId, {
+        kind: "permission",
+        action: "select",
+        requestId: "33333333-3333-4333-8333-333333333333",
+        optionId: "allow",
+      }),
+    );
+
+    expect(res.status).toBe(410);
+    expect(res.body).toMatchObject({
+      code: "HITL_TIMEOUT",
+      details: { reason: "session_ended" },
+    });
   });
 
   it("action=select without optionId returns 409 PRECONDITION", async () => {

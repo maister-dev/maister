@@ -2080,3 +2080,13 @@ properties/lastAction` sets `nullable: true` beside an `allOf` with no sibling
   the next freed slot or the operator's retry, whose own claim admits under
   cap. Agent resumes have the continuation worker's re-selection. A backstop
   changes the gate for every pool and is separate work (R9).
+- **A flow node whose adapter child crashes mid-prompt (no permission
+  pending) still ends `Failed` (found 2026-09-26, ownership residuals T3.2b).**
+  The `session_crashed` evidence class shipped for the class G0 measured — a
+  permission park, closed at the node's re-entry. The plan's second arm, a
+  `Running` node whose prompt fails because its child crashed, was not
+  characterized: the owner applies the failure as the node's result and the
+  graph fails it, which Recover then refuses. Classifying it needs its own
+  control first (which event reaches Postgres first, the prompt's terminal or
+  the session's `session.crashed`, decides where the evidence can be read), so
+  it is separate work (R9).

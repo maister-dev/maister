@@ -732,6 +732,12 @@ export const REASON_TOKENS = [
   // cancelled, so a late answer is a RESUME, not a failure. It rides the
   // unchanged 410 HITL_TIMEOUT.
   "session_checkpointed",
+  // ADR-177 2026-09-26 amendment: why else no deferred exists — the child
+  // died (`session_ended`, a crashed or exited entry that is not parking) or
+  // the live session holds no such request (`permission_not_pending`). Same
+  // 410; the web never fails a run on either.
+  "session_ended",
+  "permission_not_pending",
   // ADR-182: the three definitive `session.steer` refusals (409 CONFLICT).
   "steer_unsupported",
   "steer_no_active_turn",

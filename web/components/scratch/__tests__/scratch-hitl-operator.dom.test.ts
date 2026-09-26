@@ -107,7 +107,8 @@ afterEach(() => {
 describe("scratch HITL operator feedback", () => {
   it.each([
     [409, "CONFLICT", "permission_resume_in_flight"],
-    [410, "HITL_TIMEOUT", "agent_session_ended"],
+    [409, "CONFLICT", "session_ended"],
+    [410, "HITL_TIMEOUT", "permission_not_pending"],
     [410, "HITL_TIMEOUT", "permission_delivery_rejected"],
     [503, "EXECUTOR_UNAVAILABLE", "delivery_unavailable"],
   ] as const)(
@@ -150,8 +151,7 @@ describe("scratch HITL operator feedback", () => {
       await click("Allow");
 
       const key =
-        reason === "agent_session_ended" ||
-        reason === "permission_delivery_rejected"
+        reason === "session_ended" || reason === "permission_delivery_rejected"
           ? (`${reason}_scratch` as const)
           : reason;
 
@@ -168,6 +168,44 @@ describe("scratch HITL operator feedback", () => {
         ).toBeNull();
     },
   );
+
+  // D-G2: the dead session's stored answer is evidence, not a pending
+  // delivery — the panel stops offering a retry that could only loop 409s.
+  it("a session_ended refusal of a stored answer's retry leaves no retry action", async () => {
+    const stored = {
+      ...openDetail,
+      pendingHitl: {
+        ...openDetail.pendingHitl,
+        answerState: "answer_stored",
+        storedResponse: { optionId: "allow" },
+      },
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        url.endsWith("/respond")
+          ? new Response(
+              JSON.stringify({
+                code: "CONFLICT",
+                details: { reason: "session_ended" },
+              }),
+              { status: 409 },
+            )
+          : new Response(JSON.stringify(stored), { status: 200 }),
+      ),
+    );
+    mount();
+    await act(async () => {});
+    await click(en.run.retryDelivery);
+    await act(async () => {});
+
+    expect(container.textContent).toContain(
+      en.run.errorReasons.session_ended_scratch,
+    );
+    expect(container.textContent).toContain(en.run.answerSaved);
+    expect(container.textContent).not.toContain(en.run.retryDelivery);
+  });
 
   it("shows a stored answer to a viewer without a retry action", async () => {
     const fetchMock = vi.fn(
@@ -331,7 +369,7 @@ describe("scratch HITL operator feedback", () => {
 
   it.each([
     [409, "CONFLICT", "option_mismatch"],
-    [410, "HITL_TIMEOUT", "agent_session_ended"],
+    [410, "HITL_TIMEOUT", "permission_not_pending"],
   ] as const)(
     "ignores a late %i refusal after a newer request",
     async (status, code, reason) => {

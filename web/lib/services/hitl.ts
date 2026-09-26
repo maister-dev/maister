@@ -136,6 +136,7 @@ const {
   nodeAttempts,
   projects,
   runs,
+  runSessionIncarnations,
   runSyncAttempts,
   scratchRuns,
   taskClarifications,
@@ -799,24 +800,56 @@ async function markSyncResolverPermissionDelivered(
     .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInput")));
 }
 
-async function markScratchPermissionTimedOut(
-  db: any,
-  runRow: any,
+// ADR-177 amendment 2026-09-26 (D-G2): the incarnation states whose session
+// can never answer a deferred again — the crash boundary owns their run.
+const DEAD_INCARNATION_STATES: ReadonlySet<string> = new Set([
+  "exited",
+  "crashed",
+  "lost",
+  "deleted",
+]);
+
+// The state of the incarnation a permission was raised on: the flow prompt's
+// own incarnation when the row names it, else the newest incarnation of the
+// host session the row was addressed to. Null when neither is known.
+async function permissionIncarnationState(
+  tx: any,
   runId: string,
-): Promise<void> {
-  if (runRow.runKind !== "scratch") return;
+  hitlSchema: unknown,
+): Promise<string | null> {
+  const schema = (hitlSchema ?? {}) as {
+    supervisorSessionId?: unknown;
+    flowPrompt?: { incarnationId?: unknown };
+  };
+  const incarnationId = schema.flowPrompt?.incarnationId;
 
-  const now = new Date();
+  if (typeof incarnationId === "string") {
+    const [row] = await tx
+      .select({ state: runSessionIncarnations.state })
+      .from(runSessionIncarnations)
+      .where(
+        and(
+          eq(runSessionIncarnations.id, incarnationId),
+          eq(runSessionIncarnations.runId, runId),
+        ),
+      );
 
-  await db
-    .update(scratchRuns)
-    .set({
-      dialogStatus: "Crashed",
-      errorCode: "HITL_TIMEOUT",
-      errorMessage: "agent session ended before the permission answer arrived",
-      updatedAt: now,
-    })
-    .where(eq(scratchRuns.runId, runId));
+    if (row) return row.state;
+  }
+  if (typeof schema.supervisorSessionId !== "string") return null;
+  const [row] = await tx
+    .select({ state: runSessionIncarnations.state })
+    .from(runSessionIncarnations)
+    .where(
+      and(
+        eq(runSessionIncarnations.runId, runId),
+        eq(runSessionIncarnations.hostSessionId, schema.supervisorSessionId),
+      ),
+    )
+    .orderBy(desc(runSessionIncarnations.createdAt))
+    .limit(1);
+
+  return row?.state ?? null;
 }
 
 // `prepared`/`client`: the `session.input` command queued in the Phase-1 tx
@@ -1686,21 +1719,21 @@ async function handlePermissionResponse(
     }
 
     if (isMaisterError(err) && err.code === "HITL_TIMEOUT") {
-      // Re-check under FOR UPDATE: a concurrent winner may have already
-      // marked respondedAt — in which case the supervisor 404 we just
-      // saw is the side-effect of THAT request succeeding, not a real
-      // timeout. Returning 200 here is the correct idempotent outcome.
-      //
-      // M8 review pass 2 finding #1: if this was a
-      // `noop-idempotent` retry (same-payload re-submit) we must NOT
-      // mark the run Failed on the supervisor's 404. The 404 may be
-      // the stale checkpointed deferred that the sweeper cancelled —
-      // an M8 background resume driver is still delivering the
-      // operator's intent against a fresh requestId. In that case we
-      // return 202 "resume-in-progress" and let the auto-deliver
-      // path (or the next retry hitting `already-delivered`) close
-      // the row.
+      // ADR-177 amendment 2026-09-26 (D-G2): the host names WHY it holds no
+      // deferred, and the route dispatches on that evidence plus the session's
+      // own incarnation. It never writes a terminal run status: a dead
+      // session's run is settled by the crash boundary — the owner
+      // application of the prompt's terminal receipt — which also closes the
+      // row. The run row is locked FIRST, then the HITL row: the claim's order
+      // and the owner application's, so the two cannot invert (D-F1).
+      const hostReason =
+        typeof err.details?.reason === "string" ? err.details.reason : null;
       const outcome = await db.transaction(async (tx: any) => {
+        await tx
+          .select({ id: runs.id })
+          .from(runs)
+          .where(eq(runs.id, runId))
+          .for("update");
         const lockedHitl = await lockHitlRow(tx, hitlRequestId);
 
         if (lockedHitl?.respondedAt) {
@@ -1708,15 +1741,14 @@ async function handlePermissionResponse(
         }
         // ADR-180: the session was PARKED with its deferreds cancelled, so the
         // stored answer is still good — the run resumes rather than failing.
-        // This goes BEFORE the noop-idempotent arm below, which is a known dead
-        // end for this case and must not be widened to cover it.
-        if (err.details?.reason === "session_checkpointed") {
-          // Classify the refused delivery in the SAME transaction. `_delivery`
-          // names a command that was REJECTED against a host session that no
-          // longer exists; the resumed session mints a fresh one. Left in
-          // place it is an "unclassified admitted input", which the
-          // prompt-owner resume claim refuses outright — the answer would be
-          // stuck rather than failed, which is no better.
+        // Classify the refused delivery in the SAME transaction. `_delivery`
+        // names a command the host REJECTED against a session that no longer
+        // holds the deferred; a resumed session mints a fresh one. Left in
+        // place it is an "unclassified admitted input", which the prompt-owner
+        // resume claim refuses outright and an agent's session consumer
+        // re-reads forever — the answer would be stuck rather than failed,
+        // which is no better. The operator's choice itself is kept.
+        const withdrawRefusedDelivery = async (): Promise<void> => {
           const stored = lockedHitl?.response as Record<string, unknown> | null;
 
           if (stored && stored._delivery !== undefined) {
@@ -1727,61 +1759,50 @@ async function handlePermissionResponse(
               .set({ response: kept })
               .where(eq(hitlRequests.id, hitlRequestId));
           }
+        };
+
+        if (hostReason === "session_checkpointed") {
+          await withdrawRefusedDelivery();
 
           return { transition: "checkpointed-resume" } as const;
         }
+        const incarnationState = await permissionIncarnationState(
+          tx,
+          runId,
+          lockedHitl?.schema,
+        );
+
+        // A dead session — named by the host, or by a crashed/exited/lost
+        // incarnation, or a host too old to name anything — keeps the stored
+        // answer as evidence and writes nothing: unproven is never terminal.
+        if (
+          hostReason !== "permission_not_pending" ||
+          (incarnationState !== null &&
+            DEAD_INCARNATION_STATES.has(incarnationState))
+        ) {
+          await withdrawRefusedDelivery();
+
+          return { transition: "session-ended", incarnationState } as const;
+        }
+        // M8 review pass 2 finding #1: a same-payload retry's refusal on a
+        // live session may be the stale deferred a background resume already
+        // re-issued — the resume delivers the intent, so this is not an error.
         if (claim.kind === "noop-idempotent") {
           return { transition: "in-flight-resume" } as const;
         }
-        const terminalRows = await tx
-          .update(runs)
-          .set({
-            status: runRow.runKind === "scratch" ? "Crashed" : "Failed",
-            endedAt: new Date(),
-          })
-          .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInput")))
-          .returning({
-            projectId: runs.projectId,
-            taskId: runs.taskId,
-            flowId: runs.flowId,
-            runKind: runs.runKind,
-            parentRunId: runs.parentRunId,
-          });
-
+        // The live session holds no such request: it was answered, cancelled
+        // or never raised. The row closes; the run is not the route's to move.
         await tx
           .update(hitlRequests)
           .set({ respondedAt: new Date() })
-          .where(eq(hitlRequests.id, hitlRequestId));
+          .where(
+            and(
+              eq(hitlRequests.id, hitlRequestId),
+              isNull(hitlRequests.respondedAt),
+            ),
+          );
 
-        // ADR-097: project-less assistant run ⇒ no project to attribute the
-        // terminal outbox events to (both emits require a non-null projectId).
-        if (terminalRows.length > 0 && terminalRows[0].projectId) {
-          await emitWebhookEvent({
-            db: tx,
-            type: runRow.runKind === "scratch" ? "run.crashed" : "run.failed",
-            projectId: terminalRows[0].projectId,
-            runId,
-            data: { errorCode: "HITL_TIMEOUT" },
-          });
-          await emitDomainEvent({
-            db: tx,
-            kind: runRow.runKind === "scratch" ? "run.crashed" : "run.failed",
-            projectId: terminalRows[0].projectId,
-            runId,
-            taskId: terminalRows[0].taskId,
-            actor: { type: "system", id: null },
-            parentRunId: terminalRows[0].parentRunId,
-            payload: {
-              runId,
-              taskId: terminalRows[0].taskId,
-              flowId: terminalRows[0].flowId,
-              runKind: terminalRows[0].runKind,
-              reason: "HITL_TIMEOUT",
-            },
-          });
-        }
-
-        return { transition: "terminal" } as const;
+        return { transition: "not-pending", incarnationState } as const;
       });
 
       if (outcome.transition === "checkpointed-resume") {
@@ -1854,35 +1875,56 @@ async function handlePermissionResponse(
         );
       }
 
-      await markScratchPermissionTimedOut(db, runRow, runId);
-      await systemCloseActiveAssignmentsForRun({
-        db,
-        runId,
-        reason: "permission deferred expired before response was delivered",
-      });
+      if (outcome.transition === "session-ended") {
+        log.warn(
+          {
+            runId,
+            hitlRequestId,
+            kind: "permission",
+            phase: "session-ended-409",
+            incarnationState: outcome.incarnationState,
+            hostReason,
+            latencyMs: Date.now() - startedAt,
+          },
+          "permission-answer-after-session-ended",
+        );
 
-      log.warn(
+        return NextResponse.json(
+          {
+            code: "CONFLICT",
+            message:
+              "The agent session ended before your answer arrived, so it was not delivered.",
+            details: { reason: "session_ended" },
+          },
+          { status: 409 },
+        );
+      }
+
+      // The request is closed; so is the operator's claim on it.
+      if (runRow.projectId)
+        await systemCloseActiveAssignmentsForHitlRequest({
+          db,
+          hitlRequestId,
+          projectId: runRow.projectId,
+          reason: "permission no longer pending on the live session",
+        });
+      log.info(
         {
           runId,
           hitlRequestId,
           kind: "permission",
-          phase: "terminal-410",
-          details: { reason: "agent_session_ended" },
+          phase: "not-pending-410",
+          incarnationState: outcome.incarnationState,
           latencyMs: Date.now() - startedAt,
         },
-        runRow.runKind === "scratch"
-          ? "agent session ended before delivery — scratch run transitioned to Crashed"
-          : "agent session ended before delivery — run transitioned to Failed",
+        "permission-answer-not-pending",
       );
 
       return NextResponse.json(
         {
           code: "HITL_TIMEOUT",
-          message:
-            runRow.runKind === "scratch"
-              ? "The agent session ended before your answer arrived. Recover the run or relaunch it."
-              : "The agent session ended before your answer arrived. Relaunch the run.",
-          details: { reason: "agent_session_ended" },
+          message: "This request is no longer pending; the run has moved on.",
+          details: { reason: "permission_not_pending" },
         },
         { status: 410 },
       );

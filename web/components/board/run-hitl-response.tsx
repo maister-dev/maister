@@ -159,6 +159,12 @@ export function RunHitlResponse({
         : null;
   const diagnostic =
     diagnosticState?.requestKey === requestKey ? diagnosticState.code : null;
+  // D-G2: a dead session's stored answer is evidence, not a pending delivery —
+  // the crash boundary closes the row and Recover asks afresh, so a retry
+  // could only loop the same 409.
+  const sessionEnded =
+    refusal?.requestKey === requestKey &&
+    refusal.descriptor.key.startsWith("errorReasons.session_ended");
 
   function setError(message: string | null): void {
     setRefusal(null);
@@ -828,7 +834,7 @@ export function RunHitlResponse({
           ) : null}
           {specialized ? decisionControls : null}
           <div className="flex gap-2">
-            {canAct && validPayload && !reconciling ? (
+            {canAct && validPayload && !reconciling && !sessionEnded ? (
               <Button
                 ref={storedActionRef}
                 className="border-amber bg-amber font-mono text-xs font-semibold text-white"

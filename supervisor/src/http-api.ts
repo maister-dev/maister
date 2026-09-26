@@ -3037,16 +3037,38 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
               "EXECUTOR_UNAVAILABLE",
               "session is being checkpointed — retry the response",
             );
-          const parked = parking;
+          if (parking)
+            throw new SupervisorError(
+              "HITL_TIMEOUT",
+              "session was checkpointed — resume and re-deliver",
+              { details: { reason: "session_checkpointed" } },
+            );
+          // Not a park: the registry knows whether the child is still there.
+          // A live session answered, cancelled or never raised the request; a
+          // crashed or exited one purged its deferreds with the process. The
+          // web decides from this, so a dead session's answer is never read as
+          // an expired one.
+          const ended = entry.record.status !== "live";
 
+          logger.info(
+            {
+              sessionId,
+              requestId: body.requestId,
+              sessionStatus: entry.record.status,
+              reason: ended ? "session_ended" : "permission_not_pending",
+            },
+            "input route: no pending permission",
+          );
           throw new SupervisorError(
             "HITL_TIMEOUT",
-            parked
-              ? "session was checkpointed — resume and re-deliver"
+            ended
+              ? "session ended before the answer arrived"
               : "no pending permission with that requestId",
-            parked
-              ? { details: { reason: "session_checkpointed" } }
-              : undefined,
+            {
+              details: {
+                reason: ended ? "session_ended" : "permission_not_pending",
+              },
+            },
           );
         }
 

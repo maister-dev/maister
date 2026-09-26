@@ -168,6 +168,11 @@ export const REASON_TOKENS = [
   // ADR-180: the host parked the session with its deferreds cancelled, so a
   // late answer RESUMES it instead of failing the run. Rides the unchanged 410.
   "session_checkpointed",
+  // ADR-177 2026-09-26 amendment: why else no deferred exists — the child died
+  // (`session_ended`) or the live session holds no such request
+  // (`permission_not_pending`). Same 410; the web never fails a run on either.
+  "session_ended",
+  "permission_not_pending",
   // ADR-182: the definitive `session.steer` refusals (409 CONFLICT).
   "steer_unsupported",
   "steer_no_active_turn",

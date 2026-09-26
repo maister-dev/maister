@@ -1393,6 +1393,12 @@ export type CrashReason =
   // from age — and the run stays recoverable, unlike the `Failed` a decoded
   // lost turn produced before.
   | "turn-lost"
+  // ADR-177 amendment 2026-09-26 (T3.2b): the adapter child crashed under a
+  // live host while the node waited on its permission. The purge failed the
+  // prompt and its owner applied that failure — nothing left to settle the run
+  // but the crashed incarnation itself, which is the evidence. Recoverable,
+  // like a lost turn.
+  | "session-crashed"
   // ADR-177: the holding host's event stream is `lost`, so the turn's evidence
   // can never be ingested. An impasse, not a wait.
   | "stream-lost"

@@ -818,6 +818,18 @@ in if that writer never comes.
 | `quarantined` | `application_error.reason='prompt_terminal_conflict'` | an operator | `runs.status='Crashed'` (`owner-poisoned`), attempt closed, command `applied` with its `application_error` PRESERVED (already `applied` when the conflict was found after application — the boundary then rewrites nothing) |
 | `poisoned` | `application_state='poisoned'` | an operator | as `quarantined` |
 
+`session_crashed` (Implemented — ADR-177 amendment 2026-09-26) is NOT a sweep
+class: it needs a `NeedsInput` run, which the sweep never loads. A flow
+permission whose adapter child crashed under a live host fails its prompt (the
+purge rejects the permission) and the owner applies that failure while the run
+waits — so its row is `applied` above. The node's re-entry
+(`reattachNodePrompt`, driven by the flow continuation worker) owns it: a
+`NeedsInput` run whose applied completion is that failure and whose prompt
+incarnation is `crashed` is closed through `closeTurnLostAttempt` with reason
+`session-crashed` — attempt `Reworked`/`decision='turn_lost'`, run `Crashed`,
+recoverable. A `Running` node whose child crashes mid-prompt keeps the ordinary
+failed-prompt path; see the decisions TODO list.
+
 Order matters twice, and both are load-bearing rather than stylistic. The
 `quarantined` test precedes the `applied` test, because `quarantine()` writes
 `application_state = completion_applied_at ? "applied" : "poisoned"` — a conflict

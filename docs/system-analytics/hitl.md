@@ -1318,8 +1318,10 @@ HITL row and offers Recover; a recovered run asks again through a fresh
 permission. When the adapter dies under a live host, the prompt receipt is
 `rejected` and the node owner's ordinary failed-prompt path applies it. The
 measured end state per class lives in the
-[ADR-177 amendment](../decisions/adr-177.md) table (pending measurement —
-T3.0). The terminal cause of a `Failed | Crashed | Abandoned` run is read from
+[ADR-177 amendment](../decisions/adr-177.md) table; a flow permission whose
+adapter crashed under a live host is closed at the node's re-entry by the
+`session_crashed` evidence class, and an answer that reached the host first
+keeps its choice but withdraws its refused `_delivery` intent. The terminal cause of a `Failed | Crashed | Abandoned` run is read from
 its terminal domain event's `cause` (see
 [domain events](domain-events.md#terminal-cause-implemented)), not from the
 respond route.

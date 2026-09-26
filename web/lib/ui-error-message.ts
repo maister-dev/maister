@@ -47,6 +47,7 @@ export function resolveHitlErrorMessage(input: {
     const key =
       surface === "scratch" &&
       (reason === "agent_session_ended" ||
+        reason === "session_ended" ||
         reason === "permission_delivery_rejected")
         ? (`errorReasons.${reason}_scratch` as const)
         : (`errorReasons.${reason}` as const);

@@ -382,11 +382,17 @@ function steerRefusal(
   });
 }
 
-function hitlTimeoutError(): MaisterError {
+// ADR-177 2026-09-26 amendment: like the host, the 410 names why no deferred
+// exists — a live session holds no such request, an ended one holds none.
+function hitlTimeoutError(
+  reason: "permission_not_pending" | "session_ended",
+): MaisterError {
   return new MaisterError(
     "HITL_TIMEOUT",
-    "fake: no pending permission with that requestId",
-    { details: { httpStatus: 410 } },
+    reason === "session_ended"
+      ? "fake: session ended before the answer arrived"
+      : "fake: no pending permission with that requestId",
+    { details: { reason, httpStatus: 410 } },
   );
 }
 
@@ -1995,7 +2001,12 @@ export function createFakeExecutionHost(
             (session.pending === undefined ||
               session.pending.delete(requestId));
 
-          if (!ok) throw hitlTimeoutError();
+          if (!ok)
+            throw hitlTimeoutError(
+              session.status === "live"
+                ? "permission_not_pending"
+                : "session_ended",
+            );
 
           return { status: 200, body: { ok: true, replayed: false } };
         },
