@@ -87,6 +87,7 @@ const OPEN: PrStateReadResult = {
   mergedAt: null,
   mergeCommitSha: null,
   hasConflicts: null,
+  headSha: null,
 };
 
 describe("runPrStateScanJob", () => {
@@ -122,6 +123,7 @@ describe("runPrStateScanJob", () => {
           mergedAt: "2026-07-14T00:00:00.000Z",
           mergeCommitSha: "merge-sha-101",
           hasConflicts: false,
+          headSha: null,
         },
         102: {
           kind: "state",
@@ -129,6 +131,7 @@ describe("runPrStateScanJob", () => {
           mergedAt: null,
           mergeCommitSha: null,
           hasConflicts: null,
+          headSha: null,
         },
         103: {
           kind: "state",
@@ -136,6 +139,7 @@ describe("runPrStateScanJob", () => {
           mergedAt: null,
           mergeCommitSha: null,
           hasConflicts: true,
+          headSha: null,
         },
       }),
     });
@@ -235,6 +239,7 @@ describe("runPrStateScanJob", () => {
         mergedAt: "2026-07-14T00:00:00.000Z",
         mergeCommitSha: "merge-sha-201",
         hasConflicts: false,
+        headSha: null,
       },
       202: {
         kind: "state",
@@ -242,6 +247,7 @@ describe("runPrStateScanJob", () => {
         mergedAt: null,
         mergeCommitSha: null,
         hasConflicts: null,
+        headSha: null,
       },
       203: {
         kind: "state",
@@ -249,6 +255,7 @@ describe("runPrStateScanJob", () => {
         mergedAt: null,
         mergeCommitSha: null,
         hasConflicts: true,
+        headSha: null,
       },
     });
 
@@ -439,6 +446,7 @@ describe("runPrStateScanJob", () => {
         mergedAt: "2026-09-23T00:00:00.000Z",
         mergeCommitSha: `merge-sha-${args.prNumber}`,
         hasConflicts: null,
+        headSha: null,
       }),
     );
     const summary = await runPrStateScanJob({
@@ -627,6 +635,7 @@ describe("runPrStateScanJob", () => {
       mergedAt: "2026-07-14T00:00:00.000Z",
       mergeCommitSha: "merge-sha-701",
       hasConflicts: false,
+      headSha: null,
     });
 
     const tick = await runSchedulerTick({ jobKind: "pr_state_scan" });

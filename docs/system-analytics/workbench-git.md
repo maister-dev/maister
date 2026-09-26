@@ -225,7 +225,9 @@ sequenceDiagram
     alt status Review
         Fin->>DB: promoteRun(mode=pull_request, reviewedTargetCommit) — readiness and drift apply
     else Crashed | Failed | Abandoned
-        Fin->>Fin: published head (ls-remote) = worktree HEAD, else publish_stale
+        Fin->>PA: getPrState(pr_number) — the PR's own head, as the provider reports it
+        Fin->>Fin: provider reports it closed -> pr_closed
+        Fin->>Fin: PR head = worktree HEAD, else publish_stale (open) or merged_pr_behind (merged)
         Fin->>DB: promotion claim CAS under the workspace lock
         Fin->>DB: Done, promotion_state=done, promoted_head_sha, GC schedule, run.promoted + run.done (source=pr_finalize)
     end
@@ -335,6 +337,10 @@ is `CONFLICT`, the rest `PRECONDITION`), and an unknown run is 404 with
   `openPullRequest`).
 - Finalize from `Review` MUST be `promoteRun(mode:'pull_request')` with the
   operator's `reviewedTargetCommit`; from `Crashed | Failed | Abandoned` it MUST
+  bind to the head the recorded PR carries as its provider reports it — never
+  to the latest publication — refusing `publish_stale` for an open PR at
+  another head, `merged_pr_behind` for a merged PR without the worktree's
+  `HEAD` and `pr_closed` for a PR the provider reports closed, and MUST
   set `runs.status='Done'`, `promotion_state='done'`, `promoted_head_sha` and
   `scheduled_removal_at`, and emit `run.promoted` + `run.done` with
   `attribution.source='pr_finalize'`; `pr_state='closed'` MUST refuse
@@ -412,10 +418,16 @@ is `CONFLICT`, the rest `PRECONDITION`), and an unknown run is 404 with
   different PR than the stored one clears the old PR's ADR-140 fields.
 - PR closed on the provider → finalize refuses `PRECONDITION` `pr_closed`; open
   PR creates a new PR for the same head/base (the dedup lists open PRs only).
-- Published head differs from local HEAD on open PR or finalize →
+- Published head differs from local HEAD on open PR →
   `MaisterError("PRECONDITION")` `publish_stale` ("publish first"); a
-  published branch that vanished from `origin` reads `not_published` on open PR
-  and `publish_stale` on finalize.
+  published branch that vanished from `origin` reads `not_published`.
+- A parked finalize reads the recorded PR, not the publication: publishing the
+  next commit to another remote leaves the PR at its head, so the finalize
+  refuses `publish_stale`; a merged PR without the worktree's later commits is
+  `merged_pr_behind` (open a new PR for them); a merged PR whose branch was
+  deleted finalizes at the head it carried. An unreadable PR is
+  `EXECUTOR_UNAVAILABLE` (retry), a provider that cannot read it
+  `provider_unsupported`.
 - A shared-tree allocator finalized from `Failed` settles the tree's `Review`
   siblings with it; a sibling still writing the tree makes finalize `busy`
   (`CONFLICT`), under the policy and again under the claim's row lock.

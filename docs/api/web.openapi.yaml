@@ -10047,14 +10047,21 @@ paths:
           `git-state.targetHead`) is required there, and `allowTargetDrift`
           is the explicit "Finalize anyway" override.
         - From `Crashed | Failed | Abandoned` there is no graph readiness to
-          assert — the operator's click is the decision. Under the promotion
-          claim (fenced against a live lifecycle claim and against unsettled
-          shared-tree siblings, exactly as promotion is) the run goes `Done`
-          with `promotion_state='done'`, `promoted_head_sha` = the published
-          head (which must equal the local `HEAD`), `merge_commit_sha` null,
-          the GC schedule, and the `run.promoted` + `run.done` events,
-          attributed `source: pr_finalize`. `reviewedTargetCommit` and
-          `allowTargetDrift` are refused outside `Review`.
+          assert — the operator's click is the decision. The recorded PR
+          (`pr_number`) is read from its provider first, and the finalize
+          binds to the head the PR carries — not to the latest publication,
+          which may have moved elsewhere while the PR stayed. That head must
+          equal the local `HEAD`: an open PR at another head is
+          `publish_stale`, a merged one `merged_pr_behind` (open a new PR for
+          the commits it lacks), and a PR the provider reports closed
+          `pr_closed`. Under the promotion claim (fenced against a live
+          lifecycle claim and against unsettled shared-tree siblings, exactly
+          as promotion is) the run goes `Done` with `promotion_state='done'`,
+          `promoted_head_sha` = that head, `merge_commit_sha` null, the GC
+          schedule, and the `run.promoted` + `run.done` events, attributed
+          `source: pr_finalize`. The read never writes the ADR-140 PR state.
+          `reviewedTargetCommit` and `allowTargetDrift` are refused outside
+          `Review`.
 
         An externally merged PR is surfaced by `pr_state_scan` and finalized
         manually; promotion stays manual by default.
@@ -10098,7 +10105,9 @@ paths:
         "409":
           description: |
             `PRECONDITION` with `details.reason`: `pr_missing`, `pr_closed`,
-            `publish_stale`, `target_drift` (from `Review`: the target
+            `publish_stale`, `merged_pr_behind` (the PR was merged without the
+            worktree's later commits), `provider_unsupported` (the provider
+            cannot read the PR), `target_drift` (from `Review`: the target
             advanced since the panel rendered it — re-read or finalize anyway),
             or a workbench git policy refusal (`human_owned` — never while a
             rework claim is open, `unsupported_status` — e.g. already `Done`,
@@ -10113,8 +10122,9 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "503":
           description: |
-            The published head could not be read from the remote, or (from
-            `Review`) the promotion's push or provider call failed transiently
+            The recorded PR could not be read from its provider, or the
+            provider reported no head for it, or (from `Review`) the
+            promotion's push or provider call failed transiently
             (`EXECUTOR_UNAVAILABLE`); the run is unchanged and retryable.
           content:
             application/json:

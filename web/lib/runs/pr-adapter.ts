@@ -650,6 +650,10 @@ export function selectPrAdapter(
 //                       unparseable remote). Still not a statement about the PR.
 // `generic` has no PR-state support → `unsupported` (mirrors selectPrAdapter's
 // unsupported-provider path as a typed result, not a throw).
+//
+// `headSha` is the commit the PR itself carries (ADR-181), which a merged PR
+// keeps after its branch is deleted: a finalize binds to it, never to whatever
+// was published last.
 
 export type PrStateReadResult =
   | {
@@ -658,6 +662,7 @@ export type PrStateReadResult =
       mergedAt: string | null;
       mergeCommitSha: string | null;
       hasConflicts: boolean | null;
+      headSha: string | null;
     }
   | { kind: "skip"; transient: boolean; reason: string }
   | { kind: "unsupported" };
@@ -802,7 +807,7 @@ async function githubPrState(args: GetPrStateArgs): Promise<PrStateReadResult> {
         "--repo",
         `${parsed.owner}/${parsed.repo}`,
         "--json",
-        "state,mergedAt,mergeCommit,mergeable,mergeStateStatus",
+        "state,mergedAt,mergeCommit,mergeable,mergeStateStatus,headRefOid",
       ],
       {
         signal: AbortSignal.timeout(EXEC_TIMEOUT_MS),
@@ -820,6 +825,7 @@ async function githubPrState(args: GetPrStateArgs): Promise<PrStateReadResult> {
     mergeCommit?: { oid?: string | null } | null;
     mergeable?: string;
     mergeStateStatus?: string;
+    headRefOid?: string | null;
   };
 
   try {
@@ -840,6 +846,7 @@ async function githubPrState(args: GetPrStateArgs): Promise<PrStateReadResult> {
     mergedAt: isoTimestamp(payload.mergedAt),
     mergeCommitSha: nonEmptyString(payload.mergeCommit?.oid),
     hasConflicts: githubConflicts(payload.mergeable, payload.mergeStateStatus),
+    headSha: nonEmptyString(payload.headRefOid),
   };
 }
 
@@ -908,6 +915,8 @@ async function gitlabPrState(args: GetPrStateArgs): Promise<PrStateReadResult> {
     merge_commit_sha?: string | null;
     has_conflicts?: boolean;
     detailed_merge_status?: string;
+    sha?: string | null;
+    diff_refs?: { head_sha?: string | null } | null;
   };
 
   try {
@@ -928,6 +937,9 @@ async function gitlabPrState(args: GetPrStateArgs): Promise<PrStateReadResult> {
     mergedAt: isoTimestamp(payload.merged_at),
     mergeCommitSha: nonEmptyString(payload.merge_commit_sha),
     hasConflicts: gitlabConflicts(payload),
+    headSha:
+      nonEmptyString(payload.sha) ??
+      nonEmptyString(payload.diff_refs?.head_sha),
   };
 }
 
@@ -1006,6 +1018,7 @@ async function giteaPrState(
     merged_at?: string | null;
     merge_commit_sha?: string | null;
     mergeable?: boolean;
+    head?: { sha?: string | null } | null;
   };
 
   try {
@@ -1028,6 +1041,7 @@ async function giteaPrState(
     mergeCommitSha: nonEmptyString(payload.merge_commit_sha),
     hasConflicts:
       typeof payload.mergeable === "boolean" ? !payload.mergeable : null,
+    headSha: nonEmptyString(payload.head?.sha),
   };
 }
 

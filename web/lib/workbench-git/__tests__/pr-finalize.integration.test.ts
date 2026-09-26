@@ -61,14 +61,31 @@ const createOrUpdatePr = vi.fn(async (_args: Record<string, unknown>) => ({
   reused: true,
 }));
 
+// The provider's view of the recorded PR: its state, and as head whatever the
+// PR's branch on the remote holds — exactly what GitHub would answer. A merged
+// PR whose branch was deleted still reports the head it carried.
+let providerState: "open" | "merged" | "closed" = "open";
+let providerHead: string | null = null;
+const getPrState = vi.fn(async (_args: Record<string, unknown>) => ({
+  kind: "state" as const,
+  state: providerState,
+  mergedAt: providerState === "merged" ? "2026-09-26T08:00:00Z" : null,
+  mergeCommitSha: null,
+  hasConflicts: false,
+  headSha:
+    providerHead ??
+    (await gitIn(repo.remote, ["rev-parse", `refs/heads/${PUBLIC}`])),
+}));
+
 // Partial: the ADR-140 scan (the one-step-further case) reads the module's
-// real constants; only the PR-opening seam is stubbed.
+// real constants; only the PR-opening seam and the PR read are stubbed.
 vi.mock("@/lib/runs/pr-adapter", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/runs/pr-adapter")>()),
   selectPrAdapter: vi.fn(() => ({
     preflight: async () => undefined,
     createOrUpdatePr,
   })),
+  getPrState: (args: Record<string, unknown>) => getPrState(args),
 }));
 
 const schema = fullSchema as unknown as Record<string, any>;
@@ -109,6 +126,9 @@ beforeEach(async () => {
   root = await mkdtemp(join(worktreesRoot, "wg-finalize-"));
   repo = await initRepoWithBareRemote(root);
   createOrUpdatePr.mockClear();
+  getPrState.mockClear();
+  providerState = "open";
+  providerHead = null;
 });
 
 afterEach(async () => {
@@ -274,8 +294,11 @@ describe("POST /api/runs/{runId}/pr/finalize", () => {
       pullRequestUrl: PR_URL,
     });
     expect(await doneEvents(run.runId)).toHaveLength(1);
-    // Finalize is DB-only: no provider call on this path.
+    // Finalize reads the PR; it never opens or updates one.
     expect(createOrUpdatePr).not.toHaveBeenCalled();
+    expect(getPrState).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "github", prNumber: 42 }),
+    );
   });
 
   it.each(["Crashed", "Abandoned"])(
@@ -313,6 +336,74 @@ describe("POST /api/runs/{runId}/pr/finalize", () => {
 
     expect(res.status).toBe(409);
     expect((await res.json()).details?.reason).toBe("publish_stale");
+    expect((await runRow(db, run.runId)).status).toBe("Failed");
+  });
+
+  // The latest publication is not the PR. Publishing the next commit to
+  // another remote leaves the PR at the head it had, so that is not the head a
+  // finalize may declare delivered.
+  it("binds to the PR's own head, not to whatever was published last", async () => {
+    const run = await prRun();
+    const backup = join(root, `backup-${randomUUID()}.git`);
+
+    await gitIn(root, ["init", "-q", "--bare", "-b", "main", backup]);
+    await gitIn(repo.parent, ["remote", "add", "backup", backup]);
+    await commitFile(run.worktree, "late.txt", "late\n", "after the PR");
+    await gitIn(run.worktree, [
+      "push",
+      "-q",
+      "backup",
+      `HEAD:refs/heads/${PUBLIC}`,
+    ]);
+    await db
+      .update(schema.workspaces)
+      .set({ publishedRemote: "backup" })
+      .where(eq(schema.workspaces.id, run.workspaceId));
+
+    const res = await post(run.runId);
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).details?.reason).toBe("publish_stale");
+    expect((await runRow(db, run.runId)).status).toBe("Failed");
+  });
+
+  it("finalizes a parked run whose PR was merged, and its branch deleted, at the head it carried", async () => {
+    const run = await prRun({ prState: "merged" });
+
+    providerState = "merged";
+    providerHead = run.head;
+    await gitIn(repo.remote, ["branch", "-D", PUBLIC]);
+
+    expect((await post(run.runId)).status).toBe(200);
+    expect(await runRow(db, run.runId)).toMatchObject({
+      status: "Done",
+      promotedHeadSha: run.head,
+    });
+  });
+
+  it("refuses merged_pr_behind when the PR was merged without the worktree's later commits", async () => {
+    const run = await prRun({ prState: "merged" });
+
+    providerState = "merged";
+    providerHead = run.head;
+    await commitFile(run.worktree, "after.txt", "after\n", "after the merge");
+
+    const res = await post(run.runId);
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).details?.reason).toBe("merged_pr_behind");
+    expect((await runRow(db, run.runId)).status).toBe("Failed");
+  });
+
+  it("refuses pr_closed when the provider reports the PR closed, whatever the scan last saw", async () => {
+    const run = await prRun();
+
+    providerState = "closed";
+
+    const res = await post(run.runId);
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).details?.reason).toBe("pr_closed");
     expect((await runRow(db, run.runId)).status).toBe("Failed");
   });
 

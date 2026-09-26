@@ -4075,6 +4075,7 @@
       "base_branch_unknown": "Базовая ветка неизвестна.",
       "pr_missing": "Для этого прогона не записан pull request.",
       "pr_closed": "Pull request закрыт.",
+      "merged_pr_behind": "Pull request слит без последних коммитов рабочей копии — откройте для них новый pull request.",
       "target_drift": "Целевая ветка сдвинулась после ревью.",
       "review_only_field": "Эта опция действует только в статусе Review.",
       "no_reattach_source": "Не из чего вернуть рабочую копию.",

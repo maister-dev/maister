@@ -60,6 +60,7 @@ const ERROR_KEYS = [
   "base_branch_unknown",
   "pr_missing",
   "pr_closed",
+  "merged_pr_behind",
   "target_drift",
   "review_only_field",
   "no_reattach_source",

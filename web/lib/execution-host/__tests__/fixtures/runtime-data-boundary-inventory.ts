@@ -1629,7 +1629,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "the PR provider is resolved from the parent checkout's origin — Stage C delivery boundary",
       [
         [
-          "preflightedPrAdapter",
+          "pullRequestProvider",
           "lib/repo-source.ts#readRemoteOrigin",
           "wrapper",
         ],

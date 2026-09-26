@@ -117,7 +117,9 @@ An unknown value opens the default section.
    finalizable. From `Review` it sends the target head the panel rendered, and
    a drift refusal offers **Finalize anyway**; outside `Review` it opens the
    shared destructive confirmation first, since no readiness is asserted
-   there.
+   there. The server finalizes at the head the PR itself carries on the
+   provider: a PR merged without the worktree's later commits is refused
+   (`merged_pr_behind`), and the copy says to open a new PR for them.
 6. **Reattach** — rendered INSTEAD of Tree / Publish / Update / PR when the
    worktree is not usable; lists which sources resolve (local branch,
    published branch, archive ref) and re-creates the worktree from the first.

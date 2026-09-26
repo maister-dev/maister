@@ -172,6 +172,7 @@ export type LifecycleWorkspace = {
   publishedRemote?: string | null;
   publishedAt?: Date | null;
   prUrl?: string | null;
+  prNumber?: number | null;
   prState?: string | null;
   promotionState?: string | null;
   promotionClaimedAt?: Date | null;
@@ -2272,6 +2273,7 @@ async function loadLifecycleContext(runId: string): Promise<LifecycleContext> {
         publishedRemote: workspaces.publishedRemote,
         publishedAt: workspaces.publishedAt,
         prUrl: workspaces.prUrl,
+        prNumber: workspaces.prNumber,
         prState: workspaces.prState,
         promotionState: workspaces.promotionState,
         promotionClaimedAt: workspaces.promotionClaimedAt,

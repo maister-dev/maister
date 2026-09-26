@@ -4075,6 +4075,7 @@
       "base_branch_unknown": "The base branch is unknown.",
       "pr_missing": "No pull request is recorded for this run.",
       "pr_closed": "The pull request is closed.",
+      "merged_pr_behind": "The pull request was merged without the worktree's latest commits — open a new pull request for them.",
       "target_drift": "The target moved since the review.",
       "review_only_field": "That option applies only in Review.",
       "no_reattach_source": "There is nothing to re-attach from.",

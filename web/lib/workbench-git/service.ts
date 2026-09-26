@@ -27,8 +27,10 @@ import { WORKTREE_TTL_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 import { worktreePresence } from "@/lib/workbench-git/presence";
 import { publishedTarget } from "@/lib/workbench-git/publication";
 import {
+  mergedPullRequestBehind,
   preflightedPrAdapter,
   pullRequestDefaults,
+  readRecordedPullRequest,
 } from "@/lib/workbench-git/pull-request";
 import {
   depsFromOptions,
@@ -747,8 +749,10 @@ export type FinalizePullRequestInput = {
 // `promoteRun(pull_request)`: readiness, the drift gate and every promotion
 // gate apply, and the operator's reviewed target rides along (C23). From
 // Crashed | Failed | Abandoned it is the parked finalize under the promotion
-// claim, at the published head — which must be the worktree's HEAD, so the
-// promoted head is what the operator reviewed.
+// claim, at the head the recorded PR carries as the provider reports it (Codex
+// F5) — which must be the worktree's HEAD, so the promoted head is what the
+// operator reviewed. The latest publication is not the PR: publishing the next
+// commit elsewhere leaves the PR where it was.
 export async function finalizePullRequestRun(
   runId: string,
   input: FinalizePullRequestInput,
@@ -793,27 +797,49 @@ export async function finalizePullRequestRun(
   }
 
   const workspace = requireWorkspace(ctx);
-  const published = publishedTarget(workspace);
-  const [head, publishedHead] = await Promise.all([
+  const prNumber: number | null = workspace.prNumber ?? null;
+
+  if (prNumber === null) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `no pull request is recorded for run ${runId}`,
+      { details: { reason: "pr_missing" } },
+    );
+  }
+
+  const [head, pr] = await Promise.all([
     deps.headCommit({ worktreePath: workspace.worktreePath }),
-    deps.remoteBranchHead({
-      projectRepoPath: workspace.parentRepoPath,
-      remote: published.remote,
-      branch: published.remoteBranch,
+    readRecordedPullRequest({
+      project: ctx.project,
+      parentRepoPath: workspace.parentRepoPath,
+      prNumber,
     }),
   ]);
 
-  if (publishedHead === null || publishedHead !== head) {
+  if (pr.state === "closed") {
     throw new MaisterError(
       "PRECONDITION",
-      `${published.remote}/${published.remoteBranch} is not the worktree's HEAD — publish run ${runId} first`,
-      { details: { reason: "publish_stale" } },
+      `pull request #${prNumber} of run ${runId} is closed`,
+      { details: { reason: "pr_closed" } },
     );
+  }
+  if (pr.headSha !== head) {
+    log.info(
+      { runId, prNumber, prState: pr.state, prHead: pr.headSha, head },
+      "parked PR finalize refused — the PR does not carry the worktree's HEAD",
+    );
+    throw pr.state === "merged"
+      ? mergedPullRequestBehind({ runId, prNumber, prHead: pr.headSha, head })
+      : new MaisterError(
+          "PRECONDITION",
+          `pull request #${prNumber} is at ${pr.headSha}, not at the worktree's HEAD — publish run ${runId} first`,
+          { details: { reason: "publish_stale" } },
+        );
   }
 
   return finalizeParkedPullRequest({
     runId,
     ctx: promoteCtx,
-    sourceHead: publishedHead,
+    sourceHead: head,
   });
 }
