@@ -521,7 +521,10 @@ export function createExecutionHosts(
                   sessionName,
                   assignmentId: current.id,
                   nodeAttemptId: payload.nodeAttemptId ?? null,
-                  result,
+                  result: {
+                    ...result,
+                    steeringSupported: result.steeringSupported ?? null,
+                  },
                 }),
               resultSummary: (result) => ({
                 sessionId: result.sessionId,

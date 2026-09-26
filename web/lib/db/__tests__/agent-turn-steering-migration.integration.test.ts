@@ -289,6 +289,51 @@ describe("migration 0180 agent turn steering (ADR-182)", () => {
       constraint: "agent_turns_command_scope",
     });
 
+    // A steer command that names some other prompt is not this parent's.
+    const strayCommand = await issueCommand(db, {
+      assignment: parent.assignment,
+      host,
+      kind: "session.steer",
+      targetSessionId: parent.targetSessionId,
+      payload: {
+        contentBlocks: [{ type: "text", text: "also X" }],
+        parentCommandId: randomUUID(),
+      },
+      maxAttempts: 3,
+    });
+
+    await expect(
+      db.insert(agentTurns).values(steerRow(parent, strayCommand.row.id, 5)),
+    ).rejects.toMatchObject({
+      code: "23514",
+      constraint: "agent_turns_command_scope",
+    });
+
+    // The steer rides the parent's own incarnation, not a sibling one.
+    const siblingIncarnation = randomUUID();
+
+    await db.insert(runSessionIncarnations).values({
+      id: siblingIncarnation,
+      runId: parent.runId,
+      runSessionId: parent.sessionId,
+      executionAssignmentId: parent.assignment.id,
+      assignmentEpoch: parent.assignment.epoch,
+      executionHostId: host.id,
+      hostSessionId: randomUUID(),
+      state: "exited",
+      origin: "native",
+      steeringSupported: true,
+    });
+    await expect(
+      db.insert(agentTurns).values({
+        ...steerRow(parent, await issueSteer(parent), 6),
+        incarnationId: siblingIncarnation,
+      }),
+    ).rejects.toMatchObject({
+      code: "23514",
+      constraint: "agent_turns_steer_parent_scope",
+    });
+
     const steerCommand = await issueSteer(parent);
 
     await expect(

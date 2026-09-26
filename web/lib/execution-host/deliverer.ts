@@ -90,8 +90,9 @@ export const COMMAND_POLICY: Readonly<Record<CommandKind, KindPolicy>> = {
     driverless: false,
     timeoutMs: 10_000,
   },
-  // ADR-182: longer than the host's own 30 s ACP bound, so the host always
-  // answers first — `injected` or the definitive `steer_timeout` refusal.
+  // ADR-182: longer than the host's own 30 s bound on a steer (waiting
+  // included), so a live host answers first — `injected` or a definitive
+  // refusal; anything else is an unknown outcome the receipt decides.
   "session.steer": {
     maxAttempts: 3,
     backoffBaseMs: 500,
@@ -264,7 +265,10 @@ async function terminalWithRejection<TResult>(
       .from(runs)
       .where(eq(runs.id, opts.command.runId))
       .for("update");
-    await write(txDb);
+    const written = await write(txDb);
+
+    // Recovery terminalized the row first and settled its domain then.
+    if (!written.changed) return;
     await onReject(txDb, err);
   });
 }
@@ -514,6 +518,20 @@ export async function deliverCommand<TResult>(
             },
           },
         );
+      // ADR-182: a steer's domain outcome is settled only by the path whose
+      // ledger write landed; recovery already settled a row it terminalized.
+      if (kind === "session.steer" && !acknowledged.changed) {
+        logger.warn(
+          {
+            commandId: opts.command.id,
+            runId: opts.command.runId,
+            state: acknowledged.row?.state ?? null,
+          },
+          "steer-ack-after-recovery-settled",
+        );
+
+        return undefined;
+      }
 
       return opts.onAck?.(tx as unknown as Db, result);
     });

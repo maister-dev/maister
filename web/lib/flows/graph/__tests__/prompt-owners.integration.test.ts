@@ -1237,7 +1237,10 @@ describe("Flow prompt owners through the production graph driver", () => {
             assignmentId: original.executionAssignmentId,
             nodeAttemptId: oldOwner.nodeAttemptId,
             sessionName,
-            result: oldResult,
+            result: {
+              ...oldResult,
+              steeringSupported: oldResult.steeringSupported ?? null,
+            },
           }),
         );
 

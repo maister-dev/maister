@@ -33,6 +33,23 @@ const ACCEPTS_MESSAGE = {
   Crashed: false,
 } satisfies Record<RunStatus, boolean>;
 
+// A message turn on a run in these statuses can never be dispatched: the claim
+// supersedes it, and a steer converted after the run closed leaves no queued
+// successor behind (ADR-182).
+export const CLOSES_MESSAGE_TURNS = {
+  Pending: false,
+  Running: false,
+  NeedsInput: false,
+  NeedsInputIdle: false,
+  HumanWorking: false,
+  WaitingOnChildren: false,
+  Review: false,
+  Done: true,
+  Failed: true,
+  Abandoned: true,
+  Crashed: false,
+} satisfies Record<RunStatus, boolean>;
+
 export function messageLogicalKey(requestKey: string | undefined): string {
   return requestKey === undefined
     ? `message:auto:${randomUUID()}`

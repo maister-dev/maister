@@ -43,6 +43,7 @@ import {
   agentTurns,
 } from "@/lib/db/schema";
 import { appendRunMessage } from "@/lib/execution-host/events/run-message-store";
+import { steerTurnIdOfRequeueKey } from "@/lib/execution-host/steer-settlement";
 import { boundPromptBody, eventHorizon } from "@/lib/flows/graph/prompt-record";
 import {
   ADMISSIBLE_PROMPT_INCARNATION_STATES,
@@ -239,8 +240,6 @@ export async function bindAgentTurnCommand(
   await recordAgentPrompt(tx, turn);
 }
 
-const REQUEUE_PREFIX = "message:requeue:";
-
 /** ADR-182 (owner decision Q1): every agent prompt reaches the transcript as
  * a bounded user row in the SAME transaction as its dispatch binding — a
  * rolled-back issue rolls the row back, a redelivered dispatch is a no-op
@@ -255,11 +254,13 @@ async function recordAgentPrompt(
     "id" | "runId" | "prompt" | "variant" | "ordinal" | "logicalKey"
   >,
 ): Promise<void> {
-  if (turn.logicalKey.startsWith(REQUEUE_PREFIX)) {
+  const steerTurnId = steerTurnIdOfRequeueKey(turn.logicalKey);
+
+  if (steerTurnId) {
     const [steer] = await tx
       .select({ commandId: agentTurns.commandId })
       .from(agentTurns)
-      .where(eq(agentTurns.id, turn.logicalKey.slice(REQUEUE_PREFIX.length)));
+      .where(eq(agentTurns.id, steerTurnId));
     const [row] = steer?.commandId
       ? await tx
           .select({ id: runMessages.id, delivery: runMessages.delivery })

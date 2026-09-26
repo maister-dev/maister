@@ -33,7 +33,7 @@ import { closeDb } from "@/lib/db/client";
 import { sendAgentMessage } from "@/lib/agents/launch";
 import { startAgentContinuationWorker } from "@/lib/agents/continuation-worker";
 import { claimAgentResumeSlot, respondToHitl } from "@/lib/services/hitl";
-import { markCheckpointed } from "@/lib/runs/state-transitions";
+import { markAbandoned, markCheckpointed } from "@/lib/runs/state-transitions";
 import { getAgentRunTranscript } from "@/lib/runs/run-transcript-projector";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import {
@@ -41,6 +41,8 @@ import {
   PROMPT_TRUNCATION_MARKER,
 } from "@/lib/flows/graph/prompt-record";
 import { createExecutionHosts } from "@/lib/execution-host/client";
+import { defaultTransport } from "@/lib/execution-host/default-transport";
+import { recoverExecutionCommands } from "@/lib/execution-host/recovery";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { canonicalProjectors } from "@/lib/execution-host/events/projection-runtime";
@@ -61,7 +63,6 @@ import {
 import { startSupervisorFaultProxy } from "@/test-support/supervisor-fault-proxy";
 
 const PRE_HOLD = "before the steer";
-const STEER_PATH = /^\/sessions\/[^/]+\/steer$/;
 const USER_ID = "agent-steering-user";
 
 let database: StartedPostgresTestDb;
@@ -155,6 +156,11 @@ afterAll(async () => {
 });
 
 afterEach(async () => {
+  // A barrier a failed test left reached but unreleased is released here; it
+  // matched only its own run's steers, so it never captured another test's.
+  for (const handle of [...armed])
+    if (handle.observations.length > 0) handle.release();
+  armed.clear();
   for (const child of drivers) {
     if (child.exitCode !== null || child.signalCode !== null) continue;
     const exited = new Promise<void>((resolve) =>
@@ -432,11 +438,53 @@ async function dialog(runId: string): Promise<Array<[string, string]>> {
     .map((message) => [message.role, message.content]);
 }
 
-function holdSteer(caseId: string) {
-  return proxy.arm(
-    { caseId, method: "POST", path: STEER_PATH },
+type HeldSteer = {
+  readonly observations: readonly unknown[];
+  awaitReached(): Promise<unknown>;
+  release(): void;
+  cut(): void;
+};
+
+const armed = new Set<HeldSteer>();
+
+async function holdSteer(runId: string, caseId: string): Promise<HeldSteer> {
+  const [session] = await db
+    .select({ hostSessionId: runSessions.hostSessionId })
+    .from(runSessions)
+    .where(eq(runSessions.runId, runId));
+  const barrier = proxy.arm(
+    {
+      caseId,
+      method: "POST",
+      path: new RegExp(`^/sessions/${session?.hostSessionId}/steer$`),
+    },
     "hold-request",
   );
+  const handle: HeldSteer = {
+    observations: barrier.observations,
+    awaitReached: () => barrier.awaitReached(),
+    release: () => {
+      armed.delete(handle);
+      barrier.release();
+    },
+    cut: () => {
+      armed.delete(handle);
+      barrier.cut();
+    },
+  };
+
+  armed.add(handle);
+
+  return handle;
+}
+
+// A manager that dies in its retry backoff: nothing after an unknown outcome
+// runs in this process.
+function managerDyingInBackoff() {
+  return createExecutionHosts({
+    db,
+    sleep: () => new Promise<void>(() => {}),
+  });
 }
 
 function steerOf(turns: AgentTurn[]): AgentTurn {
@@ -539,7 +587,7 @@ describe("steering a persistent agent's running turn (ADR-182)", () => {
       const runId = await seedPersistentAgent();
       const driver = startDriver(runId);
       const parent = await runningTurn(runId);
-      const barrier = holdSteer(`worker-${runId}`);
+      const barrier = await holdSteer(runId, `worker-${runId}`);
       const sending = sendAgentMessage(runId, "while unobserved", {
         db,
         mode: "steer",
@@ -586,7 +634,7 @@ describe("steering a persistent agent's running turn (ADR-182)", () => {
     );
     const driver = startDriver(runId);
     const parent = await runningTurn(runId);
-    const barrier = holdSteer(`permission-${runId}`);
+    const barrier = await holdSteer(runId, `permission-${runId}`);
     const sending = sendAgentMessage(runId, "mind the tests", {
       db,
       mode: "steer",
@@ -690,7 +738,7 @@ describe("steering a persistent agent's running turn (ADR-182)", () => {
 
     startDriver(runId);
     const parent = await runningTurn(runId);
-    const barrier = holdSteer(`prior-${runId}`);
+    const barrier = await holdSteer(runId, `prior-${runId}`);
     const sending = sendAgentMessage(runId, "stuck steer", {
       db,
       mode: "steer",
@@ -727,6 +775,13 @@ describe("steering a persistent agent's running turn (ADR-182)", () => {
       delivery: "queued",
     });
     expect((await turn(steer.id)).state).toBe("superseded");
+    expect(await commandsOf(runId, "session.steer")).toMatchObject([
+      {
+        id: steer.commandId,
+        state: "fenced",
+        lastError: { details: { reason: "assignment_fenced" } },
+      },
+    ]);
     await releasePrompt(runId, 2);
     expect(await next).toMatchObject({
       messageState: "applied",
@@ -750,7 +805,7 @@ describe("steering a persistent agent's running turn (ADR-182)", () => {
     const runId = await seedPersistentAgent();
     const driver = startDriver(runId);
     const parent = await runningTurn(runId);
-    const barrier = holdSteer(`refusal-${runId}`);
+    const barrier = await holdSteer(runId, `refusal-${runId}`);
     const sending = sendAgentMessage(runId, "late steer", {
       db,
       mode: "steer",
@@ -800,7 +855,16 @@ describe("steering a persistent agent's running turn (ADR-182)", () => {
     });
     expect((await turn(steer.id)).state).toBe("superseded");
     expect(await commandsOf(runId, "session.steer")).toMatchObject([
-      { id: steer.commandId, state: "failed" },
+      {
+        id: steer.commandId,
+        state: "failed",
+        // The run parked (checkpointed) before the steer arrived: the host
+        // session is no longer live, a definitive refusal before any ACP call.
+        lastError: {
+          code: "PRECONDITION",
+          message: expect.stringMatching(/not live/),
+        },
+      },
     ]);
     // Exactly one delivery: the successor's prompt; the adapter never saw the
     // steer (the host refused it before any ACP call).
@@ -905,16 +969,76 @@ describe("steering a persistent agent's running turn (ADR-182)", () => {
     await awaitRunStatus(runId, "NeedsInputIdle");
   }, 120_000);
 
-  it("T3.4: a steer racing a queued message — consecutive ordinals; the message waits for the parent, not the steer", async () => {
+  it("T3.4: a steer racing a queued message serializes on the run row — consecutive ordinals, each delivered once", async () => {
     const runId = await seedPersistentAgent();
 
     startDriver(runId);
     const parent = await runningTurn(runId);
-    const [steered, queued] = await Promise.all([
-      sendAgentMessage(runId, "race steer", { db, mode: "steer" }),
-      sendAgentMessage(runId, "race queue", { db, mode: "queue" }),
-    ]);
+    const trigger = `mixed_race_${runId.replaceAll("-", "")}`;
+    const lockKey = Math.floor(Math.random() * 2_000_000_000) + 1;
+    const lock = await database.pool.connect();
+    let steered: Awaited<ReturnType<typeof sendAgentMessage>>;
+    let queued: Awaited<ReturnType<typeof sendAgentMessage>>;
 
+    try {
+      await lock.query("SELECT pg_advisory_lock(260927, $1)", [lockKey]);
+      // The steer takes the run row and parks while inserting its turn; the
+      // queued message must wait for that row, not race it for an ordinal.
+      await database.pool.query(
+        `CREATE FUNCTION ${trigger}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.run_id = '${runId}' AND NEW.variant = 'steer' THEN PERFORM pg_advisory_xact_lock(260927, ${lockKey}); END IF; RETURN NEW; END $$`,
+      );
+      await database.pool.query(
+        `CREATE TRIGGER ${trigger} BEFORE INSERT ON agent_turns FOR EACH ROW EXECUTE FUNCTION ${trigger}()`,
+      );
+      const steering = sendAgentMessage(runId, "race steer", {
+        db,
+        mode: "steer",
+      });
+
+      await expect
+        .poll(
+          async () =>
+            (
+              await database.pool.query<{ count: number }>(
+                "SELECT count(*)::int AS count FROM pg_locks WHERE locktype = 'advisory' AND classid = 260927 AND objid = $1 AND NOT granted",
+                [lockKey],
+              )
+            ).rows[0].count,
+          { timeout: 30_000, interval: 25 },
+        )
+        .toBe(1);
+      const queueing = sendAgentMessage(runId, "race queue", {
+        db,
+        mode: "queue",
+      });
+
+      await expect
+        .poll(
+          async () =>
+            (
+              await database.pool.query<{ count: number }>(
+                `SELECT count(*)::int AS count FROM pg_stat_activity loser
+                 WHERE loser.wait_event_type = 'Lock'
+                   AND EXISTS (SELECT 1 FROM pg_locks winner
+                     WHERE winner.locktype = 'advisory' AND winner.classid = 260927
+                       AND winner.objid = $1 AND NOT winner.granted
+                       AND winner.pid = ANY (pg_blocking_pids(loser.pid)))`,
+                [lockKey],
+              )
+            ).rows[0].count,
+          { timeout: 30_000, interval: 25 },
+        )
+        .toBe(1);
+      await lock.query("SELECT pg_advisory_unlock_all()");
+      [steered, queued] = await Promise.all([steering, queueing]);
+    } finally {
+      await lock.query("SELECT pg_advisory_unlock_all()");
+      lock.release();
+      await database.pool.query(
+        `DROP TRIGGER IF EXISTS ${trigger} ON agent_turns`,
+      );
+      await database.pool.query(`DROP FUNCTION IF EXISTS ${trigger}()`);
+    }
     expect(steered).toMatchObject({
       messageState: "applied",
       delivery: "steered",
@@ -923,14 +1047,12 @@ describe("steering a persistent agent's running turn (ADR-182)", () => {
       messageState: "queued",
       delivery: "queued",
     });
-    const turns = await turnsOf(runId);
-
-    expect(turns.slice(1).map((row) => row.ordinal)).toEqual([
-      parent.ordinal + 1,
-      parent.ordinal + 2,
+    expect(
+      (await turnsOf(runId)).slice(1).map((row) => [row.variant, row.ordinal]),
+    ).toEqual([
+      ["steer", parent.ordinal + 1],
+      ["live_message", parent.ordinal + 2],
     ]);
-    // The steer is applied; the queued message still waits for the parent.
-    expect((await turn(queued.messageId)).state).toBe("queued");
     await releasePrompt(runId, 1);
     await awaitTurnState(parent.id, "applied");
     const continuation = startAgentContinuationWorker({ db });
@@ -943,6 +1065,7 @@ describe("steering a persistent agent's running turn (ADR-182)", () => {
       await continuation.stop();
     }
     expect(await adapterCalls(runId, "session/prompt")).toHaveLength(2);
+    expect(await adapterCalls(runId, "_session/steering")).toHaveLength(1);
   }, 150_000);
 
   it("T3.5: every agent prompt is recorded once at dispatch, bounded, ahead of its turn's reply", async () => {
@@ -1019,6 +1142,90 @@ describe("steering a persistent agent's running turn (ADR-182)", () => {
       "assistant",
     ]);
   }, 180_000);
+
+  it("an intent orphaned by recovery converts into ONE successor, delivered exactly once", async () => {
+    const runId = await seedPersistentAgent();
+
+    startDriver(runId);
+    const parent = await runningTurn(runId);
+    const barrier = await holdSteer(runId, `orphan-${runId}`);
+
+    // The issuing manager dies with its request still on the wire: the host
+    // never sees it.
+    void sendAgentMessage(runId, "orphaned steer", {
+      db,
+      mode: "steer",
+      executionHosts: managerDyingInBackoff(),
+    }).catch(() => undefined);
+    await barrier.awaitReached();
+    const steer = steerOf(await turnsOf(runId));
+
+    await recoverExecutionCommands({
+      db,
+      transport: defaultTransport(),
+      graceMs: 0,
+    });
+    barrier.cut();
+    const successor = (await turnsOf(runId)).find(
+      (row) => row.logicalKey === `message:requeue:${steer.id}`,
+    ) as AgentTurn;
+
+    expect((await turn(steer.id)).state).toBe("superseded");
+    expect(successor).toMatchObject({
+      prompt: "orphaned steer",
+      state: "queued",
+    });
+    expect(await commandsOf(runId, "session.steer")).toMatchObject([
+      {
+        id: steer.commandId,
+        state: "failed",
+        lastError: { code: "CRASH", reason: "ORPHANED" },
+      },
+    ]);
+    await releasePrompt(runId, 1);
+    await awaitTurnState(parent.id, "applied");
+    const continuation = startAgentContinuationWorker({ db });
+
+    try {
+      await releasePrompt(runId, 2);
+      await awaitTurnState(successor.id, "applied", 60_000);
+    } finally {
+      await continuation.stop();
+    }
+    expect(await adapterCalls(runId, "session/prompt")).toHaveLength(2);
+    expect(await adapterCalls(runId, "_session/steering")).toHaveLength(0);
+  }, 150_000);
+
+  it("a steer converted after its run closed leaves no queued successor behind", async () => {
+    const runId = await seedPersistentAgent();
+
+    startDriver(runId);
+    await runningTurn(runId);
+    const barrier = await holdSteer(runId, `closed-${runId}`);
+
+    void sendAgentMessage(runId, "too late", {
+      db,
+      mode: "steer",
+      executionHosts: managerDyingInBackoff(),
+    }).catch(() => undefined);
+    await barrier.awaitReached();
+    const steer = steerOf(await turnsOf(runId));
+
+    expect(await markAbandoned(runId, { db })).toMatchObject({ ok: true });
+    await recoverExecutionCommands({
+      db,
+      transport: defaultTransport(),
+      graceMs: 0,
+    });
+    barrier.cut();
+    const successor = (await turnsOf(runId)).find(
+      (row) => row.logicalKey === `message:requeue:${steer.id}`,
+    ) as AgentTurn;
+
+    expect((await turn(steer.id)).state).toBe("superseded");
+    expect(successor.state).toBe("superseded");
+    expect((await runOf(runId)).resumeRequestedAt).toBeNull();
+  }, 150_000);
 });
 
 describe("steer outcome startedNewTurn (ADR-182 S5b)", () => {

@@ -26,10 +26,11 @@ ALTER TABLE "agent_turns" ADD CONSTRAINT "agent_turns_source_check" CHECK ("agen
       AND length("agent_turns"."logical_key") BETWEEN 1 AND 256 AND length("agent_turns"."prompt") BETWEEN 1 AND 1000000);--> statement-breakpoint
 ALTER TABLE "execution_commands" ADD CONSTRAINT "execution_commands_kind_check" CHECK ("execution_commands"."kind" in ('workspace.adopt', 'workspace.release', 'session.create', 'session.prompt', 'session.input', 'session.steer', 'session.cancel', 'session.checkpoint', 'session.delete', 'runtime_object.reserve', 'runtime_object.upload', 'runtime_object.delete'));--> statement-breakpoint
 ALTER TABLE "run_messages" ADD CONSTRAINT "run_messages_delivery_check" CHECK ("run_messages"."delivery" IS NULL OR ("run_messages"."role" = 'user' AND "run_messages"."delivery" IN ('queued', 'prompted', 'steered')));--> statement-breakpoint
--- ADR-182 (hand-written; drizzle does not model triggers). A steer row binds a
--- `session.steer` command that owns no prompt, on the parent's assignment and
--- incarnation, and names a non-steer parent turn of the same run. Every other
--- variant keeps the 0153 rule: an agent-turn-owned `session.prompt`.
+-- ADR-182 (hand-written; drizzle does not model triggers). A steer row names a
+-- non-steer parent turn of the same run, carries that parent's assignment and
+-- incarnation, and binds a `session.steer` command that owns no prompt and
+-- names the parent's command. Every other variant keeps the 0153 rule: an
+-- agent-turn-owned `session.prompt`.
 CREATE OR REPLACE FUNCTION guard_agent_turn_source() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
@@ -66,9 +67,12 @@ BEGIN
   IF NEW.parent_turn_id IS NOT NULL AND NOT EXISTS (
     SELECT 1 FROM agent_turns p
     WHERE p.id = NEW.parent_turn_id AND p.run_id = NEW.run_id AND p.variant <> 'steer'
+      AND (NEW.variant <> 'steer' OR (
+        p.execution_assignment_id IS NOT DISTINCT FROM NEW.execution_assignment_id
+        AND p.incarnation_id IS NOT DISTINCT FROM NEW.incarnation_id))
   ) THEN
     RAISE EXCEPTION USING ERRCODE = '23514', CONSTRAINT = 'agent_turns_steer_parent_scope',
-      MESSAGE = 'a steer must name a non-steer turn of its own run';
+      MESSAGE = 'a steer must name a non-steer turn of its own run, on that turn''s assignment and incarnation';
   END IF;
   IF NEW.execution_assignment_id IS NOT NULL AND NOT EXISTS (
     SELECT 1 FROM execution_assignments a JOIN run_sessions s ON s.run_id = a.run_id
@@ -83,6 +87,9 @@ BEGIN
       ON i.id = NEW.incarnation_id AND i.run_session_id = NEW.run_session_id
     WHERE c.id = NEW.command_id AND c.run_id = NEW.run_id
       AND c.kind = 'session.steer' AND c.owner_kind IS NULL
+      AND (NEW.parent_turn_id IS NULL OR c.payload->>'parentCommandId' = (
+        SELECT p.command_id FROM agent_turns p WHERE p.id = NEW.parent_turn_id
+      ))
       AND c.execution_assignment_id = NEW.execution_assignment_id
       AND c.assignment_epoch = NEW.assignment_epoch
       AND i.execution_assignment_id = NEW.execution_assignment_id
@@ -90,7 +97,7 @@ BEGIN
       AND i.host_session_id = c.target_session_id
   ) THEN
     RAISE EXCEPTION USING ERRCODE = '23514', CONSTRAINT = 'agent_turns_command_scope',
-      MESSAGE = 'agent steer command must be an owner-less session.steer on its parent incarnation';
+      MESSAGE = 'agent steer command must be an owner-less session.steer naming its parent command, on its parent incarnation';
   END IF;
   IF NEW.command_id IS NOT NULL AND NEW.variant <> 'steer' AND NOT EXISTS (
     SELECT 1 FROM execution_commands c JOIN run_session_incarnations i

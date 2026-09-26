@@ -47,7 +47,11 @@ async function ack(
         sessionName: "default",
         assignmentId,
         nodeAttemptId: null,
-        result: { sessionId: hostSessionId, acpSessionId: null },
+        result: {
+          sessionId: hostSessionId,
+          acpSessionId: null,
+          steeringSupported: null,
+        },
       }),
     ),
   ).resolves.toBe("applied");
@@ -158,7 +162,11 @@ describe("an unowned create's late acknowledgement (review finding)", () => {
         sessionName: "default",
         assignmentId,
         nodeAttemptId: null,
-        result: { sessionId: hostSessionId, acpSessionId: null },
+        result: {
+          sessionId: hostSessionId,
+          acpSessionId: null,
+          steeringSupported: null,
+        },
       }),
     );
   }
@@ -213,7 +221,7 @@ describe("steering capability at the create ACK", () => {
     runId: string,
     assignmentId: string,
     hostSessionId: string,
-    steeringSupported: boolean | null | undefined,
+    steeringSupported: boolean | null,
   ): Promise<void> {
     await db.transaction((tx) =>
       applyCreateAck(tx as unknown as Db, {
@@ -224,7 +232,7 @@ describe("steering capability at the create ACK", () => {
         result: {
           sessionId: hostSessionId,
           acpSessionId: null,
-          ...(steeringSupported === undefined ? {} : { steeringSupported }),
+          steeringSupported,
         },
       }),
     );
@@ -260,7 +268,7 @@ describe("steering capability at the create ACK", () => {
 
     const unknown = `host-${randomUUID()}`;
 
-    await steeringAck(runId, assignmentId, unknown, undefined);
+    await steeringAck(runId, assignmentId, unknown, null);
     expect((await incarnation(unknown)).steeringSupported).toBeNull();
   }, 60_000);
 

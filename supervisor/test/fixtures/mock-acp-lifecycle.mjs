@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { createHash, randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { appendFile, open, writeFile } from "node:fs/promises";
 import { Readable, Writable } from "node:stream";
 
@@ -28,6 +29,11 @@ let steering = false;
 let steerOutcome = "auto";
 let steerDelayMs = 0;
 let steerEcho = false;
+// --steer-hold-file <path>: a steer is answered only once the file exists, so
+// a test controls exactly how long the host waits on it. Steers being held are
+// counted so a prompt or a second steer that arrives meanwhile is flagged.
+let steerHoldFile;
+let steersHeld = 0;
 // Text the controlled prompt emits BEFORE it holds, so a steer lands between
 // assistant output the operator already saw and the reply to the steer.
 let preHoldText;
@@ -76,12 +82,14 @@ for (let i = 0; i < args.length; i += 1) {
     steering = true;
   } else if (arg === "--steer-outcome") {
     steerOutcome = args[++i];
-    if (!["auto", "injected", "promptRequired", "startedNewTurn", "failed", "hang"].includes(steerOutcome))
+    if (!["auto", "injected", "promptRequired", "startedNewTurn", "failed", "error", "hang"].includes(steerOutcome))
       throw new Error(`unknown --steer-outcome ${steerOutcome}`);
   } else if (arg === "--steer-delay-ms") {
     steerDelayMs = Number.parseInt(args[++i], 10);
   } else if (arg === "--steer-echo") {
     steerEcho = true;
+  } else if (arg === "--steer-hold-file") {
+    steerHoldFile = args[++i];
   } else if (arg === "--pre-hold-text") {
     preHoldText = args[++i];
     if (preHoldText === undefined) throw new Error("--pre-hold-text requires a value");
@@ -119,8 +127,20 @@ class LifecycleAgent {
     const idleBehavior = params?._meta?.steering?.idleBehavior ?? null;
     const text = steerText(params?.prompt);
 
+    await logInvocation({
+      sessionId: params.sessionId,
+      method: "_session/steering/received",
+      text,
+      overlapping: steersHeld > 0,
+    });
+    if (steerHoldFile) {
+      steersHeld += 1;
+      while (!existsSync(steerHoldFile)) await new Promise((resolve) => setTimeout(resolve, 20));
+      steersHeld -= 1;
+    }
     if (steerDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, steerDelayMs));
     if (steerOutcome === "hang") return never();
+    if (steerOutcome === "error") throw acp.RequestError.internalError({ reason: "scripted" });
     if (steerEcho) {
       await this.connection.sessionUpdate({
         sessionId: params.sessionId,
@@ -166,6 +186,8 @@ class LifecycleAgent {
       stopped = true;
       clearInterval(timer);
       unownedTurn = undefined;
+      // How many chunks the turn produced: none follows this row.
+      void logInvocation({ sessionId, method: "unowned/stopped", count });
     };
     if (hangPermission) {
       void this.connection
@@ -282,6 +304,7 @@ class LifecycleAgent {
         sessionId: params.sessionId,
         method: "session/prompt",
         requestSha256: createHash("sha256").update(JSON.stringify(params)).digest("hex"),
+        ...(steerHoldFile ? { duringSteer: steersHeld > 0 } : {}),
       })}\n`);
     }
     if (controlledPrompt) {

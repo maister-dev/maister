@@ -3011,32 +3011,13 @@ export function memoryBoundClient(args: {
         "durable permission replay requires the Postgres-backed test client",
       );
     },
-    // No ledger: a definitive refusal runs `onReject` like the real client; an
-    // unknown outcome runs neither (the receipt would decide).
-    async prepareSteer(_tx, sessionId, payload) {
-      const env = envelope("session.steer", payload);
-
-      return {
-        commandId: env.command.id,
-        payload,
-        deliver: async (opts) => {
-          let result: SteerResult;
-
-          try {
-            result = await fake.transport.steer(sessionId, env);
-          } catch (err) {
-            const unknown =
-              err instanceof MaisterError &&
-              err.details?.transport === UNKNOWN_OUTCOME_DETAIL;
-
-            if (!unknown) await opts?.onReject?.(null as never, err);
-            throw err;
-          }
-          await opts?.onAck?.(null as never, result);
-
-          return result;
-        },
-      };
+    // A steer's outcome is settled in its ledger transaction (ADR-182); this
+    // client has no ledger to settle it in.
+    async prepareSteer() {
+      throw new MaisterError(
+        "PRECONDITION",
+        "durable steering requires the Postgres-backed test client",
+      );
     },
     async sessionsForRun() {
       const runId = current.runId;

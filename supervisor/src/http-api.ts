@@ -31,6 +31,7 @@ import {
   sendPromptOnConnection,
   STEER_ACP_TIMEOUT_MS,
   steerOnConnection,
+  type SteerAttempt,
 } from "./acp-client";
 import { retainedOutputBudget } from "./bounded-acp-stream";
 import {
@@ -202,6 +203,8 @@ export type RegisterRoutesOptions = {
   logger: Logger;
   runtimeRoot: string;
   killGraceMs?: number;
+  // ADR-182: the host's bound on one steer; tests shorten it.
+  steerTimeoutMs?: number;
   spawnOverrides?: SpawnOverrides;
   // ADR-076 model-catalog resolver. Injected so tests can stub the source set
   // and the cache; main.ts wires the real registry (with Phase-2 sources) and
@@ -521,6 +524,7 @@ async function diagnoseAdapterBinary(
 export function registerRoutes(opts: RegisterRoutesOptions): void {
   const { app, registry, logger, runtimeRoot } = opts;
   const killGraceMs = opts.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
+  const steerTimeoutMs = opts.steerTimeoutMs ?? STEER_ACP_TIMEOUT_MS;
   const mcRegistry = opts.modelCatalog?.registry ?? new ModelSourceRegistry();
   const mcCache = opts.modelCatalog?.cache ?? modelCatalogCache;
   const { hostState } = opts;
@@ -1140,8 +1144,10 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     });
   }
 
-  // ADR-182 D-B6: a prompt is never written to the adapter while a steer's ACP
-  // call is unanswered, so a steer can never land in the NEXT owned turn.
+  // ADR-182 D-B6: a prompt is not written to the adapter while a steer named
+  // before it is unanswered, so a steer aimed at an earlier turn never lands in
+  // this one. A steer admitted after the prompt names this prompt itself. The
+  // wait is bounded by the steer timeout (EDGE-STR-06 is what lies past it).
   async function awaitSteerBarrier(entry: RegistryEntry): Promise<void> {
     const barrier = entry.record.steerInFlight;
 
@@ -1152,7 +1158,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       await Promise.race([
         barrier,
         new Promise<void>((resolve) => {
-          timer = setTimeout(resolve, STEER_ACP_TIMEOUT_MS);
+          timer = setTimeout(resolve, steerTimeoutMs);
           timer.unref();
         }),
       ]);
@@ -1265,11 +1271,30 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     entry.record.steerInFlight = barrier;
 
     try {
-      const attempt = await steerOnConnection(
-        connection,
-        { adapter: entry.record.adapter, acpSessionId, contentBlocks },
-        logger,
-      );
+      // Steers of one session reach the adapter one at a time: a steer that
+      // makes the adapter start an unowned turn has that turn cancelled
+      // before the next steer is checked, so none lands in it.
+      if (previous) {
+        await previous;
+        assertSteerable(entry, sessionId, commandId, parentCommandId);
+      }
+      // One timeout budget per steer, waiting included, so the host still
+      // answers before the manager's delivery timeout. A steer whose budget
+      // went on the wait is refused without reaching the adapter.
+      const remainingMs = steerTimeoutMs - (Date.now() - startedAt);
+      const attempt: SteerAttempt =
+        remainingMs > 0
+          ? await steerOnConnection(
+              connection,
+              {
+                adapter: entry.record.adapter,
+                acpSessionId,
+                contentBlocks,
+                timeoutMs: remainingMs,
+              },
+              logger,
+            )
+          : { kind: "timeout" };
 
       throwIfFenced(entry, parsed.envelope);
       if (attempt.kind === "injected") {
@@ -1300,7 +1325,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
           commandId,
           parentCommandId,
           reason: "steer_timeout",
-          message: `the adapter did not answer the steer within ${STEER_ACP_TIMEOUT_MS} ms`,
+          message: `the steer was not answered within ${steerTimeoutMs} ms`,
         });
       }
       if (attempt.adapterOutcome === "startedNewTurn") {
@@ -1328,8 +1353,9 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   }
 
   // ADR-182 D-B5: `startedNewTurn` means the adapter found no running turn and
-  // started one nobody owns. It is cancelled before the refusal is written, and
-  // any permission it raised is released rather than leaked.
+  // started one nobody owns. Its cancel is sent (best effort — the adapter
+  // decides when the turn stops) before the refusal is written, and any
+  // permission it raised is released rather than leaked.
   async function cancelUnownedTurn(args: {
     entry: RegistryEntry;
     sessionId: string;

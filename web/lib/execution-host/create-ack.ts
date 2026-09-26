@@ -37,12 +37,13 @@ export async function applyCreateAck(
     sessionName: string;
     assignmentId: string;
     nodeAttemptId: string | null;
-    // ADR-182: the adapter's `initialize` steering advertisement; absent or
-    // null from a host older than the steering contract (not observed).
+    // ADR-182: the adapter's `initialize` steering advertisement; null from a
+    // host older than the steering contract (not observed). Required so a
+    // caller that forgets it does not compile — a silent null means "queue".
     result: {
       sessionId: string;
       acpSessionId: string | null;
-      steeringSupported?: boolean | null;
+      steeringSupported: boolean | null;
     };
   },
 ): Promise<SessionBindingDisposition> {
@@ -144,10 +145,7 @@ export async function applyCreateAck(
       );
   }
   const now = new Date();
-  const steeringSupported =
-    typeof input.result.steeringSupported === "boolean"
-      ? input.result.steeringSupported
-      : null;
+  const steeringSupported = input.result.steeringSupported;
   const binding = {
     hostSessionId: input.result.sessionId,
     acpSessionId: input.result.acpSessionId,

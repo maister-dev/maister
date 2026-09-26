@@ -238,7 +238,11 @@ describe("prompt admission on the ACK-authored incarnation", () => {
         sessionName: "default",
         assignmentId: first.assignment.id,
         nodeAttemptId: null,
-        result: { sessionId: hostSessionId, acpSessionId: null },
+        result: {
+          sessionId: hostSessionId,
+          acpSessionId: null,
+          steeringSupported: null,
+        },
       }),
     );
 

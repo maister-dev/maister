@@ -107,7 +107,11 @@ describe("Durable agent turn admission", () => {
           sessionName: "default",
           assignmentId: assignment.id,
           nodeAttemptId: null,
-          result: { sessionId: `host-${runId}`, acpSessionId: `acp-${runId}` },
+          result: {
+            sessionId: `host-${runId}`,
+            acpSessionId: `acp-${runId}`,
+            steeringSupported: null,
+          },
         }),
       );
       const [incarnation] = await db

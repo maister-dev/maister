@@ -1,7 +1,7 @@
 import type { CommandEnvelope, SessionEvent } from "../types";
 
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -44,7 +44,7 @@ afterEach(async () => {
 
 async function boot(
   fixtureArgs: string[],
-  opts: { root?: string; stateDir?: string } = {},
+  opts: { root?: string; stateDir?: string; steerTimeoutMs?: number } = {},
 ): Promise<Stack> {
   const root = opts.root ?? (await mkdtemp(join(tmpdir(), "steer-route-")));
   const log = join(root, "invocations.ndjson");
@@ -52,6 +52,7 @@ async function boot(
     runtimeRoot: root,
     stateDir: opts.stateDir,
     killGraceMs: 1_000,
+    steerTimeoutMs: opts.steerTimeoutMs,
     fixtureArgs: ["--hang", "--invocation-log", log, ...fixtureArgs],
   });
   const stack = { host, log, root };
@@ -148,6 +149,7 @@ async function invocations(
 async function waitForInvocations(
   log: string,
   predicate: (rows: Array<Record<string, unknown>>) => boolean,
+  timeoutMs = 10_000,
 ): Promise<Array<Record<string, unknown>>> {
   const startedAt = Date.now();
 
@@ -155,7 +157,7 @@ async function waitForInvocations(
     const rows = await invocations(log);
 
     if (predicate(rows)) return rows;
-    if (Date.now() - startedAt > 10_000)
+    if (Date.now() - startedAt > timeoutMs)
       throw new Error(`invocation log never matched: ${JSON.stringify(rows)}`);
     await new Promise((resolveP) => setTimeout(resolveP, 20));
   }
@@ -441,12 +443,21 @@ describe("POST /sessions/:id/steer (ADR-182)", () => {
     expect(cancelAt).toBeGreaterThan(steerAt);
     expect(rows[cancelAt]).toMatchObject({ unowned: true });
 
-    await new Promise((resolveP) => setTimeout(resolveP, 150));
-    const settled = agentText(session).filter((t) => t.startsWith("unowned:"));
+    // The mock logs how many chunks the unowned turn produced when the cancel
+    // stops it; the host forwards exactly those and nothing after.
+    const stopped = (
+      await waitForInvocations(
+        stack.log,
+        (logged) => count(logged, "unowned/stopped") === 1,
+      )
+    ).find((row) => row.method === "unowned/stopped");
+    const produced = Number(stopped?.count);
+    const unowned = () =>
+      agentText(session).filter((t) => t.startsWith("unowned:"));
 
-    await new Promise((resolveP) => setTimeout(resolveP, 250));
-    expect(agentText(session).filter((t) => t.startsWith("unowned:"))).toEqual(
-      settled,
+    await waitFor(() => unowned().length === produced, 5_000);
+    expect(unowned()).toEqual(
+      Array.from({ length: produced }, (_, i) => `unowned:${i + 1}`),
     );
 
     await releasePrompt(stack, session, parent);
@@ -508,12 +519,12 @@ describe("POST /sessions/:id/steer (ADR-182)", () => {
   });
 
   it("never writes the next prompt before an unanswered steer (S5c)", async () => {
-    const stack = await boot([
-      "--steering",
-      "--controlled-prompt",
-      "--steer-delay-ms",
-      "1500",
-    ]);
+    const root = await mkdtemp(join(tmpdir(), "steer-route-"));
+    const hold = join(root, "steer.release");
+    const stack = await boot(
+      ["--steering", "--controlled-prompt", "--steer-hold-file", hold],
+      { root },
+    );
     const session = await openSession(stack);
     const parent = await startPrompt(stack, session);
 
@@ -521,16 +532,29 @@ describe("POST /sessions/:id/steer (ADR-182)", () => {
       stack.log,
       (rows) => count(rows, "session/prompt") === 1,
     );
-    const body = steerBody(session, parent, "in flight");
-    const steered = steer(stack, session, body);
+    const steered = steer(stack, session, steerBody(session, parent, "held"));
 
-    await waitFor(
-      () =>
-        stack.host.hostState.getReceipt(body.command.id)?.phase === "accepted",
-      5_000,
+    await waitForInvocations(
+      stack.log,
+      (rows) => count(rows, "_session/steering/received") === 1,
     );
     await releasePrompt(stack, session, parent);
     const next = await startPrompt(stack, session, "next");
+
+    // The next prompt is accepted while the steer is still unanswered; it
+    // must not reach the adapter before the steer does.
+    await waitFor(
+      () => stack.host.hostState.getReceipt(next)?.phase === "accepted",
+      5_000,
+    );
+    await expect(
+      waitForInvocations(
+        stack.log,
+        (rows) => count(rows, "session/prompt") === 2,
+        500,
+      ),
+    ).rejects.toThrow(/never matched/);
+    await writeFile(hold, "");
     const res = await steered;
 
     expect(res.status).toBe(409);
@@ -542,17 +566,185 @@ describe("POST /sessions/:id/steer (ADR-182)", () => {
       stack.log,
       (logged) => count(logged, "session/prompt") === 2,
     );
-    const steerAt = rows.findIndex((row) => row.method === "_session/steering");
-    const secondPromptAt = rows
-      .map((row) => row.method)
-      .lastIndexOf("session/prompt");
 
-    expect(steerAt).toBeGreaterThanOrEqual(0);
-    expect(steerAt).toBeLessThan(secondPromptAt);
+    expect(rows.filter((row) => row.duringSteer === true)).toEqual([]);
+    expect(
+      rows.findIndex((row) => row.method === "_session/steering"),
+    ).toBeLessThan(rows.map((row) => row.method).lastIndexOf("session/prompt"));
     await releasePrompt(stack, session, next);
     expect(agentText(session).some((text) => text.startsWith("steered:"))).toBe(
       false,
     );
+  });
+
+  it("sends the steers of one session to the adapter one at a time", async () => {
+    const root = await mkdtemp(join(tmpdir(), "steer-route-"));
+    const hold = join(root, "steer.release");
+    const stack = await boot(
+      ["--steering", "--controlled-prompt", "--steer-hold-file", hold],
+      { root },
+    );
+    const session = await openSession(stack);
+    const parent = await startPrompt(stack, session);
+
+    await waitForInvocations(
+      stack.log,
+      (rows) => count(rows, "session/prompt") === 1,
+    );
+    const first = steerBody(session, parent, "first");
+    const second = steerBody(session, parent, "second");
+    const answers = Promise.all([
+      steer(stack, session, first),
+      steer(stack, session, second),
+    ]);
+
+    await waitFor(
+      () =>
+        stack.host.hostState.getReceipt(first.command.id)?.phase ===
+          "accepted" &&
+        stack.host.hostState.getReceipt(second.command.id)?.phase ===
+          "accepted",
+      5_000,
+    );
+    // While one steer is held, the other must not reach the adapter.
+    await expect(
+      waitForInvocations(
+        stack.log,
+        (rows) => count(rows, "_session/steering/received") === 2,
+        500,
+      ),
+    ).rejects.toThrow(/never matched/);
+    await writeFile(hold, "");
+    const [one, two] = await answers;
+
+    expect([one.status, two.status]).toEqual([200, 200]);
+    const steps = (await invocations(stack.log))
+      .filter((row) => String(row.method).startsWith("_session/steering"))
+      .map((row) => row.method);
+
+    expect(steps).toEqual([
+      "_session/steering/received",
+      "_session/steering",
+      "_session/steering/received",
+      "_session/steering",
+    ]);
+    expect(
+      (await invocations(stack.log)).filter((row) => row.overlapping === true),
+    ).toEqual([]);
+    await releasePrompt(stack, session, parent);
+  });
+
+  it("refuses steer_timeout when the adapter does not answer in time, and a later prompt proceeds", async () => {
+    const stack = await boot(
+      ["--steering", "--controlled-prompt", "--steer-outcome", "hang"],
+      { steerTimeoutMs: 300 },
+    );
+    const session = await openSession(stack);
+    const parent = await startPrompt(stack, session);
+
+    await waitForInvocations(
+      stack.log,
+      (rows) => count(rows, "session/prompt") === 1,
+    );
+    const body = steerBody(session, parent, "late");
+    const res = await steer(stack, session, body);
+
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "steer_timeout", parentCommandId: parent },
+    });
+    expect(stack.host.hostState.getReceipt(body.command.id)?.phase).toBe(
+      "rejected",
+    );
+    expect(
+      stack.host.registry.get(session.sessionId)?.record.steerInFlight,
+    ).toBe(undefined);
+    await releasePrompt(stack, session, parent);
+  });
+
+  it.each(["failed", "error"] as const)(
+    "refuses steer_no_active_turn when the adapter answers %s",
+    async (outcome) => {
+      const stack = await boot([
+        "--steering",
+        "--controlled-prompt",
+        "--steer-outcome",
+        outcome,
+      ]);
+      const session = await openSession(stack);
+      const parent = await startPrompt(stack, session);
+
+      await waitForInvocations(
+        stack.log,
+        (rows) => count(rows, "session/prompt") === 1,
+      );
+      const res = await steer(stack, session, steerBody(session, parent, "x"));
+
+      expect(res.status).toBe(409);
+      expect(res.body.details).toMatchObject({
+        reason: "steer_no_active_turn",
+        adapterOutcome: outcome,
+      });
+      expect(count(await invocations(stack.log), "session/cancel")).toBe(0);
+      await releasePrompt(stack, session, parent);
+    },
+  );
+
+  it("confines steer content like a prompt: a file outside the run sandbox never reaches the adapter", async () => {
+    const stack = await boot(["--steering", "--controlled-prompt"]);
+    const session = await openSession(stack);
+    const parent = await startPrompt(stack, session);
+
+    await waitForInvocations(
+      stack.log,
+      (rows) => count(rows, "session/prompt") === 1,
+    );
+    const body = envelope(
+      "session.steer",
+      session.fence,
+      {
+        contentBlocks: [
+          { type: "text", text: "read this" },
+          { type: "resource_link", uri: "file:///etc/passwd", name: "passwd" },
+        ],
+        parentCommandId: parent,
+      },
+      randomUUID(),
+    );
+    const res = await steer(stack, session, body);
+
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ code: "PRECONDITION" });
+    expect(String(res.body.message)).toMatch(/escapes the run sandbox/);
+    expect(
+      count(await invocations(stack.log), "_session/steering/received"),
+    ).toBe(0);
+    await releasePrompt(stack, session, parent);
+  });
+
+  it("refuses PRECONDITION on a session whose adapter has exited", async () => {
+    const stack = await boot(["--steering", "--controlled-prompt"]);
+    const session = await openSession(stack);
+    const parent = await startPrompt(stack, session);
+
+    await waitForInvocations(
+      stack.log,
+      (rows) => count(rows, "session/prompt") === 1,
+    );
+    process.kill(session.pid, "SIGKILL");
+    await waitFor(() => {
+      const child = stack.host.registry.get(session.sessionId)?.child;
+
+      return !child || child.exitCode !== null || child.signalCode !== null;
+    }, 5_000);
+    const res = await steer(stack, session, steerBody(session, parent, "x"));
+
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ code: "PRECONDITION" });
+    expect(
+      count(await invocations(stack.log), "_session/steering/received"),
+    ).toBe(0);
   });
 
   it("injects while the parent waits on a permission without cancelling it (S7-host)", async () => {

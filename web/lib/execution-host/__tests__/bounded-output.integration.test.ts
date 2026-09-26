@@ -502,6 +502,7 @@ describe("AT-01 bounded output on the production supervisor", () => {
           result: {
             sessionId: failed!.hostSessionId,
             acpSessionId: "late-dead-handle",
+            steeringSupported: null,
           },
         }),
       ).toBe("stale");

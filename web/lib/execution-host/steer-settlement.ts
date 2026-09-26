@@ -5,7 +5,10 @@ import { and, eq, sql } from "drizzle-orm";
 import pino, { type Logger } from "pino";
 
 import { agentTurns, runMessages, runs } from "@/lib/db/schema";
-import { insertAgentMessageTurn } from "@/lib/agents/turns";
+import {
+  CLOSES_MESSAGE_TURNS,
+  insertAgentMessageTurn,
+} from "@/lib/agents/turns";
 
 const defaultLog = pino({
   name: "execution-host",
@@ -17,13 +20,17 @@ const defaultLog = pino({
 // orphan pass all call it inside the transaction that writes the ledger's
 // terminal state, with the run row already locked — so a steer's domain row
 // can never lag its command. A successor is created only from a definitive
-// host answer (`refused`), never from an unknown outcome: that is what makes
-// delivery exactly-once.
+// host answer (`refused`), never from an unknown outcome, so a message is
+// converted at most once. A definitive answer can still follow an injection
+// into a turn that then died with its session (a fence after the call, a lost
+// turn, a dead adapter): such a message is delivered at least once
+// (EDGE-STR-09).
 
 export type SteerOutcome =
   | Readonly<{ kind: "injected" }>
   // A definitive host refusal, FENCED, an orphaned intent, or a lost turn:
-  // the message never reached the running turn.
+  // the running turn did not take the message, or did not survive to act on
+  // it (EDGE-STR-09).
   | Readonly<{ kind: "refused"; reason: string }>;
 
 export type SteerSettlement =
@@ -42,8 +49,17 @@ export type SteerSettlement =
     }>
   | Readonly<{ domain: "none" }>;
 
+const REQUEUE_PREFIX = "message:requeue:";
+
 export function steerRequeueKey(steerTurnId: string): string {
-  return `message:requeue:${steerTurnId}`;
+  return `${REQUEUE_PREFIX}${steerTurnId}`;
+}
+
+/** The steer turn a successor's logical key names; null for any other key. */
+export function steerTurnIdOfRequeueKey(logicalKey: string): string | null {
+  return logicalKey.startsWith(REQUEUE_PREFIX)
+    ? logicalKey.slice(REQUEUE_PREFIX.length)
+    : null;
 }
 
 export async function settleSteerCommand(
@@ -224,19 +240,25 @@ async function settleAgentSteer(
     .select({ id: runs.id, status: runs.status })
     .from(runs)
     .where(eq(runs.id, steer.runId));
-  const successor = await insertAgentMessageTurn(
+  const inserted = await insertAgentMessageTurn(
     tx,
     run,
     steer.prompt,
     steerRequeueKey(steer.id),
   );
+  // A run that closed while the steer was in flight will never dispatch the
+  // successor; the live claim would supersede it, and so does recovery here.
+  const successor = CLOSES_MESSAGE_TURNS[run.status]
+    ? await supersedeUndeliverableSuccessor(tx, inserted, run.status, opts)
+    : inserted;
 
-  await tx
-    .update(runs)
-    .set({
-      resumeRequestedAt: sql`coalesce(${runs.resumeRequestedAt}, ${opts.now})`,
-    })
-    .where(eq(runs.id, steer.runId));
+  if (successor.state === "queued")
+    await tx
+      .update(runs)
+      .set({
+        resumeRequestedAt: sql`coalesce(${runs.resumeRequestedAt}, ${opts.now})`,
+      })
+      .where(eq(runs.id, steer.runId));
   opts.logger.info(
     {
       runId: steer.runId,
@@ -255,6 +277,26 @@ async function settleAgentSteer(
     steerTurn: settled,
     successor,
   };
+}
+
+async function supersedeUndeliverableSuccessor(
+  tx: Db,
+  successor: AgentTurn,
+  runStatus: string,
+  opts: { logger: Logger; now: Date },
+): Promise<AgentTurn> {
+  const [superseded] = await tx
+    .update(agentTurns)
+    .set({ state: "superseded", completedAt: opts.now, updatedAt: opts.now })
+    .where(and(eq(agentTurns.id, successor.id), eq(agentTurns.state, "queued")))
+    .returning();
+
+  opts.logger.info(
+    { runId: successor.runId, successorTurnId: successor.id, runStatus },
+    "agent-steer-successor-superseded-closed-run",
+  );
+
+  return superseded ?? successor;
 }
 
 /** The refusal reason a ledger error record carries, for the settlement log. */

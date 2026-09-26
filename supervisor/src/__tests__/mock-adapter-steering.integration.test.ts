@@ -320,12 +320,17 @@ describe("lifecycle mock steering flags (ADR-182)", () => {
       agentText(acp.events).some((text) => text.startsWith("unowned:")),
     );
     await acp.connection.cancel({ sessionId: acp.acpSessionId });
-    await waitForInvocation(acp.log, "session/cancel");
-    await new Promise((resolveP) => setTimeout(resolveP, 150));
-    const settled = agentText(acp.events).length;
+    await waitForInvocation(acp.log, "unowned/stopped");
+    const produced = Number(
+      (await invocations(acp.log)).find(
+        (row) => row.method === "unowned/stopped",
+      )?.count,
+    );
 
-    await new Promise((resolveP) => setTimeout(resolveP, 200));
-    expect(agentText(acp.events).length).toBe(settled);
+    await waitUntil(() => agentText(acp.events).length === produced);
+    expect(agentText(acp.events)).toEqual(
+      Array.from({ length: produced }, (_, i) => `unowned:${i + 1}`),
+    );
     expect(await invocations(acp.log)).toContainEqual(
       expect.objectContaining({ method: "session/cancel", unowned: true }),
     );

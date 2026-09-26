@@ -18,6 +18,7 @@ import { capForPool, countLiveRuns, takeSchedulerLock } from "@/lib/scheduler";
 import { claimAgentIdleResumeInTransaction } from "@/lib/runs/state-transitions";
 import { MaisterError } from "@/lib/errors";
 import { OWNED_TURN_VARIANTS } from "@/lib/agents/turn-variants";
+import { CLOSES_MESSAGE_TURNS } from "@/lib/agents/turns";
 
 export type AgentTurnClaim =
   | Readonly<{ kind: "claimed"; turn: AgentTurn }>
@@ -82,7 +83,7 @@ export async function claimAgentMessage(
         { details: { turnId } },
       );
     if (
-      ["Done", "Failed", "Abandoned"].includes(run.status) ||
+      CLOSES_MESSAGE_TURNS[run.status] ||
       (turn.executionAssignmentId !== null &&
         turn.executionAssignmentId !== run.executionAssignmentId)
     ) {

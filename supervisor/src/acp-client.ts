@@ -1287,8 +1287,10 @@ export async function sendPromptOnConnection(
   return resp;
 }
 
-// ADR-182: the host's own bound on one steer. The manager's transport timeout
-// for the kind is longer, so the host always answers first.
+// ADR-182: the host's own bound on one steer, waiting on an earlier steer
+// included. The manager's transport timeout for the kind is longer, so a live
+// host answers first; a dead host or network leaves an unknown outcome the
+// command receipt decides.
 export const STEER_ACP_TIMEOUT_MS = 30_000;
 
 export const STEER_METHOD = "_session/steering";

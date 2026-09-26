@@ -271,7 +271,10 @@ export async function createOwnedSession(input: {
         assignmentId: current.executionAssignmentId,
         nodeAttemptId: owner.variant === "agent" ? null : owner.nodeAttemptId,
         sessionName: envelope.payload.sessionName ?? "default",
-        result,
+        result: {
+          ...result,
+          steeringSupported: result.steeringSupported ?? null,
+        },
       });
     const resultValue = (result: CreateSessionResult) => ({
       ...result,
