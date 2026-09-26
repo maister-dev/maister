@@ -156,7 +156,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       properties: {
         slug: { type: "string" },
         taskId: { type: "string" },
-        recipientUserId: { type: "string" },
+        recipientUserId: { type: "string", minLength: 1 },
         question: { type: "string", minLength: 1 },
         reason: { type: "string", minLength: 1 },
         answerFormat: { type: "string", enum: ["text", "choice", "yes_no"] },
@@ -694,9 +694,37 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       required: ["runId", "message", "operationKey"],
     },
   },
+  librarian_memory_remember: {
+    description:
+      "Remember an explicit fact, goal, commitment or preference the owner asked to retain. Only an owner-message turn may call this tool.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        kind: {
+          type: "string",
+          enum: ["preference", "goal", "commitment", "fact"],
+        },
+        content: { type: "string", minLength: 1, maxLength: 2000 },
+        scope: { type: "string", enum: ["general", "project"] },
+        projectSlug: { type: "string", minLength: 1 },
+        validUntil: { type: "string" },
+        operationKey: { type: "string", minLength: 1, maxLength: 128 },
+      },
+      required: ["kind", "content", "scope", "operationKey"],
+    },
+  },
+  librarian_history_search: {
+    description:
+      "Search the owner's librarian conversation history. Results from older segments are labeled and current project visibility is enforced.",
+    inputSchema: {
+      type: "object",
+      properties: { q: { type: "string", minLength: 1, maxLength: 200 } },
+      required: ["q"],
+    },
+  },
   librarian_card_propose: {
     description:
-      "Propose a statement change or a human confirmation card. The owner reviews and decides it in the MAIster panel; this tool never performs the proposed action.",
+      "Propose a statement change, human confirmation, or inferred memory suggestion card. The owner reviews and decides it in the MAIster panel; this tool never performs the proposed action.",
     inputSchema: {
       type: "object",
       properties: {
@@ -707,6 +735,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
             "hitl_respond",
             "run_promote",
             "run_discard",
+            "memory_suggest",
           ],
         },
         taskId: { type: "string" },
@@ -720,6 +749,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
           enum: ["local_merge", "rebase_merge", "pull_request"],
         },
         reviewedTargetCommit: { type: "string" },
+        memory: { type: "object" },
         operationKey: { type: "string", minLength: 1, maxLength: 128 },
       },
       required: ["action", "operationKey"],
@@ -1709,6 +1739,35 @@ function resolveRouting(
         body: { message },
       };
     }
+    case "librarian_memory_remember": {
+      const { kind, content, scope, projectSlug, validUntil } = args as {
+        kind: string;
+        content: string;
+        scope: string;
+        projectSlug?: string;
+        validUntil?: string;
+      };
+
+      return {
+        method: "POST",
+        path: "/api/v1/ext/librarian/memory",
+        body: {
+          kind,
+          content,
+          scope,
+          ...(projectSlug ? { projectSlug } : {}),
+          ...(validUntil ? { validUntil } : {}),
+        },
+      };
+    }
+    case "librarian_history_search": {
+      const { q } = args as { q: string };
+
+      return {
+        method: "GET",
+        path: `/api/v1/ext/librarian/history/search?q=${encodeURIComponent(q)}`,
+      };
+    }
     case "librarian_card_propose": {
       const {
         action,
@@ -1720,12 +1779,14 @@ function resolveRouting(
         response,
         mode,
         reviewedTargetCommit,
+        memory,
       } = args as {
         action:
           | "statement_accept"
           | "hitl_respond"
           | "run_promote"
-          | "run_discard";
+          | "run_discard"
+          | "memory_suggest";
         taskId?: string;
         expectedRevision?: number;
         statement?: Record<string, unknown>;
@@ -1734,6 +1795,7 @@ function resolveRouting(
         response?: Record<string, unknown>;
         mode?: string;
         reviewedTargetCommit?: string;
+        memory?: Record<string, unknown>;
       };
       const body =
         action === "statement_accept"
@@ -1742,7 +1804,9 @@ function resolveRouting(
             ? { action, runId, hitlRequestId, response }
             : action === "run_promote"
               ? { action, runId, mode, reviewedTargetCommit }
-              : { action, runId };
+              : action === "memory_suggest"
+                ? { action, memory }
+                : { action, runId };
 
       return { method: "POST", path: "/api/v1/ext/librarian/cards", body };
     }

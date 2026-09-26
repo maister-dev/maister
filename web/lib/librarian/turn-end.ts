@@ -15,6 +15,7 @@ import {
 import { applyLibrarianPark } from "./park";
 import { dispatchLibrarianTurn, type LibrarianTurnStarter } from "./pool";
 import { readLibrarianSettings } from "./settings";
+import { queueLibrarianSummary, writeLibrarianSummary } from "./summary";
 
 import {
   librarianConversations,
@@ -114,11 +115,27 @@ export async function finishLibrarianTurnInTransaction(
 
     return null;
   }
+  let end = input.end;
+
+  if (turn.variant === "summary" && end.status === "completed") {
+    let saved = false;
+
+    try {
+      saved = await writeLibrarianSummary(tx, {
+        turnId: turn.id,
+        ownerId: ref.userId,
+        text: end.reply,
+      });
+    } catch (error) {
+      log.warn({ turnId: turn.id, error }, "librarian summary rejected");
+    }
+    if (!saved) end = { status: "failed", reason: "start_failed" };
+  }
   const [ended] = await tx
     .update(librarianTurns)
     .set({
-      status: input.end.status,
-      failureReason: input.end.status === "failed" ? input.end.reason : null,
+      status: end.status,
+      failureReason: end.status === "failed" ? end.reason : null,
       endedAt: now,
     })
     .where(
@@ -130,17 +147,28 @@ export async function finishLibrarianTurnInTransaction(
     .returning({ id: librarianTurns.id });
 
   if (!ended) return null;
-  if (turn.messageId)
+  if (turn.variant === "summary")
+    await tx
+      .update(librarianConversations)
+      .set({
+        contextEpoch: locked.conversation.contextEpoch + 1,
+        updatedAt: now,
+      })
+      .where(eq(librarianConversations.id, locked.conversation.id));
+  if (turn.messageId && turn.variant !== "summary")
     await tx
       .update(librarianMessages)
       .set({ deliveryState: "processed" })
       .where(eq(librarianMessages.id, turn.messageId));
-  if (input.end.status === "completed")
+  if (turn.variant === "summary") {
+    if (end.status === "failed")
+      await queueLibrarianSummary(tx, locked.conversation, turn.segmentId);
+  } else if (end.status === "completed")
     await appendConversationMessage(tx, {
       conversationId: turn.conversationId,
       segmentId: turn.segmentId,
       authorKind: "librarian",
-      body: input.end.reply,
+      body: end.reply,
       turnId: turn.id,
       sourceProjectIds: await sourceProjectIds(tx, turn.id),
     });
@@ -149,10 +177,12 @@ export async function finishLibrarianTurnInTransaction(
       conversationId: turn.conversationId,
       segmentId: turn.segmentId,
       authorKind: "system",
-      body: librarianSystemCode(input.end) ?? "turn_ended",
+      body: librarianSystemCode(end) ?? "turn_ended",
       turnId: turn.id,
     });
   await revokeLibrarianTurnToken(turn.id, tx);
+  if (turn.variant !== "summary")
+    await queueLibrarianSummary(tx, locked.conversation, turn.segmentId);
   const runId = locked.conversation.runId;
   const park = runId ? await applyLibrarianPark(tx, runId) : { parked: false };
   const settings = await readLibrarianSettings(tx);
@@ -169,13 +199,13 @@ export async function finishLibrarianTurnInTransaction(
     ? now.getTime() - turn.startedAt.getTime()
     : null;
 
-  if (input.end.status === "completed")
+  if (end.status === "completed")
     log.info(
       {
         turnId: turn.id,
         runId,
         from: turn.status,
-        to: input.end.status,
+        to: end.status,
         durationMs,
       },
       "librarian turn ended",
@@ -186,8 +216,8 @@ export async function finishLibrarianTurnInTransaction(
         turnId: turn.id,
         runId,
         from: turn.status,
-        to: input.end.status,
-        code: input.end.status === "failed" ? input.end.reason : "stopped",
+        to: end.status,
+        code: end.status === "failed" ? end.reason : "stopped",
         durationMs,
       },
       "librarian turn ended without a reply",

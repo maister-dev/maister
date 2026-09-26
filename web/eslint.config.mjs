@@ -202,6 +202,34 @@ export default defineConfig([
     },
   },
   {
+    files: ["lib/librarian/**"],
+
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            cronerRestriction,
+            {
+              name: "@/lib/supervisor-client",
+              message: "Use the execution-host client for supervisor access.",
+            },
+            {
+              name: "@/lib/execution-host/import-maintenance",
+              message: "Historical import maintenance is operator-only.",
+            },
+          ],
+          patterns: [
+            {
+              group: ["@/lib/brain/**", "@/lib/agents/memory-store", "**/brain/**", "**/agents/memory-store"],
+              message: "Personal librarian memory must stay separate from Project Brain and agent memory.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     // ADR-166 D10: the local-direct transport, the test doubles and the test
     // suites (module mocks by path) are the only places the wire may be named.
     files: [

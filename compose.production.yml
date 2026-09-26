@@ -19,6 +19,8 @@ x-security: &default-security
 # Assistant-activity thresholds stay in the host env / systemd unit alongside
 # the web tier; they are intentionally not duplicated into this Postgres-only
 # overlay.
+# Librarian retention is configured in the host-run web EnvironmentFile, not
+# this Postgres-only overlay (see deploy/maister.env.example).
 services:
   postgres:
     # ADR-122 (Project Brain): pgvector-enabled PG16, data-compatible with

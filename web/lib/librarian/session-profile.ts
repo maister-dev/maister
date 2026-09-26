@@ -33,6 +33,18 @@ export function librarianEnforcementProfile(): {
   };
 }
 
+/** A summary cannot call built-ins or MCP tools, even with auto approval. */
+export function librarianSummaryEnforcementProfile(): ReturnType<
+  typeof librarianEnforcementProfile
+> {
+  return {
+    tools: { allow: [] },
+    mcps: { allowServers: [] },
+    enforcedClasses: ["tools", "mcps"],
+    escalationThreshold: 1,
+  };
+}
+
 // D5 L2: the built-ins a claude adapter must never run for the librarian.
 export const LIBRARIAN_BUILTIN_DENY = [
   "Read",
@@ -81,6 +93,23 @@ export async function materializeLibrarianAdapterSettings(
   );
 
   return { materialized: true };
+}
+
+export async function materializeLibrarianSummaryAdapterSettings(
+  cwd: string,
+  capabilityAgent: string,
+): Promise<void> {
+  if (capabilityAgent !== "claude") return;
+  await atomicWriteText(
+    path.join(cwd, CLAUDE_SETTINGS_RELATIVE),
+    `${JSON.stringify(
+      {
+        permissions: { allow: [], deny: [...LIBRARIAN_BUILTIN_DENY] },
+      },
+      null,
+      2,
+    )}\n`,
+  );
 }
 
 export type LibrarianFacadeServer = {

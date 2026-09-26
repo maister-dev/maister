@@ -34,6 +34,8 @@ export const LIBRARIAN_TOOLSET = [
   "run_stop",
   "run_operator_message",
   "librarian_card_propose",
+  "librarian_memory_remember",
+  "librarian_history_search",
   "run_get",
   "run_activity",
   "readiness_get",

@@ -12,6 +12,8 @@ name: ${COMPOSE_PROJECT_NAME:-maister}
 # ADR-161's `MAISTER_MAX_OPERATOR_RESTARTS` is host env only for the same
 # reason; it lives in `.env.example`, `deploy/maister.env.example`, and the
 # `docs/configuration.md` env table.
+# Librarian retention uses MAISTER_LIBRARIAN_HISTORY_RETENTION_DAYS and
+# MAISTER_LIBRARIAN_SNAPSHOT_RETENTION_DAYS in the host-run web environment.
 services:
   postgres:
     # ADR-122 (Project Brain): pgvector-enabled PG16 — the brain lineage does

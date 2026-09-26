@@ -22,6 +22,8 @@ import {
 import {
   librarianConversations,
   librarianCards,
+  librarianContextSnapshots,
+  librarianMemoryItems,
   librarianMessages,
   librarianUpdates,
   librarianTurns,
@@ -99,7 +101,11 @@ export type LibrarianTurnDto = {
 
 export function librarianMessageDto(
   row: LibrarianMessageRow,
-  options: { masked?: boolean; update?: LibrarianUpdateDto | null } = {},
+  options: {
+    masked?: boolean;
+    update?: LibrarianUpdateDto | null;
+    usedMemoryItemIds?: string[];
+  } = {},
 ): LibrarianMessageDto {
   return {
     id: row.id,
@@ -114,7 +120,7 @@ export function librarianMessageDto(
     card: null,
     update: options.masked ? null : (options.update ?? null),
     taskChips: [],
-    usedMemoryItemIds: [],
+    usedMemoryItemIds: options.masked ? [] : (options.usedMemoryItemIds ?? []),
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -135,6 +141,49 @@ export async function librarianMessageDtos(
   const visibleIds = new Set(visible.map((project) => project.id));
   const visibleSlugs = new Map(
     visible.map((project) => [project.id, project.slug]),
+  );
+  const replyTurnIds = rows
+    .filter((row) => row.authorKind === "librarian" && row.turnId)
+    .map((row) => row.turnId!);
+  const snapshots =
+    replyTurnIds.length > 0
+      ? await db
+          .select({
+            turnId: librarianContextSnapshots.turnId,
+            memoryItemRevisions: librarianContextSnapshots.memoryItemRevisions,
+          })
+          .from(librarianContextSnapshots)
+          .where(inArray(librarianContextSnapshots.turnId, replyTurnIds))
+      : [];
+  const snapshotByTurnId = new Map(
+    snapshots.map((snapshot) => [snapshot.turnId, snapshot]),
+  );
+  const referencedMemoryIds = [
+    ...new Set(
+      snapshots.flatMap((snapshot) =>
+        Object.keys(snapshot.memoryItemRevisions),
+      ),
+    ),
+  ];
+  const memoryRows =
+    referencedMemoryIds.length > 0
+      ? await db
+          .select({
+            id: librarianMemoryItems.id,
+            forgottenAt: librarianMemoryItems.forgottenAt,
+            sourceProjectIds: librarianMemoryItems.sourceProjectIds,
+          })
+          .from(librarianMemoryItems)
+          .where(inArray(librarianMemoryItems.id, referencedMemoryIds))
+      : [];
+  const visibleMemoryIds = new Set(
+    memoryRows
+      .filter(
+        (item) =>
+          item.forgottenAt === null &&
+          item.sourceProjectIds.every((id) => visibleIds.has(id)),
+      )
+      .map((item) => item.id),
   );
   const updateIds = rows
     .map((row) => row.updateId)
@@ -265,6 +314,11 @@ export async function librarianMessageDtos(
 
     return librarianMessageDto(row, {
       masked,
+      usedMemoryItemIds: row.turnId
+        ? Object.keys(
+            snapshotByTurnId.get(row.turnId)?.memoryItemRevisions ?? {},
+          ).filter((id) => visibleMemoryIds.has(id))
+        : [],
       update:
         update && !masked
           ? {

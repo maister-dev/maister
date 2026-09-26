@@ -106,6 +106,23 @@ afterAll(async () => {
   await database?.stop();
 });
 
+describe("IT-LMM-02: memory content is revisioned", () => {
+  it("refuses an in-place content change", async () => {
+    const userId = await seedActiveUser(db);
+    const itemId = randomUUID();
+
+    await db.execute(sql`
+      INSERT INTO librarian_memory_items (id, user_id, kind, content, scope, origin)
+      VALUES (${itemId}, ${userId}, 'preference', 'Original', 'general', 'explicit')
+    `);
+    const err = await refusal(sql`
+      UPDATE librarian_memory_items SET content = 'Changed' WHERE id = ${itemId}
+    `);
+
+    expect(constraintOf(err)).toBe("librarian_memory_items_content_immutable");
+  });
+});
+
 describe("IT-LCV-01: one conversation per user", () => {
   it("refuses a second conversation for the same user", async () => {
     const { userId } = await seedConversation();
@@ -157,7 +174,8 @@ describe("IT-LOP-11: follow-up update uniqueness", () => {
       RETURNING id
     `);
     const eventId = Number(event.rows[0].id);
-    const insert = () => db.execute(sql`
+    const insert = () =>
+      db.execute(sql`
       INSERT INTO librarian_updates
         (id, conversation_id, domain_event_id, kind, status)
       VALUES (${randomUUID()}, ${conversationId}, ${eventId}, 'run.done', 'pending')
@@ -193,8 +211,12 @@ describe("Phase 3 database invariants", () => {
       DELETE FROM task_statement_revisions WHERE task_id = ${taskId} AND revision = 1
     `);
 
-    expect(constraintOf(updateError)).toBe("task_statement_revisions_immutable");
-    expect(constraintOf(deleteError)).toBe("task_statement_revisions_immutable");
+    expect(constraintOf(updateError)).toBe(
+      "task_statement_revisions_immutable",
+    );
+    expect(constraintOf(deleteError)).toBe(
+      "task_statement_revisions_immutable",
+    );
   });
 
   it("IT-LOP-02: a conversation cannot reuse an operation key", async () => {

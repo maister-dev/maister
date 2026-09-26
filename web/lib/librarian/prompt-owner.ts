@@ -140,6 +140,7 @@ export async function admitLibrarianPrompt(
 /** Reads the turn's reply and whether the supervisor halted the session. */
 async function readTurnOutcome(
   outcome: PromptOwnerOutcome,
+  variant: LibrarianPromptVariant,
 ): Promise<LibrarianTurnEnd> {
   // Every failure the host reports — a lost turn, a crashed adapter — ends the
   // turn the same way for the owner: the host lost it (D19's closed reasons).
@@ -148,6 +149,7 @@ async function readTurnOutcome(
   if (outcome.state !== "succeeded") return { status: "stopped" };
   let reply = "";
   let halted = false;
+  let toolCalled = false;
 
   for await (const event of outcome.events) {
     if (
@@ -156,13 +158,17 @@ async function readTurnOutcome(
     )
       halted = true;
     if (event.eventType !== "session.update") continue;
+    const update = event.payload?.update as { sessionUpdate?: string } | undefined;
+
+    if (variant === "summary" && update?.sessionUpdate === "tool_call")
+      toolCalled = true;
     const text = agentMessageText(event.payload?.update);
 
     if (text !== null && reply.length < LIBRARIAN_REPLY_MAX_CHARS)
       reply += text;
   }
   // D5: a guard halt fails the turn — never a HITL row; the run has no inbox.
-  if (halted) return { status: "failed", reason: "capability_trip" };
+  if (halted || toolCalled) return { status: "failed", reason: "capability_trip" };
   if (outcome.response.stopReason === "cancelled") return { status: "stopped" };
 
   return {
@@ -216,7 +222,7 @@ export async function prepareLibrarianPrompt(input: {
   // ended by whichever path superseded it.
   if (outcome.state === "fenced")
     return { apply: async () => "superseded" as const };
-  const end = await readTurnOutcome(outcome);
+  const end = await readTurnOutcome(outcome, ref.variant);
 
   await closeTurnSession(db, ref, input.hostSessionId);
   let finish: LibrarianTurnFinish | null = null;

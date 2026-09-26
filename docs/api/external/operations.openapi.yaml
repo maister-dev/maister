@@ -4532,6 +4532,53 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ExtErrorBody" }
 
+  /api/v1/ext/projects/{slug}/tasks/{taskId}/publish-excerpt:
+    post:
+      tags: [tasks]
+      summary: Publish an owner-requested librarian excerpt as a task comment
+      description: |
+        Scope `comments:create`; librarian turn token only. The excerpt is
+        quoted into a task comment visible to project members. The operation
+        and source conversation link are recorded in the same transaction.
+      operationId: extPublishLibrarianExcerpt
+      security:
+        - librarianTurnToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+        - name: taskId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [excerpt]
+              properties:
+                excerpt: { type: string, minLength: 1, maxLength: 5000 }
+      responses:
+        "201":
+          description: Excerpt published as a comment.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [comment]
+                properties:
+                  comment: { type: object }
+        "401": { $ref: "#/components/responses/TokenUnauthorized" }
+        "403": { $ref: "#/components/responses/HitlForbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+
   /api/v1/ext/librarian/cards:
     post:
       tags: [librarian]
@@ -6661,11 +6708,9 @@ components:
     ExtCreateTaskBody:
       type: object
       description: |
-        `prompt` is required today. (Designed — ADR-186) When statements land,
-        the body carries exactly one of `prompt` or `statement`; the
-        `x-maister-designed` marker on `statement` is removed in the same
-        change.
-      required: [title, prompt]
+        The body carries exactly one of `prompt` or `statement`; a statement
+        is stored as revision 1 and renders the task prompt.
+      required: [title]
       properties:
         title:
           type: string
@@ -6674,7 +6719,6 @@ components:
           type: string
           minLength: 1
         statement:
-          x-maister-designed: true
           allOf:
             - $ref: "#/components/schemas/TaskStatement"
           description: |
@@ -7887,9 +7931,7 @@ components:
       required: [recipientUserId, question, reason, answerFormat, blocking]
       description: |
         (Designed — ADR-187, `CLR-01`) A user-origin clarification request.
-        `choices` is required when `answerFormat` is `choice` and refused
-        (`422 CONFIG`) otherwise. The requester and the source message are
-        never body fields.
+        The requester and the source message are never body fields.
       properties:
         recipientUserId:
           type: string
@@ -7902,12 +7944,13 @@ components:
         reason:
           type: string
           minLength: 1
-          maxLength: 1000
+          maxLength: 2000
           description: Why the answer is needed, shown to the recipient.
         answerFormat:
           type: string
           enum: [text, choice, yes_no]
         choices:
+          x-maister-designed: true
           type: array
           minItems: 2
           maxItems: 10
@@ -7921,6 +7964,7 @@ components:
             `true` holds launch (`clarification_pending`) until the request is
             answered, cancelled or superseded.
         supersedesClarificationId:
+          x-maister-designed: true
           type: string
           format: uuid
           description: |
@@ -8256,19 +8300,26 @@ components:
           maxLength: 1000
 
     LibrarianCardProposal:
+      type: object
+      additionalProperties: false
+      required: [action]
       description: |
-        (Designed — ADR-185 D7) One card, discriminated by `kind`. The target
-        revision and payload digest are bound by the server, never sent.
-      oneOf:
-        - $ref: "#/components/schemas/LibrarianStatementProposal"
-        - $ref: "#/components/schemas/LibrarianConfirmationProposal"
-        - $ref: "#/components/schemas/LibrarianMemorySuggestionProposal"
-      discriminator:
-        propertyName: kind
-        mapping:
-          statement_proposal: "#/components/schemas/LibrarianStatementProposal"
-          confirmation: "#/components/schemas/LibrarianConfirmationProposal"
-          memory_suggestion: "#/components/schemas/LibrarianMemorySuggestionProposal"
+        A card proposal selected by `action`. The server validates the fields
+        required for that action, binds the current target revision and writes
+        the payload digest. `memory_suggest` remains inert until owner accept.
+      properties:
+        action:
+          type: string
+          enum: [statement_accept, hitl_respond, run_promote, run_discard, memory_suggest]
+        taskId: { type: string, format: uuid }
+        expectedRevision: { type: integer, minimum: 0 }
+        statement: { type: object }
+        runId: { type: string, format: uuid }
+        hitlRequestId: { type: string, format: uuid }
+        response: { type: object }
+        mode: { type: string, enum: [local_merge, rebase_merge, pull_request] }
+        reviewedTargetCommit: { type: string }
+        memory: { type: object }
 
     LibrarianCard:
       type: object

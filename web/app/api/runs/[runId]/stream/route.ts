@@ -41,6 +41,7 @@ type RouteParams = { params: Promise<{ runId: string }> };
 
 type RunLite = {
   id: string;
+  runKind: string;
   status: string;
   currentStepId: string | null;
   projectId: string | null;
@@ -53,6 +54,7 @@ async function loadRunLite(runId: string): Promise<RunLite | null> {
   const rows = await db
     .select({
       id: runs.id,
+      runKind: runs.runKind,
       status: runs.status,
       currentStepId: runs.currentStepId,
       projectId: runs.projectId,
@@ -70,6 +72,7 @@ async function loadRunLite(runId: string): Promise<RunLite | null> {
 
   return {
     id: row.id,
+    runKind: row.runKind,
     status: row.status,
     currentStepId: row.currentStepId,
     projectId: row.projectId,
@@ -226,6 +229,8 @@ function canonicalRunEventStream(input: {
               );
             }
             cursor = sequence;
+            if (input.run.runKind === "librarian" && event.payload === null)
+              continue;
             controller.enqueue(
               encoder.encode(
                 formatSseEvent(

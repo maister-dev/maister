@@ -26,6 +26,7 @@ import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useLibrarian } from "@/components/librarian/librarian-provider";
+import { LibrarianMemoryDialog } from "@/components/librarian/librarian-memory-dialog";
 import { LibrarianWork } from "@/components/librarian/librarian-work";
 import { librarianPanelMode } from "@/components/librarian/panel-mode";
 import { TranscriptView } from "@/components/run-transcript/transcript-view";
@@ -184,6 +185,18 @@ function LibrarianPanelBody(): ReactElement {
   const [errorKey, setErrorKey] = useState<string | null>(null);
   const [busyCardId, setBusyCardId] = useState<string | null>(null);
   const [busyUpdateId, setBusyUpdateId] = useState<string | null>(null);
+  const [memoryOpen, setMemoryOpen] = useState(false);
+  const [resetBusy, setResetBusy] = useState(false);
+  const [clearPreview, setClearPreview] = useState<{
+    previewDigest: string;
+    messages: number;
+    summaries: number;
+    snapshots: number;
+    cards: number;
+    linksUnavailable: number;
+    operationsKept: number;
+  } | null>(null);
+  const [clearBusy, setClearBusy] = useState(false);
   const [showJump, setShowJump] = useState(false);
 
   const mode: LibrarianPanelMode =
@@ -509,6 +522,56 @@ function LibrarianPanelBody(): ReactElement {
           <h2 className="m-0 mr-auto text-[14px] font-semibold">
             {t("title")}
           </h2>
+          <button
+            className="text-xs underline"
+            data-testid="librarian-memory-open"
+            type="button"
+            onClick={() => setMemoryOpen(true)}
+          >
+            {t("memoryTitle")}
+          </button>
+          <button
+            className="text-xs underline disabled:opacity-50"
+            data-testid="librarian-reset"
+            disabled={resetBusy || view?.conversation.resetState !== "idle"}
+            type="button"
+            onClick={() => {
+              setResetBusy(true);
+              void fetch("/api/librarian/reset", { method: "POST" })
+                .then(async (response) => {
+                  if (!response.ok)
+                    throw new Error(`reset failed: ${response.status}`);
+                  await refresh();
+                })
+                .catch(() => setErrorKey("errorSend"))
+                .finally(() => setResetBusy(false));
+            }}
+          >
+            {resetBusy || view?.conversation.resetState === "resetting"
+              ? t("resetting")
+              : t("resetContext")}
+          </button>
+          <button
+            className="text-xs underline disabled:opacity-50"
+            data-testid="librarian-clear-open"
+            disabled={clearBusy || view?.conversation.resetState !== "idle"}
+            type="button"
+            onClick={() => {
+              setClearBusy(true);
+              void fetch("/api/librarian/history/clear-preview", {
+                cache: "no-store",
+              })
+                .then(async (response) => {
+                  if (!response.ok)
+                    throw new Error(`preview failed: ${response.status}`);
+                  setClearPreview(await response.json());
+                })
+                .catch(() => setErrorKey("errorSend"))
+                .finally(() => setClearBusy(false));
+            }}
+          >
+            {t("clearHistory")}
+          </button>
           {mode === "fullscreen" ? null : (
             <button
               aria-label={expanded ? t("collapseReading") : t("expandReading")}
@@ -575,6 +638,59 @@ function LibrarianPanelBody(): ReactElement {
           </div>
         </header>
 
+        {clearPreview ? (
+          <section
+            aria-label={t("clearHistory")}
+            className="border-b border-line bg-canvas px-4 py-3 text-xs"
+            data-testid="librarian-clear-preview"
+          >
+            <p className="m-0">
+              {t("clearPreview", {
+                messages: clearPreview.messages,
+                summaries: clearPreview.summaries,
+                snapshots: clearPreview.snapshots,
+                cards: clearPreview.cards,
+                links: clearPreview.linksUnavailable,
+              })}
+            </p>
+            <p className="mt-1 text-mute">
+              {t("clearKeeps", { operations: clearPreview.operationsKept })}
+            </p>
+            <div className="mt-2 flex gap-3">
+              <button
+                className="text-red-700 underline"
+                data-testid="librarian-clear-confirm"
+                disabled={clearBusy}
+                type="button"
+                onClick={() => {
+                  setClearBusy(true);
+                  void fetch("/api/librarian/history/clear", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      previewDigest: clearPreview.previewDigest,
+                    }),
+                  })
+                    .then(async (response) => {
+                      if (!response.ok)
+                        throw new Error(`clear failed: ${response.status}`);
+                      setClearPreview(null);
+                      setMessages([]);
+                      await refresh();
+                    })
+                    .catch(() => setErrorKey("errorSend"))
+                    .finally(() => setClearBusy(false));
+                }}
+              >
+                {clearBusy ? t("clearingHistory") : t("clearConfirm")}
+              </button>
+              <button type="button" onClick={() => setClearPreview(null)}>
+                {t("memoryCancelEdit")}
+              </button>
+            </div>
+          </section>
+        ) : null}
+
         {availability && availability !== "ready" ? (
           <p
             className="m-0 border-b border-line bg-amber-soft px-4 py-2 text-[12px] leading-[1.45] text-amber"
@@ -616,6 +732,22 @@ function LibrarianPanelBody(): ReactElement {
                   toolCount: (name, count) => `${name} · ${count}`,
                 }}
                 messages={transcript}
+                renderAttachments={(messageId) => {
+                  const usedIds =
+                    messages.find((message) => message.id === messageId)
+                      ?.usedMemoryItemIds ?? [];
+
+                  return usedIds.length > 0 ? (
+                    <button
+                      className="rounded-md border border-line px-2 py-1 text-xs text-mute"
+                      data-testid="librarian-used-memory"
+                      type="button"
+                      onClick={() => setMemoryOpen(true)}
+                    >
+                      {t("memoryUsedInReply", { count: usedIds.length })}
+                    </button>
+                  ) : null;
+                }}
                 running={responding}
                 userLabel={t("you")}
               />
@@ -828,6 +960,10 @@ function LibrarianPanelBody(): ReactElement {
           ) : null}
         </form>
       </div>
+      <LibrarianMemoryDialog
+        open={memoryOpen}
+        onClose={() => setMemoryOpen(false)}
+      />
     </>
   );
 }

@@ -8,13 +8,32 @@ import { z } from "zod";
 
 import { requireProjectActionForUser, type ProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
-import { hitlRequests, librarianCards, runs, tasks } from "@/lib/db/schema";
+import {
+  hitlRequests,
+  librarianCards,
+  librarianConversations,
+  runs,
+  tasks,
+} from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import {
+  assertMemorySuggestionNotForgotten,
+  assertMemoryTurnFence,
+  memoryDraftSchema,
+  projectForDraft,
+} from "@/lib/librarian/memory";
 import { taskStatementSchema } from "@/lib/tasks/statement";
 
 type Db = ReturnType<typeof getDb>;
 
 export const librarianCardProposalSchema = z.discriminatedUnion("action", [
+  z
+    .object({
+      action: z.literal("memory_suggest"),
+      memory: memoryDraftSchema,
+      rationale: z.string().max(1000).optional(),
+    })
+    .strict(),
   z
     .object({
       action: z.literal("statement_accept"),
@@ -114,6 +133,27 @@ export async function cardTarget(
   ownerUserId: string,
   db: Db,
 ): Promise<{ target: Record<string, string>; revision: string }> {
+  if (proposal.action === "memory_suggest") {
+    const [conversation] = await db
+      .select({ contextEpoch: librarianConversations.contextEpoch })
+      .from(librarianConversations)
+      .where(eq(librarianConversations.userId, ownerUserId));
+
+    if (!conversation)
+      throw new MaisterError("PRECONDITION", "conversation is unavailable");
+    const projectId = await projectForDraft(db, ownerUserId, proposal.memory);
+
+    await assertMemorySuggestionNotForgotten(
+      db,
+      ownerUserId,
+      proposal.memory.content,
+    );
+
+    return {
+      target: projectId ? { projectId } : {},
+      revision: String(conversation.contextEpoch),
+    };
+  }
   if (proposal.action === "statement_accept") {
     const [task] = await db
       .select({
@@ -228,6 +268,7 @@ export async function proposeLibrarianCard(
     segmentId: string;
     ownerUserId: string;
     proposal: LibrarianCardProposal;
+    turnId?: string;
     recordCreated: (db: Db, cardId: string) => Promise<void>;
   },
   db: Db = getDb(),
@@ -243,6 +284,31 @@ export async function proposeLibrarianCard(
     .digest("hex");
   const expiresAt = new Date(Date.now() + cardTtlMinutes() * 60_000);
   const card = await db.transaction(async (tx) => {
+    if (proposal.action === "memory_suggest") {
+      if (!input.turnId)
+        throw new MaisterError(
+          "UNAUTHORIZED",
+          "memory suggestion needs an owner-message turn",
+        );
+      await assertMemoryTurnFence(
+        tx as unknown as Db,
+        input.ownerUserId,
+        input.turnId,
+      );
+      const current = await cardTarget(
+        proposal,
+        input.ownerUserId,
+        tx as unknown as Db,
+      );
+
+      if (
+        current.revision !== revision ||
+        current.target.projectId !== target.projectId
+      )
+        throw new MaisterError("CONFLICT", "memory suggestion target changed", {
+          details: { reason: "target_changed" },
+        });
+    }
     const [created] = await tx
       .insert(librarianCards)
       .values({
@@ -251,7 +317,9 @@ export async function proposeLibrarianCard(
         kind:
           proposal.action === "statement_accept"
             ? "statement_proposal"
-            : "confirmation",
+            : proposal.action === "memory_suggest"
+              ? "memory_suggestion"
+              : "confirmation",
         status: "pending",
         target,
         targetRevision: revision,

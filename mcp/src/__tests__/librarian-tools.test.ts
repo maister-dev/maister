@@ -171,6 +171,57 @@ describe("CT-LAU-06 librarian discovery tools route to the visibility-scoped ext
       (call().init.headers as Record<string, string>)["Idempotency-Key"],
     ).toBe("turn-1:cancel:1");
   });
+
+  it("routes memory writes, history search, and memory suggestions", async () => {
+    await dispatchTool({
+      name: "librarian_memory_remember",
+      args: {
+        kind: "preference",
+        content: "Prefer short updates",
+        scope: "global",
+        operationKey: "turn-1:memory:1",
+      },
+      ctx,
+      baseUrl: BASE_URL,
+    });
+    expect(call().url).toBe(`${BASE_URL}/api/v1/ext/librarian/memory`);
+    expect(call().init.method).toBe("POST");
+    expect((call().init.headers as Record<string, string>)["Idempotency-Key"]).toBe("turn-1:memory:1");
+    expect(JSON.parse(call().init.body as string)).toEqual({
+      kind: "preference",
+      content: "Prefer short updates",
+      scope: "global",
+    });
+
+    fetchSpy.mockClear();
+    await dispatchTool({
+      name: "librarian_history_search",
+      args: { q: "invoice status" },
+      ctx,
+      baseUrl: BASE_URL,
+    });
+    expect(call()).toMatchObject({
+      url: `${BASE_URL}/api/v1/ext/librarian/history/search?q=invoice%20status`,
+      init: { method: "GET" },
+    });
+
+    fetchSpy.mockClear();
+    await dispatchTool({
+      name: "librarian_card_propose",
+      args: {
+        action: "memory_suggest",
+        memory: { kind: "preference", content: "Prefer short updates", scope: "global" },
+        operationKey: "turn-1:card:1",
+      },
+      ctx,
+      baseUrl: BASE_URL,
+    });
+    expect(call().url).toBe(`${BASE_URL}/api/v1/ext/librarian/cards`);
+    expect(JSON.parse(call().init.body as string)).toEqual({
+      action: "memory_suggest",
+      memory: { kind: "preference", content: "Prefer short updates", scope: "global" },
+    });
+  });
 });
 
 describe("CT-LAU-06 the librarian toolset lists only librarian-permitted tools", () => {
@@ -185,6 +236,8 @@ describe("CT-LAU-06 the librarian toolset lists only librarian-permitted tools",
       "clarification_cancel",
       "clarification_list",
       "project_members_list",
+      "librarian_memory_remember",
+      "librarian_history_search",
     ]) {
       expect(names).toContain(offered);
     }

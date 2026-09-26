@@ -1296,6 +1296,13 @@
       "when": 1790461820231,
       "tag": "0187_librarian_updates",
       "breakpoints": true
+    },
+    {
+      "idx": 188,
+      "version": "7",
+      "when": 1790463222204,
+      "tag": "0188_librarian_memory",
+      "breakpoints": true
     }
   ]
 }

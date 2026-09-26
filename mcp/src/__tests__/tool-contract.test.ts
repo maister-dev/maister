@@ -220,6 +220,18 @@ const TOOL_OP: Record<string, { method: string; path: string }> = {
   work_list: { method: "get", path: "/api/v1/ext/work" },
   decisions_list: { method: "get", path: "/api/v1/ext/decisions" },
   activity_feed: { method: "get", path: "/api/v1/ext/activity/feed" },
+  project_members_list: { method: "get", path: "/api/v1/ext/projects/{slug}/members" },
+  run_stop: { method: "post", path: "/api/v1/ext/runs/{runId}/stop" },
+  run_operator_message: { method: "post", path: "/api/v1/ext/runs/{runId}/operator-message" },
+  task_statement_accept: { method: "post", path: "/api/v1/ext/projects/{slug}/tasks/{taskId}/statement" },
+  task_send_to_triage: { method: "post", path: "/api/v1/ext/projects/{slug}/tasks/{taskId}/send-to-triage" },
+  task_publish_excerpt: { method: "post", path: "/api/v1/ext/projects/{slug}/tasks/{taskId}/publish-excerpt" },
+  clarification_request: { method: "post", path: "/api/v1/ext/projects/{slug}/tasks/{taskId}/clarifications" },
+  clarification_cancel: { method: "delete", path: "/api/v1/ext/projects/{slug}/tasks/{taskId}/clarifications/{clarificationId}" },
+  clarification_list: { method: "get", path: "/api/v1/ext/projects/{slug}/tasks/{taskId}/clarifications" },
+  librarian_card_propose: { method: "post", path: "/api/v1/ext/librarian/cards" },
+  librarian_memory_remember: { method: "post", path: "/api/v1/ext/librarian/memory" },
+  librarian_history_search: { method: "get", path: "/api/v1/ext/librarian/history/search" },
 };
 
 // A spec field or parameter marked `x-maister-designed: true` is part of an
@@ -430,7 +442,9 @@ describe("TOOL_SPECS ↔ external OpenAPI contract", () => {
         ...requiredQueryParams(op),
       ]);
 
-      expect(new Set(toolRequired)).toEqual(expected);
+      // Idempotency-Key is conditionally required for librarian tokens; the
+      // shared OpenAPI operation cannot express that as a required header.
+      expect(new Set(toolRequired.filter((name) => name !== "operationKey"))).toEqual(expected);
     });
 
     it("mirrors every body + query field's base type, enum, and bounds", () => {

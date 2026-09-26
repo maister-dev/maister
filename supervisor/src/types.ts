@@ -349,13 +349,13 @@ export const EnvRefsResponseSchema = z
 // ADR-130: derived capability-enforcement set for the capability_guard seam
 // interceptor. Present iff the resolved node/agent declares strict tools/mcps on an
 // enforceable adapter. Seeded onto SessionRecord like hooksConfig; read at the
-// requestPermission seam. `tools.allow` is never empty (a strict class with no
-// declared allow-set is a web-side CONFIG refusal). `escalationThreshold` (N) is
+// requestPermission seam. An empty `tools.allow` is a deliberate deny-all
+// profile for tool-less summary turns. `escalationThreshold` (N) is
 // web-resolved and delivered here so the supervisor stays config-free.
 export const SessionEnforcementProfileSchema = z
   .object({
     tools: z
-      .object({ allow: z.array(z.string().min(1)).min(1) })
+      .object({ allow: z.array(z.string().min(1)) })
       .strict()
       .optional(),
     mcps: z
@@ -698,6 +698,8 @@ export const REASON_TOKENS = [
   "turn_lost",
   "unknown_workspace",
   "workspace_released",
+  "workspace_in_use",
+  "invalid_librarian_workspace",
   "workspace_rejected",
   "legacy_field",
   "missing_envelope",

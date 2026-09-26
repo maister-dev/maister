@@ -1324,10 +1324,10 @@ update text instructs it), `UT-LUI-01` part 2 (indicator states). **Log**: `info
 
 ### Phase 6 — Memory, summaries, reset, forget, history · `LMM-01..12`, `TST-06`
 
-**T6.1 [ ] — Migration 0188.** Appendix A/0188. *RED*: `IT-LMM-02` part 1 (edit creates
+**T6.1 [x] — Migration 0188.** Appendix A/0188. *RED*: `IT-LMM-02` part 1 (edit creates
 a revision row; `librarian_memory_items` UPDATE of `content` refused by trigger).
 
-**T6.2 [ ] — Memory service, tools, UI.** `web/lib/librarian/memory.ts`; ext `POST
+**T6.2 [x] — Memory service, tools, UI.** `web/lib/librarian/memory.ts`; ext `POST
 /ext/librarian/memory` (owner-message turns only) and suggestion cards; session memory
 routes; Memory dialog (list, edit, forget, "use memory in next segment" toggle, "used
 in this reply" chips). ESLint fence: `web/lib/librarian/**` may not import
@@ -1336,41 +1336,41 @@ refused; suggestion only persists on accept), `IT-LMM-02`, `IT-LMM-11` (fence + 
 Brain/agent-memory row after a remember), `IT-LMM-12`. **Log**: `info` `{itemId,
 action}` — never content.
 
-**T6.3 [ ] — Summary turns.** `summary` variant: no server attached, no token, D5's
+**T6.3 [x] — Summary turns.** `summary` variant: no server attached, no token, D5's
 summary profile; output validated against the summary schema; CAS write per D12.
 *RED*: `IT-LMM-07` (reset between summary start and write → nothing written —
 `EDGE-LMM-01`; forget between → nothing written), `EDGE-LAU-04` (a summary adapter
 emitting a tool call → turn `failed`). **Log**: `info` `{segmentId, revision, fromSeq,
 toSeq}`; `warn` fenced.
 
-**T6.4 [ ] — Retrieval and masking.** Composer consumes memory + summaries with
+**T6.4 [x] — Retrieval and masking.** Composer consumes memory + summaries with
 visibility re-check; message render masks by `source_project_ids`. *RED*: `IT-LMM-03`
 (mixed summary with a revoked source dropped and rebuild queued), `IT-LMM-09` (the
 owner's own messages still render; librarian message sourced from a revoked project
 renders the unavailable marker), `IT-LMM-04` (pre-reset messages absent from the
 snapshot). **Log**: `debug` `{dropped, masked}` counts.
 
-**T6.5 [ ] — Reset barrier.** `web/lib/librarian/reset.ts` + route + `system_sweep`
+**T6.5 [x] — Reset barrier.** `web/lib/librarian/reset.ts` + route + `system_sweep`
 backstop + UI progress state. *RED*: `IT-LMM-05` (admitted operation of the old segment
 → reset stays `resetting` until it settles; queued message withdrawn; pending card
 `cleared_by_reset`; epoch bumped), reset-vs-admission two-racer (D15). **Log**: `info`
 `{conversationId, phase}`.
 
-**T6.6 [ ] — Forget.** Tombstone + epoch bump; suggestion and summary writers consult
+**T6.6 [x] — Forget.** Tombstone + epoch bump; suggestion and summary writers consult
 tombstones. *RED*: `IT-LMM-06` (forgotten fact not re-suggested from an older summary;
 explicit re-remember creates a new item; `EDGE-LMM-02`). **Log**: `info` `{itemId}`.
 
-**T6.7 [ ] — History search tool.** Ext route + MCP `librarian_history_search`;
+**T6.7 [x] — History search tool.** Ext route + MCP `librarian_history_search`;
 labelled results. *RED*: `IT-LMM-04` part 2 (older segment hit returned with label;
 masked messages excluded). **Log**: `debug` `{hits}`.
 
-**T6.8 [ ] — Clear history.** Preview + clear per D14; host workspace release and the
+**T6.8 [x] — Clear history.** Preview + clear per D14; host workspace release and the
 transcript purge decided in T0.9; the next turn re-adopts. *RED*: `IT-LMM-08` (all
 personal rows gone; operations and audit kept with nulled refs; subsequent turn uses
 `session/new` and a fresh adoption), `IT-TST-06` (tasks, statements, excerpts intact;
 source link renders unavailable — `EDGE-TST-02`). **Log**: `info` counts per table.
 
-**T6.9 [ ] — Retention pass + wiring.** `system_sweep` pass with keyset cursor; env
+**T6.9 [x] — Retention pass + wiring.** `system_sweep` pass with keyset cursor; env
 vars for retention and TTL in `.env.example`, compose files, `docs/configuration.md`.
 *RED*: `IT-LMM-10` via `runSchedulerTick` (old messages and snapshots purged, newer
 kept; progress across batches). **Log**: `info` batch totals.

@@ -76,6 +76,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
             conversationId: turn.conversationId,
             segmentId: turn.segmentId,
             ownerUserId: ctx.actor.ownerUserId,
+            turnId: ctx.actor.librarianTurnId,
             proposal,
             recordCreated: async (tx, cardId) => {
               const receipt = { cardId, status: "pending" };

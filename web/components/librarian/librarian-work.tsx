@@ -98,6 +98,13 @@ function Card({
         </p>
       ) : card.action === "statement_accept" ? (
         <StatementDiff card={card} />
+      ) : card.action === "memory_suggest" ? (
+        <p className="m-0 mt-2 rounded-md border border-line bg-canvas p-2 text-[12px]">
+          {typeof (card.payload.memory as { content?: unknown } | undefined)
+            ?.content === "string"
+            ? (card.payload.memory as { content: string }).content
+            : t("linkedUnavailable")}
+        </p>
       ) : (
         <p className="m-0 mt-1 break-all font-mono text-[11px] text-mute">
           {card.target.hitlRequestId ?? card.target.runId ?? card.target.taskId}

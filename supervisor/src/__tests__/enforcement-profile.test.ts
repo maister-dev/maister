@@ -46,14 +46,14 @@ describe("SessionEnforcementProfileSchema", () => {
     ).toBe(true);
   });
 
-  it("rejects an empty tools allow-list (never enforce-nothing)", () => {
+  it("accepts an empty tools allow-list for deny-all summary sessions", () => {
     expect(
       SessionEnforcementProfileSchema.safeParse({
         tools: { allow: [] },
         enforcedClasses: ["tools"],
         escalationThreshold: 3,
       }).success,
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("rejects an empty enforcedClasses list", () => {

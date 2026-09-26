@@ -181,7 +181,9 @@ export async function getLinkedWork(
     const task = card.target.taskId ? taskById.get(card.target.taskId) : null;
     const projectId = card.target.projectId;
     const available =
-      visibleById.has(projectId) &&
+      (card.kind === "memory_suggestion" && !projectId
+        ? true
+        : visibleById.has(projectId)) &&
       (card.target.taskId
         ? !!task
         : card.target.runId

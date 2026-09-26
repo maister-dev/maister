@@ -8631,3 +8631,98 @@ export const librarianUpdates = pgTable(
   }),
 );
 export type LibrarianUpdateRow = typeof librarianUpdates.$inferSelect;
+
+export const LIBRARIAN_MEMORY_KINDS = [
+  "preference", "goal", "commitment", "fact",
+] as const;
+export const LIBRARIAN_MEMORY_SCOPES = ["general", "project"] as const;
+export const LIBRARIAN_MEMORY_ORIGINS = ["explicit", "accepted_suggestion"] as const;
+
+export type LibrarianMemorySourceRef = {
+  messageId: string;
+  projectId: string | null;
+};
+
+export type LibrarianSummaryContent = {
+  decisions: string[];
+  proposals: string[];
+  uncertainties: string[];
+};
+
+export const librarianMemoryItems = pgTable(
+  "librarian_memory_items",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    kind: text("kind", { enum: LIBRARIAN_MEMORY_KINDS }).notNull(),
+    content: text("content").notNull(),
+    scope: text("scope", { enum: LIBRARIAN_MEMORY_SCOPES }).notNull(),
+    projectId: text("project_id").references(() => projects.id, { onDelete: "cascade" }),
+    sourceRefs: jsonb("source_refs").$type<LibrarianMemorySourceRef[]>().notNull().default(sql`'[]'::jsonb`),
+    sourceProjectIds: text("source_project_ids").array().notNull().default(sql`'{}'::text[]`),
+    origin: text("origin", { enum: LIBRARIAN_MEMORY_ORIGINS }).notNull(),
+    validUntil: timestamp("valid_until", { withTimezone: true, mode: "date" }),
+    revision: integer("revision").notNull().default(1),
+    forgottenAt: timestamp("forgotten_at", { withTimezone: true, mode: "date" }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => ({
+    userActiveIdx: index("librarian_memory_items_user_active_idx")
+      .on(t.userId).where(sql`${t.forgottenAt} IS NULL`),
+    kindCheck: check("librarian_memory_items_kind_check", sql`${t.kind} IN ('preference', 'goal', 'commitment', 'fact')`),
+    scopeCheck: check("librarian_memory_items_scope_check", sql`${t.scope} IN ('general', 'project')`),
+    originCheck: check("librarian_memory_items_origin_check", sql`${t.origin} IN ('explicit', 'accepted_suggestion')`),
+    revisionCheck: check("librarian_memory_items_revision_check", sql`${t.revision} >= 1`),
+    projectScopeCheck: check("librarian_memory_items_project_scope_check", sql`(${t.scope} = 'project') = (${t.projectId} IS NOT NULL)`),
+  }),
+);
+export type LibrarianMemoryItemRow = typeof librarianMemoryItems.$inferSelect;
+
+export const librarianMemoryItemRevisions = pgTable(
+  "librarian_memory_item_revisions",
+  {
+    itemId: text("item_id").notNull().references(() => librarianMemoryItems.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull(),
+    content: text("content").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.itemId, t.revision] }),
+    revisionCheck: check("librarian_memory_item_revisions_revision_check", sql`${t.revision} >= 1`),
+  }),
+);
+export type LibrarianMemoryItemRevisionRow = typeof librarianMemoryItemRevisions.$inferSelect;
+
+export const librarianMemoryTombstones = pgTable(
+  "librarian_memory_tombstones",
+  {
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    contentDigest: text("content_digest").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.userId, t.contentDigest] }) }),
+);
+export type LibrarianMemoryTombstoneRow = typeof librarianMemoryTombstones.$inferSelect;
+
+export const librarianSegmentSummaries = pgTable(
+  "librarian_segment_summaries",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    segmentId: text("segment_id").notNull().references(() => librarianSegments.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull(),
+    fromSeq: bigint("from_seq", { mode: "bigint" }).notNull(),
+    toSeq: bigint("to_seq", { mode: "bigint" }).notNull(),
+    content: jsonb("content").$type<LibrarianSummaryContent>().notNull(),
+    sourceProjectIds: text("source_project_ids").array().notNull().default(sql`'{}'::text[]`),
+    forgetGeneration: integer("forget_generation").notNull(),
+    historyGeneration: integer("history_generation").notNull(),
+    invalidatedAt: timestamp("invalidated_at", { withTimezone: true, mode: "date" }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqRevision: unique("librarian_segment_summaries_revision_uq").on(t.segmentId, t.revision),
+    rangeCheck: check("librarian_segment_summaries_range_check", sql`${t.fromSeq} <= ${t.toSeq}`),
+  }),
+);
+export type LibrarianSegmentSummaryRow = typeof librarianSegmentSummaries.$inferSelect;

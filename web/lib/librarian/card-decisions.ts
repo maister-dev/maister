@@ -25,6 +25,7 @@ import {
   type LibrarianOperationResult,
 } from "@/lib/librarian/operations";
 import { promoteRun } from "@/lib/runs/promote";
+import { rememberAcceptedSuggestion } from "@/lib/librarian/memory";
 import { respondToHitl } from "@/lib/services/hitl";
 import { acceptStatement } from "@/lib/tasks/statement";
 import { discardWorkbench } from "@/lib/workbench-lifecycle/service";
@@ -94,7 +95,10 @@ async function assertCardTargetUnchanged(
 }
 
 async function executeHumanAction(
-  proposal: Exclude<LibrarianCardProposal, { action: "statement_accept" }>,
+  proposal: Exclude<
+    LibrarianCardProposal,
+    { action: "statement_accept" | "memory_suggest" }
+  >,
   user: {
     id: string;
     name?: string | null;
@@ -176,14 +180,18 @@ export async function decideLibrarianCard(
 ): Promise<LibrarianOperationResult> {
   const card = await loadOwnedCard(input.cardId, input.user.id, db);
 
-  try {
-    await requireProjectActionForUser(
-      input.user.id,
-      card.target.projectId,
-      "readBoard",
-    );
-  } catch (err) {
-    if (!isMaisterError(err)) throw err;
+  if (card.target.projectId) {
+    try {
+      await requireProjectActionForUser(
+        input.user.id,
+        card.target.projectId,
+        "readBoard",
+      );
+    } catch (err) {
+      if (!isMaisterError(err)) throw err;
+      throw new MaisterError("PRECONDITION", "card is unavailable");
+    }
+  } else if (card.kind !== "memory_suggestion") {
     throw new MaisterError("PRECONDITION", "card is unavailable");
   }
 
@@ -313,6 +321,71 @@ export async function decideLibrarianCard(
         },
       }
     );
+  }
+
+  if (proposal.action === "memory_suggest") {
+    try {
+      const receipt = await db.transaction(async (tx) => {
+        const [conversation] = await tx
+          .select({ id: librarianConversations.id })
+          .from(librarianConversations)
+          .where(eq(librarianConversations.id, card.conversationId))
+          .for("update");
+
+        if (!conversation) throw changed();
+        const [locked] = await tx
+          .select({ status: librarianCards.status })
+          .from(librarianCards)
+          .where(eq(librarianCards.id, card.id))
+          .for("update");
+
+        if (locked?.status !== "pending") throw changed();
+        const itemId = await rememberAcceptedSuggestion(
+          tx as unknown as Db,
+          input.user.id,
+          proposal.memory,
+          Number(card.targetRevision),
+        );
+        const result: LibrarianOperationResult = {
+          statusCode: 200,
+          body: { cardId: card.id, status: "accepted", memoryItemId: itemId },
+        };
+
+        await tx
+          .update(librarianCards)
+          .set({ status: "accepted", decidedAt: new Date() })
+          .where(eq(librarianCards.id, card.id));
+        await settleLibrarianOperation(
+          { id: operation.id, result },
+          tx as unknown as Db,
+        );
+
+        return result;
+      });
+
+      log.info(
+        { cardId: card.id, kind: card.kind, decision: "accepted" },
+        "librarian card decided",
+      );
+
+      return receipt;
+    } catch (err) {
+      if (isMaisterError(err))
+        await refuseLibrarianOperation(
+          {
+            id: operation.id,
+            errorCode: err.code,
+            statusCode: 409,
+            body: {
+              code: err.code,
+              message: err.message,
+              details: err.details,
+            },
+          },
+          db,
+        );
+      throw err;
+    }
   }
 
   const currentCard = await loadOwnedCard(card.id, input.user.id, db);

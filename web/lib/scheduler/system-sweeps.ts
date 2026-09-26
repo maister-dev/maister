@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { LibrarianSweepSummary } from "@/lib/librarian/turn-recovery";
+import type { LibrarianRetentionSummary } from "@/lib/librarian/retention";
 import type { EphemeralAgentGcSummary } from "@/lib/gc/ephemeral-agent-gc";
 import type { ContextMountGcSummary } from "@/lib/gc/context-mount-gc";
 import type { AgentMaterializationGcSummary } from "@/lib/gc/agent-materialization-gc";
@@ -91,6 +92,7 @@ export type SystemSweepSummary = GcCompatibilitySummary & {
   // ADR-183 (D19/D20): the librarian's turn deadlines, lost starts, queued
   // turns nothing admitted and its pool promotion.
   librarian: LibrarianSweepSummary | null;
+  librarianRetention: LibrarianRetentionSummary | null;
   cost: Awaited<ReturnType<typeof reconcileTerminalCostRollups>> | null;
   // ADR-166 D5/D8: execution-command crash-window recovery (W1/W2/W4 with the
   // 60 s in-flight grace), the stale-active-assignment backstop, and the 7-day
@@ -345,6 +347,7 @@ export async function runSystemSweep(
   let reconcile: SystemSweepSummary["reconcile"] = null;
   let syncRecovery: SystemSweepSummary["syncRecovery"] = null;
   let librarian: SystemSweepSummary["librarian"] = null;
+  let librarianRetention: SystemSweepSummary["librarianRetention"] = null;
   let cost: SystemSweepSummary["cost"] = null;
   let executionEventPlane: SystemSweepSummary["executionEventPlane"] = null;
   let streamHealth: SystemSweepSummary["streamHealth"] = null;
@@ -395,6 +398,18 @@ export async function runSystemSweep(
     errors.push(`librarian sweep failed: ${message}`);
     bundleErrors.push(`librarian sweep failed: ${message}`);
     log.error({ err: message }, "system_sweep librarian threw");
+  }
+
+  try {
+    const { runLibrarianRetention } = await import("@/lib/librarian/retention");
+
+    librarianRetention = await runLibrarianRetention();
+  } catch (err) {
+    const message = errorMessage(err);
+
+    errors.push(`librarian retention failed: ${message}`);
+    bundleErrors.push(`librarian retention failed: ${message}`);
+    log.error({ err: message }, "system_sweep librarian retention threw");
   }
 
   try {
@@ -587,6 +602,7 @@ export async function runSystemSweep(
     reconcile,
     syncRecovery,
     librarian,
+    librarianRetention,
     cost,
     executionEventPlane,
     streamHealth,

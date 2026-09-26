@@ -17,8 +17,11 @@ import {
 } from "vitest";
 
 import { MaisterError } from "@/lib/errors";
-import { submitOwnerMessage } from "@/lib/librarian/admission";
+import { admitNextLibrarianTurn, submitOwnerMessage } from "@/lib/librarian/admission";
+import { clearLibrarianHistory, previewLibrarianClear } from "@/lib/librarian/clear-history";
+import { lockOwnerConversation } from "@/lib/librarian/conversation";
 import { startLibrarianTurn } from "@/lib/librarian/runtime";
+import { queueLibrarianSummary } from "@/lib/librarian/summary";
 import {
   runLibrarianTurnSweep,
   stopLibrarianTurn,
@@ -345,6 +348,116 @@ describe("IT-LCV-06: session/resume only under the same epoch and runner", () =>
     await send(ownerId, "four");
     await settle();
     expect(creates().at(-1)).not.toHaveProperty("resumeSessionId");
+  });
+});
+
+describe("IT-LMM-07: a summary uses an isolated, tool-free session", () => {
+  async function queueSummary(ownerId: string): Promise<{ conversationId: string; turnId: string }> {
+    await send(ownerId, "start conversation");
+    await settle();
+    const { conversation, segment } = await db.transaction((tx) =>
+      lockOwnerConversation(tx as never, ownerId));
+    const messageId = randomUUID();
+
+    await db.execute(sql`INSERT INTO librarian_messages
+      (id, conversation_id, segment_id, seq, author_kind, body, delivery_state)
+      VALUES (${messageId}, ${conversation.id}, ${segment.id}, 3,
+        'owner', ${"A".repeat(31_000)}, 'processed')`);
+    await db.execute(sql`UPDATE librarian_conversations SET last_seq = 3 WHERE id = ${conversation.id}`);
+    await db.transaction((tx) => queueLibrarianSummary(tx as never, conversation, segment.id));
+    const [queued] = rows<{ id: string }>(await db.execute(sql`
+      SELECT id FROM librarian_turns WHERE segment_id = ${segment.id}
+        AND variant = 'summary' AND status = 'queued'
+    `));
+
+    expect(queued).toBeDefined();
+
+    return { conversationId: conversation.id, turnId: queued.id };
+  }
+
+  it("runs a new session with no token or MCP server and stores structured summary", async () => {
+    const ownerId = await seedActiveUser(db);
+    const queued = await queueSummary(ownerId);
+
+    reply(JSON.stringify({ decisions: ["Keep the accepted plan"], proposals: [], uncertainties: [] }));
+    await admitNextLibrarianTurn(queued.conversationId, { db: db as unknown as Db, start });
+    await settle();
+    const payload = creates().at(-1)!;
+
+    expect(payload).not.toHaveProperty("resumeSessionId");
+    expect(payload.mcpServers).toEqual([]);
+    expect(payload.enforcementProfile).toMatchObject({
+      mcps: { allowServers: [] }, escalationThreshold: 1,
+    });
+    expect((await turnRow(queued.turnId)).status).toBe("completed");
+    const [tokenCount] = rows<{ count: number }>(await db.execute(sql`
+      SELECT count(*)::int AS count FROM project_tokens
+      WHERE librarian_turn_id = ${queued.turnId}
+    `));
+    const summaries = rows<{ content: { decisions: string[] } }>(await db.execute(sql`
+      SELECT content FROM librarian_segment_summaries WHERE segment_id =
+        (SELECT segment_id FROM librarian_turns WHERE id = ${queued.turnId})
+    `));
+
+    expect(tokenCount.count).toBe(0);
+    expect(summaries.at(-1)?.content.decisions).toEqual(["Keep the accepted plan"]);
+  });
+
+  it("fails the summary if the adapter reports a tool call", async () => {
+    const ownerId = await seedActiveUser(db);
+    const queued = await queueSummary(ownerId);
+
+    reply("{}", [{
+      type: "session.update", sessionId: "fake", monotonicId: 1,
+      update: { sessionUpdate: "tool_call", toolCallId: "forbidden", title: "Read" },
+    } as unknown as SupervisorEvent]);
+    await admitNextLibrarianTurn(queued.conversationId, { db: db as unknown as Db, start });
+    await settle();
+    expect(await turnRow(queued.turnId)).toMatchObject({
+      status: "failed", failure_reason: "capability_trip",
+    });
+    await expect.poll(async () => {
+      const [row] = rows<{ count: number }>(await db.execute(sql`
+        SELECT count(*)::int AS count FROM librarian_turns
+        WHERE conversation_id = ${queued.conversationId}
+          AND variant = 'summary' AND status = 'failed'
+      `));
+
+      return row.count;
+    }, { timeout: 20_000 }).toBe(2);
+  });
+});
+
+describe("IT-LMM-08: clear releases the host workspace and re-adopts on the next turn", () => {
+  it("purges the conversation history, releases its workspace and creates a fresh session", async () => {
+    const ownerId = await seedActiveUser(db);
+
+    await send(ownerId, "before clear");
+    await settle();
+    const preview = await previewLibrarianClear(ownerId, db as unknown as Db);
+    const releaseCount = fake.callsOf("releaseWorkspace").length;
+    const adoptCount = fake.callsOf("adoptWorkspace").length;
+    const createCount = creates().length;
+
+    expect(await clearLibrarianHistory(ownerId, preview.previewDigest,
+      db as unknown as Db, hosts)).toBe("none");
+    expect(fake.callsOf("releaseWorkspace")).toHaveLength(releaseCount + 1);
+    const [historyCount] = rows<{ count: number }>(await db.execute(sql`
+      SELECT count(*)::int AS count FROM librarian_messages m
+      JOIN librarian_conversations c ON c.id = m.conversation_id
+      WHERE c.user_id = ${ownerId}
+    `));
+
+    expect(historyCount.count).toBe(0);
+    await send(ownerId, "after clear");
+    await settle();
+    expect(fake.callsOf("adoptWorkspace")).toHaveLength(adoptCount + 1);
+    const newSessions = creates().slice(createCount);
+
+    expect(newSessions.length).toBeGreaterThan(0);
+    for (const session of newSessions)
+      expect(session).not.toHaveProperty("resumeSessionId");
+    expect(prompts.at(-1)).not.toContain("before clear");
   });
 });
 

@@ -8,6 +8,8 @@ import pino from "pino";
 import { admitNextLibrarianTurn } from "./admission";
 import { lockOwnerConversation } from "./conversation";
 import { dispatchLibrarianTurn } from "./pool";
+import { sweepLibrarianResets } from "./reset";
+import { sweepLibrarianClearReleases } from "./clear-history";
 import { LIBRARIAN_MAX_START_ATTEMPTS, endLibrarianTurn } from "./runtime";
 
 import { getDb } from "@/lib/db/client";
@@ -213,6 +215,8 @@ export type LibrarianSweepSummary = {
   deadlines: number;
   restarts: number;
   admissions: number;
+  resets: number;
+  clears: number;
 };
 
 /** The `system_sweep` backstop (D19/D20): deadlines, lost starts and queued
@@ -226,6 +230,8 @@ export async function runLibrarianTurnSweep(
     deadlines: 0,
     restarts: 0,
     admissions: 0,
+    resets: 0,
+    clears: 0,
   };
   const overdue = await db
     .select({ id: librarianTurns.id })
@@ -303,6 +309,8 @@ export async function runLibrarianTurnSweep(
       );
     }
   }
+  summary.resets = await sweepLibrarianResets(db);
+  summary.clears = await sweepLibrarianClearReleases(db);
   const waiting = await db
     .selectDistinct({ conversationId: librarianTurns.conversationId })
     .from(librarianTurns)
@@ -333,7 +341,14 @@ export async function runLibrarianTurnSweep(
       "librarian pool promotion arm failed",
     );
   }
-  if (summary.deadlines + summary.restarts + summary.admissions > 0)
+  if (
+    summary.deadlines +
+      summary.restarts +
+      summary.admissions +
+      summary.resets +
+      summary.clears >
+    0
+  )
     log.warn(summary, "librarian sweep acted");
 
   return summary;

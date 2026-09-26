@@ -12,7 +12,7 @@ import type { LibrarianSubject } from "@/lib/librarian/types";
 
 import { randomUUID } from "node:crypto";
 
-import { and, asc, eq, inArray, lt } from "drizzle-orm";
+import { and, asc, eq, inArray, lt, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { librarianConfig } from "./config";
@@ -256,10 +256,17 @@ export async function admitNextTurnInTransaction(
       and(
         eq(librarianTurns.conversationId, conversation.id),
         eq(librarianTurns.status, "queued"),
-        inArray(librarianTurns.variant, ["owner_message", "explain"]),
+        inArray(librarianTurns.variant, [
+          "owner_message",
+          "explain",
+          "summary",
+        ]),
       ),
     )
-    .orderBy(asc(librarianMessages.seq))
+    .orderBy(
+      sql`CASE WHEN ${librarianTurns.variant} = 'summary' THEN 1 ELSE 0 END`,
+      asc(librarianMessages.seq),
+    )
     .limit(1)
     .for("update", { of: librarianTurns });
 

@@ -21,6 +21,10 @@ import { issueLibrarianTurnToken } from "@/lib/librarian/authority";
 import { decideLibrarianCard } from "@/lib/librarian/card-decisions";
 import { getLinkedWork } from "@/lib/librarian/read-models";
 import { librarianIndicator } from "@/lib/librarian/view";
+import {
+  forgetPersonalMemory,
+  listPersonalMemory,
+} from "@/lib/librarian/memory";
 import { seedProject, seedRun } from "@/test-support/execution-host-seed";
 import {
   addProjectMember,
@@ -49,6 +53,67 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await database?.stop();
+});
+
+describe("IT-LMM-01/06: memory suggestion needs owner acceptance", () => {
+  it("persists only after acceptance and refuses a forgotten exact suggestion", async () => {
+    const owner = await fixture();
+    const request = (allowDuplicate = false) =>
+      new NextRequest("http://localhost/api/v1/ext/librarian/cards", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${owner.token}`,
+          "content-type": "application/json",
+          "idempotency-key": randomUUID(),
+          ...(allowDuplicate ? { "X-Maister-Allow-Duplicate": "true" } : {}),
+        },
+        body: JSON.stringify({
+          action: "memory_suggest",
+          memory: {
+            kind: "preference",
+            content: "Use brief updates",
+            scope: "general",
+          },
+        }),
+      });
+    const proposed = await proposePost(request());
+
+    expect(proposed.status).toBe(201);
+    const { cardId } = (await proposed.json()) as { cardId: string };
+
+    expect((await listPersonalMemory(owner.userId, db)).items).toHaveLength(0);
+    const linked = await getLinkedWork(owner.userId, db);
+
+    expect(linked.cards.find((card) => card.id === cardId)).toMatchObject({
+      kind: "memory_suggestion",
+      available: true,
+      status: "pending",
+    });
+    const decided = await decideLibrarianCard(
+      {
+        cardId,
+        user: { id: owner.userId, role: "member" },
+        decision: "accept",
+      },
+      db,
+    );
+
+    expect(decided.body.status).toBe("accepted");
+    const [item] = (await listPersonalMemory(owner.userId, db)).items;
+
+    expect(item).toMatchObject({
+      content: "Use brief updates",
+      origin: "accepted_suggestion",
+    });
+    await forgetPersonalMemory(owner.userId, item.id, db);
+    const repeated = await proposePost(request(true));
+
+    expect(repeated.status).toBe(409);
+    expect(await repeated.json()).toMatchObject({
+      details: { reason: "forgotten_memory" },
+    });
+    expect((await listPersonalMemory(owner.userId, db)).items).toHaveLength(0);
+  });
 });
 
 async function fixture() {
@@ -147,7 +212,9 @@ describe("librarian statement cards", () => {
     );
 
     expect(response.status).toBe(403);
-    const cards = await db.select().from(librarianCards);
+    const cards = await db.select().from(librarianCards)
+      .innerJoin(librarianConversations, eq(librarianConversations.id, librarianCards.conversationId))
+      .where(eq(librarianConversations.userId, owner.userId));
 
     expect(cards).toHaveLength(0);
   });

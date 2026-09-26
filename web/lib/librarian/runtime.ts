@@ -8,7 +8,7 @@ import type { LibrarianPromptVariant } from "./prompt-owner";
 import type { ComposerMessage } from "./composer";
 import type { LibrarianSubject } from "./types";
 
-import { and, asc, desc, eq, inArray, lt } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import pino from "pino";
 
 import {
@@ -31,7 +31,9 @@ import { admitLibrarianPrompt, librarianPromptOwners } from "./prompt-owner";
 import {
   librarianEnforcementProfile,
   librarianFacadeServer,
+  librarianSummaryEnforcementProfile,
   materializeLibrarianAdapterSettings,
+  materializeLibrarianSummaryAdapterSettings,
 } from "./session-profile";
 import {
   librarianRunnerIneligibility,
@@ -44,6 +46,8 @@ import {
   type LibrarianTurnEnd,
 } from "./turn-end";
 import { ensureLibrarianWorkspace } from "./workspace";
+import { retrieveLibrarianContext } from "./retrieval";
+import { LIBRARIAN_SUMMARY_INSTRUCTIONS } from "./summary";
 
 import {
   mergeRunnerAdapterLaunch,
@@ -90,38 +94,11 @@ type PreparedStart = {
   freshPrompt: string;
   resumePrompt: string;
   epoch: number;
-  tokenSecret: string;
+  tokenSecret: string | null;
   deadlineAt: Date;
 };
 
 type StartRefusal = { refused: true; reason: string };
-
-/** The active segment's messages before the turn's own, as composer rows. */
-async function loadHistory(
-  tx: Db,
-  input: { conversationId: string; segmentId: string; beforeSeq: bigint },
-): Promise<ComposerMessage[]> {
-  const rows = await tx
-    .select({
-      id: librarianMessages.id,
-      seq: librarianMessages.seq,
-      authorKind: librarianMessages.authorKind,
-      body: librarianMessages.body,
-    })
-    .from(librarianMessages)
-    .where(
-      and(
-        eq(librarianMessages.conversationId, input.conversationId),
-        eq(librarianMessages.segmentId, input.segmentId),
-        lt(librarianMessages.seq, input.beforeSeq),
-        inArray(librarianMessages.authorKind, ["owner", "librarian", "update"]),
-        inArray(librarianMessages.deliveryState, ["accepted", "processed"]),
-      ),
-    )
-    .orderBy(asc(librarianMessages.seq));
-
-  return rows as ComposerMessage[];
-}
 
 async function latestFingerprint(
   tx: Db,
@@ -223,23 +200,35 @@ async function prepareStart(
     const current: ComposerMessage = {
       id: message.id,
       seq: BigInt(message.seq),
-      authorKind: "owner",
+      authorKind: turn.variant === "summary" ? "librarian" : "owner",
       body: message.body,
     };
-    const history = await loadHistory(tx, {
-      conversationId: locked.conversation.id,
+    const retrieved = await retrieveLibrarianContext(tx, {
+      ownerId: ref.userId,
       segmentId: turn.segmentId,
       beforeSeq: BigInt(message.seq),
+      forgetGeneration: locked.conversation.forgetGeneration,
+      historyGeneration: locked.conversation.historyGeneration,
+      useMemory: locked.conversation.memoryEnabledNextSegment,
     });
-    const subject = (message.subject ?? null) as LibrarianSubject | null;
+    const subject =
+      turn.variant === "summary"
+        ? null
+        : ((message.subject ?? null) as LibrarianSubject | null);
     const composed = composeLibrarianContext({
-      instructions: librarianInstructions(),
-      instructionsVersion: LIBRARIAN_INSTRUCTIONS_VERSION,
+      instructions:
+        turn.variant === "summary"
+          ? LIBRARIAN_SUMMARY_INSTRUCTIONS
+          : librarianInstructions(),
+      instructionsVersion:
+        turn.variant === "summary"
+          ? "summary-v1"
+          : LIBRARIAN_INSTRUCTIONS_VERSION,
       subject,
-      history,
+      history: retrieved.history,
       current,
-      summaries: [],
-      memoryItems: [],
+      summaries: turn.variant === "summary" ? [] : retrieved.summaries,
+      memoryItems: turn.variant === "summary" ? [] : retrieved.memoryItems,
       maxChars: librarianConfig().contextMaxChars,
     });
     const [session] = await tx
@@ -255,13 +244,16 @@ async function prepareStart(
           eq(runSessions.sessionName, "default"),
         ),
       );
-    const mode = decideSessionMode({
-      acpSessionId: session?.acpSessionId ?? null,
-      sessionEpoch: session?.epoch ?? null,
-      sessionRunnerId: session?.runnerId ?? null,
-      conversationEpoch: epoch,
-      runnerId: runner.id,
-    });
+    const mode =
+      turn.variant === "summary"
+        ? "new"
+        : decideSessionMode({
+            acpSessionId: session?.acpSessionId ?? null,
+            sessionEpoch: session?.epoch ?? null,
+            sessionRunnerId: session?.runnerId ?? null,
+            conversationEpoch: epoch,
+            runnerId: runner.id,
+          });
 
     await writeContextSnapshot(tx, {
       turnId,
@@ -276,15 +268,18 @@ async function prepareStart(
     // A restarted start mints a fresh token: the previous secret died with the
     // process that held it.
     await revokeLibrarianTurnToken(turnId, tx);
-    const token = await issueLibrarianTurnToken(
-      {
-        ownerUserId: ref.userId,
-        turnId,
-        scopes: [...scopesForLibrarianTurn(turn.variant)],
-        expiresAt: deadlineAt,
-      },
-      tx,
-    );
+    const token =
+      turn.variant === "summary"
+        ? null
+        : await issueLibrarianTurnToken(
+            {
+              ownerUserId: ref.userId,
+              turnId,
+              scopes: [...scopesForLibrarianTurn(turn.variant)],
+              expiresAt: deadlineAt,
+            },
+            tx,
+          );
 
     await tx
       .update(librarianTurns)
@@ -293,7 +288,7 @@ async function prepareStart(
         startedAt: turn.startedAt ?? now,
         deadlineAt,
         runnerSnapshot: runner as never,
-        tokenId: token.tokenId,
+        tokenId: token?.tokenId ?? null,
         startAttempts: turn.startAttempts + 1,
       })
       .where(eq(librarianTurns.id, turnId));
@@ -326,7 +321,7 @@ async function prepareStart(
       freshPrompt: composed.prompt,
       resumePrompt: composeResumePrompt({ subject, current }),
       epoch,
-      tokenSecret: token.secret,
+      tokenSecret: token?.secret ?? null,
       deadlineAt,
     };
   });
@@ -359,11 +354,17 @@ function sessionPayload(
     runner: runnerSupervisorInput({ snapshot: prepared.runner }),
     ...(resumeSessionId ? { resumeSessionId } : {}),
     adapterLaunch: mergeRunnerAdapterLaunch(prepared.runner),
-    mcpServers: [librarianFacadeServer(prepared.tokenSecret)],
+    mcpServers:
+      prepared.variant === "summary"
+        ? []
+        : [librarianFacadeServer(prepared.tokenSecret!)],
     // D5: L3 — an admitted MCP call never becomes a permission request that
     // would need a HITL row; L1 (the profile) decides first.
     autoApprovePermissions: true,
-    enforcementProfile: librarianEnforcementProfile(),
+    enforcementProfile:
+      prepared.variant === "summary"
+        ? librarianSummaryEnforcementProfile()
+        : librarianEnforcementProfile(),
   };
 }
 
@@ -434,10 +435,16 @@ export async function startLibrarianTurn(
     const bound = client;
     const cwd = await ensureLibrarianWorkspace(prepared.conversationId);
 
-    await materializeLibrarianAdapterSettings(
-      cwd,
-      prepared.runner.capabilityAgent,
-    );
+    if (prepared.variant === "summary")
+      await materializeLibrarianSummaryAdapterSettings(
+        cwd,
+        prepared.runner.capabilityAgent,
+      );
+    else
+      await materializeLibrarianAdapterSettings(
+        cwd,
+        prepared.runner.capabilityAgent,
+      );
     let session: Awaited<ReturnType<typeof bound.createOwnedSession>> | null =
       null;
     let prompt = prepared.freshPrompt;
