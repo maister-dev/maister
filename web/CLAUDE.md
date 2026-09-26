@@ -299,7 +299,13 @@ red, and every one passed re-run idle: `lib/agents/__tests__/prompt-owners`
 failing at ~15.8 s — just past a 15 s wait — and green at 20-77 s idle),
 `projection-worker` AT-03, `execution-ab-process-cleanup` O2 and
 `execution-ab-partitions` P4. Treat those names as load-sensitive: re-run the
-file idle before filing a recurrence.
+file idle before filing a recurrence. After the same day's review fix round:
+unit **850 files / 8792 tests, 0 failures**; supervisor **76 files / 730
+tests, 0 failures**; the full integration lane was NOT re-run — the 21 files the
+round touched or depends on ran green (the steering, scratch-placement,
+local-package-assistant, migration, ext-message, recovery, deliverer, ledger
+and admission suites), and `ledger.integration`'s unhandled "pool after end"
+rejection is the one `8ff196d4` also shows.
 
 **A first-hit Next-dev compile can exhaust a 10s e2e timeout.** Before calling
 such a failure a regression, re-run the spec in isolation and read the RETRY

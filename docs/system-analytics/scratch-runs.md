@@ -165,6 +165,7 @@ stateDiagram-v2
     Review --> Abandoned: drop/discard
 
     Crashed --> Running: recover with resume handle
+    Crashed --> WaitingForUser: recover with messages queued (oldest dispatched next)
     WaitingForUser --> Abandoned: discard
     Crashed --> Abandoned: drop/discard
 
@@ -174,7 +175,7 @@ stateDiagram-v2
 
 | `scratch_runs.dialog_status` | `runs.status` | Active workspace label | Meaning |
 | --- | --- | --- | --- |
-| `Starting` | `Running` | `Running` | Setup, worktree, session, or first prompt is in flight. |
+| `Starting` | `Running` | `Running` | Setup, worktree, session, or first prompt is in flight. A message is refused `409 CONFLICT` — there is no session to steer or queue for yet (Implemented — ADR-182). |
 | `Running` | `Running` | `Running` | A prompt is actively running in the supervisor session. A message sent now is appended at once and steered into the running turn or queued for the next one (`run_messages.delivery`); the status does not change (Implemented — ADR-182). |
 | `WaitingForUser` | `Running` | `WaitingForUser` | Session is live and idle between dialog turns. |
 
@@ -274,16 +275,29 @@ Message rules while the agent is busy (Implemented — [ADR-182](../decisions/ad
 - `WaitingForUser` → the prompt arm: the message becomes the next turn at
   once — unless older rows are still `delivery = 'queued'`; then the new row is
   appended `queued` behind them and the oldest is dispatched first.
-- `Starting | Running` → the busy arm: the row is appended with
+- `Running` → the busy arm: the row is appended with
   `delivery = 'steered'` (a `session.steer` names the running scratch prompt,
   whose incarnation advertised steering) or `delivery = 'queued'`; the dialog
   status is unchanged and the route answers 202 at acceptance with `delivery`
-  (no `stopReason`). A refused steer flips the row `steered → queued`.
-- `NeedsInput`, `Review`, `Crashed`, `Done`, `Abandoned` → `409 CONFLICT`.
+  (no `stopReason`). A refused steer flips the row `steered → queued`. A steer
+  whose outcome is still unknown is answered `steered`: the row and its command
+  are durable and the receipt fold settles them (an error would invite a
+  resend — scratch has no idempotency key).
+- `Starting`, `NeedsInput`, `Review`, `Crashed`, `Done`, `Abandoned` →
+  `409 CONFLICT` (`Starting` has no session to steer or queue for yet; the
+  composer offers no Send). `NeedsInput` keeps its refusal because the operator
+  answers the pending permission in the panel; an agent run accepts a message
+  there because its messages come from coordinators that cannot see a panel
+  (ADR-182 D6).
 - Queued rows are dispatched oldest first by `dispatchQueuedScratchMessages`
-  after the previous turn's `WaitingForUser` commit, after a refused steer,
-  and by the next send; the CAS `queued → prompted` guarantees one prompt per
-  row. The composer has no client-side queue: a reload loses nothing.
+  after the previous turn's `WaitingForUser` commit, after a refused steer
+  (live, or folded by recovery), by a send that finds older rows queued, and by
+  a Recover — whose own message joins the queue behind them; the CAS
+  `queued → prompted` guarantees one prompt per row. The composer has no
+  client-side queue: a reload loses nothing.
+- A queued row on a dialog that ended (`Review`, `Done`, `Abandoned` — a
+  workbench Stop included) is never sent; the transcript reads it "Not sent".
+  On a `Crashed` dialog it stays "Queued": Recover sends it first.
 - The dispatch is detached from the turn that ends: the scratch prompt owner's
   `afterCommit` wakes `dispatchQueuedScratchMessages` without awaiting it, so
   the previous turn's application commits and returns while the dispatched
@@ -291,8 +305,9 @@ Message rules while the agent is busy (Implemented — [ADR-182](../decisions/ad
   and usage alone — a steer's acceptance event closes the assistant row, a
   queued row's own dispatch starts the next turn.
 - Local-package assistant runs (the Flow Studio dock, ADR-097) keep the
-  `WaitingForUser`-only gate: their send is refused `CONFLICT` while busy and
-  their composer offers only Stop while the agent works.
+  `WaitingForUser`-only gate: the service refuses their busy send `CONFLICT`
+  on every route — the generic message route included — and their composer
+  offers only Stop while the agent works.
 
 ### Permission HITL in scratch dialog (Implemented)
 
@@ -493,9 +508,9 @@ history automatically.
 - Scratch dialog message sends MUST be serialized by the run and
   `scratch_runs` row locks, allowing at most one OWNED prompt per run; steers
   ride inside it and a queued row owns no prompt until
-  `dispatchQueuedScratchMessages` CASes it `queued → prompted`
-  (`run_messages_queued_idx`, `run_messages_steer_command_uq`; Implemented —
-  ADR-182).
+  `dispatchQueuedScratchMessages` CASes it `queued → prompted` (enforced by
+  `lockRunRows`, the dispatcher's `WaitingForUser` guard, the `delivery` CAS
+  and the host's `command_in_progress` refusal; Implemented — ADR-182).
 - Scratch messages MUST be append-only with monotonic sequence per run.
 - Scratch capability selection MUST snapshot platform/project/Flow-package
   capability choices before the supervisor session starts.
@@ -537,9 +552,11 @@ history automatically.
 | Too many files, oversized file, or oversized multipart payload | `409 PRECONDITION`; no DB attachment row is committed. |
 | Unsafe upload filename/path after sanitization | `409 PRECONDITION`; no file is written outside the run artifact tree. |
 | File write failure | `503 EXECUTOR_UNAVAILABLE`; launch cleanup is best effort and message rows remain invisible. |
-| Second message while `Starting` / `Running` | `202` with `delivery: "steered"` or `"queued"`; the running prompt is untouched and the row is appended at once (Implemented — ADR-182). A message in a terminal or `NeedsInput` dialog state stays `409 CONFLICT`. |
+| Second message while `Running` | `202` with `delivery: "steered"` or `"queued"`; the running prompt is untouched and the row is appended at once (Implemented — ADR-182). A message while `Starting` (no session yet), `NeedsInput` or a terminal state stays `409 CONFLICT`. |
 | Steer refused after the turn ended | The row flips `steered → queued` and, the dialog being `WaitingForUser`, is dispatched by the conversion; a concurrent dispatcher finds the dialog `Running` (or loses the `delivery` CAS) and returns `{dispatched: false}` — one prompt, no error. |
-| Web process dies between the previous turn's completion and the queued dispatch | The row stays `queued` and visible ("Queued"); the next send flushes the queue. Automatic re-drive belongs to A4 (ADR-182 Consequences). |
+| Web process dies between the previous turn's completion and the queued dispatch, or a dispatched queued row fails retryably | The rows stay `queued` and visible ("Queued"); the next send or a Recover flushes the queue. Automatic re-drive belongs to A4 (ADR-182 Consequences). |
+| A steer's answer is lost and its outcome is unknown | `202` `delivery: "steered"`; the receipt fold settles it later — injected (stays "Steered") or refused (flips to "Queued" and the fold wakes the dispatcher). |
+| The dialog ends (Stop, `Done`, `Abandoned`) or crashes with rows `queued` | Ended: the rows are never sent and read "Not sent". Crashed: Recover queues its own message behind them and the oldest is sent first. |
 | Supervisor unavailable before launch | `503 EXECUTOR_UNAVAILABLE`; no worktree, DB run, or upload side effect occurs. |
 | Supervisor prompt delivery fails after message commit | Retryable or crashed dialog status follows existing scratch service behavior; the user message stays visible. |
 | Permission deferred released terminally (host 410 without `session_checkpointed`) | `HITL_TIMEOUT`; scratch transitions to `Crashed` with error metadata. A `session_checkpointed` 410 — the session was parked with its deferreds cancelled (Implemented — ADR-180) — parks and resumes instead, never `Crashed`. |

@@ -2541,9 +2541,11 @@ supersedes it and inserts a successor `live_message | persistent_message` whose
 `logical_key` is `message:requeue:<steerTurnId>` (ADR-182).
 The due index covers unfinished turns. Postgres guards reject source/binding
 rewrites, phase regression and cross-run bindings. Migration `0180` extends
-the `guard_agent_turn_source` trigger: a `steer` row must bind an owner-less
-`session.steer` command on its parent's assignment and incarnation and name a
-non-steer parent of the same run (`agent_turns_steer_parent_scope`); every other
+the `guard_agent_turn_source` trigger: a `steer` row must name a non-steer
+parent of the same run and carry that parent's assignment and incarnation
+(`agent_turns_steer_parent_scope`), and bind an owner-less `session.steer`
+command whose `payload.parentCommandId` is the parent's command
+(`agent_turns_command_scope`); every other
 variant keeps the agent-turn-owned `session.prompt` rule, and `parent_turn_id`
 joins the immutable source columns. Run deletion cascades to its
 turns; individual referenced assignments, sessions, incarnations and commands

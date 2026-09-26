@@ -1619,13 +1619,20 @@ paths:
         calls the ACP extension request `_session/steering` with
         `_meta.steering.idleBehavior: "promptRequired"`, bounded by 30 s.
         Only `injected` succeeds; `promptRequired`, `startedNewTurn`,
-        `failed` and an ACP error are `steer_no_active_turn` (a
-        `startedNewTurn` turn is cancelled by the host, with every pending
-        permission of the session, before the refusal is written); no answer
-        within 30 s is `steer_timeout`. Every outcome writes a receipt and a
+        `failed` and an ACP error are `steer_no_active_turn` (for a
+        `startedNewTurn` turn the host sends `session/cancel` — best effort —
+        and cancels every pending permission of the session before the
+        refusal is written); a steer not answered within 30 s is
+        `steer_timeout`. The steers of one session reach the adapter one at a
+        time, each re-checked after the previous one answered; the 30 s is
+        one budget per steer, the wait included, and a steer that spent it
+        waiting is `steer_timeout` without an ACP call. Every outcome of an
+        admitted steer writes a receipt and a
         `session.command{kind: "session.steer"}` pair and replays by command
-        id. The next prompt on the session waits for an in-flight steer
-        before it is written to the adapter.
+        id; the fence refusal, a missing envelope and the unknown-session 503
+        are answered before any receipt and write neither. The next prompt on
+        the session waits for every steer named before it before it is
+        written to the adapter.
       operationId: steerSession
       parameters:
         - $ref: "#/components/parameters/SessionId"

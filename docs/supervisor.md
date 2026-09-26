@@ -808,17 +808,28 @@ bounded by `STEER_ACP_TIMEOUT_MS` (30 s):
 - `promptRequired`, `failed`, or an ACP error → `409 CONFLICT
   steer_no_active_turn` with `adapterOutcome`;
 - `startedNewTurn` → the adapter started a turn nobody owns: the host sends
-  `session/cancel` and cancels every pending permission of the session, then
-  refuses `steer_no_active_turn` (`adapterOutcome: "startedNewTurn"`);
-- no answer within 30 s → `409 CONFLICT steer_timeout`.
+  `session/cancel` (best effort — the adapter decides when the turn stops) and
+  cancels every pending permission of the session, then refuses
+  `steer_no_active_turn` (`adapterOutcome: "startedNewTurn"`);
+- not answered within 30 s → `409 CONFLICT steer_timeout`.
 
-Every refusal writes a `rejected` receipt; every outcome emits the
-`session.command{kind: "session.steer"}` pair and replays by command id
-(`x-maister-command-replayed`). While the ACP call is in flight the session
-holds a `steerInFlight` barrier: the next `POST /sessions/:id/prompts` waits
-for it (bounded by the same 30 s) before writing to the adapter, so a prompt
-never overtakes an unanswered steer. The steered output carries the PARENT's
-`sourceCommandId`; the parent's receipt and span are unchanged.
+The steers of one session reach the adapter one at a time: a steer waits for
+the previous one's answer, then re-runs the checks above. The 30 s is one
+budget per steer, the wait included, so the host still answers inside the
+manager's 45 s transport timeout; a steer that spent the budget waiting is
+refused `steer_timeout` without an ACP call. A fence taken after the ACP call
+answered is still `FENCED` — the manager converts, and if the adapter had
+injected, the message is delivered at least once (ADR-182 EDGE-STR-09).
+
+Every refusal of an admitted steer writes a `rejected` receipt; every outcome
+emits the `session.command{kind: "session.steer"}` pair and replays by command
+id (`x-maister-command-replayed`). The fence refusal, a missing envelope and
+the unknown-session `503` are answered before any receipt and write neither.
+While an ACP call is in flight the session holds a `steerInFlight` barrier:
+the next `POST /sessions/:id/prompts` waits for every steer named before it
+(bounded by the same 30 s) before writing to the adapter, so a steer aimed at
+an earlier turn never lands in the next one. The steered output carries the
+PARENT's `sourceCommandId`; the parent's receipt and span are unchanged.
 
 Logs: INFO `steer-injected {sessionId, commandId, parentCommandId,
 promptBytes, latencyMs}`, WARN `steer-refused {…, reason, adapterOutcome}`,

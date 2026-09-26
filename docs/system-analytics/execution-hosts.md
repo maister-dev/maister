@@ -573,14 +573,16 @@ Unknown-outcome retry budgets (same command id): adopt 3 (0.5 s·2ⁿ), create 3
 cancel 3, checkpoint 3, delete 3 (`driverless`), release 3 (`driverless`).
 Transport timeouts: adopt 10 s, create 60 s, input/cancel 10 s, steer 45 s,
 checkpoint/delete 30 s, prompt none. The steer's 45 s exceeds the host's own
-ACP bound (`STEER_ACP_TIMEOUT_MS`, 30 s), so the host always answers first —
-with `injected` or the `steer_timeout` refusal (Implemented — ADR-182).
+bound on a steer (`STEER_ACP_TIMEOUT_MS`, 30 s, waiting on an earlier steer
+of the session included), so a live host answers first — `injected` or a
+definitive refusal; a dead host or network leaves an unknown outcome the
+receipt decides (Implemented — ADR-182).
 
 ## Command admission by assignment state
 
 | Assignment state | Admitted kinds                                                                                                                 | Otherwise                    |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------- |
-| `active`         | all nine                                                                                                                       | —                            |
+| `active`         | all twelve                                                                                                                     | —                            |
 | `released`       | teardown only: `session.checkpoint`, `session.delete`, `session.cancel`, `session.input{action:"cancel"}`, `workspace.release` | local `fenced`, no wire call |
 | `superseded`     | none                                                                                                                           | local `fenced`, no wire call |
 
@@ -812,7 +814,12 @@ Preserve `MaisterError`/`SupervisorError` conventions. Add a strict reason union
   whose command returns `assignment_fenced` MUST write no run, attempt, HITL,
   or scratch state. Enforced by: every claim transition returns its minted
   assignment; the `fenced:true` result + early returns in every driver; test
-  P3.
+  P3. One exception (ADR-166 amendment 2026-09-26, ADR-182): a fenced
+  `session.steer`'s message still becomes a queued message — an agent
+  successor turn plus `runs.resume_requested_at`, or a scratch row's
+  `delivery = 'queued'` — in the transaction of the ledger's `fenced` write;
+  no run status is written (`steer-deliverer.integration.test.ts`,
+  `agent-steering.integration.test.ts` T3.0(c)).
 - **E-EH-12** — No secret value or prompt body MUST be persisted in
   `execution_commands.payload`, receipt bodies, or logs. Enforced by:
   `redactPayload()` at ledger insert — a per-kind ALLOW-list projection (ids,

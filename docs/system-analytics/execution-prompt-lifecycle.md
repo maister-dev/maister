@@ -1432,8 +1432,8 @@ request digest, its receipt and its span, and the output the steered agent
 produces is attributed to the parent (the host stamps the session's active
 prompt as `sourceCommandId`). This section is normative for both callers, a
 persistent agent run (`sendAgentMessage`, `mode: "steer"`) and a project
-scratch dialog (`POST /api/scratch-runs/{runId}/messages` while `Starting |
-Running`).
+scratch dialog (`POST /api/scratch-runs/{runId}/messages` while
+`Running`).
 
 Entities:
 
@@ -1443,8 +1443,11 @@ Entities:
 - `agent_turns` row with `variant = 'steer'` and `parent_turn_id` (the
   dispatched parent turn); inserted `dispatched` in the issue transaction,
   already bound to its `session.steer` command, then `applied | superseded`;
-  never `queued` or `claimed` (the `guard_agent_turn_source` transition rule
-  has no `queued → dispatched` edge, and a steer is never claimed). Every
+  never `queued` or `claimed`, because `acceptAgentSteer` inserts it
+  `dispatched` and nothing claims a steer. `guard_agent_turn_source` requires
+  it to name a non-steer parent of the same run, to carry that parent's
+  assignment and incarnation, and to bind an owner-less `session.steer` whose
+  `payload.parentCommandId` is the parent's command. Every
   reader that means "the run's turn" selects through `OWNED_TURN_VARIANTS`
   (`agents/turn-variants.ts`, an exhaustive map over the variant union): the
   continuation worker's Running arm, `startAgentSession`'s turn selection,
@@ -1470,7 +1473,7 @@ supersedes the steer and hands the message to the ordinary queue.
 stateDiagram-v2
   [*] --> dispatched: issue tx (intent, command bound)
   dispatched --> applied: host 200 injected
-  dispatched --> superseded: host 409 refusal, FENCED, or orphaned intent
+  dispatched --> superseded: definitive refusal, FENCED, orphaned or lost
   superseded --> [*]: successor turn / scratch row delivery = queued
   applied --> [*]
 ```
@@ -1480,8 +1483,9 @@ only state that owns a prompt (through the ordinary scratch message owner).
 
 ```mermaid
 stateDiagram-v2
+  [*] --> prompted: send while WaitingForUser, nothing queued ahead
   [*] --> steered: busy send, parent incarnation steering_supported IS TRUE
-  [*] --> queued: busy send, capability absent or unknown
+  [*] --> queued: busy send with no eligible parent, or a send behind queued rows
   steered --> queued: steer refused (CAS on steer_command_id)
   queued --> prompted: dispatchQueuedScratchMessages (CAS, dialog WaitingForUser)
   steered --> [*]: injected
@@ -1540,10 +1544,10 @@ neither (a steer fenced after its ACP call emits `status: "fenced"`).
 | --- | --- | --- | --- | --- |
 | `steer_unsupported` | the connection did not advertise `_meta.steering.supported` | 409 `CONFLICT` | none | convert to queued |
 | `steer_no_active_turn` | no active prompt, a different active prompt, or the adapter answered `promptRequired`, `startedNewTurn` (host cancels it), `failed` or an ACP error | 409 `CONFLICT` | none, or one | convert to queued |
-| `steer_timeout` | the adapter did not answer within `STEER_ACP_TIMEOUT_MS` (30 s) | 409 `CONFLICT` | one | convert to queued (EDGE-STR-06) |
-| `assignment_fenced` | stale epoch (`FENCED` on the wire) | 409 `FENCED` | none | convert to queued (successor + `runs.resume_requested_at`); no `runs.status` write |
+| `steer_timeout` | not answered within `STEER_ACP_TIMEOUT_MS` (30 s, a wait on an earlier steer of the session included) | 409 `CONFLICT` | one, or none when the wait spent the budget | convert to queued (EDGE-STR-06) |
+| `assignment_fenced` | stale epoch (`FENCED` on the wire), at the fence or after the ACP call | 409 `FENCED` | none, or one (EDGE-STR-09) | convert to queued (successor + `runs.resume_requested_at`); no `runs.status` write (ADR-166 E-EH-11 amendment) |
 | `missing_envelope` / session not live | malformed request, dead session | 409 `PRECONDITION` | none | ledger `failed`; convert |
-| unknown session | host lost the session (restart) | 503 `EXECUTOR_UNAVAILABLE` (parsed, definitive) | none | ledger `failed`; convert (the parent turn is lost too) |
+| unknown session | host lost the session (restart) | 503 `EXECUTOR_UNAVAILABLE` (parsed, definitive) | none on this attempt (an earlier one may have injected — EDGE-STR-09) | ledger `failed`; convert (the parent turn is lost too) |
 | network error, timeout, non-JSON 5xx | outcome unknown | — | unknown | retry the same id (3×, 0.5 s·2ⁿ); the host replays or joins its receipt |
 
 Settlement, `settleSteerCommand(tx, command, outcome)` — the single writer
@@ -1558,13 +1562,16 @@ write back — the row stays `delivering` and the recovery fold re-runs both.
 | 409 definitive refusal | `failed` (`last_error.details.reason`; the recovery fold writes a top-level `reason`) | CAS `dispatched → superseded` | `live_message | persistent_message` at the next ordinal, `logical_key = message:requeue:<steerTurnId>`, `resume_requested_at` set; claimed after commit | CAS `steered → queued`, then `dispatchQueuedScratchMessages` | `delivery: "queued"` (the successor's `messageId` for agents) |
 | `FENCED` | `fenced` | as a refusal | as a refusal (successor + `runs.resume_requested_at`) | as a refusal | as a refusal; no `runs.status` write |
 | orphaned intent (never sent) | `failed` (`last_error = {code: "CRASH", reason: "ORPHANED"}`) | as a refusal | as a refusal | as a refusal | — (the caller died) |
-| unknown outcome, budget exhausted | stays `delivering` | stays `dispatched` | none | stays `steered` | `EXECUTOR_UNAVAILABLE` 503; the fold settles later |
+| unknown outcome, budget exhausted | stays `delivering` | stays `dispatched` | none | stays `steered` | agent: `EXECUTOR_UNAVAILABLE` 503 (a same-`requestKey` retry answers the steer row); scratch: 202 `delivery: "steered"` — the row and command are durable; the fold settles later |
 
 The CAS predicates (`state = 'dispatched' AND command_id = …`, `delivery =
 'steered' AND steer_command_id = …`) make settlement idempotent across the
 live path and recovery; a lost CAS logs `steer-settlement-already-applied`
 and returns the row as found. A successor is inserted only from a definitive
-host answer, never from an unknown one.
+host answer, never from an unknown one, and only by the path whose ledger
+write landed: a terminal CAS that changed nothing means another path
+terminalized the command and settled it in that transaction
+(`steer-ack-after-recovery-settled`).
 
 An agent message keeps ONE transcript row whatever happens to it. The issue
 transaction writes it `delivery = 'steered'` under `prompt_dispatch_key =
@@ -1583,12 +1590,16 @@ Recovery windows (normative; each cell names its owner):
 
 | Window | State of the steer | Live owner | Owner after a manager death |
 | --- | --- | --- | --- |
-| W1 — crash after the intent commit, before the wire | ledger `queued`, no receipt | the issuing request | the command recovery orphan pass; for `session.steer` it runs `settleSteerCommand(refused, "ORPHANED")` → steer `superseded` + successor / scratch row `queued` (the wire never happened, so exactly once) |
+| W1 — crash after the intent commit, before the wire | ledger `queued`, `attempts = 0`, no receipt | the issuing request | the command recovery orphan pass; for `session.steer` it runs `settleSteerCommand(refused, "ORPHANED")` → steer `superseded` + successor / scratch row `queued` (never sent, so the host never saw it) |
+| W1b — crash in the retry backoff after an unknown outcome | ledger `queued`, `attempts > 0` | the issuing request's retry | recovery claims it back to `delivering` and folds its receipt as in W2 (`steer-attempted-reconciled-from-receipt`) — an earlier attempt may have injected; with no receipt it falls back to W1 |
 | W2 — crash after the wire, before settlement | ledger `delivering`, host receipt exists | the issuing request | `foldReceipt`'s `session.steer` arm → `settleSteerCommand` |
-| host died mid-steer | ledger `delivering`, host has no receipt | — | the existing `receipt_missing` / `turn_lost` folds mark the ledger (`receipt_missing` → `{code: "CRASH", reason: "receipt_missing"}`) and `settleSteerCommand(refused)` converts; the parent turn is lost too and re-drives through its own path |
+| host died before recording the steer | ledger `delivering`, host has no receipt | — | back to `queued`, then the orphan pass (W1): the host never saw it |
+| host died during the ACP call | ledger `delivering`, receipt `accepted`, not in flight | — | the `turn_lost` fold (`{code: "ACP_PROTOCOL", reason: "turn_lost"}`) and `settleSteerCommand(refused)` convert; the parent turn is lost too and re-drives through its own path; an injection before the death is EDGE-STR-09 |
 | W3 — crash after settlement, before the successor claim | successor `queued` | the issuing request | `resume_requested_at` is set: the continuation worker's parked-run arm re-drives after the parent parks; a `Running` parent's park re-arms it |
 | W4 — scratch row `queued`, dialog `Running` | row `queued` | the previous turn's `afterCommit` | the same `afterCommit`, run by whichever process applies the previous turn's completion (the prompt-owner worker) |
-| W5/W6 — scratch row `queued`, dialog `WaitingForUser` (crash between the completion commit and the detached dispatch, or after a conversion) | row `queued` | — | **A4** (scratch re-drive; not in ADR-182). Interim: the next send flushes the queue FIFO and the row shows "Queued"; the row is never lost |
+| W5/W6 — scratch row `queued`, dialog `WaitingForUser` (crash between the completion commit and the detached dispatch, or a retryable failure of a dispatched queued row) | row `queued` | — | **A4** (scratch re-drive; not in ADR-182). Interim: the next send or a Recover flushes the queue FIFO and the row shows "Queued"; the row is never lost. A conversion folded by recovery wakes the dispatcher itself (`scratch-steer-requeued-by-recovery`) |
+| scratch dialog ended (Stop → `Review` / `Abandoned`, `Done`) with rows `queued` | row `queued` | — | none needed: the row is never sent and the UI reads it "Not sent" |
+| scratch dialog `Crashed` with rows `queued` | row `queued` | — | Recover: its own message joins the queue behind them and the dispatcher sends the oldest first |
 | host: `steerInFlight` set, adapter never answers | receipt `accepted` | the 30 s bound | a host restart drops the promise with the session; the parent's receipt folds `turn_lost` |
 
 Identifiers and trust:
@@ -1609,9 +1620,10 @@ Invariants and their enforcement:
 | At most one non-steer active turn per run | `agent_turns_active_run_uq` (`state IN ('claimed','dispatched') AND variant <> 'steer'`) |
 | A steer names its parent | `agent_turns_steer_parent_check` |
 | A steer never owns a prompt | `owner_kind IS NULL` on its ledger row; `OWNED_TURN_VARIANTS` excludes `steer` for every owned-turn reader |
-| A message is delivered exactly once | successor only from a definitive receipt; same-key lookup (`message:request:<key>` → steer row or `message:requeue:<steerTurnId>` successor); `run_messages_steer_command_uq`; the `delivery` CAS |
-| An unowned turn never runs to completion | host `session/cancel` on `startedNewTurn` (+ pending permissions cancelled) |
-| A prompt never overtakes an unanswered steer | the host `steerInFlight` barrier |
+| A steer is bound to its parent | `guard_agent_turn_source`: a non-steer parent of the same run, its assignment and incarnation, and the command's `payload.parentCommandId` |
+| A message is converted at most once (delivered at least once across a dead turn, EDGE-STR-09) | successor only from a definitive answer and only by the path whose ledger CAS wrote; an attempted `queued` steer folds its receipt first; same-key lookup (`message:request:<key>` → steer row or `message:requeue:<steerTurnId>` successor); `run_messages_steer_command_uq`; the `delivery` CAS |
+| An unowned turn is cancelled and no later steer lands in it | host `session/cancel` on `startedNewTurn` (best effort; + pending permissions cancelled); the steers of one session reach the adapter one at a time |
+| A prompt is not written while a steer named before it is unanswered | the host `steerInFlight` barrier, bounded by the steer timeout (EDGE-STR-06 past it) |
 | The parent's evidence is untouched | the span verifier skips `session.command` rows; the steered output carries the parent's `sourceCommandId` |
 | Prompt text never leaves the transcript | `PAYLOAD_PROJECTION["session.steer"]` keeps `parentCommandId`, `promptBytes`, `contentBlockCount` only; logs carry byte counts |
 
@@ -1653,13 +1665,16 @@ here rather than as new `PRM` ids.)
 - **EDGE-PRM-15 (Implemented, 2026-09-23):** A turn settled from the host's span reaches its owner before canonical ingest reaches the terminal event, and the span is unreadable by then. Owner application defers it without counting a failure while the stream is not lost, and counts it toward poisoning once the stream is lost (`prompt-output-frontier.integration.test.ts`).
 
 - **EDGE-STR-01 (Implemented — ADR-182):** A steer arrives after its parent completed. The host's active prompt is already cleared (it clears only after the parent's terminal receipt), so it refuses `steer_no_active_turn` without an ACP call and the message is queued; it never attaches to the next prompt (`CONFLICT`; `steer-route.integration.test.ts`).
-- **EDGE-STR-02 (Implemented — ADR-182):** The host check passes, the adapter goes idle first and answers `startedNewTurn`. The host cancels that unowned turn and every pending permission of the session, then refuses `steer_no_active_turn` with `adapterOutcome: "startedNewTurn"`; the manager converts once (`CONFLICT`).
+- **EDGE-STR-02 (Implemented — ADR-182):** The host check passes, the adapter goes idle first and answers `startedNewTurn`. The host sends `session/cancel` for that unowned turn (best effort) and cancels every pending permission of the session, then refuses `steer_no_active_turn` with `adapterOutcome: "startedNewTurn"`; the manager converts once (`CONFLICT`).
 - **EDGE-STR-03 (Implemented — ADR-182):** The adapter does not advertise steering, or the incarnation predates the capability column (NULL). The manager never issues a `session.steer`; the message is queued and answered `delivery: "queued"`.
 - **EDGE-STR-04 (Implemented — ADR-182):** The parent is blocked on a permission (`NeedsInput`). The steer is admitted, the pending permission is never cancelled by it, and the adapter decides when the text takes effect (not measured: neither adapter raised a permission on the measuring host — `acp-runners.md` Steering).
-- **EDGE-STR-05 (Implemented — ADR-182):** A steer is refused after the parent turn ended. The conversion's successor (agent) or re-queued row (scratch) is dispatched as the next prompt; if the dialog is already `WaitingForUser` the conversion dispatches it immediately, and a concurrent `afterCommit` dispatcher finds the dialog `Running` (or loses the `delivery` CAS) and returns `{dispatched: false}`, logging `scratch-queued-dispatch-skipped` — exactly one prompt, no error.
-- **EDGE-STR-06 (Implemented — ADR-182):** The adapter answers after `STEER_ACP_TIMEOUT_MS`. The host has refused `steer_timeout` and the manager has queued the message; an adapter that injects it anyway delivers it twice. This is the only reachable double delivery and requires an adapter defect (`CONFLICT`).
+- **EDGE-STR-05 (Implemented — ADR-182):** A steer is refused after the parent turn ended. The conversion's successor (agent) or re-queued row (scratch) is dispatched as the next prompt; if the dialog is already `WaitingForUser` the conversion dispatches it immediately — a conversion folded by recovery included — and a concurrent `afterCommit` dispatcher finds the dialog `Running` (or loses the `delivery` CAS) and returns `{dispatched: false}`, logging `scratch-queued-dispatch-skipped` — exactly one prompt, no error.
+- **EDGE-STR-06 (Implemented — ADR-182):** The adapter answers after `STEER_ACP_TIMEOUT_MS`. The host has refused `steer_timeout` and the manager has queued the message; an adapter that injects it anyway delivers it twice. One of the two reachable double deliveries (EDGE-STR-09 is the other); this one requires an adapter defect (`CONFLICT`).
 - **EDGE-STR-07 (Implemented — ADR-182):** Transcript order is the manager's acceptance order: the steered user row is allocated when the manager accepts it, so assistant chunks the adapter emitted before the injection but projected later sort after it. The steer's `accepted` command event closes the open assistant row, so text before and after the steer never merge.
 - **EDGE-STR-08 (Implemented — ADR-182):** The adapter refuses the steer's content (e.g. an image block on a text-only model). The host maps it to `steer_no_active_turn`, the manager queues the message, and the later prompt fails the same way through the existing prompt failure path (`markScratchPromptRetryable` / agent turn failure).
+- **EDGE-STR-09 (Implemented — ADR-182):** A definitive answer follows an injection into a turn that then died with its session: a newer generation's command fenced the session after the adapter answered `injected` (`FENCED`), the host restarted during the ACP call (receipt `accepted` → `turn_lost`), the adapter exited after the send (an ACP error → `steer_no_active_turn`), or a retry after a host restart found the session gone (the parsed 503 precedes the receipt replay). The manager converts: the message is delivered at least once — twice if the dead turn had already persisted the injected text into the session the next generation resumes. A duplicate is preferred over a lost instruction (`CONFLICT` / `EXECUTOR_UNAVAILABLE`).
+- **EDGE-STR-10 (Implemented — ADR-182):** Two steers of one session arrive together. They reach the adapter one at a time, each re-checked after the previous one answered; a steer that spent its whole 30 s budget waiting is refused `steer_timeout` without reaching the adapter (`steer-route.integration.test.ts`).
+- **EDGE-STR-11 (Implemented — ADR-182):** An agent run closes (`Done | Failed | Abandoned`) while its steer is in flight. The conversion leaves the successor `superseded` and sets no `resume_requested_at`, so nothing waits on a run that will never dispatch it (`agent-steering.integration.test.ts`).
 
 ## Verification
 

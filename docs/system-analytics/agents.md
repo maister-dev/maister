@@ -80,7 +80,10 @@ not restated here).
   A `steer` row (`variant = 'steer'`, `parent_turn_id` = the dispatched parent)
   is a message injected into the running turn (Implemented — ADR-182): it owns
   no prompt, is invisible to every owned-turn reader (`OWNED_TURN_VARIANTS`),
-  and a host refusal supersedes it with an ordinary successor message
+  and a host refusal supersedes it with an ordinary successor message — itself
+  `superseded` when the run closed meanwhile (`CLOSES_MESSAGE_TURNS`). A
+  steer-mode message to a `NeedsInputIdle` run finds no running turn and is
+  queued
   ([steering contract](execution-prompt-lifecycle.md#steering-a-running-turn-implemented--adr-182)).
 - **`agents`** (Implemented) — catalog projection over
   `maister-agents/<stem>.md` inside the providing package's NEWEST Installed

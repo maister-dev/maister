@@ -5367,13 +5367,18 @@ paths:
           a `PromptHandle` and, today, answers after that turn completes with its
           `stopReason`. When older rows are still queued the new row is appended
           `delivery: "queued"` behind them and the oldest is dispatched first.
-        - **Busy arm** (`Starting` / `Running`): the row is appended at once and
-          either steered into the running turn (`delivery: "steered"`) or queued
-          for the next one (`delivery: "queued"`); the dialog status is not
-          changed and the route answers at acceptance, without `stopReason`.
-          A refused steer answers `delivery: "queued"`.
+        - **Busy arm** (`Running`): the row is appended at once and either
+          steered into the running turn (`delivery: "steered"`) or queued for
+          the next one (`delivery: "queued"`); the dialog status is not changed
+          and the route answers at acceptance, without `stopReason`. A refused
+          steer answers `delivery: "queued"`. A steer whose outcome is still
+          unknown (its answer was lost) answers `delivery: "steered"`: the row
+          and its command are durable and the host receipt settles them later
+          — injected, or refused and then queued. Do not resend.
 
-        `NeedsInput` and terminal dialogs refuse with `409 CONFLICT`. The body carries
+        `Starting` (no session yet), `NeedsInput` and terminal dialogs refuse
+        with `409 CONFLICT`. A project-less local-package assistant run is
+        refused `409 CONFLICT` while busy on this route too (ADR-097). The body carries
         message content and attachment refs only. It MUST NOT include session
         ids, project slug, worktree path, step id, or message sequence.
         Accepts JSON for text/metadata-only messages and multipart form data
@@ -5413,16 +5418,20 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "409":
           description: |
-            Scratch run not found, not scratch, `NeedsInput` or terminal dialog,
-            no live host session, invalid upload filename/path, too many files,
-            oversized file, or oversized total multipart payload
-            (`PRECONDITION` / `CONFLICT`). A message while the agent is busy is
-            never refused — it is steered or queued (ADR-182).
+            Scratch run not found, not scratch, `Starting`, `NeedsInput` or
+            terminal dialog, a busy local-package assistant run, no live host
+            session, invalid upload filename/path, too many files, oversized
+            file, or oversized total multipart payload (`PRECONDITION` /
+            `CONFLICT`). A message to a project scratch dialog whose turn is
+            running is never refused — it is steered or queued (ADR-182).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "503":
-          description: Supervisor prompt delivery or file-storage infrastructure failed retryably (`EXECUTOR_UNAVAILABLE`).
+          description: |
+            Prompt-arm delivery or file-storage infrastructure failed
+            retryably (`EXECUTOR_UNAVAILABLE`). A busy-arm steer never answers
+            503: an unknown outcome is answered `202` `delivery: "steered"`.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -5628,15 +5637,26 @@ paths:
                         Abandoned,
                       ]
         "202":
-          description: Scratch session resumed and prompt dispatched.
+          description: |
+            Scratch session resumed. With no message queued from before the
+            crash the prompt ran as the recovery turn and `stopReason` is set.
+            With messages still queued (ADR-182) the prompt was queued behind
+            them (`delivery: "queued"`, no `stopReason`), the dialog is
+            `WaitingForUser`, and the oldest queued message is dispatched next.
           content:
             application/json:
               schema:
                 type: object
-                required: [runId, action, dialogStatus, stopReason]
+                required: [runId, action, dialogStatus]
                 properties:
                   runId: { type: string, format: uuid }
                   action: { type: string, enum: [recover] }
+                  delivery:
+                    type: string
+                    enum: [queued]
+                    description: |
+                      (Implemented — ADR-182) Present only when the prompt
+                      was queued behind messages that waited out the crash.
                   dialogStatus:
                     type: string
                     enum:
@@ -19774,8 +19794,10 @@ components:
           description: |
             (Implemented — ADR-182) How the message reached the agent:
             `prompted` — it was sent as its own turn (prompt arm); `steered` —
-            injected into the running turn; `queued` — it waits for the current
-            turn to end and is dispatched automatically, oldest first.
+            sent to the running turn (injected, or its answer was lost and the
+            host receipt settles it later — a refusal then flips the row to
+            `queued`); `queued` — it waits for the current turn to end and is
+            dispatched automatically, oldest first.
         dialogStatus:
           type: string
           enum:

@@ -2051,8 +2051,9 @@ paths:
             (Implemented — ADR-182) A `mode: "steer"` message whose steer
             outcome is still unknown after its delivery attempts
             (`EXECUTOR_UNAVAILABLE`). The message is accepted and durable; the
-            host's receipt settles it later, and a retry with the same
-            `requestKey` answers its identity without re-issuing it.
+            host's receipt settles it later. Only a retry with the same
+            `requestKey` is safe — it answers the message's identity without
+            re-issuing it; a retry without one sends a second message.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ExtErrorBody" }

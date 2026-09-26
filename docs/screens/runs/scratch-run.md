@@ -39,14 +39,18 @@ moment.
 | Project admin / owner | Has member capabilities plus project-level delivery actions where configured. |
 | Global admin | Bypasses project role checks as owner-equivalent. |
 
-While the agent is working the composer stays editable and **Send** stays the
+While a turn runs the composer stays editable and **Send** stays the
 primary action (Implemented — ADR-182): the message is either steered into the
 running turn or queued for the next one, and the response says which — an
-inline notice under the composer and a badge on the row ("Steered" / "Queued").
-**Stop** is a secondary button beside Send; it interrupts the current turn (ACP
-`session/cancel`) while keeping the session live, and never sends anything on
-its own. There is no client-side queue: queued messages live on the server, so a
-reload loses nothing, and they are dispatched oldest first when the turn ends. A
+inline notice under the composer, shown only while that turn runs, and a badge
+on the row ("Steered" / "Queued"). **Stop** is a secondary button beside Send;
+it interrupts the current turn (ACP `session/cancel`) while keeping the session
+live; the interrupted turn's end then dispatches any queued message, as any
+turn end does — a queued message cannot be withdrawn. There is no client-side
+queue: queued messages live on the server, so a reload loses nothing, and they
+are dispatched oldest first when the turn ends. While the dialog is `Starting`
+there is no session yet: only Stop is offered. A queued row on a dialog that
+ended (Review, Done, Abandoned) reads "Not sent". A
 crashed run may expose a recover composer that sends the resume prompt instead
 of a normal message.
 
@@ -96,8 +100,9 @@ The scratch screen uses the conversation as the primary center:
    `Enter` inserts a newline. It stays editable while the agent is busy: **Send**
    stays primary (the message is steered into the running turn or queued —
    ADR-182) and a secondary **Stop** button interrupts the current turn. A queued
-   row carries a "Queued" badge until it is dispatched; a steered row carries
-   "Steered". It supports structured attachments and uploaded
+   row carries a "Queued" badge until it is dispatched ("Not sent" once the
+   dialog ended without sending it); a steered row carries "Steered". It
+   supports structured attachments and uploaded
    files. Slash suggestions include package skills plus the live ACP session's
    available commands; native runner commands are inserted as their exact raw
    command text rather than converted into capability chips.
@@ -166,7 +171,8 @@ stateDiagram-v2
 
 | State | Main focus |
 | --- | --- |
-| `Starting` / `Running` | Transcript with latest tool group expanded; composer editable with Send primary (steer or queue) and a secondary Stop button to interrupt the turn |
+| `Starting` | Transcript; composer editable for drafting, Stop only (no session to send to yet) |
+| `Running` | Transcript with latest tool group expanded; composer editable with Send primary (steer or queue) and a secondary Stop button to interrupt the turn |
 | `WaitingForUser` | Transcript plus enabled composer and live slash-command suggestions |
 | `NeedsInput` | Pending permission/HITL prompt in the conversation |
 | `Review` | Transcript plus inspector action shortcuts and change size |
@@ -186,7 +192,9 @@ stateDiagram-v2
   may collapse local transcript history after `/clear`, but it does not filter
   the command or delete stored messages.
 - `POST /api/scratch-runs/{runId}/recover` resumes a crashed scratch session
-  with a user prompt.
+  with a user prompt; with messages still queued from before the crash it
+  queues the prompt behind them and answers `delivery: "queued"`, so the
+  oldest is sent first.
 - `POST /api/scratch-runs/{runId}/interrupt` interrupts the agent's in-flight
   turn (composer Stop) without ending the session; the dialog returns to
   `WaitingForUser` on its own.
