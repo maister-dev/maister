@@ -687,12 +687,14 @@ async function setHostPressure(pressuredSince: Date | null): Promise<string> {
   const host = await localHost({ db: db as never, force: true });
 
   await db
-    .update(schema.executionHosts)
-    .set({
+    .delete(schema.executionHostPressure)
+    .where(eq(schema.executionHostPressure.executionHostId, host.id));
+  if (pressuredSince)
+    await db.insert(schema.executionHostPressure).values({
+      executionHostId: host.id,
       pressuredSince,
-      pressureUnacknowledgedAtStart: pressuredSince ? 40 : null,
-    })
-    .where(eq(schema.executionHosts.id, host.id));
+      unacknowledgedAtStart: 40,
+    });
 
   return host.id;
 }
@@ -726,13 +728,13 @@ function healthSample(pressured: boolean) {
 
 async function hostPressuredSince(hostId: string): Promise<Date | null> {
   const [row] = (await db
-    .select({ pressuredSince: schema.executionHosts.pressuredSince })
-    .from(schema.executionHosts)
-    .where(eq(schema.executionHosts.id, hostId))) as Array<{
-    pressuredSince: Date | null;
+    .select({ pressuredSince: schema.executionHostPressure.pressuredSince })
+    .from(schema.executionHostPressure)
+    .where(eq(schema.executionHostPressure.executionHostId, hostId))) as Array<{
+    pressuredSince: Date;
   }>;
 
-  return row.pressuredSince;
+  return row?.pressuredSince ?? null;
 }
 
 async function seedPendingAgentRun(): Promise<string> {
@@ -816,9 +818,13 @@ describe("ADR-183 D-M0 — the refusal writer (W9)", () => {
     } finally {
       scheduling.real = false;
       await db
-        .update(schema.executionHosts)
-        .set({ pressuredSince: null, pressureUnacknowledgedAtStart: null })
-        .where(eq(schema.executionHosts.id, assignment.executionHostId));
+        .delete(schema.executionHostPressure)
+        .where(
+          eq(
+            schema.executionHostPressure.executionHostId,
+            assignment.executionHostId,
+          ),
+        );
       await db
         .update(schema.runs)
         .set({ status: "Done" })

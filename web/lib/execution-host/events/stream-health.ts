@@ -9,6 +9,7 @@ import {
   executionCommands,
   executionEventConsumers,
   executionEventStreams,
+  executionHostPressure,
   executionHosts,
 } from "@/lib/db/schema";
 import { getDb } from "@/lib/db/client";
@@ -46,7 +47,7 @@ export async function findStalledEventStreams(input: {
       streamId: executionEventStreams.streamId,
       executionHostId: executionEventStreams.executionHostId,
       lastSeenAt: executionEventStreams.lastSeenAt,
-      pressuredSince: executionHosts.pressuredSince,
+      pressuredSince: executionHostPressure.pressuredSince,
       openCommands: sql<number>`(
         select count(*)::int from ${executionCommands}
          where ${executionCommands.executionHostId} = ${executionEventStreams.executionHostId}
@@ -57,6 +58,10 @@ export async function findStalledEventStreams(input: {
     .innerJoin(
       executionHosts,
       eq(executionHosts.id, executionEventStreams.executionHostId),
+    )
+    .leftJoin(
+      executionHostPressure,
+      eq(executionHostPressure.executionHostId, executionHosts.id),
     )
     .where(
       and(

@@ -185,7 +185,7 @@ sequenceDiagram
     R->>D: ONE tx: node_interrupt{cause host_pressure, actor system} +<br/>CAS Running→NeedsInput + same attempt NeedsInput +<br/>action_resume{kind interrupt, acpSessionId} + run.escalated
     Note over D: keep-alive Pass 1b idles the run to NeedsInputIdle, slot freed
     S->>H: GET /health?includeStream=true → pressured false
-    S->>D: clear pressured_since, then for up to 25 open host-pressure interrupts<br/>applyNodeInterruptResume(actor system)
+    S->>D: delete the pressure record, then for up to 25 open host-pressure interrupts<br/>applyNodeInterruptResume(actor system)
     D->>R: claimGraphResumeSlot → runFlow (or resume_requested_at when full)
     R->>H: session.create {resumeSessionId} → session/resume, same attempt
     S->>D: promoteNextPending per pool

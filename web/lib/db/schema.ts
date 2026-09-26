@@ -2193,14 +2193,6 @@ export const executionHosts = pgTable(
       .notNull()
       .defaultNow(),
     retiredAt: timestamp("retired_at", { withTimezone: true, mode: "date" }),
-    // ADR-183: the host's outbox-pressure record — set by a health sample with
-    // stream.pressured=true or by an event_outbox_backpressure refusal,
-    // cleared only by a pressured=false sample.
-    pressuredSince: timestamp("pressured_since", {
-      withTimezone: true,
-      mode: "date",
-    }),
-    pressureUnacknowledgedAtStart: integer("pressure_unacknowledged_at_start"),
   },
   (t) => ({
     // E-EH-01: at most one non-retired local host.
@@ -2215,16 +2207,36 @@ export const executionHosts = pgTable(
       "execution_hosts_readiness_check",
       inLiteralList(t.readiness, EXECUTION_HOST_READINESS),
     ),
-    pressureStartCheck: check(
-      "execution_hosts_pressure_start_check",
-      sql`${t.pressureUnacknowledgedAtStart} IS NULL OR ${t.pressureUnacknowledgedAtStart} >= 0`,
-    ),
-    pressureStartRequiresSinceCheck: check(
-      "execution_hosts_pressure_start_requires_since",
-      sql`${t.pressureUnacknowledgedAtStart} IS NULL OR ${t.pressuredSince} IS NOT NULL`,
+  }),
+);
+
+// ADR-183 D-M0: the host's outbox-pressure record. A row exists exactly while
+// the manager believes the host is pressured: written by a health sample with
+// `stream.pressured=true` or by an `event_outbox_backpressure` refusal, deleted
+// only by a `pressured=false` sample. Its own table, not `execution_hosts`
+// columns: the staged upgrade runs the current registrar against the additive
+// stage's `execution_hosts`, whose shape must not change after 0133.
+export const executionHostPressure = pgTable(
+  "execution_host_pressure",
+  {
+    executionHostId: text("execution_host_id")
+      .primaryKey()
+      .references(() => executionHosts.id, { onDelete: "cascade" }),
+    pressuredSince: timestamp("pressured_since", {
+      withTimezone: true,
+      mode: "date",
+    }).notNull(),
+    unacknowledgedAtStart: integer("unacknowledged_at_start"),
+  },
+  (t) => ({
+    unacknowledgedAtStartCheck: check(
+      "execution_host_pressure_unacknowledged_at_start_check",
+      sql`${t.unacknowledgedAtStart} IS NULL OR ${t.unacknowledgedAtStart} >= 0`,
     ),
   }),
 );
+
+export type ExecutionHostPressure = typeof executionHostPressure.$inferSelect;
 
 export const executionAssignments = pgTable(
   "execution_assignments",

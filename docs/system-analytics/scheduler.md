@@ -279,7 +279,7 @@ underneath it. See [execution data cutover](execution-data-cutover.md).
 
 The host-pressure fence (Implemented — ADR-183) sits beside it and is not the
 same thing: it claims nothing new but keeps the tick running. While the local
-execution host's pressure record (`execution_hosts.pressured_since`) is set,
+execution host's pressure record (an `execution_host_pressure` row) is set,
 `effectivePoolCap` answers a zero cap with fence `host_pressured` to every
 admission edge — `tryStartRun`, `promoteNextPending`, the resume and turn
 claims — so launches queue `Pending` with `queueReason: "host_pressured"` and

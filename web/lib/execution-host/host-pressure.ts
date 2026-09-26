@@ -1,12 +1,12 @@
 import type { Db } from "./db";
 import type { SupervisorEventStreamHealth } from "@/types/platform-status";
 
-import { and, eq, isNotNull, isNull } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import pino, { type Logger } from "pino";
 
 import { LOCAL_DIRECT_KIND } from "./hosts";
 
-import { executionHosts } from "@/lib/db/schema";
+import { executionHostPressure, executionHosts } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 
 // ADR-183 D-M0/D-M6: the host's wire token for a soft/hard outbox refusal, and
@@ -65,12 +65,10 @@ export async function recordHostPressureRefusal(
   logger: Logger = defaultLog,
 ): Promise<boolean> {
   const rows = await db
-    .update(executionHosts)
-    .set({ pressuredSince: new Date() })
-    .where(
-      and(eq(executionHosts.id, hostId), isNull(executionHosts.pressuredSince)),
-    )
-    .returning({ id: executionHosts.id });
+    .insert(executionHostPressure)
+    .values({ executionHostId: hostId, pressuredSince: new Date() })
+    .onConflictDoNothing({ target: executionHostPressure.executionHostId })
+    .returning({ id: executionHostPressure.executionHostId });
 
   if (!rows[0]) return false;
   logger.warn(
@@ -106,12 +104,8 @@ export async function recordHostPressureSample(input: {
   const now = input.now ?? new Date();
 
   return input.db.transaction(async (tx) => {
-    const [host] = await tx
-      .select({
-        id: executionHosts.id,
-        pressuredSince: executionHosts.pressuredSince,
-        unacknowledgedAtStart: executionHosts.pressureUnacknowledgedAtStart,
-      })
+    const [registered] = await tx
+      .select({ id: executionHosts.id })
       .from(executionHosts)
       .where(
         and(
@@ -121,7 +115,7 @@ export async function recordHostPressureSample(input: {
       )
       .for("update");
 
-    if (!host) {
+    if (!registered) {
       logger.debug(
         { hostKey: input.hostKey },
         "host pressure sample skipped: no registered host for this key",
@@ -129,15 +123,23 @@ export async function recordHostPressureSample(input: {
 
       return null;
     }
+    const [record] = await tx
+      .select()
+      .from(executionHostPressure)
+      .where(eq(executionHostPressure.executionHostId, registered.id));
+    const host = {
+      id: registered.id,
+      pressuredSince: record?.pressuredSince ?? null,
+      unacknowledgedAtStart: record?.unacknowledgedAtStart ?? null,
+    };
     const episodes = input.stream.pressure?.episodes ?? null;
 
     if (!input.stream.pressured) {
       if (host.pressuredSince === null)
         return observation(host.id, "clear", null, null, null, episodes);
       await tx
-        .update(executionHosts)
-        .set({ pressuredSince: null, pressureUnacknowledgedAtStart: null })
-        .where(eq(executionHosts.id, host.id));
+        .delete(executionHostPressure)
+        .where(eq(executionHostPressure.executionHostId, host.id));
       const durationMs = Math.max(
         0,
         now.getTime() - host.pressuredSince.getTime(),
@@ -171,12 +173,16 @@ export async function recordHostPressureSample(input: {
       host.unacknowledgedAtStart !== unacknowledgedAtStart
     )
       await tx
-        .update(executionHosts)
-        .set({
+        .insert(executionHostPressure)
+        .values({
+          executionHostId: host.id,
           pressuredSince,
-          pressureUnacknowledgedAtStart: unacknowledgedAtStart,
+          unacknowledgedAtStart,
         })
-        .where(eq(executionHosts.id, host.id));
+        .onConflictDoUpdate({
+          target: executionHostPressure.executionHostId,
+          set: { unacknowledgedAtStart },
+        });
     if (host.pressuredSince === null)
       logger.warn(
         { hostId: host.id, source: "health", unacknowledgedAtStart },
@@ -216,13 +222,16 @@ function observation(
  * whatever lock the caller already holds. */
 export async function localHostPressuredSince(db: Db): Promise<Date | null> {
   const [host] = await db
-    .select({ pressuredSince: executionHosts.pressuredSince })
-    .from(executionHosts)
+    .select({ pressuredSince: executionHostPressure.pressuredSince })
+    .from(executionHostPressure)
+    .innerJoin(
+      executionHosts,
+      eq(executionHosts.id, executionHostPressure.executionHostId),
+    )
     .where(
       and(
         eq(executionHosts.kind, LOCAL_DIRECT_KIND),
         isNull(executionHosts.retiredAt),
-        isNotNull(executionHosts.pressuredSince),
       ),
     )
     .limit(1);

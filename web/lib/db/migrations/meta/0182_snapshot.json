@@ -1,5 +1,5 @@
 {
-  "id": "a8349b1c-2233-4f0f-9577-f7f299bedc99",
+  "id": "cfe45f2e-e92e-488d-9964-084f5a3728a3",
   "prevId": "b3c41509-0a30-4537-a2dd-3c290683f754",
   "version": "7",
   "dialect": "postgresql",
@@ -8650,6 +8650,56 @@
       },
       "isRLSEnabled": false
     },
+    "public.execution_host_pressure": {
+      "name": "execution_host_pressure",
+      "schema": "",
+      "columns": {
+        "execution_host_id": {
+          "name": "execution_host_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "pressured_since": {
+          "name": "pressured_since",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "unacknowledged_at_start": {
+          "name": "unacknowledged_at_start",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "execution_host_pressure_execution_host_id_execution_hosts_id_fk": {
+          "name": "execution_host_pressure_execution_host_id_execution_hosts_id_fk",
+          "tableFrom": "execution_host_pressure",
+          "tableTo": "execution_hosts",
+          "columnsFrom": [
+            "execution_host_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "execution_host_pressure_unacknowledged_at_start_check": {
+          "name": "execution_host_pressure_unacknowledged_at_start_check",
+          "value": "\"execution_host_pressure\".\"unacknowledged_at_start\" IS NULL OR \"execution_host_pressure\".\"unacknowledged_at_start\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
     "public.execution_hosts": {
       "name": "execution_hosts",
       "schema": "",
@@ -8735,18 +8785,6 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
-        },
-        "pressured_since": {
-          "name": "pressured_since",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "pressure_unacknowledged_at_start": {
-          "name": "pressure_unacknowledged_at_start",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {
@@ -8787,14 +8825,6 @@
         "execution_hosts_readiness_check": {
           "name": "execution_hosts_readiness_check",
           "value": "\"execution_hosts\".\"readiness\" in ('unknown', 'ready', 'unavailable')"
-        },
-        "execution_hosts_pressure_start_check": {
-          "name": "execution_hosts_pressure_start_check",
-          "value": "\"execution_hosts\".\"pressure_unacknowledged_at_start\" IS NULL OR \"execution_hosts\".\"pressure_unacknowledged_at_start\" >= 0"
-        },
-        "execution_hosts_pressure_start_requires_since": {
-          "name": "execution_hosts_pressure_start_requires_since",
-          "value": "\"execution_hosts\".\"pressure_unacknowledged_at_start\" IS NULL OR \"execution_hosts\".\"pressured_since\" IS NOT NULL"
         }
       },
       "isRLSEnabled": false

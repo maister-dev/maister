@@ -50,11 +50,19 @@ async function setHost(input: {
   pressuredSince: Date | null;
 }): Promise<void> {
   await testDatabase.pool.query(
-    `update execution_hosts set readiness = $2, pressured_since = $3,
-       pressure_unacknowledged_at_start = null
-      where id = $1`,
-    [hostId, input.readiness, input.pressuredSince],
+    `update execution_hosts set readiness = $2 where id = $1`,
+    [hostId, input.readiness],
   );
+  await testDatabase.pool.query(
+    `delete from execution_host_pressure where execution_host_id = $1`,
+    [hostId],
+  );
+  if (input.pressuredSince)
+    await testDatabase.pool.query(
+      `insert into execution_host_pressure (execution_host_id, pressured_since)
+       values ($1, $2)`,
+      [hostId, input.pressuredSince],
+    );
 }
 
 async function streamLastError(): Promise<unknown> {

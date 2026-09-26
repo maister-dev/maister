@@ -51,9 +51,11 @@ manager-side [execution event plane](execution-event-plane.md),
 {protocolVersion, supervisorVersion, adapters[]}`. The supervisor URL is
   transport configuration (`MAISTER_SUPERVISOR_URL`) read at call time by the
   local-direct transport — never stored on the row.
-  The host's outbox-pressure record — `pressured_since` and
-  `pressure_unacknowledged_at_start` (migration `0182`) — is the manager's copy
-  of the host's pressure episode (Implemented — ADR-183).
+  The host's outbox-pressure record — a row of `execution_host_pressure`
+  (`pressured_since`, `unacknowledged_at_start`; migration `0182`) that exists
+  exactly while the host is pressured — is the manager's copy of the host's
+  pressure episode (Implemented — ADR-183). It is a separate table so the
+  `execution_hosts` row keeps the shape the staged upgrade reads.
 - **Host state store** — the supervisor-private `node:sqlite` file
   `<MAISTER_EXECUTION_HOST_STATE_DIR>/state.sqlite` (default
   `<MAISTER_RUNTIME_ROOT>/.maister/execution-host/`) holding
@@ -663,22 +665,22 @@ ADR-182). The tokens the web mints itself
 | 409 `FENCED`                                                                 | terminal                                                                                                                                                                                                                                                                                                                           | `fenced`               | `CONFLICT {details.reason:"assignment_fenced"}`                                                                                            |
 | 404 / 410 / 409 `PRECONDITION` (any reason)                                  | terminal                                                                                                                                                                                                                                                                                                                           | `failed`               | existing per-endpoint mapping, `details` passed through                                                                                    |
 | 409 `PRECONDITION unknown_workspace` / `workspace_released` on create        | terminal for this command                                                                                                                                                                                                                                                                                                          | `failed`               | one re-adopt + a NEW create                                                                                                                |
-| 409 `PRECONDITION event_outbox_backpressure` (host pressure, ADR-183)        | terminal for this command; BEFORE the rethrow the deliverer sets `execution_hosts.pressured_since = now()` where it is NULL (`isHostPressureRefusal`) | `failed`               | the original error, `details.reason` intact; drivers map it to the host-pressure park |
+| 409 `PRECONDITION event_outbox_backpressure` (host pressure, ADR-183)        | terminal for this command; BEFORE the rethrow the deliverer inserts the `execution_host_pressure` row (`now()`, ON CONFLICT DO NOTHING — `isHostPressureRefusal`) | `failed` (row keeps the host's verbatim error) | `EXECUTOR_UNAVAILABLE {reason: "host_pressured", hostReason, commandId}`; drivers park on it |
 | driverless kind (`session.delete`, `workspace.release`), ONE unknown outcome | the row stays `queued` for the recovery pass — the caller is not held through the retry budget                                                                                                                                                                                                                                     | `queued`               | `EXECUTOR_UNAVAILABLE {details.reason:"delivery_deferred"}`                                                                                |
 | prompt after `accepted`: transport failure                                   | receipt lookup retried up to 5× (0.5 s·2ⁿ), `failed{receipt_lookup_failed}` after that; `completed` → `succeeded{stopReason}`; `rejected` → `failed` / `fenced`; `accepted` + `inflight:true` → the SAME id is re-sent ONCE to join the turn; `accepted` + `inflight:false` → `failed{turn_lost}`; 404 → `failed{receipt_missing}` | as looked up           | `stopReason` when completed; `EXECUTOR_UNAVAILABLE` (`receipt_lookup_failed`) or `ACP_PROTOCOL` (`turn_lost`, `receipt_missing`) otherwise |
 | ledger write fails mid-turn                                                  | logged `command-ledger-write-failed`; the turn's outcome still reaches the driver; the next recovery pass folds the row from the host receipt                                                                                                                                                                                      | unchanged until folded | the turn's own outcome; `ACP_PROTOCOL {details.reason:"ledger_write_failed"}` only when the ledger error is the first settling signal      |
 
 ## Host pressure on the manager (Implemented — ADR-183)
 
-The manager keeps one durable record of the host's outbox pressure on the host
-row, `execution_hosts.pressured_since` (+ `pressure_unacknowledged_at_start`,
-which requires it — CHECK `execution_hosts_pressure_start_requires_since`).
+The manager keeps one durable record of the host's outbox pressure: a row of
+`execution_host_pressure` per pressured host (`pressured_since` NOT NULL,
+`unacknowledged_at_start` nullable). No row means not pressured.
 
 | Writer | When | Effect |
 | --- | --- | --- |
-| `system_sweep` observation step | health sample with `stream.pressured: true` | `pressured_since = coalesce(pressured_since, stream.pressure.since)`, `pressure_unacknowledged_at_start` from the sample; logs `execution-host-pressured` on the NULL → set edge |
-| command deliverer (`isHostPressureRefusal`) | a `PRECONDITION` refusal whose `details.reason` is `event_outbox_backpressure` | `pressured_since = now()` WHERE it is NULL, outside any domain transaction, before the rethrow |
-| `system_sweep` observation step | health sample with `stream.pressured: false` while the record is set | clears both columns, logs `execution-host-pressure-cleared`, auto-resumes host-pressure interrupts, then calls `promoteNextPending` per pool |
+| `system_sweep` observation step | health sample with `stream.pressured: true` | inserts the row with `pressured_since = stream.pressure.since` (an existing row keeps its value) and `unacknowledged_at_start` from the sample; logs `execution-host-pressured` on the absent → present edge |
+| command deliverer (`isHostPressureRefusal`) | a `PRECONDITION` refusal whose `details.reason` is `event_outbox_backpressure` | inserts `pressured_since = now()` ON CONFLICT DO NOTHING, outside any domain transaction, before the rethrow |
+| `system_sweep` observation step | health sample with `stream.pressured: false` while the row exists | deletes it, logs `execution-host-pressure-cleared`, auto-resumes host-pressure interrupts, then calls `promoteNextPending` per pool |
 
 A successful ACK never clears the record: the host is the authority, sampled
 once per sweep (60 s). The readers:
@@ -920,7 +922,7 @@ Preserve `MaisterError`/`SupervisorError` conventions. Add a strict reason union
 | X-EH-21 | Host receipt write fails after executing                                                                                                     | 500 `ACP_PROTOCOL`; the effect may exist; reconcile catches an orphan session (accepted residual)                                                                                                                                                                                  | R5                                                                 |
 | X-EH-22 | Host unreachable at Web boot                                                                                                                 | readiness unavailable; legacy runs still reported (`legacy-runs-unplaced`, once per run); the resolver retries on the next command / sweep (accepted residual)                                                                                                                     | G5, Y4                                                             |
 | X-EH-23 | Upgrade to ADR-166 with live pre-ADR-166 sessions                                                                                            | the sessions die with the old supervisor — restart the supervisor first (drain recommended); in-flight runs follow the supervisor-restart semantics, no backfill                                                                                                                   | — (operational; [`../deployment.md`](../deployment.md#11-updates)) |
-| X-EH-24 | Host outbox pressured (unACKed at soft) while the manager launches or prompts | host 409 `PRECONDITION event_outbox_backpressure`; the manager sets `pressured_since`, queues launches `Pending{queueReason: host_pressured}` and parks drivers `EXECUTOR_UNAVAILABLE {reason: "host_pressured"}` until a sample reports `pressured: false` (ADR-183) | T3.3, T4.1 |
+| X-EH-24 | Host outbox pressured (unACKed at soft) while the manager launches or prompts | host 409 `PRECONDITION event_outbox_backpressure`; the manager records the pressure (`execution_host_pressure`), queues launches `Pending{queueReason: host_pressured}` and parks drivers `EXECUTOR_UNAVAILABLE {reason: "host_pressured"}` until a sample reports `pressured: false` (ADR-183) | T3.3, T4.1 |
 | X-EH-25 | Host pressured and silent for longer than the stall window | stream classified `pressured`, never repaired or degraded to `lost` (ADR-183) | T3.1 |
 
 ## Linked artifacts

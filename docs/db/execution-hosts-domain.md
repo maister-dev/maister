@@ -59,6 +59,7 @@ erDiagram
     EXECUTION_ASSIGNMENTS o|--o| RUNS : "runs.execution_assignment_id — the latest minted assignment (SET NULL)"
     EXECUTION_ASSIGNMENTS o|--o{ RUN_SESSIONS : "run_sessions.execution_assignment_id (SET NULL)"
     EXECUTION_ASSIGNMENTS o|--o{ NODE_ATTEMPTS : "node_attempts.execution_assignment_id (SET NULL)"
+    EXECUTION_HOSTS ||--o| EXECUTION_HOST_PRESSURE : "execution_host_pressure.execution_host_id (CASCADE)"
 
     EXECUTION_HOSTS {
         text id PK
@@ -74,8 +75,12 @@ erDiagram
         timestamptz registered_at "DEFAULT now()"
         timestamptz updated_at "DEFAULT now()"
         timestamptz retired_at "nullable; partial UNIQUE (kind) WHERE kind='local_direct' AND retired_at IS NULL"
-        timestamptz pressured_since "nullable (0182, ADR-183); host outbox pressure record"
-        integer pressure_unacknowledged_at_start "nullable; CHECK >= 0; requires pressured_since"
+    }
+
+    EXECUTION_HOST_PRESSURE {
+        text execution_host_id PK "FK execution_hosts(id) CASCADE; a row exists exactly while pressured (0182, ADR-183)"
+        timestamptz pressured_since "NOT NULL; the episode start (host sample) or the first refusal"
+        integer unacknowledged_at_start "nullable; CHECK >= 0; NULL when a refusal opened the record"
     }
 
     EXECUTION_ASSIGNMENTS {

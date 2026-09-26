@@ -130,7 +130,7 @@ after its first row arrives, so batching never manufactures silence.
 Host pressure is not a stall (Implemented — ADR-183). While the host is
 pressured every producer's next frame waits, so a healthy host goes silent
 for its open commands. The stall pass reads the manager's pressure record
-(`execution_hosts.pressured_since`) from the same join that checks `readiness =
+(`execution_host_pressure.pressured_since`) from the same join that checks `readiness =
 'ready'`: a silent stream with open commands on a pressured `ready` host is
 counted `pressured` in the stream-health summary, logged
 `runtime-event-stream-pressured`, and neither repaired nor degraded —
