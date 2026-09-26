@@ -168,6 +168,10 @@ beforeEach(() => {
 });
 
 afterAll(async () => {
+  // A prompt waiter binds the ingested terminal event directly (L10 does) while
+  // the fake's canonical delivery is still projecting it. Drain it before the
+  // pool ends, or the late projection meets an ended pool after the suite.
+  await fake?.waitForCanonicalEvents();
   await testDatabase?.stop();
 });
 
