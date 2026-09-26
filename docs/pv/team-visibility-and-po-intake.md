@@ -16,6 +16,11 @@
 > answered (§7), the Desk layout was settled on a mockup (§8), and the wave-1
 > scope was handed to `/aif-plan` (§9); §4 keeps the original wave order for
 > the record.
+>
+> **Partially superseded, 2026-09-26:** [`personal-librarian.md`](personal-librarian.md)
+> replaces this brief's librarian direction — D1, D2, D5 and D7, the librarian
+> parts of F1 and F2, the mandatory initiative dependency, and the §7 owner
+> decisions in rows 2 and 7. Every other option keeps its own status here.
 
 ## 1. The ask, split into five product questions
 

@@ -52,7 +52,30 @@ const RUN_TRACE_GROUP = {
   traceabilityFile: "run-trace.md",
 };
 
-const ANALYTICS_GROUPS = [STAGE_B_GROUP, M51_GROUP, RUN_TRACE_GROUP];
+// The personal librarian's seven owning documents. Each prefix is one domain;
+// the matrix is a standalone file like M51's, and it additionally maps the
+// brief's LIB/L ids — rows the requirement regex never matches.
+export const LIBRARIAN_GROUP = {
+  label: "Librarian",
+  documents: [
+    "librarian-conversation.md",
+    "librarian-authority.md",
+    "librarian-operations.md",
+    "task-statements.md",
+    "task-clarifications.md",
+    "librarian-memory.md",
+    "librarian-surface.md",
+  ],
+  prefixes: ["LCV", "LAU", "LOP", "TST", "CLR", "LMM", "LUI"],
+  traceabilityFile: "librarian-traceability.md",
+};
+
+const ANALYTICS_GROUPS = [
+  STAGE_B_GROUP,
+  M51_GROUP,
+  RUN_TRACE_GROUP,
+  LIBRARIAN_GROUP,
+];
 
 const R5_SECTIONS = [
   "Purpose",
@@ -191,6 +214,10 @@ export function validateM51Analytics(analyticsRoot) {
 
 export function validateRunTraceAnalytics(analyticsRoot) {
   return validateAnalyticsGroup(analyticsRoot, RUN_TRACE_GROUP);
+}
+
+export function validateLibrarianAnalytics(analyticsRoot) {
+  return validateAnalyticsGroup(analyticsRoot, LIBRARIAN_GROUP);
 }
 
 export function validateDocsIndexes(root = docsRoot) {

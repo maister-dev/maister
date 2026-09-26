@@ -13,7 +13,7 @@ row here has a blank `Primary test` cell.
 
 **The `Primary test` column names real tests, not scenario aliases.** Test ids follow
 `UT-` unit, `IT-` integration, `CT-` contract, `E2E-` Playwright, suffixed with the
-requirement id. `scripts/validate-m51-coverage.mjs` additionally proves the mapping is
+requirement id. `scripts/validate-requirement-coverage.mjs --group m51` additionally proves the mapping is
 bidirectional: every requirement names at least one task, and every implementation task
 in the plan is named by at least one requirement. T8.4 greps each `Primary test` cell
 against the suite and fails when a name does not resolve to an executed test — which is

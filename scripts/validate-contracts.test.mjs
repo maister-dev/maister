@@ -56,6 +56,41 @@ function readContract(file) {
   return YAML.parse(readFileSync(new URL(file, import.meta.url), "utf8"));
 }
 
+async function withBrokenLibrarianStream(mutate, callback) {
+  const document = readContract(
+    "../docs/api/async/librarian-stream.asyncapi.yaml",
+  );
+  mutate(document.components.schemas);
+  return withContractFile("yaml", YAML.stringify(document), callback);
+}
+
+test("librarian stream contract rejects a frame that carries a message body", async () => {
+  await assert.rejects(
+    withBrokenLibrarianStream(
+      (schemas) => {
+        schemas.LibrarianMessageEvent.properties.body = { type: "string" };
+      },
+      (file) => validateAsyncApi(file, { log: false }),
+    ),
+    /LibrarianMessageEvent must not carry a message body/,
+  );
+});
+
+test("librarian stream contract rejects a heartbeat that carries a frame id", async () => {
+  await assert.rejects(
+    withBrokenLibrarianStream(
+      (schemas) => {
+        schemas.LibrarianHeartbeatEvent.properties.id = {
+          type: "string",
+          pattern: "^(0|[1-9][0-9]{0,18})$",
+        };
+      },
+      (file) => validateAsyncApi(file, { log: false }),
+    ),
+    /LibrarianHeartbeatEvent must not carry a frame id/,
+  );
+});
+
 function schemaValidator(document, namespace, component) {
   const ajv = new Ajv({
     strict: false,

@@ -786,12 +786,23 @@
   enumerating every reader of the newly nullable `webhook_events` columns and by
   making subscription scope two independent axes. Migrations `01640`–`01660`.
   Specifications are Phase 0 and carry machine-enforced requirement IDs
-  (`STG`/`ATN`/`NAV`/`NTF`) with a bidirectional coverage gate. Explicit
-  non-goals: PO intake, initiatives, a task-statement schema, delivery reports,
-  an effects ledger, Structured Ask, snooze/delegate/claim, a Telegram bot,
-  agent narration, USD cost, and any change to the run or task state machines.
+  (`STG`/`ATN`/`NAV`/`NTF`) with a bidirectional coverage gate. **(F) The
+  personal librarian** (ADR-183..189, added 2026-09-26 by owner choice): one
+  durable personal conversation per user on a project-less `librarian` run kind
+  with MCP-only per-turn sessions, per-turn owner-bound delegated tokens under
+  live RBAC, an idempotent operation ledger, typed task statements with
+  provenance, addressed clarification before execution, deduplicated follow-up
+  updates, and personal memory with a reset barrier and history deletion —
+  closing discuss → statement → tasks → clarify/triage/launch → follow → explain
+  in one release, with its own `LCV`/`LAU`/`LOP`/`TST`/`CLR`/`LMM`/`LUI`
+  requirement ids and coverage gate. Explicit non-goals: initiatives, delivery
+  reports, an effects ledger beyond the librarian's operation ledger, Structured
+  Ask, snooze/delegate/claim, a Telegram bot, agent narration, USD cost, and any
+  change to the run or task status state machines.
   (see `.ai-factory/plans/feature-m51-see-everything.md`,
-  `docs/system-analytics/m51-traceability.md`)
+  `.ai-factory/plans/claude-peaceful-lamport-84s9c3.md`,
+  `docs/system-analytics/m51-traceability.md`,
+  `docs/system-analytics/librarian-traceability.md`)
 
 ## Completed
 

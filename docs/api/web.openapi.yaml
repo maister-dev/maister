@@ -81,6 +81,15 @@ info:
       and bounded bytes. URL values select only the run/object IDs; the server
       derives project authorization and host binding from Postgres.
 
+    - Personal librarian (Designed — ADR-183..189) — `/api/librarian/*`
+      (conversation, messages, withdraw, stop, read cursor, card decisions,
+      personal memory, reset, history clear, Explain, SSE stream), the admin
+      `PATCH /api/admin/platform/librarian`, and the clarification answer
+      `POST /api/projects/{slug}/tasks/{number}/clarifications/{clarificationId}/answer`.
+      The owner is always the session user: no route accepts a user id, none
+      reads another user's conversation (global admins included), and none is
+      reachable with a token.
+
     **Authentication.** All routes require a valid session (Auth.js v5
     credentials). Unauthenticated requests return `401 UNAUTHENTICATED`.
     Insufficient role returns `403 UNAUTHORIZED`. An authenticated account
@@ -164,6 +173,11 @@ tags:
     description: >-
       Project Brain session-auth surface: Consultant page data, indexed sources,
       proposal review, project settings, and admin defaults (ADR-122/127/128).
+  - name: librarian
+    description: >-
+      (Designed — ADR-183..189) The signed-in user's personal librarian —
+      one durable conversation, its turns and cards, personal memory, reset and
+      history deletion, the conversation SSE stream, and the admin enablement.
 paths:
   /api/admin/acp-runners:
     get:
@@ -2441,6 +2455,13 @@ paths:
         `targetBranch` against git ref-name shape. Does NOT touch
         `triage_status` — that is the triager's mark (ext triage op) or the
         send-to-triage action.
+
+        (Designed — ADR-186, `TST-02`) `updateTask` runs under the task row lock
+        (`SELECT … FOR UPDATE`) and increments `tasks.revision` on every
+        successful write; the response carries the new `revision`. An optional
+        `expectedRevision` that differs from the current revision is refused
+        `409 CONFLICT` with `details.reason: "stale_revision"`, nothing written.
+        `expectedRevision` does not count toward the one-field minimum.
       operationId: patchTask
       parameters:
         - name: slug
@@ -2480,6 +2501,12 @@ paths:
                   minimum: 0
                   maximum: 1
                 queuePaused: { type: boolean }
+                expectedRevision:
+                  type: integer
+                  minimum: 0
+                  description: |
+                    (Designed — ADR-186) Optional optimistic guard — the task
+                    `revision` the editor last read.
       responses:
         "200":
           description: Updated.
@@ -2490,10 +2517,23 @@ paths:
                 required: [ok]
                 properties:
                   ok: { type: boolean }
+                  revision:
+                    type: integer
+                    minimum: 1
+                    description: (Designed — ADR-186) The task's `revision` after this write.
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404":
           description: Unknown task number for this project.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409":
+          description: |
+            (Designed — ADR-186) `CONFLICT` with `details.reason:
+            "stale_revision"` — `expectedRevision` is no longer current; or
+            `PRECONDITION` — a Backlog-gated field was edited while the task is
+            not in `Backlog`.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -2637,6 +2677,112 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/projects/{slug}/tasks/{number}/clarifications/{clarificationId}/answer:
+    post:
+      tags: [projects]
+      summary: (ADR-187 — Designed) Answer a clarification addressed to you
+      description: |
+        (Designed — ADR-187, `CLR-02`, `CLR-04`, `CLR-06`, `CLR-07`, `CLR-09`.)
+        Session auth. Only the addressed human recipient answers: the session
+        user must be the row's recipient AND hold `member` or above in the
+        task's project (`answerHitl`) at answer time — otherwise `403
+        UNAUTHORIZED`. The task is resolved by `(slug, number)`; the
+        clarification must be a user-origin row of that task (`404` otherwise).
+        No token reaches this route; its token twin is `POST
+        /api/v1/ext/projects/{slug}/tasks/{taskId}/clarifications/{clarificationId}/answer`
+        (global personal token with exact `hitl:respond:human`, never a
+        librarian or agent token).
+
+        One transaction under the row lock with a status CAS `open → answered`:
+        a row that is already answered, cancelled or superseded — including the
+        loser of two racing answers — is refused `409 CONFLICT`, and an answer
+        is never overwritten (a correction is a new, superseding request). The
+        answer must fit the row's `answerFormat` and `choices` (`422 CONFIG`
+        otherwise).
+
+        Answering never changes the statement, the task revision or launch
+        state. It records `task_activity` `clarification_answered`, releases the
+        launch hold when no other blocking request on the task stays open, and
+        emits `task.clarification_answered`; the answer shows on task detail and
+        reaches the requester's librarian conversation only while the requester
+        can still read the task. No question or answer text is logged.
+      operationId: answerTaskClarification
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+        - name: number
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: clarificationId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TaskClarificationAnswerBody" }
+      responses:
+        "200":
+          description: The answered clarification.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [clarification]
+                properties:
+                  clarification: { $ref: "#/components/schemas/TaskClarification" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+  /api/projects/{slug}/tasks/{number}/clarifications/{clarificationId}:
+    delete:
+      tags: [projects]
+      summary: (ADR-187 — Designed) Cancel a clarification you requested
+      description: |
+        (Designed — ADR-187, `CLR-04`, `CLR-08`.) Session auth. Only the
+        row's requester cancels, and the requester must still hold `member`
+        or above in the task's project — otherwise `403 UNAUTHORIZED`. One
+        transaction under the row lock with a status CAS `open → cancelled`
+        (`cancel_reason = 'owner_cancelled'`); a row that is no longer `open`
+        is refused `409 CONFLICT`. Records `task_activity`
+        `clarification_cancelled`, emits `task.clarification_cancelled`, and
+        releases the launch hold when no other blocking request stays open.
+      operationId: cancelTaskClarification
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+        - name: number
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: clarificationId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The cancelled clarification.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [clarification]
+                properties:
+                  clarification: { $ref: "#/components/schemas/TaskClarification" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
   /api/projects/{slug}/tasks/{number}/comments:
     get:
       tags: [social-board]
@@ -16333,6 +16479,592 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
 
+  # ── ADR-183..189 Personal librarian — session routes (Designed) ─────────────
+  # Owner = the session user (auth-context) on every route below. No route
+  # accepts a user id, none returns another user's conversation, memory or
+  # snapshots (a global admin included), and none is reachable with a token.
+
+  /api/librarian/conversation:
+    get:
+      tags: [librarian]
+      summary: (ADR-183 — Designed) Read the caller's librarian conversation
+      description: |
+        (Designed — ADR-183, `LCV-01`, `LCV-11`, `LAU-01`, `LAU-09`, `LUI-02`.)
+        Requires an active session. The owner is the SESSION USER; there is one
+        conversation per user (UNIQUE `librarian_conversations_user_uq`),
+        created by the first call — two concurrent first calls still yield one
+        row.
+
+        Returns everything the panel needs to resume after navigation or a
+        reload in one read: the conversation and its current segment, the
+        top-navigation indicator, pending cards, queued messages, the active
+        turn, the conversation's non-terminal operations, and availability. The
+        active turn's live tokens are not here: they ride the existing
+        `GET /api/runs/{runId}/stream` of `conversation.runId`, whose
+        project-less authorization is `created_by_user_id = viewer`.
+
+        Never refused for a disabled librarian or a missing runner: the
+        response says so in `availability`, and nothing is deleted.
+      operationId: getLibrarianConversation
+      responses:
+        "200":
+          description: The caller's conversation state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LibrarianConversationView" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    patch:
+      tags: [librarian]
+      summary: (ADR-188 — Designed) Change the conversation's own settings
+      description: |
+        (Designed — ADR-188, `LMM-04`.) Requires an active session; the owner
+        is the session user. `memoryEnabledNextSegment` decides whether
+        personal memory items are composed into the NEXT segment's turns — it
+        never changes the current segment and never deletes an item.
+      operationId: patchLibrarianConversation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [memoryEnabledNextSegment]
+              properties:
+                memoryEnabledNextSegment: { type: boolean }
+      responses:
+        "200":
+          description: The conversation state after the change.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LibrarianConversationView" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/librarian/messages:
+    get:
+      tags: [librarian]
+      summary: (ADR-183 — Designed) Page back through the caller's messages
+      description: |
+        (Designed — ADR-183, `LMM-04`, `LMM-09`.) The `limit` messages of the
+        caller's conversation immediately before `beforeSeq` (absent = the
+        latest), in ascending `seq` order; `hasMore` says whether older ones
+        exist. Older segments are included: the history is the owner's,
+        whatever the automatic context holds. A librarian or update message
+        whose source projects the owner can no longer see renders masked
+        (`masked: true`, `body: null`); the owner's own messages always render.
+      operationId: listLibrarianMessages
+      parameters:
+        - name: beforeSeq
+          in: query
+          required: false
+          schema: { $ref: "#/components/schemas/LibrarianSeq" }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        "200":
+          description: One page of messages.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LibrarianMessagePage" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/Config" }
+    post:
+      tags: [librarian]
+      summary: (ADR-183 — Designed) Send a message to the librarian
+      description: |
+        (Designed — ADR-183, `LCV-02`, `LCV-03`, `LCV-05`, `LCV-10`, `LCV-11`,
+        `LUI-04`.) Commits the owner's message, then admits or queues one turn
+        for it. `clientMessageId` is the dedup key within the owner's
+        conversation (partial UNIQUE `librarian_messages_client_id_uq`): a
+        repeat — including two tabs racing — returns the stored message and its
+        turn with `200`, never a second message, and is answered before any
+        refusal below is considered.
+
+        `subject` is captured at send time and a later route change never
+        retargets it; every id in it is visibility-checked against the owner,
+        and a foreign or unknown one is refused `404`.
+
+        At most one turn per conversation is `admitted` or `running`; a message
+        sent while one is active queues in `seq` order (`turn.status: queued`
+        with `queuePosition`) and can be withdrawn while queued. A full librarian
+        pool (`MAISTER_MAX_CONCURRENT_LIBRARIAN_TURNS`) also queues; it never
+        refuses.
+
+        These refusals are decided before anything is written, so the composer
+        keeps the draft: the librarian is disabled (`422 CONFIG`); no ready
+        librarian runner is configured (`503 EXECUTOR_UNAVAILABLE`); the
+        per-user daily turn cap `MAISTER_LIBRARIAN_DAILY_TURNS_PER_USER` is
+        spent (`429 BUDGET_EXCEEDED`); the conversation is `resetting`
+        (`409 CONFLICT`).
+      operationId: postLibrarianMessage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LibrarianPostMessageBody" }
+      responses:
+        "200":
+          description: A repeat of an already stored `clientMessageId`; the stored message and its turn.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LibrarianPostMessageResult" }
+        "202":
+          description: Message stored; its turn is admitted or queued.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LibrarianPostMessageResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+        "429": { $ref: "#/components/responses/BudgetExceeded" }
+        "503": { $ref: "#/components/responses/ExecutorUnavailable" }
+
+  /api/librarian/messages/{messageId}:
+    delete:
+      tags: [librarian]
+      summary: (ADR-183 — Designed) Withdraw a queued message
+      description: |
+        (Designed — ADR-183, `LCV-03`.) Withdraws a message whose
+        `deliveryState` is `queued`; its turn never runs. Any other state —
+        accepted, processed, already withdrawn — is refused `409 CONFLICT`.
+        `messageId` is compared with the owner's conversation (server-state); a
+        mismatch or unknown id is `404`.
+      operationId: withdrawLibrarianMessage
+      parameters:
+        - name: messageId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204":
+          description: Withdrawn.
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/librarian/turns/current/stop:
+    post:
+      tags: [librarian]
+      summary: (ADR-183 — Designed) Stop the librarian's current response
+      description: |
+        (Designed — ADR-183, `LCV-08`, `LUI-07`.) "Stop response" — distinct
+        from any run's "Stop run". Cancels the active turn's prompt through the
+        execution host (`BoundClient`), revokes the turn's token, and ends the
+        turn `stopped`; the conversation's run parks. It never cancels a task
+        run and never deletes an operation row: operations the turn already
+        admitted settle by reconcile. Queued messages stay queued. No active
+        turn → `409 CONFLICT`. Empty body.
+      operationId: stopLibrarianTurn
+      responses:
+        "202":
+          description: Stop requested; the stream reports the turn's `stopped` state.
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/ExecutorUnavailable" }
+
+  /api/librarian/read-cursor:
+    post:
+      tags: [librarian]
+      summary: (ADR-183 — Designed) Advance the caller's read cursor
+      description: |
+        (Designed — ADR-183, `LUI-01`.) Sets `read_through_seq` with a monotonic
+        `GREATEST` upsert: a stale or replayed value is a no-op and never
+        resurfaces read messages as unread. A value above the conversation's
+        latest `seq` is clamped to it. Drives the `unread` indicator.
+      operationId: advanceLibrarianReadCursor
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [seq]
+              properties:
+                seq: { $ref: "#/components/schemas/LibrarianSeq" }
+      responses:
+        "204":
+          description: Cursor advanced, or unchanged when the value was stale.
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/librarian/cards/{cardId}/decide:
+    post:
+      tags: [librarian]
+      summary: (ADR-185 — Designed) Accept or reject a librarian card
+      description: |
+        (Designed — ADR-185 D7, `LOP-08`, `LOP-09`, `LAU-08`, `LMM-01`.) The
+        owner's one click on a card. `cardId` is checked against the owner's
+        conversation (`404` otherwise). Under the card row lock the server
+        re-reads the bound target: a card whose target moved since it was
+        created (task revision, reviewed head SHA, HITL request revision, run
+        status), a card past its `expiresAt`, or an `expectedRevision` that
+        differs from the current one, is refused `409 CONFLICT` with
+        `details.reason: "target_changed"`.
+
+        `accept` executes through the SAME domain service the existing UI uses,
+        as the owner — never as the librarian: `respondToHitl` with
+        `HitlActor{kind:"user", userId}` for `hitl_respond`, `promoteRun` with
+        the bound head SHA for `run_promote`, the discard service for
+        `run_discard`, the statement accept (Backlog gate, `stale_revision`) for
+        `statement_proposal`, and a memory write with
+        `origin='accepted_suggestion'` for `memory_suggestion`. The effect is
+        recorded as an operation keyed `card:<cardId>`, so a double click is one
+        effect: repeating the same decision returns the stored card and
+        operation. `reject` performs no effect (`operation: null`). Human-only
+        actions — human HITL answers, promotion, discard — run only from this
+        click.
+
+        The owner's live project role must allow the underlying action (`403`
+        otherwise). A promotion or HITL delivery that needs the execution host
+        and cannot reach it → `503 EXECUTOR_UNAVAILABLE`.
+      operationId: decideLibrarianCard
+      parameters:
+        - name: cardId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LibrarianCardDecisionBody" }
+      responses:
+        "200":
+          description: The decided card and, for an accept, its operation receipt.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LibrarianCardDecisionResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+        "503": { $ref: "#/components/responses/ExecutorUnavailable" }
+
+  /api/librarian/memory:
+    get:
+      tags: [librarian]
+      summary: (ADR-188 — Designed) List the caller's personal memory
+      description: |
+        (Designed — ADR-188, `LMM-02`, `LMM-03`.) The owner's active (not
+        forgotten) memory items and the "use memory in the next segment"
+        setting. `excludedReason` says why an item is not used in context now:
+        it expired, or a source project is no longer visible to the owner —
+        visibility is re-checked on every use, never cached.
+      operationId: listLibrarianMemory
+      responses:
+        "200":
+          description: The caller's memory items.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LibrarianMemoryList" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [librarian]
+      summary: (ADR-188 — Designed) Add a personal memory item
+      description: |
+        (Designed — ADR-188, `LMM-01`, `LMM-02`, `LMM-11`.) The owner writes an
+        item from the Memory dialog (`origin='explicit'`, revision 1). A
+        `project`-scoped item names a project the owner can see (`404`
+        otherwise). Explicitly re-remembering previously forgotten content
+        creates a new item. Personal memory never writes to Project Brain or to
+        an agent's `memory.md`. No memory content is logged.
+      operationId: createLibrarianMemoryItem
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LibrarianMemoryDraft" }
+      responses:
+        "201":
+          description: Item created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LibrarianMemoryItemResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/librarian/memory/{itemId}:
+    parameters:
+      - name: itemId
+        in: path
+        required: true
+        description: A memory item of the caller; any other id is `404`.
+        schema: { type: string, format: uuid }
+    patch:
+      tags: [librarian]
+      summary: (ADR-188 — Designed) Edit a personal memory item
+      description: |
+        (Designed — ADR-188, `LMM-02`.) An edit writes a NEW revision
+        (`librarian_memory_item_revisions`); content is never updated in place.
+        `expectedRevision` must equal the item's current revision, else
+        `409 CONFLICT` with `details.reason: "stale_revision"`. At least one
+        field besides `expectedRevision` is required.
+      operationId: updateLibrarianMemoryItem
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LibrarianMemoryPatchBody" }
+      responses:
+        "200":
+          description: The item at its new revision.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LibrarianMemoryItemResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+    delete:
+      tags: [librarian]
+      summary: (ADR-188 — Designed) Forget a personal memory item
+      description: |
+        (Designed — ADR-188, `LMM-06`.) Forget: sets `forgotten_at`, writes a
+        tombstone digest of the content, and bumps the conversation's
+        `forget_generation` and `context_epoch`. Summary and suggestion writers
+        refuse tombstoned content, so a delayed summarizer cannot recreate it;
+        the next turn starts a fresh session from a composed context. A reply
+        already in flight may still cite the item; the next snapshot cannot.
+      operationId: forgetLibrarianMemoryItem
+      responses:
+        "204":
+          description: Forgotten.
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/librarian/reset:
+    post:
+      tags: [librarian]
+      summary: (ADR-188 — Designed) Start a new context segment (reset barrier)
+      description: |
+        (Designed — ADR-188 D13, `LMM-05`.) One transaction under the
+        conversation row lock sets `reset_state='resetting'`, withdraws queued
+        messages (`withdrawn_by_reset`), requests a stop of the current turn and
+        revokes its token. The reset is acknowledged only when no operation of
+        the old segment is `admitted` or `unknown` and no turn is `admitted` or
+        `running`: the acknowledgement inserts the new segment, bumps
+        `context_epoch`, marks pending cards `cleared_by_reset`, clears the
+        subject and returns to `none`. A barrier pass runs inline and as a
+        `system_sweep` backstop; the stream's `librarian.reset` frame reports
+        the acknowledgement. Repeating the call while `resetting` returns the
+        same state. Nothing is deleted: tasks, statements, operations and
+        history stay; older segments are reachable only through explicit history
+        search.
+      operationId: resetLibrarianConversation
+      responses:
+        "202":
+          description: Reset started, or already acknowledged inline.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LibrarianResetResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/librarian/history/clear-preview:
+    get:
+      tags: [librarian]
+      summary: (ADR-188 — Designed) Preview what clearing history deletes
+      description: |
+        (Designed — ADR-188 D14, `LMM-08`, `TST-06`.) Counts of what
+        `POST /api/librarian/history/clear` would delete and what it keeps,
+        plus a `previewDigest` over that scope. The clear must present the
+        same digest.
+      operationId: previewLibrarianHistoryClear
+      responses:
+        "200":
+          description: The clear scope and its digest.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LibrarianHistoryClearPreview" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/librarian/history/clear:
+    post:
+      tags: [librarian]
+      summary: (ADR-188 — Designed) Delete the caller's librarian history
+      description: |
+        (Designed — ADR-188 D14, `LMM-08`, `TST-06`.) A destructive action,
+        separate from reset. `previewDigest` must match a fresh preview; a stale
+        digest (anything changed since) is refused `409 CONFLICT` and nothing is
+        deleted.
+
+        One transaction deletes messages, summaries, context snapshots, cards
+        and search rows, nulls message references on task links and
+        operations, and bumps `history_generation` and `context_epoch`.
+        Operations and token audit rows are kept; tasks, accepted statements
+        and published excerpts are never deleted, and a task link whose source
+        message is gone renders an explicit unavailable state. After commit the
+        conversation's host workspace is released — the supervisor removes the
+        `_librarian` working directory and the claude adapter transcript
+        directory for it — and the next turn re-adopts a fresh one and starts a
+        new session.
+      operationId: clearLibrarianHistory
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LibrarianHistoryClearBody" }
+      responses:
+        "202":
+          description: History deleted; the host workspace release follows.
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/librarian/updates/{updateId}/explain:
+    post:
+      tags: [librarian]
+      summary: (ADR-185 — Designed) Ask the librarian to explain a follow-up update
+      description: |
+        (Designed — ADR-185 D11, `LOP-11`, `LAU-05`.) Enqueues an `explain` turn
+        for one follow-up update card. The turn's token holds only the
+        read-only `LIBRARIAN_READ_SCOPES`, so nothing in the update text or a
+        teammate's answer can cause an effect. `updateId` is checked against
+        the owner's conversation (`404` otherwise). Admission follows the same
+        rules as a message: `422 CONFIG` when disabled, `503
+        EXECUTOR_UNAVAILABLE` without a ready runner, `429 BUDGET_EXCEEDED` when
+        the daily cap is spent, `409 CONFLICT` while `resetting`.
+      operationId: explainLibrarianUpdate
+      parameters:
+        - name: updateId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "202":
+          description: Explain turn admitted or queued.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LibrarianExplainResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+        "429": { $ref: "#/components/responses/BudgetExceeded" }
+        "503": { $ref: "#/components/responses/ExecutorUnavailable" }
+
+  /api/librarian/stream:
+    get:
+      tags: [librarian]
+      summary: (ADR-183 — Designed) SSE — the caller's librarian conversation stream
+      description: |
+        (Designed — ADR-183, `LCV-12`.) Requires an active session, checked as
+        the FIRST await. Addressed by the SESSION USER: it emits only the
+        owner's conversation, and there is no parameter naming a user or a
+        conversation.
+
+        A server-side poll of durable tables — 500 ms while a turn runs, 2 s
+        when idle; the stream closes after five quiet minutes. Frames are
+        pointers, not payloads: `librarian.message`, `librarian.turn`,
+        `librarian.indicator` and `librarian.reset` name what changed, and the
+        client refetches it. Every durable frame's SSE `id` is the
+        conversation's monotonic `seq`; the standard `Last-Event-ID` header, or
+        the `?lastEventId=` fallback, resumes strictly after it. A heartbeat
+        every 15 s carries no `id`. Frame schemas live in
+        `async/librarian-stream.asyncapi.yaml`.
+
+        The running turn's live tokens are NOT on this stream: they ride the
+        existing `GET /api/runs/{runId}/stream` of the conversation's run, whose
+        project-less authorization is `created_by_user_id = viewer`.
+      operationId: streamLibrarian
+      parameters:
+        - name: Last-Event-ID
+          in: header
+          required: false
+          schema: { type: string, pattern: "^(0|[1-9][0-9]{0,18})$" }
+        - name: lastEventId
+          in: query
+          required: false
+          description: Query-string fallback for `Last-Event-ID`, same canonical decimal form.
+          schema: { type: string, pattern: "^(0|[1-9][0-9]{0,18})$" }
+      responses:
+        "200":
+          description: SSE stream.
+          headers:
+            Content-Type:
+              schema:
+                type: string
+                enum: [text/event-stream]
+            Cache-Control:
+              schema: { type: string, enum: [no-cache] }
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: Frames per `async/librarian-stream.asyncapi.yaml`.
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/admin/platform/librarian:
+    get:
+      tags: [admin, librarian]
+      summary: (ADR-183 — Designed) Read the librarian settings and readiness
+      description: |
+        (Designed — ADR-183, `LCV-11`.) Global admin only. The settings card's
+        read: `librarian_enabled`, `librarian_runner_id` and the resulting
+        readiness. Carries no user's conversation data.
+      operationId: getAdminLibrarianSettings
+      responses:
+        "200":
+          description: The stored settings and the resulting readiness.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LibrarianSettingsResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    patch:
+      tags: [admin, librarian]
+      summary: (ADR-183 — Designed) Enable the librarian and choose its runner
+      description: |
+        (Designed — ADR-183, `LCV-11`.) Global admin only
+        (`requireGlobalRole('admin')`). Writes `librarian_enabled` and
+        `librarian_runner_id` on the singleton `platform_runtime_settings` row.
+        `enabled` is required. `runnerId` absent leaves the runner unchanged;
+        `null` clears it (readiness `not_configured`). A runner must exist, be
+        enabled and be read-only-capable, and must never run with
+        `dangerously_skip_permissions`; otherwise `422 CONFIG`.
+
+        Disabling stops admission only: a running turn finishes or hits its
+        deadline, queued messages stay queued and visible, admitted operations
+        still reconcile, and nothing is deleted. No admin route reads any
+        user's conversation.
+      operationId: patchAdminLibrarianSettings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LibrarianSettingsPatchBody" }
+      responses:
+        "200":
+          description: The stored settings and the resulting readiness.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LibrarianSettingsResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/Config" }
+
 components:
   securitySchemes:
     cronToken:
@@ -16494,6 +17226,20 @@ components:
           schema: { $ref: "#/components/schemas/MaisterErrorBody" }
     FlowInstall:
       description: Flow package install/upgrade failed (`FLOW_INSTALL`).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+    BudgetExceeded:
+      description: |
+        A finite budget is spent (`BUDGET_EXCEEDED`) — e.g. (Designed — ADR-183)
+        the per-user daily librarian turn cap. Retry after the budget resets.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+    ExecutorUnavailable:
+      description: |
+        No ready runner, or the execution host is unreachable
+        (`EXECUTOR_UNAVAILABLE`). Retryable.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -22029,6 +22775,7 @@ components:
             - ACP_PROTOCOL
             - CHECKPOINT
             - STEP_CHECKPOINTED
+            - BUDGET_EXCEEDED
             - UNAUTHENTICATED
             - UNAUTHORIZED
             - PASSWORD_CHANGE_REQUIRED
@@ -22083,6 +22830,9 @@ components:
             `PRECONDITION`); the top-level `reason` enum above is unchanged.
             HITL respond errors refine this open object to the bounded
             `HitlRespondDetails` contract; unrelated error details remain open.
+            (Designed — ADR-185/186) The librarian session routes and the task
+            PATCH set `details.reason` to `target_changed` (a card whose target
+            moved or expired) or `stale_revision` (a stale `expectedRevision`).
 
     HitlRespondReason:
       type: string
@@ -24729,3 +25479,909 @@ components:
           type: string
           enum: [timeout, network, http, config]
           description: Present only when `ok` is false; classified failure cause.
+
+    # ── Personal librarian schemas (Designed — ADR-183..189) ──────────────────
+    # Explicit DTOs: none of them is a database row. They mirror the same-named
+    # schemas in `external/operations.openapi.yaml` where both surfaces carry
+    # the object.
+
+    TaskStatement:
+      type: object
+      description: |
+        (Designed — ADR-186, `TST-01`) The agreed, self-contained task
+        statement. Every key is required; arrays may be empty except
+        `acceptance`. Accepting a statement stores an immutable
+        `task_statement_revisions` row and renders `tasks.prompt` from it
+        deterministically (`renderStatementPrompt`, fixed section order).
+      additionalProperties: false
+      required:
+        [context, goal, acceptance, constraints, outOfScope, links, openQuestions]
+      properties:
+        context: { type: string, minLength: 1, maxLength: 8000 }
+        goal: { type: string, minLength: 1, maxLength: 2000 }
+        acceptance:
+          type: array
+          minItems: 1
+          maxItems: 30
+          items: { type: string, minLength: 1, maxLength: 1000 }
+        constraints:
+          type: array
+          maxItems: 30
+          items: { type: string, minLength: 1, maxLength: 1000 }
+        outOfScope:
+          type: array
+          maxItems: 30
+          items: { type: string, minLength: 1, maxLength: 1000 }
+        links:
+          type: array
+          maxItems: 20
+          items: { $ref: "#/components/schemas/TaskStatementLink" }
+        openQuestions:
+          type: array
+          maxItems: 20
+          items: { type: string, minLength: 1, maxLength: 1000 }
+
+    TaskStatementLink:
+      type: object
+      additionalProperties: false
+      required: [title, url]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 200 }
+        url: { type: string, format: uri, maxLength: 2000 }
+
+    UserRef:
+      type: object
+      additionalProperties: false
+      required: [userId, label]
+      properties:
+        userId: { type: string }
+        label:
+          type: string
+          description: Display label resolved at read time.
+
+    TaskClarificationAnswer:
+      description: |
+        (Designed — ADR-187) Exactly one form, matching the request's
+        `answerFormat`: `text`, `choice` (one of the request's `choices`), or
+        `yesNo`.
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [text]
+          properties:
+            text: { type: string, minLength: 1, maxLength: 4000 }
+        - type: object
+          additionalProperties: false
+          required: [choice]
+          properties:
+            choice: { type: string, minLength: 1, maxLength: 200 }
+        - type: object
+          additionalProperties: false
+          required: [yesNo]
+          properties:
+            yesNo: { type: boolean }
+
+    TaskClarificationAnswerBody:
+      type: object
+      additionalProperties: false
+      required: [answer]
+      properties:
+        answer: { $ref: "#/components/schemas/TaskClarificationAnswer" }
+
+    TaskClarification:
+      type: object
+      additionalProperties: false
+      description: |
+        (Designed — ADR-187) Explicit projection of one USER-origin
+        `task_clarifications` row.
+      required:
+        [
+          id,
+          taskId,
+          status,
+          question,
+          reason,
+          answerFormat,
+          choices,
+          blocking,
+          requester,
+          recipient,
+          answer,
+          answeredBy,
+          answeredAt,
+          cancelReason,
+          supersededByClarificationId,
+          createdAt,
+        ]
+      properties:
+        id: { type: string, format: uuid }
+        taskId: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [open, answered, cancelled, superseded]
+        question: { type: string }
+        reason: { type: string }
+        answerFormat:
+          type: string
+          enum: [text, choice, yes_no]
+        choices:
+          type: array
+          nullable: true
+          items: { type: string }
+        blocking: { type: boolean }
+        requester: { $ref: "#/components/schemas/UserRef" }
+        recipient: { $ref: "#/components/schemas/UserRef" }
+        answer:
+          allOf:
+            - $ref: "#/components/schemas/TaskClarificationAnswer"
+          nullable: true
+        answeredBy:
+          allOf:
+            - $ref: "#/components/schemas/UserRef"
+          nullable: true
+        answeredAt: { type: string, format: date-time, nullable: true }
+        cancelReason:
+          type: string
+          nullable: true
+          enum:
+            [
+              requester_cancelled,
+              recipient_deactivated,
+              recipient_lost_access,
+              task_abandoned,
+              null,
+            ]
+        supersededByClarificationId:
+          type: string
+          format: uuid
+          nullable: true
+        createdAt: { type: string, format: date-time }
+
+    WorkStage:
+      type: string
+      enum:
+        [
+          Triage,
+          Held,
+          Ready,
+          Queued,
+          Executing,
+          WaitingOnHuman,
+          Review,
+          Crashed,
+          Promoted,
+          Abandoned,
+        ]
+      description: The derived work stage (ADR-170) — comparable across projects, never persisted.
+
+    LibrarianSeq:
+      type: string
+      pattern: "^(0|[1-9][0-9]{0,18})$"
+      description: |
+        (Designed — ADR-183) A conversation message sequence
+        (`librarian_messages.seq`, bigint) as a canonical decimal string, like
+        every other cursor on the wire — the same value the stream frames carry
+        as their SSE `id`.
+
+    LibrarianAvailability:
+      type: object
+      additionalProperties: false
+      required: [state]
+      description: |
+        (Designed — ADR-183, `LCV-11`) Whether a message can be admitted now.
+        `disabled` — an admin turned the librarian off; `not_configured` — no
+        librarian runner is set; `runner_not_ready` — the runner fails its
+        readiness diagnostics. Every non-`ready` state disables Send with this
+        reason; history, cards and memory stay readable.
+      properties:
+        state:
+          type: string
+          enum: [ready, disabled, not_configured, runner_not_ready]
+
+    LibrarianIndicator:
+      type: object
+      additionalProperties: false
+      required: [state]
+      description: |
+        (Designed — ADR-189, `LUI-01`) The top-navigation indicator — a state,
+        never a numeric global count: `running` (a turn is admitted or
+        running), `action_required` (a pending card awaits the owner), `unread`
+        (a message past `readThroughSeq`), or `none`. When several hold, the
+        precedence is ADR-189's; the stream's `librarian.indicator` frame
+        carries the same value.
+      properties:
+        state:
+          type: string
+          enum: [none, running, unread, action_required]
+
+    LibrarianConversation:
+      type: object
+      additionalProperties: false
+      required:
+        [id, runId, resetState, readThroughSeq, lastSeq, memoryEnabledNextSegment, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        runId:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            The conversation's single `run_kind='librarian'` run, created on the
+            first turn and parked between turns; null before the first turn.
+            Its `GET /api/runs/{runId}/stream` carries the running turn's tokens.
+        resetState:
+          type: string
+          enum: [none, resetting]
+        readThroughSeq: { $ref: "#/components/schemas/LibrarianSeq" }
+        lastSeq: { $ref: "#/components/schemas/LibrarianSeq" }
+        memoryEnabledNextSegment:
+          type: boolean
+          description: Whether personal memory feeds the next segment's context.
+        createdAt: { type: string, format: date-time }
+
+    LibrarianSegment:
+      type: object
+      additionalProperties: false
+      required: [id, ordinal, startedAt]
+      properties:
+        id: { type: string, format: uuid }
+        ordinal:
+          type: integer
+          minimum: 0
+          description: Monotonic within the conversation; a reset starts the next one.
+        startedAt: { type: string, format: date-time }
+
+    LibrarianSubject:
+      type: object
+      additionalProperties: false
+      description: |
+        (Designed — ADR-189, `LUI-04`) What the owner was looking at when the
+        message was sent, captured at send time and never retargeted. Every id
+        is visibility-checked; a foreign or unknown one is refused `404`.
+      properties:
+        projectSlug: { type: string, minLength: 1 }
+        taskIds:
+          type: array
+          maxItems: 20
+          items: { type: string, format: uuid }
+        runId: { type: string, format: uuid }
+
+    LibrarianTaskChip:
+      type: object
+      additionalProperties: false
+      description: |
+        (Designed — ADR-186, `TST-08`) A task chip read live, in one batched,
+        visibility-filtered read. When the task is gone or no longer visible to
+        the owner, `available` is false and every other field but `taskId` is
+        null — an explicit unavailable state, never a stale title.
+      required: [taskId, available, taskKey, title, projectSlug, status, workStage]
+      properties:
+        taskId: { type: string, format: uuid }
+        available: { type: boolean }
+        taskKey: { type: string, nullable: true }
+        title: { type: string, nullable: true }
+        projectSlug: { type: string, nullable: true }
+        status:
+          type: string
+          nullable: true
+          enum: [Backlog, InFlight, Done, Abandoned, null]
+        workStage:
+          allOf:
+            - $ref: "#/components/schemas/WorkStage"
+          nullable: true
+
+    LibrarianUpdateCard:
+      type: object
+      additionalProperties: false
+      description: |
+        (Designed — ADR-185 D11, `LOP-11`) A deterministic follow-up card for
+        one domain event on followed work, rendered without a model turn. Run
+        status and stage are read live at render. A merged run never claims
+        deployment: `promotedKind: merge` reads "merged · deployment unknown".
+      required: [updateId, eventKind, task, runId, runStatus, workStage, promotedKind, occurredAt]
+      properties:
+        updateId: { type: string, format: uuid }
+        eventKind:
+          type: string
+          enum:
+            [
+              run.done,
+              run.failed,
+              run.crashed,
+              run.abandoned,
+              run.review,
+              run.review_opened,
+              run.needs_input,
+              run.escalated,
+              run.rework_claimed,
+              run.rework_returned,
+              gate.failed,
+              task.clarification_answered,
+              task.clarification_cancelled,
+            ]
+        task:
+          allOf:
+            - $ref: "#/components/schemas/LibrarianTaskChip"
+          nullable: true
+        runId: { type: string, format: uuid, nullable: true }
+        runStatus: { type: string, nullable: true }
+        workStage:
+          allOf:
+            - $ref: "#/components/schemas/WorkStage"
+          nullable: true
+        promotedKind:
+          type: string
+          nullable: true
+          enum: [merge, result, null]
+        occurredAt: { type: string, format: date-time }
+
+    LibrarianOperationTarget:
+      type: object
+      additionalProperties: false
+      description: The ids an operation addressed; keys it did not address are absent.
+      properties:
+        projectSlug: { type: string }
+        taskId: { type: string, format: uuid }
+        taskKey: { type: string }
+        runId: { type: string, format: uuid }
+        hitlRequestId: { type: string, format: uuid }
+        clarificationId: { type: string, format: uuid }
+        cardId: { type: string, format: uuid }
+        memoryItemId: { type: string, format: uuid }
+
+    LibrarianOperationReceipt:
+      type: object
+      additionalProperties: false
+      description: |
+        (Designed — ADR-185, `LOP-01`..`LOP-04`) Explicit projection of one
+        `librarian_operations` row. The receipt UI renders the target's live
+        status from a batched read (`TST-08`), never from `result`.
+      required:
+        [
+          operationId,
+          idempotencyKey,
+          kind,
+          status,
+          target,
+          errorCode,
+          result,
+          createdAt,
+          settledAt,
+        ]
+      properties:
+        operationId: { type: string, format: uuid }
+        idempotencyKey: { type: string }
+        kind:
+          type: string
+          pattern: "^[a-z][a-z_]*$"
+          description: The effect, named after the MCP tool or card action that requested it (e.g. `task_create`, `run_launch`, `hitl_respond`).
+        status:
+          type: string
+          enum: [admitted, succeeded, refused, failed, unknown]
+        target: { $ref: "#/components/schemas/LibrarianOperationTarget" }
+        errorCode:
+          type: string
+          nullable: true
+          description: The `MaisterError` code; set exactly when `status` is `refused` or `failed`.
+        result:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: The stored success DTO of the route that performed the effect.
+        createdAt: { type: string, format: date-time }
+        settledAt: { type: string, format: date-time, nullable: true }
+
+    LibrarianCardTarget:
+      type: object
+      additionalProperties: false
+      description: The exact objects a card is bound to; keys it does not address are absent.
+      properties:
+        taskId: { type: string, format: uuid }
+        taskKey: { type: string }
+        runId: { type: string, format: uuid }
+        hitlRequestId: { type: string, format: uuid }
+
+    LibrarianMemoryDraft:
+      type: object
+      additionalProperties: false
+      required: [kind, content, scope]
+      description: |
+        (Designed — ADR-188, `LMM-02`) A personal memory item to write.
+        `projectSlug` is required when `scope` is `project` and refused
+        otherwise (`422 CONFIG`).
+      properties:
+        kind:
+          type: string
+          enum: [preference, goal, commitment, fact]
+        content: { type: string, minLength: 1, maxLength: 2000 }
+        scope:
+          type: string
+          enum: [general, project]
+        projectSlug: { type: string, minLength: 1 }
+        validUntil: { type: string, format: date-time }
+
+    LibrarianStatementProposal:
+      type: object
+      additionalProperties: false
+      required: [kind, taskId, statement]
+      properties:
+        kind:
+          type: string
+          enum: [statement_proposal]
+        taskId: { type: string, format: uuid }
+        statement: { $ref: "#/components/schemas/TaskStatement" }
+        rationale: { type: string, maxLength: 1000 }
+
+    LibrarianConfirmationProposal:
+      type: object
+      additionalProperties: false
+      required: [kind, action, runId]
+      properties:
+        kind:
+          type: string
+          enum: [confirmation]
+        action:
+          type: string
+          enum: [hitl_respond, run_promote, run_discard]
+        runId: { type: string, format: uuid }
+        hitlRequestId: { type: string, format: uuid }
+        response:
+          type: object
+          additionalProperties: true
+          description: The proposed HITL answer, validated by the respond service when the owner accepts.
+        rationale: { type: string, maxLength: 1000 }
+
+    LibrarianMemorySuggestionProposal:
+      type: object
+      additionalProperties: false
+      required: [kind, memory]
+      properties:
+        kind:
+          type: string
+          enum: [memory_suggestion]
+        memory: { $ref: "#/components/schemas/LibrarianMemoryDraft" }
+        rationale: { type: string, maxLength: 1000 }
+
+    LibrarianCard:
+      type: object
+      additionalProperties: false
+      description: |
+        (Designed — ADR-185 D7, `LOP-08`) Explicit projection of one
+        `librarian_cards` row. A statement proposal renders as a diff against
+        the task's current revision.
+      required:
+        [
+          id,
+          kind,
+          status,
+          target,
+          targetRevision,
+          payload,
+          requiresOwner,
+          expiresAt,
+          decidedAt,
+          createdAt,
+        ]
+      properties:
+        id: { type: string, format: uuid }
+        kind:
+          type: string
+          enum: [statement_proposal, confirmation, memory_suggestion]
+        status:
+          type: string
+          enum:
+            [pending, accepted, rejected, expired, superseded, cleared_by_reset]
+        target: { $ref: "#/components/schemas/LibrarianCardTarget" }
+        targetRevision:
+          type: string
+          nullable: true
+          description: |
+            The server-bound revision the decision is checked against — the task
+            revision, the reviewed head SHA, the HITL request revision, or the
+            run status. Null for a memory suggestion. Send it back as
+            `expectedRevision`.
+        payload:
+          description: The proposal as created; its `kind` repeats the card's.
+          oneOf:
+            - $ref: "#/components/schemas/LibrarianStatementProposal"
+            - $ref: "#/components/schemas/LibrarianConfirmationProposal"
+            - $ref: "#/components/schemas/LibrarianMemorySuggestionProposal"
+        requiresOwner: { type: boolean }
+        expiresAt: { type: string, format: date-time }
+        decidedAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+
+    LibrarianTurn:
+      type: object
+      additionalProperties: false
+      description: |
+        (Designed — ADR-183) Explicit projection of one `librarian_turns` row.
+        `queued → admitted → running → completed | stopped | failed`;
+        `queued → withdrawn`.
+      required:
+        [
+          id,
+          variant,
+          status,
+          failureReason,
+          queuePosition,
+          messageId,
+          createdAt,
+          startedAt,
+          endedAt,
+          deadlineAt,
+        ]
+      properties:
+        id: { type: string, format: uuid }
+        variant:
+          type: string
+          enum: [owner_message, explain, summary]
+        status:
+          type: string
+          enum: [queued, admitted, running, completed, stopped, failed, withdrawn]
+          description: |
+            `withdrawn` — the queued message was withdrawn by the owner or by a
+            reset before its turn ran.
+        failureReason:
+          type: string
+          nullable: true
+          enum: [start_failed, host_lost, deadline, capability_trip, null]
+          description: Set exactly when `status` is `failed`.
+        queuePosition:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: Present while `queued`, or `admitted` behind a full librarian pool.
+        messageId:
+          type: string
+          format: uuid
+          nullable: true
+          description: The owner message the turn answers; null for a summary turn.
+        createdAt: { type: string, format: date-time }
+        startedAt: { type: string, format: date-time, nullable: true }
+        endedAt: { type: string, format: date-time, nullable: true }
+        deadlineAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Set when the turn starts running (`MAISTER_LIBRARIAN_TURN_MAX_MINUTES`).
+
+    LibrarianTurnRef:
+      type: object
+      additionalProperties: false
+      required: [id, status, queuePosition]
+      properties:
+        id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [queued, admitted, running, completed, stopped, failed, withdrawn]
+        queuePosition: { type: integer, minimum: 1, nullable: true }
+
+    LibrarianMessage:
+      type: object
+      additionalProperties: false
+      description: |
+        (Designed — ADR-183, `LMM-09`, `LMM-12`, `TST-08`) Explicit projection
+        of one `librarian_messages` row with its live chips.
+      required:
+        [
+          id,
+          seq,
+          segmentId,
+          authorKind,
+          body,
+          masked,
+          deliveryState,
+          subject,
+          turnId,
+          card,
+          update,
+          taskChips,
+          usedMemoryItemIds,
+          createdAt,
+        ]
+      properties:
+        id: { type: string, format: uuid }
+        seq: { $ref: "#/components/schemas/LibrarianSeq" }
+        segmentId: { type: string, format: uuid }
+        authorKind:
+          type: string
+          enum: [owner, librarian, update, system]
+        body:
+          type: string
+          nullable: true
+          description: Null exactly when `masked`.
+        masked:
+          type: boolean
+          description: |
+            A librarian or update message that drew on a project the owner can
+            no longer see renders as unavailable. The owner's own messages are
+            never masked.
+        deliveryState:
+          type: string
+          enum: [accepted, queued, withdrawn, withdrawn_by_reset, processed]
+        subject:
+          allOf:
+            - $ref: "#/components/schemas/LibrarianSubject"
+          nullable: true
+        turnId: { type: string, format: uuid, nullable: true }
+        card:
+          allOf:
+            - $ref: "#/components/schemas/LibrarianCard"
+          nullable: true
+        update:
+          allOf:
+            - $ref: "#/components/schemas/LibrarianUpdateCard"
+          nullable: true
+        taskChips:
+          type: array
+          items: { $ref: "#/components/schemas/LibrarianTaskChip" }
+        usedMemoryItemIds:
+          type: array
+          items: { type: string, format: uuid }
+          description: |
+            (`LMM-12`) The memory items the reply's context snapshot used; empty
+            for every message that is not a librarian reply.
+        createdAt: { type: string, format: date-time }
+
+    LibrarianMessagePage:
+      type: object
+      additionalProperties: false
+      required: [messages, hasMore]
+      properties:
+        messages:
+          type: array
+          maxItems: 100
+          items: { $ref: "#/components/schemas/LibrarianMessage" }
+        hasMore: { type: boolean }
+
+    LibrarianConversationView:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          conversation,
+          segment,
+          indicator,
+          availability,
+          pendingCards,
+          queuedMessages,
+          activeTurn,
+          pendingOperations,
+        ]
+      properties:
+        conversation: { $ref: "#/components/schemas/LibrarianConversation" }
+        segment: { $ref: "#/components/schemas/LibrarianSegment" }
+        indicator: { $ref: "#/components/schemas/LibrarianIndicator" }
+        availability: { $ref: "#/components/schemas/LibrarianAvailability" }
+        pendingCards:
+          type: array
+          items: { $ref: "#/components/schemas/LibrarianCard" }
+        queuedMessages:
+          type: array
+          items: { $ref: "#/components/schemas/LibrarianMessage" }
+        activeTurn:
+          allOf:
+            - $ref: "#/components/schemas/LibrarianTurn"
+          nullable: true
+        pendingOperations:
+          type: array
+          description: The current segment's operations still `admitted` or `unknown`.
+          items: { $ref: "#/components/schemas/LibrarianOperationReceipt" }
+
+    LibrarianPostMessageBody:
+      type: object
+      additionalProperties: false
+      required: [clientMessageId, body]
+      properties:
+        clientMessageId:
+          type: string
+          format: uuid
+          description: Client-generated dedup key, scoped to the owner's conversation.
+        body:
+          type: string
+          minLength: 1
+          maxLength: 20000
+        subject: { $ref: "#/components/schemas/LibrarianSubject" }
+
+    LibrarianPostMessageResult:
+      type: object
+      additionalProperties: false
+      required: [message, turn]
+      properties:
+        message: { $ref: "#/components/schemas/LibrarianMessage" }
+        turn:
+          allOf:
+            - $ref: "#/components/schemas/LibrarianTurnRef"
+          nullable: true
+          description: The message's turn; null only on a repeat of a message that was withdrawn.
+
+    LibrarianCardDecisionBody:
+      type: object
+      additionalProperties: false
+      required: [decision]
+      properties:
+        decision:
+          type: string
+          enum: [accept, reject]
+        expectedRevision:
+          type: string
+          maxLength: 128
+          description: The card's `targetRevision` as the owner saw it.
+
+    LibrarianCardDecisionResult:
+      type: object
+      additionalProperties: false
+      required: [card, operation]
+      properties:
+        card: { $ref: "#/components/schemas/LibrarianCard" }
+        operation:
+          allOf:
+            - $ref: "#/components/schemas/LibrarianOperationReceipt"
+          nullable: true
+          description: The effect's receipt (key `card:<cardId>`); null for `reject`.
+
+    LibrarianMemoryItem:
+      type: object
+      additionalProperties: false
+      description: (Designed — ADR-188, `LMM-02`) Explicit projection of one personal memory item.
+      required:
+        [
+          id,
+          kind,
+          content,
+          scope,
+          projectSlug,
+          origin,
+          validUntil,
+          revision,
+          excludedReason,
+          createdAt,
+          updatedAt,
+        ]
+      properties:
+        id: { type: string, format: uuid }
+        kind:
+          type: string
+          enum: [preference, goal, commitment, fact]
+        content: { type: string }
+        scope:
+          type: string
+          enum: [general, project]
+        projectSlug: { type: string, nullable: true }
+        origin:
+          type: string
+          enum: [explicit, accepted_suggestion]
+        validUntil: { type: string, format: date-time, nullable: true }
+        revision: { type: integer, minimum: 1 }
+        excludedReason:
+          type: string
+          nullable: true
+          enum: [expired, source_unavailable, null]
+          description: Why the item is not used in context now; null when it is.
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    LibrarianMemoryItemResult:
+      type: object
+      additionalProperties: false
+      required: [item]
+      properties:
+        item: { $ref: "#/components/schemas/LibrarianMemoryItem" }
+
+    LibrarianMemoryList:
+      type: object
+      additionalProperties: false
+      required: [items, memoryEnabledNextSegment]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/LibrarianMemoryItem" }
+        memoryEnabledNextSegment: { type: boolean }
+
+    LibrarianMemoryPatchBody:
+      type: object
+      additionalProperties: false
+      required: [expectedRevision]
+      minProperties: 2
+      properties:
+        expectedRevision: { type: integer, minimum: 1 }
+        kind:
+          type: string
+          enum: [preference, goal, commitment, fact]
+        content: { type: string, minLength: 1, maxLength: 2000 }
+        validUntil:
+          type: string
+          format: date-time
+          nullable: true
+          description: "`null` clears the expiry."
+
+    LibrarianResetResult:
+      type: object
+      additionalProperties: false
+      required: [resetState, segmentId]
+      properties:
+        resetState:
+          type: string
+          enum: [none, resetting]
+          description: "`none` when the barrier acknowledged inline; `resetting` while it waits."
+        segmentId:
+          type: string
+          format: uuid
+          nullable: true
+          description: The new segment once acknowledged; null while `resetting`.
+
+    LibrarianHistoryClearPreview:
+      type: object
+      additionalProperties: false
+      required: [counts, previewDigest]
+      properties:
+        counts:
+          type: object
+          additionalProperties: false
+          required:
+            [
+              messages,
+              summaries,
+              snapshots,
+              cards,
+              taskLinksBecomingUnavailable,
+              operationsKept,
+            ]
+          properties:
+            messages: { type: integer, minimum: 0 }
+            summaries: { type: integer, minimum: 0 }
+            snapshots: { type: integer, minimum: 0 }
+            cards: { type: integer, minimum: 0 }
+            taskLinksBecomingUnavailable:
+              type: integer
+              minimum: 0
+              description: Task links kept, whose source messages will render unavailable.
+            operationsKept:
+              type: integer
+              minimum: 0
+              description: Operations kept with their message references nulled.
+        previewDigest:
+          type: string
+          minLength: 1
+          maxLength: 128
+
+    LibrarianHistoryClearBody:
+      type: object
+      additionalProperties: false
+      required: [previewDigest]
+      properties:
+        previewDigest: { type: string, minLength: 1, maxLength: 128 }
+
+    LibrarianExplainResult:
+      type: object
+      additionalProperties: false
+      required: [turn]
+      properties:
+        turn: { $ref: "#/components/schemas/LibrarianTurn" }
+
+    LibrarianSettingsPatchBody:
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+        runnerId:
+          type: string
+          nullable: true
+          minLength: 1
+          description: Absent leaves the runner unchanged; `null` clears it.
+
+    LibrarianSettingsResult:
+      type: object
+      additionalProperties: false
+      required: [settings, readiness]
+      properties:
+        settings:
+          type: object
+          additionalProperties: false
+          required: [enabled, runnerId]
+          properties:
+            enabled: { type: boolean }
+            runnerId: { type: string, nullable: true }
+        readiness: { $ref: "#/components/schemas/LibrarianAvailability" }

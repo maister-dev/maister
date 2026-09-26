@@ -31,7 +31,10 @@ Scoping is inherited from `getCrossProjectHitlInbox` / `getInboxItems` /
 `getUnreadInboxCount` (admin = all, member = own); a foreign run or inbox item is
 never listed. Inline HITL responses go through the same authorization as the
 board (`answerHitl`); the lazy per-card expand payload (`inbox-context`) is gated
-by `readBoard` on the run's project.
+by `readBoard` on the run's project. (Designed — ADR-187) A clarification card
+is shown only to its recipient — never to the requester or other members, and
+not to a global admin who is not the recipient — and only while the recipient
+holds project `member` (`answerHitl`'s minimum role).
 
 ## Navigation
 
@@ -66,6 +69,16 @@ header (eyebrow, title, and the canonical `decisions` count — ADR-169), then:
 Sections 1–4 are the four kinds summed by `decisions`; section 5 is `updates` and
 carries the **neutral** tone (ADR-169 D7). Sections 2–4 reuse the `HitlCard` shell
 and add **no new mutation path**.
+
+(Designed — ADR-187) A fifth decision section, **Questions for you**, renders
+between **Held — flagged** and **Mentions & comments**. It lists the
+`clarification` decision items: open user-origin clarifications addressed to
+the reader (see "The clarification card" below). It is the fifth kind summed by
+`decisions`, and the empty-state rule then reads "all five decision sections".
+The recipient's `inbox_items` row for the same request
+(`event_kind='clarification_requested'`) also appears in **Mentions &
+comments** as an ordinary notification row with mark-read — it is the
+`updates` side of the fact, not a second answerable card.
 
 The empty state appears only when `decisions === 0` across all four decision
 sections **and** section 5 is also empty. Gating it on `decisions` alone would
@@ -150,6 +163,30 @@ the project-group header) with three disclosure tiers:
 Per-card criticality accent (critical red / high amber / medium info / low
 neutral); the prior block-level amber "alarm" chrome is removed.
 
+### The clarification card (Designed — ADR-187)
+
+A question one user addressed to the reader about a task, usually through their
+personal librarian, before any run exists. It reuses the `HitlCard` shell and
+its project grouping; there is no run, so there is no stage-progress, branch or
+`View run`.
+
+- **Collapsed:** requester · task title · `KEY-N` · the kind's
+  [`WorkStageChip`](../system-analytics/work-stages.md) · a **Blocking** chip
+  when the question holds launch · age · the question (1–2 lines) · the reason.
+  A `yes_no` or `choice` question is answerable inline with its buttons; a
+  `text` question shows a Respond affordance · **View task**.
+- **Expanded:** the full question and reason and the answer control for its
+  format. No lazy context fetch — everything comes with the decision item.
+- **Answer:** human only; submitting disables the control, shows localized
+  busy / error feedback, and removes the card when the answer is stored. A
+  `409 CONFLICT` (someone answered first, or the request was cancelled or
+  superseded meanwhile) refreshes to the stored state rather than assuming the
+  losing submission won. Answering never edits the task's prompt or launches
+  anything.
+- **Never actionable:** answered, cancelled or superseded requests, and a
+  request whose reader is no longer a project `member` — the card leaves the
+  queue rather than offering an answer that would be refused.
+
 ## States
 
 ```mermaid
@@ -195,6 +232,11 @@ and activation-unavailable states.
   [`../system-analytics/hitl.md`](../system-analytics/hitl.md).
 - Mutations: `POST /api/runs/{runId}/hitl/{hitlRequestId}/respond` (inline
   respond), `PATCH /api/inbox/[itemId]/read`, `POST /api/inbox/read-all`.
+- Clarification card (Designed — ADR-187): items come from the same
+  `getDecisionsQueue` (its fifth source); the answer posts
+  `POST /api/projects/{slug}/tasks/{number}/clarifications/{id}/answer`
+  (session auth, recipient only). Behaviour in
+  [`../system-analytics/task-clarifications.md`](../system-analytics/task-clarifications.md).
 
 ## i18n
 
@@ -203,6 +245,10 @@ and activation-unavailable states.
 `gatesEvidence`, `lastAgentMessage`, `stageProgress`, `changes`, `changesSummary`,
 `moreGates`, `staleEvidence`, plus budget progress/decision labels) and
 `portfolio` (reused notification block labels).
+(Designed — ADR-187) The clarification card and the **Questions for you**
+section add their keys — section title, answer-format controls, blocking chip,
+`View task`, the stale-answer refresh message — plus the
+`clarification_requested` notification label to `inbox`, with EN + RU parity.
 The card reuses `run.*` (criticality / HITL decision) and `board.*` (assignment)
 labels; node-type and gate-status are shown by icon, not text, so no `stage.*` /
 `gate.*` keys exist.
@@ -321,7 +367,11 @@ open a review workspace. The Inbox never presents a second approve/rework form.
   [ADR-083](../decisions.md#adr-083) (social board / inbox),
   [ADR-125](../decisions.md#adr-125-budget-breach-four-way-fork-with-staged-claims),
   [ADR-161](../decisions.md#adr-161-operator-node-interrupt-with-corrective-restart)
-  (node-interrupt card).
+  (node-interrupt card),
+  [ADR-187](../decisions.md#adr-187-addressed-task-clarification-before-execution)
+  (clarification card; Designed).
+- Behaviour (Designed): [`../system-analytics/task-clarifications.md`](../system-analytics/task-clarifications.md)
+  (clarification lifecycle and answer rules).
 - Plan: `.ai-factory/plans/feature-inbox-card-redesign.md`.
 - Source: `web/app/(app)/inbox/page.tsx`, `web/lib/queries/needs-you.ts`,
   `web/lib/queries/portfolio.ts` (`getCrossProjectHitlInbox`),
