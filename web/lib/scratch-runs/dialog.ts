@@ -121,13 +121,33 @@ export type ComposerAttachment = {
 export type ApiError = {
   code?: string;
   message?: string;
-  details?: { reason?: string; causeCode?: string };
+  details?: {
+    reason?: string;
+    causeCode?: string;
+    status?: string;
+    next?: string;
+  };
 };
 
 export function errorText(payload: ApiError | null): string {
   void payload;
 
   return "errorGeneric";
+}
+
+// ADR-175 2026-09-26: a Recover refused because the run is not `Crashed` names
+// what the operator can do instead, by the run status the route observed.
+export function recoverErrorText(payload: ApiError | null): string {
+  if (
+    payload?.code !== "CONFLICT" ||
+    payload.details?.reason !== "scratch_not_recoverable"
+  )
+    return errorText(payload);
+  if (payload.details.status === "Failed") return "recoverRefused.Failed";
+  if (payload.details.status === "NeedsInputIdle")
+    return "recoverRefused.NeedsInputIdle";
+
+  return "recoverRefused.Live";
 }
 
 export function hitlErrorText(
@@ -153,20 +173,36 @@ export function canSendWhileBusy(status: ScratchDialogStatus): boolean {
 }
 
 // ADR-182: a queued message waits for the dialog's next turn. A dialog that
-// ended — other than a crash, which Recover resumes — will never send it.
-export function queuedMessageUnsendable(status: ScratchDialogStatus): boolean {
-  return status === "Review" || status === "Done" || status === "Abandoned";
+// ended — other than a crash Recover can resume — will never send it; a
+// `Crashed` dialog under a `Failed` run is a budget stop Recover refuses.
+export function queuedMessageUnsendable(
+  status: ScratchDialogStatus,
+  runStatus: string | null | undefined,
+): boolean {
+  return (
+    status === "Review" ||
+    status === "Done" ||
+    status === "Abandoned" ||
+    runStatus === "Failed"
+  );
 }
 
 // A crashed run can be resumed by typing a message (routes Send to /recover,
-// which respawns + resumes via session/resume). Attachments/files stay
-// message-only.
-export function canRecover(status: ScratchDialogStatus): boolean {
-  return status === "Crashed";
+// which respawns + resumes via session/resume). Recover is a CAS on the RUN's
+// `Crashed` as well as the dialog's (ADR-175 2026-09-26). Attachments/files
+// stay message-only.
+export function canRecover(
+  status: ScratchDialogStatus,
+  runStatus: string | null | undefined,
+): boolean {
+  return status === "Crashed" && runStatus === "Crashed";
 }
 
-export function canCompose(status: ScratchDialogStatus): boolean {
-  return canSend(status) || canRecover(status);
+export function canCompose(
+  status: ScratchDialogStatus,
+  runStatus: string | null | undefined,
+): boolean {
+  return canSend(status) || canRecover(status, runStatus);
 }
 
 export function lifecycleActionsForScratchDetail(

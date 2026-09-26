@@ -1245,12 +1245,16 @@ the agent continuation worker, which wakes it (detached) for a `Running` scratch
 run whose dialog has been `WaitingForUser` for 5 s, holds a `queued` row, and
 has an admissible incarnation on its active assignment — the owner of a row left
 behind when the process died between the completion commit and the detached
-dispatch. A retryable failure of a dispatched turn (`EXECUTOR_UNAVAILABLE`,
-including the admission yield `PromptIncarnationPending`) returns its row to
-`queued` (`prompted → queued`; the launch row `NULL → queued`) in the same
-transaction as `markScratchPromptRetryable`, keeping its `sequence`, so the
-re-drive sends it again oldest-first; a definitive failure leaves it `prompted`
-and crashes the dialog. The recovery turn's text is appended as a user row
+dispatch. A turn whose prompt yields before admission (`PromptIncarnationPending`
+— no command was issued) returns its row to `queued` (`prompted → queued`; the
+launch row `NULL → queued`) in the same transaction as
+`markScratchPromptRetryable`, keeping its `sequence`, so the re-drive sends it
+again oldest-first with a fresh command. A retryable failure after the command
+was issued leaves the row `prompted`: a re-send under the same logical
+operation key would only re-attach to that command, which its own recovery
+settles. A definitive failure leaves it `prompted` and crashes the dialog. A
+project-less assistant turn is never re-queued (its `package_*` owner carries
+the edit-lock generation). The recovery turn's text is appended as a user row
 before it is prompted, so a yielded Recover keeps its message as a `queued`
 row. See [scratch reconciliation](scratch-runs.md#reconciliation-grace-and-recover-implemented).
 
@@ -1636,7 +1640,7 @@ Recovery windows (normative; each cell names its owner):
 | host died during the ACP call | ledger `delivering`, receipt `accepted`, not in flight | — | the `turn_lost` fold (`{code: "ACP_PROTOCOL", reason: "turn_lost"}`) and `settleSteerCommand(refused)` convert; the parent turn is lost too and re-drives through its own path; an injection before the death is EDGE-STR-09 |
 | W3 — crash after settlement, before the successor claim | successor `queued` | the issuing request | `resume_requested_at` is set: the continuation worker's parked-run arm re-drives after the parent parks; a `Running` parent's park re-arms it |
 | W4 — scratch row `queued`, dialog `Running` | row `queued` | the previous turn's `afterCommit` | the same `afterCommit`, run by whichever process applies the previous turn's completion (the prompt-owner worker) |
-| W5/W6 — scratch row `queued`, dialog `WaitingForUser` (crash between the completion commit and the detached dispatch, or a retryable failure of a dispatched queued row) | row `queued` | — | the agent continuation worker's scratch arm (ADR-182 open item A4, closed 2026-09-26): once the dialog has been `WaitingForUser` for 5 s and the run has an admissible incarnation it wakes `dispatchQueuedScratchMessages`, which sends the oldest row; a retryably failed row is returned to `queued` first. A conversion folded by recovery still wakes the dispatcher itself (`scratch-steer-requeued-by-recovery`) |
+| W5/W6 — scratch row `queued`, dialog `WaitingForUser` (crash between the completion commit and the detached dispatch, or a queued row whose prompt yielded before admission) | row `queued` | — | the agent continuation worker's scratch arm (ADR-182 open item A4, closed 2026-09-26): once the dialog has been `WaitingForUser` for 5 s and the run has an admissible incarnation it wakes `dispatchQueuedScratchMessages`, which sends the oldest row; a yielded row is returned to `queued` first. A conversion folded by recovery still wakes the dispatcher itself (`scratch-steer-requeued-by-recovery`) |
 | scratch dialog ended (Stop → `Review` / `Abandoned`, `Done`) with rows `queued` | row `queued` | — | none needed: the row is never sent and the UI reads it "Not sent" |
 | scratch dialog `Crashed` with rows `queued` | row `queued` | — | Recover: its own message joins the queue behind them and the dispatcher sends the oldest first |
 | host: `steerInFlight` set, adapter never answers | receipt `accepted` | the 30 s bound | a host restart drops the promise with the session; the parent's receipt folds `turn_lost` |
@@ -1665,7 +1669,7 @@ Invariants and their enforcement:
 | A prompt is not written while a steer named before it is unanswered | the host `steerInFlight` barrier, bounded by the steer timeout (EDGE-STR-06 past it) |
 | The parent's evidence is untouched | the span verifier skips `session.command` rows; the steered output carries the parent's `sourceCommandId` |
 | Prompt text never leaves the transcript | `PAYLOAD_PROJECTION["session.steer"]` keeps `parentCommandId`, `promptBytes`, `contentBlockCount` only; logs carry byte counts |
-| A queued scratch row behind a `WaitingForUser` dialog is delivered or visibly unsendable | the continuation worker's scratch arm (live-session predicate mirrors `admitScratchPrompt`); `markScratchPromptRetryable` returns a retryably failed row to `queued`; `queuedMessageUnsendable(dialogStatus, runStatus)` reads "Not sent" on `Review \| Done \| Abandoned` and on a `Failed` run |
+| A queued scratch row behind a `WaitingForUser` dialog is delivered or visibly unsendable | the continuation worker's scratch arm (live-session predicate mirrors `admitScratchPrompt`); `markScratchPromptRetryable` returns a row whose prompt yielded before admission to `queued`; `queuedMessageUnsendable(dialogStatus, runStatus)` reads "Not sent" on `Review \| Done \| Abandoned` and on a `Failed` run |
 | A queued agent message turn on a finished run never waits forever | the finalization transaction supersedes `queued` `live_message \| persistent_message` turns for `Failed \| Crashed \| Abandoned` (`CLOSES_MESSAGE_TURNS`) |
 | A launch-window message is delivered after a web death | the continuation worker's A1 arm selects a `Running` run with no generation turn (`GENERATION_TURN_VARIANTS`), not one with no turn |
 

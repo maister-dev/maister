@@ -1308,6 +1308,11 @@
     "promoteInto": "Into {branch}",
     "recover": "Recover",
     "recoverHint": "This run's session ended (e.g. on restart). Type a message below and send to resume it.",
+    "recoverRefused": {
+      "Failed": "This run was stopped by its budget and cannot be recovered.",
+      "NeedsInputIdle": "This session is waiting for your answer to a permission request. Answer it to resume the session.",
+      "Live": "This session stopped responding and is being checked. Try Recover again in a minute."
+    },
     "recoverPlaceholder": "Tell the resumed agent what to do next.",
     "pendingAction": "{action}…",
     "context": "Context",

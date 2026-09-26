@@ -5402,8 +5402,13 @@ paths:
             Message accepted. Prompt arm: the turn ran and `stopReason` is set
             (`delivery: "prompted"`) — unless older rows were still queued,
             then the message was queued behind them and the route answers at
-            acceptance (`delivery: "queued"`, no `stopReason`). Busy arm: the
-            message was steered or queued (`delivery`), no `stopReason`.
+            acceptance (`delivery: "queued"`, no `stopReason`). A turn whose
+            prompt yielded before admission (no durable incarnation yet, so no
+            command was issued) keeps its row as `delivery: "queued"` for the
+            continuation worker's re-drive and answers `delivery: "queued"`
+            with the dialog `WaitingForUser` (Implemented — ADR-182 A4). Busy
+            arm: the message was steered or queued (`delivery`), no
+            `stopReason`.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ScratchMessageResponse" }
@@ -5728,10 +5733,13 @@ paths:
           description: |
             The execution host is unavailable retryably (`code:
             EXECUTOR_UNAVAILABLE`; the body carries only `code` and `message`).
-            This includes a recovered session whose incarnation was not durable
-            yet when the prompt was admitted (ADR-167 D5 amendment): the session
-            is live, nothing was dispatched, and the run is kept for the user to
-            resend — it is NOT crashed.
+            A recovered session whose incarnation was not durable yet when the
+            prompt was admitted (ADR-167 D5 amendment) is NOT this answer since
+            ADR-182 A4 (Implemented): the Recover text was persisted before the
+            prompt, so it goes back to the queue for the continuation worker's
+            re-drive and the route answers `202 {delivery: "queued"}` — the
+            session is live, nothing was dispatched, and the run is not
+            crashed.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }

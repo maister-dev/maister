@@ -16,7 +16,8 @@ import { ScratchConversation } from "@/components/scratch/scratch-conversation";
 import en from "@/messages/en.json";
 
 // ADR-182: what the scratch dialog tells the operator about a message sent
-// while the agent was busy — the transcript badge and the composer notice.
+// while the agent was busy — the transcript badge and the composer notice —
+// and, since the ownership residuals (D-A2), why a Recover was refused.
 
 const TestIntlProvider = NextIntlClientProvider as ComponentType<{
   locale: string;
@@ -32,6 +33,7 @@ vi.mock("@/lib/use-run-stream", () => ({
 vi.mock("@/components/scratch/scratch-composer", () => ({
   ScratchComposer: (props: {
     deliveryNotice: string | null;
+    onRecover: (prompt: string) => Promise<boolean>;
     onSend: (payload: {
       content: string;
       attachments: never[];
@@ -59,12 +61,22 @@ vi.mock("@/components/scratch/scratch-composer", () => ({
         },
         "send",
       ),
+      createElement(
+        "button",
+        {
+          type: "button",
+          onClick: () => void props.onRecover("go on"),
+        },
+        "recover",
+      ),
     ),
 }));
 
 let root: Root;
 let container: HTMLDivElement;
 let dialogStatus: ScratchDialogStatus;
+let runStatus: string;
+let recoverRefusal: string | null;
 
 function detail(): ScratchDetail {
   return {
@@ -74,6 +86,7 @@ function detail(): ScratchDetail {
       capabilityAgent: "claude",
       runnerSnapshot: null,
       createdByDisplayName: "Operator",
+      status: runStatus,
     },
     scratch: { dialogStatus },
     messages: [
@@ -107,8 +120,12 @@ async function render(): Promise<void> {
 }
 
 // A stream event makes the conversation reload its detail (debounced 250 ms).
-async function refresh(status: ScratchDialogStatus): Promise<void> {
+async function refresh(
+  status: ScratchDialogStatus,
+  run = "Running",
+): Promise<void> {
   dialogStatus = status;
+  runStatus = run;
   stream.eventCount += 1;
   await render();
   await act(async () => {
@@ -133,6 +150,8 @@ function notice(): string {
 beforeEach(() => {
   stream.eventCount = 0;
   dialogStatus = "Running";
+  runStatus = "Running";
+  recoverRefusal = null;
   vi.useFakeTimers();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal(
@@ -148,7 +167,22 @@ beforeEach(() => {
             }),
             { status: 202 },
           )
-        : new Response(JSON.stringify(detail()), { status: 200 }),
+        : init?.method === "POST" && url.endsWith("/recover")
+          ? new Response(
+              JSON.stringify({
+                code: "CONFLICT",
+                message: "scratch run is not recoverable",
+                details: {
+                  reason: "scratch_not_recoverable",
+                  status: recoverRefusal,
+                  ...(recoverRefusal === "NeedsInputIdle"
+                    ? { next: "respond" }
+                    : {}),
+                },
+              }),
+              { status: 409 },
+            )
+          : new Response(JSON.stringify(detail()), { status: 200 }),
     ),
   );
   container = document.createElement("div");
@@ -177,7 +211,36 @@ describe("scratch delivery feedback (ADR-182)", () => {
       await refresh(ended);
       expect(badge(), ended).toBe(en.scratch.deliveryNotSentBadge);
     }
+    // A budget stop leaves the dialog `Crashed` over a `Failed` run, which
+    // Recover refuses: nothing will ever send the row.
+    await refresh("Crashed", "Failed");
+    expect(badge()).toBe(en.scratch.deliveryNotSentBadge);
   });
+
+  it.each([
+    ["Failed", en.scratch.recoverRefused.Failed],
+    ["NeedsInputIdle", en.scratch.recoverRefused.NeedsInputIdle],
+    ["Running", en.scratch.recoverRefused.Live],
+  ])(
+    "a Recover refused for a %s run names why instead of a generic error",
+    async (status, text) => {
+      recoverRefusal = status;
+      dialogStatus = "Crashed";
+      runStatus = "Crashed";
+      await render();
+      await act(async () => {});
+      await act(async () => {
+        [...container.querySelectorAll("button")]
+          .find((button) => button.textContent === "recover")
+          ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        await Promise.resolve();
+      });
+      await act(async () => {});
+      expect(
+        container.querySelector('[role="alert"]')?.textContent ?? null,
+      ).toBe(text);
+    },
+  );
 
   it("a delivery notice ends with its turn and is not revived by the next dispatched turn", async () => {
     await render();

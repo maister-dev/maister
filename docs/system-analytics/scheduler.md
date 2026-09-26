@@ -510,7 +510,12 @@ must not enter `bundleErrors` or disable the scheduler job.
   poll is the C2 BACKSTOP (shares `lib/scheduler/c2-eligibility` with the gate), and
   resume is cap-safe (the D2 bypass is removed) — see [`task-queue.md`](task-queue.md).
   Both apply the `MAISTER_TASK_QUEUE_AUTO_RESERVE` / per-project `maxInFlightAuto`
-  capacity guards to C2.
+  capacity guards to C2. C1 and C3 candidates are read `FOR UPDATE ... SKIP
+  LOCKED`, and only C2 has a periodic backstop: a C1/C3 run whose row another
+  transaction holds at the instant of the pass (a stale driver's owner
+  application, a respond claim) is not admitted by it and waits for the next
+  slot-free edge. An answered idle run also has the operator's retry, whose own
+  claim admits it when the pool is under cap.
 - (Implemented — ADR-165) **Per-orchestrator active-children skip.** Beside the
   existing shared-writer sibling gate, `tryStartRun` and `promoteNextPending`
   MUST skip (and `continue` past) a `Pending` run whose `parent_run_id` names an

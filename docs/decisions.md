@@ -2071,3 +2071,12 @@ properties/lastAction` sets `nullable: true` beside an `allOf` with no sibling
   but the route serializes `getRunDTO` verbatim, which carries `runnerId` and
   no `executorId`; its `status` enum also lacks `WaitingOnChildren`. The branch added only `terminalCause`; re-syncing the
   schema is separate work (R9).
+- **The admission gate has no periodic C1/C3 pass (found 2026-09-26,
+  ownership residuals T1.5).** `promoteNextPending` reads C1 and C3 candidates
+  `FOR UPDATE ... SKIP LOCKED` and runs only on a slot-free edge; only C2 has
+  the 60 s backstop. A queued answered-idle resume (flow, or scratch since
+  D-A8) whose run row another transaction holds at that instant — measured: a
+  stale launch driver's prompt-owner application — is skipped and waits for
+  the next freed slot or the operator's retry, whose own claim admits under
+  cap. Agent resumes have the continuation worker's re-selection. A backstop
+  changes the gate for every pool and is separate work (R9).

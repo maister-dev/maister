@@ -26,6 +26,7 @@ import {
   canCompose,
   canSendWhileBusy,
   errorText,
+  recoverErrorText,
   hitlErrorText,
   queuedMessageUnsendable,
 } from "@/lib/scratch-runs/dialog";
@@ -335,12 +336,12 @@ export function ScratchConversation({
     deliveryBadge: (delivery) =>
       delivery === "steered"
         ? t("deliverySteeredBadge")
-        : queuedMessageUnsendable(status)
+        : queuedMessageUnsendable(status, detail?.run.status)
           ? t("deliveryNotSentBadge")
           : t("deliveryQueuedBadge"),
   };
   const quickReplies = useMemo(() => {
-    if (!canCompose(status)) return [];
+    if (!canCompose(status, detail?.run.status)) return [];
     const messages = detail?.messages ?? [];
 
     for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -352,7 +353,7 @@ export function ScratchConversation({
     }
 
     return [];
-  }, [detail?.messages, status]);
+  }, [detail?.messages, detail?.run.status, status]);
   const renderMessageAttachments = useCallback(
     (messageId: string) => {
       const list = attachmentsByMessage.get(messageId) ?? [];
@@ -467,7 +468,9 @@ export function ScratchConversation({
         });
 
         if (!response.ok) {
-          setError(t(errorText(await response.json().catch(() => null))));
+          setError(
+            t(recoverErrorText(await response.json().catch(() => null))),
+          );
 
           return false;
         }
@@ -792,6 +795,7 @@ export function ScratchConversation({
         pending={pendingAction === "send"}
         quickReplies={quickReplies}
         recoverEnabled={resolvedRecoverEndpoint !== null}
+        runStatus={detail?.run.status}
         // ADR-182 D-D5: only project scratch runs accept a message while busy;
         // the local-package assistant (its own endpoint) keeps the idle gate.
         sendWhileBusy={messageEndpoint === undefined}

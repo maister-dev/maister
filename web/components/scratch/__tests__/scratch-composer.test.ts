@@ -41,6 +41,12 @@ async function noop(): Promise<boolean> {
   return true;
 }
 
+// The run status every dialog status is written with (a Crashed dialog sits on
+// a Crashed run; the others on a Running one).
+function runStatusFor(status: ScratchDialogStatus): string {
+  return status === "Crashed" ? "Crashed" : "Running";
+}
+
 function render(
   status: ScratchDialogStatus,
   quickReplies: QuickReply[] = [],
@@ -53,6 +59,7 @@ function render(
   return renderToStaticMarkup(
     createElement(ScratchComposer, {
       status,
+      runStatus: runStatusFor(status),
       pending: false,
       quickReplies,
       agent: "codex",
@@ -80,6 +87,7 @@ function renderCompact(status: ScratchDialogStatus) {
   return renderToStaticMarkup(
     createElement(ScratchComposer, {
       status,
+      runStatus: runStatusFor(status),
       pending: false,
       quickReplies: [],
       agent: "codex",

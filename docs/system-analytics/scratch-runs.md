@@ -417,7 +417,7 @@ The recovery windows below are normative; each cell names its owner.
 | dialog `Running`, prompt in flight, session live | the prompt owner | `live-scratch-session` skip; the prompt owner worker applies the terminal |
 | dialog `WaitingForUser`, session live, `queued` row (a process death between the completion commit and the detached dispatch) | the `afterCommit` dispatcher | the agent continuation worker's scratch arm, within one pass after `scratch_runs.updated_at + 5 s` |
 | dialog `WaitingForUser`, `queued` row, no admissible incarnation | — | the scratch arm skips (`no_admissible_incarnation`); the sweep crashes past grace; Recover sends the row first |
-| dialog `WaitingForUser` after a retryable failure (row back to `queued`, `error_code` set) | — | the scratch arm retries each pass, bounded by the grace rule above |
+| dialog `WaitingForUser` after an admission yield (row back to `queued`, `error_code` set) | — | the scratch arm retries each pass, bounded by the grace rule above |
 | runs `Crashed`, dialog `Crashed` | — | Recover (CAS on `Crashed`); queued rows are sent first, then the Recover text |
 | runs `Failed` (budget), dialog `Crashed` | — | terminal; Recover refused `scratch_not_recoverable`; queued rows read "Not sent" |
 | runs `NeedsInputIdle`, dialog `NeedsInput` (host cap park) | — | the stored answer → `runScratchIdleResume` → respawn + `session/resume` → the re-raised permission is answered from the stored row; Recover refused with `next: "respond"` |
@@ -436,14 +436,26 @@ Recover writes nothing and mints no placement:
 | `Running`, `NeedsInput`, `Pending` | dead | `409 CONFLICT {reason: "scratch_not_recoverable", status}` — the sweep owns the crash; the operator waits at most one grace window |
 | any, dialog `Review` or a live host session | live | `200 {action: "open"}` (unchanged) |
 
-**The queue survives a retryable failure.** `markScratchPromptRetryable` CASes
-the failed turn's row `run_messages.delivery` `prompted → queued` (the launch
-row `NULL → queued`) in the transaction that sets the dialog `WaitingForUser`
-with `error_code`/`error_message`, so the row keeps its `sequence` and FIFO
-place; the admission yield (`PromptIncarnationPending`) is such a failure. A
+**The queue survives the admission yield.** When a turn's prompt yields
+before admission (`PromptIncarnationPending` — no durable incarnation yet, so no
+prompt command was issued), `markScratchPromptRetryable` CASes the turn's row
+`run_messages.delivery` `prompted → queued` (the launch row `NULL → queued`) in
+the transaction that sets the dialog `WaitingForUser` with
+`error_code`/`error_message`, so the row keeps its `sequence` and FIFO place,
+and the send or Recover answers `202 {delivery: "queued"}` rather than an error
+that would invite a second copy. Any other retryable failure came after a
+prompt command was issued: a re-send under the same logical key would only
+re-attach to that command, whose own recovery settles it, so the row stays
+`prompted` and the dialog `WaitingForUser` with the error. A local-package
+assistant turn is never re-queued — its `package_*` owner carries the
+operator's edit-lock generation, which no background dispatcher holds. A
 definitive failure keeps `markScratchCrashed`: the row stays `prompted` (it was
 sent and refused), Recover does not resend it, and the crash panel names why
-through the run's terminal cause. Recover persists its text as a user row
+through the run's terminal cause. A wait that ends before the prompt owner
+applied (`ScratchPromptContinuationPending` — the host went away mid-turn) is
+neither: the driver writes nothing, the durable owner worker applies the
+command's outcome once it settles, and a host that never returns leaves the run
+to the reconcile sweep's grace rule. Recover persists its text as a user row
 before prompting, so a yield keeps it as a `queued` row instead of dropping it.
 
 **The scratch arm of the agent continuation worker** selects `run_kind =
@@ -453,14 +465,24 @@ session whose incarnation is admissible on the run's active assignment. It
 wakes `dispatchQueuedScratchMessages` detached and never awaits the turn; the
 dispatcher's `lockRunRows`, its `WaitingForUser` check and the `queued →
 prompted` CAS make a concurrent live wake a no-op, and `ORDER BY sequence`
-keeps FIFO. There is no attempt counter: a retryable failure returns the row
-and the next pass retries, bounded by the grace rule (dead session) or by the
-host coming back (live session).
+keeps FIFO. There is no attempt counter: a re-queued row is retried each pass,
+bounded by the grace rule (dead session) or by the incarnation becoming
+admissible (live session).
 
 **Idle resume after a host park.** A scratch permission is parked only by the
-host's absolute cap (`MAISTER_PERMISSION_MAX_HOURS`); the keep-alive sweeper's
-checkpointed arm moves the run to `NeedsInputIdle` while the dialog stays
-`NeedsInput`. The operator's answer is stored and `runScratchIdleResume` runs:
+host's absolute cap (`MAISTER_PERMISSION_MAX_HOURS`). The turn's scratch event
+consumer sees the host's `session.exited{reason: "checkpoint"}` while the
+dialog is `NeedsInput` and parks the run through the shared `NeedsInput →
+NeedsInputIdle` CAS (`markCheckpointed`), leaving the dialog `NeedsInput` and
+the request open; the keep-alive sweeper's checkpointed arm and the respond
+route's race-window arm park through the same CAS, so whichever runs first wins
+(a checkpoint exit with no pending permission still ends the turn
+`WaitingForUser`). The parked turn's own driver finds its prompt owner's
+application `superseded`, or — when its wait ends before the owner applied, as
+it does if the host goes down first — leaves the command to the durable owner
+worker (`ScratchPromptContinuationPending`, the agent and flow drivers'
+continuation rule), and yields like a fenced one: it writes nothing, so it can
+never crash the run a later resume claims. The operator's answer is stored and `runScratchIdleResume` runs:
 under the scheduler lock it re-checks `NeedsInputIdle` and the checkpointed
 incarnation's assignment, cap-gates (a project run against the flow/scratch
 pool, a project-less assistant against `MAISTER_MAX_CONCURRENT_ASSISTANTS`; at
@@ -468,11 +490,22 @@ cap it stamps `resume_requested_at = coalesce(resume_requested_at, now())` and
 answers `202 QUEUED`), otherwise CASes `NeedsInputIdle → Running` and mints a
 `resume` placement; it then respawns the session with `session/resume` and
 re-prompts the interrupted turn's newest user row (owner variant `recovery`,
-`package_recovery` for the assistant). When the resumed agent raises the
-permission again, the scratch permission handler rebinds the stored row in
-place and delivers the stored option instead of inserting a new request. A
-resumed turn that completes without raising it goes `WaitingForUser` and the
-stored row is closed. The freed-slot admission gate forks `agent | scratch |
+the variant a Recover prompt uses for project and assistant runs alike). When
+the resumed agent raises the permission again, the scratch permission handler
+finds the answer stored for an EARLIER host session (a request answered on the
+live session is its own delivery in flight, never an answer for the next one),
+rebinds that row in place (`requestId`, `options`, `toolCall`,
+`supervisorSessionId`) and delivers the stored option through the enveloped
+input command, stamping `responded_at` on the ack — no new request and no
+`NeedsInput` flip; a stored choice the re-raised request does not offer retires
+the row (`superseded_at`) and asks afresh. The turn's event consumer resumes the
+new session's stream from the notices written since THAT session's first
+incarnation: monotonic ids restart at 1 per host session, so an older session's
+higher ids would make the host drop the re-raised request. A resumed turn that
+completes without raising it goes `WaitingForUser` and the stored row is
+closed. Every scratch terminal (`markScratchCrashed`, a live `session.crashed`)
+closes the run's open permission requests, so a Recover's fresh session never
+inherits an answer given to a dead one. The freed-slot admission gate forks `agent | scratch |
 flow`, so a cap-deferred scratch answer is admitted on a freed slot by the same
 claim. A host that is down at respawn answers `503` `delivery_unavailable`;
 the claim rolls back and the run stays `NeedsInputIdle` with the answer kept.
@@ -649,12 +682,12 @@ history automatically.
 | File write failure | `503 EXECUTOR_UNAVAILABLE`; launch cleanup is best effort and message rows remain invisible. |
 | Second message while `Running` | `202` with `delivery: "steered"` or `"queued"`; the running prompt is untouched and the row is appended at once (Implemented — ADR-182). A message while `Starting` (no session yet), `NeedsInput` or a terminal state stays `409 CONFLICT`. |
 | Steer refused after the turn ended | The row flips `steered → queued` and, the dialog being `WaitingForUser`, is dispatched by the conversion; a concurrent dispatcher finds the dialog `Running` (or loses the `delivery` CAS) and returns `{dispatched: false}` — one prompt, no error. |
-| Web process dies between the previous turn's completion and the queued dispatch, or a dispatched queued row fails retryably | The rows stay `queued` and visible ("Queued") — a retryably failed row returns to `queued` at its `sequence`; the agent continuation worker's scratch arm re-drives the oldest once the dialog has been `WaitingForUser` for 5 s and the session is admissible (Implemented — ADR-182 A4 closed). |
+| Web process dies between the previous turn's completion and the queued dispatch, or a dispatched queued row fails retryably | The rows stay `queued` and visible ("Queued") — a row whose prompt yielded before admission returns to `queued` at its `sequence`; the agent continuation worker's scratch arm re-drives the oldest once the dialog has been `WaitingForUser` for 5 s and the session is admissible (Implemented — ADR-182 A4 closed). |
 | A steer's answer is lost and its outcome is unknown | `202` `delivery: "steered"`; the receipt fold settles it later — injected (stays "Steered") or refused (flips to "Queued" and the fold wakes the dispatcher). |
 | The dialog ends (Stop, `Done`, `Abandoned`) or crashes with rows `queued` | Ended (or runs `Failed`): the rows are never sent and read "Not sent". Crashed: Recover queues its own message behind them and the oldest is sent first. |
 | Recover on a run that is not `Crashed` | `409 CONFLICT {reason: "scratch_not_recoverable", status, next?}`; no placement, no status change (`Failed` terminal; `NeedsInputIdle` → `next: "respond"`; a live status with a dead session waits for the sweep). |
 | Supervisor unavailable before launch | `503 EXECUTOR_UNAVAILABLE`; no worktree, DB run, or upload side effect occurs. |
-| Supervisor prompt delivery fails after message commit | Retryable: the dialog goes `WaitingForUser` with `error_code` and the row returns to `queued` for the re-drive. Definitive: the dialog crashes and the row stays `prompted` (Recover does not resend it). The user message stays visible. |
+| Supervisor prompt delivery fails after message commit | Admission yield: the dialog goes `WaitingForUser` with `error_code`, the row returns to `queued` for the re-drive and the send answers `202 queued`. Another retryable failure (the command was issued): the dialog goes `WaitingForUser` with `error_code`, the row stays `prompted` and the command's recovery settles it. Definitive: the dialog crashes and the row stays `prompted` (Recover does not resend it). The user message stays visible. |
 | Permission answered after the host session ended (host 410 `session_ended`, a reason-less 410, or a `crashed \| exited \| lost` incarnation) | `409 CONFLICT {reason: "session_ended"}`; the respond route writes no run or dialog state and keeps the answer, the projection or sweep crashes the dialog and `markScratchCrashed` closes the row (Implemented — ADR-177 2026-09-26). `410 {reason: "permission_not_pending"}` on a live session closes the row only. A `session_checkpointed` 410 parks the run `NeedsInputIdle` and the answer resumes it, never `Crashed`. |
 | Promote merge conflict | `409 CONFLICT`; run remains `Review` and the worktree stays available. |
 | Shared lifecycle drop from scratch detail | Preserve first, remove only a MAIster-owned worktree, set `removed_at`, and mark non-`Done` runs/dialog metadata `Abandoned`. |

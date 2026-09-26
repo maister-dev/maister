@@ -259,6 +259,41 @@ vi.mock("@/lib/execution-host", async () => {
   };
 });
 
+// The transcript allocator locks and inserts, which this predicate-blind fake
+// cannot model; record the rows instead. Recover persists its own text (A4).
+vi.mock("@/lib/scratch-runs/messages", () => ({
+  appendScratchMessage: vi.fn(
+    async (
+      _tx: unknown,
+      input: {
+        id?: string;
+        runId: string;
+        role: string;
+        content: string;
+        delivery?: string;
+      },
+    ) => {
+      const sequence = dbState.tables.run_messages.length + 1;
+      const id = input.id ?? `message-${sequence}`;
+
+      dbState.tables.run_messages.push({
+        id,
+        runId: input.runId,
+        role: input.role,
+        content: input.content,
+        delivery: input.delivery ?? null,
+        sequence,
+      });
+
+      return { id, sequence };
+    },
+  ),
+  userScratchMessageDraft: (args: { content: string }) => ({
+    role: "user",
+    content: args.content,
+  }),
+}));
+
 vi.mock("@/lib/scratch-runs/events", () => ({
   sendScratchPromptAndProjectEvents: vi.fn(async () => ({
     stopReason: "end_turn",
@@ -281,6 +316,7 @@ function emptyTables(): Tables {
 function seedScratchRun(
   overrides: Partial<{
     runKind: "flow" | "scratch";
+    runStatus: string;
     acpSessionId: string | null;
     dialogStatus: string;
     supervisorSessionId: string | null;
@@ -304,7 +340,7 @@ function seedScratchRun(
       providerKind: "anthropic",
       permissionPolicy: "default",
     },
-    status: "Crashed",
+    status: overrides.runStatus ?? "Crashed",
     acpSessionId: Object.hasOwn(overrides, "acpSessionId")
       ? overrides.acpSessionId
       : "acp-old",
@@ -533,7 +569,62 @@ describe("POST /api/scratch-runs/[runId]/recover", () => {
       dialogStatus: "WaitingForUser",
       supervisorSessionId: "sup-old",
     });
+    // A4: the operator's Recover text is a transcript row before it is a
+    // prompt, so the transcript shows it.
+    expect(dbState.tables.run_messages).toEqual([
+      expect.objectContaining({
+        role: "user",
+        content: "continue from here",
+        delivery: "prompted",
+      }),
+    ]);
   });
+
+  // ADR-175 2026-09-26: Recover is a CAS on `Crashed`. Every other status is
+  // refused with a token naming why, before any claim, placement or create.
+  it.each([
+    {
+      name: "a budget-Failed run",
+      runStatus: "Failed",
+      dialogStatus: "Crashed",
+      details: { reason: "scratch_not_recoverable", status: "Failed" },
+    },
+    {
+      name: "a host-parked NeedsInputIdle run (answer it instead)",
+      runStatus: "NeedsInputIdle",
+      dialogStatus: "NeedsInput",
+      details: {
+        reason: "scratch_not_recoverable",
+        status: "NeedsInputIdle",
+        next: "respond",
+      },
+    },
+    {
+      name: "a Running dialog whose host session is dead",
+      runStatus: "Running",
+      dialogStatus: "WaitingForUser",
+      details: { reason: "scratch_not_recoverable", status: "Running" },
+    },
+  ])(
+    "refuses $name with 409 scratch_not_recoverable and writes nothing",
+    async ({ runStatus, dialogStatus, details }) => {
+      const runId = seedScratchRun({ runStatus, dialogStatus });
+
+      const res = await invokePost(runId, { prompt: "continue from here" });
+      const body = (await res.json()) as {
+        code?: string;
+        details?: Record<string, unknown>;
+      };
+
+      expect(res.status).toBe(409);
+      expect(body).toMatchObject({ code: "CONFLICT", details });
+      expect(dbState.tables.runs[0].status).toBe(runStatus);
+      expect(dbState.tables.scratch_runs[0].dialogStatus).toBe(dialogStatus);
+      expect(createSession).not.toHaveBeenCalled();
+      expect(sendScratchPromptAndProjectEvents).not.toHaveBeenCalled();
+      expect(dbState.tables.run_messages).toEqual([]);
+    },
+  );
 
   // ADR-166: the claim (CAS + `scratch_recover` mint) commits BEFORE the create;
   // a failed create rolls it back — Running → the observed status, the minted
@@ -585,9 +676,11 @@ describe("POST /api/scratch-runs/[runId]/recover", () => {
 
   // ADR-167 D5 amendment (2026-09-23): an admission fence timeout after the
   // create succeeded is a yield. The recovered session is live and nothing was
-  // admitted, so the route answers a retryable 503 and leaves the run for the
-  // user's resend instead of crashing a recovery that worked.
-  it("answers a retryable 503 without crashing the run when prompt admission yields", async () => {
+  // admitted, so the run is not crashed. ADR-182 A4 (2026-09-26): the Recover
+  // text was persisted before the prompt, so it goes back to the queue for the
+  // continuation worker's re-drive and the answer is the accepted state — a
+  // 503 would invite the operator to send it twice.
+  it("keeps the Recover text as a queued row and answers 202 queued when prompt admission yields", async () => {
     const runId = seedScratchRun();
     const pending = new PromptIncarnationPending({
       runId,
@@ -600,11 +693,21 @@ describe("POST /api/scratch-runs/[runId]/recover", () => {
     const res = await invokePost(runId, { prompt: "continue from here" });
 
     expect(sendScratchPromptAndProjectEvents).toHaveBeenCalledTimes(1);
-    expect(res.status).toBe(503);
+    expect(res.status).toBe(202);
     expect(await res.json()).toEqual({
-      code: "EXECUTOR_UNAVAILABLE",
-      message: pending.message,
+      runId,
+      action: "recover",
+      dialogStatus: "WaitingForUser",
+      delivery: "queued",
     });
+    expect(dbState.tables.run_messages).toEqual([
+      expect.objectContaining({
+        runId,
+        role: "user",
+        content: "continue from here",
+        delivery: "queued",
+      }),
+    ]);
     expect(dbState.tables.runs[0]).toMatchObject({
       status: "Running",
       acpSessionId: "acp-new",

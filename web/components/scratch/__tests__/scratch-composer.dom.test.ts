@@ -65,6 +65,7 @@ function mount(onSend: () => Promise<boolean>): HTMLDivElement {
     root.render(
       createElement(ScratchComposer, {
         status: "WaitingForUser",
+        runStatus: "Running",
         pending: false,
         quickReplies: [],
         onRecover: async () => true,
@@ -160,6 +161,7 @@ describe("ScratchComposer while the agent is busy", () => {
         root.render(
           createElement(ScratchComposer, {
             status,
+            runStatus: "Running",
             pending: props.pending ?? false,
             quickReplies: [],
             sendWhileBusy: true,

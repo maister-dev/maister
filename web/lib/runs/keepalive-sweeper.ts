@@ -96,6 +96,7 @@ const {
   runSessions,
   runs,
   runSyncAttempts,
+  scratchRuns,
 } = schemaModule as unknown as Record<string, any>;
 
 // ADR-141: a run with a non-terminal `run_sync_attempts` row is owned
@@ -472,6 +473,13 @@ export async function runPass2(db: Db): Promise<number> {
       if (updated.length === 0) return false;
 
       await releaseAssignmentForRun(tx, row.id, "abandoned");
+      // A scratch run parked by the host cap keeps its dialog `NeedsInput`;
+      // the terminal closes that store too, or the dialog outlives its run.
+      if (updated[0].runKind === "scratch")
+        await tx
+          .update(scratchRuns)
+          .set({ dialogStatus: "Abandoned", updatedAt: new Date() })
+          .where(eq(scratchRuns.runId, row.id));
 
       // M8 T12: mark any open hitl_requests row for this run with
       // respondedAt=now() so the operator UI shows the request as closed.

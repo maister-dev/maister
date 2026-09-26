@@ -24,7 +24,7 @@ import type {
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { assertRuntimeObjectsReferenceable } from "@/lib/execution-host/runtime-object-holds";
@@ -106,6 +106,8 @@ import {
   userScratchMessageDraft,
 } from "@/lib/scratch-runs/messages";
 import { cleanupLocalPackageAssistantMaterialization } from "@/lib/scratch-runs/local-package-materialization";
+import { closeOpenScratchPermissions } from "@/lib/scratch-runs/open-permissions";
+import { isYieldedScratchTurn } from "@/lib/scratch-runs/prompt-owner";
 import {
   assertScratchCanAcceptUserMessage,
   dialogStatusAfterSupervisorStop,
@@ -588,7 +590,7 @@ export async function markScratchCrashed(args: {
   // matching the flow/agent budget-terminate; the scratch dialog FSM has no
   // `Failed` state, so `dialog_status` stays `Crashed` (the scratch-UI terminal).
   terminal?: "crashed" | "failed";
-}): Promise<void> {
+}): Promise<{ applied: boolean }> {
   const db = args.db ?? getDb();
   const errorCode = isMaisterError(args.err) ? args.err.code : "CRASH";
   const runStatus = args.terminal === "failed" ? "Failed" : "Crashed";
@@ -603,7 +605,7 @@ export async function markScratchCrashed(args: {
     updatedAt: endedAt,
   };
 
-  await db.transaction(async (tx: Db) => {
+  return db.transaction(async (tx: Db) => {
     // CAS-before-write: only flip a still-live scratch run to Crashed. The
     // allow-list (never `!terminal`) lets the reconcile sweep crash a Running
     // scratch run, while a duplicate call on an already-terminal row is a
@@ -611,7 +613,12 @@ export async function markScratchCrashed(args: {
     // stamps the scratch metadata.
     const rows = await tx
       .update(runs)
-      .set({ status: runStatus, endedAt, currentStepId: null })
+      .set({
+        status: runStatus,
+        endedAt,
+        currentStepId: null,
+        resumeStartedAt: null,
+      })
       .where(
         and(
           eq(runs.id, args.runId),
@@ -631,13 +638,14 @@ export async function markScratchCrashed(args: {
         "markScratchCrashed: status-guard mismatch — already terminal or gone",
       );
 
-      return;
+      return { applied: false };
     }
 
     await tx
       .update(scratchRuns)
       .set(scratchUpdate)
       .where(eq(scratchRuns.runId, args.runId));
+    await closeOpenScratchPermissions(tx, args.runId, endedAt);
     await releaseAssignmentForRun(
       tx,
       args.runId,
@@ -676,6 +684,8 @@ export async function markScratchCrashed(args: {
         },
       });
     }
+
+    return { applied: true };
   });
 }
 
@@ -693,7 +703,12 @@ export async function markScratchPromptRetryable(args: {
   db?: Db;
   runId: string;
   err: unknown;
-}): Promise<void> {
+  // The failed turn's `run_messages` row. It goes back to the queue at its own
+  // `sequence` (ADR-182 A4) when the failure is the admission yield, so the
+  // continuation worker's scratch arm sends it again oldest-first instead of
+  // the operator having to resend it.
+  messageId?: string | null;
+}): Promise<{ requeued: boolean }> {
   const db = args.db ?? getDb();
   const errorCode = isMaisterError(args.err)
     ? args.err.code
@@ -702,11 +717,14 @@ export async function markScratchPromptRetryable(args: {
     args.err instanceof Error ? args.err.message : String(args.err);
   const now = new Date();
 
-  const applied = await db.transaction(async (tx: Db) => {
+  const outcome = await db.transaction(async (tx: Db) => {
     await lockRunRows(tx, args.runId);
 
     const rows = await tx
-      .select({ dialogStatus: scratchRuns.dialogStatus })
+      .select({
+        dialogStatus: scratchRuns.dialogStatus,
+        projectId: scratchRuns.projectId,
+      })
       .from(scratchRuns)
       .where(eq(scratchRuns.runId, args.runId));
     const current = rows[0]?.dialogStatus as ScratchDialogStatus | undefined;
@@ -725,7 +743,7 @@ export async function markScratchPromptRetryable(args: {
         "scratch prompt failed but dialog already moved; retryable marking skipped",
       );
 
-      return false;
+      return null;
     }
 
     await tx
@@ -742,15 +760,62 @@ export async function markScratchPromptRetryable(args: {
       .set({ status: "Running", currentStepId: scratchStepId() })
       .where(eq(runs.id, args.runId));
 
-    return true;
+    // Only the admission yield returns its row: nothing was issued, so a
+    // re-drive mints a fresh prompt command. After an issued command's unknown
+    // or exhausted outcome, a re-send under the same logical key would only
+    // re-attach to that command, which its own recovery settles. And only a
+    // project dialog re-drives its queue: a local-package assistant turn is a
+    // `package_*` owner bound to the operator's edit-lock generation, which no
+    // background dispatcher holds (ADR-097, ADR-182 D-D5).
+    if (
+      !args.messageId ||
+      !(args.err instanceof PromptIncarnationPending) ||
+      !rows[0]?.projectId
+    )
+      return { requeued: false };
+    const moved = await tx
+      .update(runMessages)
+      .set({ delivery: "queued" })
+      .where(
+        and(
+          eq(runMessages.id, args.messageId),
+          eq(runMessages.runId, args.runId),
+          eq(runMessages.role, "user"),
+          or(
+            eq(runMessages.delivery, "prompted"),
+            isNull(runMessages.delivery),
+          ),
+        ),
+      )
+      .returning({ id: runMessages.id, sequence: runMessages.sequence });
+
+    return { requeued: moved.length > 0, sequence: moved[0]?.sequence };
   });
 
-  if (applied) {
+  if (outcome) {
     log.warn(
-      { runId: args.runId, errorCode, errorMessage },
+      {
+        runId: args.runId,
+        errorCode,
+        errorMessage,
+        messageId: args.messageId ?? null,
+        requeued: outcome.requeued,
+      },
       "scratch prompt failed after message persistence; dialog left retryable",
     );
+    if (outcome.requeued)
+      log.info(
+        {
+          runId: args.runId,
+          messageId: args.messageId,
+          sequence: outcome.sequence,
+          errorCode,
+        },
+        "scratch-message-returned-to-queue",
+      );
   }
+
+  return { requeued: outcome?.requeued ?? false };
 }
 
 // Phase 6 (FR-F1/F2): the staged launch. Runs every precondition up to the
@@ -940,6 +1005,7 @@ export async function* launchScratchRunStaged(
         flowRevisionId: null,
         createdByUserId: args.userId,
         startedAt: now,
+        resumeStartedAt: now,
       });
       // M42 (ADR-114): a scratch run is a single-`default`-session run.
       await tx.insert(runSessions).values({
@@ -1263,10 +1329,17 @@ export async function* launchScratchRunStaged(
       planMode: policy.planMode,
     });
   } catch (err) {
-    // ADR-166 E-EH-11: a fenced turn belongs to a superseded generation — the
-    // run and its dialog are that driver's to settle; write nothing.
-    if (isFencedError(err)) {
-      log.warn({ runId }, "driver-yielded");
+    // ADR-166 E-EH-11: a fenced, superseded or owner-retained turn belongs to
+    // another owner — the run and its dialog are that owner's to settle; write
+    // nothing.
+    if (isYieldedScratchTurn(err)) {
+      log.warn(
+        {
+          runId,
+          reason: isMaisterError(err) ? err.details?.reason : undefined,
+        },
+        "driver-yielded",
+      );
       throw err;
     }
     if (
@@ -1275,7 +1348,12 @@ export async function* launchScratchRunStaged(
       err.code === "EXECUTOR_UNAVAILABLE"
     ) {
       noteScratchAdmissionYield(runId, err);
-      await markScratchPromptRetryable({ db, runId, err }).catch((markErr) =>
+      await markScratchPromptRetryable({
+        db,
+        runId,
+        err,
+        messageId,
+      }).catch((markErr) =>
         log.error(
           {
             runId,
@@ -1655,6 +1733,7 @@ export async function* launchLocalPackageAssistantStaged(
         flowRevisionId: null,
         createdByUserId: args.userId,
         startedAt: now,
+        resumeStartedAt: now,
       });
       // M42 (ADR-114): a local-package assistant run is single-`default`-session.
       await tx.insert(runSessions).values({
@@ -1867,10 +1946,16 @@ export async function* launchLocalPackageAssistantStaged(
       actionResult,
     });
   } catch (err) {
-    // ADR-166 E-EH-11: a fenced turn belongs to a superseded generation — no
-    // teardown, no terminal write from this driver.
-    if (isFencedError(err)) {
-      log.warn({ runId }, "driver-yielded");
+    // ADR-166 E-EH-11: a fenced, superseded or owner-retained turn belongs to
+    // another owner — no teardown, no terminal write from this driver.
+    if (isYieldedScratchTurn(err)) {
+      log.warn(
+        {
+          runId,
+          reason: isMaisterError(err) ? err.details?.reason : undefined,
+        },
+        "driver-yielded",
+      );
       throw err;
     }
     // No prompt was admitted, so no deferred exists and the live session is
@@ -2230,13 +2315,16 @@ export function wakeQueuedScratchDispatch(
  * sent message — including the same window a direct send has between that
  * commit and the prompt's admission (A4). Callers: the previous turn's
  * `afterCommit`, a steer refusal (live or folded by recovery), a send that
- * found older rows queued, and a Recover. Concurrent callers serialize on the
+ * found older rows queued, a Recover, and the agent continuation worker's
+ * scratch arm (`source: "redrive"`, the owner of a row left behind by a
+ * process death or a retryable failure). Concurrent callers serialize on the
  * locks; the loser answers `{dispatched: false}`.
  */
 export async function dispatchQueuedScratchMessages(
   db: Db,
   runId: string,
   executionHosts?: ExecutionHosts,
+  opts: { source?: "redrive" } = {},
 ): Promise<{ dispatched: boolean }> {
   const claim = await db.transaction(async (tx: Db) => {
     await lockRunRows(tx, runId);
@@ -2291,7 +2379,11 @@ export async function dispatchQueuedScratchMessages(
       .where(eq(scratchRuns.runId, runId));
     await tx
       .update(runs)
-      .set({ status: "Running", currentStepId: scratchStepId() })
+      .set({
+        status: "Running",
+        currentStepId: scratchStepId(),
+        resumeStartedAt: now,
+      })
       .where(eq(runs.id, runId));
     const [remaining] = await tx
       .select({ count: sql<number>`count(*)::int` })
@@ -2305,7 +2397,12 @@ export async function dispatchQueuedScratchMessages(
       .where(eq(scratchAttachments.messageId, oldest.id));
 
     return {
-      message: oldest as { id: string; sequence: number; content: string },
+      message: oldest as {
+        id: string;
+        sequence: number;
+        content: string;
+        createdAt: Date;
+      },
       isLocalPackageAssistant: !owner?.projectId,
       hostSessionId: activeSession.hostSessionId as string,
       capabilityAgent: activeSession.capabilityAgent ?? null,
@@ -2339,8 +2436,13 @@ export async function dispatchQueuedScratchMessages(
       messageId: message.id,
       sequence: message.sequence,
       remaining: claim.remaining,
+      ...(opts.source === "redrive"
+        ? { queuedForMs: Date.now() - new Date(message.createdAt).getTime() }
+        : {}),
     },
-    "scratch-queued-message-dispatched",
+    opts.source === "redrive"
+      ? "scratch-queued-message-redriven"
+      : "scratch-queued-message-dispatched",
   );
   const execution = await scratchExecution(db, runId, executionHosts);
   const prompt = normalizeScratchPrompt(
@@ -2367,6 +2469,7 @@ export async function dispatchQueuedScratchMessages(
     await failScratchMessageTurn({
       db,
       runId,
+      messageId: message.id,
       hostSessionId: claim.hostSessionId,
       isLocalPackageAssistant: claim.isLocalPackageAssistant,
       err,
@@ -2378,36 +2481,48 @@ export async function dispatchQueuedScratchMessages(
 }
 
 /** The shared failure path of a scratch message turn (sent directly or
- * dispatched from the queue). The caller rethrows. */
-async function failScratchMessageTurn(args: {
+ * dispatched from the queue). `requeued` says the retryable failure returned
+ * the message to the queue, where the continuation worker's scratch arm
+ * re-drives it; otherwise the caller rethrows. */
+export async function failScratchMessageTurn(args: {
   db: Db;
   runId: string;
+  messageId: string;
   hostSessionId: string;
   isLocalPackageAssistant: boolean;
   err: unknown;
-}): Promise<void> {
+}): Promise<{ requeued: boolean }> {
   const { db, runId, err } = args;
 
-  // ADR-166 E-EH-11: a fenced turn belongs to a superseded generation — no
-  // teardown, no terminal write from this driver.
-  if (isFencedError(err)) {
-    log.warn({ runId }, "driver-yielded");
+  // ADR-166 E-EH-11: a fenced, superseded or owner-retained turn belongs to
+  // another owner — no teardown, no terminal write from this driver.
+  if (isYieldedScratchTurn(err)) {
+    log.warn(
+      { runId, reason: isMaisterError(err) ? err.details?.reason : undefined },
+      "driver-yielded",
+    );
 
-    return;
+    return { requeued: false };
   }
   if (isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE") {
     noteScratchAdmissionYield(runId, err);
-    await markScratchPromptRetryable({ db, runId, err }).catch((markErr) =>
+
+    return markScratchPromptRetryable({
+      db,
+      runId,
+      err,
+      messageId: args.messageId,
+    }).catch((markErr) => {
       log.error(
         {
           runId,
           markErr: markErr instanceof Error ? markErr.message : String(markErr),
         },
         "failed to mark scratch message prompt retryable",
-      ),
-    );
+      );
 
-    return;
+      return { requeued: false };
+    });
   }
 
   // ADR-097: a local-package assistant turn failure explicitly releases any
@@ -2436,6 +2551,8 @@ async function failScratchMessageTurn(args: {
       "failed to mark scratch message prompt failure",
     ),
   );
+
+  return { requeued: false };
 }
 
 async function appendScratchUserMessage(args: {
@@ -2613,7 +2730,11 @@ async function appendScratchUserMessage(args: {
           .where(eq(scratchRuns.runId, args.runId));
         await tx
           .update(runs)
-          .set({ status: "Running", currentStepId: scratchStepId() })
+          .set({
+            status: "Running",
+            currentStepId: scratchStepId(),
+            resumeStartedAt: now,
+          })
           .where(eq(runs.id, args.runId));
       } else {
         // D-D2: the dialog status is not touched — the running turn (or the
@@ -2756,13 +2877,24 @@ export async function sendScratchUserMessage(args: {
       delivery: "prompted",
     });
   } catch (err) {
-    await failScratchMessageTurn({
+    const { requeued } = await failScratchMessageTurn({
       db,
       runId: args.runId,
+      messageId: appended.messageId,
       hostSessionId: appended.hostSessionId,
       isLocalPackageAssistant: appended.isLocalPackageAssistant,
       err,
     });
+
+    // The message is durable and back in the queue; answering a transport
+    // error here would invite the operator to send it twice.
+    if (requeued)
+      return messageResponse({
+        messageId: appended.messageId,
+        sequence: appended.sequence,
+        dialogStatus: await readScratchDialogStatus(db, args.runId),
+        delivery: "queued",
+      });
     throw err;
   }
 }
@@ -2856,10 +2988,16 @@ export async function sendLocalPackageAssistantMessage(args: {
       actionResult,
     });
   } catch (err) {
-    // ADR-166 E-EH-11: a fenced turn belongs to a superseded generation — no
-    // teardown, no terminal write from this driver.
-    if (isFencedError(err)) {
-      log.warn({ runId: args.runId }, "driver-yielded");
+    // ADR-166 E-EH-11: a fenced, superseded or owner-retained turn belongs to
+    // another owner — no teardown, no terminal write from this driver.
+    if (isYieldedScratchTurn(err)) {
+      log.warn(
+        {
+          runId: args.runId,
+          reason: isMaisterError(err) ? err.details?.reason : undefined,
+        },
+        "driver-yielded",
+      );
       throw err;
     }
     if (isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE") {

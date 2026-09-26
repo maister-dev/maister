@@ -71,6 +71,7 @@ const {
   hitlRequests,
   nodeAttempts,
   projects,
+  runMessages,
   runs,
   runSyncAttempts,
   tasks,
@@ -987,6 +988,48 @@ async function latestAttemptStartedAt(
   return rows[0]?.startedAt ?? null;
 }
 
+// A scratch dialog has no node ledger: every turn it starts is a user row, so the
+// newest one is when the dialog last asked its host for work.
+async function latestScratchMessageAt(
+  db: Db,
+  runId: string,
+): Promise<Date | null> {
+  const rows = await db
+    .select({ createdAt: runMessages.createdAt })
+    .from(runMessages)
+    .where(and(eq(runMessages.runId, runId), eq(runMessages.role, "user")))
+    .orderBy(desc(runMessages.createdAt))
+    .limit(1);
+
+  return rows[0]?.createdAt ?? null;
+}
+
+type GraceAnchor = {
+  at: Date | null;
+  source: "started_at" | "run_messages" | "node_attempts";
+};
+
+async function resolveGraceAnchor(
+  db: Db,
+  cand: { runId: string; runKind: string; runStartedAt: Date | null },
+): Promise<GraceAnchor> {
+  if (cand.runKind === "agent") {
+    return { at: cand.runStartedAt, source: "started_at" };
+  }
+  if (cand.runKind === "scratch") {
+    const at = await latestScratchMessageAt(db, cand.runId);
+
+    return at
+      ? { at, source: "run_messages" }
+      : { at: cand.runStartedAt, source: "started_at" };
+  }
+
+  return {
+    at: await latestAttemptStartedAt(db, cand.runId),
+    source: "node_attempts",
+  };
+}
+
 // M36 (ADR-095 T7.1 / ADR-097): the SETTLED child statuses an orchestrator no
 // longer actively waits on — terminal OR Review (a diff awaiting promote/rework).
 // A parked orchestrator with only settled children is woken by run.review/
@@ -1719,13 +1762,27 @@ export async function runReconcileSweep(
             currentStepId: cand.currentStepId,
           });
 
-    // Agent runs (and project-less assistant scratch runs) have no node_attempts
-    // ledger — anchor the grace window on the run's own startedAt so a
-    // just-spawned session is never crashed before it registers.
-    const attemptStartedAt =
-      cand.runKind === "agent" || cand.projectId == null
-        ? cand.runStartedAt
-        : await latestAttemptStartedAt(db, cand.runId);
+    // Agent runs anchor the grace window on the run's own startedAt so a
+    // just-spawned session is never crashed before it registers; a scratch run
+    // (project or project-less) on its newest user message, because a dialog
+    // re-asks its host at every turn and a Recover — both far past startedAt.
+    // `resume_started_at`, written at every scratch host effect, is folded in
+    // by the classifier for every kind.
+    const anchor = await resolveGraceAnchor(db, cand);
+    const attemptStartedAt = anchor.at;
+
+    if (!live) {
+      log.debug(
+        {
+          runId: cand.runId,
+          runKind: cand.runKind,
+          source: anchor.source,
+          anchorAt: anchor.at?.toISOString() ?? null,
+          resumeStartedAt: cand.resumeStartedAt?.toISOString() ?? null,
+        },
+        "reconcile-anchor-resolved",
+      );
+    }
 
     // ADR-177. Resolved HERE, beside the `crashRecoverPending` computation, so
     // it inherits this loop's PER_PASS_CONCURRENCY and needs no bound of its
@@ -2010,11 +2067,23 @@ export async function runReconcileSweep(
             "@/lib/scratch-runs/service"
           );
 
-          await markScratchCrashed({
+          const { applied } = await markScratchCrashed({
             db,
             runId: cand.runId,
             err: new MaisterError("CRASH", `reconcile: ${reason}`),
           });
+
+          if (!applied) {
+            // Same rule as the flow arm below: a lost CAS crashed nothing, so
+            // it neither counts nor frees a slot to promote into.
+            skipped += 1;
+            log.warn(
+              { runId: cand.runId, reason, from: cand.status },
+              "reconcile: scratch crash CAS lost — a concurrent transition moved the run; left alone",
+            );
+
+            return;
+          }
         } else {
           // Guard on the status this candidate was CLASSIFIED in — for every
           // pre-existing reason that is `Running`, unchanged; for a paused or

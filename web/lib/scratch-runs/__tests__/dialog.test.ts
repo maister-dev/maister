@@ -10,6 +10,8 @@ import {
   canSendWhileBusy,
   errorText,
   lifecycleActionsForScratchDetail,
+  queuedMessageUnsendable,
+  recoverErrorText,
 } from "@/lib/scratch-runs/dialog";
 
 function detail(over: {
@@ -69,16 +71,60 @@ describe("scratch dialog status helpers", () => {
     expect(canSendWhileBusy("Crashed")).toBe(false);
   });
 
-  it("canRecover only for Crashed", () => {
-    expect(canRecover("Crashed")).toBe(true);
-    expect(canRecover("WaitingForUser")).toBe(false);
+  it("canRecover only when the dialog AND the run are Crashed (ADR-175 2026-09-26)", () => {
+    expect(canRecover("Crashed", "Crashed")).toBe(true);
+    expect(canRecover("WaitingForUser", "Running")).toBe(false);
+    // A budget stop keeps a Crashed dialog under a Failed run — not recoverable.
+    expect(canRecover("Crashed", "Failed")).toBe(false);
+    expect(canRecover("Crashed", undefined)).toBe(false);
   });
 
-  it("canCompose for WaitingForUser or Crashed", () => {
-    expect(canCompose("WaitingForUser")).toBe(true);
-    expect(canCompose("Crashed")).toBe(true);
-    expect(canCompose("Running")).toBe(false);
-    expect(canCompose("Done")).toBe(false);
+  it("canCompose for WaitingForUser, or a Crashed dialog on a Crashed run", () => {
+    expect(canCompose("WaitingForUser", "Running")).toBe(true);
+    expect(canCompose("Crashed", "Crashed")).toBe(true);
+    expect(canCompose("Crashed", "Failed")).toBe(false);
+    expect(canCompose("Running", "Running")).toBe(false);
+    expect(canCompose("Done", "Done")).toBe(false);
+  });
+
+  it("a queued row is unsendable once the dialog ended or the run Failed", () => {
+    expect(queuedMessageUnsendable("Review", "Review")).toBe(true);
+    expect(queuedMessageUnsendable("Done", "Done")).toBe(true);
+    expect(queuedMessageUnsendable("Abandoned", "Abandoned")).toBe(true);
+    expect(queuedMessageUnsendable("Crashed", "Failed")).toBe(true);
+    // Recover sends a crashed run's queue first — still "Queued".
+    expect(queuedMessageUnsendable("Crashed", "Crashed")).toBe(false);
+    expect(queuedMessageUnsendable("WaitingForUser", "Running")).toBe(false);
+    expect(queuedMessageUnsendable("Running", "Running")).toBe(false);
+  });
+});
+
+describe("recoverErrorText", () => {
+  it("names the refusal by the run status the route observed", () => {
+    const refusal = (status: string, next?: string) => ({
+      code: "CONFLICT",
+      details: { reason: "scratch_not_recoverable", status, next },
+    });
+
+    expect(recoverErrorText(refusal("Failed"))).toBe("recoverRefused.Failed");
+    expect(recoverErrorText(refusal("NeedsInputIdle", "respond"))).toBe(
+      "recoverRefused.NeedsInputIdle",
+    );
+    expect(recoverErrorText(refusal("Running"))).toBe("recoverRefused.Live");
+    expect(recoverErrorText(refusal("NeedsInput"))).toBe("recoverRefused.Live");
+  });
+
+  it("falls back to the generic copy for every other error", () => {
+    expect(recoverErrorText(null)).toBe("errorGeneric");
+    expect(
+      recoverErrorText({ code: "CONFLICT", details: { reason: "busy" } }),
+    ).toBe("errorGeneric");
+    expect(
+      recoverErrorText({
+        code: "PRECONDITION",
+        details: { reason: "scratch_not_recoverable", status: "Failed" },
+      }),
+    ).toBe("errorGeneric");
   });
 });
 

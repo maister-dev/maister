@@ -723,6 +723,191 @@ describe("runReconcileSweep (integration)", () => {
     expect(runFlow).not.toHaveBeenCalled();
   }, 60_000);
 
+  // ADR-175 2026-09-26 (T1.1 RED A1): a scratch run anchors the grace window on
+  // its newest user message and on `resume_started_at`, written at every host
+  // effect. On master a PROJECT scratch run read the node-attempt ledger it
+  // never has, so a dialog whose session was still binding crashed on the
+  // first tick.
+  describe("scratch grace anchor", () => {
+    async function seedScratch(opts: {
+      userMessageAt?: Date;
+      resumeStartedAt?: Date | null;
+      startedAt?: Date;
+      dialogStatus?: string;
+    }): Promise<string> {
+      const runId = await seedRun({
+        runKind: "scratch",
+        currentStepId: "dialog",
+        acpSessionId: "acp-scratch",
+        resumeStartedAt: opts.resumeStartedAt ?? null,
+        startedAt: opts.startedAt ?? new Date(Date.now() - 60 * 60_000),
+      });
+
+      await db.insert(schema.scratchRuns).values({
+        runId,
+        projectId,
+        initialPrompt: "hello",
+        baseBranch: "main",
+        baseCommit: "deadbeef",
+        dialogStatus: opts.dialogStatus ?? "WaitingForUser",
+        createdByUserId: userId,
+      });
+      if (opts.userMessageAt)
+        await db.insert(schema.runMessages).values({
+          id: randomUUID(),
+          runId,
+          sequence: 1,
+          role: "user",
+          content: "hello",
+          createdAt: opts.userMessageAt,
+        });
+      await seedWorkspace(runId, `/worktrees/scratch-${runId}`);
+
+      return runId;
+    }
+
+    async function sweep(runId: string) {
+      const { opts } = await makeOpts({
+        worktreePaths: [`/worktrees/scratch-${runId}`],
+        liveSessions: [],
+      });
+
+      return runReconcileSweep(opts);
+    }
+
+    it("skips a scratch dialog whose newest user message is inside the grace window (its create still binding)", async () => {
+      const runId = await seedScratch({
+        dialogStatus: "Starting",
+        userMessageAt: new Date(),
+      });
+
+      const summary = await sweep(runId);
+
+      expect((await readRun(runId)).status).toBe("Running");
+      expect(summary.crashed).toBe(0);
+      expect(summary.skipped).toBeGreaterThanOrEqual(1);
+    }, 60_000);
+
+    it("skips a scratch dialog whose Recover / dispatch stamped resume_started_at inside the grace window", async () => {
+      const runId = await seedScratch({
+        userMessageAt: new Date(Date.now() - 60 * 60_000),
+        resumeStartedAt: new Date(),
+      });
+
+      const summary = await sweep(runId);
+
+      expect((await readRun(runId)).status).toBe("Running");
+      expect(summary.crashed).toBe(0);
+    }, 60_000);
+
+    it("crashes a scratch dialog whose session is gone past grace, through markScratchCrashed, and keeps it recoverable", async () => {
+      const runId = await seedScratch({
+        userMessageAt: new Date(Date.now() - 60 * 60_000),
+      });
+
+      const summary = await sweep(runId);
+      const [dialog] = await db
+        .select()
+        .from(schema.scratchRuns)
+        .where(eq(schema.scratchRuns.runId, runId));
+      const [session] = await db
+        .select()
+        .from(schema.runSessions)
+        .where(eq(schema.runSessions.runId, runId));
+
+      expect(summary.crashed).toBe(1);
+      expect(await readRun(runId)).toMatchObject({
+        status: "Crashed",
+        resumeStartedAt: null,
+      });
+      expect(dialog.dialogStatus).toBe("Crashed");
+      // The resume handle Recover reads survives the crash.
+      expect(session.acpSessionId).toBe("acp-scratch");
+    }, 60_000);
+
+    it("anchors a project-less assistant dialog on its newest user message too", async () => {
+      const lpId = randomUUID();
+
+      await pool.query(
+        `INSERT INTO "local_packages" ("id", "name", "slug", "working_dir") VALUES ($1, 'Recon LP', $2, '/tmp/recon-lp')`,
+        [lpId, `recon-lp-${randomUUID().slice(0, 8)}`],
+      );
+      const fresh = randomUUID();
+      const stale = randomUUID();
+
+      for (const [runId, messageAt] of [
+        [fresh, new Date()],
+        [stale, new Date(Date.now() - 60 * 60_000)],
+      ] as const) {
+        // Launched long ago: `started_at` alone would crash both.
+        await pool.query(
+          `INSERT INTO "runs" ("id", "run_kind", "local_package_id", "project_id", "task_id", "flow_version", "flow_revision", "status", "current_step_id", "started_at")
+           VALUES ($1, 'scratch', $2, NULL, NULL, 'scratch', 'manual', 'Running', 'dialog', $3)`,
+          [runId, lpId, new Date(Date.now() - 60 * 60_000)],
+        );
+        await db.insert(schema.runSessions).values({
+          id: randomUUID(),
+          runId,
+          sessionName: "default",
+          runnerId: executorId,
+          capabilityAgent: "claude",
+          runnerSnapshot: testRunnerSnapshot(executorId),
+          acpSessionId: `acp-${runId}`,
+        });
+        await db.insert(schema.runMessages).values({
+          id: randomUUID(),
+          runId,
+          sequence: 1,
+          role: "user",
+          content: "hi",
+          createdAt: messageAt,
+        });
+      }
+
+      const { opts } = await makeOpts({ worktreePaths: [], liveSessions: [] });
+
+      await runReconcileSweep(opts);
+
+      expect((await readRun(fresh)).status).toBe("Running");
+      expect((await readRun(stale)).status).toBe("Crashed");
+      await pool.query(`DELETE FROM "local_packages" WHERE "id" = $1`, [lpId]);
+    }, 60_000);
+
+    // D-A6: a crash CAS the run moved out from under neither counts nor
+    // promotes — the flow arm's rule (F1 below), now the scratch arm's too.
+    it("does not count a scratch crash whose CAS a concurrent terminal won", async () => {
+      const runId = await seedScratch({
+        userMessageAt: new Date(Date.now() - 60 * 60_000),
+      });
+      const { opts } = await makeOpts({ worktreePaths: [], liveSessions: [] });
+      // listWorktrees runs AFTER candidate load and BEFORE classification —
+      // the deterministic slot for a concurrent terminal (a budget stop).
+      const listWorktrees = vi.fn(async (): Promise<WorktreeInfo[]> => {
+        await db
+          .update(runs)
+          .set({ status: "Failed" })
+          .where(eq(runs.id, runId));
+
+        return [
+          {
+            path: `/worktrees/scratch-${runId}`,
+            branch: "b",
+            head: "h",
+            bare: false,
+            locked: false,
+            prunable: false,
+          },
+        ];
+      });
+
+      const summary = await runReconcileSweep({ ...opts, listWorktrees });
+
+      expect((await readRun(runId)).status).toBe("Failed");
+      expect(summary.crashed).toBe(0);
+      expect(summary.skipped).toBe(1);
+    }, 60_000);
+  });
+
   it("skips an in-flight recover within grace (resumeStartedAt = now) — not crashed", async () => {
     const recovering = await seedRun({
       status: "Running",
@@ -2191,10 +2376,13 @@ describe("runReconcileSweep — evidence-first crash classification (ADR-177)", 
   }, 60_000);
 
   it("RED 5c: a SCRATCH run with a settled turn_lost command keeps its own arm — the evidence probe is flow-only", async () => {
+    // Past the grace window: a scratch run anchors grace on its own launch /
+    // newest user message (ADR-175 2026-09-26), never on a node attempt.
     const runId = await seedRun({
       runKind: "scratch",
       acpSessionId: null,
       currentStepId: "dialog",
+      startedAt: new Date(Date.now() - 10 * 60_000),
     });
 
     await seedWorkspace(runId, "/worktrees/scratch-lost");

@@ -1412,8 +1412,129 @@ async function handlePermissionResponse(
     );
   };
 
+  // A scratch run parked by the host's permission cap (dialog still
+  // `NeedsInput`). The flow-shaped `resumeRun` cannot drive it (no node, no
+  // flow pool claim, no permission delivery to a dialog), so it has its own
+  // claim — the one the freed-slot gate also uses — then respawns the session
+  // with `session/resume` and re-prompts the interrupted turn; the scratch
+  // permission handler answers the re-raised request from the stored row.
+  const runScratchIdleResume = async (): Promise<NextResponse> => {
+    const { claimScratchIdleResume, driveScratchIdleResume } = await import(
+      "@/lib/scratch-runs/idle-resume"
+    );
+    const retryable = (err: unknown): NextResponse => {
+      log.warn(
+        {
+          runId,
+          hitlRequestId,
+          branch: "scratch-idle",
+          phase: "resume-retryable",
+          code: isMaisterError(err) ? err.code : "UNKNOWN",
+          details: { reason: "delivery_unavailable" },
+          latencyMs: Date.now() - startedAt,
+        },
+        "scratch idle permission resume unavailable",
+      );
+
+      return NextResponse.json(
+        {
+          code: "EXECUTOR_UNAVAILABLE",
+          message:
+            "Your answer is saved; delivery is pending. Retry delivery to send it.",
+          details: { reason: "delivery_unavailable" },
+          terminal: false,
+        },
+        { status: 503 },
+      );
+    };
+    let placementHost: Awaited<ReturnType<typeof localHost>>;
+
+    try {
+      placementHost = await localHost({
+        db,
+        transport: args.executionHosts.transport,
+      });
+    } catch (err) {
+      if (!isMaisterError(err) || err.code !== "EXECUTOR_UNAVAILABLE")
+        throw err;
+
+      return retryable(err);
+    }
+    const claimed = await db.transaction(async (tx: any) => {
+      await takeSchedulerLock(tx);
+      const claim = await claimScratchIdleResume(tx, runId, {
+        host: placementHost,
+      });
+
+      // A claimed resume's 202 is audited with the respawn it depends on.
+      if (claim.outcome !== "claimed") await args.recordSuccessAudit?.(tx, 202);
+
+      return claim;
+    });
+
+    if (claimed.outcome !== "claimed") {
+      log.info(
+        {
+          runId,
+          hitlRequestId,
+          branch: "scratch-idle",
+          phase: claimed.outcome === "queued" ? "resume-queued" : "claim-race",
+          latencyMs: Date.now() - startedAt,
+        },
+        claimed.outcome === "queued"
+          ? "permission stored; scratch resume awaits a free slot"
+          : "concurrent scratch resume in progress — returning 202",
+      );
+
+      return NextResponse.json(
+        {
+          ok: true,
+          runStatus:
+            claimed.outcome === "queued" ? "NeedsInputIdle" : "Running",
+          state: "resume-in-progress",
+        },
+        { status: 202 },
+      );
+    }
+    try {
+      await driveScratchIdleResume({
+        db,
+        hosts: args.executionHosts,
+        runId,
+        assignmentId: claimed.assignmentId,
+        recordSuccessAudit: async (tx: any) => {
+          await args.recordSuccessAudit?.(tx, 202);
+        },
+      });
+    } catch (err) {
+      if (isFencedError(err)) throw err;
+      if (isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE")
+        return retryable(err);
+      throw err;
+    }
+    log.info(
+      {
+        runId,
+        hitlRequestId,
+        branch: "scratch-idle",
+        phase: "resume-scheduled",
+        latencyMs: Date.now() - startedAt,
+      },
+      "permission stored; scratch session resumed — auto-deliver async",
+    );
+
+    return NextResponse.json(
+      { ok: true, runStatus: "Running", state: "resume-in-progress" },
+      { status: 202 },
+    );
+  };
+
   const runIdleResumeForKind = (): Promise<NextResponse> =>
-    runRow.runKind === "agent" ? runAgentIdleResume() : runIdleResume();
+    runRow.runKind === "agent"
+      ? runAgentIdleResume()
+      : runRow.runKind === "scratch"
+        ? runScratchIdleResume()
+        : runIdleResume();
 
   // M8 T10 / D8: NeedsInputIdle branch. The intent is now in
   // hitl_requests.response (Phase 1). There is no live supervisor

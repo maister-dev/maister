@@ -2626,12 +2626,13 @@ row per message) and every other recorded dispatch prompt
 (`prompt_dispatch_key = agent_turn:<variant>:<turnId>:<ordinal>`,
 `delivery = 'prompted'`). NULL on rows written before
 `0180`, on non-user rows, and on a scratch dialog's launch prompt (it is the
-launch turn itself, never queued or steered) until that prompt fails
-retryably. **(Implemented — ADR-182 A4 closed 2026-09-26)** A retryable
-failure of a scratch turn returns its row to the queue in the transaction that
-sets the dialog `WaitingForUser`: `prompted → queued`, and the launch row
-`NULL → queued`, keeping its `sequence`; the agent continuation worker's
-scratch arm re-drives it. A definitive failure leaves the row `prompted`. `run_messages_queued_idx` (partial, `(run_id,
+launch turn itself, never queued or steered) until that prompt yields.
+**(Implemented — ADR-182 A4 closed 2026-09-26)** A project scratch turn whose
+prompt yields before admission (`PromptIncarnationPending`, no command issued)
+returns its row to the queue in the transaction that sets the dialog
+`WaitingForUser`: `prompted → queued`, and the launch row `NULL → queued`,
+keeping its `sequence`; the agent continuation worker's scratch arm re-drives
+it. Any other failure leaves the row `prompted`. `run_messages_queued_idx` (partial, `(run_id,
 sequence) WHERE delivery = 'queued'`) serves the FIFO dispatcher;
 `run_messages_steer_command_uq` (partial unique on `steer_command_id`) lets
 recovery find the scratch row by its steer command.
