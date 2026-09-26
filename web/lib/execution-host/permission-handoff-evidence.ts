@@ -7,6 +7,10 @@ import type { CommandReceipt } from "./contracts";
 import { and, eq, sql } from "drizzle-orm";
 
 import { assertTerminalEventConfirmed } from "./prompt-owners";
+import {
+  HOST_PRESSURE_REFUSAL_REASON,
+  isHostPressureFailure,
+} from "./host-pressure";
 
 import { executionEvents } from "@/lib/db/schema";
 
@@ -46,12 +50,14 @@ export function isRejectedPermissionInputReceipt(
   );
 }
 
-/** A `session.input` the host REFUSED with a definitive 503 — typically the
- * unknown-session refusal once a parked session's registry entry aged out.
- * The command never reached a deferred, so the delivery intent that names it
- * is void: the operator's answer is still undelivered and only a fresh input
- * can carry it. A network failure or an unknown outcome is NOT this — the
- * host may have admitted the command — and keeps its intent.
+/** A `session.input` the host REFUSED definitively — a 503 (typically the
+ * unknown-session refusal once a parked session's registry entry aged out), or
+ * (ADR-183) its outbox at the HARD bound (`event_outbox_backpressure`, the
+ * admission refusal that stores no receipt). The command never reached a
+ * deferred, so the delivery intent that names it is void: the operator's
+ * answer is still undelivered and only a fresh input can carry it. A network
+ * failure or an unknown outcome is NOT this — the host may have admitted the
+ * command — and keeps its intent.
  */
 export function isRefusedPermissionDelivery(
   command: ExecutionCommand,
@@ -63,8 +69,10 @@ export function isRefusedPermissionDelivery(
   return (
     command.kind === "session.input" &&
     command.state === "failed" &&
-    command.lastError?.code === "EXECUTOR_UNAVAILABLE" &&
-    details?.httpStatus === 503
+    ((command.lastError?.code === "EXECUTOR_UNAVAILABLE" &&
+      details?.httpStatus === 503) ||
+      (command.lastError?.code === "PRECONDITION" &&
+        details?.reason === HOST_PRESSURE_REFUSAL_REASON))
   );
 }
 
@@ -92,6 +100,20 @@ export function isPermissionResultCommand(
       (command.state === "failed" &&
         (command.lastError?.code === "ACP_PROTOCOL" ||
           command.lastError?.code === "EXECUTOR_UNAVAILABLE")))
+  );
+}
+
+/** ADR-183 D-M1: the host parked this prompt's session itself because the
+ * manager fell behind its outbox (`session_checkpointed`, cause
+ * `outbox_pressure`). Host-authored positive evidence, like `turn_lost`. */
+export function isHostParkedPromptRejection(
+  command: ExecutionCommand,
+): boolean {
+  return (
+    command.kind === "session.prompt" &&
+    command.state === "failed" &&
+    command.lastError?.code === "ACP_PROTOCOL" &&
+    isHostPressureFailure(command.lastError)
   );
 }
 

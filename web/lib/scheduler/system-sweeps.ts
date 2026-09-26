@@ -9,6 +9,7 @@ import type { PlainAgentDirectoryGcSummary } from "@/lib/gc/plain-agent-director
 import type { EvidenceSweepSummary } from "@/lib/evaluations/evidence/gc";
 import type { WorkspaceReconciliationSummary } from "@/lib/gc/workspace-reconciler";
 import type { PlatformStatus } from "@/types/platform-status";
+import type { HostPausedInterruptSummary } from "@/lib/services/hitl";
 import type {
   ExecutionObservabilitySummary,
   LagStreamObservation,
@@ -130,9 +131,10 @@ export type SystemSweepSummary = GcCompatibilitySummary & {
   pressure: HostPressureSweepSummary | null;
 };
 
-export type HostPressureSweepSummary = HostPressureObservation & {
-  promoted: number;
-};
+export type HostPressureSweepSummary = HostPressureObservation &
+  HostPausedInterruptSummary & {
+    promoted: number;
+  };
 
 type PromoteDispatch = Pick<
   PromoteNextPendingOptions,
@@ -650,9 +652,17 @@ export async function applyHostPressureSample(
   });
 
   if (!observed) return null;
+  // ADR-183 D-M2: host-paused nodes resume first (the clear is their signal),
+  // then the queued launches take whatever slots remain.
+  const { resumeHostPausedInterrupts } = await import("@/lib/services/hitl");
+  const interrupts = await resumeHostPausedInterrupts(getDb(), {
+    autoResume:
+      observed.transition === "clear" || observed.transition === "cleared",
+  });
 
   return {
     ...observed,
+    ...interrupts,
     promoted:
       observed.transition === "cleared"
         ? await promoteQueuedAfterClear(dispatch)

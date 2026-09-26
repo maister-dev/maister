@@ -34,6 +34,7 @@ import {
 } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
 import { respondToHitl, type HitlActor } from "@/lib/services/hitl";
+import { runFlow } from "@/lib/flows/runner";
 import { seedGraphRun } from "@/test-support/graph-run-seed";
 import {
   startMainPostgresTestDb,
@@ -359,7 +360,54 @@ describe("respondToHitl node_interrupt integration", () => {
 
     expect(attempt.status).toBe("NeedsInput");
     expect(attempt.decision).toBeNull();
-    expect((await getHitl(hitlRequestId)).respondedAt).not.toBeNull();
+    const answered = await getHitl(hitlRequestId);
+
+    expect(answered.respondedAt).not.toBeNull();
+    // ADR-183: the answer carries its provenance (there is no respondedBy).
+    expect(answered.response).toEqual({
+      optionId: "resume",
+      actor: { type: "user", id: "u-1" },
+      cause: "operator",
+    });
+    // A NeedsInput run still holds its generation: the driver resumes it.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(vi.mocked(runFlow)).toHaveBeenCalledWith(runId);
+  });
+
+  // ADR-183 N11 / C22: the keep-alive idled the run while the operator was
+  // deciding. The claim mints the next generation (markResumed) and rebinds
+  // the parked attempt to it — a bare scheduleResume would no-op on an idle
+  // run, and a released generation could not admit the resumed prompt.
+  it("resume of an IDLE interrupt mints the next generation and rebinds the parked attempt", async () => {
+    const projectId = await seedProject("ni-resume-idle");
+    const { runId, hitlRequestId, parkedAttemptId } =
+      await seedParkedRun(projectId);
+
+    await (db as any)
+      .update(schema.runs)
+      .set({ status: "NeedsInputIdle", checkpointAt: new Date() })
+      .where(eq(schema.runs.id, runId));
+
+    const res = await respondToHitl(
+      { runId, hitlRequestId, body: { optionId: "resume" } },
+      userActor,
+      { db, executionHosts: hosts },
+    );
+
+    expect(res.status).toBe(202);
+    const [run] = await (db as any)
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.id, runId));
+
+    expect(run.status).toBe("NeedsInput");
+    expect(run.executionAssignmentId).not.toBeNull();
+    const attempt = await getAttempt(parkedAttemptId);
+
+    expect(attempt.status).toBe("NeedsInput");
+    expect(attempt.executionAssignmentId).toBe(run.executionAssignmentId);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(vi.mocked(runFlow)).toHaveBeenCalledWith(runId);
   });
 
   // CB3: two operators answering the same HITL — the already-delivered branch
@@ -604,6 +652,50 @@ describe("node_interrupt — an answer after the idle sweep still wakes the run"
     expect(run.checkpointAt).toBeNull();
     // The decision itself still landed.
     expect((await getAttempt(parkedAttemptId)).status).toBe("Reworked");
+  });
+
+  // ADR-183 T4.0: `claimGraphResumeSlot` reads the fenced cap. While the host
+  // is pressured the answer lands and the claim defers — the run stays idle
+  // with its resume queued for the clear's `promoteNextPending`.
+  it("defers the un-idle while the host is pressured", async () => {
+    const projectId = await seedProject("ni-idle-fenced");
+    const { runId, hitlRequestId, parkedAttemptId } =
+      await seedParkedRun(projectId);
+    const [host] = await (db as any)
+      .select({ id: schema.executionHosts.id })
+      .from(schema.executionHosts)
+      .where(eq(schema.executionHosts.kind, "local_direct"));
+
+    await (db as any)
+      .update(schema.runs)
+      .set({
+        status: "NeedsInputIdle",
+        checkpointAt: new Date(),
+        keepaliveUntil: null,
+      })
+      .where(eq(schema.runs.id, runId));
+    await (db as any)
+      .insert(schema.executionHostPressure)
+      .values({ executionHostId: host.id, pressuredSince: new Date() });
+
+    try {
+      const res = await respondToHitl(
+        { runId, hitlRequestId, body: { optionId: "restart_node" } },
+        userActor,
+        { db, executionHosts: hosts },
+      );
+
+      expect(res.status).toBe(202);
+      const run = await getRun(runId);
+
+      expect(run.status).toBe("NeedsInputIdle");
+      expect(run.resumeRequestedAt).not.toBeNull();
+      expect((await getAttempt(parkedAttemptId)).status).toBe("Reworked");
+    } finally {
+      await (db as any)
+        .delete(schema.executionHostPressure)
+        .where(eq(schema.executionHostPressure.executionHostId, host.id));
+    }
   });
 });
 

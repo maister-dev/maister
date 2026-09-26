@@ -41,6 +41,17 @@ function render(over: Partial<NodeInterruptControlsProps> = {}): string {
 }
 
 describe("NodeInterruptControls", () => {
+  it("ADR-183: a host-paused node says the host paused it, the operator's says you did", () => {
+    expect(render({ cause: "host_pressure" })).toContain(
+      "nodeInterrupt.hostPaused",
+    );
+    expect(render({ cause: "host_pressure" })).not.toContain(
+      "nodeInterrupt.interrupted",
+    );
+    expect(render()).toContain("nodeInterrupt.interrupted");
+    expect(render()).not.toContain("nodeInterrupt.hostPaused");
+  });
+
   it("renders the one-click default plus resume and stop", () => {
     const html = render();
 

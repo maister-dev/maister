@@ -84,6 +84,9 @@ export type ScratchDetail = {
     dialogStatus: ScratchDialogStatus;
     errorCode: string | null;
     errorMessage: string | null;
+    // ADR-183 D-M3s: set while the execution host's outbox pressure paused
+    // the dialog's last turn.
+    errorMetadata?: { cause: "host_pressure" } | null;
   };
   workspace: {
     id?: string;

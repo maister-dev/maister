@@ -79,6 +79,7 @@ let dialogStatus: ScratchDialogStatus;
 let runStatus: string;
 let recoverRefusal: string | null;
 let terminalCause: TerminalCause | null;
+let errorMetadata: { cause: "host_pressure" } | null = null;
 
 function detail(): ScratchDetail {
   return {
@@ -90,7 +91,7 @@ function detail(): ScratchDetail {
       createdByDisplayName: "Operator",
       status: runStatus,
     },
-    scratch: { dialogStatus },
+    scratch: { dialogStatus, errorMetadata },
     messages: [
       {
         id: "m-1",
@@ -156,6 +157,7 @@ beforeEach(() => {
   runStatus = "Running";
   recoverRefusal = null;
   terminalCause = null;
+  errorMetadata = null;
   vi.useFakeTimers();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal(
@@ -199,6 +201,25 @@ afterEach(() => {
   container.remove();
   vi.unstubAllGlobals();
   vi.useRealTimers();
+});
+
+describe("scratch host pause (ADR-183)", () => {
+  it("says the execution host paused the dialog while the cause is set and the dialog waits for the user", async () => {
+    const paused = () =>
+      container.querySelector('[data-testid="scratch-host-paused"]')
+        ?.textContent ?? null;
+
+    errorMetadata = { cause: "host_pressure" };
+    await refresh("WaitingForUser");
+    expect(paused()).toBe(en.scratch.hostPaused);
+    // A running turn (the operator sent again) is not paused.
+    await refresh("Running");
+    expect(paused()).toBeNull();
+    // A plain retryable failure carries no host cause.
+    errorMetadata = null;
+    await refresh("WaitingForUser");
+    expect(paused()).toBeNull();
+  });
 });
 
 describe("scratch delivery feedback (ADR-182)", () => {

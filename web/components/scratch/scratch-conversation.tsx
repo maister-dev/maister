@@ -822,6 +822,17 @@ export function ScratchConversation({
         </div>
       ) : null}
 
+      {status === "WaitingForUser" &&
+      detail?.scratch.errorMetadata?.cause === "host_pressure" ? (
+        <p
+          className="rounded-[8px] border border-amber-line bg-amber-soft px-3 py-2 text-[12.5px] text-amber"
+          data-testid="scratch-host-paused"
+          role="status"
+        >
+          {t("hostPaused")}
+        </p>
+      ) : null}
+
       <ScratchComposer
         agent={composerAgent}
         attachmentsEnabled={attachmentsEnabled}

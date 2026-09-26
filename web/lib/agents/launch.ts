@@ -30,7 +30,10 @@ import {
 import { claimAgentMessage } from "./turn-claim";
 import { OWNED_TURN_VARIANTS } from "./turn-variants";
 import { admitAgentGenerationTurn, resumeVariantFor } from "./generation-turn";
-import { settleAgentCreateFailure } from "./create-failure";
+import {
+  parkClaimedAgentTurnForHostPressure,
+  settleAgentCreateFailure,
+} from "./create-failure";
 import {
   assertAgentResumeTurn,
   findAgentPermissionResult,
@@ -53,6 +56,7 @@ import {
   sharedAgentWorktreesDirectory,
 } from "./workspace-paths";
 
+import { isHostPressuredError } from "@/lib/execution-host/host-pressure";
 import { ADMISSIBLE_PROMPT_INCARNATION_STATES } from "@/lib/execution-host/session-binding";
 import { createHitlRequest } from "@/lib/runs/hitl-create";
 import {
@@ -127,6 +131,7 @@ import {
 import {
   settleSteerCommand,
   steerRefusalReason,
+  steerRequeueKey,
   type SteerSettlement,
 } from "@/lib/execution-host/steer-settlement";
 import { cancelOpenAgentQuestionsForTaskInTransaction } from "@/lib/services/agent-question";
@@ -2363,6 +2368,21 @@ export async function sendAgentMessage(
     turn = await acceptAgentMessage(_db, childRunId, prompt, {
       requestKey: opts.requestKey,
     });
+    // ADR-183 D-M3: a message the host parked mid-turn was superseded by a
+    // successor carrying the same text; a same-key retry answers with it.
+    if (turn.state === "superseded") {
+      const [successor]: AgentTurn[] = await _db
+        .select()
+        .from(agentTurns)
+        .where(
+          and(
+            eq(agentTurns.runId, childRunId),
+            eq(agentTurns.logicalKey, steerRequeueKey(turn.id)),
+          ),
+        );
+
+      if (successor) turn = successor;
+    }
   }
   // D-C6: a same-key retry of a steer answers the row it created, or the
   // successor a refusal left behind; nothing is issued again.
@@ -3647,6 +3667,15 @@ export async function startAgentSession(
     if (agentTurn) {
       const execution = await bindAgentExecution(hosts, runId, assignmentId);
 
+      if (
+        isHostPressuredError(err) &&
+        (await parkClaimedAgentTurnForHostPressure(
+          _db,
+          execution.client,
+          agentTurn,
+        ))
+      )
+        return;
       if (await settleAgentCreateFailure(_db, execution.client, agentTurn))
         return;
       throw err;

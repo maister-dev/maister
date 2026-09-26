@@ -22070,6 +22070,7 @@ components:
         - session_ended
         - permission_not_pending
         - edit_lock_not_held
+        - event_outbox_backpressure
       description: |
         `agent_session_ended` is deprecated: it has no producer since
         2026-09-26 (a dead session answers 409 `session_ended`) and stays in the
@@ -22077,6 +22078,9 @@ components:
         refuses an answer to a PARKED local-package assistant permission whose
         launching user no longer holds the package's edit lock: resuming would
         write into a working dir nobody holds (ADR-097).
+        `event_outbox_backpressure` (503) means the execution host refused the
+        answer at its HARD outbox budget; the answer is not stored and stays
+        retryable (ADR-183).
     HitlAnswerState:
       type: string
       enum: [open, answer_stored]

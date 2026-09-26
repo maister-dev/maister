@@ -37,7 +37,10 @@ import { emitDelegatedReviewIfChild } from "@/lib/runs/delegated-review-emit";
 import { mintPlacement, releaseAssignmentForRun } from "@/lib/execution-host";
 import { gcAgeDays } from "@/lib/instance-config";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
-import { authorizeOrchestratorActionResume } from "@/lib/flows/graph/action-resume";
+import {
+  authorizeNodeInterruptResume,
+  authorizeOrchestratorActionResume,
+} from "@/lib/flows/graph/action-resume";
 import {
   authorizeNodePermissionResume,
   authorizeNodePermissionResult,
@@ -354,8 +357,10 @@ export async function markResumed(
             assignment,
             opts.permissionResult,
           );
-        else if (!(await authorizeGatePermissionResume(tx, assignment)))
+        else if (!(await authorizeGatePermissionResume(tx, assignment))) {
           await authorizeNodePermissionResume(tx, assignment);
+          await authorizeNodeInterruptResume(tx, assignment);
+        }
       }
       await opts.recordSuccessAudit?.(tx);
 

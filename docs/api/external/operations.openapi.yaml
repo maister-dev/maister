@@ -3601,7 +3601,7 @@ components:
 
     HitlRespondReason:
       type: string
-      enum: [permission_resume_in_flight, assignment_fenced, prompt_owner_deferred, prompt_owner_invariant, already_delivered, option_mismatch, not_awaiting_input, agent_session_ended, delivery_unavailable, permission_delivery_rejected, session_ended, permission_not_pending, edit_lock_not_held]
+      enum: [permission_resume_in_flight, assignment_fenced, prompt_owner_deferred, prompt_owner_invariant, already_delivered, option_mismatch, not_awaiting_input, agent_session_ended, delivery_unavailable, permission_delivery_rejected, session_ended, permission_not_pending, edit_lock_not_held, event_outbox_backpressure]
       description: |
         `agent_session_ended` is deprecated: no producer since 2026-09-26 (a
         dead session answers 409 `session_ended`); it stays for clients that

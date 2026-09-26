@@ -27,20 +27,36 @@ export async function applyPersistentAgentPark(
   tx: Db,
   runId: string,
 ): Promise<AgentParkApplication> {
+  return applyAgentPark(tx, runId);
+}
+
+/** ADR-183 D-M3: the host-pressure park is the persistent park for ANY agent
+ * run — a one-shot run parked by its host is not done, it is interrupted — and
+ * it always asks for a resume: its interrupted turn may have left no queued
+ * successor to date the request by. */
+export async function applyAgentPark(
+  tx: Db,
+  runId: string,
+  opts: { cause?: "host_pressure" } = {},
+): Promise<AgentParkApplication> {
+  const queuedSince = sql`(SELECT min(${agentTurns.createdAt}) FROM ${agentTurns}
+        WHERE ${agentTurns.runId} = ${runId} AND ${agentTurns.state} = 'queued')`;
+  const hostPark = opts.cause === "host_pressure";
   const [parked] = await tx
     .update(runs)
     .set({
       status: "NeedsInputIdle",
       checkpointAt: new Date(),
       keepaliveUntil: null,
-      resumeRequestedAt: sql`(SELECT min(${agentTurns.createdAt}) FROM ${agentTurns}
-        WHERE ${agentTurns.runId} = ${runId} AND ${agentTurns.state} = 'queued')`,
+      resumeRequestedAt: hostPark
+        ? sql`coalesce(${queuedSince}, clock_timestamp())`
+        : queuedSince,
     })
     .where(
       and(
         eq(runs.id, runId),
         eq(runs.runKind, "agent"),
-        eq(runs.persistent, true),
+        ...(hostPark ? [] : [eq(runs.persistent, true)]),
         eq(runs.status, "Running"),
       ),
     )

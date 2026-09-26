@@ -134,13 +134,80 @@ async function hitlRowsFor(runId: string): Promise<any[]> {
 }
 
 describe("escalateNodeInterrupt", () => {
+  it("ADR-183: a host park skips the checkpoint, records cause and system actor, and moves the attempt past the turn", async () => {
+    const { runId, attemptId } = await seedRunningRun("ni-host-park");
+    const checkpointSession = vi.fn(async () => ({}));
+
+    const result = await escalateNodeInterrupt({
+      db,
+      runId,
+      actor: { type: "system" },
+      cause: "host_pressure",
+      nodeAttemptId: attemptId,
+      checkpointSession,
+      supervisorSessionId: "host-session",
+    });
+
+    // The host already parked the session: the manager never checkpoints it.
+    expect(checkpointSession).not.toHaveBeenCalled();
+    // No prompt was ever admitted on this attempt: no handle, fresh resume.
+    expect(result.resumeHandle).toBe(false);
+    const [hitl] = await hitlRowsFor(runId);
+
+    expect(hitl.schema).toMatchObject({
+      kind: "node_interrupt",
+      cause: "host_pressure",
+      actor: { type: "system" },
+    });
+    expect(hitl.prompt).toContain("execution host paused");
+    const [attempt] = await (db as any)
+      .select()
+      .from(schema.nodeAttempts)
+      .where(eq(schema.nodeAttempts.id, attemptId));
+
+    expect(attempt).toMatchObject({
+      status: "NeedsInput",
+      actionPromptOrdinal: 1,
+      actionCompletion: null,
+      actionResume: null,
+    });
+    const escalated = (
+      await (db as any)
+        .select()
+        .from(schema.domainEvents)
+        .where(eq(schema.domainEvents.runId, runId))
+    ).find((event: { kind: string }) => event.kind === "run.escalated");
+
+    expect(escalated).toMatchObject({
+      actorType: "system",
+      payload: { reason: "node_interrupt", cause: "host_pressure" },
+    });
+  });
+
+  it("ADR-183: a park naming an attempt that is no longer running refuses without writing", async () => {
+    const { runId } = await seedRunningRun("ni-host-park-moved");
+
+    await expect(
+      escalateNodeInterrupt({
+        db,
+        runId,
+        actor: { type: "system" },
+        cause: "host_pressure",
+        nodeAttemptId: randomUUID(),
+      }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(await hitlRowsFor(runId)).toHaveLength(0);
+    expect((await getRun(runId)).status).toBe("Running");
+  });
+
   it("parks the run in ONE transaction with a node_interrupt HITL", async () => {
     const { runId, attemptId } = await seedRunningRun("ni-park");
 
     const result = await escalateNodeInterrupt({
       db,
       runId,
-      actorUserId: "u-1",
+      actor: { type: "user", id: "u-1" },
+      cause: "operator",
       supervisorSessionId: "sess-1",
       checkpointSession: async () => undefined,
     });
@@ -176,7 +243,8 @@ describe("escalateNodeInterrupt", () => {
       escalateNodeInterrupt({
         db,
         runId,
-        actorUserId: "u-1",
+        actor: { type: "user", id: "u-1" },
+        cause: "operator",
         supervisorSessionId: "sess-1",
         checkpointSession: async () => {
           throw new MaisterError("EXECUTOR_UNAVAILABLE", "supervisor 5xx");
@@ -197,7 +265,8 @@ describe("escalateNodeInterrupt", () => {
     await escalateNodeInterrupt({
       db,
       runId,
-      actorUserId: "u-1",
+      actor: { type: "user", id: "u-1" },
+      cause: "operator",
       supervisorSessionId: "sess-1",
       checkpointSession: async () => {
         throw new Error("session already gone");
@@ -230,7 +299,8 @@ describe("escalateNodeInterrupt", () => {
       escalateNodeInterrupt({
         db,
         runId,
-        actorUserId: "u-1",
+        actor: { type: "user", id: "u-1" },
+        cause: "operator",
         supervisorSessionId: "sess-1",
         checkpointSession: async () => undefined,
       }),
@@ -250,7 +320,8 @@ describe("escalateNodeInterrupt", () => {
         escalateNodeInterrupt({
           db,
           runId,
-          actorUserId: "u-1",
+          actor: { type: "user", id: "u-1" },
+          cause: "operator",
           supervisorSessionId: "sess-1",
           checkpointSession: async () => undefined,
         }),
@@ -270,7 +341,8 @@ describe("escalateNodeInterrupt", () => {
       escalateNodeInterrupt({
         db,
         runId,
-        actorUserId: "u-1",
+        actor: { type: "user", id: "u-1" },
+        cause: "operator",
         supervisorSessionId: "sess-1",
         checkpointSession: async () => undefined,
       }),
@@ -287,7 +359,8 @@ describe("escalateNodeInterrupt", () => {
     await escalateNodeInterrupt({
       db,
       runId,
-      actorUserId: "u-1",
+      actor: { type: "user", id: "u-1" },
+      cause: "operator",
       supervisorSessionId: "sess-1",
       checkpointSession: async () => undefined,
     });
@@ -449,7 +522,8 @@ describe("escalateNodeInterrupt — the checkpoint window is a race window", () 
       escalateNodeInterrupt({
         db,
         runId,
-        actorUserId: "u-1",
+        actor: { type: "user", id: "u-1" },
+        cause: "operator",
         supervisorSessionId: "sess-1",
         // The observed node finishes and the run moves on — still `Running`,
         // so a status-only CAS would have passed here.
@@ -490,7 +564,8 @@ describe("escalateNodeInterrupt — the checkpoint window is a race window", () 
       escalateNodeInterrupt({
         db,
         runId,
-        actorUserId: "u-1",
+        actor: { type: "user", id: "u-1" },
+        cause: "operator",
         supervisorSessionId: "sess-1",
         // Same node, new attempt: the cursor still matches, so only the
         // attempt-level CAS can catch this one.

@@ -6,6 +6,8 @@ import {
   resolveHitlErrorMessage,
   resolveUiErrorMessageKey,
 } from "@/lib/ui-error-message";
+import en from "@/messages/en.json";
+import ru from "@/messages/ru.json";
 
 describe("UI error-message resolver", () => {
   it.each([
@@ -29,6 +31,24 @@ describe("UI error-message resolver", () => {
   ])("maps known code %s to its run translation key", (code) => {
     expect(resolveUiErrorMessageKey(code)).toBe(`error.${code}`);
     expect(isMaisterErrorCode(code)).toBe(true);
+  });
+
+  it("ADR-183 P0-4: a host outbox refusal of an answer resolves its own copy, only as EXECUTOR_UNAVAILABLE", () => {
+    expect(
+      resolveHitlErrorMessage({
+        code: "EXECUTOR_UNAVAILABLE",
+        details: { reason: "event_outbox_backpressure" },
+      }),
+    ).toEqual({ key: "errorReasons.event_outbox_backpressure" });
+    expect(en.run.errorReasons.event_outbox_backpressure).toBeTruthy();
+    expect(ru.run.errorReasons.event_outbox_backpressure).toBeTruthy();
+    // The same reason under any other code is not this refusal.
+    expect(
+      resolveHitlErrorMessage({
+        code: "PRECONDITION",
+        details: { reason: "event_outbox_backpressure" },
+      }).key,
+    ).not.toBe("errorReasons.event_outbox_backpressure");
   });
 
   it("preserves the generic executor copy outside the HITL surface", () => {

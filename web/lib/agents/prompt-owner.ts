@@ -26,7 +26,15 @@ import { and, eq, inArray } from "drizzle-orm";
 import pino from "pino";
 
 import { prepareAgentRunFinalization } from "./finalization";
-import { applyPersistentAgentPark, afterPersistentAgentPark } from "./park";
+import {
+  applyAgentPark,
+  applyPersistentAgentPark,
+  afterPersistentAgentPark,
+} from "./park";
+import {
+  HOST_PARKABLE_AGENT_VARIANTS,
+  settleHostParkedAgentTurn,
+} from "./host-park-settlement";
 import { requireAgentPermissionCompletion } from "./permission";
 import {
   assertAgentResumeTurn,
@@ -68,6 +76,7 @@ import { MaisterError } from "@/lib/errors";
 import { readPromptRequest } from "@/lib/execution-host/command-request";
 import { waitForPromptCompletion } from "@/lib/execution-host/deliverer";
 import { isTurnLostError } from "@/lib/reconcile-evidence";
+import { isHostPressureFailure } from "@/lib/execution-host/host-pressure";
 
 const log = pino({
   name: "agent-prompt-owner",
@@ -509,6 +518,24 @@ export async function lockAgentOwner(
   return binding.state === "exited" || binding.state === "crashed";
 }
 
+/** ADR-183 D-M3: the host parked this turn's session — its incarnation ends
+ * `checkpointed` (or `lost`, when its create was projected after the turn's
+ * rejection applied). A live binding means the exit is not projected yet. */
+export async function lockHostParkedAgentOwner(
+  tx: Db,
+  ref: AdmittedAgentRef,
+  targetSessionId: string | null,
+  commandId: string,
+): Promise<boolean> {
+  const binding = await lockAgentBinding(tx, ref, targetSessionId, commandId);
+
+  if (!binding) return false;
+  if (binding.state === "active" || binding.state === "created")
+    throw new PromptOwnerDeferred("agent_session_teardown_pending");
+
+  return true;
+}
+
 /** Close only the completed turn's current process before workspace inspection.
  * The exact target and assignment fence also protect a concurrent replacement.
  */
@@ -662,10 +689,50 @@ export const agentPromptOwner = definePromptOwnerAdapter(
         command.id,
       );
     const [run] = await db
-      .select({ persistent: runs.persistent })
+      .select({ persistent: runs.persistent, status: runs.status })
       .from(runs)
       .where(eq(runs.id, ref.runId));
     const persistent = run?.persistent ?? false;
+
+    // ADR-183 D-M3: the host parked this turn under outbox pressure. The run
+    // is interrupted, not finished: supersede the turn (re-queueing a message
+    // as its successor) and park the run for a resume on the same ACP session.
+    // A run already paused for a permission keeps ADR-180's path.
+    if (
+      outcome.state === "failed" &&
+      isHostPressureFailure(outcome.error) &&
+      HOST_PARKABLE_AGENT_VARIANTS.has(ref.variant) &&
+      run?.status === "Running"
+    ) {
+      let application: AgentParkApplication = { parked: false };
+
+      return {
+        apply: async (tx) => {
+          if (
+            !(await lockHostParkedAgentOwner(
+              tx,
+              ref,
+              command.targetSessionId,
+              command.id,
+            ))
+          )
+            return supersedeAgentMessage(tx, ref, command.id);
+          await settleHostParkedAgentTurn(tx, {
+            runId: ref.runId,
+            turnId: ref.turnId,
+            commandId: command.id,
+          });
+          application = await applyAgentPark(tx, ref.runId, {
+            cause: "host_pressure",
+          });
+          if (!application.parked)
+            throw new PromptOwnerDeferred("agent_park_pending");
+
+          return "applied";
+        },
+        afterCommit: () => afterPersistentAgentPark(db, ref.runId, application),
+      };
+    }
 
     if (persistent && succeeded) {
       let application: AgentParkApplication = { parked: false };

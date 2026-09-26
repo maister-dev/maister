@@ -104,6 +104,10 @@ import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { escalateHookTrip } from "@/lib/runs/hook-trip";
 import { haltRuleFromEvent } from "@/lib/runs/hook-trip-rule";
 import { staleSessionBinding } from "@/lib/execution-host/session-binding";
+import {
+  HOST_PRESSURED_REASON,
+  isHostPressuredError,
+} from "@/lib/execution-host/host-pressure";
 import { PromptOwnerInvariantError } from "@/lib/execution-host/prompt-owners";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { SessionCreatePending } from "@/lib/execution-host/owned-session-create";
@@ -1736,6 +1740,9 @@ async function runNewSession(
         }
       } catch (err) {
         if (err instanceof FlowPromptContinuationPending) throw err;
+        // ADR-183: a refused admission never reached the adapter — there is no
+        // checkpoint to wait for.
+        if (isHostPressuredError(err)) throw err;
         // A checkpoint (keep-alive sweep, budget park, node interrupt) tears
         // the adapter down mid-turn; the host then answers the in-flight turn
         // with a failure ("ACP connection closed") that is NOT the step's — the
@@ -1856,6 +1863,33 @@ async function runNewSession(
         vars: {},
         durationMs: Date.now() - startedAt,
         errorCode: "STEP_CHECKPOINTED" as const,
+        acpSessionId: session.acpSessionId,
+        sessionFallback,
+      };
+    }
+
+    // ADR-183 D-M1: the host parked this session because the manager fell
+    // behind its outbox. Its exit is a checkpoint too, but no HITL owns this
+    // one — the node parks on a host-paused interrupt, so it is classified
+    // before the checkpoint-observed arm (which would idle a run nobody wakes).
+    if (nodeCompletion?.reason === HOST_PRESSURED_REASON) {
+      log.warn(
+        {
+          runId: ctx.runId,
+          stepId: ctx.stepId,
+          acpSessionId: session.acpSessionId,
+          checkpointed,
+        },
+        "step parked by execution-host outbox pressure",
+      );
+
+      return {
+        ok: false,
+        stdout: consumer.snapshot(),
+        vars: {},
+        durationMs: Date.now() - startedAt,
+        errorCode: "EXECUTOR_UNAVAILABLE" as const,
+        reason: HOST_PRESSURED_REASON,
         acpSessionId: session.acpSessionId,
         sessionFallback,
       };

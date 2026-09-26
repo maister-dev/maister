@@ -57,6 +57,33 @@ export function isHostPressuredError(err: unknown): boolean {
   );
 }
 
+// ADR-183 D-D3: the host's own park answers the interrupted prompt with this
+// token; a route or permission-cap checkpoint never mints it (it has a manager
+// owner already).
+export const HOST_PARK_REJECTION_REASON = "session_checkpointed";
+export const HOST_PARK_CAUSE = "outbox_pressure";
+
+/** A command outcome (a MaisterError or a stored `last_error`) that says the
+ * host's outbox pressure ended this turn: its own park, or a refused
+ * admission. Positive host evidence, like `turn_lost` — never inferred. */
+export function isHostPressureFailure(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const { code, details } = error as {
+    code?: unknown;
+    details?: { reason?: unknown; cause?: unknown } | null;
+  };
+
+  return (
+    (code === "ACP_PROTOCOL" &&
+      details?.reason === HOST_PARK_REJECTION_REASON &&
+      details.cause === HOST_PARK_CAUSE) ||
+    (code === "PRECONDITION" &&
+      details?.reason === HOST_PRESSURE_REFUSAL_REASON) ||
+    (code === "EXECUTOR_UNAVAILABLE" &&
+      details?.reason === HOST_PRESSURED_REASON)
+  );
+}
+
 /** Refusal writer: the refusal IS evidence of pressure, so the fence closes
  * now rather than a sweep later (W9). Idempotent; only a health sample clears. */
 export async function recordHostPressureRefusal(

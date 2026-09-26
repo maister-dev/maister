@@ -2,6 +2,8 @@
 // contract fixture, the error mapper passes reason tokens through and folds
 // FENCED into CONFLICT, and the transport layer carries no DB edge.
 
+import type { ExecutionCommand } from "@/lib/db/schema";
+
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -9,6 +11,7 @@ import { parse } from "yaml";
 import { describe, expect, it } from "vitest";
 
 import { buildEnvelope } from "@/lib/execution-host/ledger";
+import { isRefusedPermissionDelivery } from "@/lib/execution-host/permission-handoff-evidence";
 import {
   hostPressuredError,
   isHostPressuredError,
@@ -190,6 +193,39 @@ describe("T2 supervisorErrorToMaister", () => {
       false,
     );
     expect(isHostPressuredError(refusal)).toBe(false);
+  });
+
+  it("ADR-183 P0-4: a host outbox refusal of a permission input voids its delivery intent", () => {
+    const input = (lastError: Record<string, unknown>) =>
+      ({
+        kind: "session.input",
+        state: "failed",
+        lastError,
+      }) as unknown as ExecutionCommand;
+
+    expect(
+      isRefusedPermissionDelivery(
+        input({
+          code: "PRECONDITION",
+          message: "hard",
+          details: { reason: "event_outbox_backpressure", httpStatus: 409 },
+        }),
+      ),
+    ).toBe(true);
+    // The 503 refusal still counts; an unknown outcome or another 409 never.
+    expect(
+      isRefusedPermissionDelivery(
+        input({ code: "EXECUTOR_UNAVAILABLE", details: { httpStatus: 503 } }),
+      ),
+    ).toBe(true);
+    expect(
+      isRefusedPermissionDelivery(
+        input({
+          code: "PRECONDITION",
+          details: { reason: "unknown_workspace", httpStatus: 409 },
+        }),
+      ),
+    ).toBe(false);
   });
 
   it("falls back for an unknown code and a bodyless response", () => {

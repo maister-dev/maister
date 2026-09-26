@@ -40,7 +40,11 @@ import {
 // the shapes are reconciled by typecheck where the DTO is passed in.
 export type NodeInterruptOptionMatrixView = Pick<
   NodeInterruptControlsProps,
-  "interruptedNodeId" | "defaultOptionId" | "options" | "restartTargets"
+  | "interruptedNodeId"
+  | "defaultOptionId"
+  | "options"
+  | "restartTargets"
+  | "cause"
 >;
 
 // Closed EN/RU maps for the consensus card: a missing key is a compile error in
@@ -1878,6 +1882,7 @@ export function HitlDecisionControls({
         <NodeInterruptControls
           busy={disabled}
           canAct={!disabled}
+          cause={nodeInterrupt.cause}
           defaultOptionId={nodeInterrupt.defaultOptionId}
           interruptedNodeId={nodeInterrupt.interruptedNodeId}
           options={nodeInterrupt.options}

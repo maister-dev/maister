@@ -14,7 +14,10 @@ import { isMaisterError, MaisterError } from "@/lib/errors";
 import {
   getActiveAssignment,
   mintAssignment,
+  releaseAssignmentForRun,
 } from "@/lib/execution-host/assignments";
+import { createExecutionHosts } from "@/lib/execution-host/client";
+import { claimAgentResumeSlot } from "@/lib/services/hitl";
 import { listCommandsForRun } from "@/lib/execution-host/commands";
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
@@ -389,6 +392,94 @@ describe("ADR-183 D5a — the host-pressure admission fence", () => {
     }
   }, 60_000);
 
+  it("T4.0: an idle resume is fenced like a launch — it queues while pressured and the clear promotes it (flow and agent)", async () => {
+    const hostId = await setHostPressure(new Date(Date.now() - 5_000));
+    const host = await localHost({ db: db as never, force: true });
+    const seedIdle = async (runKind: "flow" | "agent") => {
+      const runId = randomUUID();
+
+      await db.insert(schema.runs).values({
+        id: runId,
+        runKind,
+        flowVersion: runKind === "agent" ? "agent" : "v1.0.0",
+        flowRevision: "manual",
+        status: "NeedsInputIdle",
+        persistent: runKind === "agent",
+        checkpointAt: new Date(),
+      });
+      await db.insert(schema.runSessions).values({
+        id: randomUUID(),
+        runId,
+        sessionName: "default",
+        acpSessionId: `acp-${runId}`,
+      });
+      // The parked generation a resume continues from.
+      await db.transaction(async (tx) => {
+        await mintAssignment(tx as never, {
+          runId,
+          hostId: host.id,
+          reason: "launch",
+        });
+        await releaseAssignmentForRun(tx as never, runId, "checkpointed");
+      });
+
+      return runId;
+    };
+    const agentRunId = await seedIdle("agent");
+    const flowRunId = await seedIdle("flow");
+
+    try {
+      // The agent's resume claim reads the fenced cap: queued, still parked.
+      expect(
+        await claimAgentResumeSlot(db as never, agentRunId, hosts()),
+      ).toEqual({ outcome: "queued" });
+      expect(await runStatus(agentRunId)).toBe("NeedsInputIdle");
+      // A flow resume queued earlier (at cap) is not promoted while fenced.
+      await db
+        .update(schema.runs)
+        .set({ resumeRequestedAt: new Date() })
+        .where(eq(schema.runs.id, flowRunId));
+      const resumed: string[] = [];
+      const started: string[] = [];
+      const dispatch = {
+        runFlow: async () => {},
+        resumeRun: async (id: string) => {
+          resumed.push(id);
+        },
+        startAgentRun: async (id: string) => {
+          started.push(id);
+        },
+      };
+
+      expect(
+        await promoteNextPending({ db: db as never, ...dispatch }),
+      ).toEqual({ promotedRunId: null });
+      expect(
+        await promoteNextPending({
+          db: db as never,
+          pool: "agent",
+          ...dispatch,
+        }),
+      ).toEqual({ promotedRunId: null });
+
+      // The clear promotes both idle resumes.
+      expect(
+        await applyHostPressureSample(healthSample(false), dispatch),
+      ).toMatchObject({ hostId, transition: "cleared" });
+      await until(async () => resumed.includes(flowRunId));
+      await until(async () => started.includes(agentRunId));
+      expect(await runStatus(flowRunId)).toBe("NeedsInput");
+      expect(await runStatus(agentRunId)).toBe("Running");
+    } finally {
+      await setHostPressure(null);
+      for (const runId of [agentRunId, flowRunId])
+        await db
+          .update(schema.runs)
+          .set({ status: "Done" })
+          .where(eq(schema.runs.id, runId));
+    }
+  }, 60_000);
+
   it("the upgrade maintenance fence and the pressure fence compose: either one holds the queue", async () => {
     const runId = await seedPendingAgentRun();
     const previous = process.env[UPGRADE_MAINTENANCE_ENV];
@@ -682,6 +773,10 @@ describe("flow launch + graph driver (ADR-166 T4.1)", () => {
     expect(hitl.map((h) => h.kind)).toContain("permission");
   }, 60_000);
 });
+
+function hosts() {
+  return createExecutionHosts({ db: db as never });
+}
 
 async function setHostPressure(pressuredSince: Date | null): Promise<string> {
   const host = await localHost({ db: db as never, force: true });

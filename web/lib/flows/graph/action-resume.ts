@@ -4,11 +4,13 @@ import type { Db } from "@/lib/execution-host/db";
 import type { ExecutionAssignment } from "@/lib/db/schema";
 
 import { and, desc, eq, inArray } from "drizzle-orm";
+import pino from "pino";
 
 import { assertPermissionHandoffSource } from "@/lib/execution-host/permission-handoff-source";
 import {
   executionAssignments,
   executionCommands,
+  hitlRequests,
   nodeAttempts,
   runs,
 } from "@/lib/db/schema";
@@ -240,4 +242,89 @@ export async function authorizeOrchestratorActionResume(
       },
     })
     .where(eq(nodeAttempts.id, attempt.id));
+}
+
+const log = pino({
+  name: "flow-action-resume",
+  level: process.env.LOG_LEVEL ?? "info",
+});
+
+/** ADR-183 N11: an answered `node_interrupt` resumes its parked attempt under
+ * the generation THIS claim minted — the park's generation was released when
+ * the run went idle, and prompt admission binds to the attempt's assignment.
+ * Rebinds the attempt and its resume handle in one statement (the handle's
+ * CHECK pins `assignmentId = execution_assignment_id`). A no-op for every
+ * other resume: the newest HITL row must be this answered interrupt, so a
+ * permission raised after it keeps its own authorization.
+ */
+export async function authorizeNodeInterruptResume(
+  tx: Db,
+  assignment: ExecutionAssignment,
+): Promise<void> {
+  const [run] = await tx
+    .select()
+    .from(runs)
+    .where(eq(runs.id, assignment.runId));
+
+  if (run?.runKind !== "flow" || !run.currentStepId) return;
+  const [attempt] = await tx
+    .select()
+    .from(nodeAttempts)
+    .where(
+      and(
+        eq(nodeAttempts.runId, run.id),
+        eq(nodeAttempts.nodeId, run.currentStepId),
+      ),
+    )
+    .orderBy(desc(nodeAttempts.attempt))
+    .limit(1)
+    .for("update");
+
+  if (
+    !attempt ||
+    attempt.status !== "NeedsInput" ||
+    attempt.actionCompletion !== null ||
+    attempt.executionAssignmentId === assignment.id
+  )
+    return;
+  const [latest] = await tx
+    .select()
+    .from(hitlRequests)
+    .where(eq(hitlRequests.runId, run.id))
+    .orderBy(desc(hitlRequests.createdAt))
+    .limit(1);
+  const response = latest?.response as { optionId?: unknown } | null;
+
+  if (
+    latest?.kind !== "node_interrupt" ||
+    latest.stepId !== attempt.nodeId ||
+    latest.respondedAt === null ||
+    response?.optionId !== "resume" ||
+    latest.createdAt < attempt.startedAt
+  )
+    return;
+  await tx
+    .update(nodeAttempts)
+    .set({
+      executionAssignmentId: assignment.id,
+      ...(attempt.actionResume?.kind === "interrupt"
+        ? {
+            actionResume: {
+              ...attempt.actionResume,
+              assignmentId: assignment.id,
+            },
+          }
+        : {}),
+    })
+    .where(eq(nodeAttempts.id, attempt.id));
+  log.info(
+    {
+      runId: run.id,
+      nodeAttemptId: attempt.id,
+      hitlRequestId: latest.id,
+      assignmentId: assignment.id,
+      resumeHandle: attempt.actionResume?.kind === "interrupt",
+    },
+    "interrupt-resume-authorized",
+  );
 }

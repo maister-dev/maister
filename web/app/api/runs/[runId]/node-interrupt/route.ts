@@ -112,7 +112,8 @@ export async function POST(
     const result = await escalateNodeInterrupt({
       db,
       runId,
-      actorUserId: user.id,
+      actor: { type: "user", id: user.id },
+      cause: "operator",
       supervisorSessionId: sessionId,
       checkpointSession: (id) => client.checkpoint(id),
     });

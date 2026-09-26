@@ -385,6 +385,11 @@ export async function GET(
         dialogStatus: scratch.dialogStatus,
         errorCode: scratch.errorCode,
         errorMessage: scratch.errorMessage,
+        errorMetadata:
+          (scratch.errorMetadata as { cause?: unknown } | null)?.cause ===
+          "host_pressure"
+            ? { cause: "host_pressure" }
+            : null,
         lastUserMessageAt: scratch.lastUserMessageAt,
         lastAgentMessageAt: scratch.lastAgentMessageAt,
       },

@@ -44,6 +44,9 @@ export interface NodeInterruptControlsProps {
   onRespond: (payload: Record<string, unknown>) => void;
   busy?: boolean;
   error?: string | null;
+  // ADR-183: a node the execution host paused under outbox pressure resumes
+  // on its own; the card says so instead of "you interrupted".
+  cause?: "operator" | "host_pressure";
 }
 
 const ICONS: Record<NodeInterruptOptionId, typeof PlayIcon> = {
@@ -62,6 +65,7 @@ export function NodeInterruptControls({
   onRespond,
   busy = false,
   error = null,
+  cause = "operator",
 }: NodeInterruptControlsProps): ReactElement {
   const t = useTranslations("nodeInterrupt");
   const [correction, setCorrection] = useState("");
@@ -151,8 +155,13 @@ export function NodeInterruptControls({
 
   return (
     <div className="flex flex-col gap-3">
-      <p className="font-mono text-[11px] text-mute">
-        {t("interrupted", { node: interruptedNodeId })}
+      <p
+        className="font-mono text-[11px] text-mute"
+        data-testid="node-interrupt-lead"
+      >
+        {cause === "host_pressure"
+          ? t("hostPaused", { node: interruptedNodeId })
+          : t("interrupted", { node: interruptedNodeId })}
       </p>
 
       <label className="flex flex-col gap-1">

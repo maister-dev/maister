@@ -86,6 +86,9 @@ export type StepResult = {
   // back `assignment_fenced`) — the caller MUST yield without writing run,
   // ledger, HITL, or scratch state.
   fenced?: boolean;
+  // ADR-183 D-M1: the execution host's outbox pressure ended this turn (its
+  // own park, or a refused admission). The node parks; it has not failed.
+  reason?: "host_pressured";
 };
 
 export type RunContext = {

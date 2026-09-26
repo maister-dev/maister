@@ -137,7 +137,11 @@ import {
 import { resolveNodeResumeSessionId } from "@/lib/runs/node-resume-session";
 import { createHitlRequest } from "@/lib/runs/hitl-create";
 import { staleSessionBinding } from "@/lib/execution-host/session-binding";
-import { loadPendingOperatorCorrection } from "@/lib/runs/node-interrupt";
+import {
+  loadPendingOperatorCorrection,
+  parkNodeForHostPressure,
+} from "@/lib/runs/node-interrupt";
+import { isHostPressuredError } from "@/lib/execution-host/host-pressure";
 import { isReviewSchema } from "@/lib/flows/hitl-validate";
 import {
   clearWorktreeProvenanceNode,
@@ -2616,6 +2620,20 @@ export async function runGraph(
   );
 
   let needsInput = false;
+  // ADR-183 W2: a host-pressure park that cannot commit leaves the host's
+  // evidence in place (the applied completion, or the refused command), so the
+  // driver yields and the continuation worker replays the node into the park.
+  // Failing the run here would turn the host's pause into a terminal failure.
+  const parkOrYield = async (
+    nodeAttemptId: string,
+    commandId: string | null,
+  ): Promise<void> => {
+    try {
+      await parkNodeForHostPressure({ db, runId, nodeAttemptId });
+    } catch (err) {
+      throw new FlowPromptContinuationPending(commandId, err);
+    }
+  };
   let checkpointed = false;
   let failed = false;
   let runErrorCode: MaisterErrorCode | null = null;
@@ -3595,6 +3613,15 @@ export async function runGraph(
             return;
           }
 
+          // ADR-183 D-M1: the host refused this node's create or first prompt
+          // because its outbox is behind. The node parks, it has not failed;
+          // its durable evidence is the refused command on this assignment.
+          if (isHostPressuredError(err)) {
+            await parkOrYield(nodeAttemptId, null);
+            needsInput = true;
+            break;
+          }
+
           const e = isMaisterError(err)
             ? err
             : new MaisterError("CRASH", asError(err).message, {
@@ -3821,6 +3848,15 @@ export async function runGraph(
       // it on the attempt row (observable, never silent).
       if (result.sessionFallback) {
         await setSessionFallback(nodeAttemptId, db);
+      }
+
+      if (!result.ok && result.reason === "host_pressured") {
+        // ADR-183 D-M1/D-M2: live and replayed alike — the host parked this
+        // turn under outbox pressure. `not_parked` means another owner (a
+        // pending permission) already holds the run; either way nothing fails.
+        await parkOrYield(nodeAttemptId, completedAction?.commandId ?? null);
+        needsInput = true;
+        break;
       }
 
       if (!result.ok) {

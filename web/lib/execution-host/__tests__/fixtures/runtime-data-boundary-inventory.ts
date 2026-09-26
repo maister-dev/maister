@@ -2294,6 +2294,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
   ]),
   ...wrappers("lib/runs/node-interrupt.ts", "manager-flow-state", [
     ["escalateNodeInterrupt", false],
+    ["parkNodeForHostPressure", false],
   ]),
   ...wrappers("lib/runs/pr-adapter.ts", "repository-worktree", [
     ["getPrState", false],
