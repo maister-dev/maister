@@ -38,6 +38,7 @@ export type ProcessIdentity = Readonly<{
 export type ProcessRole =
   | "runner"
   | "vitest"
+  | "playwright"
   | "supervisor"
   | "web"
   | "build"
@@ -881,6 +882,70 @@ export async function removeInvocationContainers(
     );
 
   return containers;
+}
+
+export type InvocationReclaimers = Readonly<{
+  sweepInvocation: typeof sweepInvocation;
+  removeInvocationContainers: typeof removeInvocationContainers;
+  removeInvocationRoots: typeof removeInvocationRoots;
+}>;
+
+const INVOCATION_RECLAIMERS: InvocationReclaimers = {
+  sweepInvocation,
+  removeInvocationContainers,
+  removeInvocationRoots,
+};
+
+/**
+ * Terminal invocation cleanup shared by every lane runner: owned processes
+ * first, then containers, then roots — a container or root may only go once
+ * nothing owned can still use it. Each reclaimer runs even when the one before
+ * it threw, because each owns a different resource class (S52-R6: a failed
+ * process sweep used to leave every container and root behind). A survivor is
+ * an error even after the sweep reaped it: a clean sweep only proves the lane's
+ * own teardown was incomplete. Returns the errors; the caller combines them
+ * with its own outcome. `subject` names the lane in the messages.
+ */
+export async function releaseInvocation(
+  invocation: Invocation,
+  subject: string,
+  reclaimers: InvocationReclaimers = INVOCATION_RECLAIMERS,
+): Promise<unknown[]> {
+  const errors: unknown[] = [];
+  let leaks: readonly ProcessIdentity[] = [];
+  let containers: readonly string[] = [];
+
+  for (const step of [
+    async () => {
+      leaks = await reclaimers.sweepInvocation(invocation);
+    },
+    async () => {
+      containers = await reclaimers.removeInvocationContainers(invocation);
+    },
+    async () => {
+      await reclaimers.removeInvocationRoots(invocation);
+    },
+  ]) {
+    try {
+      await step();
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (leaks.length)
+    errors.push(
+      new Error(
+        `${subject} leaked ${leaks.length} process(es); the final sweep reaped them (ledger ${invocation.directory})`,
+      ),
+    );
+  if (containers.length)
+    errors.push(
+      new Error(
+        `${subject} leaked ${containers.length} container(s); terminal cleanup removed them (ledger ${invocation.directory})`,
+      ),
+    );
+
+  return errors;
 }
 
 export async function fixtureProcessEnvironment(

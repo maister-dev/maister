@@ -425,12 +425,17 @@ existing checkpoint contract, not an unqualified delayed session-create ACK.
    mutate a developer database or reset a schema.
 7. On E2E interruption, Playwright's process-group exit MUST be observed before the wrapper
    tears down its database.
-8. The A/B runner MUST exit non-zero when any invocation-tagged process
+8. A lane runner MUST exit non-zero when any invocation-tagged process
    survives its final sweep, even when the sweep killed it successfully, and
    each reclaimer (processes, containers, roots) MUST run even if an earlier
-   one throws — enforced by the terminal cleanup in
-   `scripts/run-stage-ab-tests.mjs` and
-   `web/test-support/__tests__/execution-ab-process-cleanup.integration.test.ts`.
+   one throws. Both rules live in ONE composition, `releaseInvocation` in
+   `web/test-support/process-invocation.ts`, which the A/B runner
+   `scripts/run-stage-ab-tests.mjs` and the E2E wrapper `web/e2e/run.ts` both
+   call — enforced by `web/test-support/__tests__/invocation-release.test.ts`
+   (the composition),
+   `web/test-support/__tests__/execution-ab-process-cleanup.integration.test.ts`
+   (the real A/B lane) and `web/e2e/__tests__/run.test.ts` (the wrapper fails
+   its lane on the release's errors and stops its database only after it).
 9. Disposing a fault barrier that is still `armed` or `reached` MUST fail
    before cleanup — enforced by `assertDrained()` in
    `web/test-support/supervisor-fault-proxy.ts`, which `close()` calls, and
@@ -524,6 +529,12 @@ AT-17. Browser half stays open under S5.3.
 - `SIGINT` and `SIGTERM` abort the wrapper, terminate the detached Playwright
   process group with bounded SIGKILL escalation, then follow the same database
   teardown path.
+- The E2E wrapper mints its own process invocation before the database starts,
+  registers the Playwright child under it (an unverifiable child fails the
+  lane) and hands its tag to Playwright, so everything Playwright spawns is
+  owned. After Playwright exits it releases the invocation (tagged survivors,
+  then invocation-owned containers, then roots), then stops the database; a
+  survivor fails the lane even when the sweep reaped it.
 
 ## Linked artifacts
 
@@ -534,7 +545,7 @@ AT-17. Browser half stays open under S5.3.
 - [`run.test.ts`](../../web/e2e/__tests__/run.test.ts)
 - [feature specification](../../.ai-factory/specs/feature-unified-test-database-testcontainers.md)
 
-The mandatory S1 CI lane runs `test:integration:ab` in both application packages on Node 24.15.0 and 24.19.0. Its explicit suite inventory is `scripts/run-stage-ab-tests.mjs`; missing files, empty discovery, failed or skipped cases fail the lane. The same runner owns the serial `isolation` slice (AT-16 core, above) and the AT-12 browser lane is `pnpm --filter maister-web test:e2e:execution-ab` (`playwright.execution-ab.config.ts`: a REAL supervisor started by `e2e/execution-ab-global-setup.ts` behind a `next dev` web server; `e2e/execution-ab-content.spec.ts`). That lane must run on an otherwise idle host — concurrent CPU load or file writes under `web/` livelocked the dev server's edge-instrumentation recompile at boot (observed before the 2026-09-08 instrumentation split: ~135k warning lines and a 180 s readiness timeout versus ~3k lines and readiness in ~15 s when idle). `web/instrumentation.ts` now reaches its Node-only body (`web/instrumentation-node.ts`) solely through the `NEXT_RUNTIME === "nodejs"` branch, so the Edge instrumentation entry no longer bundles the server graph and a dev boot plus page compile prints none of those warnings; the idle-host requirement has not been re-measured since. The isolation slice is wired to the mandatory `execution-isolation` macOS Intel job; its actual hosted run and sub-60-minute budget remain unqualified. The browser lane stays with S5.3. A separate mandatory image job builds the pinned Dockerfile, exercises real binary HTTP and runs `web/scripts/smoke-production-image.ts` through the default image ENTRYPOINT/CMD with a migrated PostgreSQL container. It verifies HTTP readiness, SIGTERM completion and no remaining web PostgreSQL sessions. The browser runtime/image matrix remains part of S5.3.
+The mandatory S1 CI lane runs `test:integration:ab` in both application packages on Node 24.15.0 and 24.19.0. Its explicit suite inventory is `scripts/run-stage-ab-tests.mjs`; missing files, empty discovery, failed or skipped cases fail the lane. The same runner owns the serial `isolation` slice (AT-16 core, above) and the AT-12 browser lane is `pnpm --filter maister-web test:e2e:execution-ab` (`playwright.execution-ab.config.ts`: a REAL supervisor started by `e2e/execution-ab-global-setup.ts` behind a `next dev` web server; `e2e/execution-ab-content.spec.ts`). The real-supervisor fixture refuses to start without a process invocation, so the lane's wrapper `web/e2e/run.ts` mints one the way the A/B runner does and replaces any caller-supplied `MAISTER_TEST_WORKTREE_INVOCATION_ID`; the Playwright process, the web server, the supervisor and its adapters all carry the tag and are released through the same `releaseInvocation` as the A/B lanes when the lane ends. That lane must run on an otherwise idle host — concurrent CPU load or file writes under `web/` livelocked the dev server's edge-instrumentation recompile at boot (observed before the 2026-09-08 instrumentation split: ~135k warning lines and a 180 s readiness timeout versus ~3k lines and readiness in ~15 s when idle). `web/instrumentation.ts` now reaches its Node-only body (`web/instrumentation-node.ts`) solely through the `NEXT_RUNTIME === "nodejs"` branch, so the Edge instrumentation entry no longer bundles the server graph and a dev boot plus page compile prints none of those warnings; the idle-host requirement has not been re-measured since. The isolation slice is wired to the mandatory `execution-isolation` macOS Intel job; its actual hosted run and sub-60-minute budget remain unqualified. The browser lane stays with S5.3. A separate mandatory image job builds the pinned Dockerfile, exercises real binary HTTP and runs `web/scripts/smoke-production-image.ts` through the default image ENTRYPOINT/CMD with a migrated PostgreSQL container. It verifies HTTP readiness, SIGTERM completion and no remaining web PostgreSQL sessions. The browser runtime/image matrix remains part of S5.3.
 
 Admin browser specs are opt-in alternatives in `AUTHED_SPEC`; discovery is a
 contract because any omitted filename falls into the unauthenticated Chromium

@@ -506,6 +506,131 @@ describe("ADR-121 unified admission gate — C2 slot-free mint (T13)", () => {
     expect(await claimOf(taskId)).toBeNull();
   });
 
+  // The orderings two gate admissions of one task can land in. The scheduler
+  // lock orders their transactions; the later one never selects a task whose
+  // claim the earlier one still holds, and once that claim is cleared the
+  // winner's run exists and the live-run guard skips it.
+  it("AC-F1-claim, sequential (control): an admission after the first launch released its claim finds the live run", async () => {
+    const projectId = await seedProject();
+    const taskId = await seedBacklogTask(projectId, "normal");
+    const a = recordingLaunch();
+    const b = recordingLaunch();
+
+    await promoteNextPending({ db, launchRun: a.fn });
+    await promoteNextPending({ db, launchRun: b.fn });
+
+    expect(a.calls).toEqual([taskId]);
+    expect(b.calls).toEqual([]);
+    expect(await claimOf(taskId)).toBeNull();
+  });
+
+  type LaunchFn = ReturnType<typeof recordingLaunch>["fn"];
+
+  // Parks a gate admission BETWEEN its eligibility reads and its claim CAS, runs
+  // `whileParked`, then lets the admission finish. The park is a third
+  // connection's ACCESS EXCLUSIVE lock on domain_events: the gate's graph-only
+  // cut-over read sits exactly between those two steps, and only runs when the
+  // task has a prior flow run — callers seed a terminal one. Two GATE admissions
+  // cannot straddle each other (the lock orders their transactions and the later
+  // one never selects a task whose claim the earlier one holds), so what lands
+  // while parked is a claimless launch: the poll backstop or a manual Launch,
+  // neither of which takes the scheduler lock or a claim.
+  async function straddleGateAdmission(
+    launch: LaunchFn,
+    whileParked: () => Promise<void>,
+  ): Promise<void> {
+    const blocker = await pool.connect();
+    let admission: Promise<unknown> | undefined;
+
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query("LOCK TABLE domain_events IN ACCESS EXCLUSIVE MODE");
+      const { rows } = await blocker.query<{ pid: number }>(
+        "SELECT pg_backend_pid() AS pid",
+      );
+
+      admission = promoteNextPending({ db, launchRun: launch });
+      // The admission passed its live-run check and waits on the cut-over
+      // read, still holding the scheduler lock.
+      await expect
+        .poll(
+          async () =>
+            (
+              await pool.query<{ n: number }>(
+                `SELECT count(*)::int AS n FROM pg_stat_activity
+                  WHERE $1 = ANY(pg_blocking_pids(pid)) AND query ILIKE '%domain_events%'`,
+                [rows[0]!.pid],
+              )
+            ).rows[0]!.n,
+          { timeout: 10_000, interval: 25 },
+        )
+        .toBe(1);
+      await whileParked();
+    } finally {
+      await blocker.query("ROLLBACK");
+      blocker.release();
+      // The admission must settle before the next test truncates the tables it
+      // still uses; allSettled keeps an assertion failure above from being masked.
+      await Promise.allSettled([admission]);
+    }
+    await admission;
+  }
+
+  it("AC-F1-claim, straddled: a claimless launch that lands between the verdict's reads and the claim CAS refuses the claim", async () => {
+    const projectId = await seedProject();
+    const taskId = await seedBacklogTask(projectId, "normal");
+
+    // A prior failed attempt past its backoff keeps the retry eligible, and makes
+    // the gate read domain_events (the graph-only cut-over check) AFTER its
+    // live-run check and BEFORE its claim CAS — the window the gate is parked in.
+    await seedTerminalFlowRun(
+      projectId,
+      taskId,
+      "Failed",
+      new Date(Date.now() - 600_000),
+    );
+    const gate = recordingLaunch();
+    const claimless = recordingLaunch();
+
+    await straddleGateAdmission(gate.fn, async () => {
+      await claimless.fn(taskId);
+    });
+
+    expect(claimless.calls).toEqual([taskId]);
+    expect(gate.calls).toEqual([]);
+    expect(await claimOf(taskId)).toBeNull();
+  });
+
+  it("AC-F1-claim, straddled with the landed run already terminal: the CAS refuses a flow run the verdict never counted", async () => {
+    const projectId = await seedProject();
+    const taskId = await seedBacklogTask(projectId, "normal");
+
+    await seedTerminalFlowRun(
+      projectId,
+      taskId,
+      "Failed",
+      new Date(Date.now() - 600_000),
+    );
+    const gate = recordingLaunch();
+    const claimless = recordingLaunch();
+
+    // The landed run fails before the gate reaches its CAS: no live run remains,
+    // but the gate's verdict counted one failure and no backoff for a task that
+    // now has two.
+    await straddleGateAdmission(gate.fn, async () => {
+      const launched = await claimless.fn(taskId);
+
+      await db
+        .update(runs)
+        .set({ status: "Failed", endedAt: new Date() })
+        .where(eq(runs.id, launched.runId));
+    });
+
+    expect(claimless.calls).toEqual([taskId]);
+    expect(gate.calls).toEqual([]);
+    expect(await claimOf(taskId)).toBeNull();
+  });
+
   it("Codex-2: an outstanding C2 claim counts toward the reserve, so a concurrent admission cannot over-mint the single free slot", async () => {
     // The burst root cause: a C2 claim reserves a flow slot BEFORE its run row
     // exists, so a lock-serialized concurrent gate call must SEE that claim as

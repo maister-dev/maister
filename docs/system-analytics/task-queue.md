@@ -25,8 +25,15 @@ substrate — it orders and bounds admission and closes the resume over-cap bug.
   `{ edgeDrain?, maxInFlightAuto? }`; NULL ⇒ env defaults.
 - **Admission claim** (`tasks.queue_claimed_at`, Implemented) — the task-level C2
   claim, CAS-set under the scheduler lock before the worktree-first `launchRun`
-  (no run row exists at claim time); cleared on run-exists or launch failure;
-  reconcile-swept if the claimer crashes.
+  (no run row exists at claim time). While set, the claim removes the task from
+  both C2 consumers' candidate query (`loadC2CandidateRows`): the scheduler lock
+  orders two gate admissions and the later one never selects a task the earlier
+  one still holds. The CAS additionally requires no live or unseen flow run for
+  the task (`unseenOrLiveFlowRunExists`: a non-terminal flow run, or one started
+  after the latest run the eligibility verdict saw), because claimless admitters
+  — the poll backstop, a manual Launch, a crash recover — run outside the lock
+  and can land a run between the verdict's reads and the CAS. Cleared on
+  run-exists or launch failure; reconcile-swept if the claimer crashes.
 - **Auto-drain origin** (`runs.queue_admitted_at`, Implemented) — set at the
   run-INSERT for funnel-minted runs; the precise per-project `liveAuto` counter.
 - **Resume request** (`runs.resume_requested_at`, Implemented) — the C3 FIFO key,
@@ -50,7 +57,7 @@ stateDiagram-v2
     [*] --> BacklogEligible: triaged + auto + flow + unblocked + not paused
     BacklogEligible --> Held: latest Flow run has D2 graph-only cut-over failure\nAND arm is absent or not newer than event
     Held --> BacklogEligible: human re-triage writes a fresh arm
-    BacklogEligible --> Claimed: C2 admit (CAS queue_claimed_at)
+    BacklogEligible --> Claimed: C2 admit (CAS queue_claimed_at IS NULL\nAND no live or unseen flow run)
     Claimed --> Running: launchRun inserts run (queue_admitted_at)
     Claimed --> BacklogEligible: launchRun fails → clear claim
     [*] --> Pending: queued run (over cap)
@@ -79,7 +86,7 @@ flowchart TD
     F -- C3 --> H[flip NeedsInputIdle to Running, dispatch session/resume]
     F -- C2 --> I{edgeDrain on AND reserve AND maxInFlightAuto?}
     I -- no --> Z
-    I -- yes --> J[CAS queue_claimed_at, launchRun outside lock]
+    I -- yes --> J[CAS queue_claimed_at and no live or unseen flow run, launchRun outside lock]
 ```
 
 ## Expectations
@@ -110,8 +117,15 @@ flowchart TD
 - Priority is read LIVE at selection from `tasks.priority` (never snapshotted onto a
   run), so a re-prioritization takes effect for not-yet-admitted work.
 - Exactly-once admission per eligible unit across {edge, poll, direct launch,
-  resume} (INV-3): C2 via the `tasks.queue_claimed_at` CAS under the scheduler lock,
-  C1/C3 via the status-guarded `Pending|NeedsInputIdle → Running` CAS.
+  resume} (INV-3): C2 via the `tasks.queue_claimed_at` CAS under the scheduler
+  lock. Two gate admissions: the lock orders their transactions and a claimed
+  task is excluded from the candidate query, so the later one never reaches the
+  CAS (before that exclusion it could CAS after the winner cleared its claim —
+  the `AC-F1-claim` double launch); gate vs a claimless admitter (poll backstop,
+  manual Launch): the CAS refuses a live or unseen flow run (the `AC-F1-claim`
+  straddled cases in `admission-gate.integration.test.ts`); the poll never
+  selects a claimed task and its `launchRun` busy gate refuses a task with a
+  live run; C1/C3 via the status-guarded `Pending|NeedsInputIdle → Running` CAS.
 - Both C2 consumers MUST inspect the durable `run.failed` graph-only cut-over
   event for the latest Flow run before claiming or launching. When the task has no
   `launch_armed_at`, or its arm is at or before the event's `occurred_at`, the
@@ -133,6 +147,20 @@ flowchart TD
 - A C2 claimer crash between the CAS and the run-INSERT → the reconcile sweep clears
   the stale `queue_claimed_at` past a grace window (`staleClaimsCleared`); the
   per-task live-flow-run guard prevents a double-mint if a run was created.
+- A claimless launch (poll backstop, manual Launch) lands a flow run between a
+  gate admission's verdict reads and its claim CAS → the CAS is refused by the
+  live-run arm; if that run already reached a terminal status, by the
+  unseen-run arm (a flow run started after the latest one the verdict counted)
+  — the gate never launches a retry ahead of its backoff or failure cap. Pinned
+  by the two `AC-F1-claim, straddled` cases.
+- Two gate admissions of one task → the later one, ordered behind the winner by
+  the scheduler lock, does not select the task while the winner's claim is set;
+  once the claim is cleared the winner's run exists and the live-run guard
+  skips it (the `AC-F1-claim, sequential` control).
+- The poll backstop ticks while the gate's claimer is between its CAS and the
+  run-INSERT → the task is not a poll candidate (outstanding claim); without
+  that filter the poll's `launchRun` would refuse on the claimer's worktree
+  (`PRECONDITION`) and give the task up while its launch succeeds.
 - A just-answered low-criticality resume can be starved by higher-criticality fresh
   tasks (accepted v1; priority aging is future — NG5).
 
