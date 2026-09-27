@@ -1,4 +1,5 @@
 import type { Logger } from "pino";
+import type { SessionRecord } from "../types";
 
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
@@ -15,6 +16,7 @@ import {
   type CommandReceiptRow,
   type HostState,
 } from "../host-state";
+import { producerPressure } from "../producer-pressure";
 import {
   DEFAULT_RUNTIME_LIMITS,
   validateRuntimeLimits,
@@ -497,6 +499,55 @@ describe("retained-pressure prune past open spans (ADR-184), floor, paging", () 
       acknowledgedThrough: null,
     });
     expect(stalled[0]).not.toHaveProperty("protectedFromSequence");
+  });
+
+  // Found by the ADR-184 R20 control (2026-09-28): at hard, nine paused
+  // producers pegged the host at 100% CPU. A REFUSED frame reservation woke
+  // every capacity listener, so each waiter's refusal made every other waiter
+  // retry: one ACK cost 4 / 15 / 64 / 325 / 1 956 / 13 699 attempts for 2–7
+  // waiters (factorial; ~10^6 for nine). Capacity wakeups belong to the commits
+  // that can free capacity; a refusal frees nothing.
+  it("H6: a refused frame reservation wakes no other waiter — one ACK costs one attempt per paused producer", async () => {
+    const tiny = validateRuntimeLimits({
+      ...DEFAULT_RUNTIME_LIMITS,
+      eventLowRows: 2,
+      eventSoftRows: 4,
+      eventHardRows: 6,
+    });
+    const state = openHostState({ inMemory: true, limits: tiny });
+
+    cleanups.push(() => state.close());
+    const waiters = 6;
+    let attempts = 0;
+    const counted = new Proxy(state, {
+      get(target, property, receiver) {
+        if (property === "tryReserveRuntimeFrame")
+          return (...args: Parameters<HostState["tryReserveRuntimeFrame"]>) => {
+            attempts += 1;
+
+            return target.tryReserveRuntimeFrame(...args);
+          };
+
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const records = Array.from({ length: waiters }, () => {
+      const receipt = promptReceipt({ kind: "session.create" });
+
+      state.reserveProducerReceipt(receipt, 0);
+
+      return { createdByCommandId: receipt.commandId } as SessionRecord;
+    });
+    const last = appendSequences(state, tiny.eventHardRows).at(-1)!;
+
+    // Every producer's next frame is refused at hard: all six wait.
+    for (const record of records)
+      void producerPressure(counted, record).beforeFrame(1024);
+    expect(records.every((record) => record.outputPaused)).toBe(true);
+    attempts = 0;
+    state.ackRuntimeEvents(state.getRuntimeEventStreamId(), last);
+    expect(attempts).toBe(waiters);
+    expect(records.every((record) => record.outputPaused)).toBe(true);
   });
 
   it("B3d: a 20 000-row retained prune takes ≥ 200 bounded pages and an ACK commits between them", async () => {

@@ -1018,7 +1018,8 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
   // refused one), so the change is logged from the durable row after each
   // commit rather than at the write.
   let observedPressure = outboxPressureEpisode(db);
-  const notifyCapacity = (): void => {
+  // Refreshes and logs the pressure state after a commit; wakes nobody.
+  const observeCapacity = (): OutboxBudgetSnapshot => {
     refreshOutboxPressure(db, limits, now().getTime());
     const logical = outboxBudgetSnapshot(db);
     const previousFilePressure = runtimeFileBudgetSnapshot(db).pressured;
@@ -1059,6 +1060,12 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
       );
     }
     observedPressure = episode;
+
+    return snapshot;
+  };
+  const notifyCapacity = (): void => {
+    const snapshot = observeCapacity();
+
     for (const listener of capacityListeners) {
       try {
         listener(snapshot);
@@ -1352,7 +1359,11 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
               freeBytes: storage.snapshot().filesystemFreeBytes,
             });
           db.exec("COMMIT");
-          notifyCapacity();
+          // A refusal frees no capacity, so it wakes no waiter: when it did,
+          // each paused producer's refusal made every other one retry — a
+          // cascade factorial in the number of waiters that pegged the host.
+          if (reserved) notifyCapacity();
+          else observeCapacity();
 
           return reserved ? reservationId : null;
         } catch (error) {
