@@ -553,6 +553,44 @@ const SCENARIOS: Array<{
       );
     },
   },
+  // ADR-184: the manager's span pager asks the host from its own frontier,
+  // which is at or above the host's floor. Both hosts must serve a read that
+  // starts AT the floor (the last pruned row) and refuse one below it — the
+  // one boundary the pager's canonical/host split relies on. Restarts the
+  // real host too.
+  {
+    name: "span from the replay floor is served; one row below it is replay_floor_lost",
+    expected: {
+      ok: true,
+      body: { fromFloor: "complete", rows: 1, below: "replay_floor_lost" },
+    },
+    run: async (lab) => {
+      const { streamId, head } = await lab.emit();
+
+      await lab.prune(streamId, head - 1n);
+
+      return normalize(
+        async () => ({
+          fromFloor: await lab.transport.readRuntimeEventSpan({
+            streamId,
+            after: (head - 1n).toString(),
+            through: head.toString(),
+          }),
+          below: await lab.transport.readRuntimeEventSpan({
+            streamId,
+            after: (head - 2n).toString(),
+            through: head.toString(),
+          }),
+        }),
+        ({ fromFloor, below }) => ({
+          fromFloor: fromFloor.state,
+          rows:
+            fromFloor.state === "unavailable" ? null : fromFloor.events.length,
+          below: below.state === "unavailable" ? below.reason : null,
+        }),
+      );
+    },
+  },
   // Corrupts the real host's outbox (an ACK can no longer cross the hole), so
   // it runs last. The route answers 503; the transport, request_failed.
   {

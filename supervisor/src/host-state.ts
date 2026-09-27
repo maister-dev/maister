@@ -291,10 +291,10 @@ export type RuntimeEventPruneMode = "grace" | "retained_pressure";
 export type RuntimeEventPruneState = Readonly<{
   retainedCount: number;
   retainedBytes: number;
+  // Rows no prune may touch: with every ACKed row prunable (ADR-184), these
+  // are what a stalled retained-pressure pass is left with.
+  unacknowledgedCount: number;
   acknowledgedThrough: string | null;
-  // The smallest accepted sequence of a v2 command whose terminal is not yet
-  // ACKed: no prune ever reaches it.
-  protectedFromSequence: string | null;
   oldestRetainedCreatedAt: string | null;
 }>;
 
@@ -2168,8 +2168,9 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
       const mode = options?.mode ?? "grace";
 
       return storage.write(() => {
-        // Retained-pressure mode has no age cutoff: any confirmed-ACKed row
-        // outside a protected span is eligible (ADR-183 D3).
+        // Retained-pressure mode has no age cutoff: any confirmed-ACKed row is
+        // eligible (ADR-183 D3), inside an open prompt's span too — the manager
+        // reads a span's ACKed prefix from its own canonical events (ADR-184).
         const cutoff =
           mode === "retained_pressure"
             ? null
@@ -2183,10 +2184,6 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         db.exec("BEGIN IMMEDIATE");
         try {
           const stream = ensureRuntimeEventStream(db, now);
-          const protectedSpan = protectedRuntimeEventSpan(
-            db,
-            stream.acknowledged_through,
-          );
           const candidates = db
             .prepare(
               `SELECT e.sequence, e.sequence_sort_key, e.encoded_bytes,
@@ -2203,10 +2200,10 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
           let count = 0;
           let last: { sequence: string; sequence_sort_key: string } | undefined;
 
+          // The floor stays a contiguous prefix: the walk stops at the first
+          // row it may not delete, and the floor is the last row it did.
           for (const row of candidates) {
             if (
-              (protectedSpan !== undefined &&
-                BigInt(row.sequence) >= BigInt(protectedSpan.sequence)) ||
               row.acknowledged_at === null ||
               (cutoff !== null && row.acknowledged_at >= cutoff) ||
               bytes + row.encoded_bytes > MAX_RUNTIME_EVENT_BYTES
@@ -2267,10 +2264,8 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
       return {
         retainedCount: regular.retainedCount,
         retainedBytes: regular.retainedBytes,
+        unacknowledgedCount: regular.unacknowledgedCount,
         acknowledgedThrough: stream.acknowledged_through,
-        protectedFromSequence:
-          protectedRuntimeEventSpan(db, stream.acknowledged_through)
-            ?.sequence ?? null,
         oldestRetainedCreatedAt: oldest?.created_at ?? null,
       };
     },
@@ -2378,22 +2373,6 @@ function ensureRuntimeEventStream(
   ).run(streamId, createdAt, createdAt);
 
   return getRuntimeEventStream(db, streamId);
-}
-
-// An accepted v2 command owns its complete event span until the terminal
-// event is ACKed. ACK alone does not retire the receipt.
-function protectedRuntimeEventSpan(
-  db: DatabaseSync,
-  acknowledgedThrough: string | null,
-): { sequence: string } | undefined {
-  return db
-    .prepare(
-      `SELECT accepted_sequence AS sequence
-    FROM command_receipts WHERE request_version = 2 AND accepted_sequence IS NOT NULL
-    AND (terminal_sequence IS NULL OR CAST(terminal_sequence AS INTEGER) > CAST(? AS INTEGER))
-    ORDER BY length(accepted_sequence), accepted_sequence LIMIT 1`,
-    )
-    .get(acknowledgedThrough ?? "-1") as { sequence: string } | undefined;
 }
 
 function runtimeEventOutboxStats(
@@ -3215,7 +3194,7 @@ export function startRuntimeEventPruner(
         logger.warn(
           {
             retainedCount: current.retainedCount,
-            protectedFromSequence: current.protectedFromSequence,
+            unacknowledgedCount: current.unacknowledgedCount,
             acknowledgedThrough: current.acknowledgedThrough,
           },
           "outbox-retained-pressure-prune-stalled",

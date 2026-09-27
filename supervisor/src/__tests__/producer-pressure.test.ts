@@ -1,3 +1,4 @@
+import type { Logger } from "pino";
 import type { HostState } from "../host-state";
 import type { SessionRecord } from "../types";
 
@@ -161,5 +162,77 @@ describe("producer pause bound (ADR-183 D6)", () => {
     void pressure.beforeFrame(1024);
     expect(unref).toHaveBeenCalledTimes(1);
     spy.mockRestore();
+  });
+});
+
+// ADR-184 D6: a producer pause is observable. R20's acceptance counts these
+// exact line names, so the names are pinned here.
+describe("producer pause logs (ADR-184 D6)", () => {
+  function logger() {
+    return { info: vi.fn() } as unknown as Logger & {
+      info: ReturnType<typeof vi.fn>;
+    };
+  }
+  const named = (log: { info: ReturnType<typeof vi.fn> }, msg: string) =>
+    log.info.mock.calls.filter((call) => call[1] === msg);
+
+  it("logs the pause once on the first refused frame and the resume with its duration", async () => {
+    const host = fakeHost({ outboxRefuses: () => true });
+    const rec = {
+      ...record(),
+      sessionId: "session-1",
+      runId: "run-1",
+    } as SessionRecord;
+    const log = logger();
+    const pressure = producerPressure(
+      host.state,
+      rec,
+      undefined,
+      undefined,
+      log,
+    );
+    const admitted = pressure.beforeFrame(1024);
+
+    // Another capacity wake without capacity is the same pause.
+    for (const listener of [...host.listeners]) listener();
+    vi.advanceTimersByTime(500);
+    expect(named(log, "producer-output-paused")).toEqual([
+      [
+        { sessionId: "session-1", runId: "run-1", outboxRefusesFrames: true },
+        "producer-output-paused",
+      ],
+    ]);
+    expect(named(log, "producer-output-resumed")).toHaveLength(0);
+    host.grant();
+    await expect(admitted).resolves.toMatchObject({ kind: "decode" });
+    expect(named(log, "producer-output-resumed")).toEqual([
+      [
+        { sessionId: "session-1", runId: "run-1", pausedMs: 500 },
+        "producer-output-resumed",
+      ],
+    ]);
+  });
+
+  it("logs nothing for a frame admitted at once, or for a log-write wait", async () => {
+    const host = fakeHost({ outboxRefuses: () => true });
+    const log = logger();
+    const files = {
+      tryReserveLogBytes: () => false,
+      reserveTeardownLogBytes: () => {},
+    };
+    const pressure = producerPressure(
+      host.state,
+      record(),
+      files as never,
+      undefined,
+      log,
+    );
+
+    void pressure.beforeWrite(1024);
+    host.grant();
+    await expect(pressure.beforeFrame(1024)).resolves.toMatchObject({
+      kind: "decode",
+    });
+    expect(log.info).not.toHaveBeenCalled();
   });
 });

@@ -345,43 +345,52 @@ function ackRangesThroughAtOrBelow(stateDir: string, sortKey: string): number {
   }
 }
 
-describe("ADR-183 retained-pressure prune: protected spans, floor, paging", () => {
-  it("B3a/B3b/B3c: stops at an unsettled v2 span, keeps the floor under the manager watermark, and prunes ACK ranges with the rows", async () => {
+/** Every sequence appended, in order. */
+function appendSequences(state: HostState, count: number): string[] {
+  return Array.from(
+    { length: count },
+    () => state.appendRuntimeEvent(eventDraft()).sequence,
+  );
+}
+
+describe("retained-pressure prune past open spans (ADR-184), floor, paging", () => {
+  it("H1: prunes through an open v2 span down to below low; the floor passes the accepted row, never the ACK watermark, and the store reopens", async () => {
     const { logger, lines } = captureLogger();
-    const { state, stateDir } = openStore(logger);
+    const stateDir = mkdtempSync(join(tmpdir(), "maister-outbox-semantics-"));
+    // Reassigned when the store is reopened below; the cleanup closes the
+    // current one.
+    let state = openHostState({ stateDir, limits: LIMITS, logger });
+
+    cleanups.push(() => {
+      state.close();
+      rmSync(stateDir, { recursive: true, force: true });
+    });
     const streamId = state.getRuntimeEventStreamId();
     const stopPruner = startRuntimeEventPruner(state, logger);
 
     cleanups.push(stopPruner);
     // 250 + 1 + 700 rows stay under hard (1000); the appends never yield, so
-    // the prune starts after the ACK below. 250 puts the span mid-page (pages
-    // are 100 rows), the one shape where the last DELETED row differs from the
-    // last SCANNED one — at a page boundary B3b could not tell them apart.
+    // the prune starts after the ACK below.
     appendBatch(state, 250);
-    // An accepted v2 prompt whose terminal is not written: it owns every row
-    // from its accepted sequence on.
+    // An accepted v2 prompt whose terminal is not written: before ADR-184 it
+    // pinned every row from its accepted sequence on.
     const accepted = state.putReceiptWithRuntimeEvent(
       promptReceipt({ requestVersion: 2 }),
       eventDraft("session.command"),
       { kind: "new_work" },
     );
-    let last = appendBatch(state, 700);
+    const last = appendBatch(state, 700);
 
     state.ackRuntimeEvents(streamId, last);
-    await waitFor(() => regularRetained(state) <= 701, 5_000, 5);
+    await waitFor(() => regularRetained(state) < LIMITS.eventLowRows, 5_000, 5);
     await settle();
 
     const floor = streamRow(stateDir);
 
-    // B3a: everything before the span went, nothing at or after it.
-    expect(regularRetained(state)).toBe(701);
-    expect(
-      state.runtimeEventsAfter(streamId, floor.replay_floor_sequence, 1)[0]
-        ?.sequence,
-    ).toBe(accepted.sequence);
-    // B3b: the floor is the last DELETED sequence, never past the watermark.
-    expect(floor.replay_floor_sequence).toBe(
-      String(BigInt(accepted.sequence) - 1n),
+    // Whole 100-row pages until below low: 951 → 551.
+    expect(regularRetained(state)).toBe(551);
+    expect(BigInt(floor.replay_floor_sequence ?? "-1")).toBeGreaterThan(
+      BigInt(accepted.sequence),
     );
     expect(BigInt(floor.replay_floor_sequence ?? "-1")).toBeLessThanOrEqual(
       BigInt(floor.acknowledged_through ?? "-1"),
@@ -393,31 +402,101 @@ describe("ADR-183 retained-pressure prune: protected spans, floor, paging", () =
       ),
     ).toThrow(/below the retained floor/);
     expect(
-      state.runtimeEventsAfter(streamId, floor.replay_floor_sequence, 1),
-    ).toHaveLength(1);
-    // B3c: no ACK range survives wholly below the floor.
-    expect(
       ackRangesThroughAtOrBelow(stateDir, floor.replay_floor_sort_key ?? ""),
     ).toBe(0);
+    expect(
+      lines.filter((line) => line.msg === "outbox-retained-pressure-prune"),
+    ).toHaveLength(1);
+    expect(
+      lines.filter(
+        (line) => line.msg === "outbox-retained-pressure-prune-stalled",
+      ),
+    ).toHaveLength(0);
+    // The boot audit accepts the prefix the prune left.
+    stopPruner();
+    state.close();
+    state = openHostState({ stateDir, limits: LIMITS, logger });
+    expect(
+      state.runtimeEventsAfter(streamId, floor.replay_floor_sequence, 1)[0]
+        ?.sequence,
+    ).toBe(String(BigInt(floor.replay_floor_sequence ?? "0") + 1n));
+  });
 
-    // Only the span remains: more ACKed traffic still prunes nothing, and the
-    // stall is reported once for the episode.
+  it("H2: the floor is the last DELETED row mid-page, past an open span", async () => {
+    const { logger } = captureLogger();
+    const { state, stateDir } = openStore(logger);
+    const streamId = state.getRuntimeEventStreamId();
+    const stopPruner = startRuntimeEventPruner(state, logger);
+
+    cleanups.push(stopPruner);
+    appendBatch(state, 250);
+    const accepted = state.putReceiptWithRuntimeEvent(
+      promptReceipt({ requestVersion: 2 }),
+      eventDraft("session.command"),
+      { kind: "new_work" },
+    );
+    // The manager's watermark sits mid-page: 276 rows ACKed, so the third page
+    // (rows 200–299) is scanned whole but deleted only through row 275 — the
+    // one shape where the last DELETED row differs from the last SCANNED one.
+    const acked = appendSequences(state, 25).at(-1)!;
+
+    state.ackRuntimeEvents(streamId, acked);
+    appendBatch(state, 675);
+    await waitFor(() => regularRetained(state) === 675, 5_000, 5);
+    await settle();
+
+    expect(streamRow(stateDir).replay_floor_sequence).toBe(acked);
+    expect(BigInt(acked)).toBeGreaterThan(BigInt(accepted.sequence));
+    expect(regularRetained(state)).toBe(675);
+  });
+
+  it("H3: unACKed rows survive every pass in both modes; the stall reports them once", async () => {
+    const { logger, lines } = captureLogger();
+    const { state } = openStore(logger);
+    const stopPruner = startRuntimeEventPruner(state, logger);
+
+    cleanups.push(stopPruner);
+    // The manager ACKed nothing: an open prompt and its tail, all unACKed.
+    state.putReceiptWithRuntimeEvent(
+      promptReceipt({ requestVersion: 2 }),
+      eventDraft("session.command"),
+      { kind: "new_work" },
+    );
+    appendBatch(state, LIMITS.eventSoftRows);
+    await waitFor(
+      () =>
+        lines.some(
+          (line) => line.msg === "outbox-retained-pressure-prune-stalled",
+        ),
+      5_000,
+      5,
+    );
     for (let round = 0; round < 3; round += 1) {
-      last = appendBatch(state, 10);
-      state.ackRuntimeEvents(streamId, last);
+      appendBatch(state, 10);
       await settle();
     }
-    expect(regularRetained(state)).toBe(731);
+    expect(
+      state.pruneAcknowledgedRuntimeEvents(new Date(), {
+        mode: "retained_pressure",
+      }),
+    ).toBe(0);
+    expect(
+      state.pruneAcknowledgedRuntimeEvents(
+        new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      ),
+    ).toBe(0);
+    expect(regularRetained(state)).toBe(LIMITS.eventSoftRows + 31);
     const stalled = lines.filter(
       (line) => line.msg === "outbox-retained-pressure-prune-stalled",
     );
 
     expect(stalled).toHaveLength(1);
     expect(stalled[0]).toMatchObject({
-      protectedFromSequence: accepted.sequence,
-      acknowledgedThrough: expect.any(String),
+      retainedCount: LIMITS.eventSoftRows + 1,
+      unacknowledgedCount: LIMITS.eventSoftRows + 1,
+      acknowledgedThrough: null,
     });
-    expect(state.runtimeEventHealthSnapshot().pressured).toBe(false);
+    expect(stalled[0]).not.toHaveProperty("protectedFromSequence");
   });
 
   it("B3d: a 20 000-row retained prune takes ≥ 200 bounded pages and an ACK commits between them", async () => {

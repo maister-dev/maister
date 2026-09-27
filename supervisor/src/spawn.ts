@@ -352,6 +352,7 @@ export async function spawnSession(
         record,
         producerFiles,
         opts.producerPauseBound,
+        logger,
       )
     : undefined;
 

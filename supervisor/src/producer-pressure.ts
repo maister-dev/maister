@@ -1,3 +1,4 @@
+import type { Logger } from "pino";
 import type { HostState } from "./host-state";
 import type { ProducerFiles } from "./producer-files";
 import type { SessionRecord } from "./types";
@@ -21,12 +22,14 @@ export type ProducerPauseBound = {
   onExceeded: (pausedMs: number) => void;
 };
 
-/** Capacity wakeups come from committed ACK/prune/release transitions. */
+/** Capacity wakeups come from committed ACK/prune/release transitions. A
+ * frame wait logs its pause and its resume once each (ADR-184 D6). */
 export function producerPressure(
   state: HostState,
   record: SessionRecord,
   files?: ProducerFiles,
   pauseBound?: ProducerPauseBound,
+  logger?: Logger,
 ): {
   beforeFrame: (frameBytes: number) => Promise<FrameAdmission>;
   beforeWrite: (bytes: number) => Promise<LogWriteAdmission>;
@@ -46,8 +49,21 @@ export function producerPressure(
       let settled = false;
       let unsubscribe = (): void => {};
       let pauseTimer: NodeJS.Timeout | undefined;
+      // A frame wait (`bounded`) that paused: one line when it pauses, one when
+      // it ends, however many capacity wakes find nothing in between.
+      let pausedAt: number | undefined;
       const cleanup = (): void => {
         settled = true;
+        if (pausedAt !== undefined)
+          logger?.info(
+            {
+              sessionId: record.sessionId,
+              runId: record.runId,
+              pausedMs: Date.now() - pausedAt,
+            },
+            "producer-output-resumed",
+          );
+        pausedAt = undefined;
         record.outputPaused = false;
         record.outputPausedSince = undefined;
         if (pauseTimer) clearTimeout(pauseTimer);
@@ -90,6 +106,17 @@ export function producerPressure(
             cleanup();
             resolve(final);
           } else {
+            if (bounded && pausedAt === undefined) {
+              pausedAt = Date.now();
+              logger?.info(
+                {
+                  sessionId: record.sessionId,
+                  runId: record.runId,
+                  outboxRefusesFrames: state.runtimeEventOutboxRefusesFrames(),
+                },
+                "producer-output-paused",
+              );
+            }
             record.outputPaused = true;
             armPauseBound();
           }

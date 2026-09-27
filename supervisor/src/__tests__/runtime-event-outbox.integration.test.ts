@@ -92,7 +92,10 @@ function admitNewWork(state: HostState): void {
 }
 
 describe("Stage B durable host event outbox", () => {
-  it("retains an accepted v2 output span until terminal ACK and keeps its receipt for explicit retirement", () => {
+  // ADR-184: an open prompt no longer pins its span. Its ACKed rows go at the
+  // grace like any other; the manager reads them canonically. The receipt still
+  // waits for explicit retirement.
+  it("prunes an accepted v2 span's ACKed rows after the grace while its prompt is open; keeps the receipt for explicit retirement", () => {
     let clock = new Date("2026-09-04T12:00:00.000Z");
     const state = openHostState({ inMemory: true, now: () => clock });
     const receipt: CommandReceiptRow = {
@@ -110,17 +113,18 @@ describe("Stage B durable host event outbox", () => {
 
       state.ackRuntimeEvents(accepted.streamId, accepted.sequence);
       clock = new Date("2026-09-07T12:00:00.000Z");
-      expect(state.pruneAcknowledgedRuntimeEvents(clock)).toBe(0);
+      expect(state.pruneAcknowledgedRuntimeEvents(clock)).toBe(1);
       const terminal = state.putReceiptWithRuntimeEvent(
         { ...receipt, phase: "completed", completedAt: clock.toISOString() },
         eventDraft("session.command"),
         { kind: "new_work" },
       );
 
+      // The terminal is not ACKed yet: never pruned.
       expect(state.pruneAcknowledgedRuntimeEvents(clock)).toBe(0);
       state.ackRuntimeEvents(terminal.streamId, terminal.sequence);
       clock = new Date("2026-09-10T12:00:00.000Z");
-      expect(state.pruneAcknowledgedRuntimeEvents(clock)).toBe(2);
+      expect(state.pruneAcknowledgedRuntimeEvents(clock)).toBe(1);
       expect(
         state.retireReceipt(receipt.commandId, {
           expectedRequestSha256: "digest",
