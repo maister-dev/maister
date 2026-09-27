@@ -208,7 +208,7 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-164](#adr-164-remove-managed-claude-code-router-support)                                                                                                | Remove managed Claude Code Router support                                                                                                      | Implemented                                                          | 2026-09-02 |
 | [ADR-165](#adr-165-governed-recursive-agent-harness--public-run-results-result-profiles-effective-recursion-bounds-result-only-completion)                   | Governed recursive agent harness — public run results, result profiles, effective recursion bounds, result-only completion                     | Implemented                                                          | 2026-09-02 |
 | [ADR-166](#adr-166-local-execution-host-contract--durable-host-identity-epoch-fenced-assignments-command-ledger-opaque-adopted-workspaces) | Local execution-host contract — durable host identity, epoch-fenced assignments, command ledger, opaque adopted workspaces | Implemented | 2026-09-02 |
-| [ADR-167](#adr-167-durable-execution-host-event-and-runtime-data-plane) | Durable execution-host event and runtime-data plane | Implemented; amended 2026-09-23, 2026-09-25, 2026-09-26 | 2026-09-04 |
+| [ADR-167](#adr-167-durable-execution-host-event-and-runtime-data-plane) | Durable execution-host event and runtime-data plane | Implemented; amended 2026-09-23, 2026-09-25, 2026-09-26, 2026-09-27 | 2026-09-04 |
 | [ADR-168](#adr-168-post-issuance-mutation-of-api-tokens) | Post-issuance mutation of API tokens | Implemented | 2026-09-11 |
 | [ADR-169](#adr-169-two-canonical-attention-counters-decisions-and-updates) | Two canonical attention counters, `decisions` and `updates` | Accepted | 2026-09-10 |
 | [ADR-170](#adr-170-derived-work-stage-vocabulary-distinct-from-the-board-columns) | Derived work-stage vocabulary distinct from the board columns | Accepted | 2026-09-10 |
@@ -224,7 +224,8 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-180](#adr-180-permission-deadline-has-one-owner) | Permission deadline has one owner | Implemented; amended 2026-09-26 | 2026-09-22 |
 | [ADR-181](#adr-181-run-git-panel-status-independent-worktree-git-operations-public-branch-names-and-pr-before-promotion) | Run git panel: status-independent worktree git operations, public branch names, and PR before promotion | Implemented | 2026-09-22 |
 | [ADR-182](#adr-182-steering-a-running-agent-turn-as-a-durable-fenced-command) | Steering a running agent turn as a durable fenced command | Implemented; amended 2026-09-26 | 2026-09-25 |
-| [ADR-183](#adr-183-outbox-pressure-means-the-manager-is-behind) | Outbox pressure means the manager is behind | Implemented | 2026-09-26 |
+| [ADR-183](#adr-183-outbox-pressure-means-the-manager-is-behind) | Outbox pressure means the manager is behind | Implemented; amended 2026-09-27 | 2026-09-26 |
+| [ADR-184](#adr-184-an-open-prompt-does-not-pin-the-outbox--the-span-feed-reads-its-acked-prefix-canonically) | An open prompt does not pin the outbox — the span feed reads its ACKed prefix canonically | Accepted | 2026-09-27 |
 
 ---
 
@@ -1711,7 +1712,7 @@ Full record: [`decisions/adr-166.md`](decisions/adr-166.md)
 
 ### ADR-167: Durable execution-host event and runtime-data plane
 
-**Status:** Implemented; amended 2026-09-23 (retirement tombstone guards; host-evidence settlement); amended 2026-09-25 (steer inside a prompt span; batched ingest and ACK, pausing subscriber); amended 2026-09-26 (outbox pressure is unacknowledged-only; retained rows pruned before grace under pressure)
+**Status:** Implemented; amended 2026-09-23 (retirement tombstone guards; host-evidence settlement); amended 2026-09-25 (steer inside a prompt span; batched ingest and ACK, pausing subscriber); amended 2026-09-26 (outbox pressure is unacknowledged-only; retained rows pruned before grace under pressure); amended 2026-09-27 (an open prompt's ACKed rows are pruned; the span feed reads them canonically)
 **Date:** 2026-09-04
 
 Full record: [`decisions/adr-167.md`](decisions/adr-167.md)
@@ -1857,10 +1858,19 @@ Full record: [`decisions/adr-182.md`](decisions/adr-182.md)
 
 ### ADR-183: Outbox pressure means the manager is behind
 
-**Status:** Implemented
+**Status:** Implemented; amended 2026-09-27 (an open prompt no longer pins the retained-pressure prune)
 **Date:** 2026-09-26
 
 Full record: [`decisions/adr-183.md`](decisions/adr-183.md)
+
+---
+
+### ADR-184: An open prompt does not pin the outbox — the span feed reads its ACKed prefix canonically
+
+**Status:** Accepted
+**Date:** 2026-09-27
+
+Full record: [`decisions/adr-184.md`](decisions/adr-184.md)
 
 ---
 

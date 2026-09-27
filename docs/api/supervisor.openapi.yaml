@@ -168,7 +168,10 @@ paths:
         The manager supplies `streamId` and an absolute `throughSequence`.
         The host verifies it against its current stream and emitted contiguous
         prefix. Acknowledgement is idempotent; regression returns the current
-        watermark and an ACK never destroys a replay record before its grace.
+        watermark. An ACK makes a row prunable: at the replay grace, or at once
+        while retained rows are at the soft budget (ADR-183) — whether or not
+        the row lies inside an open prompt's span (ADR-184). An unacknowledged
+        row is never pruned.
       operationId: acknowledgeExecutionHostRuntimeEvents
       requestBody:
         required: true
@@ -206,7 +209,10 @@ paths:
         returned (other runs' events included, as on the SSE replay), because
         contiguity and source binding can only be proven over the whole range.
         A page is bounded like the replay (≤ 500 rows, ≤ 1 MiB); `partial` with
-        `nextAfter` means "request again from `nextAfter`". A range the host can
+        `nextAfter` means "request again from `nextAfter`". A span's ACKed
+        prefix may already be pruned while its prompt is open (ADR-184): the
+        manager reads that prefix from its own canonical events and requests
+        only from its own contiguous frontier upward. A range the host can
         no longer or cannot yet serve answers `200 unavailable` with a reason —
         it is never a command outcome. Loopback trusted-admin transport only,
         like `/runtime-events`.
@@ -281,7 +287,7 @@ paths:
                       payloadSchema: maister.session.update.v1
                       payload: {}
                 replayFloorLost:
-                  summary: The range was pruned after its ACK and replay grace.
+                  summary: The range starts below the replay floor (its rows were pruned after their ACK).
                   value:
                     streamId: 3a1f0c2e-5b6d-4e7f-8a9b-0c1d2e3f4a5b
                     after: "40"

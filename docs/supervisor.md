@@ -692,7 +692,9 @@ endpoint for two causes: a pending permission outlives
 `MAISTER_PERMISSION_MAX_HOURS` (`cause: "permission_cap"`, Implemented —
 ADR-180), or a producer's frames stay paused by outbox pressure for
 `PRODUCER_PAUSE_MAX_MS` (5 min; `cause: "outbox_pressure"`, Implemented —
-ADR-183, logged `producer-pause-exceeded`). Neither has a `command.id`, fence,
+ADR-183, logged `producer-pause-exceeded`; the pause itself logs INFO
+`producer-output-paused` and, on relief, `producer-output-resumed` with
+`pausedMs` — ADR-184 D6, Designed). Neither has a `command.id`, fence,
 ledger row or receipt, and a throwing teardown is logged at `error` rather than
 returned to anyone. The steps are identical from here on:
 
@@ -939,7 +941,9 @@ amendment 2026-09-23) returns the same retained envelopes for the range
 `(after, through]` as one bounded JSON page (`complete`, or `partial` with
 `nextAfter`). It is read-only — it never ACKs, prunes or opens SSE — and takes no
 command id, so the manager can prove contiguity and source binding over the whole
-range. A foreign stream, a pruned floor or a range past the highest emitted
+range. An open prompt's ACKed prefix may already be pruned (ADR-184); the
+manager asks only from its own contiguous frontier upward. A foreign stream,
+a pruned floor or a range past the highest emitted
 sequence answers `200 unavailable` with `stream_identity_changed`,
 `replay_floor_lost` or `beyond_emitted`; `after >= through` or any
 non-canonical sequence (`abc`, `1.5`, `1e3`) is `409
@@ -956,13 +960,18 @@ The in-memory per-session SSE ring remains a local diagnostic surface only; it i
 run-state authority. The supervisor no longer writes `run.events.jsonl`.
 
 Pruning (Implemented — ADR-183) removes only confirmed-ACKed rows, oldest
-first and never at or beyond an unsettled v2 command's span. The 24 h replay
+first, as a contiguous prefix; an open v2 command's span no longer stops it
+(ADR-184, Designed — the manager reads a span's ACKed prefix from its own
+canonical events). The 24 h replay
 grace (`MAISTER_EVENT_ACK_GRACE_MS`) is the retention target: the hourly pass
 prunes rows past it, and a `retained_pressure` pass — kicked after any
 committed ACK, append or receipt that finds retained rows at the soft budget —
 prunes ACKed rows before their grace until retained rows fall below the low
 budget, 100 rows / 1 MiB per page with a yield between pages. Retained rows
-never set `pressured`; only unacknowledged rows do.
+never set `pressured`; only unacknowledged rows do. A pass that can prune
+nothing logs `outbox-retained-pressure-prune-stalled` once per episode with
+`retainedCount`, `unacknowledgedCount` and `acknowledgedThrough` — only
+unacknowledged rows are left, so the manager is behind.
 
 ### Execution-host state store _(Implemented — ADR-166)_
 
