@@ -225,7 +225,7 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-181](#adr-181-run-git-panel-status-independent-worktree-git-operations-public-branch-names-and-pr-before-promotion) | Run git panel: status-independent worktree git operations, public branch names, and PR before promotion | Implemented | 2026-09-22 |
 | [ADR-182](#adr-182-steering-a-running-agent-turn-as-a-durable-fenced-command) | Steering a running agent turn as a durable fenced command | Implemented; amended 2026-09-26 | 2026-09-25 |
 | [ADR-183](#adr-183-outbox-pressure-means-the-manager-is-behind) | Outbox pressure means the manager is behind | Implemented; amended 2026-09-27 | 2026-09-26 |
-| [ADR-184](#adr-184-an-open-prompt-does-not-pin-the-outbox--the-span-feed-reads-its-acked-prefix-canonically) | An open prompt does not pin the outbox — the span feed reads its ACKed prefix canonically | Accepted | 2026-09-27 |
+| [ADR-184](#adr-184-an-open-prompt-does-not-pin-the-outbox--the-span-feed-reads-its-acked-prefix-canonically) | An open prompt does not pin the outbox — the span feed reads its ACKed prefix canonically | Implemented | 2026-09-27 |
 
 ---
 
@@ -1867,7 +1867,7 @@ Full record: [`decisions/adr-183.md`](decisions/adr-183.md)
 
 ### ADR-184: An open prompt does not pin the outbox — the span feed reads its ACKed prefix canonically
 
-**Status:** Accepted
+**Status:** Implemented
 **Date:** 2026-09-27
 
 Full record: [`decisions/adr-184.md`](decisions/adr-184.md)

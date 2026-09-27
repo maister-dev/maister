@@ -380,10 +380,13 @@ episode logs `outbox-retained-pressure-prune` once when it ends and
 `outbox-retained-pressure-prune-stalled` once when a pass could prune nothing
 — with `retainedCount`, `unacknowledgedCount` and `acknowledgedThrough`; since
 ADR-184 a stall means only unacknowledged rows remain above low (the manager is
-behind). A producer whose frame waits for outbox capacity logs INFO
+behind). A producer whose frame waits for capacity logs INFO
 `producer-output-paused` once on the pause and INFO `producer-output-resumed`
-(with `pausedMs`) once on relief (ADR-184 D6, Designed); `producer-pause-exceeded`
-stays the 5-minute bound's line.
+(with `pausedMs`) once when that wait ends (ADR-184 D6, Implemented); a log-write
+wait logs neither, and `producer-pause-exceeded` stays the 5-minute bound's
+line. A paused producer is woken only by a commit that can free capacity — an
+ACK, a prune, a released frame or wallet; a refused frame reservation records
+any pressure flip and wakes nobody (EDGE-EVT-14).
 
 Every command receipt names its admission (a closed enum; there is no
 default). The soft gate refuses new work and never an answer or a teardown:
@@ -613,7 +616,7 @@ longer waits for that queue; the event plane itself is unchanged:
   it, the prompt reconciler binds it itself through the same reducer.
 - **Host span.** When it is not ingested yet, the reconciler reads the turn's
   span `[acceptedSequence, terminalSequence]` through the span pager
-  (ADR-184, Designed): the prefix up to the manager's contiguous frontier from
+  (ADR-184, Implemented): the prefix up to the manager's contiguous frontier from
   `execution_events` (a foreign `execution_event_skips` row fills contiguity),
   the rest from the host through the read-only `GET /runtime-events/span`
   (bounded pages of the same retained envelopes the SSE replays; see
@@ -815,7 +818,7 @@ token.
 | `runtime-event-stream-closed` — cursor, reason, pauses | INFO | host |
 | `runtime-event-acknowledged` | INFO, now per batch | host |
 | `outbox-retained-pressure-prune-stalled` — `retainedCount`, `unacknowledgedCount`, `acknowledgedThrough` | WARN, once per retained-pressure episode | host |
-| `producer-output-paused` — `sessionId`, `runId`, `outboxRefusesFrames`; `producer-output-resumed` — `sessionId`, `runId`, `pausedMs` | INFO, once per pause edge (ADR-184 D6, Designed) | host |
+| `producer-output-paused` — `sessionId`, `runId`, `outboxRefusesFrames`; `producer-output-resumed` — `sessionId`, `runId`, `pausedMs` | INFO, once per pause edge (ADR-184 D6, Implemented) | host |
 
 **Load control (R20, opt-in, not in any lane).** Run it alone on a quiet,
 mains-powered host (check `pmset -g log` for sleep and `uptime` for load first):
@@ -864,9 +867,23 @@ crashed, all nine prompts settled canonically. The same harness on
 `881619a5`: `pressured` at 204 s (retained rows at soft), every producer
 paused with no bound and all nine runs still `Running` and unsettled when the
 window closed — the path that ended in `stream-lost`. The residual was the
-open-span limit recorded in ADR-183's Consequences; ADR-184 (Designed) removes
-it — the host prunes an open span's ACKed rows — and its acceptance re-runs
-this measurement.
+open-span limit recorded in ADR-183's Consequences; ADR-184 (Implemented) removes
+it — the host prunes an open span's ACKed rows.
+
+At the default budgets with ADR-184 (measured 2026-09-27, 10-minute window,
+load < 8 at start, mains power, two runs): 393 rows/s, lag at most 60 and 72
+rows, `pressured` never set, no refused command, no manager pressure record,
+zero `producer-output-paused` and `producer-pause-exceeded` lines, retained at
+most 79 994 / 79 978 (hard 100 000), 12 retained-pressure episodes per run of
+exactly 164 pages / 16 400 rows each, every one ending below low (≤ 63 928),
+the longest 1 025 / 995 ms, no stall; no 1 s sample read retained at or above
+soft. The gate's run-length bound N = 3 samples is twice the first run's
+longest episode, rounded up (ADR-184 D7 f); the second run passed with it.
+All nine prompts settled canonically, 3 agent runs `Done` and 6 flow runs
+`Review`. The same harness on ADR-183 alone (`cc9cf20c`) reproduced the limit:
+soft at 203 s, hard at ~251 s, one stall, nine `producer-pause-exceeded`
+checkpoints — and, once nine producers waited at hard, a supervisor pegged at
+100% CPU by the capacity cascade of EDGE-EVT-14, fixed on the same branch.
 
 ## Expectations
 
@@ -881,7 +898,7 @@ this measurement.
 - **EVT-09:** Outbox pressure — unacknowledged rows at the soft budget — refuses new work (`session.create`, `session.prompt`, `workspace.adopt`, runtime-object reserve/upload), pauses producer frames up to `PRODUCER_PAUSE_MAX_MS`, and never refuses an answer (`session.input`, `session.steer`) or a teardown; enforced by `admitReceipt`'s admission table and the host admission suite (Implemented — ADR-183).
 - **EVT-10:** Each projector owns a durable per-run cursor and poison state independent of accepted ingest.
 - **EVT-11:** Browser replay is authorized, exclusive-after-cursor, bounded, and sourced only from canonical user-safe rows.
-- **EVT-12:** Canonical events retain with the run while host outbox rows prune only after confirmed ACK — never an unacknowledged row, and an open prompt's span does not stop the walk; the 24 h replay grace is the retention target and is cut short, oldest-first, while retained rows are at the soft budget; enforced by the break conditions of `pruneAcknowledgedRuntimeEvents` (unACKed row, grace cutoff, page byte cap) and the outbox-pressure suite (H1–H3); the read-only span route neither ACKs nor prunes (Implemented — ADR-183; open spans pruned — ADR-184, Designed).
+- **EVT-12:** Canonical events retain with the run while host outbox rows prune only after confirmed ACK — never an unacknowledged row, and an open prompt's span does not stop the walk; the 24 h replay grace is the retention target and is cut short, oldest-first, while retained rows are at the soft budget; enforced by the break conditions of `pruneAcknowledgedRuntimeEvents` (unACKed row, grace cutoff, page byte cap) and the outbox-pressure suite (H1–H3); the read-only span route neither ACKs nor prunes (Implemented — ADR-183; open spans pruned — ADR-184, Implemented).
 
 ## Edge cases
 
@@ -896,8 +913,9 @@ this measurement.
 - **EDGE-EVT-09 (Implemented — ADR-167 amendment 2026-09-25):** A subscriber whose socket stops draining is paused, not closed. The host stops paging for that connection until `drain`, resumes from the last sequence written to the socket (the frame whose `write()` returned `false` was buffered and counts as written), and goes live at an empty page. The manager's claim and pass are unaffected (`H1`, `H2`). No `MaisterError` is raised: nothing failed.
 - **EDGE-EVT-10 (Implemented — ADR-167 amendment 2026-09-25):** A catch-up read that falls below the replay floor mid-stream closes the connection `floor`; a page read that finds the stream replaced or corrupt, or a live event naming another stream, closes it `protocol`. The manager reconnects from its durable cursor: after a lost floor the next open answers `409 PRECONDITION/replay_floor_lost` (EDGE-EVT-03); after a replacement the open serves the new stream and its first envelope reaches ingest, which degrades the host as `CONFLICT/event_stream_mismatch` (EDGE-EVT-04).
 - **EDGE-EVT-11 (Implemented — ADR-183):** A producer paused past `PRODUCER_PAUSE_MAX_MS` is checkpointed with `cause: "outbox_pressure"`; its prompt is rejected `ACP_PROTOCOL {reason: "session_checkpointed", cause: "outbox_pressure"}`, which the manager reads as a park (`EXECUTOR_UNAVAILABLE {reason: "host_pressured"}`; a route or permission-cap `session_checkpointed` without that `cause` is not a park), and a flow or agent run resumes on the same ACP session when a health sample reports no pressure.
-- **EDGE-EVT-12 (Implemented — ADR-183; amended by ADR-184, Designed):** A retained-pressure pass that can prune nothing because an unacknowledged prefix pins the oldest rows — the manager is behind — logs `outbox-retained-pressure-prune-stalled` once per episode with `unacknowledgedCount`; the hard budget (`event_outbox_backpressure` at `retained ≥ hard`) stays the last line. No `MaisterError` is raised by the prune itself. An open prompt no longer pins the prune (before ADR-184 the oldest open v2 prompt pinned every later row, and R20 at the default budgets reached the hard budget with the manager caught up — ADR-183 Consequences, "Measured limit").
+- **EDGE-EVT-12 (Implemented — ADR-183; amended by ADR-184, Implemented):** A retained-pressure pass that can prune nothing because an unacknowledged prefix pins the oldest rows — the manager is behind — logs `outbox-retained-pressure-prune-stalled` once per episode with `unacknowledgedCount`; the hard budget (`event_outbox_backpressure` at `retained ≥ hard`) stays the last line. No `MaisterError` is raised by the prune itself. An open prompt no longer pins the prune (before ADR-184 the oldest open v2 prompt pinned every later row, and R20 at the default budgets reached the hard budget with the manager caught up — ADR-183 Consequences, "Measured limit").
 - **EDGE-EVT-13 (Implemented — ADR-183):** A silent stream with open commands on a pressured, `ready` host is classified `pressured`, never `lost`; an unreachable host keeps the stall rules, and a record cleared by the next health sample returns the stream to them.
+- **EDGE-EVT-14 (Implemented, 2026-09-28):** Several producers wait for frame capacity at once (unACKed pressure, the hard budget or physical headroom). A refused reservation wakes no other waiter, so one committed capacity change costs one reservation attempt per paused producer. Before the fix every refusal woke every listener, and each waiter's refusal made the others retry: one ACK cost 4 / 15 / 64 / 325 / 1 956 / 13 699 attempts for 2–7 waiters — about 10⁶ for the nine producers of the default caps — and the ADR-184 R20 control on ADR-183 alone pegged the host at 100% CPU once its nine producers paused at hard; with the fix the same control kept serving health through the pause and checkpointed all nine at the bound (`outbox-pressure-semantics.integration.test.ts` H6). No `MaisterError`: a paused producer stays paused until capacity frees or its bound checkpoints it.
 
 ## Linked artifacts
 

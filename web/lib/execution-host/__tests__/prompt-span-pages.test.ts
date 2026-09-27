@@ -107,6 +107,9 @@ function readers(script: Script) {
     },
     hostPage: async (after, through) => {
       calls.push(`host(${after},${through}]`);
+      // The readers resolve on microtasks, so a pager that retries without
+      // end never reaches a timer (the abort signal would never fire).
+      if (calls.length > 100) throw new Error("the pager loops on the host");
       if (script.hostFloor !== undefined && after < BigInt(script.hostFloor))
         throw new HostSpanUnavailable("replay_floor_lost");
 

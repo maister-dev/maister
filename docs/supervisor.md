@@ -694,7 +694,7 @@ ADR-180), or a producer's frames stay paused by outbox pressure for
 `PRODUCER_PAUSE_MAX_MS` (5 min; `cause: "outbox_pressure"`, Implemented —
 ADR-183, logged `producer-pause-exceeded`; the pause itself logs INFO
 `producer-output-paused` and, on relief, `producer-output-resumed` with
-`pausedMs` — ADR-184 D6, Designed). Neither has a `command.id`, fence,
+`pausedMs` — ADR-184 D6, Implemented). Neither has a `command.id`, fence,
 ledger row or receipt, and a throwing teardown is logged at `error` rather than
 returned to anyone. The steps are identical from here on:
 
@@ -961,7 +961,7 @@ run-state authority. The supervisor no longer writes `run.events.jsonl`.
 
 Pruning (Implemented — ADR-183) removes only confirmed-ACKed rows, oldest
 first, as a contiguous prefix; an open v2 command's span no longer stops it
-(ADR-184, Designed — the manager reads a span's ACKed prefix from its own
+(ADR-184, Implemented — the manager reads a span's ACKed prefix from its own
 canonical events). The 24 h replay
 grace (`MAISTER_EVENT_ACK_GRACE_MS`) is the retention target: the hourly pass
 prunes rows past it, and a `retained_pressure` pass — kicked after any
