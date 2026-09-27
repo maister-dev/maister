@@ -24,6 +24,7 @@ import {
 
 import {
   executionCommands,
+  executionEventStreams,
   executionEvents,
   nodeAttempts,
   runMessages,
@@ -222,8 +223,74 @@ const countingOwners = () => {
   };
 };
 
+/** The manager's contiguous frontier on the stream a command's receipt names. */
+async function frontierOf(commandId: string): Promise<bigint> {
+  const streamId = (await command(commandId)).receiptEvidence?.evidenceV2
+    ?.terminal?.streamId;
+  const [stream] = await db
+    .select({ last: executionEventStreams.lastContiguousSequence })
+    .from(executionEventStreams)
+    .where(eq(executionEventStreams.streamId, streamId!));
+
+  if (stream?.last === null || stream?.last === undefined)
+    throw new Error(`stream ${streamId} has no contiguous frontier`);
+
+  return stream.last;
+}
+
+const terminalOf =
+  (commandId: string) =>
+  (envelope: RuntimeEventEnvelope): boolean =>
+    envelope.eventType === "session.command" &&
+    envelope.payload?.commandId === commandId &&
+    envelope.payload?.phase !== "accepted";
+
 describe("host-span settlement on the fake host", () => {
-  it("B5: an unreadable (pruned) span keeps the command waiting, and it settles canonically once ingest catches up", async () => {
+  // ADR-184: the host prunes ACKed rows inside an open span. The manager has
+  // ingested (and so may have ACKed) the span up to its terminal; the host's
+  // floor is that frontier. The pager reads the prefix canonically and asks
+  // the host only above the frontier.
+  it("B5a: a span whose ACKed prefix the host pruned at or below the manager's frontier settles from the host", async () => {
+    const { client, hostSessionId } = await laggingSession();
+
+    // No read may settle before the prefix is pruned.
+    fake.setPrunedFloor("1000000");
+    const handle = await prompt(client, hostSessionId);
+
+    await untilReceipt(handle.commandId);
+    await fake.releaseIngest({ before: terminalOf(handle.commandId) });
+    const frontier = await frontierOf(handle.commandId);
+    const output = (await command(handle.commandId)).receiptEvidence?.evidenceV2
+      ?.terminal?.result?.output as
+      | { acceptedSequence: string; terminalSequence: string }
+      | undefined;
+
+    expect(frontier).toBeGreaterThanOrEqual(BigInt(output!.acceptedSequence));
+    expect(frontier).toBeLessThan(BigInt(output!.terminalSequence));
+    fake.setPrunedFloor(frontier.toString());
+    await db
+      .update(executionCommands)
+      .set({ nextAttemptAt: null })
+      .where(eq(executionCommands.id, handle.commandId));
+    const reads = fake.callsOf("readRuntimeEventSpan").length;
+
+    await reconcile(handle.commandId);
+    expect(await command(handle.commandId)).toMatchObject({
+      settledFrom: "host_span",
+      state: "succeeded",
+      terminalEventId: null,
+      hostSpanVerdict: null,
+    });
+    expect(
+      fake
+        .callsOf("readRuntimeEventSpan")
+        .slice(reads)
+        .map((call) => (call.args[0] as { after: string }).after),
+      "the host is asked only above the manager's frontier",
+    ).toEqual([frontier.toString()]);
+  });
+
+  it("B5b: a floor above the manager's frontier (a restore) keeps the command waiting, and it settles canonically once ingest catches up", async () => {
     const { client, hostSessionId } = await laggingSession();
 
     fake.setPrunedFloor("1000000");
@@ -530,6 +597,10 @@ describe("host-span settlement on the fake host", () => {
         command: await command(handle.commandId),
         signal: AbortSignal.timeout(10_000),
       });
+
+      // Held ingest keeps the terminal off the canonical log.
+      if (terminal === "canonical_available")
+        throw new Error("the lagging span must be read from the host");
 
       // Everything before the turn's terminal frame is ingested first, so the
       // canonical writer that parks is the terminal settlement itself.

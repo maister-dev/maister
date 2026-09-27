@@ -19,8 +19,8 @@ import {
   reconcileStoredPromptEvidence,
   reduceHostSpanEvidence,
 } from "./prompt-evidence";
-import { HostSpanSignals, verifyHostPromptSpan } from "./prompt-output";
-import { HostSpanUnavailable } from "./prompt-host-span";
+import { verifyHostPromptSpan } from "./prompt-output";
+import { HostSpanSignals, HostSpanUnavailable } from "./prompt-host-span";
 import {
   classifyPromptTransportFailure,
   isPromptProtocolConflict,
@@ -247,7 +247,7 @@ async function verifySpanRetryingBusyReads(
   db: Db,
   command: ExecutionCommand,
   signal: AbortSignal,
-): Promise<ExecutionEvent> {
+): Promise<ExecutionEvent | "canonical_available"> {
   for (let attempt = 1; ; attempt += 1) {
     try {
       return await verifyHostPromptSpan({ db, command, signal });
@@ -270,7 +270,9 @@ async function verifySpanRetryingBusyReads(
  * claim's release records (`HOST_SPAN_VERDICTS`): `busy` when the host kept
  * asking for a retry or a retryable write failed — no verdict on the span —
  * and `refused` when the span itself could not settle the command. `null`
- * means no read ran (already settled, or not a host-span command). */
+ * means no read ran (already settled, or not a host-span command) or the
+ * canonical log already holds the terminal (ADR-184 D3.7) — the canonical feed
+ * settles that one. */
 async function attemptHostSpan(
   db: Db,
   commandId: string,
@@ -337,6 +339,14 @@ async function attemptHostSpan(
       );
 
     return "refused";
+  }
+  if (terminal === "canonical_available") {
+    log.debug(
+      { commandId, feed: "canonical", reason: "frontier_covers_terminal" },
+      "prompt-evidence-feed-selected",
+    );
+
+    return null;
   }
   log.debug(
     { commandId, feed: "host_span", reason: "span_verified" },

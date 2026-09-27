@@ -24,6 +24,16 @@ export class HostSpanUnavailable extends MaisterError {
   }
 }
 
+/** A consumer-signal event lies inside a span a fast feed reads (D-B8). */
+export class HostSpanSignals extends MaisterError {
+  constructor(readonly eventType: string) {
+    super("PRECONDITION", "host span carries a consumer signal event", {
+      details: { reason: "span_has_signal_events", eventType },
+    });
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
 /** ADR-167 D5 amendment (D-B4): the host's retained envelopes for
  * `(after, through]`, paged and turned into the same row shape ingest would
  * store — same parse, same jsonb-safe escape, same payload digest and size,

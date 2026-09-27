@@ -167,6 +167,41 @@ describe("stream-lost recovery settles on host evidence (D-B7)", () => {
     });
   });
 
+  // ADR-184: the host pruned the ACKed prefix of the open span while the
+  // manager was ingesting it; the stream is then lost with the frontier inside
+  // the span. The pager reads the prefix canonically and the tail from the
+  // host, so the rescue still settles instead of crashing `stream-lost`.
+  it("settles a completed turn from the host span when the host already pruned its ACKed prefix", async () => {
+    const { runId, commandId } = await completedButUningested();
+    const streamId = (await fake.transport.getCommandReceipt(commandId))
+      ?.evidenceV2?.terminal?.streamId;
+
+    await fake.releaseIngest({
+      before: (envelope) =>
+        envelope.eventType === "session.command" &&
+        envelope.payload?.commandId === commandId &&
+        envelope.payload?.phase !== "accepted",
+    });
+    const [stream] = await db
+      .select({ last: executionEventStreams.lastContiguousSequence })
+      .from(executionEventStreams)
+      .where(eq(executionEventStreams.streamId, streamId!));
+
+    fake.setPrunedFloor(stream!.last!.toString());
+    await loseStream();
+    expect(
+      await resolvePromptEvidence(db, fake.transport, { runId, nodeId: "s1" }),
+    ).toMatchObject({
+      evidence: "pending_application",
+      streamLost: true,
+      commandId,
+    });
+    expect(await command(commandId)).toMatchObject({
+      settledFrom: "host_span",
+      state: "succeeded",
+    });
+  });
+
   it("keeps the stream-lost classification when the span cannot be read", async () => {
     const { runId, commandId } = await completedButUningested();
 
