@@ -418,7 +418,7 @@ The recovery windows below are normative; each cell names its owner.
 | dialog `Running`, prompt in flight, session live | the prompt owner | `live-scratch-session` skip; the prompt owner worker applies the terminal |
 | dialog `WaitingForUser`, session live, `queued` row (a process death between the completion commit and the detached dispatch) | the `afterCommit` dispatcher | the agent continuation worker's scratch arm, within one pass after `scratch_runs.updated_at + 5 s` |
 | dialog `WaitingForUser`, `queued` row, no admissible incarnation | — | the scratch arm does not select the run (its query requires an admissible incarnation); the sweep crashes past grace; Recover sends the row first |
-| dialog `WaitingForUser` after an admission yield (row back to `queued`, `error_code` set) | — | the scratch arm retries each pass while the incarnation stays admissible (each dispatch re-stamps the grace anchor); a failure after a command was issued leaves the row `prompted`, never re-sent |
+| dialog `WaitingForUser` after an admission yield or a queued dispatch's failed host bind (row back to `queued`, `error_code` set) | — | the scratch arm retries each pass while the incarnation stays admissible (each dispatch re-stamps the grace anchor); a failure after a command was issued leaves the row `prompted`, never re-sent |
 | runs `Crashed`, dialog `Crashed` | — | Recover (CAS on `Crashed`); queued rows are sent first, then the Recover text |
 | runs `Failed` (budget), dialog `Crashed` | — | terminal; Recover refused `scratch_not_recoverable`; queued rows read "Not sent" |
 | runs `NeedsInputIdle`, dialog `NeedsInput` (host cap park) | — | the stored answer → `runScratchIdleResume` → respawn + `session/resume` → the re-raised permission is answered from the stored row; Recover refused with `next: "respond"` |
@@ -444,14 +444,14 @@ prompt command was issued), `markScratchPromptRetryable` CASes the turn's row
 the transaction that sets the dialog `WaitingForUser` with
 `error_code`/`error_message`, so the row keeps its `sequence` and FIFO place,
 and the send or Recover answers `202 {delivery: "queued"}` rather than an error
-that would invite a second copy. Any other retryable failure the turn's
-failure path sees came after a prompt command was issued: a re-send under the
-same logical key would only re-attach to that command, whose own recovery
-settles it, so the row stays `prompted` and the dialog `WaitingForUser` with
-the error. (Known gap, not closed here: a queued dispatch resolves its host
-after claiming the row, outside that failure path, so a host that cannot be
-resolved at that instant leaves the row `prompted` and the dialog `Running`
-with nothing issued — see the TODO list in `decisions.md`.) A local-package
+that would invite a second copy. A queued dispatch binds the run's host after
+claiming its row, inside the same failure path: a host that cannot be resolved
+there (`EXECUTOR_UNAVAILABLE`) issued nothing either, so its row goes back to
+`queued` the same way instead of staying `prompted` under a `Running` dialog
+that no owner would pick up again. Any other retryable failure came after a
+prompt command was issued: a re-send under the same logical key would only
+re-attach to that command, whose own recovery settles it, so the row stays
+`prompted` and the dialog `WaitingForUser` with the error. A local-package
 assistant turn is never re-queued — its `package_*` owner carries the
 operator's edit-lock generation, which no background dispatcher holds. A
 definitive failure keeps `markScratchCrashed`: the row stays `prompted` (it was

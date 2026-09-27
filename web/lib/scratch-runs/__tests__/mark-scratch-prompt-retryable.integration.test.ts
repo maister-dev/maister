@@ -9,9 +9,15 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import * as fullSchema from "@/lib/db/schema";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import { MaisterError } from "@/lib/errors";
+import { mintAssignment } from "@/lib/execution-host/assignments";
+import { createExecutionHosts } from "@/lib/execution-host/client";
 import { PromptIncarnationPending } from "@/lib/execution-host/prompt-incarnation";
-import { markScratchPromptRetryable } from "@/lib/scratch-runs/service";
+import {
+  dispatchQueuedScratchMessages,
+  markScratchPromptRetryable,
+} from "@/lib/scratch-runs/service";
 import { runStatusForDialogStatus } from "@/lib/scratch-runs/state";
+import { seedLocalHost } from "@/test-support/execution-host-seed";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -43,6 +49,7 @@ afterAll(async () => {
 
 async function seedScratchRun(dialogStatus: ScratchDialogStatus): Promise<{
   runId: string;
+  runnerId: string;
 }> {
   const projectId = randomUUID();
   const executorId = randomUUID();
@@ -83,7 +90,7 @@ async function seedScratchRun(dialogStatus: ScratchDialogStatus): Promise<{
     dialogStatus,
   });
 
-  return { runId };
+  return { runId, runnerId: executorId };
 }
 
 async function stateOf(runId: string): Promise<{
@@ -284,7 +291,64 @@ describe("markScratchPromptRetryable — the failed turn's row goes back to the 
     await expect(
       markScratchPromptRetryable({ db, runId, err: yielded(runId), messageId }),
     ).resolves.toEqual({ requeued: false });
+    // Nor when nothing was issued because its host could not be resolved.
+    await db
+      .update(schema.scratchRuns)
+      .set({ dialogStatus: "Running" })
+      .where(eq(schema.scratchRuns.runId, runId));
+    await expect(
+      markScratchPromptRetryable({
+        db,
+        runId,
+        err: unavailable,
+        messageId,
+        nothingIssued: true,
+      }),
+    ).resolves.toEqual({ requeued: false });
     expect((await rowOf(messageId)).delivery).toBe("prompted");
     expect((await stateOf(runId)).dialogStatus).toBe("WaitingForUser");
+  });
+
+  // The queued dispatch claims its row (`queued → prompted`, dialog `Running`)
+  // and only then binds the run's host. A host that cannot be resolved there —
+  // here the one the assignment names was retired — issued nothing, so the row
+  // goes back to the queue like an admission yield. Left `prompted` under a
+  // `Running` dialog over a live session, neither the re-drive (it selects
+  // `WaitingForUser`) nor the sweep (a live session is skipped) would ever
+  // pick it up.
+  it("a queued dispatch whose host cannot be resolved returns its row to the queue", async () => {
+    const { runId, runnerId } = await seedScratchRun("WaitingForUser");
+    const host = await seedLocalHost(db);
+
+    await db.transaction((tx) =>
+      mintAssignment(tx as never, { runId, hostId: host.id, reason: "launch" }),
+    );
+    await db.insert(schema.runSessions).values({
+      id: randomUUID(),
+      runId,
+      sessionName: "default",
+      runnerId,
+      capabilityAgent: "claude",
+      hostSessionId: `sup-${runId}`,
+    });
+    await db
+      .update(schema.executionHosts)
+      .set({ retiredAt: new Date() })
+      .where(eq(schema.executionHosts.id, host.id));
+    const messageId = await seedUserRow(runId, "queued", 3);
+
+    await expect(
+      dispatchQueuedScratchMessages(
+        db as never,
+        runId,
+        createExecutionHosts({ db: db as never }),
+      ),
+    ).rejects.toMatchObject({ code: "EXECUTOR_UNAVAILABLE" });
+    expect({ row: await rowOf(messageId), ...(await stateOf(runId)) }).toEqual({
+      row: { delivery: "queued", sequence: 3 },
+      dialogStatus: "WaitingForUser",
+      runStatus: "Running",
+      errorCode: "EXECUTOR_UNAVAILABLE",
+    });
   });
 });

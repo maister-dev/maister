@@ -1250,7 +1250,8 @@ scratch run (a local-package assistant never re-queues a row) whose dialog has b
 has an admissible incarnation on its active assignment — the owner of a row left
 behind when the process died between the completion commit and the detached
 dispatch. A turn whose prompt yields before admission (`PromptIncarnationPending`
-— no command was issued) returns its row to `queued` (`prompted → queued`; the
+— no command was issued), or a queued dispatch that cannot bind the run's host
+after claiming its row, returns its row to `queued` (`prompted → queued`; the
 launch row `NULL → queued`) in the same transaction as
 `markScratchPromptRetryable`, keeping its `sequence`, so the re-drive sends it
 again oldest-first with a fresh command. A retryable failure after the command

@@ -717,6 +717,9 @@ export async function markScratchPromptRetryable(args: {
   // continuation worker's scratch arm sends it again oldest-first instead of
   // the operator having to resend it.
   messageId?: string | null;
+  // The failure came before any prompt command existed (the queued dispatch
+  // could not bind its host), so the row goes back like an admission yield.
+  nothingIssued?: boolean;
 }): Promise<{ requeued: boolean }> {
   const db = args.db ?? getDb();
   const errorCode = isMaisterError(args.err)
@@ -769,8 +772,9 @@ export async function markScratchPromptRetryable(args: {
       .set({ status: "Running", currentStepId: scratchStepId() })
       .where(eq(runs.id, args.runId));
 
-    // Only the admission yield returns its row: nothing was issued, so a
-    // re-drive mints a fresh prompt command. After an issued command's unknown
+    // Only a turn that issued nothing returns its row — the admission yield,
+    // or a queued dispatch that could not bind its host — so a re-drive mints
+    // a fresh prompt command. After an issued command's unknown
     // or exhausted outcome, a re-send under the same logical key would only
     // re-attach to that command, which its own recovery settles. And only a
     // project dialog re-drives its queue: a local-package assistant turn is a
@@ -778,7 +782,7 @@ export async function markScratchPromptRetryable(args: {
     // background dispatcher holds (ADR-097, ADR-182 D-D5).
     if (
       !args.messageId ||
-      !(args.err instanceof PromptIncarnationPending) ||
+      !(args.err instanceof PromptIncarnationPending || args.nothingIssued) ||
       !rows[0]?.projectId
     )
       return { requeued: false };
@@ -2453,14 +2457,18 @@ export async function dispatchQueuedScratchMessages(
       ? "scratch-queued-message-redriven"
       : "scratch-queued-message-dispatched",
   );
-  const execution = await scratchExecution(db, runId, executionHosts);
   const prompt = normalizeScratchPrompt(
     message.content,
     claim.capabilityAgent,
     { runId },
   );
+  let execution: Awaited<ReturnType<typeof scratchExecution>> | undefined;
 
   try {
+    // Bound after the claim, inside the failure path: a host that cannot be
+    // resolved now issued nothing, and the row must not be left `prompted`
+    // under a `Running` dialog that no owner ever picks up again.
+    execution = await scratchExecution(db, runId, executionHosts);
     await sendScratchPromptAndProjectEvents({
       runId,
       sessionId: claim.hostSessionId,
@@ -2482,6 +2490,7 @@ export async function dispatchQueuedScratchMessages(
       hostSessionId: claim.hostSessionId,
       isLocalPackageAssistant: claim.isLocalPackageAssistant,
       err,
+      nothingIssued: execution === undefined,
     });
     throw err;
   }
@@ -2500,6 +2509,8 @@ export async function failScratchMessageTurn(args: {
   hostSessionId: string;
   isLocalPackageAssistant: boolean;
   err: unknown;
+  // No prompt command exists yet (see `markScratchPromptRetryable`).
+  nothingIssued?: boolean;
 }): Promise<{ requeued: boolean }> {
   const { db, runId, err } = args;
 
@@ -2521,6 +2532,7 @@ export async function failScratchMessageTurn(args: {
       runId,
       err,
       messageId: args.messageId,
+      nothingIssued: args.nothingIssued,
     }).catch((markErr) => {
       log.error(
         {
