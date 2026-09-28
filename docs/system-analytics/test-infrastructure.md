@@ -114,7 +114,7 @@ substitute. Qualification records revision, image, architecture and Node version
 The implemented invocation lifecycle preserves roots across restart and disposes
 of them only after the last owned process using them is dead.
 
-### S5.2 hosted CI repair contract (Designed until hosted evidence lands)
+### S5.2 hosted CI repair contract (Implemented; hosted qualification pending)
 
 The mandatory push workflow keeps both Node 24.15.0 and 24.19.0 and a 60-minute
 limit per job. `execution-data-plane` selects two deterministic, disjoint web
