@@ -1,6 +1,6 @@
 {
-  "id": "cfe45f2e-e92e-488d-9964-084f5a3728a3",
-  "prevId": "b3c41509-0a30-4537-a2dd-3c290683f754",
+  "id": "e9305b0d-267f-48d2-8e1a-71081c30741d",
+  "prevId": "8a5b796c-c0d7-483b-9199-ca04f5c43b10",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -2928,6 +2928,34 @@
           ],
           "isUnique": false,
           "where": "\"domain_events\".\"kind\" = 'run.failed' AND \"domain_events\".\"payload\"->>'reason' = 'legacy_steps_engine_3_cutover' AND \"domain_events\".\"payload\"->>'source' = 'upgrade_cutover' AND \"domain_events\".\"task_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "domain_events_run_terminal_idx": {
+          "name": "domain_events_run_terminal_idx",
+          "columns": [
+            {
+              "expression": "run_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "occurred_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "first"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "first"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"domain_events\".\"kind\" IN ('run.done', 'run.failed', 'run.crashed', 'run.abandoned')",
           "concurrently": false,
           "method": "btree",
           "with": {}
