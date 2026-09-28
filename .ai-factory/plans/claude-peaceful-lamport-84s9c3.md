@@ -1414,12 +1414,17 @@ lists shipped domains.
 `pnpm validate:docs`, `pnpm validate:contracts`, coverage gate, Playwright librarian
 specs, lint and typecheck green; qualification record complete.
 
-Release evidence (2026-09-28): web unit 875 files / 9,095 tests passed; web
-integration 568 files / 4,992 tests passed (2 files / 2 tests skipped);
-supervisor unit 466 and integration 284 tests passed; MCP unit 352 and
+Release evidence (2026-09-28): web unit 877 files / 9,161 tests passed; the
+initial full web integration gate passed 568 files / 4,992 tests (2 files / 2
+tests skipped). The post-review aggregate passed 579 files; its projection
+worker file timed out under concurrent load and its long Flow prompt-owner file
+was still running when the aggregate was stopped. Both qualified alone on the
+same revision: projection worker 12/12 and Flow prompt owners 58/58. The
+review-fix Postgres routes passed 20/20, and the turn recovery file passed
+14/14. Supervisor unit 488 and integration 302 tests passed; MCP unit 352 and
 integration 6 tests passed; librarian Playwright 13 tests passed. Docs,
-contracts, M51 and librarian coverage, typechecks, and lint passed. The
-live-adapter results and Codex runner exclusion are recorded in
+contracts, M51 and librarian coverage, migration generation parity, typechecks,
+and lint passed. The live-adapter results and Codex runner exclusion are in
 `docs/spikes/2026-09-27-librarian-qualification.md`.
 
 > **Checkpoint 8** — `test(librarian): L-01..L-12 acceptance, live-adapter qualification and docs`
