@@ -219,7 +219,36 @@ beforeAll(async () => {
   });
 }, 240_000);
 
+// A driver a case cannot await where it starts it: Recover awaits its
+// dispatcher, so the case detaches the resumed `runFlow` to observe the run.
+// Each case settles its own before it returns. `afterAll` fails if one did
+// not, and still lets it finish before the database stops: a straggler wakes
+// on the killed host and writes, and a database stopped under it surfaces
+// 57P01 as unhandled errors.
+const detached: Array<{ what: string; settled: boolean; done: Promise<void> }> =
+  [];
+
+function detach(what: string, work: Promise<unknown>): Promise<void> {
+  const driver = { what, settled: false, done: Promise.resolve() };
+
+  driver.done = work.then(
+    () => {
+      driver.settled = true;
+    },
+    () => {
+      driver.settled = true;
+    },
+  );
+  detached.push(driver);
+
+  return driver.done;
+}
+
 afterAll(async () => {
+  const unsettled = detached
+    .filter((driver) => !driver.settled)
+    .map((driver) => driver.what);
+
   restoreUrl();
   for (const [key, value] of Object.entries(savedEnv)) {
     if (value === undefined) delete process.env[key];
@@ -230,7 +259,11 @@ afterAll(async () => {
   await projectionWorker?.stop();
   await proxy?.close();
   await sup?.kill();
+  await Promise.all(detached.map((driver) => driver.done));
   await testDatabase?.stop();
+  expect(unsettled, "a case returned with its driver still running").toEqual(
+    [],
+  );
 });
 
 async function runRow(runId: string) {
@@ -558,16 +591,21 @@ describe("the crash boundary with a permission pending (G0, no answer sent)", ()
     expect(await boundaryState(runId)).toEqual(FLOW_SESSION_CRASHED);
     expect(await crashReason(runId)).toBe("session-crashed");
 
+    let resumed: Promise<void> | undefined;
     const recovered = await resumeCrashedRun(runId, {
       db,
       executionHosts: hosts,
-      runFlow: (id, runOpts) =>
-        void runFlow(id, {
-          db,
-          runtimeRoot: sup.runtimeRoot,
-          executionHosts: hosts,
-          ...runOpts,
-        }).catch(() => undefined),
+      runFlow: (id, runOpts) => {
+        resumed = detach(
+          "flow-sigkill: the resumed driver",
+          runFlow(id, {
+            db,
+            runtimeRoot: sup.runtimeRoot,
+            executionHosts: hosts,
+            ...runOpts,
+          }),
+        );
+      },
     });
 
     expect(recovered).toEqual({ state: "resumed" });
@@ -584,6 +622,12 @@ describe("the crash boundary with a permission pending (G0, no answer sent)", ()
 
     expect(rows.find((row) => row.id === hitl.id)?.respondedAt).not.toBeNull();
     expect(rows.find((row) => row.id !== hitl.id)?.respondedAt).toBeNull();
+
+    // The resumed driver waits on that fresh permission. End its session the
+    // way the case began, so the driver settles before the case returns.
+    process.kill(await adapterPid(runId), "SIGKILL");
+    await settled(runId, "flow-sigkill: the resumed session dies");
+    await resumed;
   }, 240_000);
 
   it("(iii-a) scratch: the adapter child dies under a live host → dialog and run Crashed, row closed", async () => {
