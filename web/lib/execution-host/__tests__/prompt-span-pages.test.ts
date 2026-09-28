@@ -19,9 +19,8 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-const { promptSpanPages, SpanCanonicallyAvailable } = await import(
-  "@/lib/execution-host/prompt-span-pages"
-);
+const { promptSpanPages, promptSpanReaders, SpanCanonicallyAvailable } =
+  await import("@/lib/execution-host/prompt-span-pages");
 const { HostSpanSignals, HostSpanUnavailable } = await import(
   "@/lib/execution-host/prompt-host-span"
 );
@@ -467,6 +466,50 @@ describe("prompt span pager (ADR-184)", () => {
         expect.objectContaining({ canonicalRows: 2, skippedRows: 1 }),
         "prompt-span-read",
       );
+    });
+  });
+});
+
+// R6: the canonical reader takes a page's headers, then its bodies. A row
+// deleted in between is a gap in the span, typed like every other incomplete
+// read — never an `undefined` row handed to the verifier.
+describe("the canonical span reader", () => {
+  it("an event deleted between its header read and its body read is event_span_gap", async () => {
+    const results: unknown[][] = [
+      [{ id: "event-11", hostSequence: 11n, bytes: 64 }],
+      [],
+      [],
+    ];
+    const query = (rows: unknown[]) => {
+      const chain = {
+        from: () => chain,
+        where: () => chain,
+        orderBy: () => chain,
+        limit: () => chain,
+        then: (
+          resolve: (value: unknown[]) => unknown,
+          reject: (reason: unknown) => unknown,
+        ) => Promise.resolve(rows).then(resolve, reject),
+      };
+
+      return chain;
+    };
+    const readers = promptSpanReaders({
+      db: { select: () => query(results.shift()!) } as never,
+      transport: {} as never,
+      command,
+      manifest,
+      hostKey: "host-key",
+      streamRowId: STREAM,
+      signal: new AbortController().signal,
+    });
+
+    await expect(readers.canonicalPage(10n, 15n)).rejects.toMatchObject({
+      code: "PRECONDITION",
+      details: {
+        reason: "required_output_incomplete",
+        causeCode: "event_span_gap",
+      },
     });
   });
 });

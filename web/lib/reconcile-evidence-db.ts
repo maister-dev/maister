@@ -304,6 +304,31 @@ export async function resolveConsensusPoisonEvidence(
  * Called from the sweep's per-candidate enrichment block, so it inherits that
  * loop's bounded concurrency and needs no bound of its own.
  */
+/** ADR-184 amendment 2026-09-28: behind a LIVE flow session a quarantined or
+ * poisoned prompt still has no writer — the reattached driver only yields
+ * again. The newest current-turn command, classified without host I/O, so it
+ * may run for every live agent-node candidate. */
+export async function resolveLivePoisonedPromptEvidence(
+  db: Db,
+  input: { runId: string; nodeId: string },
+): Promise<ResolvedPromptEvidence> {
+  const nodeAttemptId = await resolveEvidenceAttemptId(db, input);
+
+  if (!nodeAttemptId) return NO_PROMPT_EVIDENCE;
+  const row = await loadPromptEvidence(db, {
+    runId: input.runId,
+    nodeAttemptId,
+    variants: CURRENT_TURN_VARIANTS,
+  });
+
+  if (!row) return NO_PROMPT_EVIDENCE;
+  const evidence = classifyPromptEvidence(row);
+
+  return evidence === "quarantined" || evidence === "poisoned"
+    ? { evidence, streamLost: false, commandId: row.id, nodeAttemptId }
+    : NO_PROMPT_EVIDENCE;
+}
+
 export async function resolvePromptEvidence(
   db: Db,
   transport: ExecutionHostTransport,

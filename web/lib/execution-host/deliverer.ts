@@ -758,7 +758,7 @@ export async function startAsyncPrompt(
         );
 
         if (evidence.disposition === "quarantined")
-          throw promptEvidenceConflict(commandId);
+          throw promptEvidenceConflict(commandId, evidence.command);
         await markAccepted(opts.db, commandId, attempts, {
           logger,
           now: now(),
@@ -982,7 +982,7 @@ export async function queryPrompt(
   });
 
   if (evidence.disposition === "quarantined")
-    throw promptEvidenceConflict(input.handle.commandId);
+    throw promptEvidenceConflict(input.handle.commandId, evidence.command);
   if (evidence.disposition === "settled") {
     if (
       input.owners &&

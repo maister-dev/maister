@@ -38,10 +38,8 @@ it("backfills only the original provable declaration without inventing one from 
   const project = await seedProjectRow(database.db);
   const runId = await seedRun(database.db, { projectId: project.id });
   const seeded = await seedLocalHost(database.db);
-  // Only `id`: this database stops at 0159, and a bare select names every
-  // column the CURRENT schema declares (0182's pressure record included).
   const [host] = await db
-    .select({ id: executionHosts.id })
+    .select()
     .from(executionHosts)
     .where(eq(executionHosts.id, seeded.id));
   const assignment = await db.transaction((tx) =>

@@ -255,7 +255,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       [
         ["packageSkillMaterializationRoots", "node:fs/promises.stat", "stat"],
         ["launchAgentRun", "node:fs/promises.mkdir", "write"],
-        ["startAgentSession", "node:fs/promises.mkdir", "write"],
+        ["driveAgentSession", "node:fs/promises.mkdir", "write"],
         [
           "applyAgentMemoryForLaunch",
           "lib/atomic.ts#atomicWriteText",

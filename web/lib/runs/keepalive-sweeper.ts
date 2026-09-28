@@ -690,6 +690,10 @@ async function completedTurnWitness(
 
   if (evidence === "pending_application" || evidence === "applying")
     return { commandId: newest.id, witness: "settled" };
+  // A quarantine has no writer left — decided before the probe, whose
+  // `completed` would defer a quarantine found before any terminal evidence
+  // forever (ADR-184 amendment 2026-09-28).
+  if (evidence === "quarantined" || evidence === "poisoned") return null;
   if (
     needsReceiptProbe(newest) &&
     !(await commandStreamLost({ db, commandId: newest.id })) &&

@@ -110,6 +110,19 @@ async function laggingSession(): Promise<{
   client: BoundClient;
   hostSessionId: string;
 }> {
+  const session = await liveSession();
+
+  fake.holdIngest();
+
+  return session;
+}
+
+/** A run whose stream already exists on the manager; ingest keeps up. */
+async function liveSession(): Promise<{
+  runId: string;
+  client: BoundClient;
+  hostSessionId: string;
+}> {
   const runId = await seedRun(database.db, {
     projectId,
     status: "Running",
@@ -126,8 +139,6 @@ async function laggingSession(): Promise<{
   const installed = await fakeExecutionHosts(db, { fake, runId });
   const client = await installed.hosts.forAssignment(installed.assignment!);
   const session = await client.createSession(CREATE_PAYLOAD);
-
-  fake.holdIngest();
 
   return { runId, client, hostSessionId: session.hostSessionId };
 }
@@ -222,6 +233,30 @@ const countingOwners = () => {
     ]),
   };
 };
+
+// A real Postgres refusal of a run's prompt terminals (22P05, as for an
+// untranslatable escape), so ingest records a `payload_unstorable` skip.
+async function refuseTerminalsOf(runId: string): Promise<void> {
+  await database.pool.query(`
+    create table if not exists test_unstorable_runs (run_id text primary key);
+    create or replace function test_refuse_unstorable() returns trigger language plpgsql as $$
+    begin
+      if new.event_type = 'session.command'
+         and new.payload ->> 'phase' <> 'accepted'
+         and exists (select 1 from test_unstorable_runs where run_id = new.run_id) then
+        raise exception 'unsupported Unicode escape sequence' using errcode = '22P05';
+      end if;
+      return new;
+    end $$;
+    drop trigger if exists test_refuse_unstorable on execution_events;
+    create trigger test_refuse_unstorable before insert on execution_events
+      for each row execute function test_refuse_unstorable();
+  `);
+  await database.pool.query(
+    "insert into test_unstorable_runs values ($1) on conflict do nothing",
+    [runId],
+  );
+}
 
 /** The manager's contiguous frontier on the stream a command's receipt names. */
 async function frontierOf(commandId: string): Promise<bigint> {
@@ -529,6 +564,47 @@ describe("host-span settlement on the fake host", () => {
       applicationState: "poisoned",
       completionAppliedAt: null,
       applicationError: { reason: "prompt_terminal_conflict" },
+    });
+  });
+
+  // ADR-184 amendment 2026-09-28: a terminal Postgres refuses is recorded in
+  // the skip ledger and the frontier walks past it; D3.7 then answered
+  // `canonical_available` for a command the canonical feed can never settle,
+  // and it waited forever with no verdict on a healthy stream.
+  it("Q-skip: a v2 prompt whose terminal is a payload_unstorable skip is quarantined terminal_unstorable", async () => {
+    // Ingest keeps up, so the frontier passes the refused terminal before any
+    // settlement read: D3.7 answers `canonical_available` at once.
+    const { runId, client, hostSessionId } = await liveSession();
+
+    await refuseTerminalsOf(runId);
+    const handle = await prompt(client, hostSessionId);
+
+    await fake.waitForCanonicalEvents();
+    await untilReceipt(handle.commandId);
+    const [skip] = (
+      await database.pool.query(
+        `select s.reason from execution_event_skips s
+          where s.event_type = 'session.command' and s.run_id = $1`,
+        [runId],
+      )
+    ).rows as Array<{ reason: string }>;
+
+    expect(skip?.reason).toBe("payload_unstorable");
+    expect(await frontierOf(handle.commandId)).toBeGreaterThanOrEqual(
+      BigInt(
+        (await command(handle.commandId)).receiptEvidence!.evidenceV2!.terminal!
+          .sequence,
+      ),
+    );
+    expect((await reconcile(handle.commandId)).disposition).toBe("quarantined");
+    expect(await command(handle.commandId)).toMatchObject({
+      state: "accepted",
+      terminalEvidenceSha256: null,
+      applicationState: "poisoned",
+      applicationError: {
+        reason: "prompt_terminal_conflict",
+        causeCode: "terminal_unstorable",
+      },
     });
   });
 

@@ -85,8 +85,13 @@ export type ScratchDetail = {
     errorCode: string | null;
     errorMessage: string | null;
     // ADR-183 D-M3s: set while the execution host's outbox pressure paused
-    // the dialog's last turn.
-    errorMetadata?: { cause: "host_pressure" } | null;
+    // the dialog's last turn; ADR-184 amendment 2026-09-28: set when the last
+    // turn's prompt was quarantined with no terminal evidence.
+    errorMetadata?: {
+      cause?: "host_pressure";
+      reason?: "prompt_terminal_conflict";
+      causeCode?: string;
+    } | null;
   };
   workspace: {
     id?: string;

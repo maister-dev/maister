@@ -2236,8 +2236,6 @@ export const executionHostPressure = pgTable(
   }),
 );
 
-export type ExecutionHostPressure = typeof executionHostPressure.$inferSelect;
-
 export const executionAssignments = pgTable(
   "execution_assignments",
   {

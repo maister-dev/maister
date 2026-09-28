@@ -618,6 +618,7 @@ async function seedAttemptPrompt(
     | "applied"
     | "poisoned"
     | "quarantined"
+    | "quarantined_unsettled"
     | "turn_lost",
   createdAt: Date,
 ): Promise<string> {
@@ -633,7 +634,7 @@ async function seedAttemptPrompt(
     ));
   const attempt = await getAttempt(runId);
   const commandId = randomUUID();
-  const settled = shape !== "accepted";
+  const settled = shape !== "accepted" && shape !== "quarantined_unsettled";
 
   await db.insert(schema.executionCommands).values({
     id: commandId,
@@ -721,6 +722,29 @@ async function seedAttemptPrompt(
             : {}),
         }
       : { state: "accepted", acceptedAt: createdAt }),
+    // What `quarantine()` writes when the canonical feed finds the terminal
+    // in the skip ledger: no terminal evidence, the receipt says completed.
+    ...(shape === "quarantined_unsettled"
+      ? {
+          receiptEvidence: {
+            commandId,
+            runId,
+            kind: "session.prompt",
+            assignmentEpoch: assignment.epoch,
+            phase: "completed",
+            httpStatus: 200,
+            body: { stopReason: "end_turn" },
+            receivedAt: createdAt.toISOString(),
+            inflight: false,
+          },
+          applicationState: "poisoned",
+          applicationError: {
+            reason: "prompt_terminal_conflict",
+            phase: "prepare",
+            causeCode: "terminal_unstorable",
+          },
+        }
+      : {}),
   });
 
   return commandId;
@@ -868,6 +892,26 @@ describe("time-limit watchdog — a finished turn is never killed (ADR-167 D5 am
     },
     60_000,
   );
+
+  // ADR-184 amendment 2026-09-28: a quarantine found before any terminal
+  // evidence has no writer either — but its receipt says `completed`, and the
+  // probe used to defer it forever on a live stream.
+  it("C1-quarantined-unsettled: a turn quarantined while accepted is killed, not deferred by its completed receipt", async () => {
+    const { runId } = await overCap();
+    const commandId = await seedAttemptPrompt(
+      runId,
+      "node",
+      "quarantined_unsettled",
+      later,
+    );
+
+    scriptProbe(commandId, "completed");
+    const result = await tick();
+
+    expect((await getRun(runId)).status).toBe("Failed");
+    expect(result.deferredCompletedCount).toBe(0);
+    expect(receiptSpy).not.toHaveBeenCalled();
+  }, 60_000);
 
   it("C1-stream-lost: a completed receipt on a host whose stream is lost is killed — its evidence can never arrive", async () => {
     const { runId } = await overCap();

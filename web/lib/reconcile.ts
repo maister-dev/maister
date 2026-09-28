@@ -38,6 +38,7 @@ import { resolveCurrentNodeContext } from "@/lib/flows/graph/current-node-kind";
 import {
   NO_PROMPT_EVIDENCE,
   resolveConsensusPoisonEvidence,
+  resolveLivePoisonedPromptEvidence,
   resolvePromptEvidence,
 } from "@/lib/reconcile-evidence-db";
 import { EVIDENCE_CRASH_REASONS } from "@/lib/reconcile-evidence";
@@ -435,9 +436,15 @@ function classifyInner(input: ReconcileInput): ReconcileDecision {
     return { action: "sync-recover", reason: "sync-orphaned-idle" };
   }
 
+  // A quarantined or poisoned prompt has no writer left, live session or not
+  // (ADR-184 amendment 2026-09-28): reattaching only re-runs a driver that
+  // yields again. Ahead of the live arm, like the consensus arm it widened.
   if (
     input.runKind === "flow" &&
-    input.currentNodeKind === "consensus" &&
+    (input.currentNodeKind === "consensus" ||
+      input.currentNodeKind === "ai_coding" ||
+      input.currentNodeKind === "orchestrator" ||
+      input.currentNodeKind === "judge") &&
     (input.promptEvidence === "poisoned" ||
       input.promptEvidence === "quarantined")
   )
@@ -1797,6 +1804,14 @@ export async function runReconcileSweep(
       !live &&
       !liveRunStep &&
       (currentNodeKind === "ai_coding" || currentNodeKind === "orchestrator");
+    // ADR-184 amendment 2026-09-28: a live session hides no writer for a
+    // quarantined prompt; this read is DB-only.
+    const wantsLivePoisonCheck =
+      cand.runKind === "flow" &&
+      Boolean(live || liveRunStep) &&
+      (currentNodeKind === "ai_coding" ||
+        currentNodeKind === "orchestrator" ||
+        currentNodeKind === "judge");
     const promptEvidence =
       cand.runKind === "flow" &&
       currentNodeKind === "consensus" &&
@@ -1805,16 +1820,21 @@ export async function runReconcileSweep(
             runId: cand.runId,
             nodeId: cand.currentStepId,
           })
-        : wantsEvidence && cand.currentStepId
-          ? await resolvePromptEvidence(db, hosts.transport, {
+        : wantsLivePoisonCheck && cand.currentStepId
+          ? await resolveLivePoisonedPromptEvidence(db, {
               runId: cand.runId,
-              // The CURRENT NODE's open attempt, which is what the boundary will
-              // act on. Deliberately not `latestAttempt` (the run-scoped grace
-              // anchor): classifying from one attempt and writing to another is
-              // how a run ends up crashed for evidence that was never its own.
               nodeId: cand.currentStepId,
             })
-          : NO_PROMPT_EVIDENCE;
+          : wantsEvidence && cand.currentStepId
+            ? await resolvePromptEvidence(db, hosts.transport, {
+                runId: cand.runId,
+                // The CURRENT NODE's open attempt, which is what the boundary will
+                // act on. Deliberately not `latestAttempt` (the run-scoped grace
+                // anchor): classifying from one attempt and writing to another is
+                // how a run ends up crashed for evidence that was never its own.
+                nodeId: cand.currentStepId,
+              })
+            : NO_PROMPT_EVIDENCE;
 
     // M36 (ADR-095) T7.1: orphan detection needs the parent's status; the
     // parked-orchestrator pass needs to know if any child is still pending.
@@ -2102,6 +2122,52 @@ export async function runReconcileSweep(
           // that transaction, so every terminal side effect it owns (HITL
           // close, sync-claim and assignment release, the `run.crashed` webhook
           // and domain event) is inherited rather than re-implemented.
+          // A poisoned turn can carry a live session, and nothing reaps a
+          // live session under a Crashed row: stop the run's own sessions
+          // first. A 5xx/fenced stop cannot confirm it — leave the run for the
+          // next tick; any other failure means the session is already gone.
+          if (reason === "owner-poisoned") {
+            const ownSessions = [
+              ...new Set(
+                [
+                  live,
+                  liveRunStep,
+                  ...[...liveByRunStep.values()].filter(
+                    (record) => record.runId === cand.runId,
+                  ),
+                ].filter((record) => record !== undefined),
+              ),
+            ];
+            let stopped = true;
+
+            for (const record of ownSessions) {
+              try {
+                const client = await hosts.forRun(cand.runId, {
+                  teardown: true,
+                });
+
+                await client.deleteSession(record.sessionId);
+              } catch (err) {
+                if (
+                  (isMaisterError(err) &&
+                    err.code === "EXECUTOR_UNAVAILABLE") ||
+                  isFencedError(err)
+                ) {
+                  stopped = false;
+                  break;
+                }
+              }
+            }
+            if (!stopped) {
+              skipped += 1;
+              log.warn(
+                { runId: cand.runId, reason },
+                "reconcile: could not confirm the poisoned turn's session stopped — leaving the run for the next tick",
+              );
+
+              return;
+            }
+          }
           const crashResult = isEvidenceCrashReason(reason)
             ? await evidenceCrash(cand, reason, promptEvidence)
             : await crashRunningRun(

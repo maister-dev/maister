@@ -142,25 +142,22 @@ export async function seedLocalHost(
 ): Promise<{ id: string; hostKey: string }> {
   const id = randomUUID();
   const hostKey = input.hostKey ?? `eh_${randomUUID().replace(/-/g, "")}`;
-  const capabilities = {
-    protocolVersion: 1,
-    supervisorVersion: "test",
-    adapters: [],
-  };
 
-  // Raw, naming only these columns (see seedProjectRow): migration-replay
-  // suites stop before later `execution_hosts` columns (0182 pressure record).
-  await db.execute(sql`
-    INSERT INTO "execution_hosts" (
-      "id", "host_key", "kind", "display_name", "transport", "capabilities",
-      "readiness", "last_boot_id", "last_seen_at"
-    ) VALUES (
-      ${id}, ${hostKey}, 'local_direct', 'test local host',
-      ${JSON.stringify({ kind: "local_direct" })}::jsonb,
-      ${JSON.stringify(capabilities)}::jsonb,
-      'ready', ${input.bootId ?? randomUUID()}, ${new Date()}
-    )
-  `);
+  await db.insert(schema.executionHosts).values({
+    id,
+    hostKey,
+    kind: "local_direct",
+    displayName: "test local host",
+    transport: { kind: "local_direct" },
+    capabilities: {
+      protocolVersion: 1,
+      supervisorVersion: "test",
+      adapters: [],
+    },
+    readiness: "ready",
+    lastBootId: input.bootId ?? randomUUID(),
+    lastSeenAt: new Date(),
+  });
 
   return { id, hostKey };
 }

@@ -192,8 +192,18 @@ describe("a caught-up span holding another run's skipped event", () => {
       .set({ currentStepId: "s1" })
       .where(eq(runs.id, runId));
     // Mid-turn, the shared host stream carries an event of a run the manager
-    // has never seen (another manager's, or one deleted since).
+    // has never seen (another manager's, or one deleted since), after one of
+    // the turn's own.
     fake.setPromptBehavior(async (ctx) => {
+      await fake.publishCanonical(ctx.envelope, ctx.sessionId, {
+        type: "session.update",
+        sessionId: ctx.sessionId,
+        monotonicId: 1,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "own" },
+        },
+      } as SupervisorEvent);
       await fake.publishCanonical(
         {
           ...ctx.envelope,
@@ -268,15 +278,23 @@ describe("a caught-up span holding another run's skipped event", () => {
         BigInt(output.acceptedSequence),
       );
       expect(skip!.hostSequence).toBeLessThan(BigInt(output.terminalSequence));
+      const hostReadsBefore = fake.callsOf("readRuntimeEventSpan").length;
       const read = await readPromptOutput({
         db,
         commandId: handle.commandId,
         signal: AbortSignal.timeout(15_000),
       });
-      const events: unknown[] = [];
+      const events: Array<{ eventType: string; runId: string | null }> = [];
 
       for await (const event of read.events) events.push(event);
       expect(read.response).toMatchObject({ stopReason: "end_turn" });
+      // The turn's own row, and nothing for the skip it stepped over.
+      expect(events.map((event) => [event.eventType, event.runId])).toEqual([
+        ["session.update", runId],
+      ]);
+      expect(fake.callsOf("readRuntimeEventSpan")).toHaveLength(
+        hostReadsBefore,
+      );
     } finally {
       fake.setPromptBehavior(async () => ({
         stopReason: "end_turn",

@@ -348,7 +348,7 @@ discards the ACP context the park preserved and spends an operator restart.
 
 ### Phase 3 — event plane: skipped-terminal quarantine and its owners (TDD). Commit: `fix(execution-host): a prompt whose terminal is a skip is quarantined and ends its owner visibly`
 
-12. [ ] REDs (`prompt-host-span-fake`, `prompt-output-frontier`, `commands` (v1),
+12. [x] REDs (`prompt-host-span-fake`, `prompt-output-frontier`, `commands` (v1),
     `ingest-batch` 22P05 trigger keyed on the terminal, `reconcile-sweep`, `time-limit-watchdog`,
     agent and scratch owner suites): v2 and v1 skipped terminal ⇒ `application_error.causeCode =
     "terminal_unstorable"` within one reconcile; flow node with a LIVE session ⇒ `Crashed
@@ -356,11 +356,34 @@ discards the ACP context the park preserved and spends an operator restart.
     `WaitingForUser` + `error_metadata.causeCode`; watchdog does not defer a quarantined command;
     host_span-settled then canonical skip ⇒ post-hoc quarantine; R6 a vanished event yields
     `event_span_gap` (typed); R7 asserts the event count and zero `readRuntimeEventSpan` calls.
-13. [ ] Implement D-B (`prompt-evidence.ts` choke point + post-hoc confirmation,
+13. [x] Implement D-B (`prompt-evidence.ts` choke point + post-hoc confirmation,
     `promptEvidenceConflict` details, flow/agent/scratch owner arms, `keepalive-sweeper.ts` witness);
     R6 typed throw + drop the `!`s; R4 restore master's Drizzle seed insert and bare select; drop the
     unused `ExecutionHostPressure` export.
-14. [ ] Focused suites green; falsify each guard once.
+14. [x] Focused suites green; falsify each guard once.
+   *(Done: 37 integration files / 371 tests green (the Phase 3 files plus the agent, scratch,
+   reconcile, keepalive, deliverer and span neighbours), web unit 870 files / 9123 tests with one
+   red — the D10 fs inventory named `startAgentSession` for the `mkdir` the body now makes as
+   `driveAgentSession`; renamed, 9/9 — web tsc clean, docs gates green. Falsified after GREEN, each
+   RED then restored: the reducer's skip check (v1 + v2), the live-session resolver and its session
+   stop, the watchdog witness, the agent detection, the agent outer rethrow, the agent session stop
+   and turn close, the scratch settle, its metadata, the GET projection and the yielded
+   classification, R6's typed gap (the reader returned `[undefined]`), R7's host-read assertion.
+   NOT covered by a test (review only): the rethrow in the agent create-continuation catch and in
+   the runner consensus-draft catch — no harness drives either path, and without them the turn
+   still ends through the next driver (create continuation) or as `Failed
+   consensus_draft_spawn_failed` (runner draft). Deviations from the plan: the agent owner is ONE
+   wrapper around `startAgentSession` (every drive path, not two catch sites); a consensus draft is
+   crashed like any agent run (the consensus counts a `Crashed` draft as settled) instead of
+   yielding — the reconcile consensus arm only reads verifier/synthesis commands, so a yielding
+   draft would have hung; the scratch owner is ONE choke point in
+   `sendScratchPromptAndProjectEvents` (all six scratch drivers) and its error is a typed
+   `CONFLICT {reason: prompt_terminal_conflict, causeCode, settled: false}`, not a pending
+   subclass. R4 restored; R6's `!` nit refuted (`execution_events.host_sequence` is nullable in
+   the schema type); the unused `ExecutionHostPressure` export dropped. ADR-184 item 3,
+   `execution-prompt-lifecycle`, `reconciliation-gc` (a live-session row), `agents`, `scratch-runs`
+   and `error-taxonomy` now say what the code does: owners read the command state, the flow
+   verdict is the reconcile sweep's.)*
 
 ### Phase 4 — UI (TDD, jsdom). Commit: `fix(ui): a stored answer under host backpressure shows as stored; a host-paused node defaults to Resume; refusing-new-work in the admin panel`
 
@@ -373,7 +396,11 @@ discards the ACP context the park preserved and spends an operator restart.
     `web/lib/hitl-response-contract.ts` used at both card sites and the scratch dialog (M3);
     `deriveNodeInterruptOptions({…, cause})` REQUIRED parameter, controls paint the default option
     primary (M4); EN/RU copy for `event_outbox_backpressure` (answer saved, delivery pending, retried
-    when the host admits work) and the admin "refusing new work" badge; U5 notice margin.
+    when the host admits work) and the admin "refusing new work" badge; U5 notice margin. ADDED in
+    Phase 3: the scratch dialog shows a notice for `errorMetadata.reason = "prompt_terminal_conflict"`
+    (the last turn's result could not be stored; send a new message to continue) with the
+    `causeCode` as a diagnostic — without it the quarantined turn is visible only as a stopped
+    spinner (the UI renders no `errorCode`).
 17. [ ] Web unit lane green; `pnpm lint` scoped to changed files, `git status` checked.
 
 ### Phase 5 — close-out. Commit: `docs(outbox-review): lanes, falsification and truth pass on the remediated tip`

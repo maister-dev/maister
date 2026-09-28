@@ -321,9 +321,15 @@ export function promptSpanReaders(input: {
               .where(inArray(executionEvents.id, ids));
       const byId = new Map(events.map((event) => [event.id, event]));
 
-      return taken.map((item) =>
-        item.kind === "skip" ? item.row : byId.get(item.id)!,
-      );
+      return taken.map((item) => {
+        if (item.kind === "skip") return item.row;
+        const event = byId.get(item.id);
+
+        // Deleted between its header read and its body read.
+        if (!event) throw incomplete("event_span_gap");
+
+        return event;
+      });
     },
     async hostPage(after, through) {
       const pages = hostSpanPages({

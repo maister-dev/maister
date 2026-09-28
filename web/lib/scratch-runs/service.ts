@@ -109,7 +109,10 @@ import {
 } from "@/lib/scratch-runs/messages";
 import { cleanupLocalPackageAssistantMaterialization } from "@/lib/scratch-runs/local-package-materialization";
 import { closeOpenScratchPermissions } from "@/lib/scratch-runs/open-permissions";
-import { isYieldedScratchTurn } from "@/lib/scratch-runs/prompt-owner";
+import {
+  isYieldedScratchTurn,
+  ScratchPromptQuarantined,
+} from "@/lib/scratch-runs/prompt-owner";
 import {
   assertScratchCanAcceptUserMessage,
   dialogStatusAfterSupervisorStop,
@@ -784,8 +787,16 @@ export async function markScratchPromptRetryable(args: {
         errorCode,
         errorMessage,
         // ADR-183 D-M3s: the host's outbox pressure ended this turn — the
-        // dialog says so instead of showing a bare failure.
-        errorMetadata: hostPressured ? { cause: "host_pressure" } : null,
+        // dialog says so instead of showing a bare failure. ADR-184 amendment
+        // 2026-09-28: so does a quarantine no feed will ever settle.
+        errorMetadata: hostPressured
+          ? { cause: "host_pressure" }
+          : args.err instanceof ScratchPromptQuarantined
+            ? {
+                reason: "prompt_terminal_conflict",
+                causeCode: args.err.causeCode,
+              }
+            : null,
         updatedAt: now,
       })
       .where(eq(scratchRuns.runId, args.runId));

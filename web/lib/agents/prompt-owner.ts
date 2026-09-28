@@ -4,6 +4,7 @@ import type {
   AgentTurn,
   RunSessionIncarnation,
   ExecutionAssignment,
+  ExecutionCommand,
 } from "@/lib/db/schema";
 import type { Db } from "@/lib/execution-host/db";
 import type { BoundClient } from "@/lib/execution-host/client";
@@ -75,6 +76,7 @@ import { nodeOutputMaxBytes } from "@/lib/instance-config";
 import { MaisterError } from "@/lib/errors";
 import { readPromptRequest } from "@/lib/execution-host/command-request";
 import { waitForPromptCompletion } from "@/lib/execution-host/deliverer";
+import { isUnsettledPromptQuarantine } from "@/lib/execution-host/prompt-evidence";
 import { isTurnLostError } from "@/lib/reconcile-evidence";
 import { isHostPressureFailure } from "@/lib/execution-host/host-pressure";
 
@@ -860,6 +862,19 @@ export class AgentPromptContinuationPending extends MaisterError {
   }
 }
 
+/** ADR-184 amendment 2026-09-28: the prompt is quarantined with no terminal
+ * evidence — no feed will ever settle it, so waiting is not pending but final.
+ * A subclass, so a caller that does not end the run still only yields. */
+export class AgentPromptQuarantined extends AgentPromptContinuationPending {
+  readonly commandId: string;
+
+  constructor(commandId: string, cause: unknown) {
+    super(commandId, cause);
+    this.commandId = commandId;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
 export async function waitForAgentPrompt(
   db: Db,
   client: BoundClient,
@@ -897,20 +912,32 @@ export async function awaitAgentApplication(
   try {
     await wait();
   } catch (cause) {
+    let command:
+      | Pick<
+          ExecutionCommand,
+          "applicationState" | "applicationError" | "terminalEvidenceSha256"
+        >
+      | undefined;
+
     try {
-      const [command] = await db
-        .select({ applicationState: executionCommands.applicationState })
+      [command] = await db
+        .select({
+          applicationState: executionCommands.applicationState,
+          applicationError: executionCommands.applicationError,
+          terminalEvidenceSha256: executionCommands.terminalEvidenceSha256,
+        })
         .from(executionCommands)
         .where(eq(executionCommands.id, commandId));
-
-      if (
-        command?.applicationState === "applied" ||
-        command?.applicationState === "superseded"
-      )
-        return;
     } catch (readCause) {
       throw new AgentPromptContinuationPending(commandId, readCause);
     }
+    if (
+      command?.applicationState === "applied" ||
+      command?.applicationState === "superseded"
+    )
+      return;
+    if (isUnsettledPromptQuarantine(command ?? null))
+      throw new AgentPromptQuarantined(commandId, cause);
     throw new AgentPromptContinuationPending(commandId, cause);
   }
 }

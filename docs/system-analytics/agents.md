@@ -792,10 +792,13 @@ flowchart TD
   *(Implemented — ADR-183, recovery window W8.)*
 - **The turn's prompt is quarantined while still `accepted`** — its terminal
   event could not be stored (`execution_event_skips` `payload_unstorable`,
-  `causeCode: "terminal_unstorable"`) or its receipt disagreed → the wait meets
-  the conflict with `details.settled: false` and stops yielding: the run is
-  finalized `Crashed` with reason `owner_poisoned`, instead of a `Running` turn
-  nobody applies (Implemented — ADR-184 amendment 2026-09-28).
+  `causeCode: "terminal_unstorable"`) or its receipt disagreed → the wait reads
+  the command as final, not pending (`AgentPromptQuarantined`), and the driver
+  that meets it — issuing or re-driving — stops the session, finalizes the run
+  `Crashed` with reason `owner_poisoned` and closes the turn `superseded`,
+  instead of a `Running` turn nobody applies. A stop the host cannot confirm,
+  or a fenced one, leaves the run to the next driver. A consensus draft ends
+  the same way (Implemented — ADR-184 amendment 2026-09-28).
 - **Crash between claim and spawn** → the run row is `Pending`;
   `promoteNextPending(kind='agent')` on the next tick recovers it.
 - **Human edits the parent checkout during a `repo_read` run** → possible

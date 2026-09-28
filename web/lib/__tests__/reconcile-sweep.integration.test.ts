@@ -2316,6 +2316,43 @@ describe("runReconcileSweep — evidence-first crash classification (ADR-177)", 
     expect(summary.ownerPoisoned).toBeGreaterThanOrEqual(1);
   }, 60_000);
 
+  // ADR-184 amendment 2026-09-28: a quarantine found before any terminal
+  // evidence (e.g. `terminal_unstorable`) behind a LIVE session. The sweep used
+  // to `reattach`, and the re-run driver only yielded again — forever.
+  it("a LIVE session whose prompt was quarantined while accepted is stopped and the run crashes owner-poisoned", async () => {
+    const runId = await seedRun({
+      currentStepId: "implement",
+      acpSessionId: "acp-quarantined",
+    });
+
+    await seedWorkspace(runId, "/worktrees/quarantined-live");
+    const deleted: string[] = [];
+    const { opts, runFlow, hostId } = await makeOpts({
+      worktreePaths: ["/worktrees/quarantined-live"],
+      liveSessions: [liveRecord(runId, "acp-quarantined")],
+      deleteSession: async (sessionId) => {
+        deleted.push(sessionId);
+      },
+    });
+    const { nodeAttemptId } = await seedOwnedPrompt(runId, hostId, {
+      state: "accepted",
+      applicationState: "poisoned",
+      applicationError: {
+        reason: "prompt_terminal_conflict",
+        phase: "prepare",
+        causeCode: "terminal_unstorable",
+      },
+    });
+
+    const summary = await runReconcileSweep(opts);
+
+    expect((await readRun(runId)).status).toBe("Crashed");
+    expect((await readAttempt(nodeAttemptId)).decision).toBe("turn_lost");
+    expect(deleted).toEqual([`sup-${runId}`]);
+    expect(runFlow).not.toHaveBeenCalled();
+    expect(summary.ownerPoisoned).toBeGreaterThanOrEqual(1);
+  }, 60_000);
+
   it("RED 5b: a run whose only command is still QUEUED derives `none` and keeps the grace/agent-session-gone path", async () => {
     const runId = await seedRun({ acpSessionId: null });
 

@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { ScratchDetail } from "@/lib/scratch-runs/dialog";
+
 import { eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import pino from "pino";
@@ -282,6 +284,29 @@ function publicRunnerSnapshot(raw: unknown): PublicRunnerSnapshot | null {
   };
 }
 
+// Only the closed tokens leave the route; anything else the column holds stays
+// server-side.
+function publicErrorMetadata(
+  value: unknown,
+): ScratchDetail["scratch"]["errorMetadata"] {
+  const metadata = value as {
+    cause?: unknown;
+    reason?: unknown;
+    causeCode?: unknown;
+  } | null;
+
+  if (metadata?.cause === "host_pressure") return { cause: "host_pressure" };
+  if (metadata?.reason === "prompt_terminal_conflict")
+    return {
+      reason: "prompt_terminal_conflict",
+      ...(typeof metadata.causeCode === "string"
+        ? { causeCode: metadata.causeCode }
+        : {}),
+    };
+
+  return null;
+}
+
 export async function GET(
   _req: Request,
   { params }: RouteParams,
@@ -385,11 +410,7 @@ export async function GET(
         dialogStatus: scratch.dialogStatus,
         errorCode: scratch.errorCode,
         errorMessage: scratch.errorMessage,
-        errorMetadata:
-          (scratch.errorMetadata as { cause?: unknown } | null)?.cause ===
-          "host_pressure"
-            ? { cause: "host_pressure" }
-            : null,
+        errorMetadata: publicErrorMetadata(scratch.errorMetadata),
         lastUserMessageAt: scratch.lastUserMessageAt,
         lastAgentMessageAt: scratch.lastAgentMessageAt,
       },
