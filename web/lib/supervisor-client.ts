@@ -47,6 +47,7 @@ import {
   DEFAULT_EVENT_STREAM_LAG_AGE_MS,
   isHostBacklogLagEligible,
 } from "@/lib/execution-host/events/lag";
+import { NEW_WORK_REFUSALS } from "@/types/platform-status";
 
 const logger = pino({
   name: "supervisor-client",
@@ -377,9 +378,19 @@ const SupervisorHealthSchema = z
           .passthrough()
           .nullable()
           .optional(),
+        // ADR-183 amendment 2026-09-28: what refuses new work now, or null.
+        // Optional so an older host, which omits it, still parses.
+        newWorkRefusedBy: z.enum(NEW_WORK_REFUSALS).nullable().optional(),
       })
       .passthrough()
       .superRefine((value, ctx) => {
+        if (value.pressured && value.newWorkRefusedBy === null) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["newWorkRefusedBy"],
+            message: "a pressured host refuses new work",
+          });
+        }
         if (
           value.pressure !== undefined &&
           (value.pressure === null) === value.pressured

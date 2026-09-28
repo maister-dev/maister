@@ -853,8 +853,7 @@ export const getRunDetail = cache(async function getRunDetail(
     activeClaimRow,
   });
   const queueReason =
-    row.status === "Pending" &&
-    (await localHostPressuredSince(client as never)) !== null
+    row.status === "Pending" && (await localHostPressuredSince(client)) !== null
       ? HOST_PRESSURED_REASON
       : null;
 

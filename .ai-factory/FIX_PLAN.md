@@ -306,7 +306,7 @@ discards the ACP context the park preserved and spends an operator restart.
 
 ### Phase 2 — manager fence, sweeps, recovery (TDD). Commit: `fix(execution-host): the fence follows the host's new-work signal; the queue drains on every admitting sample; host parks survive Pass 2; the auto-resume backs off`
 
-9. [ ] REDs (`launch-paths`, `host-pressure-park`, `hitl-node-interrupt`, `keepalive-persistent`,
+9. [x] REDs (`launch-paths`, `host-pressure-park`, `hitl-node-interrupt`, `keepalive-persistent`,
    `system-sweeps.test.ts`, `wire-shape.test.ts`, `pool-cap-fence.test.ts`):
    - M2: physical/retained refusal → record; next sample with `newWorkRefusedBy: "physical"` holds it (no
      auto-resume, no promote); `null` clears and drains once; `wallet` refusal parks without a record;
@@ -324,12 +324,27 @@ discards the ACP context the park preserved and spends an operator restart.
    - P5: realistic idle seeds (production idle helper, assignment released), W6 seed with
      `actor`/`cause`, refused-create W2 park failure replays through the continuation worker, the
      `redriven` arm.
-10. [ ] Implement: `host-pressure.ts` (D-A manager side, `sampledAt`), `deliverer.ts` (log +
+10. [x] Implement: `host-pressure.ts` (D-A manager side, `sampledAt`), `deliverer.ts` (log +
     `wallet` skip), `supervisor-client.ts` + `platform-status.ts` (optional `newWorkRefusedBy`,
     `outboxLimit` passthrough), `system-sweeps.ts` (D-C), `keepalive-sweeper.ts` (D-D),
     `services/hitl.ts` (D-E, P3b, P6), `pool-cap-fence.test.ts` + D9 exemption for consensus capacity
     (R3); U4 remove `client as never`.
-11. [ ] Web unit + the focused integration files green; falsify each guard once.
+11. [x] Web unit + the focused integration files green; falsify each guard once.
+   *(Done: web unit 870 files / 9116 tests; the 22 integration files touching the changed code
+   (`grep` of runPass2 / runSweepTick / applyHostPressureSample / recordHostPressureSample /
+   resumeHostPausedInterrupts / createOwnedSession / event_outbox_backpressure / host_pressured,
+   R20 excluded) 349 tests green; web tsc clean. Falsified after GREEN, each RED then restored:
+   the sample following `pressured` (R-M2 physical), the `sampledAt` guard (stale sample), the
+   `wallet` skip (teardown seam test), the create choke point (W2), both Pass 2 exclusions,
+   `resume-queued`, and the raw-cap guard (a probe reader). FOUND while writing W2 — not in the
+   review: `createOwnedSession` rethrew a refused create's STORED failure (`PRECONDITION
+   event_outbox_backpressure`), so the driver never saw D8's `host_pressured` and FAILED the node
+   instead of parking it; the real-supervisor suite missed it because the adoption is refused
+   first there. Fixed at the create choke point (every create owner). P4's backoff is a pure
+   module (`host-pressure-resume-backoff.ts`, unit-tested) because `localHost` memoizes and gives
+   no deterministic throw seam. P5a: the W6 seed is realistic (a `stop` writes no response) — left;
+   the three idle seeds now use `markCheckpointed`. P6: a non-user actor on the resume arm throws
+   the same UNAUTHORIZED the human-only guard does. U4 cast removed.)*
 
 ### Phase 3 — event plane: skipped-terminal quarantine and its owners (TDD). Commit: `fix(execution-host): a prompt whose terminal is a skip is quarantined and ends its owner visibly`
 

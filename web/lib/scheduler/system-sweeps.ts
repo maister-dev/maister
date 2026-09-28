@@ -134,6 +134,9 @@ export type SystemSweepSummary = GcCompatibilitySummary & {
 export type HostPressureSweepSummary = HostPressureObservation &
   HostPausedInterruptSummary & {
     promoted: number;
+    // Each step after the sample fails on its own (ADR-183 amendment
+    // 2026-09-28); the sweep reports these in its `errors`.
+    errors: string[];
   };
 
 type PromoteDispatch = Pick<
@@ -452,7 +455,8 @@ export async function runSystemSweep(
       const health = await executionHosts.local().platformStatus();
 
       try {
-        pressure = await applyHostPressureSample(health);
+        pressure = await applyHostPressureSample(health, {}, sampledAt);
+        errors.push(...(pressure?.errors ?? []));
       } catch (err) {
         const message = errorMessage(err);
 
@@ -632,12 +636,17 @@ function gcFailureMessages(
   return errors;
 }
 
-// ADR-183 D-M0: the host is the authority on pressure — its sample sets and
-// clears the record. A clear lifts the admission fence, and nothing else would
-// wake the work it queued, so the clear itself admits it (D-M4, C29).
+// ADR-183 D-M0: the host is the authority on whether it admits new work —
+// its sample sets and clears the record, clearing only a record set before
+// `sampledAt`, when the health request began. Every sample on which the host
+// admits new work resumes the host-paused nodes and drains the queue, not only
+// the one that cleared the record: a sweep that died or threw between the
+// delete and the drain, or a re-registered host, would otherwise strand the
+// queue with no owner (amendment 2026-09-28). Each step fails on its own.
 export async function applyHostPressureSample(
   health: PlatformStatus,
   dispatch: PromoteDispatch = {},
+  sampledAt?: Date,
 ): Promise<HostPressureSweepSummary | null> {
   if (health.kind !== "ready") return null;
   const hostKey = health.health.host?.hostKey;
@@ -648,44 +657,70 @@ export async function applyHostPressureSample(
     db: getDb(),
     hostKey,
     stream,
+    sampledAt,
     logger: log,
   });
 
   if (!observed) return null;
-  // ADR-183 D-M2: host-paused nodes resume first (the clear is their signal),
-  // then the queued launches take whatever slots remain.
-  const { resumeHostPausedInterrupts } = await import("@/lib/services/hitl");
-  const interrupts = await resumeHostPausedInterrupts(getDb(), {
-    autoResume:
-      observed.transition === "clear" || observed.transition === "cleared",
-  });
+  const admits =
+    observed.transition === "clear" || observed.transition === "cleared";
+  const errors: string[] = [];
+  let interrupts: HostPausedInterruptSummary = {
+    resumed: 0,
+    redriven: 0,
+    resumeFailures: [],
+  };
+
+  // ADR-183 D-M2: host-paused nodes resume first (the host's admission is
+  // their signal), then the queued launches take whatever slots remain.
+  try {
+    const { resumeHostPausedInterrupts } = await import("@/lib/services/hitl");
+
+    interrupts = await resumeHostPausedInterrupts(getDb(), {
+      autoResume: admits,
+    });
+  } catch (err) {
+    errors.push(`host-paused interrupt resume failed: ${errorMessage(err)}`);
+    log.warn(
+      { err: errorMessage(err) },
+      "system_sweep host-paused interrupt resume threw",
+    );
+  }
 
   return {
     ...observed,
     ...interrupts,
-    promoted:
-      observed.transition === "cleared"
-        ? await promoteQueuedAfterClear(dispatch)
-        : 0,
+    promoted: admits ? await drainQueuedWork(dispatch, errors) : 0,
+    errors,
   };
 }
 
-async function promoteQueuedAfterClear(
+async function drainQueuedWork(
   dispatch: PromoteDispatch,
+  errors: string[],
 ): Promise<number> {
   let promoted = 0;
 
   for (const pool of ["flow", "agent"] as const satisfies SchedulerPool[]) {
-    const { cap } = await effectivePoolCap(getDb(), pool);
+    try {
+      const { cap } = await effectivePoolCap(getDb(), pool);
 
-    for (let admitted = 0; admitted < cap; admitted += 1) {
-      const { promotedRunId } = await promoteNextPending({ ...dispatch, pool });
+      for (let admitted = 0; admitted < cap; admitted += 1) {
+        const { promotedRunId } = await promoteNextPending({
+          ...dispatch,
+          pool,
+        });
 
-      if (!promotedRunId) break;
-      promoted += 1;
+        if (!promotedRunId) break;
+        promoted += 1;
+      }
+    } catch (err) {
+      errors.push(`${pool} queue drain failed: ${errorMessage(err)}`);
+      log.warn({ pool, err: errorMessage(err) }, "system_sweep drain threw");
     }
   }
-  log.info({ promoted }, "host pressure cleared → queued work promoted");
+  if (promoted > 0)
+    log.info({ promoted }, "host admits new work → queued work promoted");
 
   return promoted;
 }

@@ -752,9 +752,9 @@ The manager's own token for this state is `host_pressured`
 
 | Message | Level | Where |
 | --- | --- | --- |
-| `execution-host-pressured` — `hostId`, `source` (`refusal` / `sample`), `unacknowledgedAtStart` | WARN, on the absent → present edge | pressure record |
+| `execution-host-pressured` — `hostId`, `source` (`refusal` / `health`), `newWorkRefusedBy` (health), `unacknowledgedAtStart` | WARN, on the absent → present edge | pressure record |
 | `execution-host-pressure-cleared` — `hostId`, `durationMs` | INFO | pressure record |
-| `command-refused-host-pressure` — `commandId`, `kind`, `outboxLimit` | WARN | deliverer |
+| `command-refused-host-pressure` — `commandId`, `commandKind`, `outboxLimit` | WARN | deliverer |
 | `execution-host-pressure-record-failed` | WARN, the refusal still parks | deliverer |
 | `run-host-pressure-resumed` | INFO, per auto-resumed interrupt | `system_sweep` |
 | `run-host-pressure-resume-failed` / `run-host-pressure-resume-stuck` | WARN per throw / ERROR at the third consecutive throw and every doubling | `system_sweep` |

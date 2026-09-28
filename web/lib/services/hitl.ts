@@ -44,6 +44,10 @@ import {
 import { maxOperatorRestarts } from "@/lib/instance-config";
 import { isHostPressuredError } from "@/lib/execution-host/host-pressure";
 import {
+  createResumeBackoff,
+  RESUME_STUCK_FAILURES,
+} from "@/lib/services/host-pressure-resume-backoff";
+import {
   OPERATOR_CORRECTION_MAX,
   WORKSPACE_POLICY_IDS,
   type NodeInterruptActor,
@@ -5722,8 +5726,7 @@ export async function applyNodeInterruptResume(
 // sweep tick, oldest first; a row whose resume throws this many times is left
 // to the operator (poison policy — the count is per process).
 export const HOST_PRESSURE_RESUME_BATCH = 25;
-const HOST_PRESSURE_RESUME_MAX_FAILURES = 3;
-const interruptResumeFailures = new Map<string, number>();
+const interruptResumeBackoff = createResumeBackoff();
 
 export type HostPausedInterruptSummary = {
   resumed: number;
@@ -5736,27 +5739,18 @@ function noteInterruptResumeFailure(
   row: { runId: string; hitlRequestId: string },
   err: unknown,
 ): void {
-  const failures = (interruptResumeFailures.get(row.hitlRequestId) ?? 0) + 1;
+  const { failures, stuck } = interruptResumeBackoff.failed(row.hitlRequestId);
+  const fields = {
+    runId: row.runId,
+    hitlRequestId: row.hitlRequestId,
+    failures,
+    err: err instanceof Error ? err.message : String(err),
+  };
 
-  interruptResumeFailures.set(row.hitlRequestId, failures);
-  log.warn(
-    {
-      runId: row.runId,
-      hitlRequestId: row.hitlRequestId,
-      failures,
-      err: err instanceof Error ? err.message : String(err),
-    },
-    "run-host-pressure-resume-failed",
-  );
-  if (failures >= HOST_PRESSURE_RESUME_MAX_FAILURES)
+  log.warn(fields, "run-host-pressure-resume-failed");
+  if (stuck) log.error(fields, "run-host-pressure-resume-stuck");
+  if (failures >= RESUME_STUCK_FAILURES)
     summary.resumeFailures.push(row.hitlRequestId);
-}
-
-function interruptResumePoisoned(hitlRequestId: string): boolean {
-  return (
-    (interruptResumeFailures.get(hitlRequestId) ?? 0) >=
-    HOST_PRESSURE_RESUME_MAX_FAILURES
-  );
 }
 
 /** ADR-183 D-M2 / W4, run by the `system_sweep` after its health sample.
@@ -5778,6 +5772,7 @@ export async function resumeHostPausedInterrupts(
     resumeFailures: [],
   };
 
+  interruptResumeBackoff.startTick();
   if (opts.autoResume) {
     const open: Array<{
       runId: string;
@@ -5801,7 +5796,7 @@ export async function resumeHostPausedInterrupts(
       .limit(HOST_PRESSURE_RESUME_BATCH);
 
     for (const row of open) {
-      if (interruptResumePoisoned(row.hitlRequestId)) continue;
+      if (!interruptResumeBackoff.due(row.hitlRequestId)) continue;
       try {
         await applyNodeInterruptResume(db, {
           runId: row.runId,
@@ -5809,6 +5804,7 @@ export async function resumeHostPausedInterrupts(
           actor: { type: "system" },
           executionHosts: opts.executionHosts,
         });
+        interruptResumeBackoff.succeeded(row.hitlRequestId);
         summary.resumed += 1;
         log.info(
           {
@@ -5847,13 +5843,14 @@ export async function resumeHostPausedInterrupts(
     runId: string;
     hitlRequestId: string;
   }>) {
-    if (interruptResumePoisoned(row.hitlRequestId)) continue;
+    if (!interruptResumeBackoff.due(row.hitlRequestId)) continue;
     try {
       if (
         (await claimNodeInterruptResume(db, row.runId, opts.executionHosts)) ===
         "ready"
       )
         summary.redriven += 1;
+      interruptResumeBackoff.succeeded(row.hitlRequestId);
     } catch (err) {
       noteInterruptResumeFailure(summary, row, err);
     }
@@ -6017,13 +6014,17 @@ async function handleNodeInterruptResponse(args: {
   }
 
   if (optionId === "resume") {
+    // The human-only guard above refused every other actor; the system's own
+    // answer never comes through here (ADR-183 D11), so none maps to it.
+    if (actor.kind !== "user")
+      throw new MaisterError(
+        "UNAUTHORIZED",
+        "a node_interrupt-kind HITL request requires a human actor",
+      );
     const outcome = await applyNodeInterruptResume(db, {
       runId,
       hitlRequestId,
-      actor:
-        actor.kind === "user"
-          ? { type: "user", id: actor.userId }
-          : { type: "system" },
+      actor: { type: "user", id: actor.userId },
       recordSuccessAudit,
       executionHosts,
     });
@@ -6053,7 +6054,10 @@ async function handleNodeInterruptResponse(args: {
       {
         ok: true,
         runStatus: outcome.runStatus,
-        state: "resume-in-progress",
+        // `resume-queued`: answered, waiting for a slot or for the host to
+        // admit new work; the sweep's re-drive claims it (ADR-183 D12).
+        state:
+          outcome.claim === "deferred" ? "resume-queued" : "resume-in-progress",
       },
       { status: 202 },
     );

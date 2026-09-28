@@ -57,6 +57,38 @@ describe("pool cap fence (ADR-183 D-M4)", () => {
     expect(offenders).toEqual([]);
   });
 
+  // ADR-183 D9 (amended 2026-09-28, review R3): the unfenced readers of the
+  // raw caps are an explicit, reasoned list. A new reader is an admission the
+  // fence cannot see until it is either fenced or added here with its reason.
+  it("the raw-cap readers are exactly D9's unfenced list", () => {
+    const EXEMPT: Record<string, string> = {
+      "lib/scheduler.ts": "the definitions and capForPool itself",
+      "lib/scratch-runs/idle-resume.ts":
+        "the package-assistant budget; the host's own refusal parks it",
+      "lib/run-schedules/dispatch.ts":
+        "schedule dispatch; its launch meets the host's refusal",
+      "lib/runs/recover.ts":
+        "crash recover; its create meets the host's refusal",
+      "lib/flows/graph/consensus/capacity.ts":
+        "a running flow node's own verify/synthesize sessions, in process",
+      "lib/orchestrator/bounds-store.ts": "orchestrator bounds, not admission",
+      "app/api/runs/[runId]/rework-claim/claim/route.ts":
+        "the ADR-160 rework claim; refused inside the claim transaction",
+    };
+    const readers = new Set<string>();
+
+    for (const root of ROOTS) {
+      for (const file of sources(join(WEB_DIR, root))) {
+        const text = readFileSync(file, "utf8");
+
+        if (/\bmaxConcurrent(Runs|AgentRuns|AssistantRuns)Cap\(\)/.test(text))
+          readers.add(relative(WEB_DIR, file));
+      }
+    }
+
+    expect([...readers].sort()).toEqual(Object.keys(EXEMPT).sort());
+  });
+
   it("the guard sees a bare read (falsifiable)", () => {
     const text = "const cap = capForPool(pool);";
 

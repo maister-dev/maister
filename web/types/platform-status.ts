@@ -33,7 +33,20 @@ export type SupervisorEventStreamHealth = {
   closes?: RuntimeEventStreamCloses;
   /** Null while not pressured; absent from an older host (ADR-183). */
   pressure?: SupervisorEventStreamPressure | null;
+  /** The host-wide outbox limit a new create or prompt would meet now, or
+   * null — what the admission fence follows; absent from an older host
+   * (ADR-183 amendment 2026-09-28). */
+  newWorkRefusedBy?: NewWorkRefusal | null;
 };
+
+export const NEW_WORK_REFUSALS = [
+  "physical",
+  "unacknowledged",
+  "retained",
+  "control",
+] as const;
+
+export type NewWorkRefusal = (typeof NEW_WORK_REFUSALS)[number];
 
 export type SupervisorHealth = {
   status: "ready";

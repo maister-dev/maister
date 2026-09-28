@@ -1,7 +1,7 @@
 import type { Db } from "./db";
 import type { SupervisorEventStreamHealth } from "@/types/platform-status";
 
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, lte } from "drizzle-orm";
 import pino, { type Logger } from "pino";
 
 import { LOCAL_DIRECT_KIND } from "./hosts";
@@ -9,8 +9,8 @@ import { LOCAL_DIRECT_KIND } from "./hosts";
 import { executionHostPressure, executionHosts } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 
-// ADR-183 D-M0/D-M6: the host's wire token for a soft/hard outbox refusal, and
-// the ONE state token the manager mints wherever it decides for itself.
+// ADR-183 D-M0/D-M6: the host's wire token for every outbox refusal, and the
+// ONE state token the manager mints wherever it decides for itself.
 export const HOST_PRESSURE_REFUSAL_REASON = "event_outbox_backpressure";
 export const HOST_PRESSURED_REASON = "host_pressured";
 
@@ -26,6 +26,16 @@ export function isHostPressureRefusal(err: unknown): boolean {
     isMaisterError(err) &&
     err.code === "PRECONDITION" &&
     err.details?.reason === HOST_PRESSURE_REFUSAL_REASON
+  );
+}
+
+/** ADR-183 amendment 2026-09-28: every outbox refusal parks its command, but
+ * only a host-wide limit closes the admission fence — a `wallet` refusal is
+ * one teardown's own funding. An older host names no limit: it closes. */
+export function refusalClosesAdmissionFence(err: unknown): boolean {
+  return (
+    isHostPressureRefusal(err) &&
+    (err as MaisterError).details?.outboxLimit !== "wallet"
   );
 }
 
@@ -117,18 +127,30 @@ export type HostPressureObservation = {
   episodes: number | null;
 };
 
-/** Health-sample writer: the host is the authority on pressure, so a sample
- * both sets and clears the record. A host that does not report its stream is
- * not sampled at all (null). */
+/** Health-sample writer: the host is the authority on whether it admits new
+ * work (`newWorkRefusedBy`, ADR-183 amendment 2026-09-28; an older host: its
+ * `pressured` bit), so a sample both sets and clears the record — but clears
+ * only a record set before its own fetch began (`sampledAt`), never a refusal
+ * it could not have seen. A host that does not report its stream is not
+ * sampled at all (null). */
 export async function recordHostPressureSample(input: {
   db: Db;
   hostKey: string;
-  stream: Pick<SupervisorEventStreamHealth, "pressured" | "pressure">;
+  stream: Pick<
+    SupervisorEventStreamHealth,
+    "pressured" | "pressure" | "newWorkRefusedBy"
+  >;
+  sampledAt?: Date;
   now?: Date;
   logger?: Logger;
 }): Promise<HostPressureObservation | null> {
   const logger = input.logger ?? defaultLog;
   const now = input.now ?? new Date();
+  const sampledAt = input.sampledAt ?? now;
+  const refusesNewWork =
+    input.stream.newWorkRefusedBy === undefined
+      ? input.stream.pressured
+      : input.stream.newWorkRefusedBy !== null;
 
   return input.db.transaction(async (tx) => {
     const [registered] = await tx
@@ -161,12 +183,38 @@ export async function recordHostPressureSample(input: {
     };
     const episodes = input.stream.pressure?.episodes ?? null;
 
-    if (!input.stream.pressured) {
+    if (!refusesNewWork) {
       if (host.pressuredSince === null)
         return observation(host.id, "clear", null, null, null, episodes);
-      await tx
+      const deleted = await tx
         .delete(executionHostPressure)
-        .where(eq(executionHostPressure.executionHostId, host.id));
+        .where(
+          and(
+            eq(executionHostPressure.executionHostId, host.id),
+            lte(executionHostPressure.pressuredSince, sampledAt),
+          ),
+        )
+        .returning({ id: executionHostPressure.executionHostId });
+
+      if (deleted.length === 0) {
+        logger.debug(
+          {
+            hostId: host.id,
+            pressuredSince: host.pressuredSince.toISOString(),
+            sampledAt: sampledAt.toISOString(),
+          },
+          "host pressure record newer than the sample; kept",
+        );
+
+        return observation(
+          host.id,
+          "held",
+          host.pressuredSince,
+          Math.max(0, now.getTime() - host.pressuredSince.getTime()),
+          host.unacknowledgedAtStart,
+          episodes,
+        );
+      }
       const durationMs = Math.max(
         0,
         now.getTime() - host.pressuredSince.getTime(),
@@ -212,7 +260,12 @@ export async function recordHostPressureSample(input: {
         });
     if (host.pressuredSince === null)
       logger.warn(
-        { hostId: host.id, source: "health", unacknowledgedAtStart },
+        {
+          hostId: host.id,
+          source: "health",
+          newWorkRefusedBy: input.stream.newWorkRefusedBy ?? null,
+          unacknowledgedAtStart,
+        },
         "execution-host-pressured",
       );
 

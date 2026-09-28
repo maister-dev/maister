@@ -16,6 +16,7 @@ import {
   hostPressuredError,
   isHostPressuredError,
   isHostPressureRefusal,
+  refusalClosesAdmissionFence,
 } from "@/lib/execution-host/host-pressure";
 import {
   supervisorErrorToMaister,
@@ -172,9 +173,8 @@ describe("T2 supervisorErrorToMaister", () => {
       commandId: "cmd-1",
     });
     expect(isHostPressuredError(mapped)).toBe(true);
-    // The hard bound's own refusal and every other reason are not pressure.
+    // Every other reason, and the token under any other code, is not pressure.
     for (const [code, reason] of [
-      ["PRECONDITION", "event_outbox_hard_limit"],
       ["PRECONDITION", "unknown_workspace"],
       ["EXECUTOR_UNAVAILABLE", "event_outbox_backpressure"],
       ["CONFLICT", "event_outbox_backpressure"],
@@ -193,6 +193,59 @@ describe("T2 supervisorErrorToMaister", () => {
       false,
     );
     expect(isHostPressuredError(refusal)).toBe(false);
+  });
+
+  // ADR-183 amendment 2026-09-28: the wire names which limit refused. Every
+  // limit is a park, but only a host-wide one closes the admission fence — a
+  // `wallet` refusal is one teardown's own funding. An older host names none.
+  it("ADR-183 amendment: only a host-wide outbox limit closes the admission fence", () => {
+    const limits = (
+      OPENAPI.components.schemas.OutboxLimit as unknown as { enum: string[] }
+    ).enum;
+
+    expect(limits).toEqual([
+      "unacknowledged",
+      "retained",
+      "physical",
+      "control",
+      "wallet",
+    ]);
+    for (const outboxLimit of limits) {
+      const refusal = supervisorErrorToMaister(
+        409,
+        {
+          code: "PRECONDITION",
+          message: "x",
+          details: { reason: "event_outbox_backpressure", outboxLimit },
+        },
+        "ACP_PROTOCOL",
+      );
+
+      expect(isHostPressureRefusal(refusal), outboxLimit).toBe(true);
+      expect(refusalClosesAdmissionFence(refusal), outboxLimit).toBe(
+        outboxLimit !== "wallet",
+      );
+    }
+    const olderHost = supervisorErrorToMaister(
+      409,
+      {
+        code: "PRECONDITION",
+        message: "x",
+        details: { reason: "event_outbox_backpressure" },
+      },
+      "ACP_PROTOCOL",
+    );
+
+    expect(refusalClosesAdmissionFence(olderHost)).toBe(true);
+    expect(
+      refusalClosesAdmissionFence(
+        supervisorErrorToMaister(
+          409,
+          { code: "PRECONDITION", message: "x", details: { reason: "other" } },
+          "ACP_PROTOCOL",
+        ),
+      ),
+    ).toBe(false);
   });
 
   it("ADR-183 P0-4: a host outbox refusal of a permission input voids its delivery intent", () => {

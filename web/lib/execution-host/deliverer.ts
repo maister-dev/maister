@@ -44,6 +44,7 @@ import {
   hostPressuredError,
   isHostPressureRefusal,
   recordHostPressureRefusal,
+  refusalClosesAdmissionFence,
 } from "./host-pressure";
 
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -353,14 +354,16 @@ export async function deliverCommand<TResult>(
       }
 
       // ADR-183 D-M0: the row keeps the host's verbatim refusal; the caller
-      // gets the manager's non-terminal state token.
+      // gets the manager's non-terminal state token. Only a host-wide limit
+      // closes the fence (amendment 2026-09-28).
       if (isHostPressureRefusal(err)) {
         try {
-          await recordHostPressureRefusal(
-            opts.db,
-            opts.command.executionHostId,
-            logger,
-          );
+          if (refusalClosesAdmissionFence(err))
+            await recordHostPressureRefusal(
+              opts.db,
+              opts.command.executionHostId,
+              logger,
+            );
         } catch (recordErr) {
           logger.warn(
             {
@@ -387,6 +390,7 @@ export async function deliverCommand<TResult>(
             attempt: attempts,
             latencyMs,
             outcome: "host_pressured",
+            outboxLimit: (err as MaisterError).details?.outboxLimit ?? null,
           },
           "command-refused-host-pressure",
         );
@@ -775,11 +779,12 @@ export async function startAsyncPrompt(
       // refusal with no receipt under this id proves no attempt was admitted.
       if (receiptAbsent && isHostPressureRefusal(error)) {
         try {
-          await recordHostPressureRefusal(
-            opts.db,
-            current.executionHostId,
-            logger,
-          );
+          if (refusalClosesAdmissionFence(error))
+            await recordHostPressureRefusal(
+              opts.db,
+              current.executionHostId,
+              logger,
+            );
         } catch (recordErr) {
           logger.warn(
             {
@@ -806,6 +811,7 @@ export async function startAsyncPrompt(
             hostId: current.executionHostId,
             attempt: attempts,
             outcome: "host_pressured",
+            outboxLimit: (error as MaisterError).details?.outboxLimit ?? null,
           },
           "command-refused-host-pressure",
         );

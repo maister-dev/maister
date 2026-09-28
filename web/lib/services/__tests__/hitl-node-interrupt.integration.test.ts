@@ -33,7 +33,12 @@ import {
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
-import { respondToHitl, type HitlActor } from "@/lib/services/hitl";
+import {
+  respondToHitl,
+  resumeHostPausedInterrupts,
+  type HitlActor,
+} from "@/lib/services/hitl";
+import { markCheckpointed } from "@/lib/runs/state-transitions";
 import { runFlow } from "@/lib/flows/runner";
 import { seedGraphRun } from "@/test-support/graph-run-seed";
 import {
@@ -383,10 +388,9 @@ describe("respondToHitl node_interrupt integration", () => {
     const { runId, hitlRequestId, parkedAttemptId } =
       await seedParkedRun(projectId);
 
-    await (db as any)
-      .update(schema.runs)
-      .set({ status: "NeedsInputIdle", checkpointAt: new Date() })
-      .where(eq(schema.runs.id, runId));
+    // The keep-alive sweeper's own idle writer (review P5a): a seed no
+    // production writer produces proves nothing about the resume.
+    expect(await markCheckpointed(runId, { db })).toEqual({ ok: true });
 
     const res = await respondToHitl(
       { runId, hitlRequestId, body: { optionId: "resume" } },
@@ -627,14 +631,7 @@ describe("node_interrupt — an answer after the idle sweep still wakes the run"
       await seedParkedRun(projectId);
 
     // The sweeper checkpointed the run while the operator was reading.
-    await (db as any)
-      .update(schema.runs)
-      .set({
-        status: "NeedsInputIdle",
-        checkpointAt: new Date(),
-        keepaliveUntil: null,
-      })
-      .where(eq(schema.runs.id, runId));
+    expect(await markCheckpointed(runId, { db })).toEqual({ ok: true });
 
     const res = await respondToHitl(
       { runId, hitlRequestId, body: { optionId: "restart_node" } },
@@ -666,14 +663,7 @@ describe("node_interrupt — an answer after the idle sweep still wakes the run"
       .from(schema.executionHosts)
       .where(eq(schema.executionHosts.kind, "local_direct"));
 
-    await (db as any)
-      .update(schema.runs)
-      .set({
-        status: "NeedsInputIdle",
-        checkpointAt: new Date(),
-        keepaliveUntil: null,
-      })
-      .where(eq(schema.runs.id, runId));
+    expect(await markCheckpointed(runId, { db })).toEqual({ ok: true });
     await (db as any)
       .insert(schema.executionHostPressure)
       .values({ executionHostId: host.id, pressuredSince: new Date() });
@@ -704,6 +694,78 @@ describe("node_interrupt — an answer after the idle sweep still wakes the run"
 // node about to be re-run anyway and left every node BETWEEN the target and the
 // interrupted node `Succeeded` with `passed` gates — evidence produced under a
 // run state the jump-back has just invalidated.
+describe("node_interrupt — resume under host pressure (ADR-183 amendment 2026-09-28)", () => {
+  async function localHostId(): Promise<string> {
+    const [host] = await (db as any)
+      .select({ id: schema.executionHosts.id })
+      .from(schema.executionHosts)
+      .where(eq(schema.executionHosts.kind, "local_direct"));
+
+    return host.id;
+  }
+
+  // Review P3b: a deferred claim said `resume-in-progress`, although the
+  // contract's `resume-queued` means exactly "answered, waiting for a slot".
+  it("a resume the fence defers answers resume-queued", async () => {
+    const projectId = await seedProject("ni-resume-queued");
+    const { runId, hitlRequestId } = await seedParkedRun(projectId);
+    const hostId = await localHostId();
+
+    expect(await markCheckpointed(runId, { db })).toEqual({ ok: true });
+    await (db as any)
+      .insert(schema.executionHostPressure)
+      .values({ executionHostId: hostId, pressuredSince: new Date() });
+    try {
+      const res = await respondToHitl(
+        { runId, hitlRequestId, body: { optionId: "resume" } },
+        userActor,
+        { db, executionHosts: hosts },
+      );
+
+      expect(res.status).toBe(202);
+      expect(await res.json()).toMatchObject({
+        ok: true,
+        state: "resume-queued",
+        runStatus: "NeedsInputIdle",
+      });
+      expect((await getRun(runId)).status).toBe("NeedsInputIdle");
+      expect((await getHitl(hitlRequestId)).respondedAt).not.toBeNull();
+    } finally {
+      await (db as any)
+        .delete(schema.executionHostPressure)
+        .where(eq(schema.executionHostPressure.executionHostId, hostId));
+    }
+  });
+
+  // Review P5c: the re-drive arm — an interrupt answered `resume` whose run is
+  // still parked is claimed again by the next sweep tick.
+  it("the sweep re-drives an answered resume whose run is still parked", async () => {
+    const projectId = await seedProject("ni-redrive");
+    const { runId, hitlRequestId } = await seedParkedRun(projectId);
+
+    await (db as any)
+      .update(schema.hitlRequests)
+      .set({
+        respondedAt: new Date(),
+        response: {
+          optionId: "resume",
+          actor: { type: "system" },
+          cause: "host_pressure",
+        },
+      })
+      .where(eq(schema.hitlRequests.id, hitlRequestId));
+
+    const summary = await resumeHostPausedInterrupts(db, {
+      autoResume: false,
+      executionHosts: hosts,
+    });
+
+    expect(summary).toMatchObject({ resumed: 0, redriven: 1 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(vi.mocked(runFlow)).toHaveBeenCalledWith(runId);
+  });
+});
+
 describe("node_interrupt — restart_from stales the whole downstream", () => {
   const MANIFEST = {
     schemaVersion: 1,
