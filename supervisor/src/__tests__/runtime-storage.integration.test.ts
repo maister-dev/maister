@@ -6,7 +6,11 @@ import { DatabaseSync } from "node:sqlite";
 
 import { describe, expect, it } from "vitest";
 
-import { openHostState, type CommandReceiptRow } from "../host-state";
+import {
+  openHostState,
+  type CommandReceiptRow,
+  type HostState,
+} from "../host-state";
 import { OUTBOX_BUDGET_SCHEMA } from "../outbox-budget";
 import {
   DEFAULT_RUNTIME_LIMITS,
@@ -23,8 +27,31 @@ import {
   waitFor,
 } from "./_fixtures/boot-host";
 
+// ADR-183: the per-kind gate replaces the dead assertCanAcceptMutatingCommand;
+// a `new_work` receipt runs the physical, soft and hard admission checks.
+function admitNewWork(state: HostState): void {
+  state.putReceipt(
+    {
+      commandId: randomUUID(),
+      runId: "admission-probe",
+      kind: "session.prompt",
+      assignmentId: randomUUID(),
+      epoch: 1,
+      hostSessionId: null,
+      requestDigest: "admission-probe",
+      eventId: null,
+      phase: "accepted",
+      httpStatus: 202,
+      body: {},
+      receivedAt: new Date().toISOString(),
+      completedAt: null,
+    },
+    { kind: "new_work" },
+  );
+}
+
 describe("AT-02 physical runtime storage", () => {
-  it("preserves default-scale retained pressure and terminal capacity across restart", () => {
+  it("preserves default-scale retained capacity and terminal capacity across restart", () => {
     const stateDir = mkdtempSync(join(tmpdir(), "maister-default-capacity-"));
     let state = openHostState({ stateDir });
     const receipt: CommandReceiptRow = {
@@ -74,21 +101,27 @@ describe("AT-02 physical runtime storage", () => {
       expect(state.runtimeStorageSnapshot().totalBytes).toBeLessThan(
         DEFAULT_RUNTIME_LIMITS.stateMaxBytes,
       );
-      expect(() => state.assertCanAcceptMutatingCommand()).toThrow();
+      // ADR-183: unACKed rows at soft are pressure …
+      expect(() => admitNewWork(state)).toThrow(/soft limit/);
       state.ackRuntimeEvents(streamId, lastSequence);
       expect(state.runtimeEventOutboxStats().unacknowledgedCount).toBe(0);
       expect(state.runtimeEventOutboxStats().retainedBytes).toBe(retainedBytes);
-      expect(() => state.assertCanAcceptMutatingCommand()).toThrow();
+      // … the same rows retained after their ACK are not.
+      expect(state.runtimeEventHealthSnapshot().pressured).toBe(false);
+      expect(() => admitNewWork(state)).not.toThrow();
       state.close();
       state = openHostState({ stateDir });
       expect(state.runtimeEventOutboxStats().retainedCount).toBe(count);
       expect(state.pruneAcknowledgedRuntimeEvents(new Date())).toBe(0);
+      // Retained replay at the soft budget is housekeeping, not capacity: a
+      // new producer is still funded across the restart (ADR-183).
+      expect(state.runtimeEventHealthSnapshot().pressured).toBe(false);
       expect(() =>
         state.reserveProducerReceipt(
           { ...receipt, commandId: randomUUID() },
           0,
         ),
-      ).toThrow();
+      ).not.toThrow();
       const terminal = state.appendRuntimeEvent({
         draft: {
           ...draft,
@@ -135,15 +168,18 @@ describe("AT-02 physical runtime storage", () => {
       observer.exec("PRAGMA wal_checkpoint(TRUNCATE)");
       observer.exec("BEGIN");
       observer.prepare("SELECT COUNT(*) FROM command_receipts").get();
-      state.putReceipt(receipt);
+      state.putReceipt(receipt, { kind: "new_work" });
       const written = statSync(join(stateDir, "state.sqlite-wal")).size;
 
       expect(written).toBeLessThan(SQLITE_WRITE_HEADROOM_BYTES);
       expect(() =>
-        state.putReceipt({
-          ...receipt,
-          body: "x".repeat(MAX_RECEIPT_BODY_BYTES),
-        }),
+        state.putReceipt(
+          {
+            ...receipt,
+            body: "x".repeat(MAX_RECEIPT_BODY_BYTES),
+          },
+          { kind: "new_work" },
+        ),
       ).toThrow(/2 MiB/);
       expect(
         Buffer.byteLength(
@@ -203,7 +239,9 @@ describe("AT-02 physical runtime storage", () => {
             },
           });
         } catch (error) {
-          expect(error).toMatchObject({ reason: "event_outbox_soft_limit" });
+          expect(error).toMatchObject({
+            reason: "event_outbox_physical_limit",
+          });
           refused = true;
           break;
         }
@@ -219,10 +257,10 @@ describe("AT-02 physical runtime storage", () => {
       expect(state.runtimeEventOutboxStats().retainedBytes).toBeLessThan(
         limits.eventSoftBytes,
       );
-      expect(() => state.assertCanAcceptMutatingCommand()).toThrow(/physical/);
+      expect(() => admitNewWork(state)).toThrow(/physical/);
       observer.exec("ROLLBACK");
       observer.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-      expect(() => state.assertCanAcceptMutatingCommand()).not.toThrow();
+      expect(() => admitNewWork(state)).not.toThrow();
     } finally {
       if (observer.isTransaction) observer.exec("ROLLBACK");
       observer.close();
@@ -307,9 +345,7 @@ describe("AT-02 physical runtime storage", () => {
         code: "EXECUTOR_UNAVAILABLE",
         details: { reason: "runtime_storage_unavailable" },
       });
-      expect(() => host.hostState.assertCanAcceptMutatingCommand()).toThrow(
-        /repair/,
-      );
+      expect(() => admitNewWork(host.hostState)).toThrow(/repair/);
       await waitFor(() =>
         entries.every(
           (entry) =>

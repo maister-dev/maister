@@ -1,7 +1,10 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { RuntimeLimits } from "./runtime-limits";
 
-import { HostRuntimeEventError } from "./host-runtime-errors";
+import {
+  HostRuntimeEventError,
+  type NewWorkRefusal,
+} from "./host-runtime-errors";
 import {
   CONTROL_EVENT_MAX_BYTES,
   EMERGENCY_EVENT_BYTES,
@@ -11,7 +14,9 @@ import {
 
 export type EventPartition = "regular" | "control" | "emergency";
 export type EventFunding =
-  | { partition: "regular"; reservationId?: string }
+  // `overflow: "emergency"` (ADR-183): teardown evidence with no producer
+  // wallet may fall back to the emergency floor when regular is at hard.
+  | { partition: "regular"; reservationId?: string; overflow?: "emergency" }
   | { partition: "control"; walletId: string; commandId?: string }
   | { partition: "emergency" };
 
@@ -41,9 +46,15 @@ export type ProducerWalletBinding = Readonly<{
   outputBindingCount: number;
 }>;
 
+// ADR-183 D-D1: every receipt names its admission; there is no default.
+// `new_work` / `producer` are refused by soft (unACKed) and hard (retained)
+// pressure, `resolve` only by hard, `teardown` never. A teardown takes its
+// producer's terminal credit when that wallet is still open.
 export type ReceiptAdmission =
+  | { kind: "new_work" }
   | { kind: "producer"; outputBindingCount: number }
-  | { kind: "teardown"; walletId: string };
+  | { kind: "resolve" }
+  | { kind: "teardown"; walletId?: string };
 
 export type BudgetReceipt = Readonly<{
   commandId: string;
@@ -72,7 +83,7 @@ CREATE TABLE IF NOT EXISTS runtime_event_pressure (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   pressured INTEGER NOT NULL CHECK (pressured IN (0, 1))
 );
-INSERT OR IGNORE INTO runtime_event_pressure VALUES (1, 0);
+INSERT OR IGNORE INTO runtime_event_pressure (id, pressured) VALUES (1, 0);
 CREATE TABLE IF NOT EXISTS runtime_event_wallets (
   wallet_id TEXT PRIMARY KEY,
   run_id TEXT NOT NULL,
@@ -130,6 +141,54 @@ CREATE TRIGGER IF NOT EXISTS runtime_event_budget_ack AFTER UPDATE OF acknowledg
 END;
 `;
 
+// ADR-183, host schema v14. SQLite verifies a new column's CHECK against the
+// existing row, so the v13 → v14 migration clears the old bit first (it also
+// counted retained rows); open recomputes it under the unACKed-only predicate.
+export const RUNTIME_EVENT_PRESSURE_EPISODE_COLUMNS = `
+ALTER TABLE runtime_event_pressure ADD COLUMN since_ms INTEGER
+  CHECK ((since_ms IS NULL) = (pressured = 0) AND (since_ms IS NULL OR since_ms >= 0));
+ALTER TABLE runtime_event_pressure ADD COLUMN unacknowledged_count_at_start INTEGER
+  CHECK ((unacknowledged_count_at_start IS NULL) = (pressured = 0)
+    AND (unacknowledged_count_at_start IS NULL OR unacknowledged_count_at_start >= 0));
+ALTER TABLE runtime_event_pressure ADD COLUMN unacknowledged_bytes_at_start INTEGER
+  CHECK ((unacknowledged_bytes_at_start IS NULL) = (pressured = 0)
+    AND (unacknowledged_bytes_at_start IS NULL OR unacknowledged_bytes_at_start >= 0));
+ALTER TABLE runtime_event_pressure ADD COLUMN episodes INTEGER NOT NULL DEFAULT 0
+  CHECK (episodes >= 0);
+`;
+
+export type OutboxPressureEpisode = Readonly<{
+  pressured: boolean;
+  sinceMs: number | null;
+  unacknowledgedCountAtStart: number | null;
+  unacknowledgedBytesAtStart: number | null;
+  episodes: number;
+}>;
+
+export function outboxPressureEpisode(db: DatabaseSync): OutboxPressureEpisode {
+  const row = db
+    .prepare(
+      `SELECT pressured, since_ms, unacknowledged_count_at_start,
+        unacknowledged_bytes_at_start, episodes
+      FROM runtime_event_pressure WHERE id = 1`,
+    )
+    .get() as {
+    pressured: number;
+    since_ms: number | null;
+    unacknowledged_count_at_start: number | null;
+    unacknowledged_bytes_at_start: number | null;
+    episodes: number;
+  };
+
+  return {
+    pressured: row.pressured === 1,
+    sinceMs: row.since_ms,
+    unacknowledgedCountAtStart: row.unacknowledged_count_at_start,
+    unacknowledgedBytesAtStart: row.unacknowledged_bytes_at_start,
+    episodes: row.episodes,
+  };
+}
+
 type UsageDbRow = {
   retained_count: number;
   retained_bytes: number;
@@ -179,39 +238,66 @@ export function outboxBudgetSnapshot(db: DatabaseSync): OutboxBudgetSnapshot {
   };
 }
 
-function atThreshold(
+/** Pressure (ADR-183): the manager is behind. */
+export function unacknowledgedAtThreshold(
   used: PartitionUsage,
   bytes: number,
   rows: number,
 ): boolean {
-  return (
-    used.retainedBytes >= bytes ||
-    used.unacknowledgedBytes >= bytes ||
-    used.retainedCount >= rows ||
-    used.unacknowledgedCount >= rows
-  );
+  return used.unacknowledgedBytes >= bytes || used.unacknowledgedCount >= rows;
+}
+
+/** Housekeeping at soft, capacity at hard (ADR-183) — never pressure. */
+export function retainedAtThreshold(
+  used: PartitionUsage,
+  bytes: number,
+  rows: number,
+): boolean {
+  return used.retainedBytes >= bytes || used.retainedCount >= rows;
 }
 
 export function refreshOutboxPressure(
   db: DatabaseSync,
   limits: RuntimeLimits,
+  nowMs: number,
 ): boolean {
   const snapshot = outboxBudgetSnapshot(db);
   const regular = reservedRegularUsage(snapshot);
   const pressured = snapshot.pressured
-    ? atThreshold(regular, limits.eventLowBytes, limits.eventLowRows)
-    : atThreshold(regular, limits.eventSoftBytes, limits.eventSoftRows);
+    ? unacknowledgedAtThreshold(
+        regular,
+        limits.eventLowBytes,
+        limits.eventLowRows,
+      )
+    : unacknowledgedAtThreshold(
+        regular,
+        limits.eventSoftBytes,
+        limits.eventSoftRows,
+      );
 
   if (snapshot.pressured !== pressured) {
-    db.prepare(
-      "UPDATE runtime_event_pressure SET pressured = ? WHERE id = 1",
-    ).run(pressured ? 1 : 0);
+    if (pressured) {
+      db.prepare(
+        `UPDATE runtime_event_pressure SET pressured = 1, since_ms = ?,
+          unacknowledged_count_at_start = ?, unacknowledged_bytes_at_start = ?
+        WHERE id = 1`,
+      ).run(nowMs, regular.unacknowledgedCount, regular.unacknowledgedBytes);
+    } else {
+      db.prepare(
+        `UPDATE runtime_event_pressure SET pressured = 0, since_ms = NULL,
+          unacknowledged_count_at_start = NULL, unacknowledged_bytes_at_start = NULL,
+          episodes = episodes + 1
+        WHERE id = 1`,
+      ).run();
+    }
   }
 
   return pressured;
 }
 
-function reservedRegularUsage(snapshot: OutboxBudgetSnapshot): PartitionUsage {
+export function reservedRegularUsage(
+  snapshot: OutboxBudgetSnapshot,
+): PartitionUsage {
   return {
     retainedCount:
       snapshot.regular.retainedCount + snapshot.reservedRegularRows,
@@ -237,14 +323,12 @@ export function reserveFrameCapacity(
     reservationId: string;
     bootId: string;
     walletId: string;
+    nowMs: number;
   },
 ): boolean {
-  if (refreshOutboxPressure(db, limits)) return false;
-  const used = reservedRegularUsage(outboxBudgetSnapshot(db));
-
   if (
-    used.retainedBytes + FRAME_EVENT_BYTES > limits.eventHardBytes ||
-    used.retainedCount + FRAME_EVENT_ROWS > limits.eventHardRows
+    refreshOutboxPressure(db, limits, input.nowMs) ||
+    !frameFitsUnderHard(db, limits)
   )
     return false;
   if (
@@ -255,7 +339,7 @@ export function reserveFrameCapacity(
       .get(input.walletId)
   ) {
     throw new HostRuntimeEventError(
-      "event_outbox_terminal_reserve_exhausted",
+      "event_outbox_wallet_exhausted",
       "an output frame requires its accepted producer wallet",
     );
   }
@@ -270,14 +354,53 @@ export function reserveFrameCapacity(
   return true;
 }
 
+function frameFitsUnderHard(db: DatabaseSync, limits: RuntimeLimits): boolean {
+  const used = reservedRegularUsage(outboxBudgetSnapshot(db));
+
+  return (
+    used.retainedBytes + FRAME_EVENT_BYTES <= limits.eventHardBytes &&
+    used.retainedCount + FRAME_EVENT_ROWS <= limits.eventHardRows
+  );
+}
+
+/** Read-only: would the outbox refuse a producer's next frame right now? */
+export function outboxRefusesFrames(
+  db: DatabaseSync,
+  limits: RuntimeLimits,
+): boolean {
+  return outboxBudgetSnapshot(db).pressured || !frameFitsUnderHard(db, limits);
+}
+
 export function assertOutboxAdmission(
   db: DatabaseSync,
   limits: RuntimeLimits,
+  nowMs: number,
 ): void {
-  if (refreshOutboxPressure(db, limits)) {
+  if (refreshOutboxPressure(db, limits, nowMs)) {
     throw new HostRuntimeEventError(
       "event_outbox_soft_limit",
-      "runtime event outbox is above the command admission soft limit or awaiting its low watermark",
+      "runtime event outbox unacknowledged rows are above the command admission soft limit or awaiting its low watermark",
+    );
+  }
+  assertRetainedBelowHard(db, limits);
+}
+
+// Retained rows never pressure the host, so without this check a stalled
+// retained prune would let admissions run on until an append failed.
+export function assertRetainedBelowHard(
+  db: DatabaseSync,
+  limits: RuntimeLimits,
+): void {
+  if (
+    retainedAtThreshold(
+      reservedRegularUsage(outboxBudgetSnapshot(db)),
+      limits.eventHardBytes,
+      limits.eventHardRows,
+    )
+  ) {
+    throw new HostRuntimeEventError(
+      "event_outbox_hard_limit",
+      "runtime event outbox retained rows are at the hard limit",
     );
   }
 }
@@ -315,6 +438,7 @@ export function reserveProducerWallet(
   db: DatabaseSync,
   limits: RuntimeLimits,
   binding: ProducerWalletBinding,
+  nowMs: number,
 ): void {
   const rows = producerWalletRows(binding.outputBindingCount);
   const existing = db
@@ -342,17 +466,8 @@ export function reserveProducerWallet(
 
     return;
   }
-  assertOutboxAdmission(db, limits);
-  const snapshot = outboxBudgetSnapshot(db);
-
-  if (
-    snapshot.control.retainedCount + snapshot.reservedControlRows + rows >
-      limits.eventControlRows - EMERGENCY_EVENT_ROWS ||
-    snapshot.control.retainedBytes +
-      snapshot.reservedControlBytes +
-      rows * CONTROL_EVENT_MAX_BYTES >
-      limits.eventControlBytes - EMERGENCY_EVENT_BYTES
-  ) {
+  assertOutboxAdmission(db, limits, nowMs);
+  if (!controlFundsProducerWallet(outboxBudgetSnapshot(db), limits, rows)) {
     throw new HostRuntimeEventError(
       "event_outbox_terminal_reserve_exhausted",
       "runtime event control capacity cannot fund another producer wallet",
@@ -372,6 +487,46 @@ export function reserveProducerWallet(
   );
 }
 
+function controlFundsProducerWallet(
+  snapshot: OutboxBudgetSnapshot,
+  limits: RuntimeLimits,
+  rows: number,
+): boolean {
+  return (
+    snapshot.control.retainedCount + snapshot.reservedControlRows + rows <=
+      limits.eventControlRows - EMERGENCY_EVENT_ROWS &&
+    snapshot.control.retainedBytes +
+      snapshot.reservedControlBytes +
+      rows * CONTROL_EVENT_MAX_BYTES <=
+      limits.eventControlBytes - EMERGENCY_EVENT_BYTES
+  );
+}
+
+/** ADR-183 amendment 2026-09-28: the host-wide outbox limit a `session.create`
+ * with no output bindings or a `session.prompt` would meet now, in admission
+ * order after the physical check the caller owns — the signal the manager's
+ * admission fence follows. Read-only. */
+export function outboxRefusesNewWork(
+  db: DatabaseSync,
+  limits: RuntimeLimits,
+): Exclude<NewWorkRefusal, "physical"> | null {
+  const snapshot = outboxBudgetSnapshot(db);
+
+  if (snapshot.pressured) return "unacknowledged";
+  if (
+    retainedAtThreshold(
+      reservedRegularUsage(snapshot),
+      limits.eventHardBytes,
+      limits.eventHardRows,
+    )
+  )
+    return "retained";
+  if (!controlFundsProducerWallet(snapshot, limits, producerWalletRows(0)))
+    return "control";
+
+  return null;
+}
+
 export function closeProducerWallet(db: DatabaseSync, walletId: string): void {
   db.prepare(
     "UPDATE runtime_event_wallets SET remaining_rows = 0, closed = 1 WHERE wallet_id = ?",
@@ -383,7 +538,8 @@ export function admitReceipt(
   db: DatabaseSync,
   limits: RuntimeLimits,
   receipt: BudgetReceipt,
-  admission?: ReceiptAdmission,
+  admission: ReceiptAdmission,
+  nowMs: number,
 ): void {
   if (
     receipt.phase !== "accepted" ||
@@ -392,76 +548,110 @@ export function admitReceipt(
       .get(receipt.commandId)
   )
     return;
-  if (admission?.kind === "producer") {
-    if (receipt.kind !== "session.create" || receipt.assignmentId === null) {
-      throw new HostRuntimeEventError(
-        "stream_identity_conflict",
-        "a producer wallet requires an accepted fenced create receipt",
+  switch (admission.kind) {
+    case "producer":
+      if (receipt.kind !== "session.create" || receipt.assignmentId === null) {
+        throw new HostRuntimeEventError(
+          "stream_identity_conflict",
+          "a producer wallet requires an accepted fenced create receipt",
+        );
+      }
+      reserveProducerWallet(
+        db,
+        limits,
+        {
+          walletId: receipt.commandId,
+          runId: receipt.runId,
+          assignmentId: receipt.assignmentId,
+          assignmentEpoch: receipt.epoch,
+          outputBindingCount: admission.outputBindingCount,
+        },
+        nowMs,
       );
-    }
-    reserveProducerWallet(db, limits, {
-      walletId: receipt.commandId,
-      runId: receipt.runId,
-      assignmentId: receipt.assignmentId,
-      assignmentEpoch: receipt.epoch,
-      outputBindingCount: admission.outputBindingCount,
-    });
 
-    return;
-  }
-  if (admission?.kind !== "teardown") {
-    assertOutboxAdmission(db, limits);
-    if (
-      receipt.kind === "session.prompt" &&
-      receipt.hostSessionId !== null &&
-      db
-        .prepare(
-          "SELECT 1 FROM command_receipts WHERE host_session_id = ? AND kind = 'session.prompt' AND phase = 'accepted' LIMIT 1",
-        )
-        .get(receipt.hostSessionId)
-    ) {
-      throw new HostRuntimeEventError(
-        "command_in_progress",
-        "a producer can own only one accepted prompt at a time",
-      );
-    }
+      return;
+    case "new_work":
+      assertOutboxAdmission(db, limits, nowMs);
+      if (
+        receipt.kind === "session.prompt" &&
+        receipt.hostSessionId !== null &&
+        db
+          .prepare(
+            "SELECT 1 FROM command_receipts WHERE host_session_id = ? AND kind = 'session.prompt' AND phase = 'accepted' LIMIT 1",
+          )
+          .get(receipt.hostSessionId)
+      ) {
+        throw new HostRuntimeEventError(
+          "command_in_progress",
+          "a producer can own only one accepted prompt at a time",
+        );
+      }
 
-    return;
+      return;
+    case "resolve":
+      assertRetainedBelowHard(db, limits);
+
+      return;
+    case "teardown":
+      admitTeardown(db, limits, receipt, admission.walletId, nowMs);
+
+      return;
   }
+}
+
+function admitTeardown(
+  db: DatabaseSync,
+  limits: RuntimeLimits,
+  receipt: BudgetReceipt,
+  walletId: string | undefined,
+  nowMs: number,
+): void {
   if (
-    !["session.cancel", "session.checkpoint", "session.delete"].includes(
-      receipt.kind,
-    )
+    !TEARDOWN_KINDS.includes(receipt.kind as (typeof TEARDOWN_KINDS)[number])
   ) {
     throw new HostRuntimeEventError(
       "stream_identity_conflict",
-      "only a producer teardown command can use terminal credit",
+      "only a teardown command can use a teardown admission",
     );
   }
+  // No open wallet (an exited session, a workspace, an object): nothing to
+  // credit, and nothing may refuse a teardown.
+  if (
+    walletId === undefined ||
+    !SESSION_TEARDOWN_KINDS.includes(
+      receipt.kind as (typeof SESSION_TEARDOWN_KINDS)[number],
+    ) ||
+    !db
+      .prepare(
+        "SELECT 1 FROM runtime_event_wallets WHERE wallet_id = ? AND closed = 0",
+      )
+      .get(walletId)
+  )
+    return;
   const active = db
     .prepare(
       "SELECT 1 FROM runtime_event_teardowns WHERE wallet_id = ? AND completed = 0",
     )
-    .get(admission.walletId);
+    .get(walletId);
 
   if (active) {
     throw new HostRuntimeEventError(
-      "event_outbox_terminal_reserve_exhausted",
+      "event_outbox_wallet_exhausted",
       "a producer teardown command is already in progress",
     );
   }
   // New IDs cannot manufacture an unlimited cancellation loop during pressure.
   // Normal turns may start another chain after capacity has recovered.
   if (
-    refreshOutboxPressure(db, limits) &&
+    refreshOutboxPressure(db, limits, nowMs) &&
     db
       .prepare(
         "SELECT 1 FROM runtime_event_teardowns WHERE wallet_id = ? AND kind = ?",
       )
-      .get(admission.walletId, receipt.kind)
+      .get(walletId, receipt.kind)
   ) {
     throw new HostRuntimeEventError(
-      "event_outbox_terminal_reserve_exhausted",
+      "event_outbox_wallet_exhausted",
       "the pressured producer already admitted this teardown step; replay its command id",
     );
   }
@@ -475,7 +665,7 @@ export function admitReceipt(
       AND closed = 0 AND remaining_rows >= 2`,
     )
     .run(
-      admission.walletId,
+      walletId,
       receipt.runId,
       receipt.assignmentId,
       receipt.epoch,
@@ -486,14 +676,26 @@ export function admitReceipt(
 
   if (reserved.changes !== 1) {
     throw new HostRuntimeEventError(
-      "event_outbox_terminal_reserve_exhausted",
+      "event_outbox_wallet_exhausted",
       "producer teardown cannot reserve its acceptance and completion credit",
     );
   }
   db.prepare(
     "INSERT INTO runtime_event_teardowns (command_id, wallet_id, kind, remaining_rows) VALUES (?, ?, ?, 2)",
-  ).run(receipt.commandId, admission.walletId, receipt.kind);
+  ).run(receipt.commandId, walletId, receipt.kind);
 }
+
+const SESSION_TEARDOWN_KINDS = [
+  "session.cancel",
+  "session.checkpoint",
+  "session.delete",
+] as const;
+
+const TEARDOWN_KINDS = [
+  ...SESSION_TEARDOWN_KINDS,
+  "workspace.release",
+  "runtime_object.delete",
+] as const;
 
 /** Releases only unused promises; committed control rows remain charged. */
 export function settleReceiptBudget(
@@ -544,6 +746,31 @@ export function markProducerEnded(
   releaseEndedWallets(db);
 }
 
+function spendEmergency(
+  db: DatabaseSync,
+  encodedBytes: number,
+): EventPartition {
+  const used = usage(db, "emergency");
+
+  if (encodedBytes > CONTROL_EVENT_MAX_BYTES) {
+    throw new HostRuntimeEventError(
+      "event_outbox_wallet_exhausted",
+      "runtime event control record exceeds 16 KiB",
+    );
+  }
+  if (
+    used.retainedBytes + encodedBytes > EMERGENCY_EVENT_BYTES ||
+    used.retainedCount + 1 > EMERGENCY_EVENT_ROWS
+  ) {
+    throw new HostRuntimeEventError(
+      "event_outbox_wallet_exhausted",
+      "runtime event emergency floor is exhausted",
+    );
+  }
+
+  return "emergency";
+}
+
 // Called only inside the same IMMEDIATE transaction as the event insert.
 // A failed insert rolls back its spend; allocating a sequence never spends twice.
 export function spendEventCapacity(
@@ -558,7 +785,6 @@ export function spendEventCapacity(
   },
 ): EventPartition {
   const { funding, encodedBytes } = input;
-  const used = usage(db, funding.partition);
 
   if (funding.partition === "regular") {
     if (funding.reservationId) {
@@ -580,7 +806,7 @@ export function spendEventCapacity(
 
       if (spent.changes !== 1)
         throw new HostRuntimeEventError(
-          "event_outbox_hard_limit",
+          "event_outbox_wallet_exhausted",
           "an output frame exceeded its event reservation",
         );
     }
@@ -592,6 +818,8 @@ export function spendEventCapacity(
       regular.retainedCount + 1 > limits.eventHardRows ||
       regular.unacknowledgedCount + 1 > limits.eventHardRows
     ) {
+      if (funding.overflow === "emergency" && !funding.reservationId)
+        return spendEmergency(db, encodedBytes);
       throw new HostRuntimeEventError(
         "event_outbox_hard_limit",
         "runtime event outbox regular partition is full",
@@ -602,23 +830,12 @@ export function spendEventCapacity(
   }
   if (encodedBytes > CONTROL_EVENT_MAX_BYTES) {
     throw new HostRuntimeEventError(
-      "event_outbox_terminal_reserve_exhausted",
+      "event_outbox_wallet_exhausted",
       "runtime event control record exceeds 16 KiB",
     );
   }
-  if (funding.partition === "emergency") {
-    if (
-      used.retainedBytes + encodedBytes > EMERGENCY_EVENT_BYTES ||
-      used.retainedCount + 1 > EMERGENCY_EVENT_ROWS
-    ) {
-      throw new HostRuntimeEventError(
-        "event_outbox_terminal_reserve_exhausted",
-        "runtime event emergency floor is exhausted",
-      );
-    }
-
-    return "emergency";
-  }
+  if (funding.partition === "emergency")
+    return spendEmergency(db, encodedBytes);
   if (
     funding.commandId &&
     db
@@ -644,7 +861,7 @@ export function spendEventCapacity(
 
     if (spent.changes !== 1)
       throw new HostRuntimeEventError(
-        "event_outbox_terminal_reserve_exhausted",
+        "event_outbox_wallet_exhausted",
         "producer teardown credit is exhausted",
       );
 
@@ -665,7 +882,7 @@ export function spendEventCapacity(
 
   if (spent.changes !== 1) {
     throw new HostRuntimeEventError(
-      "event_outbox_terminal_reserve_exhausted",
+      "event_outbox_wallet_exhausted",
       "runtime event requires an available credit from its producer wallet",
     );
   }

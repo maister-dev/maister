@@ -37,14 +37,21 @@ import { emitDelegatedReviewIfChild } from "@/lib/runs/delegated-review-emit";
 import { mintPlacement, releaseAssignmentForRun } from "@/lib/execution-host";
 import { gcAgeDays } from "@/lib/instance-config";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
-import { authorizeOrchestratorActionResume } from "@/lib/flows/graph/action-resume";
+import {
+  authorizeNodeInterruptResume,
+  authorizeOrchestratorActionResume,
+} from "@/lib/flows/graph/action-resume";
 import {
   authorizeNodePermissionResume,
   authorizeNodePermissionResult,
   authorizeNodePermissionContinuation,
   consumeUndeliveredFlowPermission,
 } from "@/lib/flows/graph/permission-resume";
-import { capForPool, countLiveRuns, takeSchedulerLock } from "@/lib/scheduler";
+import {
+  countLiveRuns,
+  effectivePoolCap,
+  takeSchedulerLock,
+} from "@/lib/scheduler";
 import { admitCompletedAgentResume } from "@/lib/agents/resume";
 import {
   readAgentPermissionResume,
@@ -350,8 +357,10 @@ export async function markResumed(
             assignment,
             opts.permissionResult,
           );
-        else if (!(await authorizeGatePermissionResume(tx, assignment)))
+        else if (!(await authorizeGatePermissionResume(tx, assignment))) {
           await authorizeNodePermissionResume(tx, assignment);
+          await authorizeNodeInterruptResume(tx, assignment);
+        }
       }
       await opts.recordSuccessAudit?.(tx);
 
@@ -520,7 +529,10 @@ export async function markResumedFromWait(
         )
           return { ok: false, reason: "status-guard-mismatch" };
       }
-      if ((await countLiveRuns(tx, "flow")) >= capForPool("flow")) {
+      if (
+        (await countLiveRuns(tx, "flow")) >=
+        (await effectivePoolCap(tx, "flow")).cap
+      ) {
         const deferred = await tx
           .update(runs)
           .set({

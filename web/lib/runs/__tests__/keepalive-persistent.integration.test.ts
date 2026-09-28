@@ -125,3 +125,91 @@ describe("keepalive Pass-2 persistent exclusion (M37 Phase 8 T8.1)", () => {
     expect(await statusOf(ephemeralRunId)).toBe("Abandoned");
   });
 });
+
+// A NeedsInputIdle flow run checkpointed 48h ago, parked on a node interrupt.
+async function seedIdleInterruptedFlow(interrupt: {
+  cause: "host_pressure" | "operator";
+  answered: boolean;
+}): Promise<string> {
+  const runId = randomUUID();
+
+  await pool.query(
+    `INSERT INTO "runs" ("id", "run_kind", "project_id", "status",
+       "current_step_id", "flow_version", "checkpoint_at")
+     VALUES ($1, 'flow', $2, 'NeedsInputIdle', 'implement', 'v1.0.0',
+             now() - interval '48 hours')`,
+    [runId, projectId],
+  );
+  await pool.query(
+    `INSERT INTO "hitl_requests" ("id", "run_id", "step_id", "kind", "prompt",
+       "schema", "response", "responded_at")
+     VALUES ($1, $2, 'implement', 'node_interrupt', 'paused', $3::jsonb,
+             $4::jsonb, $5)`,
+    [
+      randomUUID(),
+      runId,
+      JSON.stringify({
+        kind: "node_interrupt",
+        nodeId: "implement",
+        cause: interrupt.cause,
+        actor: {
+          type: interrupt.cause === "host_pressure" ? "system" : "user",
+        },
+      }),
+      interrupt.answered
+        ? JSON.stringify({
+            optionId: "resume",
+            actor: { type: "system" },
+            cause: interrupt.cause,
+          })
+        : null,
+      interrupt.answered ? new Date(Date.now() - 47 * 3_600_000) : null,
+    ],
+  );
+
+  return runId;
+}
+
+// ADR-183 amendment 2026-09-28 (decision 4): the TTL measures operator
+// silence. A host park, and any resume the manager still owes, is not silence.
+describe("keepalive Pass-2 never abandons a host park", () => {
+  it("skips a run whose resume is owed and a flow run parked on a host-pressure interrupt; an operator-silent run still abandons", async () => {
+    await seedProject();
+    const owedAgent = await seedIdleAgent(false);
+
+    await pool.query(
+      `UPDATE "runs" SET "resume_requested_at" = now() - interval '47 hours' WHERE "id" = $1`,
+      [owedAgent],
+    );
+    const hostParked = await seedIdleInterruptedFlow({
+      cause: "host_pressure",
+      answered: false,
+    });
+    const autoResumedDeferred = await seedIdleInterruptedFlow({
+      cause: "host_pressure",
+      answered: true,
+    });
+    const operatorSilent = await seedIdleInterruptedFlow({
+      cause: "operator",
+      answered: false,
+    });
+    const silentAgent = await seedIdleAgent(false);
+
+    const abandoned = await runPass2(db);
+
+    expect({
+      owedAgent: await statusOf(owedAgent),
+      hostParked: await statusOf(hostParked),
+      autoResumedDeferred: await statusOf(autoResumedDeferred),
+      operatorSilent: await statusOf(operatorSilent),
+      silentAgent: await statusOf(silentAgent),
+    }).toEqual({
+      owedAgent: "NeedsInputIdle",
+      hostParked: "NeedsInputIdle",
+      autoResumedDeferred: "NeedsInputIdle",
+      operatorSilent: "Abandoned",
+      silentAgent: "Abandoned",
+    });
+    expect(abandoned).toBe(2);
+  });
+});

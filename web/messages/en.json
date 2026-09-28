@@ -1339,7 +1339,9 @@
       "Crashed": "Crashed",
       "Done": "Done",
       "Abandoned": "Abandoned"
-    }
+    },
+    "hostPaused": "Paused by the execution host — send again when it recovers",
+    "turnQuarantined": "The last turn's result could not be stored, so it ended without one. Send a new message to continue."
   },
   "board": {
     "needYou": "need you",
@@ -2662,7 +2664,8 @@
       "edit_lock_not_held": "Your edit lock on this package expired or passed to someone else. Reopen the package editor, then answer again to resume.",
       "delivery_unavailable": "Your answer is saved; delivery is pending. Retry delivery to send it.",
       "permission_delivery_rejected": "The checkpointed permission could not accept your answer. Relaunch the run.",
-      "permission_delivery_rejected_scratch": "The checkpointed permission could not accept your answer. Recover the run or relaunch it."
+      "permission_delivery_rejected_scratch": "The checkpointed permission could not accept your answer. Recover the run or relaunch it.",
+      "event_outbox_backpressure": "Your answer is saved. The execution host is over its event budget and has not taken it yet — retry delivery once the host catches up."
     },
     "errorDiagnostic": "Diagnostic",
     "answerSaved": "Answer saved — delivery pending",
@@ -2739,6 +2742,9 @@
       "Done": "Done",
       "Abandoned": "Abandoned",
       "Failed": "Failed"
+    },
+    "queueReason": {
+      "host_pressured": "Waiting for the execution host to catch up on its event backlog"
     },
     "nodeStatus": {
       "Pending": "Pending",
@@ -2878,6 +2884,7 @@
     "confirmAccept": "Confirm",
     "confirmCancel": "Cancel",
     "interrupted": "Node {node} was interrupted mid-turn. Choose how to continue.",
+    "hostPaused": "The execution host paused node {node} — its event budget is exhausted. It resumes automatically when the host catches up; you can also stop or restart it.",
     "correctionLabel": "Correction for the agent (optional)",
     "correctionPlaceholder": "What did it get wrong? This is appended to the restarted node's prompt.",
     "workspacePolicyLabel": "Workspace",
@@ -3189,8 +3196,6 @@
     "title": "Execution host",
     "subtitle": "Current host, event-stream, projection, worker, and command evidence in one operator view.",
     "missing": "unavailable",
-    "yes": "yes",
-    "no": "no",
     "sampledAt": "Current data sampled {value}",
     "hosts": {
       "title": "Hosts",
@@ -3209,6 +3214,21 @@
       "closesLegend": "Why the host closed runtime-event connections since its boot",
       "watermarkLegend": "R received · C contiguous · A ACK-confirmed",
       "lagLegend": "H→M host to manager · G gap · A ACK confirmation"
+    },
+    "pressure": {
+      "active": "Pressured",
+      "clear": "Not pressured",
+      "since": "since {value}",
+      "duration": "for {value}",
+      "unackedAtStart": "{count} unACKed at start",
+      "episodes": "{count} earlier episodes",
+      "refusingNewWork": "Refusing new work: {limit}",
+      "limit": {
+        "physical": "storage",
+        "unacknowledged": "unACKed backlog",
+        "retained": "retained backlog",
+        "control": "control reserve"
+      }
     },
     "closeReason": {
       "disconnect": "disconnect",

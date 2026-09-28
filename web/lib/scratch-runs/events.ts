@@ -21,6 +21,7 @@ import { canonicalCommandJson } from "../../../runtime/command-json";
 
 import {
   admitScratchPrompt,
+  ScratchPromptQuarantined,
   waitForScratchPrompt,
   type ScratchPromptOwner,
 } from "./prompt-owner";
@@ -938,7 +939,7 @@ function startScratchEventConsumer(args: {
   };
 }
 
-export async function sendScratchPromptAndProjectEvents(args: {
+type ScratchPromptSend = {
   runId: string;
   sessionId: string;
   stepId: string;
@@ -954,7 +955,42 @@ export async function sendScratchPromptAndProjectEvents(args: {
   // Optional cancel forwarded to the supervisor prompt fetch (staged assistant
   // launch passes its request signal); a disconnect aborts the in-flight turn.
   signal?: AbortSignal;
-}): Promise<PromptResult> {
+};
+
+export async function sendScratchPromptAndProjectEvents(
+  args: ScratchPromptSend,
+): Promise<PromptResult> {
+  try {
+    return await sendAndProjectScratchPrompt(args);
+  } catch (err) {
+    // ADR-184 amendment 2026-09-28: a quarantined turn has no writer left, so
+    // it fails here — once its events stopped projecting — instead of
+    // yielding forever. Every caller then treats it as yielded.
+    if (err instanceof ScratchPromptQuarantined) {
+      const { markScratchPromptRetryable } = await import("./service");
+
+      await markScratchPromptRetryable({
+        db: args.db ?? getDb(),
+        runId: args.runId,
+        err,
+      }).catch((markErr: unknown) =>
+        log.error(
+          {
+            runId: args.runId,
+            markErr:
+              markErr instanceof Error ? markErr.message : String(markErr),
+          },
+          "failed to mark a quarantined scratch turn retryable",
+        ),
+      );
+    }
+    throw err;
+  }
+}
+
+async function sendAndProjectScratchPrompt(
+  args: ScratchPromptSend,
+): Promise<PromptResult> {
   const db = args.db ?? getDb();
   const execution =
     args.execution ?? (await bindScratchExecution(db, args.runId));

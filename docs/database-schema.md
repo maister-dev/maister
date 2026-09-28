@@ -119,6 +119,7 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `inbox_items`                          | **(ADR-083 — Implemented, migration `0043`)** Per-recipient inbox fanned out from comment/mention events; `read_at` read marker; `source_ref` jsonb.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | `projects.id`, `tasks.id`                                                                                                                         |
 
 | `execution_hosts` | **(ADR-166 — Implemented, migration `0130`)** Registered execution hosts. Stage A: exactly one non-retired `kind='local_direct'` row (partial unique index), identity `host_key` minted by the supervisor, readiness + capabilities refreshed by the web registrar. The supervisor URL is env, never a column. | (none — retired via `retired_at`, never deleted while referenced) |
+| `execution_host_pressure` | **(ADR-183 — Implemented, migration `0182`)** The manager's outbox-pressure record per host: a row exists exactly while the host is recorded as pressured (`pressured_since` NOT NULL, `unacknowledged_at_start` nullable, CHECK `>= 0`). Written by the `system_sweep` health sample and by an `event_outbox_backpressure` refusal; deleted only by a `pressured: false` sample. Read by the admission fence (`effectivePoolCap`), the stall class, the run read model's `queueReason` and the host-paused auto-resume. A separate table so `execution_hosts` keeps the shape the staged upgrade reads. | `execution_hosts.id` (CASCADE) |
 | `execution_assignments` | **(ADR-166 — Implemented, migration `0130`)** Append-only per-run placement ledger: one row per `(run_id, epoch)`, `state ∈ active|superseded|released`, `placement_reason`, the opaque `execution_workspace_id` handle. At most one `active` row per run (partial unique index). | `runs.id`, `execution_hosts.id` (RESTRICT), self-ref `superseded_by_id` (SET NULL) |
 | `execution_commands` | **(ADR-166 — Implemented, migration `0130`)** Host-bound command intent + delivery ledger (`queued → delivering → accepted → succeeded|failed|fenced`), one row per wire `command.id`, REDACTED payload, per-kind retry budget, `driverless` recovery flag. **(ADR-167 S2.11/S2.12 — Implemented, migrations `0158`/`0159`)** Reclamation is the two-sided retirement handshake below, never age: `retired_at` marks the compacted tombstone, deleting a run or assignment around it is refused by `execution_commands_protected_evidence`, and every new `session.prompt` row must carry an owner (`execution_commands_prompt_owner_required`, NOT VALID so pre-v2 history is preserved unreconstructed). **(Migration `0176`, Implemented)** The compaction to a tombstone is the only transition exempt from the `0140`/`0141` request and evidence guards: `request_canonical_json`, `receipt_evidence`, `result` and `last_error` may become NULL only in the same UPDATE that sets `retired_at`, identity/digests/terminal event/state stay frozen, and a settled tombstone is final. **(Migration `0177`, Implemented — ADR-167 D5 amendment 2026-09-23)** `settled_from` records which evidence feed first settled a prompt (`canonical | host_span`); a `host_span` row may hold its digest before the canonical event binds `terminal_event_id`. **(Migration `0178`, Implemented — ADR-177 amendment 2026-09-23)** `host_span_verdict` (`busy | refused`, `execution_commands_host_span_verdict_check`) is the answer of the latest host-span read that ran without settling the prompt; a read clears it when it claims the command, and the stream-lost reconcile resolver crashes only on a recorded `refused`. **(Migration `0180`, Implemented — ADR-182)** `execution_commands_kind_check` gains `session.steer`: a v1, owner-less command that injects a message into the run's accepted prompt; its payload projection keeps `parentCommandId`, `promptBytes` and `contentBlockCount` only. | `runs.id`, `execution_assignments.id`, `execution_hosts.id` (RESTRICT) |
 | `execution_event_streams` | **(ADR-167 — Implemented, migrations `0131`–`0132`)** Manager-side host stream identity, durable received/contiguous/acknowledged cursors, gap state, boot observation, and consumer claim fields. | `execution_hosts.id` (RESTRICT) |
@@ -1846,9 +1847,28 @@ execution_hosts {
                                   //   timeout | http | malformed
   lastBootId?, lastSeenAt?,       // supervisor per-process bootId + last health
   registeredAt, updatedAt,
-  retiredAt?                      // partial UNIQUE (kind) WHERE
+  retiredAt?,                     // partial UNIQUE (kind) WHERE
                                   //   kind='local_direct' AND retired_at IS NULL
 }
+
+// ADR-183, migration 0182: the host's outbox-pressure record. A row exists
+// exactly while the manager believes the host is pressured. Its own table,
+// not execution_hosts columns: the staged upgrade (execution-ab-additive ..
+// finalize) runs the current registrar against the additive stage's
+// execution_hosts, and a Drizzle select/insert/returning names every column
+// the current schema declares — that row's shape must not change after 0133.
+execution_host_pressure {
+  executionHostId,                // PK; execution_hosts FK CASCADE
+  pressuredSince,                 // NOT NULL — a health sample with
+                                  //   stream.pressured=true inserts it from
+                                  //   stream.pressure.since (an existing row keeps
+                                  //   its value); an event_outbox_backpressure
+                                  //   refusal inserts now() ON CONFLICT DO NOTHING
+  unacknowledgedAtStart?          // integer CHECK >= 0; copied from
+                                  //   stream.pressure.unacknowledgedCountAtStart;
+                                  //   NULL until a pressured sample fills it
+                                  //   when a refusal opened the record
+}                                 // deleted only by a pressured=false sample
 
 execution_assignments {
   id, runId,                      // runs FK CASCADE; UNIQUE(runId, epoch)
@@ -2484,7 +2504,13 @@ agent path drives `Review→Running→…→Review`. Behavior:
               | 'Review' | 'Crashed' | 'Done' | 'Abandoned',
   errorCode?,
   errorMessage?,
-  errorMetadata?,
+  errorMetadata?,                // jsonb; {cause: "host_pressure"} when the
+                                 //   execution host's outbox pressure parked or
+                                 //   refused the turn (ADR-183), or {reason:
+                                 //   "prompt_terminal_conflict", causeCode} when
+                                 //   the turn's prompt was quarantined while
+                                 //   still accepted (ADR-184 amendment
+                                 //   2026-09-28) — no migration, unconstrained
   createdByUserId,               // FK -> users.id
   lastUserMessageAt?,
   lastAgentMessageAt?,
@@ -2548,7 +2574,9 @@ turn per run — migration `0180` re-created it with `AND variant <> 'steer'`, s
 a dispatched steer can sit beside its dispatched parent — and `command_id` is
 unique. A steer's `command_id` is its `session.steer` ledger row; a refusal
 supersedes it and inserts a successor `live_message | persistent_message` whose
-`logical_key` is `message:requeue:<steerTurnId>` (ADR-182).
+`logical_key` is `message:requeue:<steerTurnId>` (ADR-182). A message turn the
+execution host parked, or whose dispatch it refused, under outbox pressure is
+superseded by a successor keyed the same way (ADR-183).
 The due index covers unfinished turns. Postgres guards reject source/binding
 rewrites, phase regression and cross-run bindings. Migration `0180` extends
 the `guard_agent_turn_source` trigger: a `steer` row must name a non-steer
@@ -3401,6 +3429,14 @@ resumed scratch turn completed without asking again) or `delivery_rejected`
 (the flow or agent permission rejection). The respond route refuses an
 identical retry of a `_closed` row with that reason's refusal instead of `200`
 — see [`api/web.openapi.yaml`](api/web.openapi.yaml).
+
+A `node_interrupt` row's server-owned `schema` (the static interrupt schema)
+carries `cause: "operator" | "host_pressure"` and `actor: {type: "user", id} |
+{type: "system"}`; a `resume` answer's `response` is `{optionId: "resume",
+actor, cause}` — the provenance of the system answer the `system_sweep` gives
+when the execution host recovers (Implemented — ADR-183). The option matrix is
+still computed on read; the keys add no column, constraint or migration, and
+`actor` is never a request body field.
 
 `kind=permission` is binary approve/deny (delivered via ACP
 `session/request_permission`). `kind=form` is a structured payload defined
@@ -4579,7 +4615,7 @@ explicitly held for repair. They cannot be backfilled from redacted payloads.
 | `node_attempts.finish_continuation` | Nullable version-1 JSONB (`0144`) | Selected outgoing target, private injected context, resolved session policy and retry marker. The source close and cursor move commit together; recovery restores this decision without recalculating or granting an ACP turn. |
 | `execution_commands.create_intent` | Nullable private version-1 JSONB (`0146`, expanded by `0154`) | Exact Flow node ordinal, gate evaluation or agent turn ID/ordinal, create generation/source, canonical original envelope and SHA-256. Unique run/assignment/operation/generation; no prompt-owner or application fields are repurposed. Recovery preserves command ID and issue time. Payload bytes stay outside DTOs/logs. Agent creation does not use the Flow-specific fresh-session fallback on CHECKPOINT refusal. |
 | `gate_results.prompt_ordinal`, `gate_results.permission_resume` | Nonnegative integer default 0 / nullable version-1 JSONB (`0150`, expanded by `0151`–`0152`) | The existing gate evaluation owns its resumed prompt ordinal. The capacity claim records exact source/receiving assignments, command/incarnation/request/HITL/choice and ACP handle, plus a SHA-256 of the nullable parent action snapshot. It rebinds the same parent attempt and clears its obsolete action-turn authorization while preserving its action ordinal/result. A positive gate ordinal requires resume authority. Unavailable ACP handles fail without a fresh session; restart reuses the persisted turn. `kind: permission_result` instead preserves the ordinal (including 0) and complete verified verdict, with original input/checkpoint/incarnation lineage and a verdict digest. Its claim atomically settles the HITL; later graph reads validate both digests and historical authority before consuming the result. `kind: permission_continue` retains the same input/checkpoint lineage for a confirmed input interrupted by checkpoint, advances the gate ordinal, clears its unfinished verdict and preserves the parent action digest. |
-| `node_attempts.action_resume` | Nullable version-1 JSONB (`0145`, expanded by `0147`–`0149` and `0152`) | Source command/assignment, admitted current assignment and ordinal, retained ACP resume handle. `kind: orchestrator` and `kind: permission` authorize a new turn under their capacity claims; permission also binds HITL/request/choice. They advance the ordinal and clear the old action snapshot atomically. `kind: permission_result` instead retains the original ordinal and verified action snapshot, with the original input, checkpoint command and incarnation IDs. Its CHECK binds the snapshot command to the source command. Historical owners remain fenced; only the current assignment can consume this handoff. An orchestrator wake after a handoff retains its full `permissionResult` source authorization, including the receiving assignment, through pre-prompt rollback/reclaim. The nested CHECK binds its source IDs, ACP handle and prior ordinal to the new turn. `kind: permission_continue` advances the ordinal after confirmed input and acknowledged checkpoint interruption, preserving the input/checkpoint/incarnation IDs and original ACP handle. Its claim settles the original HITL; later permissions require independent responses. |
+| `node_attempts.action_resume` | Nullable version-1 JSONB (`0145`, expanded by `0147`–`0149`, `0152` and `0182`) | Source command/assignment, admitted current assignment and ordinal, retained ACP resume handle. `kind: orchestrator` and `kind: permission` authorize a new turn under their capacity claims; permission also binds HITL/request/choice. They advance the ordinal and clear the old action snapshot atomically. `kind: permission_result` instead retains the original ordinal and verified action snapshot, with the original input, checkpoint command and incarnation IDs. Its CHECK binds the snapshot command to the source command. Historical owners remain fenced; only the current assignment can consume this handoff. An orchestrator wake after a handoff retains its full `permissionResult` source authorization, including the receiving assignment, through pre-prompt rollback/reclaim. The nested CHECK binds its source IDs, ACP handle and prior ordinal to the new turn. `kind: permission_continue` advances the ordinal after confirmed input and acknowledged checkpoint interruption, preserving the input/checkpoint/incarnation IDs and original ACP handle. Its claim settles the original HITL; later permissions require independent responses. `kind: interrupt` (Implemented — ADR-183, CHECK widened by `0182`) is written by every `node_interrupt` park — operator or host-pressure (`cause`) — whose parked prompt ran on an ACP session (a create/prompt refusal park writes none); the park also advances the ordinal and clears the action snapshot, and the handle carries the ACP resume handle, so a `resume` answer re-enters the node with `session/resume` instead of a fresh session. |
 | `execution_commands.retirement_state` | `text`, `retained` | CHECK `retained|eligible|host_confirmed|tombstone`; eligible requires terminal evidence, owner disposition and run/delivery/ACK/grace predicates. |
 | `execution_commands.retirement_eligible_at` | `timestamptz`, null | Immutable time at eligibility-generation admission. |
 | `execution_commands.retirement_receipt` | `jsonb`, null | Exact host-confirmed eligibility identity; no compaction before confirmation. |

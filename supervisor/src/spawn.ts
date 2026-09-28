@@ -12,7 +12,7 @@ import { dirname, join } from "node:path";
 
 import { prepareProducerFiles, type ProducerFiles } from "./producer-files";
 import { HostRuntimeEventError } from "./host-runtime-errors";
-import { producerPressure } from "./producer-pressure";
+import { producerPressure, type ProducerPauseBound } from "./producer-pressure";
 import { captureAcpFrames, reserveOutputProducer } from "./bounded-acp-stream";
 import { SESSION_EVENT_CHANNEL } from "./registry";
 import {
@@ -48,6 +48,8 @@ export type SpawnSessionOptions = {
     assignmentEpoch: number;
   };
   logger: Logger;
+  // ADR-183: parks a producer whose frames stay paused by outbox pressure.
+  producerPauseBound?: ProducerPauseBound;
   binaryOverride?: string;
   preArgs?: string[];
   runtimeObjectEnv?: {
@@ -345,7 +347,13 @@ export async function spawnSession(
     drained = resolve;
   });
   const pressure = opts.hostState
-    ? producerPressure(opts.hostState, record, producerFiles)
+    ? producerPressure(
+        opts.hostState,
+        record,
+        producerFiles,
+        opts.producerPauseBound,
+        logger,
+      )
     : undefined;
 
   record.stopOutputForTeardown = () => {

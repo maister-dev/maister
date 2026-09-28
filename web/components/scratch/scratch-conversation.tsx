@@ -46,6 +46,7 @@ import { isStaleViewErrorCode } from "@/lib/ui-error-message";
 import {
   canReplayHitlAnswer,
   isPendingHitlDeliveryState,
+  isStoredAnswerDeliveryReason,
 } from "@/lib/hitl-response-contract";
 
 const shell =
@@ -577,7 +578,7 @@ export function ScratchConversation({
                 ? body.details.reason
                 : null,
           });
-          if (body?.details?.reason === "delivery_unavailable") {
+          if (isStoredAnswerDeliveryReason(body?.details?.reason)) {
             setLocalAnswer({
               requestKey,
               payload: canReplayHitlAnswer(
@@ -817,6 +818,36 @@ export function ScratchConversation({
             <p className="mt-1 text-mute">
               {tRun("errorDiagnostic")}:{" "}
               <code>{visibleHitlError.descriptor.causeCode}</code>
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {status === "WaitingForUser" &&
+      detail?.scratch.errorMetadata?.cause === "host_pressure" ? (
+        <p
+          className="mx-4 mt-3 rounded-[8px] border border-amber-line bg-amber-soft px-3 py-2 text-[12.5px] text-amber"
+          data-testid="scratch-host-paused"
+          role="status"
+        >
+          {t("hostPaused")}
+        </p>
+      ) : null}
+
+      {/* ADR-184 amendment 2026-09-28: the last turn's prompt was quarantined
+          — it failed rather than finishing, and no result will arrive. */}
+      {status === "WaitingForUser" &&
+      detail?.scratch.errorMetadata?.reason === "prompt_terminal_conflict" ? (
+        <div
+          className="mx-4 mt-3 rounded-lg border border-[#d9534f]/40 bg-[#d9534f]/10 px-3 py-2 text-[12px] leading-[1.5] text-[#d9534f]"
+          data-testid="scratch-turn-quarantined"
+          role="alert"
+        >
+          {t("turnQuarantined")}
+          {detail.scratch.errorMetadata.causeCode ? (
+            <p className="mt-1 text-mute">
+              {tRun("errorDiagnostic")}:{" "}
+              <code>{detail.scratch.errorMetadata.causeCode}</code>
             </p>
           ) : null}
         </div>

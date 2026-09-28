@@ -10,17 +10,28 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
-import { isMaisterError } from "@/lib/errors";
+import { isMaisterError, MaisterError } from "@/lib/errors";
 import {
   getActiveAssignment,
   mintAssignment,
+  releaseAssignmentForRun,
 } from "@/lib/execution-host/assignments";
+import { createExecutionHosts } from "@/lib/execution-host/client";
+import { claimAgentResumeSlot } from "@/lib/services/hitl";
 import { listCommandsForRun } from "@/lib/execution-host/commands";
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
 import { runFlow } from "@/lib/flows/runner";
+import { startFlowContinuationWorker } from "@/lib/flows/graph/continuation-worker";
 import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
 import { launchRun } from "@/lib/services/runs";
+import { getRunDetail } from "@/lib/queries/run";
+import { acceptAgentMessage } from "@/lib/agents/turns";
+import { claimAgentMessage } from "@/lib/agents/turn-claim";
+import { localHost } from "@/lib/execution-host/resolver";
+import { applyHostPressureSample } from "@/lib/scheduler/system-sweeps";
+import { promoteNextPending, tryStartRun } from "@/lib/scheduler";
+import { UPGRADE_MAINTENANCE_ENV } from "@/lib/maintenance/upgrade-fence";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import { fakeGraphHosts } from "@/test-support/fake-execution-host";
 import { seedGraphRun } from "@/test-support/graph-run-seed";
@@ -31,6 +42,7 @@ import {
 import {
   readyExecutionHostCapabilities,
   readySupervisorHealth,
+  type ReadySupervisorHealth,
 } from "@/test-support/supervisor-health-fixture";
 
 const schema = schemaModule as unknown as Record<string, any>;
@@ -64,12 +76,41 @@ vi.mock("@/lib/worktree", async (importOriginal) => {
   };
 });
 
+// P1–P4 keep every launch queued; the ADR-183 fence cases drive the real
+// admission.
+const scheduling = vi.hoisted(() => ({ real: false }));
+// ADR-183 W2 for a REFUSED create (review P5b): the named run's first park
+// transaction throws inside the driver.
+const parkFault = vi.hoisted(() => ({ runId: null as string | null }));
+
+vi.mock("@/lib/runs/node-interrupt", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/runs/node-interrupt")>();
+
+  return {
+    ...actual,
+    parkNodeForHostPressure: async (
+      args: Parameters<typeof actual.parkNodeForHostPressure>[0],
+    ) => {
+      if (parkFault.runId === args.runId) {
+        parkFault.runId = null;
+        throw new Error("injected: the park transaction failed");
+      }
+
+      return actual.parkNodeForHostPressure(args);
+    },
+  };
+});
+
 vi.mock("@/lib/scheduler", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/scheduler")>();
 
   return {
     ...actual,
-    tryStartRun: async () => ({ started: false, queuePosition: 1 }),
+    tryStartRun: async (...args: Parameters<typeof actual.tryStartRun>) =>
+      scheduling.real
+        ? actual.tryStartRun(...args)
+        : { started: false, queuePosition: 1 },
   };
 });
 
@@ -234,6 +275,349 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await testDatabase?.stop();
+});
+
+// These run before P2–P4, whose fake host replaces the registered local host.
+describe("ADR-183 D5a — the host-pressure admission fence", () => {
+  it("a launch while the host is pressured queues Pending{queueReason: host_pressured}; the sweep's clear starts it", async () => {
+    const hostId = await setHostPressure(new Date(Date.now() - 5_000));
+
+    scheduling.real = true;
+    try {
+      const { taskId } = await seedLaunchableTask();
+      const launched = await launchRun(
+        { taskId },
+        { authorize: async () => {} },
+        db as never,
+      );
+
+      expect(launched).toMatchObject({
+        status: "Pending",
+        queueReason: "host_pressured",
+      });
+      const [task] = (await db
+        .select({ status: schema.tasks.status })
+        .from(schema.tasks)
+        .where(eq(schema.tasks.id, taskId))) as Array<{ status: string }>;
+
+      expect(task.status).toBe("InFlight");
+      expect(await runStatus(launched.runId)).toBe("Pending");
+      // The run page reads the reason off the record — there is no column.
+      expect((await getRunDetail(launched.runId))?.queueReason).toBe(
+        "host_pressured",
+      );
+
+      // A freed slot while the record is set admits nothing.
+      const dispatched: string[] = [];
+      const runFlow = async (id: string) => {
+        dispatched.push(id);
+      };
+
+      expect(await promoteNextPending({ db: db as never, runFlow })).toEqual({
+        promotedRunId: null,
+      });
+      // A pressured sample keeps the record and admits nothing either.
+      expect(
+        await applyHostPressureSample(healthSample(true), { runFlow }),
+      ).toMatchObject({ hostId, transition: "held", promoted: 0 });
+      expect(await runStatus(launched.runId)).toBe("Pending");
+
+      // The host reports it caught up: the clear lifts the fence AND starts the
+      // work it queued.
+      const cleared = await applyHostPressureSample(healthSample(false), {
+        runFlow,
+      });
+
+      expect(cleared).toMatchObject({ hostId, transition: "cleared" });
+      expect(cleared?.promoted).toBeGreaterThanOrEqual(1);
+      expect(await hostPressuredSince(hostId)).toBeNull();
+      expect(await runStatus(launched.runId)).toBe("Running");
+      expect((await getRunDetail(launched.runId))?.queueReason).toBeNull();
+      await until(async () => dispatched.includes(launched.runId));
+    } finally {
+      scheduling.real = false;
+      await setHostPressure(null);
+    }
+  }, 60_000);
+
+  it("the agent pool is fenced the same way: a launch queues, a turn claim defers, and both admit after the clear", async () => {
+    const hostId = await setHostPressure(new Date(Date.now() - 5_000));
+    const pendingRunId = await seedPendingAgentRun();
+    const idleRunId = randomUUID();
+
+    await db.insert(schema.runs).values({
+      id: idleRunId,
+      runKind: "agent",
+      flowVersion: "agent",
+      flowRevision: "manual",
+      status: "NeedsInputIdle",
+      persistent: true,
+    });
+    await db.insert(schema.runSessions).values({
+      id: randomUUID(),
+      runId: idleRunId,
+      sessionName: "default",
+      acpSessionId: `acp-${idleRunId}`,
+    });
+    const host = await localHost({ db: db as never, force: true });
+
+    scheduling.real = true;
+    try {
+      expect(
+        await tryStartRun(pendingRunId, { db: db as never }),
+      ).toMatchObject({ started: false, queueReason: "host_pressured" });
+      const turn = await acceptAgentMessage(
+        db as never,
+        idleRunId,
+        "while pressured",
+      );
+
+      expect(await claimAgentMessage(db as never, turn.id, host)).toMatchObject(
+        { kind: "queued", reason: "capacity" },
+      );
+      expect(await runStatus(idleRunId)).toBe("NeedsInputIdle");
+
+      // The claim is a request-path admission: once the record is clear it
+      // binds on the next attempt.
+      await setHostPressure(null);
+      expect(await claimAgentMessage(db as never, turn.id, host)).toMatchObject(
+        { kind: "claimed", turn: { id: turn.id } },
+      );
+      await db
+        .update(schema.runs)
+        .set({ status: "Done" })
+        .where(eq(schema.runs.id, idleRunId));
+
+      // The queued launch waits for the sweep's clear.
+      await setHostPressure(new Date(Date.now() - 5_000));
+      const started: string[] = [];
+      const cleared = await applyHostPressureSample(healthSample(false), {
+        startAgentRun: async (id: string) => {
+          started.push(id);
+        },
+        runFlow: async () => {},
+      });
+
+      expect(cleared).toMatchObject({ hostId, transition: "cleared" });
+      expect(await runStatus(pendingRunId)).toBe("Running");
+      await until(async () => started.includes(pendingRunId));
+    } finally {
+      scheduling.real = false;
+      await setHostPressure(null);
+      await db
+        .update(schema.runs)
+        .set({ status: "Done" })
+        .where(eq(schema.runs.id, pendingRunId));
+      await db
+        .update(schema.runs)
+        .set({ status: "Done" })
+        .where(eq(schema.runs.id, idleRunId));
+    }
+  }, 60_000);
+
+  it("T4.0: an idle resume is fenced like a launch — it queues while pressured and the clear promotes it (flow and agent)", async () => {
+    const hostId = await setHostPressure(new Date(Date.now() - 5_000));
+    const host = await localHost({ db: db as never, force: true });
+    const seedIdle = async (runKind: "flow" | "agent") => {
+      const runId = randomUUID();
+
+      await db.insert(schema.runs).values({
+        id: runId,
+        runKind,
+        flowVersion: runKind === "agent" ? "agent" : "v1.0.0",
+        flowRevision: "manual",
+        status: "NeedsInputIdle",
+        persistent: runKind === "agent",
+        checkpointAt: new Date(),
+      });
+      await db.insert(schema.runSessions).values({
+        id: randomUUID(),
+        runId,
+        sessionName: "default",
+        acpSessionId: `acp-${runId}`,
+      });
+      // The parked generation a resume continues from.
+      await db.transaction(async (tx) => {
+        await mintAssignment(tx as never, {
+          runId,
+          hostId: host.id,
+          reason: "launch",
+        });
+        await releaseAssignmentForRun(tx as never, runId, "checkpointed");
+      });
+
+      return runId;
+    };
+    const agentRunId = await seedIdle("agent");
+    const flowRunId = await seedIdle("flow");
+
+    try {
+      // The agent's resume claim reads the fenced cap: queued, still parked.
+      expect(
+        await claimAgentResumeSlot(db as never, agentRunId, hosts()),
+      ).toEqual({ outcome: "queued" });
+      expect(await runStatus(agentRunId)).toBe("NeedsInputIdle");
+      // A flow resume queued earlier (at cap) is not promoted while fenced.
+      await db
+        .update(schema.runs)
+        .set({ resumeRequestedAt: new Date() })
+        .where(eq(schema.runs.id, flowRunId));
+      const resumed: string[] = [];
+      const started: string[] = [];
+      const dispatch = {
+        runFlow: async () => {},
+        resumeRun: async (id: string) => {
+          resumed.push(id);
+        },
+        startAgentRun: async (id: string) => {
+          started.push(id);
+        },
+      };
+
+      expect(
+        await promoteNextPending({ db: db as never, ...dispatch }),
+      ).toEqual({ promotedRunId: null });
+      expect(
+        await promoteNextPending({
+          db: db as never,
+          pool: "agent",
+          ...dispatch,
+        }),
+      ).toEqual({ promotedRunId: null });
+
+      // The clear promotes both idle resumes.
+      expect(
+        await applyHostPressureSample(healthSample(false), dispatch),
+      ).toMatchObject({ hostId, transition: "cleared" });
+      await until(async () => resumed.includes(flowRunId));
+      await until(async () => started.includes(agentRunId));
+      expect(await runStatus(flowRunId)).toBe("NeedsInput");
+      expect(await runStatus(agentRunId)).toBe("Running");
+    } finally {
+      await setHostPressure(null);
+      for (const runId of [agentRunId, flowRunId])
+        await db
+          .update(schema.runs)
+          .set({ status: "Done" })
+          .where(eq(schema.runs.id, runId));
+    }
+  }, 60_000);
+
+  it("the upgrade maintenance fence and the pressure fence compose: either one holds the queue", async () => {
+    const runId = await seedPendingAgentRun();
+    const previous = process.env[UPGRADE_MAINTENANCE_ENV];
+
+    await setHostPressure(new Date(Date.now() - 5_000));
+    process.env[UPGRADE_MAINTENANCE_ENV] = "1";
+    scheduling.real = true;
+    try {
+      expect(await tryStartRun(runId, { db: db as never })).toMatchObject({
+        started: false,
+        queueReason: "host_pressured",
+      });
+      // Pressure cleared, maintenance still engaged: still queued, and the
+      // reason is no longer the host's.
+      await setHostPressure(null);
+      const maintained = await tryStartRun(runId, { db: db as never });
+
+      expect(maintained).toMatchObject({ started: false });
+      expect(maintained).not.toHaveProperty("queueReason");
+      // Maintenance lifted, pressure set: queued for the host alone.
+      delete process.env[UPGRADE_MAINTENANCE_ENV];
+      await setHostPressure(new Date(Date.now() - 5_000));
+      expect(await tryStartRun(runId, { db: db as never })).toMatchObject({
+        started: false,
+        queueReason: "host_pressured",
+      });
+      // Neither: the run starts.
+      await setHostPressure(null);
+      expect(await tryStartRun(runId, { db: db as never })).toEqual({
+        started: true,
+      });
+    } finally {
+      scheduling.real = false;
+      if (previous === undefined) delete process.env[UPGRADE_MAINTENANCE_ENV];
+      else process.env[UPGRADE_MAINTENANCE_ENV] = previous;
+      await setHostPressure(null);
+      await db
+        .update(schema.runs)
+        .set({ status: "Done" })
+        .where(eq(schema.runs.id, runId));
+    }
+  }, 60_000);
+});
+
+// ADR-183 amendment 2026-09-28 (review R-M2): the record means "the host
+// refuses new work", and only the host's own `newWorkRefusedBy: null` clears
+// it. The unACKed-only `pressured` bit used to clear it every sweep while the
+// host kept refusing for a limit that bit never sees (low disk, retained at
+// hard), driving each clear's resume and drain straight into a new refusal.
+describe("ADR-183 amendment — the fence follows the host's new-work signal", () => {
+  it("R-M2: a host refusing new work for physical headroom keeps the fence closed while unpressured; its null sample clears and drains", async () => {
+    const hostId = await setHostPressure(new Date(Date.now() - 5_000));
+
+    scheduling.real = true;
+    try {
+      const { taskId } = await seedLaunchableTask();
+      const launched = await launchRun(
+        { taskId },
+        { authorize: async () => {} },
+        db as never,
+      );
+      const dispatched: string[] = [];
+      const runFlow = async (id: string) => {
+        dispatched.push(id);
+      };
+
+      expect(launched).toMatchObject({ status: "Pending" });
+      expect(
+        await applyHostPressureSample(healthSampleRefusing("physical"), {
+          runFlow,
+        }),
+      ).toMatchObject({ hostId, transition: "held", promoted: 0 });
+      expect(await hostPressuredSince(hostId)).not.toBeNull();
+      expect(await runStatus(launched.runId)).toBe("Pending");
+
+      const cleared = await applyHostPressureSample(
+        healthSampleRefusing(null),
+        {
+          runFlow,
+        },
+      );
+
+      expect(cleared).toMatchObject({ hostId, transition: "cleared" });
+      expect(cleared?.promoted).toBeGreaterThanOrEqual(1);
+      expect(await hostPressuredSince(hostId)).toBeNull();
+      expect(await runStatus(launched.runId)).toBe("Running");
+      await until(async () => dispatched.includes(launched.runId));
+    } finally {
+      scheduling.real = false;
+      await setHostPressure(null);
+    }
+  }, 60_000);
+
+  it("R-M2: a sample fetched before a refusal committed does not delete the refusal's record", async () => {
+    // The sample's fetch began, THEN a refusal set the record: the sample
+    // cannot speak for a refusal it never saw.
+    const sampledAt = new Date(Date.now() - 2_000);
+    const hostId = await setHostPressure(new Date());
+    const cleared = await applyHostPressureSample(
+      healthSampleRefusing(null),
+      { runFlow: async () => {} },
+      sampledAt,
+    );
+
+    try {
+      expect(cleared).toMatchObject({
+        hostId,
+        transition: "held",
+        promoted: 0,
+      });
+      expect(await hostPressuredSince(hostId)).not.toBeNull();
+    } finally {
+      await setHostPressure(null);
+    }
+  }, 60_000);
 });
 
 describe("flow launch + graph driver (ADR-166 T4.1)", () => {
@@ -483,6 +867,280 @@ describe("flow launch + graph driver (ADR-166 T4.1)", () => {
     }>;
 
     expect(hitl.map((h) => h.kind)).toContain("permission");
+  }, 60_000);
+});
+
+function hosts() {
+  return createExecutionHosts({ db: db as never });
+}
+
+async function setHostPressure(pressuredSince: Date | null): Promise<string> {
+  const host = await localHost({ db: db as never, force: true });
+
+  await db
+    .delete(schema.executionHostPressure)
+    .where(eq(schema.executionHostPressure.executionHostId, host.id));
+  if (pressuredSince)
+    await db.insert(schema.executionHostPressure).values({
+      executionHostId: host.id,
+      pressuredSince,
+      unacknowledgedAtStart: 40,
+    });
+
+  return host.id;
+}
+
+function healthSample(pressured: boolean) {
+  const ready = readySupervisorHealth();
+
+  return {
+    ...ready,
+    health: {
+      ...ready.health,
+      stream: {
+        streamId: "stream-1",
+        headSequence: "10",
+        unacknowledgedCount: pressured ? 40 : 0,
+        retainedCount: 40,
+        pressured,
+        oldestUnacknowledgedAgeMs: pressured ? 1_000 : null,
+        pressure: pressured
+          ? {
+              since: new Date(Date.now() - 1_000).toISOString(),
+              unacknowledgedCountAtStart: 40,
+              unacknowledgedBytesAtStart: 4_096,
+              episodes: 1,
+            }
+          : null,
+      },
+    },
+  } satisfies ReadySupervisorHealth & { health: { stream: unknown } };
+}
+
+function healthSampleRefusing(
+  refusedBy: "physical" | "unacknowledged" | "retained" | "control" | null,
+) {
+  const sample = healthSample(refusedBy === "unacknowledged");
+
+  return {
+    ...sample,
+    health: {
+      ...sample.health,
+      stream: { ...sample.health.stream, newWorkRefusedBy: refusedBy },
+    },
+  };
+}
+
+async function hostPressuredSince(hostId: string): Promise<Date | null> {
+  const [row] = (await db
+    .select({ pressuredSince: schema.executionHostPressure.pressuredSince })
+    .from(schema.executionHostPressure)
+    .where(eq(schema.executionHostPressure.executionHostId, hostId))) as Array<{
+    pressuredSince: Date;
+  }>;
+
+  return row?.pressuredSince ?? null;
+}
+
+async function seedPendingAgentRun(): Promise<string> {
+  const runId = randomUUID();
+
+  await db.insert(schema.runs).values({
+    id: runId,
+    runKind: "agent",
+    flowVersion: "agent",
+    flowRevision: "manual",
+    status: "Pending",
+  });
+
+  return runId;
+}
+
+describe("ADR-183 D-M0 — the refusal writer (W9)", () => {
+  it("a host refusal closes the admission fence before the next sweep; only a health sample reopens it", async () => {
+    const seeded = await seedGraphRun(db, agentFlow);
+    const { hosts, fake } = await fakeGraphHosts(db, seeded.runId);
+    const assignment = (await getActiveAssignment(db as never, seeded.runId))!;
+
+    fake.failOnce(
+      "createSession",
+      new MaisterError(
+        "PRECONDITION",
+        "runtime event outbox is under backpressure",
+        { details: { reason: "event_outbox_backpressure", httpStatus: 409 } },
+      ),
+    );
+    expect(await hostPressuredSince(assignment.executionHostId)).toBeNull();
+    await runFlow(seeded.runId, {
+      db: db as never,
+      runtimeRoot: seeded.runtimeRoot,
+      executionHosts: hosts,
+    });
+
+    // The refused command keeps the host's verbatim reason...
+    const create = (await listCommandsForRun(db as never, seeded.runId)).find(
+      (c) => c.kind === "session.create",
+    );
+
+    expect(create).toMatchObject({
+      state: "failed",
+      lastError: {
+        code: "PRECONDITION",
+        details: { reason: "event_outbox_backpressure" },
+      },
+    });
+    // ...and the refusal itself set the record, with no sweep in between.
+    expect(await hostPressuredSince(assignment.executionHostId)).not.toBeNull();
+    const pendingRunId = await seedPendingAgentRun();
+
+    scheduling.real = true;
+    try {
+      expect(
+        await tryStartRun(pendingRunId, { db: db as never }),
+      ).toMatchObject({ started: false, queueReason: "host_pressured" });
+      // Only the host's own sample reopens the fence, and its clear admits
+      // the work the refusal queued.
+      const sample = healthSample(false);
+      const started: string[] = [];
+
+      expect(
+        await applyHostPressureSample(
+          { ...sample, health: { ...sample.health, host: fake.identity } },
+          {
+            runFlow: async () => {},
+            startAgentRun: async (id: string) => {
+              started.push(id);
+            },
+          },
+        ),
+      ).toMatchObject({
+        hostId: assignment.executionHostId,
+        transition: "cleared",
+      });
+      expect(await hostPressuredSince(assignment.executionHostId)).toBeNull();
+      expect(await runStatus(pendingRunId)).toBe("Running");
+      await until(async () => started.includes(pendingRunId));
+    } finally {
+      scheduling.real = false;
+      await db
+        .delete(schema.executionHostPressure)
+        .where(
+          eq(
+            schema.executionHostPressure.executionHostId,
+            assignment.executionHostId,
+          ),
+        );
+      await db
+        .update(schema.runs)
+        .set({ status: "Done" })
+        .where(eq(schema.runs.id, pendingRunId));
+    }
+  }, 60_000);
+
+  // ADR-183 amendment 2026-09-28: a `wallet` refusal is one teardown's own
+  // funding, not a host that refuses new work — it fails the command, and
+  // the admission fence stays open.
+  it("a teardown refused for its own wallet closes no fence", async () => {
+    const seeded = await seedGraphRun(db, agentFlow);
+    const { hosts, fake } = await fakeGraphHosts(db, seeded.runId);
+    const assignment = (await getActiveAssignment(db as never, seeded.runId))!;
+    const client = await hosts.forRun(seeded.runId);
+
+    fake.failOnce(
+      "deleteSession",
+      new MaisterError(
+        "PRECONDITION",
+        "a producer teardown command is already in progress",
+        {
+          details: {
+            reason: "event_outbox_backpressure",
+            outboxLimit: "wallet",
+            httpStatus: 409,
+          },
+        },
+      ),
+    );
+    const refused = await client
+      .deleteSession(randomUUID())
+      .then(() => null)
+      .catch((error: unknown) => error);
+
+    expect(refused).toMatchObject({
+      code: "EXECUTOR_UNAVAILABLE",
+      details: { reason: "host_pressured" },
+    });
+    expect(await hostPressuredSince(assignment.executionHostId)).toBeNull();
+  }, 60_000);
+
+  // Found writing this W2 case (2026-09-28): `createOwnedSession` re-read the
+  // refused create and rethrew its STORED failure — `PRECONDITION
+  // event_outbox_backpressure` — so the driver never saw D8's `host_pressured`
+  // and failed the node. The real-supervisor suite missed it: there the
+  // workspace adoption is refused first. A later node, whose workspace is
+  // already adopted, meets exactly this path.
+  it("W2: a refused create parks the node; when the park transaction fails, the continuation worker replays it into the park", async () => {
+    const seeded = await seedGraphRun(db, agentFlow);
+    const { hosts, fake } = await fakeGraphHosts(db, seeded.runId);
+    const assignment = (await getActiveAssignment(db as never, seeded.runId))!;
+    const creates = async () =>
+      (await listCommandsForRun(db as never, seeded.runId)).filter(
+        (c) => c.kind === "session.create",
+      ).length;
+
+    fake.failOnce(
+      "createSession",
+      new MaisterError("PRECONDITION", "physical headroom is short", {
+        details: {
+          reason: "event_outbox_backpressure",
+          outboxLimit: "physical",
+          httpStatus: 409,
+        },
+      }),
+    );
+    parkFault.runId = seeded.runId;
+    await runFlow(seeded.runId, {
+      db: db as never,
+      runtimeRoot: seeded.runtimeRoot,
+      executionHosts: hosts,
+    });
+    // The refused create reached the park, whose transaction threw: the
+    // driver yielded with the run still `Running` and nothing parked — the
+    // state only the continuation worker can finish.
+    expect(parkFault.runId).toBeNull();
+    expect(await runStatus(seeded.runId)).toBe("Running");
+
+    const worker = startFlowContinuationWorker({
+      db: db as never,
+      runtimeRoot: seeded.runtimeRoot,
+      executionHosts: hosts,
+    });
+
+    try {
+      await until(async () => (await runStatus(seeded.runId)) === "NeedsInput");
+      const [interrupt] = (await db
+        .select({ schema: schema.hitlRequests.schema })
+        .from(schema.hitlRequests)
+        .where(eq(schema.hitlRequests.runId, seeded.runId))) as Array<{
+        schema: Record<string, unknown>;
+      }>;
+
+      expect(interrupt?.schema).toMatchObject({
+        kind: "node_interrupt",
+        cause: "host_pressure",
+      });
+      // The replay parked on the stored refusal; it re-issued no create.
+      expect(await creates()).toBe(1);
+    } finally {
+      await worker.stop();
+      await db
+        .delete(schema.executionHostPressure)
+        .where(
+          eq(
+            schema.executionHostPressure.executionHostId,
+            assignment.executionHostId,
+          ),
+        );
+    }
   }, 60_000);
 });
 

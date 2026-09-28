@@ -432,6 +432,28 @@ appears — run detail, the HITL inbox, and the cross-project inbox — because 
 of them resolve the option matrix from one server loader. No surface falls back
 to a raw JSON response body.
 
+**Host-paused interrupt (Implemented — ADR-183).** When the execution host
+parked the node under outbox pressure, the same card opens with the
+`nodeInterrupt.hostPaused` notice ("The execution host paused node {node} —
+its event budget is exhausted. It resumes automatically when the host catches
+up; you can also stop or restart it.") in place of the operator-interrupt lead
+line,
+selected by the row's `schema.cause`. The four options are unchanged, but
+*Resume* — not *Restart node* — is the marked one-click default and the primary
+(amber) button: a restart would discard the ACP context the park preserved and
+spend an operator restart (the server's option matrix sets `defaultOptionId`
+from the cause; ADR-183 amendment 2026-09-28). The
+system answers *Resume* itself when the host recovers, and a card answered that
+way disappears like any answered HITL.
+
+**Queued by host pressure (Implemented — ADR-183).** Any `Pending` run shows an
+amber ▲ chip with the reason (`run.queueReason.host_pressured`) beside the
+unchanged `Pending` status chip while the execution host refuses new work —
+derived on read from the host's pressure record, no column, so it names what
+the run waits on now, not what queued it. Like the queue position, the chip is
+rendered with the page: a `Pending` run streams nothing, so it refreshes on the
+run's start or a reload. There is no board queue badge.
+
 ## Public result panel + tree cost facts (Implemented — ADR-165)
 
 Surface only; the behaviour it renders lives in

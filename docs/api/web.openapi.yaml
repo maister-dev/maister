@@ -7466,10 +7466,18 @@ paths:
           model — run detail, the HITL inbox, and the cross-project portfolio
           inbox all resolve it through one loader, so the client never re-derives
           availability and no surface falls back to a raw JSON response body.
-          - `resume` → leave the run awaiting and `scheduleResume(runId)`; the
-            runner owns `NeedsInput → Running` and the agent continues the SAME
-            attempt via `session/resume`, so context is preserved. Returns 202.
-          - `restart_node` (**default**) / `restart_from` → close the parked
+          - `resume` → claim through `claimNodeInterruptResume` (ADR-183): a
+            `NeedsInput` run is re-driven; a `NeedsInputIdle` run mints a new
+            generation under the fenced flow cap, and over cap or while the
+            host is pressured the claim is deferred and the `system_sweep`
+            re-drives it. The runner owns `NeedsInput → Running` and the agent
+            continues the SAME attempt via `session/resume` on the handle the
+            park wrote, so context is preserved. Returns 202 `state:
+            "resume-in-progress"`, or `state: "resume-queued"` when the claim
+            was deferred (ADR-183 amendment 2026-09-28). `resume` is the
+            default for a host-paused interrupt (`schema.cause:
+            "host_pressure"`).
+          - `restart_node` (**default** for an operator interrupt) / `restart_from` → close the parked
             attempt `Reworked` with `decision='operator_interrupt'`, apply the
             operator's `workspacePolicy` against the target's `checkpoint_ref`
             **before** the ledger transaction, stale downstream when the target
@@ -7931,7 +7939,10 @@ paths:
             The response is already stored and `respondedAt` remains null;
             delivery is pending. Retry the identical answer to send it;
             agent runs may also resume automatically. Pre-claim failures do
-            not claim that an answer was saved.
+            not claim that an answer was saved. `details.reason` is
+            `event_outbox_backpressure` when the execution host refused the
+            answer at its hard outbox bound (ADR-183), `delivery_unavailable`
+            otherwise.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/HitlRespondErrorBody" }
@@ -8893,7 +8904,11 @@ paths:
         `markNodeNeedsInput`, the HITL insert, the assignment,
         `run.needs_input` (webhook), and `run.escalated` with
         `reason='node_interrupt'` (domain event — the existing kind is reused,
-        so no taxonomy entry and no CHECK migration).
+        so no taxonomy entry and no CHECK migration). Since ADR-183 the same
+        transaction also clears the parked attempt's `action_completion`,
+        advances its `action_prompt_ordinal` and, when the parked prompt ran on
+        an ACP session, writes `action_resume{kind: "interrupt", cause, …}`;
+        the HITL `schema` and `run.escalated` carry `cause: "operator"`.
 
         **Admission is an allow-list**: `runs.status='Running'`,
         `run_kind='flow'`, the current node has a `node_attempts` row with
@@ -17016,6 +17031,14 @@ components:
           type: integer
           minimum: 1
           description: Present when queued over the agent budget.
+        queueReason:
+          type: string
+          enum: [host_pressured]
+          description: |
+            (Implemented — ADR-183) Present iff the run was queued because the
+            execution host reports outbox pressure (the manager's pressure
+            record is set); absent when it was queued by the budget alone. The
+            run starts when the host recovers.
     PostTaskBody:
       type: object
       required: [title, prompt]
@@ -17778,6 +17801,15 @@ components:
           type: integer
           minimum: 1
           description: Present iff `status == "Pending"`.
+        queueReason:
+          type: string
+          enum: [host_pressured]
+          description: |
+            (Implemented — ADR-183) Present iff the run was queued because the
+            execution host reports outbox pressure (the manager's pressure
+            record is set) — the launch is still created and answered 202,
+            never 503; absent when it was queued by the concurrency cap alone.
+            The run starts when a health sample reports the host recovered.
     RecoverQueuedResponse:
       type: object
       description: |
@@ -19872,6 +19904,21 @@ components:
                 ]
             errorCode: { type: string, nullable: true }
             errorMessage: { type: string, nullable: true }
+            errorMetadata:
+              type: object
+              nullable: true
+              description: |
+                (Implemented — ADR-183) `{cause: "host_pressure"}` while the
+                dialog's last turn was parked or refused by the execution
+                host's outbox pressure; `{reason: "prompt_terminal_conflict",
+                causeCode}` when the last turn's prompt was quarantined while
+                still accepted — e.g. `causeCode: "terminal_unstorable"`, its
+                terminal event could not be stored (ADR-184 amendment
+                2026-09-28); `null` otherwise.
+              properties:
+                cause: { type: string, enum: [host_pressure] }
+                reason: { type: string, enum: [prompt_terminal_conflict] }
+                causeCode: { type: string }
         workspace:
           type: object
           nullable: true
@@ -22053,6 +22100,7 @@ components:
         - session_ended
         - permission_not_pending
         - edit_lock_not_held
+        - event_outbox_backpressure
       description: |
         `agent_session_ended` is deprecated: it has no producer since
         2026-09-26 (a dead session answers 409 `session_ended`) and stays in the
@@ -22060,6 +22108,9 @@ components:
         refuses an answer to a PARKED local-package assistant permission whose
         launching user no longer holds the package's edit lock: resuming would
         write into a working dir nobody holds (ADR-097).
+        `event_outbox_backpressure` (503) means the execution host refused the
+        answer at its HARD outbox budget; the answer is not stored and stays
+        retryable (ADR-183).
     HitlAnswerState:
       type: string
       enum: [open, answer_stored]
@@ -22121,7 +22172,11 @@ components:
               required: [reason]
               additionalProperties: false
               properties:
-                reason: { type: string, enum: [delivery_unavailable] }
+                reason:
+                  {
+                    type: string,
+                    enum: [delivery_unavailable, event_outbox_backpressure],
+                  }
 
     CloneFailureReason:
       type: string

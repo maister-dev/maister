@@ -111,6 +111,8 @@ describe("scratch HITL operator feedback", () => {
     [410, "HITL_TIMEOUT", "permission_not_pending"],
     [410, "HITL_TIMEOUT", "permission_delivery_rejected"],
     [503, "EXECUTOR_UNAVAILABLE", "delivery_unavailable"],
+    // ADR-183: refused at the host's hard outbox bound — stored all the same.
+    [503, "EXECUTOR_UNAVAILABLE", "event_outbox_backpressure"],
   ] as const)(
     "renders the %i/%s reason after POST",
     async (status, code, reason) => {

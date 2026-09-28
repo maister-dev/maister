@@ -32,6 +32,17 @@
 //                             SDK (which would never produce one). Pins the
 //                             producer-fault boundary: that path must still
 //                             abort the output and SIGKILL.
+//   MOCK_ACP_FLOOD_FRAMES / MOCK_ACP_FLOOD_BYTES  (ADR-183) the first,
+//                             non-resumed prompt emits this many text chunks of
+//                             this many bytes, enough to fill the stdout pipe
+//                             under a tiny outbox budget.
+//   MOCK_ACP_HOLD_AFTER_FLOOD "1" → after the flood, keep the turn open until
+//                             teardown.
+//   MOCK_ACP_PERMISSION_THEN_FLOOD "1" → request a permission, flood while it
+//                             is pending, then await it.
+//   MOCK_ACP_REMEMBER        "1" → journal the first prompt's text; a resumed
+//                             session's prompt answers `recall: <text>` — the
+//                             prior-context witness (the M0 ALBATROSS check).
 
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -50,6 +61,12 @@ const COMPLETE_ON_CHECKPOINT =
 const PERMISSION_MALFORMED =
   process.env.MOCK_ACP_PERMISSION_MALFORMED === "1";
 const STATE_DIR = process.env.MOCK_ACP_STATE_DIR ?? null;
+const FLOOD_FRAMES = Number(process.env.MOCK_ACP_FLOOD_FRAMES ?? "0");
+const FLOOD_BYTES = Number(process.env.MOCK_ACP_FLOOD_BYTES ?? "0");
+const HOLD_AFTER_FLOOD = process.env.MOCK_ACP_HOLD_AFTER_FLOOD === "1";
+const PERMISSION_THEN_FLOOD =
+  process.env.MOCK_ACP_PERMISSION_THEN_FLOOD === "1";
+const REMEMBER = process.env.MOCK_ACP_REMEMBER === "1";
 
 function log(level, payload) {
   // stderr-only — the supervisor's stdio config is `pipe/pipe/inherit`,
@@ -188,6 +205,18 @@ class MockAgent {
     /* no-op ack */
   }
 
+  async flood(sessionId) {
+    for (let index = 0; index < FLOOD_FRAMES; index += 1) {
+      await this.connection.sessionUpdate({
+        sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "f".repeat(FLOOD_BYTES) },
+        },
+      });
+    }
+  }
+
   async prompt(params) {
     const text = extractText(params.prompt);
     const session = this.sessions.get(params.sessionId);
@@ -195,6 +224,46 @@ class MockAgent {
     let permissionSelected = HOLD_AFTER_PERMISSION && session?.resumed === true;
 
     if (session) session.prompts += 1;
+    if (REMEMBER) {
+      const journal = readJournal(params.sessionId) ?? {};
+
+      if (session?.resumed && journal.rememberedText) {
+        await this.connection.sessionUpdate({
+          sessionId: params.sessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: `recall: ${journal.rememberedText}` },
+          },
+        });
+
+        return { stopReason: STOP_REASON };
+      }
+      writeJournal(params.sessionId, {
+        ...journal,
+        acpSessionId: params.sessionId,
+        rememberedText: text,
+      });
+    }
+    if (FLOOD_FRAMES > 0 && !session?.resumed) {
+      if (PERMISSION_THEN_FLOOD) {
+        const pending = this.connection.requestPermission({
+          sessionId: params.sessionId,
+          toolCall: { toolCallId: "tc-flood", title: "Mock tool", kind: "execute" },
+          options: [
+            { optionId: "allow", kind: "allow_always", name: "Allow" },
+            { optionId: "deny", kind: "reject_once", name: "Deny" },
+          ],
+        });
+
+        await this.flood(params.sessionId);
+        await pending;
+      } else {
+        await this.flood(params.sessionId);
+      }
+      if (HOLD_AFTER_FLOOD) await new Promise(() => {});
+
+      return { stopReason: STOP_REASON };
+    }
 
     await this.connection.sessionUpdate({
       sessionId: params.sessionId,

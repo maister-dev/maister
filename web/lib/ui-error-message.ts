@@ -33,6 +33,7 @@ const REASON_CODES: Record<HitlRespondReason, string> = {
   session_ended: "CONFLICT",
   permission_not_pending: "HITL_TIMEOUT",
   edit_lock_not_held: "CONFLICT",
+  event_outbox_backpressure: "EXECUTOR_UNAVAILABLE",
 };
 
 export function resolveHitlErrorMessage(input: {

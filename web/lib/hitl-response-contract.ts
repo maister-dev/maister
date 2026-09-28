@@ -14,6 +14,9 @@ export const HITL_RESPOND_REASONS = [
   "session_ended",
   "permission_not_pending",
   "edit_lock_not_held",
+  // ADR-183: the host refused the answer at its HARD outbox bound — reachable
+  // from an answer only there, since the soft gate admits resolve commands.
+  "event_outbox_backpressure",
 ] as const;
 
 export type HitlRespondReason = (typeof HITL_RESPOND_REASONS)[number];
@@ -44,6 +47,16 @@ export type HitlStoredResponse =
   | HitlStructuredResponse;
 
 export type HitlAnswerState = "open" | "answer_stored";
+
+/** A respond refusal that still stored the answer: the host could not take it
+ * now (`delivery_unavailable`) or refused it at its hard outbox bound
+ * (`event_outbox_backpressure`, ADR-183). Every card holds such an answer
+ * read-only with a retry. */
+export function isStoredAnswerDeliveryReason(reason: unknown): boolean {
+  return (
+    reason === "delivery_unavailable" || reason === "event_outbox_backpressure"
+  );
+}
 
 export function isPendingHitlDeliveryState(value: unknown): boolean {
   return value === "resume-in-progress" || value === "delivery-in-progress";

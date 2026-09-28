@@ -324,7 +324,12 @@ verbatim (checkpoint pre-transaction, one park transaction) and adds no
 `runs.status` value and no `node_attempts` status value. The keep-alive idle path,
 the 24 h `NeedsInputIdle → Abandoned` sweep, and the reconcile classifier treat it
 exactly like a `hook_trip` park. See [`hitl.md`](hitl.md) for the kind and
-[`run-continuation.md`](run-continuation.md) for the option matrix.
+[`run-continuation.md`](run-continuation.md) for the option matrix. Since
+ADR-183 the execution host's outbox pressure parks a node through the same
+transition with a `system` actor and no checkpoint call, and every interrupt
+park clears the attempt's `action_completion`, advances its prompt ordinal and
+writes a resume handle when the parked prompt had a session
+([run continuation](run-continuation.md#host-pressure-park-implemented--adr-183)).
 
 ### Reconcile-driven `Running → Crashed` + hybrid Recover (Implemented)
 
@@ -1142,6 +1147,16 @@ already-inserted run) — never an orphan worktree or live ACP session.
   hard cap); excess runs wait as `Pending` and auto-promote when a slot
   frees. `HumanWorking` counts toward the cap exactly like
   `Running`/`NeedsInput` — a claimed worktree holds a slot.
+- **(Implemented — ADR-183)** While the execution host refuses new work (an
+  `execution_host_pressure` row exists) the effective cap is zero: a launch is
+  still created and answered 202, queued `Pending`, and it starts when a
+  `system_sweep` sample reports `newWorkRefusedBy: null` — every such sample
+  drains both pools with `promoteNextPending` (ADR-183 amendment 2026-09-28).
+  While the record exists every `Pending` run reads `queueReason:
+  "host_pressured"` (derived on read, no column: under a zero cap every queued
+  run waits on the host, whatever queued it); `POST /api/runs` answers the
+  cause-precise reason of that launch. The run page's `Pending` label names the
+  reason.
 - **(Implemented)** A `HumanWorking` run survives Next.js and
   supervisor restart WITHOUT being classified `Crashed`: it is session-less
   by design and is excluded from the `runResumeRecoverySweep` candidate set
@@ -1364,7 +1379,7 @@ concurrency 4:
 |------|--------|----------------|
 | 1 | `NeedsInput WHERE keepalive_until < now()` | look up supervisor session by `acpSessionId`; if live → `checkpointSession()` then `markCheckpointed`; if not live → `markCheckpointed` directly; on supervisor 5xx → leave row, next tick retries; on success → `releaseSlotOnIdle` → `promoteNextPending` |
 | 1b | `NeedsInput` whose CURRENT assignment's session holds a `checkpointed` incarnation, **independent of `keepalive_until`** (Implemented — ADR-180). A resume in flight — `markResumed` has minted the next assignment, the create ack has not yet retired the prior incarnation — is not a candidate: the incarnation must belong to `runs.execution_assignment_id` | `markCheckpointed` through the same CAS → `releaseSlotOnIdle` → `promoteNextPending`. Its own query and its own `LIMIT`: Pass 1 orders by `keepalive_until` and would starve these rows behind up to 50 expired ones. Only `checkpointed` qualifies — `exited`/`crashed` incarnations belong to the crash-reconcile paths |
-| 2 | `NeedsInputIdle WHERE checkpoint_at + ttl < now()` | UPDATE to `Abandoned` with status-guard; close any open `hitl_requests.respondedAt`; TTL = `MAISTER_NEEDSINPUTIDLE_TTL_HOURS` |
+| 2 | `NeedsInputIdle WHERE checkpoint_at + ttl < now()`, excluding a run with `resume_requested_at` set and a flow run whose latest `node_interrupt` at its current node carries `cause: "host_pressure"` (open or answered `resume`) — the TTL measures operator silence, and those runs wait on the manager (ADR-183 amendment 2026-09-28) | UPDATE to `Abandoned` with status-guard; close any open `hitl_requests.respondedAt`; TTL = `MAISTER_NEEDSINPUTIDLE_TTL_HOURS` |
 
 Pass 1b is a **positive witness**, not an inference from absence:
 `run_session_incarnations.state='checkpointed'` is written only for

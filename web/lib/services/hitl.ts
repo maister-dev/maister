@@ -42,9 +42,15 @@ import {
   OPERATOR_INTERRUPT_DECISION,
 } from "@/lib/flows/graph/ledger";
 import { maxOperatorRestarts } from "@/lib/instance-config";
+import { isHostPressuredError } from "@/lib/execution-host/host-pressure";
+import {
+  createResumeBackoff,
+  RESUME_STUCK_FAILURES,
+} from "@/lib/services/host-pressure-resume-backoff";
 import {
   OPERATOR_CORRECTION_MAX,
   WORKSPACE_POLICY_IDS,
+  type NodeInterruptActor,
 } from "@/lib/runs/node-interrupt";
 import {
   assertConsensusDecision,
@@ -83,7 +89,10 @@ import {
   getLatestFlowRun,
 } from "@/lib/runs/launchability";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
-import { claimAgentIdleResumeInTransaction } from "@/lib/runs/state-transitions";
+import {
+  claimAgentIdleResumeInTransaction,
+  markResumed,
+} from "@/lib/runs/state-transitions";
 import { revokeAgentRunTokensForRun } from "@/lib/agents/tokens";
 import {
   reconcileAgentPermissionResume,
@@ -108,7 +117,11 @@ import {
 } from "@/lib/runs/budget-breach-fork";
 import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import { budgetFromSnapshot } from "@/lib/runs/execution-policy";
-import { capForPool, countLiveRuns, takeSchedulerLock } from "@/lib/scheduler";
+import {
+  countLiveRuns,
+  effectivePoolCap,
+  takeSchedulerLock,
+} from "@/lib/scheduler";
 import { launchRun } from "@/lib/services/runs";
 import { sendTaskToTriageInTransaction } from "@/lib/services/triage";
 import { requireNoLiveGateChatTurn } from "@/lib/services/gate-chat";
@@ -225,6 +238,17 @@ async function lockPlanReviewParent(
 // the first-success path and the same-payload retry path so a process
 // restart between Phase 3 commit and the original microtask cannot
 // strand the run in NeedsInput.
+// ADR-183 D-M6: the host refused the answer at its HARD outbox bound. The
+// operator is told the host is behind — not merely that delivery stalled —
+// and the answer stays retryable (its refused input is withdrawn on retry).
+function deliveryUnavailableReason(
+  err: unknown,
+): "delivery_unavailable" | "event_outbox_backpressure" {
+  return isHostPressuredError(err)
+    ? "event_outbox_backpressure"
+    : "delivery_unavailable";
+}
+
 function scheduleResume(runId: string): void {
   queueMicrotask(
     () =>
@@ -255,7 +279,10 @@ async function claimGraphResumeSlot(
 
     if (current.status !== "NeedsInputIdle") return "noop";
 
-    if ((await countLiveRuns(tx, "flow")) >= capForPool("flow")) {
+    if (
+      (await countLiveRuns(tx, "flow")) >=
+      (await effectivePoolCap(tx, "flow")).cap
+    ) {
       await tx
         .update(runs)
         .set({
@@ -376,7 +403,10 @@ export async function claimAgentResumeSlot(
 
     // NeedsInputIdle freed the slot — cap-gate the reclaim (INV-1).
     if (cur.status === "NeedsInputIdle") {
-      if ((await countLiveRuns(tx, "agent")) >= capForPool("agent")) {
+      if (
+        (await countLiveRuns(tx, "agent")) >=
+        (await effectivePoolCap(tx, "agent")).cap
+      ) {
         await tx
           .update(runs)
           .set({
@@ -1460,7 +1490,7 @@ async function handlePermissionResponse(
           hitlRequestId,
           branch: "agent-idle",
           phase: "resume-retryable",
-          details: { reason: "delivery_unavailable" },
+          details: { reason: deliveryUnavailableReason(err) },
           latencyMs: Date.now() - startedAt,
         },
         "agent idle permission resume unavailable",
@@ -1471,7 +1501,7 @@ async function handlePermissionResponse(
           code: "EXECUTOR_UNAVAILABLE",
           message:
             "Your answer is saved; delivery is pending. Retry delivery to send it.",
-          details: { reason: "delivery_unavailable" },
+          details: { reason: deliveryUnavailableReason(err) },
           terminal: false,
         },
         { status: 503 },
@@ -1488,7 +1518,7 @@ async function handlePermissionResponse(
       await takeSchedulerLock(tx);
       const live = await countLiveRuns(tx, "agent");
 
-      if (live >= capForPool("agent")) {
+      if (live >= (await effectivePoolCap(tx, "agent")).cap) {
         await tx
           .update(runs)
           .set({
@@ -2170,7 +2200,7 @@ async function handlePermissionResponse(
           hitlRequestId,
           kind: "permission",
           phase: "retry-503",
-          details: { reason: "delivery_unavailable" },
+          details: { reason: deliveryUnavailableReason(err) },
           latencyMs: Date.now() - startedAt,
         },
         "answer stored — delivery unavailable",
@@ -2181,7 +2211,7 @@ async function handlePermissionResponse(
           code: "EXECUTOR_UNAVAILABLE",
           message:
             "Your answer is saved; delivery is pending. Retry delivery to send it.",
-          details: { reason: "delivery_unavailable" },
+          details: { reason: deliveryUnavailableReason(err) },
         },
         { status: 503 },
       );
@@ -5574,6 +5604,261 @@ async function handleHookTripResponse(args: {
 // the ledger transaction (the M30 rework X-ATOMIC ordering), so a crash between
 // the two is idempotent on retry. A missing checkpoint_ref degrades to `keep`
 // with a WARN — never a guess.
+/** How an answered interrupt's resume was claimed. `deferred`: the flow pool
+ * is full or the host is pressured — the answer is recorded and the sweep
+ * re-drives the claim (W4). An interrupt resume is never queued as
+ * `resume_requested_at`: the C3 promotion re-enters through crash recovery,
+ * which would abandon the parked attempt. */
+export type NodeInterruptResumeClaim = "ready" | "deferred" | "noop";
+
+/** ADR-183 N11: resume a parked interrupt on its own attempt. `NeedsInput`
+ * still holds its generation and slot; an idle run mints the next generation
+ * through `markResumed`, whose hook rebinds the attempt and its ACP handle. */
+export async function claimNodeInterruptResume(
+  db: any,
+  runId: string,
+  executionHosts?: ExecutionHosts,
+): Promise<NodeInterruptResumeClaim> {
+  const [current] = await db
+    .select({ status: runs.status })
+    .from(runs)
+    .where(eq(runs.id, runId));
+
+  if (current?.status === "NeedsInput") {
+    scheduleResume(runId);
+
+    return "ready";
+  }
+  if (current?.status !== "NeedsInputIdle") return "noop";
+  const hosts = executionHosts ?? createExecutionHosts({ db });
+  const placementHost = await localHost({ db, transport: hosts.transport });
+  const claim = await db.transaction(
+    async (tx: any): Promise<NodeInterruptResumeClaim> => {
+      await takeSchedulerLock(tx);
+      const { cap, fence } = await effectivePoolCap(tx, "flow");
+
+      if ((await countLiveRuns(tx, "flow")) >= cap) {
+        log.info(
+          { runId, cap, fence },
+          "node_interrupt resume deferred — flow pool full or host pressured",
+        );
+
+        return "deferred";
+      }
+      const resumed = await markResumed(runId, {
+        db: tx,
+        placement: { host: placementHost, transport: hosts.transport },
+      });
+
+      return resumed.ok ? "ready" : "noop";
+    },
+  );
+
+  if (claim === "ready") scheduleResume(runId);
+
+  return claim;
+}
+
+/** ADR-183 D-M2: the `resume` answer to a `node_interrupt`, extracted so the
+ * operator's route (through `respondToHitl`, a human actor) and the sweep's
+ * auto-resume of a host-paused node (`system`, server-internal — never a
+ * `HitlActor`, never a route) apply the SAME transition. */
+export async function applyNodeInterruptResume(
+  db: any,
+  args: {
+    runId: string;
+    hitlRequestId: string;
+    actor: NodeInterruptActor;
+    recordSuccessAudit?: (db: any, statusCode: number) => Promise<void>;
+    executionHosts?: ExecutionHosts;
+  },
+): Promise<{
+  transition: "resume" | "already-delivered";
+  runStatus: string;
+  claim: NodeInterruptResumeClaim;
+}> {
+  const { runId, hitlRequestId, actor } = args;
+  const answered = await db.transaction(async (tx: any) => {
+    const locked = await lockHitlRow(tx, hitlRequestId);
+
+    if (!locked || locked.runId !== runId || locked.kind !== "node_interrupt") {
+      throw new MaisterError(
+        "PRECONDITION",
+        `node_interrupt request not found: ${hitlRequestId}`,
+      );
+    }
+    if (locked.respondedAt) return "already-delivered" as const;
+    const cause =
+      (locked.schema as { cause?: unknown } | null)?.cause === "host_pressure"
+        ? "host_pressure"
+        : "operator";
+
+    await tx
+      .update(hitlRequests)
+      .set({
+        respondedAt: new Date(),
+        response: { optionId: "resume", actor, cause },
+      })
+      .where(eq(hitlRequests.id, hitlRequestId));
+    await systemCloseActiveAssignmentsForRun({
+      db: tx,
+      runId,
+      reason: "node_interrupt resumed",
+    });
+    await args.recordSuccessAudit?.(tx, 202);
+
+    return "resume" as const;
+  });
+  const claim = await claimNodeInterruptResume(db, runId, args.executionHosts);
+  const [run] = await db
+    .select({ status: runs.status })
+    .from(runs)
+    .where(eq(runs.id, runId));
+
+  return {
+    transition: answered,
+    runStatus: (run?.status as string | undefined) ?? "NeedsInput",
+    claim,
+  };
+}
+
+// ADR-183 D-M2: at most this many host-paused interrupts are resumed per
+// sweep tick, oldest first; a row whose resume throws this many times is left
+// to the operator (poison policy — the count is per process).
+export const HOST_PRESSURE_RESUME_BATCH = 25;
+const interruptResumeBackoff = createResumeBackoff();
+
+export type HostPausedInterruptSummary = {
+  resumed: number;
+  redriven: number;
+  resumeFailures: string[];
+};
+
+function noteInterruptResumeFailure(
+  summary: HostPausedInterruptSummary,
+  row: { runId: string; hitlRequestId: string },
+  err: unknown,
+): void {
+  const { failures, stuck } = interruptResumeBackoff.failed(row.hitlRequestId);
+  const fields = {
+    runId: row.runId,
+    hitlRequestId: row.hitlRequestId,
+    failures,
+    err: err instanceof Error ? err.message : String(err),
+  };
+
+  log.warn(fields, "run-host-pressure-resume-failed");
+  if (stuck) log.error(fields, "run-host-pressure-resume-stuck");
+  if (failures >= RESUME_STUCK_FAILURES)
+    summary.resumeFailures.push(row.hitlRequestId);
+}
+
+/** ADR-183 D-M2 / W4, run by the `system_sweep` after its health sample.
+ *
+ * `autoResume` (the host reports no pressure): answer every open host-paused
+ * interrupt `resume` as `system`, through the same application an operator's
+ * answer takes — never through `respondToHitl`, whose ADR-161 machine-actor
+ * exclusion stays untouched. The re-drive (every tick): claim again for an
+ * interrupt answered `resume` whose run is still parked — a crash after the
+ * answer, or a claim the full pool or the pressure fence deferred.
+ */
+export async function resumeHostPausedInterrupts(
+  db: any,
+  opts: { autoResume: boolean; executionHosts?: ExecutionHosts },
+): Promise<HostPausedInterruptSummary> {
+  const summary: HostPausedInterruptSummary = {
+    resumed: 0,
+    redriven: 0,
+    resumeFailures: [],
+  };
+
+  interruptResumeBackoff.startTick();
+  if (opts.autoResume) {
+    const open: Array<{
+      runId: string;
+      hitlRequestId: string;
+      createdAt: Date;
+    }> = await db
+      .select({
+        runId: hitlRequests.runId,
+        hitlRequestId: hitlRequests.id,
+        createdAt: hitlRequests.createdAt,
+      })
+      .from(hitlRequests)
+      .where(
+        and(
+          eq(hitlRequests.kind, "node_interrupt"),
+          isNull(hitlRequests.respondedAt),
+          sql`${hitlRequests.schema}->>'cause' = 'host_pressure'`,
+        ),
+      )
+      .orderBy(asc(hitlRequests.createdAt))
+      .limit(HOST_PRESSURE_RESUME_BATCH);
+
+    for (const row of open) {
+      if (!interruptResumeBackoff.due(row.hitlRequestId)) continue;
+      try {
+        await applyNodeInterruptResume(db, {
+          runId: row.runId,
+          hitlRequestId: row.hitlRequestId,
+          actor: { type: "system" },
+          executionHosts: opts.executionHosts,
+        });
+        interruptResumeBackoff.succeeded(row.hitlRequestId);
+        summary.resumed += 1;
+        log.info(
+          {
+            runId: row.runId,
+            hitlRequestId: row.hitlRequestId,
+            pressuredForMs: Math.max(0, Date.now() - row.createdAt.getTime()),
+          },
+          "run-host-pressure-resumed",
+        );
+      } catch (err) {
+        noteInterruptResumeFailure(summary, row, err);
+      }
+    }
+  }
+
+  const answered = await db.execute(sql`
+    SELECT r.id AS "runId", h.id AS "hitlRequestId"
+      FROM runs r
+      JOIN LATERAL (
+        SELECT id, kind, step_id, responded_at, response
+          FROM hitl_requests
+         WHERE run_id = r.id
+         ORDER BY created_at DESC
+         LIMIT 1
+      ) h ON true
+     WHERE r.run_kind = 'flow'
+       AND r.status IN ('NeedsInput', 'NeedsInputIdle')
+       AND h.kind = 'node_interrupt'
+       AND h.step_id = r.current_step_id
+       AND h.responded_at IS NOT NULL
+       AND h.response->>'optionId' = 'resume'
+     LIMIT ${HOST_PRESSURE_RESUME_BATCH}
+  `);
+
+  for (const row of (answered.rows ?? []) as Array<{
+    runId: string;
+    hitlRequestId: string;
+  }>) {
+    if (!interruptResumeBackoff.due(row.hitlRequestId)) continue;
+    try {
+      if (
+        (await claimNodeInterruptResume(db, row.runId, opts.executionHosts)) ===
+        "ready"
+      )
+        summary.redriven += 1;
+      interruptResumeBackoff.succeeded(row.hitlRequestId);
+    } catch (err) {
+      noteInterruptResumeFailure(summary, row, err);
+    }
+  }
+
+  return summary;
+}
+
 async function handleNodeInterruptResponse(args: {
   db: any;
   hitlRow: any;
@@ -5589,6 +5874,7 @@ async function handleNodeInterruptResponse(args: {
   startedAt: number;
   recordSuccessAudit?: (db: any, statusCode: number) => Promise<void>;
   executionHosts: ExecutionHosts;
+  actor: HitlActor;
 }): Promise<NextResponse> {
   const {
     db,
@@ -5600,6 +5886,7 @@ async function handleNodeInterruptResponse(args: {
     startedAt,
     recordSuccessAudit,
     executionHosts,
+    actor,
   } = args;
   const optionId = body.optionId;
 
@@ -5727,61 +6014,51 @@ async function handleNodeInterruptResponse(args: {
   }
 
   if (optionId === "resume") {
-    const outcome = await db.transaction(async (tx: any) => {
-      const locked = await lockHitlRow(tx, hitlRequestId);
-
-      if (!locked) {
-        throw new MaisterError(
-          "PRECONDITION",
-          `hitl request not found: ${hitlRequestId}`,
-        );
-      }
-      if (locked.respondedAt) {
-        const [r] = await tx
-          .select({ status: runs.status })
-          .from(runs)
-          .where(eq(runs.id, runId));
-
-        return {
-          transition: "already-delivered",
-          runStatus: (r?.status as string | undefined) ?? runRow.status,
-        } as const;
-      }
-
-      await tx
-        .update(hitlRequests)
-        .set({ respondedAt: new Date() })
-        .where(eq(hitlRequests.id, hitlRequestId));
-      await systemCloseActiveAssignmentsForRun({
-        db: tx,
-        runId,
-        reason: "node_interrupt resumed",
-      });
-      await recordSuccessAudit?.(tx, 202);
-
-      return { transition: "resume" } as const;
+    // The human-only guard above refused every other actor; the system's own
+    // answer never comes through here (ADR-183 D11), so none maps to it.
+    if (actor.kind !== "user")
+      throw new MaisterError(
+        "UNAUTHORIZED",
+        "a node_interrupt-kind HITL request requires a human actor",
+      );
+    const outcome = await applyNodeInterruptResume(db, {
+      runId,
+      hitlRequestId,
+      actor: { type: "user", id: actor.userId },
+      recordSuccessAudit,
+      executionHosts,
     });
 
     // Self-heal a crash between the respondedAt commit and the resume handoff
-    // (CB3): a same-payload retry re-drives it. Idempotent — runFlow's
-    // NeedsInput gate no-ops if the run already advanced.
+    // (CB3): a same-payload retry re-drives the claim. Idempotent — the claim
+    // no-ops once the run advanced.
     if (outcome.transition === "already-delivered") {
-      if (outcome.runStatus === "NeedsInput") scheduleResume(runId);
-
       return NextResponse.json(
         { ok: true, runStatus: outcome.runStatus, idempotent: true },
         { status: 200 },
       );
     }
 
-    scheduleResume(runId);
     log.info(
-      { runId, hitlRequestId, optionId, latencyMs: Date.now() - startedAt },
+      {
+        runId,
+        hitlRequestId,
+        optionId,
+        claim: outcome.claim,
+        latencyMs: Date.now() - startedAt,
+      },
       "node_interrupt resumed — same attempt continues via session/resume",
     );
 
     return NextResponse.json(
-      { ok: true, runStatus: "NeedsInput", state: "resume-in-progress" },
+      {
+        ok: true,
+        runStatus: outcome.runStatus,
+        // `resume-queued`: answered, waiting for a slot or for the host to
+        // admit new work; the sweep's re-drive claims it (ADR-183 D12).
+        state:
+          outcome.claim === "deferred" ? "resume-queued" : "resume-in-progress",
+      },
       { status: 202 },
     );
   }
@@ -6639,6 +6916,7 @@ export async function respondToHitl(
       startedAt,
       recordSuccessAudit,
       executionHosts,
+      actor,
     });
   }
 

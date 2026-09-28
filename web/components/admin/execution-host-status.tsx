@@ -198,6 +198,70 @@ function HostsPanel({
   );
 }
 
+// ADR-183 D-M7: the host's pressure episode, not a yes/no — how long the
+// manager has been behind and how far, so the operator can tell a blip from an
+// outage.
+function PressureCell({
+  telemetry,
+  format,
+}: {
+  telemetry: ExecutionEventStreamLag["hostTelemetry"];
+  format: Format;
+}): ReactElement {
+  const { t, time, span, missing } = format;
+
+  if (!telemetry) return <>{missing}</>;
+  // ADR-183 amendment 2026-09-28: what the admission fence follows. A host
+  // refuses new work at the retained, physical or control limit without
+  // being pressured, so "not pressured" alone would read as admitting.
+  const refusing = telemetry.newWorkRefusedBy ?? null;
+
+  if (!telemetry.pressured && !refusing)
+    return <Badge tone="good">{t("pressure.clear")}</Badge>;
+  const episode = telemetry.pressure;
+
+  return (
+    <div data-testid="stream-pressure">
+      {refusing ? (
+        <div className="mb-1">
+          <Badge tone="warn">
+            {t("pressure.refusingNewWork", {
+              limit: t(`pressure.limit.${refusing}`),
+            })}
+          </Badge>
+        </div>
+      ) : null}
+      {telemetry.pressured ? (
+        <>
+          <Badge tone="warn">{t("pressure.active")}</Badge>
+          {episode ? (
+            <div className="mt-1 font-mono text-xs leading-5 text-mute">
+              {t("pressure.since", { value: time(episode.since) })}
+              <br />
+              {t("pressure.duration", {
+                value: span(
+                  Math.max(
+                    0,
+                    Date.parse(telemetry.sampledAt) - Date.parse(episode.since),
+                  ),
+                ),
+              })}
+              <br />
+              {t("pressure.unackedAtStart", {
+                count: episode.unacknowledgedCountAtStart,
+              })}
+              <br />
+              {t("pressure.episodes", { count: episode.episodes })}
+            </div>
+          ) : (
+            <div className="mt-1 text-xs text-mute">{missing}</div>
+          )}
+        </>
+      ) : null}
+    </div>
+  );
+}
+
 function StreamsPanel({
   streams,
   observation,
@@ -306,12 +370,11 @@ function StreamsPanel({
                     {t(`telemetryStatus.${stream.hostTelemetryStatus}`)}
                   </div>
                 </td>
-                <td className="px-3 py-3">
-                  {stream.hostTelemetry?.pressured === undefined
-                    ? "—"
-                    : stream.hostTelemetry.pressured
-                      ? t("yes")
-                      : t("no")}
+                <td className="px-3 py-3" data-testid="stream-pressure-cell">
+                  <PressureCell
+                    format={format}
+                    telemetry={stream.hostTelemetry}
+                  />
                 </td>
                 <td className="px-3 py-3 font-mono text-xs">
                   {stream.claimOwner ?? "—"}

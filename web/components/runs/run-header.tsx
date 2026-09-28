@@ -36,6 +36,8 @@ export interface RunHeaderLabels {
   // Cost-budget governance warn badge — `$pct`-token template (house pattern).
   // Optional so non-run-detail consumers (no budget signal) keep compiling.
   budgetWarn?: string;
+  // ADR-183: why a `Pending` run waits, when it is not the plain cap queue.
+  queueReason?: string;
   review?: string;
   promote?: string;
   promotionStarted?: string;
@@ -167,6 +169,15 @@ export function RunHeader({
           >
             {status}
           </span>
+          {status === "Pending" && labels.queueReason ? (
+            <span
+              className="inline-flex items-center gap-1 rounded-full border border-amber-line bg-amber-soft px-2 py-0.5 font-mono text-[11px] font-semibold text-amber"
+              data-testid="run-header-queue-reason"
+            >
+              <span aria-hidden>▲</span>
+              {labels.queueReason}
+            </span>
+          ) : null}
           {keyRef ? (
             taskHref ? (
               <Link

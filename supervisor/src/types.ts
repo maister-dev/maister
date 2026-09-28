@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { COMMAND_KINDS } from "../../runtime/command-kinds";
 
+import { NEW_WORK_REFUSALS, type OutboxLimit } from "./host-runtime-errors";
 import { RuntimeEventSequenceSchema } from "./runtime-events";
 
 const EXECUTOR_AGENTS = [
@@ -791,6 +792,12 @@ export type SupervisorErrorDetails = {
   parentCommandId?: string;
   activePromptCommandId?: string | null;
   adapterOutcome?: SteerAdapterOutcome;
+  // ADR-183: a prompt rejected `session_checkpointed` because the host's own
+  // pause bound parked its session names that cause.
+  cause?: "outbox_pressure";
+  // ADR-183 amendment 2026-09-28: which limit refused an
+  // `event_outbox_backpressure` admission.
+  outboxLimit?: OutboxLimit;
 };
 
 export const STEER_ADAPTER_OUTCOMES = [
@@ -1071,9 +1078,35 @@ export const SupervisorEventStreamHealthSchema = z
         shutdown: z.number().int().nonnegative().safe(),
       } satisfies Record<RuntimeEventCloseReason, z.ZodTypeAny>)
       .strict(),
+    // ADR-183: the pressure episode (SQLite v14), null while not pressured.
+    pressure: z
+      .object({
+        since: z.string().datetime(),
+        unacknowledgedCountAtStart: z.number().int().nonnegative().safe(),
+        unacknowledgedBytesAtStart: z.number().int().nonnegative().safe(),
+        episodes: z.number().int().nonnegative().safe(),
+      })
+      .strict()
+      .nullable(),
+    // ADR-183 amendment 2026-09-28: what refuses new work now, or null.
+    newWorkRefusedBy: z.enum(NEW_WORK_REFUSALS).nullable(),
   })
   .strict()
   .superRefine((value, ctx) => {
+    if ((value.pressure === null) === value.pressured) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["pressure"],
+        message: "pressure must be null exactly when pressured is false",
+      });
+    }
+    if (value.pressured && value.newWorkRefusedBy === null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["newWorkRefusedBy"],
+        message: "a pressured host refuses new work",
+      });
+    }
     if (value.unacknowledgedCount > value.retainedCount) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -1250,6 +1283,8 @@ export type SessionRecord = {
   stopOutputForTeardown?: () => void;
   outputTeardownStarted?: boolean;
   outputPaused?: boolean;
+  // ADR-183: epoch ms of the first unanswered capacity wait; cleared on wake.
+  outputPausedSince?: number;
   outputTerminal?: Promise<void>;
   terminalPublished?: boolean;
   outputFailure?: SupervisorErrorBody;
@@ -1447,12 +1482,13 @@ export type SessionEvent =
       // operator-cancel path. ADR-166: `"fenced"` = evicted by a command with a
       // higher assignment epoch.
       reason?: "checkpoint" | "intentional" | "fenced";
-      // ADR-180: diagnostic only — present exactly when the host's own
-      // absolute permission cap started the teardown. Nothing branches on it,
-      // and it is deliberately NOT a new `reason` value: the web's SSE decoder
-      // validates `reason` against the three above and drops the whole
-      // terminal event for anything else.
-      cause?: "permission_cap";
+      // ADR-180 / ADR-183: diagnostic only — present exactly when the host
+      // itself started the teardown: its absolute permission cap, or a
+      // producer paused by outbox pressure past its bound. Nothing branches on
+      // it, and it is deliberately NOT a new `reason` value: the web's SSE
+      // decoder validates `reason` against the three above and drops the
+      // whole terminal event for anything else.
+      cause?: "permission_cap" | "outbox_pressure";
     }
   // ADR-166: command acceptance / completion for the enveloped session routes
   // — the durable completion signal that is NOT the long-lived HTTP response.

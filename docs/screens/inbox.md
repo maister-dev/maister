@@ -141,7 +141,10 @@ the project-group header) with three disclosure tiers:
   The option matrix (per-option `enabled`/`disabledReason`, the ledger-derived
   restart targets, and the interrupted node id) is server-supplied through the
   same loader run detail uses, so an interrupt raised anywhere is answerable
-  here without falling back to a raw JSON response body.
+  here without falling back to a raw JSON response body. A host-paused
+  interrupt (`schema.cause = host_pressure`, ADR-183) renders the
+  `nodeInterrupt.hostPaused` notice above the same options, with *Resume* as the
+  marked default; the system resumes it when the host recovers.
 - **Run (deep dive):** `View run` opens the full run page.
 
 Per-card criticality accent (critical red / high amber / medium info / low

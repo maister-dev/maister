@@ -31,6 +31,7 @@ import {
   isUnknownOutcome,
 } from "./deliverer";
 import { applyCreateAck } from "./create-ack";
+import { hostPressuredError, isHostPressureRefusal } from "./host-pressure";
 import { issueCommand } from "./ledger";
 import { casTransition, markFailed, requeueDelivering } from "./commands";
 import { ensureSessionOutputIntents } from "./session-output-intents";
@@ -146,6 +147,11 @@ export async function createOwnedSession(input: {
 
       if (isUnknownOutcome(failure))
         throw new SessionCreatePending(original.id, failure);
+      // ADR-183 D8: an outbox refusal is a park, not a failure. The deliverer
+      // gives its first caller `host_pressured`; the stored failure this loop
+      // re-reads must say the same, or the driver fails the node.
+      if (isHostPressureRefusal(failure))
+        throw hostPressuredError(failure, original.id);
       if (
         failure.code === "CHECKPOINT" &&
         owner.variant !== "agent" &&

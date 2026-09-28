@@ -16,6 +16,7 @@ const BASE = {
   ledgerNodeIds: ["plan", "implement", "checks", "implement"] as const,
   operatorRestartCount: 0,
   maxOperatorRestarts: 10,
+  cause: "operator" as const,
 };
 
 describe("T-B5 ADR-161 — server-owned option matrix", () => {
@@ -108,5 +109,23 @@ describe("T-B1 ADR-161 — interruptible node types", () => {
       "rewind-to-node-checkpoint",
       "fresh-attempt",
     ]);
+  });
+});
+
+// ADR-183 amendment 2026-09-28 (M4): the park kept the ACP session, and the
+// host resumes the node on its own — a one-click restart would discard that
+// context and spend an operator restart. The default follows the cause.
+describe("the default option follows the interrupt's cause", () => {
+  it("an operator's interrupt defaults to restart_node", () => {
+    expect(deriveNodeInterruptOptions(BASE).defaultOptionId).toBe(
+      "restart_node",
+    );
+  });
+
+  it("a host-paused node defaults to resume and carries its cause", () => {
+    const m = deriveNodeInterruptOptions({ ...BASE, cause: "host_pressure" });
+
+    expect(m.defaultOptionId).toBe("resume");
+    expect(m.cause).toBe("host_pressure");
   });
 });

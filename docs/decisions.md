@@ -202,13 +202,13 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-158](#adr-158-russian-user-manual-with-screenshots-under-docsrumanual)                                                                                  | Russian user manual with screenshots under `docs/ru/manual/`                                                                                   | Implemented                                                          | 2026-08-12 |
 | [ADR-159](#adr-159-dbml-as-the-format-of-the-generated-consolidated-erd)                                                                                     | DBML as the format of the generated consolidated ERD                                                                                           | Implemented                                                          | 2026-08-31 |
 | [ADR-160](#adr-160-review-run-rework-claim-with-fast-forward-only-handoff-round-trip)                                                                        | Review-run rework claim with fast-forward-only handoff round-trip                                                                              | Accepted                                                             | 2026-08-31 |
-| [ADR-161](#adr-161-operator-node-interrupt-with-corrective-restart)                                                                                          | Operator node interrupt with corrective restart                                                                                                | Accepted                                                             | 2026-08-31 |
+| [ADR-161](#adr-161-operator-node-interrupt-with-corrective-restart)                                                                                          | Operator node interrupt with corrective restart                                                                                                | Accepted; amended 2026-09-26                                         | 2026-08-31 |
 | [ADR-162](#adr-162-universal-structured-node-result--transport-matrix-open-json-grammar-schema-identity)                                                     | Universal structured node result — transport matrix, open JSON grammar, schema identity                                                        | Implemented                                                          | 2026-09-01 |
 | [ADR-163](#adr-163-flow-target-delegation--carrier-task-shared-admission-canonical-flow-launcher)                                                            | Flow-target delegation — carrier task, shared admission, canonical Flow launcher                                                               | Implemented                                                          | 2026-09-01 |
 | [ADR-164](#adr-164-remove-managed-claude-code-router-support)                                                                                                | Remove managed Claude Code Router support                                                                                                      | Implemented                                                          | 2026-09-02 |
 | [ADR-165](#adr-165-governed-recursive-agent-harness--public-run-results-result-profiles-effective-recursion-bounds-result-only-completion)                   | Governed recursive agent harness — public run results, result profiles, effective recursion bounds, result-only completion                     | Implemented                                                          | 2026-09-02 |
 | [ADR-166](#adr-166-local-execution-host-contract--durable-host-identity-epoch-fenced-assignments-command-ledger-opaque-adopted-workspaces) | Local execution-host contract — durable host identity, epoch-fenced assignments, command ledger, opaque adopted workspaces | Implemented | 2026-09-02 |
-| [ADR-167](#adr-167-durable-execution-host-event-and-runtime-data-plane) | Durable execution-host event and runtime-data plane | Implemented; amended 2026-09-23, 2026-09-25 | 2026-09-04 |
+| [ADR-167](#adr-167-durable-execution-host-event-and-runtime-data-plane) | Durable execution-host event and runtime-data plane | Implemented; amended 2026-09-23, 2026-09-25, 2026-09-26, 2026-09-27 | 2026-09-04 |
 | [ADR-168](#adr-168-post-issuance-mutation-of-api-tokens) | Post-issuance mutation of API tokens | Implemented | 2026-09-11 |
 | [ADR-169](#adr-169-two-canonical-attention-counters-decisions-and-updates) | Two canonical attention counters, `decisions` and `updates` | Accepted | 2026-09-10 |
 | [ADR-170](#adr-170-derived-work-stage-vocabulary-distinct-from-the-board-columns) | Derived work-stage vocabulary distinct from the board columns | Accepted | 2026-09-10 |
@@ -224,6 +224,8 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-180](#adr-180-permission-deadline-has-one-owner) | Permission deadline has one owner | Implemented; amended 2026-09-26 | 2026-09-22 |
 | [ADR-181](#adr-181-run-git-panel-status-independent-worktree-git-operations-public-branch-names-and-pr-before-promotion) | Run git panel: status-independent worktree git operations, public branch names, and PR before promotion | Implemented | 2026-09-22 |
 | [ADR-182](#adr-182-steering-a-running-agent-turn-as-a-durable-fenced-command) | Steering a running agent turn as a durable fenced command | Implemented; amended 2026-09-26 | 2026-09-25 |
+| [ADR-183](#adr-183-outbox-pressure-means-the-manager-is-behind) | Outbox pressure means the manager is behind | Implemented; amended 2026-09-27, 2026-09-28 | 2026-09-26 |
+| [ADR-184](#adr-184-an-open-prompt-does-not-pin-the-outbox--the-span-feed-reads-its-acked-prefix-canonically) | An open prompt does not pin the outbox — the span feed reads its ACKed prefix canonically | Implemented; amended 2026-09-28 | 2026-09-27 |
 
 ---
 
@@ -1660,7 +1662,7 @@ Full record: [`decisions/adr-160.md`](decisions/adr-160.md)
 
 ### ADR-161: Operator node interrupt with corrective restart
 
-**Status:** Accepted
+**Status:** Accepted; amended 2026-09-26 (system-caused host-pressure interrupt; `resume` claims a slot and keeps the ACP context)
 **Date:** 2026-08-31
 
 Full record: [`decisions/adr-161.md`](decisions/adr-161.md)
@@ -1710,7 +1712,7 @@ Full record: [`decisions/adr-166.md`](decisions/adr-166.md)
 
 ### ADR-167: Durable execution-host event and runtime-data plane
 
-**Status:** Implemented; amended 2026-09-23 (retirement tombstone guards; host-evidence settlement); amended 2026-09-25 (steer inside a prompt span; batched ingest and ACK, pausing subscriber)
+**Status:** Implemented; amended 2026-09-23 (retirement tombstone guards; host-evidence settlement); amended 2026-09-25 (steer inside a prompt span; batched ingest and ACK, pausing subscriber); amended 2026-09-26 (outbox pressure is unacknowledged-only; retained rows pruned before grace under pressure); amended 2026-09-27 (an open prompt's ACKed rows are pruned; the span feed reads them canonically)
 **Date:** 2026-09-04
 
 Full record: [`decisions/adr-167.md`](decisions/adr-167.md)
@@ -1829,7 +1831,7 @@ Full record: [`decisions/adr-179.md`](decisions/adr-179.md)
 
 ### ADR-180: Permission deadline has one owner
 
-**Status:** Implemented; amended 2026-09-26
+**Status:** Implemented; amended 2026-09-26 (the dead-session answer; second checkpoint cause `outbox_pressure`)
 **Date:** 2026-09-22
 
 Full record: [`decisions/adr-180.md`](decisions/adr-180.md)
@@ -1851,6 +1853,24 @@ Full record: [`decisions/adr-181.md`](decisions/adr-181.md)
 **Date:** 2026-09-25
 
 Full record: [`decisions/adr-182.md`](decisions/adr-182.md)
+
+---
+
+### ADR-183: Outbox pressure means the manager is behind
+
+**Status:** Implemented; amended 2026-09-27 (an open prompt no longer pins the retained-pressure prune); amended 2026-09-28 (the refusal names its cause and the fence follows the host's new-work signal; the drain is a backstop; host parks survive the TTL)
+**Date:** 2026-09-26
+
+Full record: [`decisions/adr-183.md`](decisions/adr-183.md)
+
+---
+
+### ADR-184: An open prompt does not pin the outbox — the span feed reads its ACKed prefix canonically
+
+**Status:** Implemented; amended 2026-09-28 (a skipped terminal is quarantined and ends its owner)
+**Date:** 2026-09-27
+
+Full record: [`decisions/adr-184.md`](decisions/adr-184.md)
 
 ---
 

@@ -15,6 +15,14 @@ info:
     are host-derived durable outbox fields. The manager never accepts a client
     filesystem path, prompt, attachment bytes, environment value, or secret in
     this stream. Payloads are redacted before publication and capped at 1 MiB.
+
+    v1 payloads are open JSON; the `session.exited` `reason`/`cause` fields
+    are defined by `supervisor-sse.asyncapi.yaml` (including the ADR-183
+    `cause: outbox_pressure`), and a prompt rejection's `details.{reason,
+    cause}` by `SupervisorErrorDetails` (here and in
+    `supervisor.openapi.yaml`) — including the `details: {reason:
+    session_checkpointed, cause: outbox_pressure}` of a host park under
+    outbox pressure.
   contact:
     name: MAIster maintainers
   license:
@@ -261,7 +269,9 @@ components:
         must remain a safe integer. A credited pressured teardown seals exact
         captured NDJSON bytes before its terminal evidence. This raw segment
         does not claim successful semantic application; the interrupted prompt
-        fails explicitly with required_output_incomplete.
+        fails explicitly with required_output_incomplete — except after the
+        host's own outbox-pressure park, where it is rejected
+        `session_checkpointed` with `cause: outbox_pressure` (ADR-183).
     RuntimeEventAck:
       type: object
       additionalProperties: false
@@ -508,6 +518,10 @@ components:
         hostEpoch:
           type: integer
           minimum: 0
+        cause:
+          type: string
+          enum: [outbox_pressure]
+          description: (Implemented — ADR-183, with `session_checkpointed` on a prompt rejection) The host's own pause bound checkpointed the session while the prompt ran; the manager parks the run instead of failing it.
     ReasonToken:
       type: string
       enum:

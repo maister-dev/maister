@@ -133,6 +133,45 @@ async function persistTerminalEvent(
   command: ExecutionCommand,
   receipt: CommandReceipt,
 ): Promise<ExecutionEvent> {
+  await ingestTerminalEvent(command, receipt);
+  const [event] = await db
+    .select()
+    .from(fullSchema.executionEvents)
+    .where(eq(fullSchema.executionEvents.id, receipt.eventId!));
+
+  expect(event.ingestDisposition).toBe("accepted");
+
+  return event;
+}
+
+// A real Postgres refusal of one command's terminal payload (22P05, as for an
+// untranslatable escape), so ingest records a `payload_unstorable` skip.
+async function refuseTerminalOf(commandId: string): Promise<void> {
+  await testDatabase.pool.query(`
+    create table if not exists test_unstorable_commands (command_id text primary key);
+    create or replace function test_refuse_unstorable() returns trigger language plpgsql as $$
+    begin
+      if new.event_type = 'session.command' and exists (
+        select 1 from test_unstorable_commands where command_id = new.payload ->> 'commandId'
+      ) then
+        raise exception 'unsupported Unicode escape sequence' using errcode = '22P05';
+      end if;
+      return new;
+    end $$;
+    drop trigger if exists test_refuse_unstorable on execution_events;
+    create trigger test_refuse_unstorable before insert on execution_events
+      for each row execute function test_refuse_unstorable();
+  `);
+  await testDatabase.pool.query(
+    "insert into test_unstorable_commands values ($1) on conflict do nothing",
+    [commandId],
+  );
+}
+
+async function ingestTerminalEvent(
+  command: ExecutionCommand,
+  receipt: CommandReceipt,
+): Promise<void> {
   await testDatabase.pool.query(
     "update runs set execution_data_plane_mode = 'canonical_events_v1', execution_assignment_id = $2 where id = $1",
     [command.runId, command.executionAssignmentId],
@@ -164,14 +203,6 @@ async function persistTerminalEvent(
       },
     },
   });
-  const [event] = await db
-    .select()
-    .from(fullSchema.executionEvents)
-    .where(eq(fullSchema.executionEvents.id, receipt.eventId!));
-
-  expect(event.ingestDisposition).toBe("accepted");
-
-  return event;
 }
 
 async function readCommand(id: string) {
@@ -594,6 +625,64 @@ describe("CAS transitions", () => {
 });
 
 describe("prompt receipt reconciliation", () => {
+  // ADR-184 amendment 2026-09-28: the frontier walks past a terminal the
+  // manager could not store, and the canonical feed can never settle it —
+  // before this it waited forever with no verdict. A v1 receipt names the
+  // terminal only by its event id.
+  it("a v1 prompt whose terminal is a payload_unstorable skip is quarantined terminal_unstorable", async () => {
+    const { runId, assignment } = await seedAssignment();
+    const row = await insertOwnedPrompt({
+      runId,
+      assignmentId: assignment.id,
+      assignmentEpoch: assignment.epoch,
+      targetSessionId: randomUUID(),
+      payload: { stepId: "unstorable-terminal" },
+    });
+
+    await claimDelivering(db, row.id, 0);
+    await markAccepted(db, row.id, 1);
+    const receipt = {
+      commandId: row.id,
+      runId,
+      kind: "session.prompt" as const,
+      assignmentEpoch: assignment.epoch,
+      phase: "completed" as const,
+      httpStatus: 200,
+      body: { stopReason: "end_turn" },
+      receivedAt: row.createdAt.toISOString(),
+      completedAt: new Date().toISOString(),
+      eventId: randomUUID(),
+      inflight: false,
+    };
+
+    expect((await depositPromptReceipt(db, row.id, receipt)).disposition).toBe(
+      "waiting",
+    );
+    await refuseTerminalOf(row.id);
+    await ingestTerminalEvent(row, receipt);
+    const skipped = await testDatabase.pool.query(
+      "select reason from execution_event_skips where event_id = $1",
+      [receipt.eventId],
+    );
+
+    expect(skipped.rows).toEqual([{ reason: "payload_unstorable" }]);
+    const result = await reconcileStoredPromptEvidence(
+      db,
+      row.id,
+      AbortSignal.timeout(1000),
+    );
+
+    expect(result.disposition).toBe("quarantined");
+    expect(await readCommand(row.id)).toMatchObject({
+      state: "accepted",
+      applicationState: "poisoned",
+      applicationError: {
+        reason: "prompt_terminal_conflict",
+        causeCode: "terminal_unstorable",
+      },
+    });
+  });
+
   it.each(["completed", "rejected"] as const)(
     "AT-06: recovery preserves %s receipt-first evidence without settling the prompt",
     async (phase) => {

@@ -40,6 +40,12 @@ import {
   promptEvidenceConflict,
 } from "./prompt-evidence";
 import { commandStreamLost } from "./events/stream-health";
+import {
+  hostPressuredError,
+  isHostPressureRefusal,
+  recordHostPressureRefusal,
+  refusalClosesAdmissionFence,
+} from "./host-pressure";
 
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { runs } from "@/lib/db/schema";
@@ -347,6 +353,50 @@ export async function deliverCommand<TResult>(
         throw err;
       }
 
+      // ADR-183 D-M0: the row keeps the host's verbatim refusal; the caller
+      // gets the manager's non-terminal state token. Only a host-wide limit
+      // closes the fence (amendment 2026-09-28).
+      if (isHostPressureRefusal(err)) {
+        try {
+          if (refusalClosesAdmissionFence(err))
+            await recordHostPressureRefusal(
+              opts.db,
+              opts.command.executionHostId,
+              logger,
+            );
+        } catch (recordErr) {
+          logger.warn(
+            {
+              commandId: opts.command.id,
+              hostId: opts.command.executionHostId,
+              err:
+                recordErr instanceof Error
+                  ? recordErr.message
+                  : String(recordErr),
+            },
+            "execution-host-pressure-record-failed",
+          );
+        }
+        await terminalWithRejection(opts, "failed", attempts, err, {
+          logger,
+          now: now(),
+        });
+        logger.warn(
+          {
+            commandId: opts.command.id,
+            commandKind: kind,
+            runId: opts.command.runId,
+            hostId: opts.command.executionHostId,
+            attempt: attempts,
+            latencyMs,
+            outcome: "host_pressured",
+            outboxLimit: (err as MaisterError).details?.outboxLimit ?? null,
+          },
+          "command-refused-host-pressure",
+        );
+        throw hostPressuredError(err as MaisterError, opts.command.id);
+      }
+
       if (isUnknownOutcome(err)) {
         if (opts.onReject && attempts >= opts.command.maxAttempts) {
           logger.warn(
@@ -608,7 +658,7 @@ export async function startAsyncPrompt(
         },
       );
     if (current.applicationError?.reason === "prompt_terminal_conflict")
-      throw promptEvidenceConflict(commandId);
+      throw promptEvidenceConflict(commandId, current);
     if (
       current.state !== "queued" ||
       current.transportState === "acknowledged" ||
@@ -678,6 +728,7 @@ export async function startAsyncPrompt(
         throw error;
       }
       let receipt: CommandReceipt | null = null;
+      let receiptAbsent = false;
 
       try {
         receipt = await lookupReceiptUntilReachable(
@@ -685,6 +736,7 @@ export async function startAsyncPrompt(
           commandId,
           sleep,
         );
+        receiptAbsent = receipt === null;
       } catch (lookupError) {
         const cause = classifyPromptTransportFailure(lookupError);
 
@@ -706,7 +758,7 @@ export async function startAsyncPrompt(
         );
 
         if (evidence.disposition === "quarantined")
-          throw promptEvidenceConflict(commandId);
+          throw promptEvidenceConflict(commandId, evidence.command);
         await markAccepted(opts.db, commandId, attempts, {
           logger,
           now: now(),
@@ -722,6 +774,48 @@ export async function startAsyncPrompt(
       if (isPromptProtocolConflict(error)) {
         await quarantinePromptProtocol(opts.db, commandId, "admission");
         throw promptEvidenceConflict(commandId);
+      }
+      // ADR-183 D-M0: the host keeps no receipt for a refused admission, so a
+      // refusal with no receipt under this id proves no attempt was admitted.
+      if (receiptAbsent && isHostPressureRefusal(error)) {
+        try {
+          if (refusalClosesAdmissionFence(error))
+            await recordHostPressureRefusal(
+              opts.db,
+              current.executionHostId,
+              logger,
+            );
+        } catch (recordErr) {
+          logger.warn(
+            {
+              commandId,
+              hostId: current.executionHostId,
+              err:
+                recordErr instanceof Error
+                  ? recordErr.message
+                  : String(recordErr),
+            },
+            "execution-host-pressure-record-failed",
+          );
+        }
+        await markFailed(opts.db, commandId, attempts, errorRecord(error), {
+          logger,
+          now: now(),
+        });
+        commandSignals.wake(commandId);
+        logger.warn(
+          {
+            commandId,
+            commandKind: "session.prompt",
+            runId: current.runId,
+            hostId: current.executionHostId,
+            attempt: attempts,
+            outcome: "host_pressured",
+            outboxLimit: (error as MaisterError).details?.outboxLimit ?? null,
+          },
+          "command-refused-host-pressure",
+        );
+        throw hostPressuredError(error as MaisterError, commandId);
       }
       const exhausted =
         attempts >= current.maxAttempts || failure.disposition !== "retry";
@@ -888,7 +982,7 @@ export async function queryPrompt(
   });
 
   if (evidence.disposition === "quarantined")
-    throw promptEvidenceConflict(input.handle.commandId);
+    throw promptEvidenceConflict(input.handle.commandId, evidence.command);
   if (evidence.disposition === "settled") {
     if (
       input.owners &&

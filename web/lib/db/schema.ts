@@ -2210,6 +2210,32 @@ export const executionHosts = pgTable(
   }),
 );
 
+// ADR-183 D-M0: the host's outbox-pressure record. A row exists exactly while
+// the manager believes the host is pressured: written by a health sample with
+// `stream.pressured=true` or by an `event_outbox_backpressure` refusal, deleted
+// only by a `pressured=false` sample. Its own table, not `execution_hosts`
+// columns: the staged upgrade runs the current registrar against the additive
+// stage's `execution_hosts`, whose shape must not change after 0133.
+export const executionHostPressure = pgTable(
+  "execution_host_pressure",
+  {
+    executionHostId: text("execution_host_id")
+      .primaryKey()
+      .references(() => executionHosts.id, { onDelete: "cascade" }),
+    pressuredSince: timestamp("pressured_since", {
+      withTimezone: true,
+      mode: "date",
+    }).notNull(),
+    unacknowledgedAtStart: integer("unacknowledged_at_start"),
+  },
+  (t) => ({
+    unacknowledgedAtStartCheck: check(
+      "execution_host_pressure_unacknowledged_at_start_check",
+      sql`${t.unacknowledgedAtStart} IS NULL OR ${t.unacknowledgedAtStart} >= 0`,
+    ),
+  }),
+);
+
 export const executionAssignments = pgTable(
   "execution_assignments",
   {
@@ -5575,7 +5601,7 @@ export const nodeAttempts = pgTable(
     ),
     actionResumeCheck: check(
       "node_attempts_action_resume_check",
-      sql`${t.actionResume} IS NULL OR (jsonb_typeof(${t.actionResume}) = 'object' AND ${t.actionResume}->'version' = '1'::jsonb AND ((${t.actionResume}->>'kind' = 'orchestrator' AND (NOT (${t.actionResume} ? 'permissionResult') OR (jsonb_typeof(${t.actionResume}->'permissionResult') = 'object' AND ${t.actionResume}->'permissionResult'->'version' = '1'::jsonb AND ${t.actionResume}->'permissionResult'->>'kind' = 'permission_result' AND ${t.actionPromptOrdinal} > 0 AND ${t.actionResume}->'permissionResult'->'promptOrdinal' = to_jsonb(${t.actionPromptOrdinal} - 1) AND ${t.actionResume}->'permissionResult'->>'sourceCommandId' = ${t.actionResume}->>'sourceCommandId' AND ${t.actionResume}->'permissionResult'->>'sourceAssignmentId' = ${t.actionResume}->>'sourceAssignmentId' AND ${t.actionResume}->'permissionResult'->>'resumeSessionId' = ${t.actionResume}->>'resumeSessionId' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'assignmentId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'hitlRequestId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'sourceRequestId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'optionId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'inputCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'checkpointCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'sourceIncarnationId') = 'string'))) OR ((${t.actionResume}->>'kind' = 'permission' OR (${t.actionResume}->>'kind' = 'permission_continue' AND ${t.actionPromptOrdinal} > 0 AND jsonb_typeof(${t.actionResume}->'checkpointCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'inputCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'sourceIncarnationId') = 'string') OR (${t.actionResume}->>'kind' = 'permission_result' AND ${t.actionCompletion}->>'commandId' = ${t.actionResume}->>'sourceCommandId' AND jsonb_typeof(${t.actionResume}->'checkpointCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'inputCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'sourceIncarnationId') = 'string')) AND jsonb_typeof(${t.actionResume}->'hitlRequestId') = 'string' AND jsonb_typeof(${t.actionResume}->'sourceRequestId') = 'string' AND jsonb_typeof(${t.actionResume}->'optionId') = 'string')) AND jsonb_typeof(${t.actionResume}->'sourceCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'sourceAssignmentId') = 'string' AND ${t.actionResume}->>'assignmentId' = ${t.executionAssignmentId} AND ${t.actionResume}->'promptOrdinal' = to_jsonb(${t.actionPromptOrdinal}) AND jsonb_typeof(${t.actionResume}->'resumeSessionId') = 'string') IS TRUE`,
+      sql`${t.actionResume} IS NULL OR (jsonb_typeof(${t.actionResume}) = 'object' AND ${t.actionResume}->'version' = '1'::jsonb AND ((${t.actionResume}->>'kind' = 'interrupt' AND ${t.actionResume}->>'cause' IN ('operator', 'host_pressure')) OR (${t.actionResume}->>'kind' = 'orchestrator' AND (NOT (${t.actionResume} ? 'permissionResult') OR (jsonb_typeof(${t.actionResume}->'permissionResult') = 'object' AND ${t.actionResume}->'permissionResult'->'version' = '1'::jsonb AND ${t.actionResume}->'permissionResult'->>'kind' = 'permission_result' AND ${t.actionPromptOrdinal} > 0 AND ${t.actionResume}->'permissionResult'->'promptOrdinal' = to_jsonb(${t.actionPromptOrdinal} - 1) AND ${t.actionResume}->'permissionResult'->>'sourceCommandId' = ${t.actionResume}->>'sourceCommandId' AND ${t.actionResume}->'permissionResult'->>'sourceAssignmentId' = ${t.actionResume}->>'sourceAssignmentId' AND ${t.actionResume}->'permissionResult'->>'resumeSessionId' = ${t.actionResume}->>'resumeSessionId' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'assignmentId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'hitlRequestId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'sourceRequestId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'optionId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'inputCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'checkpointCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'sourceIncarnationId') = 'string'))) OR ((${t.actionResume}->>'kind' = 'permission' OR (${t.actionResume}->>'kind' = 'permission_continue' AND ${t.actionPromptOrdinal} > 0 AND jsonb_typeof(${t.actionResume}->'checkpointCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'inputCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'sourceIncarnationId') = 'string') OR (${t.actionResume}->>'kind' = 'permission_result' AND ${t.actionCompletion}->>'commandId' = ${t.actionResume}->>'sourceCommandId' AND jsonb_typeof(${t.actionResume}->'checkpointCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'inputCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'sourceIncarnationId') = 'string')) AND jsonb_typeof(${t.actionResume}->'hitlRequestId') = 'string' AND jsonb_typeof(${t.actionResume}->'sourceRequestId') = 'string' AND jsonb_typeof(${t.actionResume}->'optionId') = 'string')) AND jsonb_typeof(${t.actionResume}->'sourceCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'sourceAssignmentId') = 'string' AND ${t.actionResume}->>'assignmentId' = ${t.executionAssignmentId} AND ${t.actionResume}->'promptOrdinal' = to_jsonb(${t.actionPromptOrdinal}) AND jsonb_typeof(${t.actionResume}->'resumeSessionId') = 'string') IS TRUE`,
     ),
     idxRun: index("node_attempts_run_idx").on(t.runId),
     idxAssignment: index("node_attempts_assignment_idx").on(

@@ -83,6 +83,7 @@ export function buildRegisterRoutesOptions(deps: {
   // both derived once here — registerRoutes has no fallback for either.
   hostState: HostState;
   workspaceRoots: string[];
+  producerPauseMaxMs?: number;
 }): RegisterRoutesOptions {
   return {
     app: deps.app,
@@ -90,12 +91,32 @@ export function buildRegisterRoutesOptions(deps: {
     logger: deps.logger,
     runtimeRoot: deps.runtimeRoot,
     killGraceMs: deps.killGraceMs,
+    ...(deps.producerPauseMaxMs === undefined
+      ? {}
+      : { producerPauseMaxMs: deps.producerPauseMaxMs }),
     modelCatalog: {
       registry: createDefaultModelSourceRegistry(),
     },
     hostState: deps.hostState,
     workspaceRoots: deps.workspaceRoots,
   };
+}
+
+// ADR-183: the producer pause bound is a code constant, not an operator
+// setting. Only a test process (NODE_ENV=test — the real-supervisor fixtures)
+// may shorten it; production ignores the variable entirely.
+export function testProducerPauseMaxMs(
+  env: NodeJS.ProcessEnv = process.env,
+): number | undefined {
+  const raw = env.MAISTER_TEST_PRODUCER_PAUSE_MAX_MS;
+
+  if (env.NODE_ENV !== "test" || raw === undefined) return undefined;
+  if (!/^[1-9][0-9]{0,9}$/.test(raw))
+    throw new Error(
+      "MAISTER_TEST_PRODUCER_PAUSE_MAX_MS must be a positive integer",
+    );
+
+  return Number(raw);
 }
 
 // ADR-166 D1: open the execution-host state store BEFORE routes register. The
@@ -216,6 +237,7 @@ export async function start(): Promise<void> {
       killGraceMs,
       hostState,
       workspaceRoots,
+      producerPauseMaxMs: testProducerPauseMaxMs(),
     }),
   );
 

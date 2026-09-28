@@ -1307,6 +1307,7 @@ terminal 410 remains visible after card removal until a newer request appears.
 | 409 `session_ended` | `answer_stored` until the crash boundary closes the row | Show the saved choice read-only with the ended-session copy and **no** retry control (the answer is not pending delivery); the card leaves when the boundary closes the row. |
 | 410 `permission_not_pending` | Absent after `responded_at` | Explain that the request is no longer pending; complete and refresh. |
 | 503 `delivery_unavailable` | `answer_stored` | Show saved answer; identical retry is allowed. |
+| 503 `event_outbox_backpressure` | `answer_stored` | The same stored view, on ONE line — the refusal copy says the answer is saved, so the "Answer saved — delivery pending" line is not repeated beside it, before or after the refresh; identical retry is allowed (Implemented — ADR-183 amendment 2026-09-28; one predicate, `isStoredAnswerDeliveryReason`, for the run card, the inbox card and the scratch dialog). |
 
 ### Respond refusal reasons (P0-4 — Implemented)
 
@@ -1331,6 +1332,7 @@ from `message`, and fall back to localized per-code copy for unknown reasons.
 | HITL_TIMEOUT | `agent_session_ended` | Deprecated — no producer since 2026-09-26 (replaced by `session_ended`); kept in the enum for external clients. | — | 410 |
 | HITL_TIMEOUT | `permission_delivery_rejected` | The checkpointed permission refused the original delivery during idle resume. | Relaunch the flow or agent run (a scratch run never reaches `resumeRun`, so never this arm). | 410 |
 | EXECUTOR_UNAVAILABLE | `delivery_unavailable` | The claimed answer could not yet be delivered. | Retry delivery with the identical answer; agent resume may also finish automatically. | 503 |
+| EXECUTOR_UNAVAILABLE | `event_outbox_backpressure` | The execution host refused the answer at its hard outbox bound; the answer is saved (ADR-183 D-M6). | Retry delivery once the host catches up. | 503 |
 
 The `session_checkpointed` token belongs to the **host's** 410; web converts
 that arm to 202 and never exposes it as a terminal HITL refusal. The host's

@@ -47,6 +47,7 @@ import {
   DEFAULT_EVENT_STREAM_LAG_AGE_MS,
   isHostBacklogLagEligible,
 } from "@/lib/execution-host/events/lag";
+import { NEW_WORK_REFUSALS } from "@/types/platform-status";
 
 const logger = pino({
   name: "supervisor-client",
@@ -365,9 +366,41 @@ const SupervisorHealthSchema = z
           } satisfies Record<RuntimeEventCloseReason, z.ZodTypeAny>)
           .passthrough()
           .optional(),
+        // ADR-183: the host's current pressure episode, null while not
+        // pressured. Optional so an older host, which omits it, still parses.
+        pressure: z
+          .object({
+            since: z.string().datetime(),
+            unacknowledgedCountAtStart: z.number().int().nonnegative().safe(),
+            unacknowledgedBytesAtStart: z.number().int().nonnegative().safe(),
+            episodes: z.number().int().nonnegative().safe(),
+          })
+          .passthrough()
+          .nullable()
+          .optional(),
+        // ADR-183 amendment 2026-09-28: what refuses new work now, or null.
+        // Optional so an older host, which omits it, still parses.
+        newWorkRefusedBy: z.enum(NEW_WORK_REFUSALS).nullable().optional(),
       })
       .passthrough()
       .superRefine((value, ctx) => {
+        if (value.pressured && value.newWorkRefusedBy === null) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["newWorkRefusedBy"],
+            message: "a pressured host refuses new work",
+          });
+        }
+        if (
+          value.pressure !== undefined &&
+          (value.pressure === null) === value.pressured
+        ) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["pressure"],
+            message: "pressure must be null exactly when pressured is false",
+          });
+        }
         if (value.unacknowledgedCount > value.retainedCount) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,

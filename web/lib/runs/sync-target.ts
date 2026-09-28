@@ -55,8 +55,8 @@ import {
   type ResolverSessionInput,
 } from "@/lib/runs/sync-resolver";
 import {
-  capForPool,
   countLiveRuns,
+  effectivePoolCap,
   poolForRunKind,
   promoteNextPending,
   takeSchedulerLock,
@@ -1562,7 +1562,10 @@ async function prepareSyncResolver(
     assignmentId = await db.transaction(async (tx: Db): Promise<string> => {
       await takeSchedulerLock(tx);
 
-      if ((await countLiveRuns(tx, pool)) >= capForPool(pool)) {
+      if (
+        (await countLiveRuns(tx, pool)) >=
+        (await effectivePoolCap(tx, pool)).cap
+      ) {
         throw new MaisterError(
           "CONFLICT",
           `sync resolver refused — ${pool} pool at capacity`,
@@ -2006,16 +2009,19 @@ async function driveSyncResolver(
 // Fail-fast pool-capacity gate under the scheduler lock (decision 15). At cap →
 // CONFLICT with no queue; the caller aborts the conflicted rebase.
 async function assertPoolCapacity(db: Db, pool: SchedulerPool): Promise<void> {
-  const live = await db.transaction(async (tx: Db) => {
+  const { live, cap } = await db.transaction(async (tx: Db) => {
     await takeSchedulerLock(tx);
 
-    return countLiveRuns(tx, pool);
+    return {
+      live: await countLiveRuns(tx, pool),
+      cap: (await effectivePoolCap(tx, pool)).cap,
+    };
   });
 
-  if (live >= capForPool(pool)) {
+  if (live >= cap) {
     throw new MaisterError(
       "CONFLICT",
-      `sync resolver refused — ${pool} pool at capacity (${live}/${capForPool(pool)})`,
+      `sync resolver refused — ${pool} pool at capacity (${live}/${cap})`,
     );
   }
 }

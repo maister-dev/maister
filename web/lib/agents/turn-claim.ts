@@ -14,7 +14,11 @@ import {
   runSessions,
   runSessionIncarnations,
 } from "@/lib/db/schema";
-import { capForPool, countLiveRuns, takeSchedulerLock } from "@/lib/scheduler";
+import {
+  countLiveRuns,
+  effectivePoolCap,
+  takeSchedulerLock,
+} from "@/lib/scheduler";
 import { claimAgentIdleResumeInTransaction } from "@/lib/runs/state-transitions";
 import { MaisterError } from "@/lib/errors";
 import { OWNED_TURN_VARIANTS } from "@/lib/agents/turn-variants";
@@ -169,7 +173,10 @@ export async function claimAgentMessage(
     }
     if (run.status === "NeedsInputIdle") {
       if (turn.state !== "queued") return defer("run_state");
-      if ((await countLiveRuns(tx, "agent")) >= capForPool("agent"))
+      if (
+        (await countLiveRuns(tx, "agent")) >=
+        (await effectivePoolCap(tx, "agent")).cap
+      )
         return defer("capacity");
       const claim = await claimAgentIdleResumeInTransaction(tx, run.id, {
         placement: { host: placementHost },

@@ -59,6 +59,7 @@ import { loadProjectMcpBindings } from "@/lib/mcp/binding-service";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { isHostPressureFailure } from "@/lib/execution-host/host-pressure";
 import {
   buildFlowAssistantContext,
   buildFlowAssistantFollowUpContext,
@@ -108,7 +109,10 @@ import {
 } from "@/lib/scratch-runs/messages";
 import { cleanupLocalPackageAssistantMaterialization } from "@/lib/scratch-runs/local-package-materialization";
 import { closeOpenScratchPermissions } from "@/lib/scratch-runs/open-permissions";
-import { isYieldedScratchTurn } from "@/lib/scratch-runs/prompt-owner";
+import {
+  isYieldedScratchTurn,
+  ScratchPromptQuarantined,
+} from "@/lib/scratch-runs/prompt-owner";
 import {
   assertScratchCanAcceptUserMessage,
   dialogStatusAfterSupervisorStop,
@@ -728,6 +732,7 @@ export async function markScratchPromptRetryable(args: {
     : "EXECUTOR_UNAVAILABLE";
   const errorMessage =
     args.err instanceof Error ? args.err.message : String(args.err);
+  const hostPressured = isHostPressureFailure(args.err);
   const now = new Date();
 
   const outcome = await db.transaction(async (tx: Db) => {
@@ -750,6 +755,22 @@ export async function markScratchPromptRetryable(args: {
     // or clobber that newer state. lockRunRows serializes against those writers
     // and the guard is re-read under the lock (sibling pattern:
     // applyScratchPromptCompletion / markScratchCrashed).
+    // ADR-183: the host's park exits the session, and that event may idle the
+    // dialog to WaitingForUser before this failure arrives. That is the same
+    // retryable state, so the cause is still recorded — no status is touched.
+    if (current === "WaitingForUser" && hostPressured) {
+      await tx
+        .update(scratchRuns)
+        .set({
+          errorCode,
+          errorMessage,
+          errorMetadata: { cause: "host_pressure" },
+          updatedAt: now,
+        })
+        .where(eq(scratchRuns.runId, args.runId));
+
+      return { requeued: false };
+    }
     if (current !== "Starting" && current !== "Running") {
       log.warn(
         { runId: args.runId, dialogStatus: current ?? "(missing)", errorCode },
@@ -765,6 +786,17 @@ export async function markScratchPromptRetryable(args: {
         dialogStatus: "WaitingForUser",
         errorCode,
         errorMessage,
+        // ADR-183 D-M3s: the host's outbox pressure ended this turn — the
+        // dialog says so instead of showing a bare failure. ADR-184 amendment
+        // 2026-09-28: so does a quarantine no feed will ever settle.
+        errorMetadata: hostPressured
+          ? { cause: "host_pressure" }
+          : args.err instanceof ScratchPromptQuarantined
+            ? {
+                reason: "prompt_terminal_conflict",
+                causeCode: args.err.causeCode,
+              }
+            : null,
         updatedAt: now,
       })
       .where(eq(scratchRuns.runId, args.runId));
@@ -814,6 +846,7 @@ export async function markScratchPromptRetryable(args: {
         errorMessage,
         messageId: args.messageId ?? null,
         requeued: outcome.requeued,
+        hostPressured,
       },
       "scratch prompt failed after message persistence; dialog left retryable",
     );
@@ -1359,7 +1392,7 @@ export async function* launchScratchRunStaged(
     if (
       initialPromptStarted &&
       isMaisterError(err) &&
-      err.code === "EXECUTOR_UNAVAILABLE"
+      (err.code === "EXECUTOR_UNAVAILABLE" || isHostPressureFailure(err))
     ) {
       noteScratchAdmissionYield(runId, err);
       const { requeued } = await markScratchPromptRetryable({
@@ -1997,8 +2030,10 @@ export async function* launchLocalPackageAssistantStaged(
       throw err;
     }
     // No prompt was admitted, so no deferred exists and the live session is
-    // kept for the resend; the dialog stays retryable instead of crashing.
-    if (err instanceof PromptIncarnationPending) {
+    // kept for the resend; the dialog stays retryable instead of crashing. The
+    // same holds for a turn the host's outbox pressure refused or parked
+    // (ADR-183).
+    if (err instanceof PromptIncarnationPending || isHostPressureFailure(err)) {
       noteScratchAdmissionYield(runId, err);
       await markScratchPromptRetryable({ db, runId, err }).catch((markErr) =>
         log.error(
@@ -2545,7 +2580,8 @@ export async function failScratchMessageTurn(args: {
     return { requeued: false };
   }
   const unavailable =
-    isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE";
+    isMaisterError(err) &&
+    (err.code === "EXECUTOR_UNAVAILABLE" || isHostPressureFailure(err));
 
   // Nothing was issued (the host could not be bound, whatever the code), so
   // nothing can have reached the agent: the row goes back to the queue rather
@@ -3047,7 +3083,10 @@ export async function sendLocalPackageAssistantMessage(args: {
       );
       throw err;
     }
-    if (isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE") {
+    if (
+      isMaisterError(err) &&
+      (err.code === "EXECUTOR_UNAVAILABLE" || isHostPressureFailure(err))
+    ) {
       noteScratchAdmissionYield(args.runId, err);
       await markScratchPromptRetryable({ db, runId: args.runId, err }).catch(
         (markErr) =>

@@ -68,8 +68,34 @@ function eventDraft(
   };
 }
 
+// ADR-183: the per-kind gate replaces the dead assertCanAcceptMutatingCommand;
+// a `new_work` receipt runs the physical, soft and hard admission checks.
+function admitNewWork(state: HostState): void {
+  state.putReceipt(
+    {
+      commandId: randomUUID(),
+      runId: "admission-probe",
+      kind: "session.prompt",
+      assignmentId: randomUUID(),
+      epoch: 1,
+      hostSessionId: null,
+      requestDigest: "admission-probe",
+      eventId: null,
+      phase: "accepted",
+      httpStatus: 202,
+      body: {},
+      receivedAt: new Date().toISOString(),
+      completedAt: null,
+    },
+    { kind: "new_work" },
+  );
+}
+
 describe("Stage B durable host event outbox", () => {
-  it("retains an accepted v2 output span until terminal ACK and keeps its receipt for explicit retirement", () => {
+  // ADR-184: an open prompt no longer pins its span. Its ACKed rows go at the
+  // grace like any other; the manager reads them canonically. The receipt still
+  // waits for explicit retirement.
+  it("prunes an accepted v2 span's ACKed rows after the grace while its prompt is open; keeps the receipt for explicit retirement", () => {
     let clock = new Date("2026-09-04T12:00:00.000Z");
     const state = openHostState({ inMemory: true, now: () => clock });
     const receipt: CommandReceiptRow = {
@@ -82,20 +108,22 @@ describe("Stage B durable host event outbox", () => {
       const accepted = state.putReceiptWithRuntimeEvent(
         receipt,
         eventDraft("session.command"),
+        { kind: "new_work" },
       );
 
       state.ackRuntimeEvents(accepted.streamId, accepted.sequence);
       clock = new Date("2026-09-07T12:00:00.000Z");
-      expect(state.pruneAcknowledgedRuntimeEvents(clock)).toBe(0);
+      expect(state.pruneAcknowledgedRuntimeEvents(clock)).toBe(1);
       const terminal = state.putReceiptWithRuntimeEvent(
         { ...receipt, phase: "completed", completedAt: clock.toISOString() },
         eventDraft("session.command"),
       );
 
+      // The terminal is not ACKed yet: never pruned.
       expect(state.pruneAcknowledgedRuntimeEvents(clock)).toBe(0);
       state.ackRuntimeEvents(terminal.streamId, terminal.sequence);
       clock = new Date("2026-09-10T12:00:00.000Z");
-      expect(state.pruneAcknowledgedRuntimeEvents(clock)).toBe(2);
+      expect(state.pruneAcknowledgedRuntimeEvents(clock)).toBe(1);
       expect(
         state.retireReceipt(receipt.commandId, {
           expectedRequestSha256: "digest",
@@ -251,7 +279,7 @@ describe("Stage B durable host event outbox", () => {
         hostSessionId: sessionId,
       };
 
-      state.putReceipt(prompt);
+      state.putReceipt(prompt, { kind: "new_work" });
       for (let index = 0; index < SMALL_LIMITS.eventHardRows; index += 1)
         state.appendRuntimeEvent(eventDraft());
       const teardown = {
@@ -324,9 +352,7 @@ describe("Stage B durable host event outbox", () => {
 
         for (let index = 0; index < count; index += 1)
           state.appendRuntimeEvent(regular);
-        expect(() => state.assertCanAcceptMutatingCommand()).toThrow(
-          /soft limit/,
-        );
+        expect(() => admitNewWork(state)).toThrow(/soft limit/);
         expect(() => state.appendRuntimeEvent(regular)).toThrow(
           /regular partition is full/,
         );
@@ -469,7 +495,7 @@ describe("Stage B durable host event outbox", () => {
     }
   });
 
-  it("resumes below the low watermark only after ACKed replay is pruned, including across restart", () => {
+  it("resumes below the low watermark on ACK — never on a prune — and keeps the pressure episode across restart", () => {
     const stateDir = mkdtempSync(join(tmpdir(), "maister-outbox-pressure-"));
     let clock = Date.now();
     let state = openHostState({
@@ -485,7 +511,12 @@ describe("Stage B durable host event outbox", () => {
       state.reserveProducerReceipt(receipt, 0);
       for (let index = 0; index < 4; index += 1)
         state.appendRuntimeEvent(eventDraft());
+      // ADR-183: unACKed 4 ≥ soft 4 enters; ACK through "1" leaves 2 = low,
+      // which the hysteresis still counts as pressured.
       state.ackRuntimeEvents(state.getRuntimeEventStreamId(), "1");
+      const since = state.runtimeEventHealthSnapshot().pressure?.since;
+
+      expect(since).toBeDefined();
       state.close();
       state = openHostState({
         stateDir,
@@ -501,24 +532,27 @@ describe("Stage B durable host event outbox", () => {
         reservedControlRows: 18,
       });
       // H1: the health SNAPSHOT is the manager's only view of pressure, so it
-      // must carry the flag too — the stats path above is host-private.
+      // must carry the flag and its unchanged episode too.
       expect(state.runtimeEventHealthSnapshot()).toMatchObject({
         pressured: true,
+        pressure: { since, unacknowledgedCountAtStart: 4, episodes: 0 },
       });
       clock += SMALL_LIMITS.eventAckGraceMs + 1;
-      state.pruneAcknowledgedRuntimeEvents(
-        new Date(clock - SMALL_LIMITS.eventAckGraceMs),
-      );
-      expect(() => state.assertCanAcceptMutatingCommand()).toThrow(
-        /low watermark/,
-      );
+      // Pruning the two ACKed rows relieves nothing: pressure is unACKed.
+      expect(
+        state.pruneAcknowledgedRuntimeEvents(
+          new Date(clock - SMALL_LIMITS.eventAckGraceMs),
+        ),
+      ).toBe(2);
+      expect(() => admitNewWork(state)).toThrow(/low watermark/);
       state.ackRuntimeEvents(state.getRuntimeEventStreamId(), "2");
-      clock += SMALL_LIMITS.eventAckGraceMs + 1;
-      state.pruneAcknowledgedRuntimeEvents(
-        new Date(clock - SMALL_LIMITS.eventAckGraceMs),
-      );
-      expect(() => state.assertCanAcceptMutatingCommand()).not.toThrow();
-      expect(snapshots).toEqual([true, true, false]);
+      expect(() => admitNewWork(state)).not.toThrow();
+      expect(state.runtimeEventHealthSnapshot()).toMatchObject({
+        pressured: false,
+        pressure: null,
+      });
+      // Notifications: the prune, the ACK, then the admitted probe receipt.
+      expect(snapshots).toEqual([true, false, false]);
       unsubscribe();
     } finally {
       state.close();
@@ -581,7 +615,7 @@ describe("Stage B durable host event outbox", () => {
     }
   });
 
-  it("refuses admission when acknowledged replay still occupies the soft budget", () => {
+  it("admits new work while only acknowledged replay occupies the soft budget (ADR-183)", () => {
     const state = openHostState({ inMemory: true, limits: SMALL_LIMITS });
 
     try {
@@ -601,9 +635,8 @@ describe("Stage B durable host event outbox", () => {
       }
       state.ackRuntimeEvents(state.getRuntimeEventStreamId(), lastSequence);
       expect(state.runtimeEventOutboxStats().unacknowledgedBytes).toBe(0);
-      expect(() => state.assertCanAcceptMutatingCommand()).toThrow(
-        /soft limit/,
-      );
+      expect(state.runtimeEventHealthSnapshot().pressured).toBe(false);
+      expect(() => admitNewWork(state)).not.toThrow();
     } finally {
       state.close();
     }

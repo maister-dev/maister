@@ -35,6 +35,7 @@ import { requestPendingHitlFocus } from "@/components/board/pending-hitl-focus-r
 import {
   canReplayHitlAnswer,
   isPendingHitlDeliveryState,
+  isStoredAnswerDeliveryReason,
 } from "@/lib/hitl-response-contract";
 import { ConfirmDialog } from "@/components/feedback/confirm-dialog";
 import { useOptionalFeedback } from "@/components/feedback/feedback-provider";
@@ -138,6 +139,7 @@ export function RunHitlResponse({
   const [refusal, setRefusal] = useState<{
     requestKey: string;
     descriptor: HitlErrorMessage;
+    reason: unknown;
   } | null>(null);
   const [diagnosticState, setDiagnosticState] = useState<{
     requestKey: string;
@@ -239,7 +241,7 @@ export function RunHitlResponse({
     });
     const message = t(descriptor.key, descriptor.values);
 
-    setRefusal({ requestKey, descriptor });
+    setRefusal({ requestKey, descriptor, reason: body.details?.reason });
     setDiagnostic(descriptor.causeCode ?? null);
 
     if (body.code === "HITL_TIMEOUT") {
@@ -284,7 +286,7 @@ export function RunHitlResponse({
 
         if (
           data?.code === "EXECUTOR_UNAVAILABLE" &&
-          data.details?.reason === "delivery_unavailable"
+          isStoredAnswerDeliveryReason(data.details?.reason)
         ) {
           setLocalAnswer({
             requestKey,
@@ -794,8 +796,7 @@ export function RunHitlResponse({
           }
         >
           {refusal?.requestKey === requestKey &&
-          refusal.descriptor.key ===
-            "errorReasons.delivery_unavailable" ? null : (
+          isStoredAnswerDeliveryReason(refusal.reason) ? null : (
             <p className="text-sm text-ink-2">
               {t(currentAnswer?.completed ? "answerRecorded" : "answerSaved")}
             </p>

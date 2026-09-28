@@ -44,6 +44,9 @@ export interface NodeInterruptControlsProps {
   onRespond: (payload: Record<string, unknown>) => void;
   busy?: boolean;
   error?: string | null;
+  // ADR-183: a node the execution host paused under outbox pressure resumes
+  // on its own; the card says so instead of "you interrupted".
+  cause?: "operator" | "host_pressure";
 }
 
 const ICONS: Record<NodeInterruptOptionId, typeof PlayIcon> = {
@@ -62,6 +65,7 @@ export function NodeInterruptControls({
   onRespond,
   busy = false,
   error = null,
+  cause = "operator",
 }: NodeInterruptControlsProps): ReactElement {
   const t = useTranslations("nodeInterrupt");
   const [correction, setCorrection] = useState("");
@@ -117,6 +121,12 @@ export function NodeInterruptControls({
   }
 
   const byId = Object.fromEntries(options.map((o) => [o.optionId, o]));
+  // The server's default is the primary button (ADR-183 amendment 2026-09-28:
+  // `resume` for a host-paused node).
+  const tone = (optionId: NodeInterruptOptionId, other: string): string =>
+    optionId === defaultOptionId
+      ? "border-amber bg-amber text-white hover:bg-amber-2"
+      : other;
   const buttonBase =
     "inline-flex w-max items-center gap-1.5 rounded-lg border px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em]";
 
@@ -151,8 +161,13 @@ export function NodeInterruptControls({
 
   return (
     <div className="flex flex-col gap-3">
-      <p className="font-mono text-[11px] text-mute">
-        {t("interrupted", { node: interruptedNodeId })}
+      <p
+        className="font-mono text-[11px] text-mute"
+        data-testid="node-interrupt-lead"
+      >
+        {cause === "host_pressure"
+          ? t("hostPaused", { node: interruptedNodeId })
+          : t("interrupted", { node: interruptedNodeId })}
       </p>
 
       <label className="flex flex-col gap-1">
@@ -191,17 +206,20 @@ export function NodeInterruptControls({
         {optionButton(
           "restart_node",
           t("restartNode"),
-          "border-amber bg-amber text-white hover:bg-amber-2",
+          tone(
+            "restart_node",
+            "border-line bg-paper text-ink-2 hover:text-ink",
+          ),
         )}
         {optionButton(
           "resume",
           t("resume"),
-          "border-line bg-paper text-ink-2 hover:text-ink",
+          tone("resume", "border-line bg-paper text-ink-2 hover:text-ink"),
         )}
         {optionButton(
           "stop",
           t("stop"),
-          "border-line bg-paper text-mute hover:text-ink-2",
+          tone("stop", "border-line bg-paper text-mute hover:text-ink-2"),
         )}
       </div>
 

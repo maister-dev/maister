@@ -157,7 +157,11 @@ vi.mock("@/lib/scheduler", () => ({
   // the claim exactly as before the cap-gate landed.
   takeSchedulerLock: vi.fn(async () => {}),
   countLiveRuns: vi.fn(async () => 0),
-  capForPool: vi.fn(() => 6),
+  effectivePoolCap: vi.fn(async () => ({
+    cap: 6,
+    fence: null,
+    pressuredSince: null,
+  })),
 }));
 vi.mock("@/lib/flows/runner", () => ({
   runFlow: vi.fn(async () => {}),

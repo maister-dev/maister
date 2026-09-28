@@ -20,6 +20,7 @@ import {
   SessionCommandEventSchema,
   StartSessionRequestSchema,
   SteerBodySchema,
+  SupervisorHealthResponseSchema,
 } from "../types";
 import { RuntimeEventSpanSchema } from "../runtime-events";
 
@@ -42,6 +43,69 @@ function schemaExample(name: string): unknown {
 }
 
 describe("supervisor OpenAPI 0.8.0 examples ↔ Zod", () => {
+  // ADR-183: every documented `/health` body — including the pressured
+  // episode — must parse with the host's strict response schema, and the
+  // pressured example must carry the episode it documents.
+  it("GET /health examples parse with the strict host response schema", () => {
+    const examples = openapi.paths["/health"].get.responses["200"].content[
+      "application/json"
+    ].examples as Record<string, { value: unknown }>;
+
+    for (const [name, example] of Object.entries(examples)) {
+      expect(
+        SupervisorHealthResponseSchema.safeParse(example.value).success,
+        name,
+      ).toBe(true);
+    }
+    expect(examples.pressured?.value).toMatchObject({
+      stream: { pressured: true, pressure: { episodes: 2 } },
+    });
+    // ADR-183 amendment 2026-09-28: a host can refuse new work unpressured.
+    expect(examples.refusingPhysical?.value).toMatchObject({
+      stream: { pressured: false, newWorkRefusedBy: "physical" },
+    });
+  });
+
+  it("every documented outbox refusal carries a documented outboxLimit", () => {
+    const limits = new Set<string>(
+      openapi.components.schemas.OutboxLimit.enum as string[],
+    );
+    const found: string[] = [];
+
+    for (const methods of Object.values(openapi.paths) as Array<
+      Record<string, { responses?: Record<string, unknown> }>
+    >) {
+      for (const operation of Object.values(methods)) {
+        const examples = (
+          operation.responses?.["409"] as
+            | {
+                content?: {
+                  "application/json"?: {
+                    examples?: Record<
+                      string,
+                      { value: { details?: Record<string, unknown> } }
+                    >;
+                  };
+                };
+              }
+            | undefined
+        )?.content?.["application/json"]?.examples;
+
+        for (const { value } of Object.values(examples ?? {})) {
+          if (value.details?.reason !== "event_outbox_backpressure") continue;
+          found.push(value.details.outboxLimit as string);
+          expect(limits.has(value.details.outboxLimit as string)).toBe(true);
+        }
+      }
+    }
+    expect(found.sort()).toEqual([
+      "control",
+      "physical",
+      "unacknowledged",
+      "wallet",
+    ]);
+  });
+
   // ADR-179: these four are only parity-checked because they carry an
   // `example` — a component without one is silently skipped by this harness.
   it("McpServerInput example parses", () => {

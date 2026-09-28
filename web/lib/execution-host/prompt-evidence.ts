@@ -30,6 +30,7 @@ import { CONSUMER_SIGNAL_EVENT_TYPES } from "./prompt-signal-events";
 
 import {
   executionCommands,
+  executionEventSkips,
   executionEvents,
   executionHosts,
   executionEventStreams,
@@ -145,13 +146,40 @@ function sameJson(left: unknown, right: unknown): boolean {
   }
 }
 
-export function promptEvidenceConflict(commandId: string): MaisterError {
+export function promptEvidenceConflict(
+  commandId: string,
+  command?: ExecutionCommand,
+): MaisterError {
   return new MaisterError(
     "CONFLICT",
     "prompt terminal evidence failed its identity or agreement check",
     {
-      details: { reason: "prompt_terminal_conflict", commandId },
+      details: {
+        reason: "prompt_terminal_conflict",
+        commandId,
+        ...(command
+          ? {
+              settled: command.terminalEvidenceSha256 !== null,
+              causeCode: command.applicationError?.causeCode ?? null,
+            }
+          : {}),
+      },
     },
+  );
+}
+
+/** ADR-184 amendment 2026-09-28: a quarantine with no terminal evidence is a
+ * turn no feed will ever settle — its owner ends it, where a settled
+ * quarantine is left to the owner application and ADR-177 reconcile. */
+export function isUnsettledPromptQuarantine(
+  command: Pick<
+    ExecutionCommand,
+    "applicationError" | "terminalEvidenceSha256"
+  > | null,
+): boolean {
+  return (
+    command?.applicationError?.reason === "prompt_terminal_conflict" &&
+    command.terminalEvidenceSha256 === null
   );
 }
 
@@ -219,6 +247,53 @@ async function quarantine(
   );
 
   return { disposition: "quarantined", command: row };
+}
+
+/** ADR-184 amendment 2026-09-28: the receipt names a terminal event the
+ * manager could not store (`execution_event_skips`) — the frontier walked past
+ * it and no canonical event will ever settle the command. The skip must carry
+ * the receipt's event id on the command's host and run, and for a v2 receipt
+ * the stream and sequence it names. */
+async function skippedTerminal(
+  tx: Db,
+  command: ExecutionCommand,
+): Promise<boolean> {
+  const eventId = command.receiptEvidence?.eventId;
+
+  if (
+    typeof eventId !== "string" ||
+    command.terminalEventId !== null ||
+    command.terminalEvidenceSha256 !== null
+  )
+    return false;
+  const [skip] = await tx
+    .select({
+      streamId: executionEventStreams.streamId,
+      hostSequence: executionEventSkips.hostSequence,
+    })
+    .from(executionEventSkips)
+    .innerJoin(
+      executionEventStreams,
+      eq(executionEventStreams.id, executionEventSkips.eventStreamId),
+    )
+    .where(
+      and(
+        eq(executionEventSkips.eventId, eventId),
+        eq(executionEventSkips.executionHostId, command.executionHostId),
+        eq(executionEventSkips.runId, command.runId),
+        eq(executionEventSkips.eventType, "session.command"),
+      ),
+    )
+    .limit(1);
+
+  if (!skip) return false;
+  const terminal = command.receiptEvidence?.evidenceV2?.terminal;
+
+  return (
+    !terminal ||
+    (skip.streamId === terminal.streamId &&
+      skip.hostSequence === BigInt(terminal.sequence))
+  );
 }
 
 /** Invalid wire evidence is a durable application quarantine, never a guessed
@@ -313,6 +388,8 @@ async function reducePromptEvidence(
 ): Promise<PromptEvidenceResult> {
   if (command.applicationError?.reason === "prompt_terminal_conflict")
     return { disposition: "quarantined", command };
+  if (!evidence && (await skippedTerminal(tx, command)))
+    return quarantine(tx, command, "terminal_unstorable");
   if (!evidence || !command.receiptEvidence)
     return { disposition: "waiting", command };
   const { event, feed } = evidence;

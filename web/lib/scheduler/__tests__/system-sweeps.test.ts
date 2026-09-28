@@ -45,6 +45,9 @@ const ensureLocalExecutionDataPlaneMock = vi.hoisted(() => vi.fn());
 const collectExecutionEventLagMock = vi.hoisted(() => vi.fn());
 const platformStatusMock = vi.hoisted(() => vi.fn());
 const executionCommandReconcilePassMock = vi.hoisted(() => vi.fn());
+const recordHostPressureSampleMock = vi.hoisted(() => vi.fn());
+const resumeHostPausedInterruptsMock = vi.hoisted(() => vi.fn());
+const promoteNextPendingMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/runs/keepalive-sweeper", () => ({
   runSweepTick: runSweepTickMock,
@@ -92,6 +95,20 @@ vi.mock("@/lib/execution-host", () => ({
   executionCommandReconcilePass: executionCommandReconcilePassMock,
 }));
 vi.mock("@/lib/db/client", () => ({ getDb: () => ({}) }));
+// ADR-183 amendment 2026-09-28: the pressure step's collaborators, so its
+// orchestration (isolation, drain on every admitting sample) is observable.
+vi.mock("@/lib/execution-host/host-pressure", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  recordHostPressureSample: recordHostPressureSampleMock,
+}));
+vi.mock("@/lib/services/hitl", () => ({
+  resumeHostPausedInterrupts: resumeHostPausedInterruptsMock,
+}));
+vi.mock("@/lib/scheduler", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  promoteNextPending: promoteNextPendingMock,
+  effectivePoolCap: vi.fn(async () => ({ cap: 2, fence: null })),
+}));
 vi.mock("@/lib/execution-host/events/lag-read-model", () => ({
   collectExecutionEventLag: collectExecutionEventLagMock,
 }));
@@ -275,6 +292,139 @@ describe("scheduler system sweeps", () => {
       assignmentsReleased: 0,
       commandsPruned: 0,
       legacy: { candidates: 0, runIds: [] },
+    });
+  });
+
+  describe("ADR-183 amendment 2026-09-28 — the pressure step (R-M5)", () => {
+    const readyHealth = () => ({
+      kind: "ready" as const,
+      health: {
+        status: "ready" as const,
+        host: {
+          hostKey: "eh_test0000000000000000000000000000",
+          bootId: "0f0e0d0c-0b0a-4908-8706-050403020100",
+          protocolVersion: 1 as const,
+        },
+        version: "0.0.1",
+        uptimeMs: 1,
+        checkedAt: new Date().toISOString(),
+        sessions: { live: 0, exited: 0, crashed: 0 },
+        stream: {
+          streamId: "stream-1",
+          headSequence: "10",
+          unacknowledgedCount: 0,
+          retainedCount: 10,
+          pressured: false,
+          oldestUnacknowledgedAgeMs: null,
+          pressure: null,
+          newWorkRefusedBy: null,
+        },
+      },
+      sessions: [],
+    });
+    const observed = (transition: string) => ({
+      hostId: "11111111-1111-4111-8111-111111111111",
+      transition,
+      pressuredSince: null,
+      durationMs: null,
+      unacknowledgedAtStart: null,
+      episodes: 0,
+    });
+
+    beforeEach(() => {
+      recordHostPressureSampleMock.mockReset();
+      resumeHostPausedInterruptsMock
+        .mockReset()
+        .mockResolvedValue({ resumed: 0, redriven: 0, resumeFailures: [] });
+      promoteNextPendingMock
+        .mockReset()
+        .mockResolvedValue({ promotedRunId: null });
+    });
+
+    it("a throwing flow drain does not stop the agent drain, and the failure is reported", async () => {
+      const { applyHostPressureSample } = await import("../system-sweeps");
+
+      recordHostPressureSampleMock.mockResolvedValue(observed("cleared"));
+      promoteNextPendingMock.mockImplementation(
+        async (opts: { pool: string }) => {
+          if (opts.pool === "flow") throw new Error("flow drain exploded");
+
+          return { promotedRunId: null };
+        },
+      );
+      const summary = await applyHostPressureSample(readyHealth() as never);
+
+      expect(
+        promoteNextPendingMock.mock.calls.map(([opts]) => opts.pool),
+      ).toEqual(["flow", "agent"]);
+      expect(summary?.errors).toEqual([
+        expect.stringContaining("flow drain exploded"),
+      ]);
+    });
+
+    it("a throwing interrupt resume does not stop the drain", async () => {
+      const { applyHostPressureSample } = await import("../system-sweeps");
+
+      recordHostPressureSampleMock.mockResolvedValue(observed("cleared"));
+      resumeHostPausedInterruptsMock.mockRejectedValue(
+        new Error("resume select failed"),
+      );
+      const summary = await applyHostPressureSample(readyHealth() as never);
+
+      expect(
+        promoteNextPendingMock.mock.calls.map(([opts]) => opts.pool),
+      ).toEqual(["flow", "agent"]);
+      expect(summary?.errors).toEqual([
+        expect.stringContaining("resume select failed"),
+      ]);
+    });
+
+    it("drains on every admitting sample, not only the one that cleared the record", async () => {
+      const { applyHostPressureSample } = await import("../system-sweeps");
+
+      // The record was deleted by a sweep that died before its drain: every
+      // later sample reads `clear`, and nothing else would ever drain.
+      recordHostPressureSampleMock.mockResolvedValue(observed("clear"));
+      await applyHostPressureSample(readyHealth() as never);
+
+      expect(
+        promoteNextPendingMock.mock.calls.map(([opts]) => opts.pool),
+      ).toEqual(["flow", "agent"]);
+    });
+
+    it("drains nothing while the host still refuses new work", async () => {
+      const { applyHostPressureSample } = await import("../system-sweeps");
+
+      recordHostPressureSampleMock.mockResolvedValue(observed("held"));
+      const summary = await applyHostPressureSample(readyHealth() as never);
+
+      expect(promoteNextPendingMock).not.toHaveBeenCalled();
+      expect(summary).toMatchObject({ transition: "held", promoted: 0 });
+    });
+
+    it("passes the sample's fetch time, taken before the health request, to the record", async () => {
+      const { runSystemSweep } = await import("../system-sweeps");
+      let fetchedAt = 0;
+
+      platformStatusMock.mockImplementation(async () => {
+        fetchedAt = Date.now();
+
+        return readyHealth();
+      });
+      recordHostPressureSampleMock.mockResolvedValue(observed("held"));
+      await runSystemSweep({
+        executionObservation: {
+          attemptId: "attempt-current",
+          observerId: "observer-a",
+          previous: null,
+        },
+      });
+
+      const [[args]] = recordHostPressureSampleMock.mock.calls as Array<
+        [{ sampledAt: Date }]
+      >;
+
+      expect(args.sampledAt.getTime()).toBeLessThanOrEqual(fetchedAt);
     });
   });
 

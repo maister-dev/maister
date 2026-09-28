@@ -41,6 +41,17 @@ function render(over: Partial<NodeInterruptControlsProps> = {}): string {
 }
 
 describe("NodeInterruptControls", () => {
+  it("ADR-183: a host-paused node says the host paused it, the operator's says you did", () => {
+    expect(render({ cause: "host_pressure" })).toContain(
+      "nodeInterrupt.hostPaused",
+    );
+    expect(render({ cause: "host_pressure" })).not.toContain(
+      "nodeInterrupt.interrupted",
+    );
+    expect(render()).toContain("nodeInterrupt.interrupted");
+    expect(render()).not.toContain("nodeInterrupt.hostPaused");
+  });
+
   it("renders the one-click default plus resume and stop", () => {
     const html = render();
 
@@ -166,5 +177,37 @@ describe("NodeInterruptControls — irreversible actions confirm first", () => {
     // The restart copy must NAME the irreversible effect, not just say "are you
     // sure" — the operator is deciding whether uncommitted work survives.
     expect(en.nodeInterrupt.confirmRestartBody).toMatch(/untracked|lost/i);
+  });
+});
+
+// ADR-183 amendment 2026-09-28 (M4): the primary (amber) button is the
+// server's default, not always restart_node.
+describe("NodeInterruptControls — the default option is the primary button", () => {
+  function buttonClass(html: string, label: string): string {
+    const match = html.match(
+      new RegExp(`<button aria-label="${label}" class="([^"]*)"`),
+    );
+
+    expect(match).not.toBeNull();
+
+    return match![1];
+  }
+
+  it("paints resume primary for a host-paused node", () => {
+    const html = render({ cause: "host_pressure", defaultOptionId: "resume" });
+
+    expect(buttonClass(html, "nodeInterrupt.resume")).toContain("bg-amber");
+    expect(buttonClass(html, "nodeInterrupt.restartNode")).not.toContain(
+      "bg-amber",
+    );
+  });
+
+  it("keeps restart_node primary for an operator's interrupt", () => {
+    const html = render();
+
+    expect(buttonClass(html, "nodeInterrupt.restartNode")).toContain(
+      "bg-amber",
+    );
+    expect(buttonClass(html, "nodeInterrupt.resume")).not.toContain("bg-amber");
   });
 });

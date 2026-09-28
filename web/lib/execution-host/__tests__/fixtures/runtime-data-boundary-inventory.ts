@@ -255,7 +255,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       [
         ["packageSkillMaterializationRoots", "node:fs/promises.stat", "stat"],
         ["launchAgentRun", "node:fs/promises.mkdir", "write"],
-        ["startAgentSession", "node:fs/promises.mkdir", "write"],
+        ["driveAgentSession", "node:fs/promises.mkdir", "write"],
         [
           "applyAgentMemoryForLaunch",
           "lib/atomic.ts#atomicWriteText",
@@ -2294,6 +2294,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
   ]),
   ...wrappers("lib/runs/node-interrupt.ts", "manager-flow-state", [
     ["escalateNodeInterrupt", false],
+    ["parkNodeForHostPressure", false],
   ]),
   ...wrappers("lib/runs/pr-adapter.ts", "repository-worktree", [
     ["getPrState", false],

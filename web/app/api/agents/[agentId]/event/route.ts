@@ -177,6 +177,7 @@ export async function POST(
             ...(result.queuePosition !== undefined
               ? { queuePosition: result.queuePosition }
               : {}),
+            ...(result.queueReason ? { queueReason: result.queueReason } : {}),
           },
           { status: 202 },
         );

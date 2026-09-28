@@ -8,6 +8,8 @@ import type { WorkspaceGcSummary } from "@/lib/gc/workspace-gc";
 import type { PlainAgentDirectoryGcSummary } from "@/lib/gc/plain-agent-directory-gc";
 import type { EvidenceSweepSummary } from "@/lib/evaluations/evidence/gc";
 import type { WorkspaceReconciliationSummary } from "@/lib/gc/workspace-reconciler";
+import type { PlatformStatus } from "@/types/platform-status";
+import type { HostPausedInterruptSummary } from "@/lib/services/hitl";
 import type {
   ExecutionObservabilitySummary,
   LagStreamObservation,
@@ -27,6 +29,16 @@ import {
 } from "@/lib/execution-host";
 import { getDb } from "@/lib/db/client";
 import { collectExecutionEventLag } from "@/lib/execution-host/events/lag-read-model";
+import {
+  recordHostPressureSample,
+  type HostPressureObservation,
+} from "@/lib/execution-host/host-pressure";
+import {
+  effectivePoolCap,
+  promoteNextPending,
+  type PromoteNextPendingOptions,
+  type SchedulerPool,
+} from "@/lib/scheduler";
 import {
   createExecutionObservability,
   createUnavailableExecutionObservability,
@@ -113,7 +125,24 @@ export type SystemSweepSummary = GcCompatibilitySummary & {
   // null when it threw before returning a summary.
   brainReindex: Awaited<ReturnType<typeof runBrainReindexSweep>> | null;
   executionObservability: ExecutionObservabilitySummary | null;
+  // ADR-183 D-M0/D-M4: the host-pressure record as this tick's health sample
+  // left it, and how many queued units the clear admitted. null when the
+  // observation was not requested or the host reported no stream.
+  pressure: HostPressureSweepSummary | null;
 };
+
+export type HostPressureSweepSummary = HostPressureObservation &
+  HostPausedInterruptSummary & {
+    promoted: number;
+    // Each step after the sample fails on its own (ADR-183 amendment
+    // 2026-09-28); the sweep reports these in its `errors`.
+    errors: string[];
+  };
+
+type PromoteDispatch = Pick<
+  PromoteNextPendingOptions,
+  "runFlow" | "resumeRun" | "startAgentRun" | "launchRun"
+>;
 
 export type SystemSweepInput = Readonly<{
   executionObservation?: Readonly<{
@@ -317,6 +346,7 @@ export async function runSystemSweep(
   let strandedAgentTurns: number | null = 0;
   let digest: SystemSweepSummary["digest"] = null;
   let executionObservability: ExecutionObservabilitySummary | null = null;
+  let pressure: HostPressureSweepSummary | null = null;
 
   try {
     keepalive = await runSweepTick();
@@ -423,6 +453,16 @@ export async function runSystemSweep(
 
     try {
       const health = await executionHosts.local().platformStatus();
+
+      try {
+        pressure = await applyHostPressureSample(health, {}, sampledAt);
+        errors.push(...(pressure?.errors ?? []));
+      } catch (err) {
+        const message = errorMessage(err);
+
+        errors.push(`host pressure sample failed: ${message}`);
+        log.warn({ err: message }, "system_sweep host pressure sample threw");
+      }
       const model = await collectExecutionEventLag({
         db: getDb(),
         health,
@@ -535,6 +575,7 @@ export async function runSystemSweep(
     brain,
     brainReindex,
     executionObservability,
+    pressure,
     workspace: gc.workspace,
     workspaceReconciliation: gc.workspaceReconciliation,
     revision: gc.revision,
@@ -593,6 +634,95 @@ function gcFailureMessages(
   }
 
   return errors;
+}
+
+// ADR-183 D-M0: the host is the authority on whether it admits new work —
+// its sample sets and clears the record, clearing only a record set before
+// `sampledAt`, when the health request began. Every sample on which the host
+// admits new work resumes the host-paused nodes and drains the queue, not only
+// the one that cleared the record: a sweep that died or threw between the
+// delete and the drain, or a re-registered host, would otherwise strand the
+// queue with no owner (amendment 2026-09-28). Each step fails on its own.
+export async function applyHostPressureSample(
+  health: PlatformStatus,
+  dispatch: PromoteDispatch = {},
+  sampledAt?: Date,
+): Promise<HostPressureSweepSummary | null> {
+  if (health.kind !== "ready") return null;
+  const hostKey = health.health.host?.hostKey;
+  const stream = health.health.stream;
+
+  if (!hostKey || !stream) return null;
+  const observed = await recordHostPressureSample({
+    db: getDb(),
+    hostKey,
+    stream,
+    sampledAt,
+    logger: log,
+  });
+
+  if (!observed) return null;
+  const admits =
+    observed.transition === "clear" || observed.transition === "cleared";
+  const errors: string[] = [];
+  let interrupts: HostPausedInterruptSummary = {
+    resumed: 0,
+    redriven: 0,
+    resumeFailures: [],
+  };
+
+  // ADR-183 D-M2: host-paused nodes resume first (the host's admission is
+  // their signal), then the queued launches take whatever slots remain.
+  try {
+    const { resumeHostPausedInterrupts } = await import("@/lib/services/hitl");
+
+    interrupts = await resumeHostPausedInterrupts(getDb(), {
+      autoResume: admits,
+    });
+  } catch (err) {
+    errors.push(`host-paused interrupt resume failed: ${errorMessage(err)}`);
+    log.warn(
+      { err: errorMessage(err) },
+      "system_sweep host-paused interrupt resume threw",
+    );
+  }
+
+  return {
+    ...observed,
+    ...interrupts,
+    promoted: admits ? await drainQueuedWork(dispatch, errors) : 0,
+    errors,
+  };
+}
+
+async function drainQueuedWork(
+  dispatch: PromoteDispatch,
+  errors: string[],
+): Promise<number> {
+  let promoted = 0;
+
+  for (const pool of ["flow", "agent"] as const satisfies SchedulerPool[]) {
+    try {
+      const { cap } = await effectivePoolCap(getDb(), pool);
+
+      for (let admitted = 0; admitted < cap; admitted += 1) {
+        const { promotedRunId } = await promoteNextPending({
+          ...dispatch,
+          pool,
+        });
+
+        if (!promotedRunId) break;
+        promoted += 1;
+      }
+    } catch (err) {
+      errors.push(`${pool} queue drain failed: ${errorMessage(err)}`);
+      log.warn({ pool, err: errorMessage(err) }, "system_sweep drain threw");
+    }
+  }
+  if (promoted > 0)
+    log.info({ promoted }, "host admits new work → queued work promoted");
+
+  return promoted;
 }
 
 function errorMessage(err: unknown): string {

@@ -260,6 +260,51 @@ describe("RunHitlResponse stored answer", () => {
       fetchMock.mock.calls[0]?.[1]?.body,
     );
   });
+  // ADR-183: a refusal at the host's hard outbox bound stores the answer too.
+  // The card holds it read-only with ONE line — before and after the refresh
+  // that brings the stored row — never the saved line and a refusal together.
+  it("holds an answer refused under host backpressure as stored, with one line", async () => {
+    const fetchMock = vi.fn(
+      async (_url: string, _init?: RequestInit) =>
+        new Response(
+          JSON.stringify({
+            code: "EXECUTOR_UNAVAILABLE",
+            details: { reason: "event_outbox_backpressure" },
+          }),
+          { status: 503 },
+        ),
+    );
+
+    vi.stubGlobal("fetch", fetchMock);
+    render("en");
+    await click("Allow");
+
+    // The visible block; the live region announces the save on its own.
+    const stored = () =>
+      container.querySelector('[data-testid="hitl-answer-stored"]');
+
+    expect(stored()).not.toBeNull();
+    expect(container.textContent).toContain(
+      en.run.errorReasons.event_outbox_backpressure,
+    );
+    expect(stored()?.textContent).not.toContain(en.run.answerSaved);
+    expect(container.textContent).not.toContain("Deny");
+
+    render("en", {
+      answerState: "answer_stored",
+      storedResponse: { optionId: "allow" },
+    });
+    expect(container.textContent).toContain(
+      en.run.errorReasons.event_outbox_backpressure,
+    );
+    expect(stored()?.textContent).not.toContain(en.run.answerSaved);
+    await click(en.run.retryDelivery);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1]?.[1]?.body).toBe(
+      fetchMock.mock.calls[0]?.[1]?.body,
+    );
+  });
+
   it("holds a 202 answer read-only through stale props and retries the same payload", async () => {
     const fetchMock = vi.fn(
       async (_url: string, _init?: RequestInit) =>

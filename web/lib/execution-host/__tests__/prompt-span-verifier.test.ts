@@ -4,6 +4,7 @@
 // the pages come from.
 import type { ExecutionCommand, ExecutionEvent } from "@/lib/db/schema";
 import type { ExecutionHostTransport } from "@/lib/execution-host/contracts";
+import type { SpanRow } from "@/lib/execution-host/prompt-span-pages";
 import type { CommandOutputManifestV2 } from "../../../../runtime/command-evidence";
 
 import { createHash, randomUUID } from "node:crypto";
@@ -53,9 +54,7 @@ function event(
   } as ExecutionEvent;
 }
 
-async function* pages(
-  ...batches: ExecutionEvent[][]
-): AsyncGenerator<ExecutionEvent[]> {
+async function* pages(...batches: SpanRow[][]): AsyncGenerator<SpanRow[]> {
   for (const batch of batches) yield batch;
 }
 
@@ -203,6 +202,88 @@ describe("prompt span verifier", () => {
     await expect(
       verify(batches as unknown as ExecutionEvent[][]),
     ).rejects.toEqual(refusal(causeCode));
+  });
+
+  // ADR-184 D3 (owner decision Q3 = A): the canonical prefix of a span can
+  // hold a sequence ingest stepped over (`execution_event_skips`). Another
+  // run's skip fills contiguity; the prompt's own run's skip is unverifiable.
+  describe("skipped rows", () => {
+    const skipped = (sequence: number, runId: string) => ({
+      skipped: true as const,
+      eventId: `skip-${sequence}`,
+      hostSequence: BigInt(sequence),
+      runId,
+      eventType: "session.update",
+      reason: "unknown_run" as const,
+    });
+
+    it("accepts another run's skipped row for contiguity and yields nothing for it", async () => {
+      const verified: ExecutionEvent[] = [];
+
+      for await (const row of commandEvents({
+        command,
+        manifest,
+        terminalEventId: TERMINAL,
+        pages: pages([event(11)], [skipped(12, "unknown-run")], [event(13)]),
+        streamRowId: STREAM,
+        transport: {} as ExecutionHostTransport,
+        signal: AbortSignal.timeout(5_000),
+      }))
+        verified.push(row);
+
+      expect(verified.map((row) => row.hostSequence)).toEqual([11n]);
+    });
+
+    it("refuses a skipped row of the prompt's own run", async () => {
+      await expect(
+        (async () => {
+          for await (const row of commandEvents({
+            command,
+            manifest,
+            terminalEventId: TERMINAL,
+            pages: pages([event(11), skipped(12, command.runId), event(13)]),
+            streamRowId: STREAM,
+            transport: {} as ExecutionHostTransport,
+            signal: AbortSignal.timeout(5_000),
+          }))
+            void row;
+        })(),
+      ).rejects.toEqual(refusal("event_span_gap"));
+    });
+
+    it("refuses a skipped row standing in for the terminal", async () => {
+      await expect(
+        (async () => {
+          for await (const row of commandEvents({
+            command,
+            manifest,
+            terminalEventId: TERMINAL,
+            pages: pages([event(11), event(12), skipped(13, "unknown-run")]),
+            streamRowId: STREAM,
+            transport: {} as ExecutionHostTransport,
+            signal: AbortSignal.timeout(5_000),
+          }))
+            void row;
+        })(),
+      ).rejects.toEqual(refusal("event_span_gap"));
+    });
+
+    it("refuses a skipped row out of order", async () => {
+      await expect(
+        (async () => {
+          for await (const row of commandEvents({
+            command,
+            manifest,
+            terminalEventId: TERMINAL,
+            pages: pages([skipped(12, "unknown-run"), event(13)]),
+            streamRowId: STREAM,
+            transport: {} as ExecutionHostTransport,
+            signal: AbortSignal.timeout(5_000),
+          }))
+            void row;
+        })(),
+      ).rejects.toEqual(refusal("event_span_gap"));
+    });
   });
 
   // Every row is present and the prefix is valid, so only the order check can

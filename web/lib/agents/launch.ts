@@ -19,6 +19,9 @@ import {
   waitForHistoricalAgentPrompt,
   agentSessionHasOwnedPrompt,
   AgentPromptContinuationPending,
+  AgentPromptQuarantined,
+  supersedeAgentMessage,
+  type AdmittedAgentRef,
 } from "./prompt-owner";
 import { applyPersistentAgentPark, afterPersistentAgentPark } from "./park";
 import { acceptAgentMessage } from "./turns";
@@ -30,7 +33,10 @@ import {
 import { claimAgentMessage } from "./turn-claim";
 import { OWNED_TURN_VARIANTS } from "./turn-variants";
 import { admitAgentGenerationTurn, resumeVariantFor } from "./generation-turn";
-import { settleAgentCreateFailure } from "./create-failure";
+import {
+  parkClaimedAgentTurnForHostPressure,
+  settleAgentCreateFailure,
+} from "./create-failure";
 import {
   assertAgentResumeTurn,
   findAgentPermissionResult,
@@ -42,6 +48,7 @@ import {
 } from "./permission";
 import {
   finalizeAgentRun as finalizeAgentRunPrepared,
+  prepareAgentRunFinalization,
   type AgentFinalizeOptions,
   type AgentTerminalOutcome,
   type AgentFinalStatus,
@@ -53,6 +60,7 @@ import {
   sharedAgentWorktreesDirectory,
 } from "./workspace-paths";
 
+import { isHostPressuredError } from "@/lib/execution-host/host-pressure";
 import { ADMISSIBLE_PROMPT_INCARNATION_STATES } from "@/lib/execution-host/session-binding";
 import { createHitlRequest } from "@/lib/runs/hitl-create";
 import {
@@ -127,6 +135,7 @@ import {
 import {
   settleSteerCommand,
   steerRefusalReason,
+  steerRequeueKey,
   type SteerSettlement,
 } from "@/lib/execution-host/steer-settlement";
 import { cancelOpenAgentQuestionsForTaskInTransaction } from "@/lib/services/agent-question";
@@ -155,7 +164,8 @@ import {
   tryStartRun,
   takeSchedulerLock,
   countLiveRuns,
-  capForPool,
+  effectivePoolCap,
+  type PoolCapFence,
 } from "@/lib/scheduler";
 import {
   createExecutionHosts,
@@ -286,7 +296,12 @@ export type LaunchAgentRunInput = {
 };
 
 export type LaunchAgentRunResult =
-  | { runId: string; status: "Running" | "Pending"; queuePosition?: number }
+  | {
+      runId: string;
+      status: "Running" | "Pending";
+      queuePosition?: number;
+      queueReason?: PoolCapFence;
+    }
   | { deduped: true; triggerEventId: number };
 
 export type AgentLaunchErrorKind =
@@ -927,6 +942,7 @@ async function launchAgentDrivenFlowRun(
     ...(result.queuePosition !== undefined
       ? { queuePosition: result.queuePosition }
       : {}),
+    ...(result.queueReason ? { queueReason: result.queueReason } : {}),
   };
 }
 
@@ -1594,6 +1610,9 @@ export async function launchAgentRun(
     runId,
     status: "Pending",
     queuePosition: startResult.queuePosition,
+    ...(startResult.queueReason
+      ? { queueReason: startResult.queueReason }
+      : {}),
   };
 }
 
@@ -2229,6 +2248,7 @@ async function startConsensusRunnerDraftSession(args: {
     await dispatchStoredAgentTurn(args.db, execution, turn, session.sessionId);
     log.info(draft, "consensus runner draft turn settled");
   } catch (err) {
+    if (err instanceof AgentPromptQuarantined) throw err;
     if (isFencedError(err)) {
       // ADR-166: a newer driver generation owns the run — yield untouched.
       log.warn({ runId }, "consensus runner draft session fenced — yielding");
@@ -2353,6 +2373,21 @@ export async function sendAgentMessage(
     turn = await acceptAgentMessage(_db, childRunId, prompt, {
       requestKey: opts.requestKey,
     });
+    // ADR-183 D-M3: a message the host parked mid-turn was superseded by a
+    // successor carrying the same text; a same-key retry answers with it.
+    if (turn.state === "superseded") {
+      const [successor]: AgentTurn[] = await _db
+        .select()
+        .from(agentTurns)
+        .where(
+          and(
+            eq(agentTurns.runId, childRunId),
+            eq(agentTurns.logicalKey, steerRequeueKey(turn.id)),
+          ),
+        );
+
+      if (successor) turn = successor;
+    }
   }
   // D-C6: a same-key retry of a steer answers the row it created, or the
   // successor a refusal left behind; nothing is issued again.
@@ -2515,12 +2550,16 @@ async function claimAgentReworkCapacity(
   runId: string,
 ): Promise<void> {
   await takeSchedulerLock(tx);
-  if ((await countLiveRuns(tx, "agent")) >= capForPool("agent"))
+  const { cap, fence } = await effectivePoolCap(tx, "agent");
+
+  if ((await countLiveRuns(tx, "agent")) >= cap)
     throw new MaisterError(
       "CONFLICT",
-      "agent pool is full; retry rework when a slot is available",
+      fence
+        ? "the execution host is behind on its event outbox; retry rework when it recovers"
+        : "agent pool is full; retry rework when a slot is available",
       {
-        details: { reason: "agent_pool_full", runId },
+        details: { reason: fence ?? "agent_pool_full", runId },
       },
     );
 }
@@ -2914,23 +2953,106 @@ function observeOwnedAgentSession(
   );
 }
 
+// M37 Phase 8 (ADR-099): overridePrompt re-messages a parked persistent
+// child with a fresh turn instead of rebuilding the definition prompt. The
+// session resumes via run.acpSessionId and re-parks on the next end_turn.
+type AgentSessionStartOptions = {
+  db?: Db;
+  executionHosts?: ExecutionHosts;
+  overridePrompt?: string;
+  agentTurnId?: string;
+  signal?: AbortSignal;
+  // ADR-166: the generation the caller's claim minted. Absent (the launch
+  // dispatch, a scheduler promotion), the run's active pointer is bound.
+  assignmentId?: string | null;
+};
+
 // Drives one standalone agent session end-to-end: spawn (resume-aware),
 // prompt, then consume supervisor events until a terminal transition.
 export async function startAgentSession(
   runId: string,
-  // M37 Phase 8 (ADR-099): overridePrompt re-messages a parked persistent
-  // child with a fresh turn instead of rebuilding the definition prompt. The
-  // session resumes via run.acpSessionId and re-parks on the next end_turn.
-  opts: {
-    db?: Db;
-    executionHosts?: ExecutionHosts;
-    overridePrompt?: string;
-    agentTurnId?: string;
-    signal?: AbortSignal;
-    // ADR-166: the generation the caller's claim minted. Absent (the launch
-    // dispatch, a scheduler promotion), the run's active pointer is bound.
-    assignmentId?: string | null;
-  } = {},
+  opts: AgentSessionStartOptions = {},
+): Promise<void> {
+  const db = opts.db ?? getDb();
+  const executionHosts = opts.executionHosts ?? createExecutionHosts({ db });
+
+  try {
+    await driveAgentSession(runId, { ...opts, db, executionHosts });
+  } catch (err) {
+    if (!(err instanceof AgentPromptQuarantined)) throw err;
+    await endQuarantinedAgentRun(db, executionHosts, err.commandId);
+  }
+}
+
+/** ADR-184 amendment 2026-09-28: a prompt quarantined with no terminal
+ * evidence has no writer left — no feed will settle it and its owner never
+ * applies — so the driver that meets it ends the run. The session is stopped
+ * first: nothing reaps a live session under a `Crashed` agent run. A stop the
+ * host cannot confirm, or one a newer generation fences, leaves the run to
+ * the next driver; any other refusal means the session is already gone. */
+async function endQuarantinedAgentRun(
+  db: Db,
+  hosts: ExecutionHosts,
+  commandId: string,
+): Promise<void> {
+  const [command] = await db
+    .select()
+    .from(executionCommands)
+    .where(eq(executionCommands.id, commandId));
+
+  if (!command) return;
+  const logContext = {
+    runId: command.runId,
+    commandId,
+    causeCode: command.applicationError?.causeCode ?? null,
+  };
+
+  if (command.targetSessionId) {
+    try {
+      const client = await hosts.forAssignment({
+        id: command.executionAssignmentId,
+      });
+
+      await client.deleteSession(command.targetSessionId);
+    } catch (err) {
+      if (
+        isFencedError(err) ||
+        (isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE")
+      ) {
+        log.warn(logContext, "agent-prompt-quarantine-stop-unconfirmed");
+
+        return;
+      }
+    }
+  }
+  const prepared = await prepareAgentRunFinalization(command.runId, "Crashed", {
+    db,
+    reason: "owner_poisoned",
+    closeOpenHitl: true,
+  });
+  const application = await db.transaction(async (tx: ExecutionDb) => {
+    const applied = await prepared.apply(tx);
+
+    if (applied.finalized)
+      await supersedeAgentMessage(
+        tx,
+        command.ownerRef as AdmittedAgentRef,
+        command.id,
+      );
+
+    return applied;
+  });
+
+  await prepared.afterCommit(application);
+  log.error(
+    { ...logContext, finalized: application.finalized },
+    "agent-prompt-quarantined",
+  );
+}
+
+async function driveAgentSession(
+  runId: string,
+  opts: AgentSessionStartOptions,
 ): Promise<void> {
   opts.signal?.throwIfAborted();
   const _db = opts.db ?? getDb();
@@ -3120,6 +3242,7 @@ export async function startAgentSession(
           opts.signal,
         );
       } catch (error) {
+        if (error instanceof AgentPromptQuarantined) throw error;
         if (
           isFencedError(error) ||
           error instanceof SessionCreatePending ||
@@ -3602,6 +3725,7 @@ export async function startAgentSession(
 
       return;
     }
+    if (err instanceof AgentPromptQuarantined) throw err;
     if (
       err instanceof AgentPromptContinuationPending ||
       err instanceof SessionCreatePending ||
@@ -3633,7 +3757,20 @@ export async function startAgentSession(
     if (agentTurn) {
       const execution = await bindAgentExecution(hosts, runId, assignmentId);
 
-      if (await settleAgentCreateFailure(_db, execution.client, agentTurn))
+      if (
+        isHostPressuredError(err) &&
+        (await parkClaimedAgentTurnForHostPressure(
+          _db,
+          execution.client,
+          agentTurn,
+        ))
+      )
+        return;
+      if (
+        await settleAgentCreateFailure(_db, execution.client, agentTurn, {
+          hostPressureRefusal: isHostPressuredError(err),
+        })
+      )
         return;
       throw err;
     }

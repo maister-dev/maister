@@ -102,6 +102,74 @@ const lag = status.lag as Exclude<
   { unavailable: true }
 >;
 
+type StreamRow = (typeof lag.streams)[number];
+
+function streamRow(
+  rowId: string,
+  telemetry: Partial<NonNullable<StreamRow["hostTelemetry"]>> | null,
+): StreamRow {
+  return {
+    streamRowId: rowId,
+    executionHostId: "host-1",
+    hostKey: "eh_local",
+    displayName: "Local",
+    readiness: "ready",
+    readinessReason: null,
+    hostLastSeenAt: sampledAt,
+    hostBootId: "boot-1",
+    streamId: rowId,
+    streamState: "active",
+    lastReceivedSequence: "9",
+    lastContiguousSequence: "9",
+    lastAckConfirmedSequence: "9",
+    streamLastSeenAt: sampledAt,
+    lastError: null,
+    claimOwner: null,
+    claimExpiresAt: null,
+    hostTelemetry:
+      telemetry === null
+        ? null
+        : {
+            streamId: rowId,
+            headSequence: "900",
+            unacknowledgedCount: 0,
+            retainedCount: 900,
+            pressured: false,
+            oldestUnacknowledgedAgeMs: null,
+            subscriberPauses: null,
+            closes: null,
+            sampledAt,
+            bootId: "boot-1",
+            ...telemetry,
+          },
+    hostTelemetryStatus: telemetry === null ? "unavailable" : "available",
+    hostTelemetryReason: null,
+    lag: {
+      hostToManager: "0",
+      contiguityGap: "0",
+      ackConfirmation: "0",
+      diagnostics: [],
+    },
+  };
+}
+
+async function pressureCells(streams: readonly StreamRow[]): Promise<string[]> {
+  const html = renderToStaticMarkup(
+    await ExecutionHostStatus({
+      status: { ...status, lag: { ...lag, streams: [...streams] } },
+    }),
+  );
+
+  return streams.map((stream) => {
+    const row = html
+      .split("<tr")
+      .find((candidate) => candidate.includes(`>${stream.streamId}<`))!;
+    const start = row.indexOf('data-testid="stream-pressure-cell"');
+
+    return row.slice(start, row.indexOf("</td>", start));
+  });
+}
+
 describe("ExecutionHostStatus", () => {
   it("renders explicit legends, compact durations, and locale-stable UTC dates", async () => {
     const markup = renderToStaticMarkup(await ExecutionHostStatus({ status }));
@@ -249,6 +317,101 @@ describe("ExecutionHostStatus", () => {
     // An older host reports neither: the cells read as missing, never zero.
     expect(html).toContain("streams.pauses: missing");
     expect(html).toContain("streams.closes: missing");
+  });
+
+  it("ADR-183: renders the pressure episode with a warning tone, not yes/no", async () => {
+    const telemetry = (
+      pressure: null | {
+        since: string;
+        unacknowledgedCountAtStart: number;
+        unacknowledgedBytesAtStart: number;
+        episodes: number;
+      },
+      rowId: string,
+    ) =>
+      streamRow(rowId, {
+        unacknowledgedCount: pressure ? 700 : 0,
+        pressured: pressure !== null,
+        pressure,
+      });
+    const html = renderToStaticMarkup(
+      await ExecutionHostStatus({
+        status: {
+          ...status,
+          lag: {
+            ...lag,
+            streams: [
+              telemetry(
+                {
+                  since: "2026-09-22T09:58:30.000Z",
+                  unacknowledgedCountAtStart: 640,
+                  unacknowledgedBytesAtStart: 65_536,
+                  episodes: 2,
+                },
+                "stream-pressured",
+              ),
+              telemetry(null, "stream-clear"),
+            ],
+          },
+        },
+      }),
+    );
+    const cell = html.slice(html.indexOf('data-testid="stream-pressure"'));
+
+    expect(cell).toContain("▲");
+    expect(cell).toContain("pressure.active");
+    expect(cell).toMatch(/pressure\.since\(value=[^)]+\)/);
+    // 90 s between the episode start and the sample.
+    expect(cell).toContain("pressure.duration(value=1m 30s)");
+    expect(cell).toContain("pressure.unackedAtStart(count=640)");
+    expect(cell).toContain("pressure.episodes(count=2)");
+    expect(html).toContain("pressure.clear");
+    expect(html).not.toMatch(/>(yes|no)</);
+  });
+
+  // ADR-183 amendment 2026-09-28: the cell shows what the admission fence
+  // follows. A host can refuse new work at the retained, physical or control
+  // limit without being pressured — "not pressured" hid exactly that.
+  it("names the limit a host refuses new work at, pressured or not", async () => {
+    const [retained, unacked] = await pressureCells([
+      streamRow("s-retained", { newWorkRefusedBy: "retained" }),
+      streamRow("s-unacked", {
+        pressured: true,
+        newWorkRefusedBy: "unacknowledged",
+        pressure: {
+          since: "2026-09-22T09:59:00.000Z",
+          unacknowledgedCountAtStart: 640,
+          unacknowledgedBytesAtStart: 65_536,
+          episodes: 0,
+        },
+      }),
+    ]);
+
+    expect(retained).toContain(
+      "pressure.refusingNewWork(limit=pressure.limit.retained)",
+    );
+    expect(retained).not.toContain("pressure.clear");
+    expect(unacked).toContain(
+      "pressure.refusingNewWork(limit=pressure.limit.unacknowledged)",
+    );
+    expect(unacked).toContain("pressure.active");
+    expect(unacked).toContain("pressure.unackedAtStart(count=640)");
+  });
+
+  // U6b: the cell's other branches.
+  it("says missing without telemetry, and for a pressured host with no episode", async () => {
+    const [absent, noEpisode, admitting] = await pressureCells([
+      streamRow("s-absent", null),
+      streamRow("s-no-episode", { pressured: true, pressure: null }),
+      streamRow("s-admitting", { newWorkRefusedBy: null }),
+    ]);
+
+    expect(absent).toMatch(/>missing$/);
+    expect(noEpisode).toContain("pressure.active");
+    expect(noEpisode).not.toContain("pressure.since");
+    expect(noEpisode).toContain(">missing<");
+    expect(noEpisode).not.toContain("pressure.refusingNewWork");
+    expect(admitting).toContain("pressure.clear");
   });
 
   it("renders an explicit empty state when no host has host-span data", async () => {

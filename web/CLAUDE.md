@@ -335,6 +335,66 @@ load-sensitive names for this Mac: the Docker probe timeout,
 `permission-result-failure` (a 767 s file under load, 190 s idle). e2e
 `m19-reconcile-gc` + `scratch-detail` **13 passed** (`--workers=2`).
 
+**Measured 2026-09-26 (ADR-183 outbox-pressure branch on `881619a5`, this
+Mac).** unit **867 files / 9041 tests, 0 failures**; supervisor **84 files /
+777 tests, 0 failures** (unit 49 / 484, integration 35 / 293); integration
+**549 files / 4871 tests** in 29.4 min on a snapshot of the Phase 4 commit —
+544 passed, 2 skipped (the opt-in load suites), 3 red and all classified:
+`app/api/runs/[runId]/recover/__tests__/route.integration.test.ts` (Docker
+"No host port found for host IP" at container start — 11/11 re-run),
+`orchestrator-park` "re-drives a rebound orchestrator coordinator after death
+before its first command" (a 10 s poll at lane load 60–85 — 4/4 idle; a new
+load-sensitive name) and `execution-ab-partitions` P4 (6/6 re-run). The
+`ledger.integration` "pool after end" rejection recurs. The Phase 5 lane
+(same Mac, Docker Desktop saturated — setup 505 s against 19 s) had 72 files
+red, 67 of them `TestDatabaseDockerUnavailableError: container runtime probe
+timed out`; all 72 passed re-run (340 tests), as did the other 29 agent
+integration files: read the setup time before reading the failures. The opt-in R20
+(`MAISTER_EVENT_PLANE_LOAD=1`) is RED at the default budgets because of the
+open-span limit — read ADR-183's "Measured limit" before filing it.
+
+**Measured 2026-09-27 (ADR-184 open-span prune, same branch, this Mac).** unit
+**868 files / 9062 tests, 0 failures**; supervisor **84 files / 782 tests, 0
+failures** (unit 49 / 486, integration 35 / 296); integration **550 files /
+4877 tests** on a snapshot of the Phase 2 commit — 546 passed, 2 skipped (the
+opt-in load suites), 2 red and both classified: `lib/brain/__tests__/ambient`
+(`TestDatabaseDockerUnavailableError: container runtime probe timed out` — 10/10
+re-run) and `consensus-prompt-owners` "P0-5: verifier output past 1 MiB …" +
+"owner-consensus-verify …" at lane load 120–190 — the same load-sensitive pair
+the ADR-183 lane recorded (its plan's N13); the whole file passes 23/23 alone
+and the P0-5 case 3/3 filtered, but it went red once more beside one other
+file at load ~20, so treat it as a standing load-sensitive name. The Phase 1
+lane's one red (`execution-ab-process-cleanup` O1-default, a nested-cleanup
+`AggregateError` at load ~120) passed 13/13 re-run. The final lane (the capacity
+fix included, 550 files / 4877 tests) had one red at load ~150 —
+`durable-workers-concurrency` "E: SIGTERM while a claim is held …" (`expected
+['pending', 'applied'] to include 'applying'`: the web drain lost the race to the
+load) — green 3/3 idle; a new load-sensitive name. The opt-in R20 is now
+GREEN at the default budgets (two 10-minute runs, ADR-184 D7): if it goes red,
+first check that the run was alone. A supervisor the fixture watchdog SIGKILLed
+("fixture-watchdog-error … could not be inspected" as the last line of its log)
+was starved — by the host's load, or by itself: before 2026-09-28 nine paused
+producers pegged it at 100% CPU (the capacity cascade, EDGE-EVT-14), so a pegged
+supervisor with paused producers is a product regression, not load.
+After the rebase onto `master` `0afffb50` (the ownership-residuals merge):
+unit **869 files / 9105 tests, 0 failures**; supervisor **84 files / 785
+tests, 0 failures**; integration **558 files / 4968 tests**, no test failure
+(`delegate-flow-arm` failed at container start — Docker "No host port found for
+host IP" — and passed 19/19 re-run).
+After the 2026-09-28 review-remediation cycle (same branch, this Mac): unit
+**870 files / 9135 tests, 0 failures**; supervisor **85 files / 798 tests, 0
+failures** (unit 50 / 494, integration 35 / 304); integration **559 files /
+4984 tests**, twice. On a snapshot of `56ec3da82` at load ~150, one red: the
+standing `durable-workers-concurrency` E, plus five unhandled `57P01`
+("terminating connection due to administrator command") from
+`permission-crash-boundary` — its Recover case detached the resumed
+`runFlow`, which then outlived `afterAll` and held connections while the
+container stopped (fixed the same day, `cf7931090`: the case settles its
+driver and `afterAll` fails on a straggler). On the
+final tree, one red: `bounded-output` (a new load-sensitive name — this branch
+never touched it) and the `ext … memory` route skipped on the Docker probe
+timeout. All four files passed together idle (50/50), with no unhandled error.
+
 **A first-hit Next-dev compile can exhaust a 10s e2e timeout.** Before calling
 such a failure a regression, re-run the spec in isolation and read the RETRY
 time: `scratch-detail.spec.ts:50` ("suggests project skills"; `:57` since

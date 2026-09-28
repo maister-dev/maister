@@ -59,7 +59,7 @@ const countLiveRunsSpy = vi.fn(async () => 0);
 vi.mock("@/lib/scheduler", () => ({
   takeSchedulerLock: async () => {},
   countLiveRuns: () => countLiveRunsSpy(),
-  capForPool: () => 6,
+  effectivePoolCap: async () => ({ cap: 6, fence: null, pressuredSince: null }),
 }));
 
 // Minimal db: select chains return seeded rows.

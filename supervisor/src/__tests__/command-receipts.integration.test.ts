@@ -631,21 +631,24 @@ describe("command receipts", () => {
     const commandId = randomUUID();
 
     // Simulate a turn that was accepted and never completed before the restart.
-    first.hostState.putReceipt({
-      commandId,
-      runId,
-      kind: "session.prompt",
-      assignmentId: null,
-      epoch: 1,
-      hostSessionId: null,
-      requestDigest: null,
-      eventId: null,
-      phase: "accepted",
-      httpStatus: 202,
-      body: {},
-      receivedAt: new Date().toISOString(),
-      completedAt: null,
-    });
+    first.hostState.putReceipt(
+      {
+        commandId,
+        runId,
+        kind: "session.prompt",
+        assignmentId: null,
+        epoch: 1,
+        hostSessionId: null,
+        requestDigest: null,
+        eventId: null,
+        phase: "accepted",
+        httpStatus: 202,
+        body: {},
+        receivedAt: new Date().toISOString(),
+        completedAt: null,
+      },
+      { kind: "new_work" },
+    );
     await first.stop();
 
     const second = await bootHost({
@@ -729,6 +732,7 @@ describe("command receipts", () => {
             payload: { commandId, kind: "session.prompt", phase: "accepted" },
           },
         },
+        { kind: "new_work" },
       );
       await first.stop();
 

@@ -45,6 +45,35 @@ async function setOpenCommand(open: boolean): Promise<void> {
   );
 }
 
+async function setHost(input: {
+  readiness: "ready" | "unavailable";
+  pressuredSince: Date | null;
+}): Promise<void> {
+  await testDatabase.pool.query(
+    `update execution_hosts set readiness = $2 where id = $1`,
+    [hostId, input.readiness],
+  );
+  await testDatabase.pool.query(
+    `delete from execution_host_pressure where execution_host_id = $1`,
+    [hostId],
+  );
+  if (input.pressuredSince)
+    await testDatabase.pool.query(
+      `insert into execution_host_pressure (execution_host_id, pressured_since)
+       values ($1, $2)`,
+      [hostId, input.pressuredSince],
+    );
+}
+
+async function streamLastError(): Promise<unknown> {
+  const { rows } = await testDatabase.pool.query(
+    `select last_error from execution_event_streams where id = $1`,
+    [streamRowId],
+  );
+
+  return rows[0].last_error;
+}
+
 async function streamState(): Promise<string> {
   const { rows } = await testDatabase.pool.query(
     `select state from execution_event_streams where id = $1`,
@@ -204,6 +233,112 @@ describe("execution event stream health", () => {
       `delete from execution_event_consumers where run_id = $1`,
       [runId],
     );
+  });
+
+  // ADR-183 D10: a pressured host pauses every producer, so its silence with
+  // open work is the host waiting for the manager — never a lost stream.
+  it("classifies a silent stream on a pressured ready host as pressured, never repairing or degrading it", async () => {
+    await testDatabase.pool.query(
+      `update execution_event_streams set state = 'active', last_error = null where id = $1`,
+      [streamRowId],
+    );
+    await setLastSeen(STALL_SECONDS * 4);
+    await setOpenCommand(true);
+    await setHost({
+      readiness: "ready",
+      pressuredSince: new Date(Date.now() - 90_000),
+    });
+    const lines: Array<Record<string, unknown>> = [];
+    const logger = {
+      info: (fields: Record<string, unknown>, msg: string) =>
+        lines.push({ ...fields, msg }),
+      warn: (fields: Record<string, unknown>, msg: string) =>
+        lines.push({ ...fields, msg }),
+    };
+    const restarted: string[] = [];
+
+    for (let pass = 0; pass < 3; pass += 1) {
+      const summary = await runEventStreamHealthPass({
+        db: testDatabase.db,
+        stallSeconds: STALL_SECONDS,
+        logger: logger as never,
+        restartConsumer: (host) => {
+          restarted.push(host);
+        },
+      });
+
+      expect(summary).toMatchObject({ pressured: 1, stalled: 0, degraded: 0 });
+    }
+    expect(restarted).toEqual([]);
+    expect(await streamState()).toBe("active");
+    expect(await streamLastError()).toBeNull();
+    const pressuredLines = lines.filter(
+      (line) => line.msg === "runtime-event-stream-pressured",
+    );
+
+    expect(pressuredLines).toHaveLength(3);
+    expect(pressuredLines[0]).toMatchObject({
+      hostId,
+      openCommands: 1,
+      pressuredForMs: expect.any(Number),
+    });
+    expect(pressuredLines[0].pressuredForMs as number).toBeGreaterThanOrEqual(
+      90_000,
+    );
+  });
+
+  it("host unreachable keeps today's rules even with a pressure record", async () => {
+    await setLastSeen(STALL_SECONDS * 4);
+    await setOpenCommand(true);
+    await setHost({ readiness: "unavailable", pressuredSince: new Date() });
+
+    const summary = await runEventStreamHealthPass({
+      db: testDatabase.db,
+      stallSeconds: STALL_SECONDS,
+      restartConsumer: () => {},
+    });
+
+    expect(summary).toMatchObject({ checked: 0, pressured: 0, stalled: 0 });
+    await setHost({ readiness: "ready", pressuredSince: null });
+  });
+
+  it("judges the stream by the stall rule again once the record clears", async () => {
+    await testDatabase.pool.query(
+      `update execution_event_streams set state = 'active', last_error = null where id = $1`,
+      [streamRowId],
+    );
+    await setLastSeen(STALL_SECONDS * 4);
+    await setOpenCommand(true);
+    await setHost({ readiness: "ready", pressuredSince: new Date() });
+    expect(
+      (
+        await runEventStreamHealthPass({
+          db: testDatabase.db,
+          stallSeconds: STALL_SECONDS,
+          restartConsumer: () => {},
+        })
+      ).pressured,
+    ).toBe(1);
+    await setHost({ readiness: "ready", pressuredSince: null });
+    const restarted: string[] = [];
+    const repair = await runEventStreamHealthPass({
+      db: testDatabase.db,
+      stallSeconds: STALL_SECONDS,
+      restartConsumer: (host) => {
+        restarted.push(host);
+      },
+    });
+
+    expect(repair).toMatchObject({ pressured: 0, stalled: 1, degraded: 0 });
+    expect(restarted).toEqual([hostId]);
+    const degrade = await runEventStreamHealthPass({
+      db: testDatabase.db,
+      stallSeconds: STALL_SECONDS,
+      restartConsumer: () => {},
+    });
+
+    expect(degrade.degraded).toBe(1);
+    expect(await streamState()).toBe("lost");
   });
 
   it("leaves a recovered stream alone after its restart worked", async () => {

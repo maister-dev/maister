@@ -793,6 +793,57 @@ describe("classifyRunReconcile — ADR-177 evidence arms", () => {
     ).toEqual({ action: "crash", reason: "turn-lost" });
   });
 
+  // ADR-184 amendment 2026-09-28: a quarantined or poisoned prompt has no
+  // writer left, whether the session is live or not. Live, the sweep used to
+  // `reattach`, and the reattached driver only yielded again — forever.
+  it.each([
+    ["ai_coding", "quarantined"],
+    ["ai_coding", "poisoned"],
+    ["orchestrator", "quarantined"],
+    ["judge", "quarantined"],
+    ["consensus", "poisoned"],
+  ] as const)(
+    "a LIVE %s node whose prompt is %s crashes owner-poisoned instead of reattaching",
+    (currentNodeKind, promptEvidence) => {
+      expect(
+        classifyRunReconcile(
+          input({ liveSession: true, currentNodeKind, promptEvidence }),
+        ),
+      ).toEqual({ action: "crash", reason: "owner-poisoned" });
+    },
+  );
+
+  // Without a session, a node the host evidence read does not cover used to
+  // gate-redispatch into the same command every tick (a judge, an AI gate on
+  // a check node); a cli node crashes either way, now naming the poison.
+  it.each([
+    ["judge", "quarantined"],
+    ["check", "quarantined"],
+    ["check", "poisoned"],
+    ["cli", "quarantined"],
+  ] as const)(
+    "a %s node without a session whose prompt is %s crashes owner-poisoned",
+    (currentNodeKind, promptEvidence) => {
+      expect(
+        classifyRunReconcile(
+          input({ liveSession: false, currentNodeKind, promptEvidence }),
+        ),
+      ).toEqual({ action: "crash", reason: "owner-poisoned" });
+    },
+  );
+
+  it("a LIVE agent node with no poisoned prompt still reattaches", () => {
+    expect(
+      classifyRunReconcile(
+        input({
+          liveSession: true,
+          currentNodeKind: "ai_coding",
+          promptEvidence: "none",
+        }),
+      ),
+    ).toEqual({ action: "reattach", reason: "live-session" });
+  });
+
   it.each(["quarantined", "poisoned"] as const)(
     "%s crashes owner-poisoned — ONE CrashReason member, the sub-reason rides error_code",
     (promptEvidence) => {

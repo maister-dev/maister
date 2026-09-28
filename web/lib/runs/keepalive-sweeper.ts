@@ -18,6 +18,7 @@ import {
   notExists,
   notInArray,
   or,
+  sql,
 } from "drizzle-orm";
 import pino from "pino";
 
@@ -277,6 +278,24 @@ async function fetchPass2Candidates(
         // Defense in depth: Pass1 can no longer idle a mid-sync run into this
         // status, but never abandon one that somehow reached it.
         excludeActiveSyncAttempt(db),
+        // ADR-183 amendment 2026-09-28: the TTL measures operator silence. A
+        // run the manager still owes a resume (an agent host park, an answer
+        // deferred for a slot), and a flow node the execution host paused,
+        // wait on the manager — never abandoned here.
+        isNull(runs.resumeRequestedAt),
+        sql`NOT EXISTS (
+          SELECT 1 FROM ${hitlRequests} h
+           WHERE h.id = (
+             SELECT latest.id FROM ${hitlRequests} latest
+              WHERE latest.run_id = ${runs.id}
+              ORDER BY latest.created_at DESC
+              LIMIT 1
+           )
+             AND h.kind = 'node_interrupt'
+             AND h.step_id = ${runs.currentStepId}
+             AND h.schema->>'cause' = 'host_pressure'
+             AND (h.responded_at IS NULL OR h.response->>'optionId' = 'resume')
+        )`,
       ),
     )
     .orderBy(asc(runs.checkpointAt))
@@ -671,6 +690,10 @@ async function completedTurnWitness(
 
   if (evidence === "pending_application" || evidence === "applying")
     return { commandId: newest.id, witness: "settled" };
+  // A quarantine has no writer left — decided before the probe, whose
+  // `completed` would defer a quarantine found before any terminal evidence
+  // forever (ADR-184 amendment 2026-09-28).
+  if (evidence === "quarantined" || evidence === "poisoned") return null;
   if (
     needsReceiptProbe(newest) &&
     !(await commandStreamLost({ db, commandId: newest.id })) &&

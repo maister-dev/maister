@@ -6,9 +6,45 @@ import pino from "pino";
 import { describe, expect, it, vi } from "vitest";
 
 import { HostKeyConflictError, openHostState } from "../host-state";
-import { bootExecutionHost, buildRegisterRoutesOptions } from "../main";
+import {
+  bootExecutionHost,
+  buildRegisterRoutesOptions,
+  testProducerPauseMaxMs,
+} from "../main";
 
 const silentLogger = pino({ level: "silent" });
+
+// ADR-183: the producer pause bound is a code constant; only a test process
+// may shorten it, and production never reads the seam.
+describe("testProducerPauseMaxMs", () => {
+  it("is ignored outside NODE_ENV=test", () => {
+    expect(
+      testProducerPauseMaxMs({
+        NODE_ENV: "production",
+        MAISTER_TEST_PRODUCER_PAUSE_MAX_MS: "1500",
+      }),
+    ).toBeUndefined();
+    expect(
+      testProducerPauseMaxMs({ MAISTER_TEST_PRODUCER_PAUSE_MAX_MS: "1500" }),
+    ).toBeUndefined();
+  });
+
+  it("shortens the bound in a test process and refuses a malformed value", () => {
+    expect(
+      testProducerPauseMaxMs({
+        NODE_ENV: "test",
+        MAISTER_TEST_PRODUCER_PAUSE_MAX_MS: "1500",
+      }),
+    ).toBe(1500);
+    expect(testProducerPauseMaxMs({ NODE_ENV: "test" })).toBeUndefined();
+    expect(() =>
+      testProducerPauseMaxMs({
+        NODE_ENV: "test",
+        MAISTER_TEST_PRODUCER_PAUSE_MAX_MS: "0",
+      }),
+    ).toThrow(/positive integer/);
+  });
+});
 
 describe("buildRegisterRoutesOptions", () => {
   it("wires the production model-catalog registry", () => {

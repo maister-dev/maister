@@ -24,6 +24,7 @@ import {
 
 import {
   executionCommands,
+  executionEventStreams,
   executionEvents,
   nodeAttempts,
   runMessages,
@@ -109,6 +110,19 @@ async function laggingSession(): Promise<{
   client: BoundClient;
   hostSessionId: string;
 }> {
+  const session = await liveSession();
+
+  fake.holdIngest();
+
+  return session;
+}
+
+/** A run whose stream already exists on the manager; ingest keeps up. */
+async function liveSession(): Promise<{
+  runId: string;
+  client: BoundClient;
+  hostSessionId: string;
+}> {
   const runId = await seedRun(database.db, {
     projectId,
     status: "Running",
@@ -125,8 +139,6 @@ async function laggingSession(): Promise<{
   const installed = await fakeExecutionHosts(db, { fake, runId });
   const client = await installed.hosts.forAssignment(installed.assignment!);
   const session = await client.createSession(CREATE_PAYLOAD);
-
-  fake.holdIngest();
 
   return { runId, client, hostSessionId: session.hostSessionId };
 }
@@ -222,8 +234,98 @@ const countingOwners = () => {
   };
 };
 
+// A real Postgres refusal of a run's prompt terminals (22P05, as for an
+// untranslatable escape), so ingest records a `payload_unstorable` skip.
+async function refuseTerminalsOf(runId: string): Promise<void> {
+  await database.pool.query(`
+    create table if not exists test_unstorable_runs (run_id text primary key);
+    create or replace function test_refuse_unstorable() returns trigger language plpgsql as $$
+    begin
+      if new.event_type = 'session.command'
+         and new.payload ->> 'phase' <> 'accepted'
+         and exists (select 1 from test_unstorable_runs where run_id = new.run_id) then
+        raise exception 'unsupported Unicode escape sequence' using errcode = '22P05';
+      end if;
+      return new;
+    end $$;
+    drop trigger if exists test_refuse_unstorable on execution_events;
+    create trigger test_refuse_unstorable before insert on execution_events
+      for each row execute function test_refuse_unstorable();
+  `);
+  await database.pool.query(
+    "insert into test_unstorable_runs values ($1) on conflict do nothing",
+    [runId],
+  );
+}
+
+/** The manager's contiguous frontier on the stream a command's receipt names. */
+async function frontierOf(commandId: string): Promise<bigint> {
+  const streamId = (await command(commandId)).receiptEvidence?.evidenceV2
+    ?.terminal?.streamId;
+  const [stream] = await db
+    .select({ last: executionEventStreams.lastContiguousSequence })
+    .from(executionEventStreams)
+    .where(eq(executionEventStreams.streamId, streamId!));
+
+  if (stream?.last === null || stream?.last === undefined)
+    throw new Error(`stream ${streamId} has no contiguous frontier`);
+
+  return stream.last;
+}
+
+const terminalOf =
+  (commandId: string) =>
+  (envelope: RuntimeEventEnvelope): boolean =>
+    envelope.eventType === "session.command" &&
+    envelope.payload?.commandId === commandId &&
+    envelope.payload?.phase !== "accepted";
+
 describe("host-span settlement on the fake host", () => {
-  it("B5: an unreadable (pruned) span keeps the command waiting, and it settles canonically once ingest catches up", async () => {
+  // ADR-184: the host prunes ACKed rows inside an open span. The manager has
+  // ingested (and so may have ACKed) the span up to its terminal; the host's
+  // floor is that frontier. The pager reads the prefix canonically and asks
+  // the host only above the frontier.
+  it("B5a: a span whose ACKed prefix the host pruned at or below the manager's frontier settles from the host", async () => {
+    const { client, hostSessionId } = await laggingSession();
+
+    // No read may settle before the prefix is pruned.
+    fake.setPrunedFloor("1000000");
+    const handle = await prompt(client, hostSessionId);
+
+    await untilReceipt(handle.commandId);
+    await fake.releaseIngest({ before: terminalOf(handle.commandId) });
+    const frontier = await frontierOf(handle.commandId);
+    const output = (await command(handle.commandId)).receiptEvidence?.evidenceV2
+      ?.terminal?.result?.output as
+      | { acceptedSequence: string; terminalSequence: string }
+      | undefined;
+
+    expect(frontier).toBeGreaterThanOrEqual(BigInt(output!.acceptedSequence));
+    expect(frontier).toBeLessThan(BigInt(output!.terminalSequence));
+    fake.setPrunedFloor(frontier.toString());
+    await db
+      .update(executionCommands)
+      .set({ nextAttemptAt: null })
+      .where(eq(executionCommands.id, handle.commandId));
+    const reads = fake.callsOf("readRuntimeEventSpan").length;
+
+    await reconcile(handle.commandId);
+    expect(await command(handle.commandId)).toMatchObject({
+      settledFrom: "host_span",
+      state: "succeeded",
+      terminalEventId: null,
+      hostSpanVerdict: null,
+    });
+    expect(
+      fake
+        .callsOf("readRuntimeEventSpan")
+        .slice(reads)
+        .map((call) => (call.args[0] as { after: string }).after),
+      "the host is asked only above the manager's frontier",
+    ).toEqual([frontier.toString()]);
+  });
+
+  it("B5b: a floor above the manager's frontier (a restore) keeps the command waiting, and it settles canonically once ingest catches up", async () => {
     const { client, hostSessionId } = await laggingSession();
 
     fake.setPrunedFloor("1000000");
@@ -465,6 +567,47 @@ describe("host-span settlement on the fake host", () => {
     });
   });
 
+  // ADR-184 amendment 2026-09-28: a terminal Postgres refuses is recorded in
+  // the skip ledger and the frontier walks past it; D3.7 then answered
+  // `canonical_available` for a command the canonical feed can never settle,
+  // and it waited forever with no verdict on a healthy stream.
+  it("Q-skip: a v2 prompt whose terminal is a payload_unstorable skip is quarantined terminal_unstorable", async () => {
+    // Ingest keeps up, so the frontier passes the refused terminal before any
+    // settlement read: D3.7 answers `canonical_available` at once.
+    const { runId, client, hostSessionId } = await liveSession();
+
+    await refuseTerminalsOf(runId);
+    const handle = await prompt(client, hostSessionId);
+
+    await fake.waitForCanonicalEvents();
+    await untilReceipt(handle.commandId);
+    const [skip] = (
+      await database.pool.query(
+        `select s.reason from execution_event_skips s
+          where s.event_type = 'session.command' and s.run_id = $1`,
+        [runId],
+      )
+    ).rows as Array<{ reason: string }>;
+
+    expect(skip?.reason).toBe("payload_unstorable");
+    expect(await frontierOf(handle.commandId)).toBeGreaterThanOrEqual(
+      BigInt(
+        (await command(handle.commandId)).receiptEvidence!.evidenceV2!.terminal!
+          .sequence,
+      ),
+    );
+    expect((await reconcile(handle.commandId)).disposition).toBe("quarantined");
+    expect(await command(handle.commandId)).toMatchObject({
+      state: "accepted",
+      terminalEvidenceSha256: null,
+      applicationState: "poisoned",
+      applicationError: {
+        reason: "prompt_terminal_conflict",
+        causeCode: "terminal_unstorable",
+      },
+    });
+  });
+
   it("B4: host-span-first then canonical leaves the same terminal row as canonical-first; only settled_from differs", async () => {
     const canonical = await laggingSession();
 
@@ -530,6 +673,10 @@ describe("host-span settlement on the fake host", () => {
         command: await command(handle.commandId),
         signal: AbortSignal.timeout(10_000),
       });
+
+      // Held ingest keeps the terminal off the canonical log.
+      if (terminal === "canonical_available")
+        throw new Error("the lagging span must be read from the host");
 
       // Everything before the turn's terminal frame is ingested first, so the
       // canonical writer that parks is the terminal settlement itself.

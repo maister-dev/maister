@@ -1466,6 +1466,15 @@ paths:
                     type: integer
                     minimum: 1
                     description: Present iff `status == "Pending"`.
+                  queueReason:
+                    type: string
+                    enum: [host_pressured]
+                    description: |
+                      (Implemented — ADR-183) Present iff the run was queued
+                      because the execution host refuses new work (the
+                      manager's pressure record is set); absent when it was
+                      queued by the budget alone. The run starts when the host
+                      admits new work again.
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
         "403":
@@ -3374,7 +3383,9 @@ paths:
             the answer stored and `responded_at` null. Retry the identical
             answer to send it; agent runs may also resume automatically. The web gives
             one `delivery_unavailable` reason for restart, parking and
-            post-grace host absence.
+            post-grace host absence, and `event_outbox_backpressure` when the
+            execution host refused the answer at its hard outbox bound
+            (ADR-183).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ExtHitlRespondErrorBody" }
@@ -3601,7 +3612,7 @@ components:
 
     HitlRespondReason:
       type: string
-      enum: [permission_resume_in_flight, assignment_fenced, prompt_owner_deferred, prompt_owner_invariant, already_delivered, option_mismatch, not_awaiting_input, agent_session_ended, delivery_unavailable, permission_delivery_rejected, session_ended, permission_not_pending, edit_lock_not_held]
+      enum: [permission_resume_in_flight, assignment_fenced, prompt_owner_deferred, prompt_owner_invariant, already_delivered, option_mismatch, not_awaiting_input, agent_session_ended, delivery_unavailable, permission_delivery_rejected, session_ended, permission_not_pending, edit_lock_not_held, event_outbox_backpressure]
       description: |
         `agent_session_ended` is deprecated: no producer since 2026-09-26 (a
         dead session answers 409 `session_ended`); it stays for clients that
@@ -3652,7 +3663,11 @@ components:
               required: [reason]
               additionalProperties: false
               properties:
-                reason: { type: string, enum: [delivery_unavailable] }
+                reason:
+                  {
+                    type: string,
+                    enum: [delivery_unavailable, event_outbox_backpressure],
+                  }
 
     ExtRecoverAccepted:
       type: object

@@ -1,3 +1,10 @@
+import type {
+  AppendRuntimeEventInput,
+  CommandReceiptRow,
+  SettledReceiptRow,
+} from "../host-state";
+import type { ReceiptAdmission } from "../outbox-budget";
+
 import { once } from "node:events";
 import * as filesystem from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
@@ -16,6 +23,7 @@ import { dirname, join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { HOST_STATE_SCHEMA_VERSION } from "../host-state";
 import { RuntimeObjectRegistry } from "../runtime-objects";
 
 import {
@@ -604,7 +612,7 @@ describe("runtime object transport", () => {
 
     try {
       expect(inspected.prepare("PRAGMA user_version").get()).toEqual({
-        user_version: 13,
+        user_version: HOST_STATE_SCHEMA_VERSION,
       });
     } finally {
       inspected.close();
@@ -887,21 +895,24 @@ describe("runtime object transport", () => {
     expect(reserved.status).toBe(201);
     const uploadCommandId = randomUUID();
 
-    host.hostState.putReceipt({
-      commandId: uploadCommandId,
-      runId,
-      kind: "runtime_object.upload",
-      assignmentId,
-      epoch: 1,
-      hostSessionId: objectId,
-      requestDigest: null,
-      eventId: null,
-      phase: "accepted",
-      httpStatus: 202,
-      body: {},
-      receivedAt: new Date().toISOString(),
-      completedAt: null,
-    });
+    host.hostState.putReceipt(
+      {
+        commandId: uploadCommandId,
+        runId,
+        kind: "runtime_object.upload",
+        assignmentId,
+        epoch: 1,
+        hostSessionId: objectId,
+        requestDigest: null,
+        eventId: null,
+        phase: "accepted",
+        httpStatus: 202,
+        body: {},
+        receivedAt: new Date().toISOString(),
+        completedAt: null,
+      },
+      { kind: "new_work" },
+    );
     const uploaded = await fetch(
       `${host.url}/runtime-objects/${objectId}/content`,
       {
@@ -990,21 +1001,24 @@ describe("runtime object transport", () => {
     const digest = `sha-256=:${Buffer.from(checksum, "hex").toString("base64")}:`;
     const uploadCommandId = randomUUID();
 
-    host.hostState.putReceipt({
-      commandId: uploadCommandId,
-      runId,
-      kind: "runtime_object.upload",
-      assignmentId,
-      epoch: 1,
-      hostSessionId: objectId,
-      requestDigest: null,
-      eventId: null,
-      phase: "accepted",
-      httpStatus: 202,
-      body: {},
-      receivedAt: new Date().toISOString(),
-      completedAt: null,
-    });
+    host.hostState.putReceipt(
+      {
+        commandId: uploadCommandId,
+        runId,
+        kind: "runtime_object.upload",
+        assignmentId,
+        epoch: 1,
+        hostSessionId: objectId,
+        requestDigest: null,
+        eventId: null,
+        phase: "accepted",
+        httpStatus: 202,
+        body: {},
+        receivedAt: new Date().toISOString(),
+        completedAt: null,
+      },
+      { kind: "new_work" },
+    );
     const uploadHeaders = {
       "content-type": "application/octet-stream",
       "content-length": String(payload.byteLength),
@@ -1245,12 +1259,20 @@ describe("runtime object crash-gap recovery", () => {
     );
     const crash = vi
       .spyOn(host.hostState, "putReceiptWithRuntimeEvent")
-      .mockImplementation((row, event, admission) => {
-        if (row.commandId === commandId && row.phase === "completed")
-          throw new Error("simulated crash before the completed receipt");
+      .mockImplementation(
+        (
+          row: CommandReceiptRow,
+          event: AppendRuntimeEventInput,
+          admission?: ReceiptAdmission,
+        ) => {
+          if (row.commandId === commandId && row.phase === "completed")
+            throw new Error("simulated crash before the completed receipt");
 
-        return original(row, event, admission);
-      });
+          return admission
+            ? original(row, event, admission)
+            : original(row as SettledReceiptRow, event);
+        },
+      );
     const interrupted = await upload(host, objectId, headers);
 
     crash.mockRestore();

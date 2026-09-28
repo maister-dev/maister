@@ -5,7 +5,9 @@ import type { Logger } from "pino";
 import { waitForChildExit } from "./execution-fence";
 import { SupervisorError } from "./types";
 
-export type CheckpointCause = "permission_cap";
+// ADR-180 permission cap; ADR-183 a producer paused by outbox pressure past
+// PRODUCER_PAUSE_MAX_MS.
+export type CheckpointCause = "permission_cap" | "outbox_pressure";
 
 /** The two registry operations a park needs — a harness holding several
  * registries behind one cap handler satisfies it without being one. */
@@ -22,8 +24,9 @@ export type CheckpointSessionInput = {
   permissions: PendingPermissionRegistry;
   logger: Logger;
   killGraceMs: number;
-  // Diagnostic only (ADR-180): it rides the emitted `session.exited`
-  // payload and nothing branches on it.
+  // Rides the emitted `session.exited` payload (ADR-180), and for
+  // `outbox_pressure` names the park on the interrupted prompt's rejection
+  // (`throwIfParkedByPressure`, ADR-183 D7).
   cause?: CheckpointCause;
 };
 

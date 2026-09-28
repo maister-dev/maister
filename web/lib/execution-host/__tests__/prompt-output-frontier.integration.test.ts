@@ -7,15 +7,21 @@
 import type { Db } from "@/lib/execution-host/db";
 import type { BoundClient } from "@/lib/execution-host/client";
 import type { FakeExecutionHost } from "@/test-support/fake-execution-host";
+import type { SupervisorEvent } from "@/lib/supervisor-client";
 
-import { eq } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
+
+import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import {
   executionCommands,
+  executionEventSkips,
   executionEventStreams,
   runs,
 } from "@/lib/db/schema";
+import { readPromptOutput } from "@/lib/execution-host/prompt-output";
+import { asCommandId } from "@/lib/execution-host/types";
 import { applyPromptOwner } from "@/lib/execution-host/prompt-owner-application";
 import {
   createPromptOwnerRegistry,
@@ -152,6 +158,151 @@ async function command(id: string) {
 
   return row!;
 }
+
+// ADR-184 D3 (owner decision Q3 = A): ingest steps over an event naming a run
+// this manager does not know (`execution_event_skips`, `unknown_run`). Inside
+// a caught-up span that sequence has no `execution_events` row; another run's
+// skip fills contiguity instead of failing the whole output.
+describe("a caught-up span holding another run's skipped event", () => {
+  it("assembles the output; the skip is inside the span", async () => {
+    const runId = await seedRun(database.db, {
+      projectId,
+      status: "Running",
+      runKind: "flow",
+      executionDataPlaneMode: "canonical_events_v1",
+    });
+
+    await seedWorkspace(database.db, {
+      runId,
+      projectId,
+      worktreePath: `/tmp/pof/${runId}`,
+      parentRepoPath: "/tmp/pof/repo",
+    });
+    const installed = await fakeExecutionHosts(db, { fake, runId });
+    const client: BoundClient = await installed.hosts.forAssignment(
+      installed.assignment!,
+    );
+    const session = await client.createSession({
+      stepId: "s1",
+      executor: { agent: "claude", model: "mock" },
+    });
+
+    await db
+      .update(runs)
+      .set({ currentStepId: "s1" })
+      .where(eq(runs.id, runId));
+    // Mid-turn, the shared host stream carries an event of a run the manager
+    // has never seen (another manager's, or one deleted since), after one of
+    // the turn's own.
+    fake.setPromptBehavior(async (ctx) => {
+      await fake.publishCanonical(ctx.envelope, ctx.sessionId, {
+        type: "session.update",
+        sessionId: ctx.sessionId,
+        monotonicId: 1,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "own" },
+        },
+      } as SupervisorEvent);
+      await fake.publishCanonical(
+        {
+          ...ctx.envelope,
+          command: { ...ctx.envelope.command, id: asCommandId(randomUUID()) },
+          fence: { ...ctx.envelope.fence, runId: randomUUID() },
+        },
+        "foreign-session",
+        {
+          type: "session.update",
+          sessionId: "foreign-session",
+          monotonicId: 1,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "foreign" },
+          },
+        } as SupervisorEvent,
+      );
+
+      return { stopReason: "end_turn", meta: null };
+    });
+    try {
+      const handle = await client.prompt(
+        session.hostSessionId,
+        { stepId: "s1", prompt: "hello" },
+        {
+          admitOwner: await seedNodePromptOwner(
+            db,
+            client,
+            session.hostSessionId,
+          ),
+        },
+      );
+
+      await client.waitForPrompt(handle, {
+        signal: AbortSignal.timeout(10_000),
+      });
+      const settled = await command(handle.commandId);
+      const output = settled.receiptEvidence?.evidenceV2?.terminal?.result
+        ?.output as { acceptedSequence: string; terminalSequence: string };
+      const [skip] = await db
+        .select()
+        .from(executionEventSkips)
+        .where(
+          and(
+            eq(executionEventSkips.executionHostId, hostId),
+            eq(executionEventSkips.reason, "unknown_run"),
+          ),
+        )
+        .orderBy(executionEventSkips.hostSequence)
+        .limit(1);
+
+      // Caught up: the canonical read, not the host's, serves the whole span.
+      await expect
+        .poll(
+          async () => {
+            const [stream] = await db
+              .select({ last: executionEventStreams.lastContiguousSequence })
+              .from(executionEventStreams)
+              .where(
+                eq(
+                  executionEventStreams.streamId,
+                  settled.receiptEvidence!.evidenceV2!.terminal!.streamId,
+                ),
+              );
+
+            return (stream?.last ?? -1n) >= BigInt(output.terminalSequence);
+          },
+          { timeout: 10_000 },
+        )
+        .toBe(true);
+      expect(skip!.hostSequence).toBeGreaterThan(
+        BigInt(output.acceptedSequence),
+      );
+      expect(skip!.hostSequence).toBeLessThan(BigInt(output.terminalSequence));
+      const hostReadsBefore = fake.callsOf("readRuntimeEventSpan").length;
+      const read = await readPromptOutput({
+        db,
+        commandId: handle.commandId,
+        signal: AbortSignal.timeout(15_000),
+      });
+      const events: Array<{ eventType: string; runId: string | null }> = [];
+
+      for await (const event of read.events) events.push(event);
+      expect(read.response).toMatchObject({ stopReason: "end_turn" });
+      // The turn's own row, and nothing for the skip it stepped over.
+      expect(events.map((event) => [event.eventType, event.runId])).toEqual([
+        ["session.update", runId],
+      ]);
+      expect(fake.callsOf("readRuntimeEventSpan")).toHaveLength(
+        hostReadsBefore,
+      );
+    } finally {
+      fake.setPromptBehavior(async () => ({
+        stopReason: "end_turn",
+        meta: null,
+      }));
+    }
+  }, 60_000);
+});
 
 describe("output behind the canonical frontier (owner application)", () => {
   it("defers without counting a failure while the stream can still deliver the output", async () => {

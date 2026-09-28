@@ -400,6 +400,42 @@ describe("checkSupervisorHealth", () => {
     });
   });
 
+  it("passes a current host's pressure episode through, and tolerates its absence (ADR-183)", async () => {
+    const base = {
+      streamId: "1d243f70-235f-47bd-804b-33aa3c8c78db",
+      headSequence: "80011",
+      unacknowledgedCount: 80_012,
+      retainedCount: 96_431,
+      oldestUnacknowledgedAgeMs: 212_000,
+    };
+    const pressured = {
+      ...base,
+      pressured: true,
+      pressure: {
+        since: "2026-09-26T08:57:10.000Z",
+        unacknowledgedCountAtStart: 80_000,
+        unacknowledgedBytesAtStart: 101_234_567,
+        episodes: 2,
+      },
+    };
+
+    for (const stream of [
+      pressured,
+      { ...base, pressured: false, pressure: null },
+      { ...base, pressured: true },
+    ]) {
+      mockOnce(
+        new Response(JSON.stringify({ ...readyHealth, stream }), {
+          status: 200,
+        }),
+      );
+      await expect(checkSupervisorHealth()).resolves.toMatchObject({
+        kind: "ready",
+        health: { stream },
+      });
+    }
+  });
+
   it("summarizes an aged host backlog without changing ready status", async () => {
     const health = {
       ...readyHealth,
@@ -551,6 +587,27 @@ describe("checkSupervisorHealth", () => {
         closes: { disconnect: 0, protocol: -1, floor: 0, shutdown: 0 },
       },
       { ...validStream, closes: { disconnect: 0 } },
+      // ADR-183: optional, but consistent with `pressured` when present.
+      {
+        ...validStream,
+        pressure: {
+          since: "2026-09-26T08:57:10.000Z",
+          unacknowledgedCountAtStart: 1,
+          unacknowledgedBytesAtStart: 10,
+          episodes: 0,
+        },
+      },
+      { ...validStream, pressured: true, pressure: null },
+      {
+        ...validStream,
+        pressured: true,
+        pressure: {
+          since: "not-a-date",
+          unacknowledgedCountAtStart: 1,
+          unacknowledgedBytesAtStart: 10,
+          episodes: 0,
+        },
+      },
     ];
 
     for (const stream of invalidStreams) {

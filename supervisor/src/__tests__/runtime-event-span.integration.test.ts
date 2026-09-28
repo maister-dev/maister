@@ -2,6 +2,8 @@
 // bounded page of the retained outbox range `(after, through]` so a manager can
 // verify a finished turn before the shared stream is ingested. It is a read:
 // the acknowledgement, the retained rows and the replay floor never move.
+import type { CommandReceiptRow } from "../host-state";
+
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -223,6 +225,87 @@ describe("GET /runtime-events/span", () => {
         (event) => event.sequence,
       ),
     ).toEqual(["4", "5"]);
+  });
+
+  // ADR-184: the host prunes ACKed rows inside an open prompt's span. A
+  // request from the accepted row finds the floor; the manager's request, from
+  // its own frontier (never above the ACK watermark), is served whole.
+  it("H5: after a prune inside an open span, the accepted row is below the floor and the ACK watermark still reads through the terminal", async () => {
+    let clock = new Date("2026-09-27T12:00:00.000Z");
+
+    host = await bootHost({ now: () => clock });
+    const state = host.hostState;
+    const streamId = state.getRuntimeEventStreamId();
+    const receipt: CommandReceiptRow = {
+      commandId: randomUUID(),
+      runId: "run-event-span",
+      kind: "session.prompt",
+      assignmentId: "b213c794-fa0a-4907-ae7c-2cf2c2e8f87a",
+      epoch: 1,
+      hostSessionId: null,
+      requestDigest: "digest",
+      eventId: null,
+      phase: "accepted",
+      httpStatus: 202,
+      body: {},
+      receivedAt: clock.toISOString(),
+      completedAt: null,
+      requestVersion: 2,
+    };
+    const commandDraft = {
+      draft: {
+        runId: "run-event-span",
+        assignmentId: "b213c794-fa0a-4907-ae7c-2cf2c2e8f87a",
+        assignmentEpoch: 1,
+        hostSessionId: "9f314433-b7e9-49b9-baf7-3a23879eae68",
+        eventType: "session.command" as const,
+        occurredAt: clock.toISOString(),
+        payload: { sourceMonotonicId: 1 },
+      },
+      terminal: true,
+    };
+
+    const first = append(state).sequence;
+    const accepted = state.putReceiptWithRuntimeEvent(receipt, commandDraft, {
+      kind: "new_work",
+    });
+
+    for (let index = 0; index < 4; index += 1) append(state);
+    const acked = append(state).sequence;
+
+    state.ackRuntimeEvents(streamId, acked);
+    append(state);
+    append(state);
+    const terminal = state.putReceiptWithRuntimeEvent(
+      { ...receipt, phase: "completed", completedAt: clock.toISOString() },
+      commandDraft,
+    );
+
+    clock = new Date(clock.getTime() + 2 * DAY_MS);
+    // Everything through the watermark goes, the open span's prefix included.
+    expect(
+      state.pruneAcknowledgedRuntimeEvents(new Date(clock.getTime() - DAY_MS)),
+    ).toBe(Number(BigInt(acked) - BigInt(first) + 1n));
+    expect(
+      await page({
+        streamId,
+        after: String(BigInt(accepted.sequence) - 1n),
+        through: terminal.sequence,
+      }),
+    ).toMatchObject({ state: "unavailable", reason: "replay_floor_lost" });
+    const served = await page({
+      streamId,
+      after: acked,
+      through: terminal.sequence,
+    });
+
+    expect(served.state).toBe("complete");
+    expect(served.events.map((event) => event.sequence)).toEqual(
+      Array.from(
+        { length: Number(BigInt(terminal.sequence) - BigInt(acked)) },
+        (_, index) => String(BigInt(acked) + BigInt(index) + 1n),
+      ),
+    );
   });
 
   it("refuses an empty, inverted or malformed range with invalid_event_span", async () => {

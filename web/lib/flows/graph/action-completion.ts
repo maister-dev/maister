@@ -22,7 +22,13 @@ export type FlowActionCompletion = Readonly<{
   result: Readonly<
     Pick<
       StepResult,
-      "ok" | "stdout" | "vars" | "errorCode" | "exitCode" | "acpSessionId"
+      | "ok"
+      | "stdout"
+      | "vars"
+      | "errorCode"
+      | "exitCode"
+      | "acpSessionId"
+      | "reason"
     >
   >;
   originalOutput: RawNodeOutputPayload;

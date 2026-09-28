@@ -10,7 +10,10 @@
 // path would never run. A counting wrapper around the local-direct transport
 // counts stream opens, server-ended closes and ACK requests instead. The gate
 // requires a flat host-to-manager lag no higher than 2N, no more ACKs than
-// committed batches, no server-ended close and no host-span settlement.
+// committed batches, no server-ended close and no host-span settlement — and,
+// at the default outbox budgets (ADR-184 D7), no pressure, no refusal, no
+// producer pause, retained rows never at hard, every retained-pressure episode
+// ending below low, and at most MAX_SAMPLES_AT_SOFT samples in a row at soft.
 //
 // Run it alone on a quiet, mains-powered host (`pmset -g log` for sleep,
 // `uptime` load < 8), never beside another lane. It prints one JSON line per
@@ -22,6 +25,7 @@ import type { RealSupervisor } from "@/test-support/real-supervisor";
 import type { PlatformStatus } from "@/types/platform-status";
 
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -86,6 +90,18 @@ const SAMPLE_MS = 1_000;
 const CATCH_UP_MS = Number(
   process.env.MAISTER_EVENT_PLANE_LOAD_CATCH_UP_MS ?? 900_000,
 );
+// The host's default regular row budgets (docs/configuration.md): the harness
+// runs at the defaults, so these are the thresholds its samples are read at.
+const LOW_ROWS = 64_000;
+const SOFT_ROWS = 80_000;
+const HARD_ROWS = 100_000;
+// ADR-184 D7 (f): the retained-pressure trigger IS soft, so retained reads at
+// soft at every trigger by construction; what may not happen is a long stretch
+// there. The bound is measured, not guessed: 2 × the longest retained-pressure
+// episode of the first acceptance run, rounded up to whole 1 s samples, capped
+// at 10. Measured 2026-09-27 (first run, gated at the cap): 12 episodes of 164
+// pages / 16 400 rows each, the longest 1 025 ms → 3.
+const MAX_SAMPLES_AT_SOFT = 3;
 
 type Sample = {
   t: number;
@@ -95,6 +111,11 @@ type Sample = {
   ackConfirmation: number | null;
   projectionMaxBacklog: number;
   unacknowledgedCount: number | null;
+  retainedCount: number | null;
+  pressured: boolean | null;
+  // ADR-183 amendment 2026-09-28: the limit the host refuses new work at;
+  // `undefined` when the host did not report it.
+  newWorkRefusedBy: string | null | undefined;
   subscriberPauses: number | null;
   closes: Record<string, number> | null;
   streamState: string | null;
@@ -199,6 +220,15 @@ async function sample(t0: number, hostId: string): Promise<Sample> {
     ackConfirmation: toNumber(stream?.lag.ackConfirmation),
     projectionMaxBacklog: Number(model.consumers.maximumBacklog),
     unacknowledgedCount: telemetry?.unacknowledgedCount ?? null,
+    retainedCount:
+      typeof telemetry?.retainedCount === "number"
+        ? telemetry.retainedCount
+        : null,
+    pressured:
+      typeof telemetry?.pressured === "boolean" ? telemetry.pressured : null,
+    newWorkRefusedBy: telemetry
+      ? (telemetry.newWorkRefusedBy as string | null | undefined)
+      : undefined,
     subscriberPauses:
       typeof telemetry?.subscriberPauses === "number"
         ? telemetry.subscriberPauses
@@ -248,13 +278,6 @@ describe.skipIf(!enabled)("event-plane throughput under load (R20)", () => {
         // INFO keeps the host's stream open/close lines (with their reason) in
         // the captured supervisor log.
         LOG_LEVEL: "info",
-        // The profile commits >108 000 rows in five minutes and the host keeps
-        // ACKed rows for the 24 h replay grace, so the default 80 000-row soft
-        // budget turns the run into an outbox-pressure test — frozen scope,
-        // not what R20 measures. Bytes stay at their defaults (~140 MB used).
-        MAISTER_EVENT_OUTBOX_LOW_ROWS: "320000",
-        MAISTER_EVENT_OUTBOX_SOFT_ROWS: "400000",
-        MAISTER_EVENT_OUTBOX_HARD_ROWS: "500000",
       },
     });
     restoreUrl = useRealSupervisorUrl(supervisor.url);
@@ -376,6 +399,55 @@ describe.skipIf(!enabled)("event-plane throughput under load (R20)", () => {
         (sum, host) => sum + host.hostSpanSettled1h,
         0,
       );
+      // ADR-183: retained rows are housekeeping. At the default budgets the
+      // profile outgrows the soft row budget within minutes, so the host must
+      // prune early and never report pressure or refuse a command.
+      const refused = await database.pool.query<{ count: string }>(
+        `select count(*)::text as count from execution_commands
+         where run_id = any($1)
+           and last_error->'details'->>'reason' = 'event_outbox_backpressure'`,
+        [runIds],
+      );
+      const managerRecords = await database.pool.query<{ count: string }>(
+        "select count(*)::text as count from execution_host_pressure",
+      );
+      const supervisorLog = await readFile(supervisor.logFile, "utf8");
+      const logLines = (msg: string) =>
+        supervisorLog.split(`"msg":"${msg}"`).length - 1;
+      // ADR-184 D7 (e): every retained-pressure episode, from its own line.
+      const episodes = supervisorLog
+        .split("\n")
+        .filter((line) =>
+          line.includes('"msg":"outbox-retained-pressure-prune"'),
+        )
+        .map(
+          (line) =>
+            JSON.parse(line) as {
+              pruned: number;
+              pages: number;
+              durationMs: number;
+              retainedBefore: number;
+              retainedAfter: number;
+            },
+        );
+      const longestEpisodeMs = maxOf(
+        episodes.map((episode) => episode.durationMs),
+      );
+      // ADR-184 D7 (f): the longest run of consecutive samples at or above
+      // soft.
+      let samplesAtSoft = 0;
+      let maxSamplesAtSoft = 0;
+
+      for (const row of samples) {
+        samplesAtSoft =
+          row.retainedCount !== null && row.retainedCount >= SOFT_ROWS
+            ? samplesAtSoft + 1
+            : 0;
+        maxSamplesAtSoft = Math.max(maxSamplesAtSoft, samplesAtSoft);
+      }
+      const retainedSamples = samples.flatMap((row) =>
+        row.retainedCount === null ? [] : [row.retainedCount],
+      );
       const post = samples.filter((row) => row.t >= WARMUP_MS);
       const firstMinute = post.filter((row) => row.t < WARMUP_MS + 60_000);
       const lastMinute = post.filter(
@@ -439,6 +511,44 @@ describe.skipIf(!enabled)("event-plane throughput under load (R20)", () => {
         lagMaxFirstMinute: maxOf(lagOf(firstMinute)),
         lagMaxLastMinute: maxOf(lagOf(lastMinute)),
         lagMax: maxOf(lagOf(post)),
+        pressure: {
+          pressuredSamples: samples.filter((row) => row.pressured === true)
+            .length,
+          // The signal reads admitting at every sample that has telemetry
+          // (the first one, before the stream opens, has none), and no such
+          // sample lacks it.
+          newWorkRefusedSamples: samples.filter(
+            (row) => typeof row.newWorkRefusedBy === "string",
+          ).length,
+          newWorkSignalMissing: samples.filter(
+            (row) =>
+              row.pressured !== null && row.newWorkRefusedBy === undefined,
+          ).length,
+          retainedMax: maxOf(retainedSamples),
+          retainedPrunes: logLines("outbox-retained-pressure-prune"),
+          retainedPruneStalls: logLines(
+            "outbox-retained-pressure-prune-stalled",
+          ),
+          refusedCommands: Number(refused.rows[0].count),
+          managerRecords: Number(managerRecords.rows[0].count),
+          // ADR-184 D7.
+          producerPauses: logLines("producer-output-paused"),
+          producerPauseBounds: logLines("producer-pause-exceeded"),
+          episodes: episodes.map(
+            ({ pruned, pages, durationMs, retainedAfter }) => ({
+              pruned,
+              pages,
+              durationMs,
+              retainedAfter,
+            }),
+          ),
+          longestEpisodeMs,
+          measuredMaxSamplesAtSoft:
+            longestEpisodeMs === null
+              ? null
+              : Math.min(10, Math.ceil((2 * longestEpisodeMs) / 1000)),
+          maxSamplesAtSoft,
+        },
         atWindowEnd: {
           counts: atWindowEnd.counts,
           batches: atWindowEnd.batches,
@@ -495,6 +605,20 @@ describe.skipIf(!enabled)("event-plane throughput under load (R20)", () => {
       expect(summary.perMinute.at(-1)!.lagP95!).toBeLessThanOrEqual(
         summary.lagMaxFirstMinute!,
       );
+      // ADR-184 D7 (a)–(f); on ADR-183 alone the open-span limit reds these.
+      expect(summary.pressure.pressuredSamples).toBe(0);
+      expect(summary.pressure.newWorkRefusedSamples).toBe(0);
+      expect(summary.pressure.newWorkSignalMissing).toBe(0);
+      expect(summary.pressure.refusedCommands).toBe(0);
+      expect(summary.pressure.managerRecords).toBe(0);
+      expect(summary.pressure.producerPauses).toBe(0);
+      expect(summary.pressure.producerPauseBounds).toBe(0);
+      expect(summary.pressure.retainedMax!).toBeLessThan(HARD_ROWS);
+      expect(summary.pressure.retainedPruneStalls).toBe(0);
+      expect(
+        episodes.filter((episode) => episode.retainedAfter >= LOW_ROWS),
+      ).toEqual([]);
+      expect(maxSamplesAtSoft).toBeLessThanOrEqual(MAX_SAMPLES_AT_SOFT);
       expect(atWindowEnd.counts.serverEndedCloses).toBe(0);
       expect(atWindowEnd.counts.streamErrors).toBe(0);
       expect(atWindowEnd.counts.ackRequests).toBeLessThanOrEqual(

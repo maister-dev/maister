@@ -2,6 +2,8 @@
 // contract fixture, the error mapper passes reason tokens through and folds
 // FENCED into CONFLICT, and the transport layer carries no DB edge.
 
+import type { ExecutionCommand } from "@/lib/db/schema";
+
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -9,6 +11,13 @@ import { parse } from "yaml";
 import { describe, expect, it } from "vitest";
 
 import { buildEnvelope } from "@/lib/execution-host/ledger";
+import { isRefusedPermissionDelivery } from "@/lib/execution-host/permission-handoff-evidence";
+import {
+  hostPressuredError,
+  isHostPressuredError,
+  isHostPressureRefusal,
+  refusalClosesAdmissionFence,
+} from "@/lib/execution-host/host-pressure";
 import {
   supervisorErrorToMaister,
   UNKNOWN_OUTCOME_TRANSPORT,
@@ -141,6 +150,135 @@ describe("T2 supervisorErrorToMaister", () => {
 
     expect(err.code).toBe("PRECONDITION");
     expect(err.details?.reason).toBe("unknown_workspace");
+  });
+
+  it("ADR-183: the host-pressure refusal predicate maps exactly PRECONDITION/event_outbox_backpressure", () => {
+    const refusal = supervisorErrorToMaister(
+      409,
+      {
+        code: "PRECONDITION",
+        message: "runtime event outbox is under backpressure",
+        details: { reason: "event_outbox_backpressure" },
+      },
+      "ACP_PROTOCOL",
+    );
+
+    expect(isHostPressureRefusal(refusal)).toBe(true);
+    const mapped = hostPressuredError(refusal, "cmd-1");
+
+    expect(mapped.code).toBe("EXECUTOR_UNAVAILABLE");
+    expect(mapped.details).toEqual({
+      reason: "host_pressured",
+      hostReason: "event_outbox_backpressure",
+      commandId: "cmd-1",
+    });
+    expect(isHostPressuredError(mapped)).toBe(true);
+    // Every other reason, and the token under any other code, is not pressure.
+    for (const [code, reason] of [
+      ["PRECONDITION", "unknown_workspace"],
+      ["EXECUTOR_UNAVAILABLE", "event_outbox_backpressure"],
+      ["CONFLICT", "event_outbox_backpressure"],
+    ] as const) {
+      expect(
+        isHostPressureRefusal(
+          supervisorErrorToMaister(
+            409,
+            { code, message: "x", details: { reason } },
+            "ACP_PROTOCOL",
+          ),
+        ),
+      ).toBe(false);
+    }
+    expect(isHostPressureRefusal(new Error("event_outbox_backpressure"))).toBe(
+      false,
+    );
+    expect(isHostPressuredError(refusal)).toBe(false);
+  });
+
+  // ADR-183 amendment 2026-09-28: the wire names which limit refused. Every
+  // limit is a park, but only a host-wide one closes the admission fence — a
+  // `wallet` refusal is one teardown's own funding. An older host names none.
+  it("ADR-183 amendment: only a host-wide outbox limit closes the admission fence", () => {
+    const limits = (
+      OPENAPI.components.schemas.OutboxLimit as unknown as { enum: string[] }
+    ).enum;
+
+    expect(limits).toEqual([
+      "unacknowledged",
+      "retained",
+      "physical",
+      "control",
+      "wallet",
+    ]);
+    for (const outboxLimit of limits) {
+      const refusal = supervisorErrorToMaister(
+        409,
+        {
+          code: "PRECONDITION",
+          message: "x",
+          details: { reason: "event_outbox_backpressure", outboxLimit },
+        },
+        "ACP_PROTOCOL",
+      );
+
+      expect(isHostPressureRefusal(refusal), outboxLimit).toBe(true);
+      expect(refusalClosesAdmissionFence(refusal), outboxLimit).toBe(
+        outboxLimit !== "wallet",
+      );
+    }
+    const olderHost = supervisorErrorToMaister(
+      409,
+      {
+        code: "PRECONDITION",
+        message: "x",
+        details: { reason: "event_outbox_backpressure" },
+      },
+      "ACP_PROTOCOL",
+    );
+
+    expect(refusalClosesAdmissionFence(olderHost)).toBe(true);
+    expect(
+      refusalClosesAdmissionFence(
+        supervisorErrorToMaister(
+          409,
+          { code: "PRECONDITION", message: "x", details: { reason: "other" } },
+          "ACP_PROTOCOL",
+        ),
+      ),
+    ).toBe(false);
+  });
+
+  it("ADR-183 P0-4: a host outbox refusal of a permission input voids its delivery intent", () => {
+    const input = (lastError: Record<string, unknown>) =>
+      ({
+        kind: "session.input",
+        state: "failed",
+        lastError,
+      }) as unknown as ExecutionCommand;
+
+    expect(
+      isRefusedPermissionDelivery(
+        input({
+          code: "PRECONDITION",
+          message: "hard",
+          details: { reason: "event_outbox_backpressure", httpStatus: 409 },
+        }),
+      ),
+    ).toBe(true);
+    // The 503 refusal still counts; an unknown outcome or another 409 never.
+    expect(
+      isRefusedPermissionDelivery(
+        input({ code: "EXECUTOR_UNAVAILABLE", details: { httpStatus: 503 } }),
+      ),
+    ).toBe(true);
+    expect(
+      isRefusedPermissionDelivery(
+        input({
+          code: "PRECONDITION",
+          details: { reason: "unknown_workspace", httpStatus: 409 },
+        }),
+      ),
+    ).toBe(false);
   });
 
   it("falls back for an unknown code and a bodyless response", () => {

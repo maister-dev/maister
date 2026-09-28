@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { unlink } from "node:fs/promises";
 import path from "node:path";
 
-import { and, asc, eq, gt } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { createHitlRequest } from "@/lib/runs/hitl-create";
@@ -31,8 +31,14 @@ import { loadRunManifest } from "@/lib/queries/run-manifest";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { hitlRequests, nodeAttempts, projects, runs } =
-  schemaModule as unknown as Record<string, any>;
+const {
+  executionCommands,
+  hitlRequests,
+  nodeAttempts,
+  projects,
+  runSessionIncarnations,
+  runs,
+} = schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -94,20 +100,39 @@ export type NodeInterruptOptionMatrix = {
   }>;
   // Ledger-derived: nodes with >= 1 prior attempt in THIS run.
   restartTargets: NodeInterruptRestartTarget[];
+  // ADR-183: who parked the node — selects the card copy and the default.
+  cause?: NodeInterruptCause;
 };
+
+// ADR-183 D-M2: an interrupt is the operator's, or the execution host's own
+// park under outbox pressure. `system` never reaches a route or a HitlActor.
+export type NodeInterruptActor =
+  | { type: "user"; id: string }
+  | { type: "system" };
+
+export type NodeInterruptCause = "operator" | "host_pressure";
 
 export type EscalateNodeInterruptArgs = {
   db?: Db;
   runId: string;
-  actorUserId: string;
-  supervisorSessionId: string;
+  actor: NodeInterruptActor;
+  cause: NodeInterruptCause;
+  // The operator's interrupt checkpoints the live session first. A host park
+  // skips it: the host already parked the session, or none was ever created.
+  supervisorSessionId?: string;
   // Injected so the caller owns the supervisor api, mirroring escalateHookTrip.
-  checkpointSession: (sessionId: string) => Promise<unknown>;
+  checkpointSession?: (sessionId: string) => Promise<unknown>;
+  // The park owner names the attempt it classified; a different running
+  // attempt means the node already moved on.
+  nodeAttemptId?: string;
 };
 
 export type EscalateNodeInterruptResult = {
   hitlRequestId: string;
   nodeId: string;
+  nodeAttemptId: string;
+  // Whether the resume continues the parked ACP session (false: fresh session).
+  resumeHandle: boolean;
 };
 
 type RunRow = {
@@ -155,17 +180,73 @@ async function fetchRunningAttempt(
   return rows.length > 0 ? rows[rows.length - 1] : null;
 }
 
-function interruptPrompt(nodeId: string): string {
-  return `You interrupted "${nodeId}" mid-turn. Resume it as-is, restart it (optionally with a correction), restart from an earlier node, or stop the run.`;
+function interruptPrompt(nodeId: string, cause: NodeInterruptCause): string {
+  return cause === "host_pressure"
+    ? `The execution host paused "${nodeId}" mid-turn — its event budget is exhausted. It resumes automatically when the host catches up; you can also restart it, restart from an earlier node, or stop the run.`
+    : `You interrupted "${nodeId}" mid-turn. Resume it as-is, restart it (optionally with a correction), restart from an earlier node, or stop the run.`;
 }
 
-function interruptSchema(nodeId: string): Record<string, unknown> {
+function interruptSchema(
+  nodeId: string,
+  cause: NodeInterruptCause,
+  actor: NodeInterruptActor,
+): Record<string, unknown> {
+  // The option matrix is computed on read, so `cause` and `actor` are inert
+  // there; they select the card copy and the sweep's auto-resume.
   return {
     kind: "node_interrupt",
     nodeId,
     decisions: [...NODE_INTERRUPT_OPTION_IDS],
     workspacePolicies: [...WORKSPACE_POLICY_IDS],
+    cause,
+    actor: actor.type === "user" ? { type: "user", id: actor.id } : actor,
   };
+}
+
+type InterruptResumeHandle = {
+  commandId: string;
+  assignmentId: string;
+  acpSessionId: string;
+};
+
+// The ACP handle of the turn the interrupt parked: the attempt's prompt at its
+// current ordinal, and the session incarnation that ran it. None when the node
+// never got a prompt admitted (a refused create or prompt) — the resume then
+// starts a fresh session.
+async function loadInterruptResumeHandle(
+  tx: Db,
+  nodeAttemptId: string,
+  promptOrdinal: number,
+): Promise<InterruptResumeHandle | null> {
+  const [prompt] = await tx
+    .select({
+      commandId: executionCommands.id,
+      assignmentId: executionCommands.executionAssignmentId,
+      acpSessionId: runSessionIncarnations.acpSessionId,
+    })
+    .from(executionCommands)
+    .innerJoin(
+      runSessionIncarnations,
+      sql`${runSessionIncarnations.id} = ${executionCommands.ownerRef}->>'incarnationId'`,
+    )
+    .where(
+      and(
+        eq(executionCommands.kind, "session.prompt"),
+        inArray(executionCommands.logicalOperationKey, [
+          `flow_node_attempt:node:${nodeAttemptId}:${promptOrdinal}`,
+          `flow_node_attempt:permission_resume:${nodeAttemptId}:${promptOrdinal}`,
+        ]),
+      ),
+    )
+    .limit(1);
+
+  return prompt?.acpSessionId
+    ? {
+        commandId: prompt.commandId,
+        assignmentId: prompt.assignmentId,
+        acpSessionId: prompt.acpSessionId,
+      }
+    : null;
 }
 
 /**
@@ -183,7 +264,7 @@ function interruptSchema(nodeId: string): Record<string, unknown> {
 export async function escalateNodeInterrupt(
   args: EscalateNodeInterruptArgs,
 ): Promise<EscalateNodeInterruptResult> {
-  const { runId, actorUserId, supervisorSessionId } = args;
+  const { runId, actor, cause, supervisorSessionId } = args;
   const db = args.db ?? getDb();
   const run = await loadRunRow(db, runId);
 
@@ -219,6 +300,12 @@ export async function escalateNodeInterrupt(
       `cannot interrupt a ${attempt.nodeType} node — only agent-executed nodes (ai_coding, judge, orchestrator) can be interrupted; interrupting a shell command mid-run is deferred, stop the run instead`,
     );
   }
+  if (args.nodeAttemptId && args.nodeAttemptId !== attempt.id) {
+    throw new MaisterError(
+      "CONFLICT",
+      `node attempt ${args.nodeAttemptId} of run ${runId} is no longer the running attempt`,
+    );
+  }
 
   const nodeId = attempt.nodeId;
 
@@ -230,29 +317,35 @@ export async function escalateNodeInterrupt(
   // 1. Checkpoint pre-tx. EXECUTOR_UNAVAILABLE re-throws with NO mutation —
   // the run stays Running and the operator can retry. Any other failure means
   // the session is already gone; proceed to the pause.
-  log.info(
-    { runId, nodeId, sessionId: supervisorSessionId },
-    "[node-interrupt] requesting checkpoint",
-  );
-  try {
-    await args.checkpointSession(supervisorSessionId);
-  } catch (err) {
-    if (isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE") {
-      log.error(
-        { runId, nodeId, err: err.message },
-        "[node-interrupt] checkpoint undeliverable — re-throwing with no mutation",
-      );
-
-      throw err;
-    }
-    log.warn(
-      { runId, nodeId, err: err instanceof Error ? err.message : String(err) },
-      "[node-interrupt] checkpoint failed terminally — session already gone, proceeding to pause",
+  if (cause === "operator" && args.checkpointSession && supervisorSessionId) {
+    log.info(
+      { runId, nodeId, sessionId: supervisorSessionId },
+      "[node-interrupt] requesting checkpoint",
     );
+    try {
+      await args.checkpointSession(supervisorSessionId);
+    } catch (err) {
+      if (isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE") {
+        log.error(
+          { runId, nodeId, err: err.message },
+          "[node-interrupt] checkpoint undeliverable — re-throwing with no mutation",
+        );
+
+        throw err;
+      }
+      log.warn(
+        {
+          runId,
+          nodeId,
+          err: err instanceof Error ? err.message : String(err),
+        },
+        "[node-interrupt] checkpoint failed terminally — session already gone, proceeding to pause",
+      );
+    }
   }
 
-  const schema = interruptSchema(nodeId);
-  const prompt = interruptPrompt(nodeId);
+  const schema = interruptSchema(nodeId, cause, actor);
+  const prompt = interruptPrompt(nodeId, cause);
   const hitlRequestId = randomUUID();
 
   // 2. needs-input.json pre-tx, unlinked if the tx throws (CB1).
@@ -274,6 +367,7 @@ export async function escalateNodeInterrupt(
   }
 
   let paused = false;
+  let resumeHandle = false;
 
   try {
     // 3. ONE transaction: CAS + ledger + HITL + assignment + both emits.
@@ -319,6 +413,47 @@ export async function escalateNodeInterrupt(
         );
       }
 
+      // ADR-183 D-M2 / N11: the resume continues THIS attempt on its own ACP
+      // session. The park moves the attempt past the interrupted turn — a late
+      // application of that turn is then superseded — and records the handle
+      // the re-entry reads, bound to the attempt's current assignment.
+      const [parked] = await tx
+        .select({
+          promptOrdinal: nodeAttempts.actionPromptOrdinal,
+          assignmentId: nodeAttempts.executionAssignmentId,
+        })
+        .from(nodeAttempts)
+        .where(eq(nodeAttempts.id, attempt.id))
+        .for("update");
+      const handle = await loadInterruptResumeHandle(
+        tx,
+        attempt.id,
+        parked.promptOrdinal,
+      );
+      const promptOrdinal = parked.promptOrdinal + 1;
+
+      resumeHandle = handle !== null && parked.assignmentId !== null;
+      await tx
+        .update(nodeAttempts)
+        .set({
+          actionCompletion: null,
+          actionPromptOrdinal: promptOrdinal,
+          actionResume:
+            handle && parked.assignmentId
+              ? {
+                  version: 1,
+                  kind: "interrupt",
+                  cause,
+                  sourceCommandId: handle.commandId,
+                  sourceAssignmentId: handle.assignmentId,
+                  assignmentId: parked.assignmentId,
+                  promptOrdinal,
+                  resumeSessionId: handle.acpSessionId,
+                }
+              : null,
+        })
+        .where(eq(nodeAttempts.id, attempt.id));
+
       await createHitlRequest(tx, {
         id: hitlRequestId,
         runId,
@@ -347,15 +482,19 @@ export async function escalateNodeInterrupt(
         });
         // Reuses the EXISTING run.escalated kind — an operator pausing a node is
         // an escalation like any other, which is why Feature B needs no taxonomy
-        // entry and no CHECK migration (ADR-160's claim/return do).
+        // entry and no CHECK migration (ADR-160's claim/return do). A host park
+        // is the same fact with a `system` actor (a taxonomy value, M31).
         await emitDomainEvent({
           db: tx,
           kind: "run.escalated",
           projectId: run.projectId,
           runId,
           taskId: run.taskId,
-          actor: { type: "user", id: actorUserId },
-          payload: { runId, reason: "node_interrupt", nodeId },
+          actor:
+            actor.type === "user"
+              ? { type: "user", id: actor.id }
+              : { type: "system", id: null },
+          payload: { runId, reason: "node_interrupt", nodeId, cause },
         });
         await emitWebhookEvent({
           db: tx,
@@ -393,11 +532,85 @@ export async function escalateNodeInterrupt(
   }
 
   log.info(
-    { runId, nodeId, nodeAttemptId: attempt.id, hitlRequestId },
+    {
+      runId,
+      nodeId,
+      nodeAttemptId: attempt.id,
+      hitlRequestId,
+      cause,
+      resumeHandle,
+    },
     "[node-interrupt] parked",
   );
 
-  return { hitlRequestId, nodeId };
+  return { hitlRequestId, nodeId, nodeAttemptId: attempt.id, resumeHandle };
+}
+
+/**
+ * ADR-183 D-M2: park a node whose turn the execution host's outbox pressure
+ * ended — the host's own checkpoint, or a refused create/prompt. It is the
+ * operator's interrupt with a `system` actor: the same card, the same four
+ * answers, and a `resume` the sweep gives automatically once the host reports
+ * it caught up.
+ *
+ * `not_parked` means the run or node already moved on (a pending permission
+ * owns it, or the attempt finished): nothing is written and the caller must
+ * not fail the node either.
+ */
+export async function parkNodeForHostPressure(args: {
+  db?: Db;
+  runId: string;
+  nodeAttemptId: string;
+}): Promise<"parked" | "not_parked"> {
+  const db = args.db ?? getDb();
+
+  try {
+    const parked = await escalateNodeInterrupt({
+      db,
+      runId: args.runId,
+      actor: { type: "system" },
+      cause: "host_pressure",
+      nodeAttemptId: args.nodeAttemptId,
+    });
+    const [incarnation] = await db
+      .select({ state: runSessionIncarnations.state })
+      .from(runSessionIncarnations)
+      .where(eq(runSessionIncarnations.runId, args.runId))
+      .orderBy(desc(runSessionIncarnations.createdAt))
+      .limit(1);
+
+    log.warn(
+      {
+        runId: args.runId,
+        nodeAttemptId: args.nodeAttemptId,
+        cause: "host_pressure",
+        incarnationState: incarnation?.state ?? null,
+        hitlRequestId: parked.hitlRequestId,
+        resumeHandle: parked.resumeHandle,
+      },
+      "run-host-pressure-parked",
+    );
+
+    return "parked";
+  } catch (err) {
+    if (
+      isMaisterError(err) &&
+      (err.code === "PRECONDITION" || err.code === "CONFLICT")
+    ) {
+      log.info(
+        {
+          runId: args.runId,
+          nodeAttemptId: args.nodeAttemptId,
+          code: err.code,
+          err: err.message,
+        },
+        "host pressure park skipped — the run or node already moved on",
+      );
+
+      return "not_parked";
+    }
+    throw err;
+  }
 }
 
 /**
@@ -421,6 +634,7 @@ export function deriveNodeInterruptOptions(args: {
   // Attempts already closed with `decision='operator_interrupt'` for this run.
   operatorRestartCount: number;
   maxOperatorRestarts: number;
+  cause: NodeInterruptCause;
 }): NodeInterruptOptionMatrix {
   const declared = new Set(args.declaredReworkTargets ?? []);
   const seen = new Set<string>();
@@ -439,7 +653,9 @@ export function deriveNodeInterruptOptions(args: {
 
   return {
     interruptedNodeId: args.interruptedNodeId,
-    defaultOptionId: "restart_node",
+    // ADR-183 amendment 2026-09-28: the host's park kept the ACP session and
+    // resumes the node on its own; restarting would discard that context.
+    defaultOptionId: args.cause === "host_pressure" ? "resume" : "restart_node",
     options: [
       { optionId: "resume", enabled: true, disabledReason: null },
       {
@@ -459,6 +675,7 @@ export function deriveNodeInterruptOptions(args: {
       { optionId: "stop", enabled: true, disabledReason: null },
     ],
     restartTargets,
+    cause: args.cause,
   };
 }
 
@@ -610,6 +827,26 @@ export async function loadNodeInterruptMatrices(args: {
     );
   }
 
+  // ADR-183: the cause rides the request's own schema; every surface reads it
+  // here so none has to thread the row's schema through.
+  const causeRows: Array<{ id: string; schema: unknown }> = await d
+    .select({ id: hitlRequests.id, schema: hitlRequests.schema })
+    .from(hitlRequests)
+    .where(
+      inArray(
+        hitlRequests.id,
+        interrupts.map((pending) => pending.id),
+      ),
+    );
+  const causeById = new Map(
+    causeRows.map((row) => [
+      row.id,
+      (row.schema as { cause?: unknown } | null)?.cause === "host_pressure"
+        ? ("host_pressure" as const)
+        : ("operator" as const),
+    ]),
+  );
+
   for (const pending of interrupts) {
     matrices.set(
       pending.id,
@@ -619,6 +856,7 @@ export async function loadNodeInterruptMatrices(args: {
         declaredReworkTargets: reworkTargetsByNode.get(pending.stepId),
         operatorRestartCount,
         maxOperatorRestarts: maxOperatorRestarts(),
+        cause: causeById.get(pending.id) ?? "operator",
       }),
     );
   }

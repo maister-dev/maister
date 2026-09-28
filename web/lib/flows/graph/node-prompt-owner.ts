@@ -36,6 +36,10 @@ import {
 } from "@/lib/execution-host/session-binding";
 import { agentMessageText } from "@/lib/run-transcript/agent-text";
 import { isTurnLostError } from "@/lib/reconcile-evidence";
+import {
+  HOST_PRESSURED_REASON,
+  isHostPressureFailure,
+} from "@/lib/execution-host/host-pressure";
 import { closeTurnLostAttempt } from "@/lib/runs/turn-lost-boundary";
 import { appendCapped } from "@/lib/flows/capped-text";
 import { isMaisterErrorCode } from "@/lib/errors-core";
@@ -186,7 +190,14 @@ export async function prepareNodePrompt(input: {
   // `isRunRecoverable` refuses. This branch is what makes the sweep's
   // `evidence-applied` SKIP arm safe: it guarantees a lost turn never becomes
   // an applied completion for the continuation worker to act on.
-  const turnLost = outcome.state === "failed" && isTurnLostError(outcome.error);
+  // ADR-183 D-M1: host pressure is classified FIRST — the park owns that
+  // turn, and it is never a lost one.
+  const hostPressured =
+    outcome.state === "failed" && isHostPressureFailure(outcome.error);
+  const turnLost =
+    !hostPressured &&
+    outcome.state === "failed" &&
+    isTurnLostError(outcome.error);
   const completion = turnLost
     ? null
     : await decodeNodePromptCompletion({
@@ -280,6 +291,22 @@ export async function decodeNodePromptCompletion(input: {
   const maxBytes = nodeOutputMaxBytes();
   let stdout = "";
   let sentinel = emptySentinelOutput();
+
+  if (outcome.state === "failed" && isHostPressureFailure(outcome.error))
+    return {
+      version: 1,
+      commandId: input.commandId,
+      promptOrdinal: input.promptOrdinal,
+      result: {
+        ok: false,
+        stdout,
+        vars: {},
+        ...(input.acpSessionId ? { acpSessionId: input.acpSessionId } : {}),
+        errorCode: "EXECUTOR_UNAVAILABLE",
+        reason: HOST_PRESSURED_REASON,
+      },
+      originalOutput: finishSentinelOutput(sentinel, maxBytes),
+    };
 
   if (outcome.state === "succeeded") {
     for await (const event of outcome.events) {

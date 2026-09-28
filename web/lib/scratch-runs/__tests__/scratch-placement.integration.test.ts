@@ -955,3 +955,126 @@ describe("scratch retryable failure keeps the row in the queue (ADR-182 A4)", ()
     });
   }, 90_000);
 });
+
+// ADR-184 amendment 2026-09-28: a turn whose prompt is quarantined while still
+// `accepted` (no terminal evidence — its terminal could not be stored) has no
+// writer left. The turn fails instead of yielding forever: the dialog returns
+// to `WaitingForUser` with the quarantine's typed cause, the row is not resent,
+// and the send answers the typed conflict. The quarantine is seeded as the
+// reducer leaves it (the reducer's own is proven in `commands` and
+// `prompt-host-span-fake`).
+describe("a quarantined scratch turn fails visibly (ADR-184 amendment)", () => {
+  async function acceptedPromptId(runId: string): Promise<string> {
+    const deadline = Date.now() + 30_000;
+
+    for (;;) {
+      const [command] = await db
+        .select({ id: schema.executionCommands.id })
+        .from(schema.executionCommands)
+        .where(
+          and(
+            eq(schema.executionCommands.runId, runId),
+            eq(schema.executionCommands.kind, "session.prompt"),
+            eq(schema.executionCommands.state, "accepted"),
+          ),
+        );
+
+      if (command) return command.id;
+      if (Date.now() > deadline)
+        throw new Error("timed out waiting for the prompt to be accepted");
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+
+  it("the dialog returns to WaitingForUser with CONFLICT and the cause; the row is not resent", async () => {
+    const gen = launchScratchRunStaged(
+      { body: launchBody(), userId: USER_ID },
+      { executionHosts: hosts },
+    );
+    let step = await gen.next();
+
+    while (!step.done) step = await gen.next();
+    const runId: string = step.value.runId;
+
+    // The turn never ends on its own: only the quarantine can end it.
+    fake.setPromptBehavior(() => new Promise(() => {}));
+    try {
+      const sending = sendScratchUserMessage({
+        runId,
+        body: { content: "store me", attachments: [] },
+        executionHosts: hosts,
+      }).then(
+        () => null,
+        (err: unknown) => err,
+      );
+      const commandId = await acceptedPromptId(runId);
+
+      await db
+        .update(schema.executionCommands)
+        .set({
+          applicationState: "poisoned",
+          applicationError: {
+            reason: "prompt_terminal_conflict",
+            phase: "prepare",
+            causeCode: "terminal_unstorable",
+          },
+        })
+        .where(eq(schema.executionCommands.id, commandId));
+
+      expect(await sending).toMatchObject({
+        code: "CONFLICT",
+        details: {
+          reason: "prompt_terminal_conflict",
+          commandId,
+          causeCode: "terminal_unstorable",
+          settled: false,
+        },
+      });
+      const [scratch] = await db
+        .select({
+          dialogStatus: schema.scratchRuns.dialogStatus,
+          errorCode: schema.scratchRuns.errorCode,
+          errorMetadata: schema.scratchRuns.errorMetadata,
+        })
+        .from(schema.scratchRuns)
+        .where(eq(schema.scratchRuns.runId, runId));
+
+      expect(scratch).toEqual({
+        dialogStatus: "WaitingForUser",
+        errorCode: "CONFLICT",
+        errorMetadata: {
+          reason: "prompt_terminal_conflict",
+          causeCode: "terminal_unstorable",
+        },
+      });
+      const [, sent] = await db
+        .select({ delivery: schema.runMessages.delivery })
+        .from(schema.runMessages)
+        .where(
+          and(
+            eq(schema.runMessages.runId, runId),
+            eq(schema.runMessages.role, "user"),
+          ),
+        )
+        .orderBy(schema.runMessages.sequence);
+
+      expect(sent).toEqual({ delivery: "prompted" });
+      const { GET } = await import("@/app/api/scratch-runs/[runId]/route");
+      const detail = await GET(
+        new NextRequest(`http://localhost/api/scratch-runs/${runId}`),
+        { params: Promise.resolve({ runId }) },
+      );
+
+      expect(detail.status).toBe(200);
+      expect((await detail.json()).scratch.errorMetadata).toEqual({
+        reason: "prompt_terminal_conflict",
+        causeCode: "terminal_unstorable",
+      });
+    } finally {
+      fake.setPromptBehavior(async () => ({
+        stopReason: "end_turn",
+        meta: null,
+      }));
+    }
+  }, 90_000);
+});

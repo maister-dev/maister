@@ -257,7 +257,11 @@ export type FakeExecutionHost = {
   // ingested nor projected; release drains them through the same path, each
   // optionally rewritten first. `before` drains only the prefix up to the
   // first matching envelope, which stays held with everything after it. The
-  // floor models an ACKed-and-pruned prefix.
+  // floor models an ACKed-and-pruned prefix: the last deleted sequence, so a
+  // span request with `after` below it answers `replay_floor_lost` and one
+  // from it is served. Like the real host since ADR-184, the floor may sit
+  // inside an open prompt's span — the fake has no span stop either; a
+  // realistic floor never passes the manager's contiguous frontier.
   holdIngest(): void;
   releaseIngest(opts?: {
     tamper?: (envelope: RuntimeEventEnvelope) => RuntimeEventEnvelope;
@@ -2720,11 +2724,15 @@ export async function fakeExecutionHosts(
       } as RuntimeEventEnvelope;
 
       await fake.deliverCanonical(canonical, async (delivered) => {
-        await ingestRuntimeEvent({
+        const ingested = await ingestRuntimeEvent({
           db,
           executionHostId: hostId,
           envelope: delivered,
         });
+
+        // The skip ledger holds it; like the real consumer, which projects only
+        // the runs a batch promoted, there is no run to project it for.
+        if (ingested.disposition === "skipped_unknown_run") return;
         if (delivered.eventType === "runtime_object.available")
           await projectCanonicalRuntimeObjects({ db, runId: delivered.runId });
         await projectExecutionEvents({

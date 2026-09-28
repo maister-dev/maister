@@ -168,7 +168,10 @@ paths:
         The manager supplies `streamId` and an absolute `throughSequence`.
         The host verifies it against its current stream and emitted contiguous
         prefix. Acknowledgement is idempotent; regression returns the current
-        watermark and an ACK never destroys a replay record before its grace.
+        watermark. An ACK makes a row prunable: at the replay grace, or at once
+        while retained rows are at the soft budget (ADR-183) — whether or not
+        the row lies inside an open prompt's span (ADR-184). An unacknowledged
+        row is never pruned.
       operationId: acknowledgeExecutionHostRuntimeEvents
       requestBody:
         required: true
@@ -206,7 +209,10 @@ paths:
         returned (other runs' events included, as on the SSE replay), because
         contiguity and source binding can only be proven over the whole range.
         A page is bounded like the replay (≤ 500 rows, ≤ 1 MiB); `partial` with
-        `nextAfter` means "request again from `nextAfter`". A range the host can
+        `nextAfter` means "request again from `nextAfter`". A span's ACKed
+        prefix may already be pruned while its prompt is open (ADR-184): the
+        manager reads that prefix from its own canonical events and requests
+        only from its own contiguous frontier upward. A range the host can
         no longer or cannot yet serve answers `200 unavailable` with a reason —
         it is never a command outcome. Loopback trusted-admin transport only,
         like `/runtime-events`.
@@ -281,7 +287,7 @@ paths:
                       payloadSchema: maister.session.update.v1
                       payload: {}
                 replayFloorLost:
-                  summary: The range was pruned after its ACK and replay grace.
+                  summary: The range starts below the replay floor (its rows were pruned after their ACK).
                   value:
                     streamId: 3a1f0c2e-5b6d-4e7f-8a9b-0c1d2e3f4a5b
                     after: "40"
@@ -370,7 +376,9 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/RuntimeObjectMetadata" }
         "409":
-          description: Fence, idempotency, or immutable object-state conflict.
+          description: |
+            Fence, idempotency, or immutable object-state conflict.
+            Under outbox pressure (ADR-183) this `new_work` admission is refused `PRECONDITION` `event_outbox_backpressure` with `details.outboxLimit` (ADR-183 amendment 2026-09-28) while unacknowledged rows are at the soft budget, retained rows at the hard budget, or physical state headroom is short; no receipt is written.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
@@ -400,7 +408,7 @@ paths:
           application/json:
             schema: { $ref: "#/components/schemas/RuntimeObjectDeleteCommand" }
       responses:
-        "204": { description: Object is deleted or already absent under the recorded retention policy. }
+        "204": { description: "Object is deleted or already absent under the recorded retention policy. A deletion is a `teardown` admission and is never refused by outbox pressure (ADR-183)." }
   /runtime-objects/{objectId}/content:
     put:
       tags: [execution-host]
@@ -448,6 +456,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/RuntimeObjectMetadata" }
         "413": { description: Upload exceeds the reserved or negotiated fixed size limit. }
+        "409": { description: "Fence, integrity or idempotency conflict; or (ADR-183) the `new_work` admission refused `event_outbox_backpressure` under outbox pressure (unacknowledged rows at soft, retained rows at hard, or physical state headroom short), named by `details.outboxLimit`." }
     get:
       tags: [execution-host]
       summary: Read a single byte range of an opaque runtime object (Implemented — ADR-167)
@@ -508,6 +517,23 @@ paths:
         subscribers, counted since this boot. They are transport telemetry,
         never lifecycle authority; a web tier reading an older host treats them
         as unknown.
+
+        (Implemented — ADR-183) `pressured` is the unacknowledged-lane outbox
+        bit — the manager is behind — and nothing else; runtime-file and
+        physical storage pressure refuse admissions on their own and never set
+        it. `pressure` is the host's current pressure episode (`since`,
+        `unacknowledgedCountAtStart`, `unacknowledgedBytesAtStart`, `episodes`)
+        while `pressured` is true, and `null` otherwise. A web tier reading an
+        older host treats its absence as unknown.
+
+        (Implemented — ADR-183 amendment 2026-09-28) `newWorkRefusedBy` names
+        the first host-wide outbox limit a `session.create` without output
+        bindings or a `session.prompt` would meet right now, in admission order
+        — `physical` (SQLite headroom, recomputed on read), `unacknowledged`
+        (the `pressured` bit), `retained` (retained rows at the hard budget) or
+        `control` (the control partition cannot fund a new producer wallet) —
+        or `null` when it would meet none. The manager's admission fence follows it; a web
+        tier reading an older host falls back to `pressured`.
       operationId: getSupervisorHealth
       parameters:
         - name: includeStream
@@ -554,6 +580,8 @@ paths:
                       oldestUnacknowledgedAgeMs: null
                       subscriberPauses: 0
                       closes: { disconnect: 0, protocol: 0, floor: 0, shutdown: 0 }
+                      pressure: null
+                      newWorkRefusedBy: null
                 pending:
                   summary: A backlog awaiting acknowledgement.
                   value:
@@ -575,6 +603,8 @@ paths:
                       oldestUnacknowledgedAgeMs: 180000
                       subscriberPauses: 12
                       closes: { disconnect: 2, protocol: 0, floor: 0, shutdown: 0 }
+                      pressure: null
+                      newWorkRefusedBy: null
                 fullyAcknowledged:
                   summary: Steady state — age is null exactly at zero backlog.
                   value:
@@ -596,6 +626,58 @@ paths:
                       oldestUnacknowledgedAgeMs: null
                       subscriberPauses: 3
                       closes: { disconnect: 1, protocol: 0, floor: 0, shutdown: 0 }
+                      pressure: null
+                      newWorkRefusedBy: null
+                pressured:
+                  summary: The manager is behind — unacknowledged rows reached the soft budget (ADR-183).
+                  value:
+                    status: ready
+                    host:
+                      hostKey: 1d243f70-235f-47bd-804b-33aa3c8c78db
+                      bootId: 2f6a1c58-0a1e-4a9b-9f0a-2b7c6d4e5f10
+                      protocolVersion: 1
+                    version: 0.1.0
+                    uptimeMs: 3600000
+                    checkedAt: "2026-09-26T09:00:00.000Z"
+                    sessions: { live: 3, exited: 0, crashed: 0 }
+                    stream:
+                      streamId: 8f1c2d70-1f4a-4b60-9a2e-6c0d3b7e5a11
+                      headSequence: "181204"
+                      unacknowledgedCount: 80012
+                      retainedCount: 96431
+                      pressured: true
+                      oldestUnacknowledgedAgeMs: 212000
+                      subscriberPauses: 41
+                      closes: { disconnect: 1, protocol: 0, floor: 0, shutdown: 0 }
+                      pressure:
+                        since: "2026-09-26T08:57:10.000Z"
+                        unacknowledgedCountAtStart: 80000
+                        unacknowledgedBytesAtStart: 101234567
+                        episodes: 2
+                      newWorkRefusedBy: unacknowledged
+                refusingPhysical:
+                  summary: Not pressured, yet refusing new work — SQLite headroom is short (ADR-183 amendment 2026-09-28).
+                  value:
+                    status: ready
+                    host:
+                      hostKey: 1d243f70-235f-47bd-804b-33aa3c8c78db
+                      bootId: 2f6a1c58-0a1e-4a9b-9f0a-2b7c6d4e5f10
+                      protocolVersion: 1
+                    version: 0.1.0
+                    uptimeMs: 3600000
+                    checkedAt: "2026-09-28T09:00:00.000Z"
+                    sessions: { live: 2, exited: 0, crashed: 0 }
+                    stream:
+                      streamId: 8f1c2d70-1f4a-4b60-9a2e-6c0d3b7e5a11
+                      headSequence: "181204"
+                      unacknowledgedCount: 64
+                      retainedCount: 20480
+                      pressured: false
+                      oldestUnacknowledgedAgeMs: 900
+                      subscriberPauses: 0
+                      closes: { disconnect: 0, protocol: 0, floor: 0, shutdown: 0 }
+                      pressure: null
+                      newWorkRefusedBy: physical
         "503":
           description: |
             Runtime storage failed, or the opt-in stream snapshot could not be
@@ -778,6 +860,10 @@ paths:
           description: |
             Fence refusal (`host_mismatch`, `assignment_mismatch`) or path
             rejection (`workspace_rejected` + `rule`); stale epoch → `FENCED`.
+            Under outbox pressure (ADR-183) this `new_work` admission is
+            refused `PRECONDITION` `event_outbox_backpressure` (unacknowledged
+            rows at soft, retained rows at hard, or physical state headroom
+            short — `details.outboxLimit` names which); no receipt is written.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
@@ -886,7 +972,9 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
         "409":
-          description: Fence refusal.
+          description: |
+            Fence refusal. A release is a `teardown` admission and is never
+            refused by outbox pressure (ADR-183).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
@@ -1102,7 +1190,12 @@ paths:
             (`unknown_workspace` / `workspace_released`), a stale epoch
             (`FENCED`), a missing or cross-assignment capability/output object,
             a missing envelope (`missing_envelope`), or a legacy path field
-            (`legacy_field` + `details.field`).
+            (`legacy_field` + `details.field`). Under outbox pressure
+            (ADR-183) the `producer` admission is refused `PRECONDITION`
+            `event_outbox_backpressure` (unacknowledged rows at soft, retained
+            rows at hard, physical state headroom short, or the producer wallet
+            unfundable — `details.outboxLimit` `unacknowledged` / `retained` /
+            `physical` / `control`); no receipt is written.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
@@ -1114,6 +1207,12 @@ paths:
                     code: "PRECONDITION"
                     message: "unknown execution workspace"
                     details: { reason: "unknown_workspace" }
+                outboxControl:
+                  summary: The control partition cannot fund a new producer wallet (ADR-183 amendment 2026-09-28).
+                  value:
+                    code: "PRECONDITION"
+                    message: "runtime event control capacity cannot fund another producer wallet"
+                    details: { reason: "event_outbox_backpressure", outboxLimit: "control" }
                 fenced:
                   value:
                     code: "FENCED"
@@ -1224,10 +1323,33 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
         "409":
-          description: Invalid envelope, fenced/stale assignment, unavailable session, or restart-lost accepted turn.
+          description: |
+            Invalid envelope, fenced/stale assignment, unavailable session, or
+            restart-lost accepted turn. Under outbox pressure (ADR-183) this
+            `new_work` admission is refused `PRECONDITION`
+            `event_outbox_backpressure` (unacknowledged rows at soft, retained
+            rows at hard, or physical state headroom short — named by
+            `details.outboxLimit`); no receipt is written. Not a 409: a prompt already accepted (202) whose session
+            the host checkpoints mid-turn (the producer pause bound) settles
+            its receipt and `session.command` completion `rejected` with
+            `code: ACP_PROTOCOL` and `details: {reason: session_checkpointed,
+            cause: outbox_pressure}`.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+              examples:
+                outboxUnacknowledged:
+                  summary: The manager is behind — unacknowledged rows at the soft budget (ADR-183 amendment 2026-09-28).
+                  value:
+                    code: "PRECONDITION"
+                    message: "runtime event outbox unacknowledged rows are above the command admission soft limit or awaiting its low watermark"
+                    details: { reason: "event_outbox_backpressure", outboxLimit: "unacknowledged" }
+                outboxPhysical:
+                  summary: SQLite headroom is short (ADR-183 amendment 2026-09-28).
+                  value:
+                    code: "PRECONDITION"
+                    message: "physical runtime state capacity is reserved for admitted producer work"
+                    details: { reason: "event_outbox_backpressure", outboxLimit: "physical" }
         "500":
           description: The host could not durably record admission or terminal evidence.
           content:
@@ -1288,11 +1410,24 @@ paths:
           description: |
             (Implemented — ADR-166) A missing envelope (`missing_envelope`), a
             fence refusal (`host_mismatch`, `run_mismatch`,
-            `assignment_mismatch`), or a stale epoch (`FENCED`).
+            `assignment_mismatch`), or a stale epoch (`FENCED`). A delete is a
+            `teardown` admission, live session or not: outbox pressure never
+            refuses it (ADR-183). Its only `event_outbox_backpressure`
+            refusals come from the producer wallet itself (`details.outboxLimit:
+            wallet`) — a teardown of the same wallet already in progress,
+            while pressured an already-admitted step under a new command id
+            (replay the original id), or a wallet whose credit cannot fund one
+            more step.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
               examples:
+                outboxWallet:
+                  summary: A teardown of the same producer wallet is already in progress (ADR-183 amendment 2026-09-28).
+                  value:
+                    code: "PRECONDITION"
+                    message: "a producer teardown command is already in progress"
+                    details: { reason: "event_outbox_backpressure", outboxLimit: "wallet" }
                 fenced:
                   value:
                     code: "FENCED"
@@ -1408,7 +1543,11 @@ paths:
             Body validation failed (unknown keys); or (Implemented — ADR-166) a
             fence refusal / stale epoch (`FENCED`). A checkpoint arriving under
             a HIGHER epoch than the live session's evicts that session first
-            (`session.exited {reason: fenced}`), then executes.
+            (`session.exited {reason: fenced}`), then executes. A checkpoint is
+            a `teardown` admission, live session or not: outbox pressure never
+            refuses it (ADR-183); its only `event_outbox_backpressure`
+            refusals come from the producer wallet itself (`outboxLimit:
+            wallet`, see the delete route).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
@@ -1483,7 +1622,10 @@ paths:
             `assignment_mismatch`), or a stale epoch (`FENCED`). A cancel
             arriving under a HIGHER epoch than the live session's evicts that
             session first (`session.exited {reason: fenced}`), then acks
-            `cancelled: false`.
+            `cancelled: false`. A cancel is a `teardown` admission, live
+            session or not: outbox pressure never refuses it (ADR-183); its
+            only `event_outbox_backpressure` refusals come from the producer
+            wallet itself (`outboxLimit: wallet`, see the delete route).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
@@ -1571,7 +1713,12 @@ paths:
             Body validation failure (`PRECONDITION`); or (Implemented — ADR-166)
             a missing envelope (`missing_envelope`), a fence refusal
             (`host_mismatch`, `run_mismatch`, `assignment_mismatch`), or a
-            stale epoch (`FENCED`).
+            stale epoch (`FENCED`). An answer is a `resolve` admission
+            (ADR-183): it is admitted while unacknowledged rows are at the soft
+            budget and refused `PRECONDITION` `event_outbox_backpressure` only
+            while retained rows are at the hard budget or physical storage is
+            short (`details.outboxLimit` `retained` / `physical`); no receipt is
+            written.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
@@ -1724,7 +1871,11 @@ paths:
             retried); a session that is not live, a body validation failure or
             a missing envelope (`PRECONDITION`); a fence refusal
             (`host_mismatch`, `run_mismatch`, `assignment_mismatch`); or a
-            stale epoch (`FENCED`).
+            stale epoch (`FENCED`). A steer is a `resolve` admission (ADR-183):
+            admitted under soft outbox pressure, refused `PRECONDITION`
+            `event_outbox_backpressure` only at the hard budget or when
+            physical storage is short (`details.outboxLimit` `retained` /
+            `physical`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
@@ -2250,7 +2401,7 @@ components:
     SupervisorEventStreamHealth:
       type: object
       additionalProperties: false
-      required: [streamId, headSequence, unacknowledgedCount, retainedCount, pressured, oldestUnacknowledgedAgeMs, subscriberPauses, closes]
+      required: [streamId, headSequence, unacknowledgedCount, retainedCount, pressured, oldestUnacknowledgedAgeMs, subscriberPauses, closes, pressure, newWorkRefusedBy]
       properties:
         streamId: { type: string, minLength: 1 }
         headSequence:
@@ -2259,7 +2410,13 @@ components:
           pattern: "^(0|[1-9][0-9]{0,18})$"
         unacknowledgedCount: { type: integer, minimum: 0, maximum: 9007199254740991 }
         retainedCount: { type: integer, minimum: 0, maximum: 9007199254740991 }
-        pressured: { type: boolean }
+        pressured:
+          description: |
+            Unacknowledged rows (plus reserved frames) reached the soft budget
+            and have not yet fallen below the low budget in both lanes — the
+            manager is behind (ADR-183). Retained rows, runtime-file pressure
+            and physical storage never set it.
+          type: boolean
         oldestUnacknowledgedAgeMs:
           type: integer
           nullable: true
@@ -2303,6 +2460,60 @@ components:
               type: integer
               minimum: 0
               maximum: 9007199254740991
+        pressure:
+          description: |
+            The host's current outbox-pressure episode (ADR-183, host SQLite
+            v14), `null` exactly while `pressured` is false. Required from the
+            host; a web tier reading an older host treats its absence as
+            unknown.
+          type: object
+          nullable: true
+          additionalProperties: false
+          required: [since, unacknowledgedCountAtStart, unacknowledgedBytesAtStart, episodes]
+          properties:
+            since:
+              description: When the episode began (the 0→1 flip).
+              type: string
+              format: date-time
+            unacknowledgedCountAtStart:
+              type: integer
+              minimum: 0
+              maximum: 9007199254740991
+            unacknowledgedBytesAtStart:
+              type: integer
+              minimum: 0
+              maximum: 9007199254740991
+            episodes:
+              description: Episodes completed (1→0 flips) since the store reached schema v14; a first episode reads 0.
+              type: integer
+              minimum: 0
+              maximum: 9007199254740991
+        newWorkRefusedBy:
+          description: |
+            (Implemented — ADR-183 amendment 2026-09-28) The first host-wide
+            outbox limit a `session.create` without output bindings or a
+            `session.prompt` would meet now, in the order an admission checks
+            them — `physical` (SQLite headroom, recomputed on read),
+            `unacknowledged` (`pressured`), `retained` (retained rows at the
+            hard budget), `control` (the control partition cannot fund a new
+            producer wallet) — or `null` when it would meet none. Per-wallet limits and
+            runtime-file pressure (`503 runtime_storage_pressure`) are not
+            reported. Required from the host; a web tier reading an older host
+            falls back to `pressured`.
+          type: string
+          nullable: true
+          enum: [unacknowledged, retained, physical, control, null]
+    OutboxLimit:
+      type: string
+      enum: [unacknowledged, retained, physical, control, wallet]
+      description: |
+        (Implemented — ADR-183 amendment 2026-09-28) Which outbox limit refused
+        or would refuse an admission: `unacknowledged` — unacknowledged rows at
+        the soft budget (the manager is behind); `retained` — retained rows at
+        the hard budget; `physical` — SQLite headroom is short; `control` — the
+        control partition cannot fund a new producer wallet; `wallet` — a
+        teardown's own wallet is serialized or out of credit (a per-command
+        refusal, never reported by health).
     SupervisorDiagnosticsResponse:
       type: object
       required: [status, version, checkedAt, adapters, envRefs]
@@ -3830,6 +4041,14 @@ components:
           type: string
           enum: [promptRequired, startedNewTurn, failed, error]
           description: (`steer_no_active_turn`) What the adapter answered instead of `injected`; absent when the host refused before the ACP call.
+        cause:
+          type: string
+          enum: [outbox_pressure]
+          description: (Implemented — ADR-183, with `session_checkpointed` on a prompt rejection) The host's own pause bound checkpointed the session while the prompt ran; the manager parks the run instead of failing it.
+        outboxLimit:
+          allOf:
+            - $ref: "#/components/schemas/OutboxLimit"
+          description: (Implemented — ADR-183 amendment 2026-09-28) Present on every `event_outbox_backpressure` refusal; names the limit that refused it. The manager closes its admission fence for every value except `wallet`.
     SupervisorErrorBody:
       type: object
       required: [code, message]

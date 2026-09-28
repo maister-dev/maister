@@ -85,6 +85,12 @@ not restated here).
   steer-mode message to a `NeedsInputIdle` run finds no running turn and is
   queued
   ([steering contract](execution-prompt-lifecycle.md#steering-a-running-turn-implemented--adr-182)).
+  A message turn whose prompt the execution host parked under outbox pressure
+  (the rejection names `session_checkpointed` with `cause: "outbox_pressure"`)
+  is superseded the same way — its successor keeps the parent's variant and
+  text, keyed `message:requeue:<turnId>` — and the run parks through the agent
+  park; a parked `initial`/`resume` generation is closed `applied` with no
+  successor and repeated by the resume generation (Implemented — ADR-183).
 - **`agents`** (Implemented) — catalog projection over
   `maister-agents/<stem>.md` inside the providing package's NEWEST Installed
   revision: `{ id (PK, package-qualified <packageName>:<stem>), package_name
@@ -755,6 +761,44 @@ flowchart TD
   ADR-106.)*
 - **Agent budget full** → run enters `Pending` with a per-kind queue position; the
   flow pool is unaffected.
+- **Execution host pressured while an agent turn runs** → the host checkpoints the
+  paused producer (`cause: "outbox_pressure"`) and rejects the prompt
+  `ACP_PROTOCOL {reason: "session_checkpointed", cause: "outbox_pressure"}`. In
+  the same transaction as the ledger write (and only while the run is
+  `Running`), the owner application settles the turn by variant — a message
+  (`live_message` / `persistent_message`) is superseded by a successor carrying
+  the SAME variant and text (`logical_key = message:requeue:<turnId>`); an
+  `initial` / `resume` generation is closed `applied` with no successor, and the
+  resume generation repeats it on the same ACP session — and parks the run
+  through `applyAgentPark(tx, runId, {cause: "host_pressure"})` —
+  `NeedsInputIdle`, `resume_requested_at` set, assignment released `parked` —
+  for one-shot and persistent runs alike; never `Failed{agent_prompt_failed}`.
+  `rework` and `consensus_draft` turns keep their existing failure settlement:
+  their input is not the agent's base prompt.
+  Once the host-pressure fence lifts, the agent continuation worker claims it
+  through `claimAgentResumeSlot` and the park-recovery branch binds the
+  successor to `session/resume` on the same ACP session. The message is
+  therefore delivered **at least once** (as ADR-182 EDGE-STR-09); a same-key
+  retry of the superseded message answers with the successor. A dispatch the host
+  refused for outbox pressure supersedes a claimed message turn with the same
+  successor and parks the run; a claimed generation turn cannot be repeated
+  from a refused dispatch (the resume invariant needs an applied predecessor),
+  so it keeps the create-failure settlement — `Failed
+  {agent_session_create_failed}`, whether the host refused its workspace
+  adoption or its create — reachable only in the W9 window, since the refusal
+  itself sets the pressure record and, since the ADR-183 amendment of
+  2026-09-28, only a health sample reporting `newWorkRefusedBy: null` lifts
+  the fence again, so the fence never reopens into a host that still refuses.
+  *(Implemented — ADR-183, recovery window W8.)*
+- **The turn's prompt is quarantined while still `accepted`** — its terminal
+  event could not be stored (`execution_event_skips` `payload_unstorable`,
+  `causeCode: "terminal_unstorable"`) or its receipt disagreed → the wait reads
+  the command as final, not pending (`AgentPromptQuarantined`), and the driver
+  that meets it — issuing or re-driving — stops the session, finalizes the run
+  `Crashed` with reason `owner_poisoned` and closes the turn `superseded`,
+  instead of a `Running` turn nobody applies. A stop the host cannot confirm,
+  or a fenced one, leaves the run to the next driver. A consensus draft ends
+  the same way (Implemented — ADR-184 amendment 2026-09-28).
 - **Crash between claim and spawn** → the run row is `Pending`;
   `promoteNextPending(kind='agent')` on the next tick recovers it.
 - **Human edits the parent checkout during a `repo_read` run** → possible
