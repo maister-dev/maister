@@ -50,7 +50,7 @@ export default async function PortfolioPage(): Promise<ReactElement> {
           </div>
         </div>
         {!isEmpty ? (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Link
               className="inline-flex items-center gap-2 rounded-full bg-amber px-4 h-[34px] text-[13px] font-semibold text-white shadow-[0_8px_24px_-10px_var(--amber)] transition-[transform,background] hover:-translate-y-px hover:bg-amber-2"
               href="/scratch-runs/new"

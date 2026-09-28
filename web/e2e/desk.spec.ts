@@ -717,31 +717,61 @@ test("E2E-NAV-08 a task in flight and blocked on a human is ONE object", async (
 // held on the Desk would be a fix for one page.
 const PRIMARY_NAV = 'nav[aria-label="Primary navigation"]';
 
+// Both locales, because RU labels run longer: the `/projects` toolbar fit EN
+// with 1px to spare on a host with narrow fonts and pushed the page to 463px
+// in RU there. The nav's accessible name is localized along with the rest.
+const PRIMARY_NAV_LABEL = {
+  en: "Primary navigation",
+  ru: "Основная навигация",
+} as const;
+
 test("E2E-NAV-07 the header fits a 390px viewport on every route", async ({
   page,
+  context,
+  baseURL,
 }) => {
+  if (!baseURL) throw new Error("Playwright baseURL is required");
+
   await page.setViewportSize({ width: 390, height: 844 });
 
-  for (const route of ["/", "/work", "/inbox", "/projects"]) {
-    await page.goto(route);
-    await expect(page.locator(PRIMARY_NAV), route).toBeVisible();
+  for (const [locale, label] of Object.entries(PRIMARY_NAV_LABEL)) {
+    await context.addCookies([
+      { name: "NEXT_LOCALE", value: locale, url: baseURL },
+    ]);
 
-    const measured = await page.evaluate((selector) => {
-      const root = document.documentElement;
-      const header = document.querySelector(selector);
+    const nav = `nav[aria-label="${label}"]`;
 
-      return {
-        document: root.scrollWidth,
-        client: root.clientWidth,
-        nav: header ? header.scrollWidth : -1,
-        viewport: window.innerWidth,
-      };
-    }, PRIMARY_NAV);
+    for (const route of ["/", "/work", "/inbox", "/projects"]) {
+      await page.goto(route);
+      await expect(page.locator(nav), `${locale} ${route}`).toBeVisible();
+      // The nav is layout chrome and paints before the page; a page React has
+      // not revealed yet is parked `display: none` and adds no width, so
+      // measuring then passes on the loading skeleton.
+      await expect(
+        page.getByRole("main").getByRole("heading", { level: 1 }),
+        `${locale} ${route} revealed`,
+      ).toBeVisible();
 
-    expect(measured.nav, `${route} nav`).toBeLessThanOrEqual(measured.viewport);
-    expect(measured.document, `${route} document`).toBeLessThanOrEqual(
-      measured.client + 1,
-    );
+      const measured = await page.evaluate((selector) => {
+        const root = document.documentElement;
+        const header = document.querySelector(selector);
+
+        return {
+          document: root.scrollWidth,
+          client: root.clientWidth,
+          nav: header ? header.scrollWidth : -1,
+          viewport: window.innerWidth,
+        };
+      }, nav);
+
+      expect(measured.nav, `${locale} ${route} nav`).toBeLessThanOrEqual(
+        measured.viewport,
+      );
+      expect(
+        measured.document,
+        `${locale} ${route} document`,
+      ).toBeLessThanOrEqual(measured.client + 1);
+    }
   }
 });
 
