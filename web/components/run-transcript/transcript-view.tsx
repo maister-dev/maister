@@ -418,6 +418,7 @@ export function TranscriptView({
   userLabel,
   assistantLabel,
   renderAttachments,
+  renderCustomMessage,
   renderFlowActionResult,
 }: {
   messages: TranscriptMessage[];
@@ -426,6 +427,7 @@ export function TranscriptView({
   userLabel?: string | null;
   assistantLabel?: string | null;
   renderAttachments?: (messageId: string) => ReactElement | null;
+  renderCustomMessage?: (messageId: string) => ReactElement | null;
   renderFlowActionResult?: (
     payload: ScratchFlowActionResultPayload,
   ) => ReactElement | null;
@@ -484,6 +486,9 @@ export function TranscriptView({
     }
 
     const message = block.message;
+    const customMessage = renderCustomMessage?.(message.id);
+
+    if (customMessage) return <div key={message.id}>{customMessage}</div>;
     const parsed = parseScratchMessageContent(message.role, message.content);
     const attachments = renderAttachments?.(message.id) ?? null;
 

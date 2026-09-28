@@ -7,11 +7,13 @@ import { getSessionUser } from "@/lib/authz";
 import { AcpRunnersPanel } from "@/components/settings/acp-runners-panel";
 import { AdapterSupportPanel } from "@/components/settings/adapter-support-panel";
 import { BrainSettingsPanel } from "@/components/settings/brain-settings-panel";
+import { LibrarianSettingsCard } from "@/components/settings/librarian-settings-card";
 import { WebhooksPanel } from "@/components/settings/webhooks-panel";
 import { getBrainSettings } from "@/lib/brain/settings";
 import { reconcilePlatformRunners } from "@/lib/acp-runners/native-defaults";
 import { platformRunnerPresetRows } from "@/lib/acp-runners/presets";
 import { getAdapterSupport } from "@/lib/acp-runners/schema";
+import { librarianSettingsView } from "@/lib/librarian/settings-view";
 import { getDb } from "@/lib/db/client";
 import { platformAcpRunners, platformRuntimeSettings } from "@/lib/db/schema";
 import {
@@ -144,6 +146,7 @@ export default async function SettingsPage(): Promise<ReactElement> {
                 runners={runtime.runners}
                 unavailableAdapters={unavailableAdapters}
               />
+              <LibrarianSettingsCard view={runtime.librarian} />
               <WebhooksPanel />
               <BrainSettingsPanel settings={runtime.brainSettings} />
             </div>
@@ -185,5 +188,6 @@ async function loadPlatformRuntimeView(
     presets: platformRunnerPresetRows(),
     runners,
     brainSettings,
+    librarian: librarianSettingsView(settingsRows[0] ?? null, runners),
   };
 }

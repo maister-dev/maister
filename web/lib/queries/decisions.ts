@@ -21,6 +21,7 @@ import type {
   FlaggedDecisionItem,
 } from "@/lib/queries/decision-sources";
 import type { CrossProjectHitlItem } from "@/lib/queries/portfolio";
+import type { RecipientClarification } from "@/lib/queries/recipient-clarifications";
 import type { WorkStage } from "@/lib/work/stage";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
@@ -36,6 +37,7 @@ import {
   listFlaggedForProjects,
 } from "@/lib/queries/decision-sources";
 import { getCrossProjectHitlInbox } from "@/lib/queries/portfolio";
+import { listOpenClarificationsForRecipient } from "@/lib/queries/recipient-clarifications";
 import {
   decisionQueueGrants,
   getActionableProjectIds,
@@ -54,6 +56,7 @@ export const DECISION_KINDS = [
   "crashed",
   "promotable",
   "flagged",
+  "clarification",
 ] as const;
 
 export type DecisionKind = (typeof DECISION_KINDS)[number];
@@ -88,7 +91,11 @@ export type DecisionItem =
   | (DecisionBase & { kind: "hitl"; hitl: CrossProjectHitlItem })
   | (DecisionBase & { kind: "crashed"; crashed: CrashedDecisionItem })
   | (DecisionBase & { kind: "promotable"; promotable: ClassifiedPromotable })
-  | (DecisionBase & { kind: "flagged"; flagged: FlaggedDecisionItem });
+  | (DecisionBase & { kind: "flagged"; flagged: FlaggedDecisionItem })
+  | (DecisionBase & {
+      kind: "clarification";
+      clarification: RecipientClarification;
+    });
 
 export interface DecisionsQueue {
   items: DecisionItem[];
@@ -121,6 +128,7 @@ const NON_HITL_RANK = {
   crashed: CRITICALITY_RANK.high,
   promotable: CRITICALITY_RANK.medium,
   flagged: CRITICALITY_RANK.low,
+  clarification: CRITICALITY_RANK.medium,
 } as const satisfies Record<Exclude<DecisionKind, "hitl">, number>;
 
 export function decisionRank(
@@ -162,6 +170,7 @@ const STAGE_BY_KIND = {
   crashed: "Crashed",
   promotable: "Review",
   flagged: "Held",
+  clarification: "WaitingOnHuman",
 } as const satisfies Record<DecisionKind, WorkStage>;
 
 function isCriticality(value: string | null): value is DecisionCriticality {
@@ -199,7 +208,7 @@ export async function computeDecisionsQueue(
 
   if (projectIds.length === 0) return { items: [], count: 0 };
 
-  const [projectRows, hitlInbox, promotable, crashed, flagged] =
+  const [projectRows, hitlInbox, promotable, crashed, flagged, clarifications] =
     await Promise.all([
       client
         .select({ id: projects.id, slug: projects.slug, name: projects.name })
@@ -213,6 +222,11 @@ export async function computeDecisionsQueue(
       listPromotableForProjects(projectIds, { db: client }),
       listCrashedForProjects(projectIds, { db: client }),
       listFlaggedForProjects(projectIds, { db: client }),
+      listOpenClarificationsForRecipient(
+        userId,
+        projectIds,
+        client as ReturnType<typeof getDb>,
+      ),
     ]);
   const projectById = new Map(projectRows.map((row) => [row.id, row]));
 
@@ -289,6 +303,23 @@ export async function computeDecisionsQueue(
         flagged: item,
       }),
     ),
+    ...clarifications.map(
+      (item): DecisionItem => ({
+        kind: "clarification",
+        stage: STAGE_BY_KIND.clarification,
+        id: `clarification:${item.id}`,
+        projectId: item.projectId,
+        projectSlug: item.projectSlug,
+        projectName: item.projectName,
+        taskId: item.taskId,
+        taskKey: item.taskKey,
+        taskTitle: item.taskTitle,
+        runId: null,
+        criticality: null,
+        since: item.createdAt,
+        clarification: item,
+      }),
+    ),
   ];
 
   // ADR-169 D5: a task held by a blocking relation looks like it needs a human
@@ -303,6 +334,7 @@ export async function computeDecisionsQueue(
   const items = unfiltered
     .filter(
       (item) =>
+        item.kind === "clarification" ||
         item.taskId === null ||
         (blockersByTask.get(item.taskId)?.length ?? 0) === 0,
     )
@@ -316,6 +348,7 @@ export async function computeDecisionsQueue(
       promotableCount: promotable.length,
       crashedCount: crashed.length,
       flaggedCount: flagged.length,
+      clarificationCount: clarifications.length,
       blockedOut: unfiltered.length - items.length,
       count: items.length,
       elapsedMs: Date.now() - startedAt,

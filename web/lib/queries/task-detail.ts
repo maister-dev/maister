@@ -50,6 +50,7 @@ export type TimelineItem =
       id: string;
       body: string;
       actor: ActorDTO;
+      via?: "librarian";
       createdAt: Date;
       mentionedAgents?: TimelineMentionedAgent[];
     }
@@ -95,6 +96,7 @@ export function interleaveTimeline(
     id: string;
     body: string;
     actor: ActorDTO;
+    via?: "librarian";
     createdAt: Date;
   }>,
   activity: Array<{
@@ -310,6 +312,7 @@ export async function getTaskDetail(
     body: string;
     actorType: string;
     actorId: string | null;
+    viaOperationId: string | null;
     createdAt: Date;
   }>;
   const activityRows = (await db
@@ -332,6 +335,7 @@ export async function getTaskDetail(
       id: c.id,
       body: c.body,
       actor: actorDTO(c, labels),
+      ...(c.viaOperationId ? { via: "librarian" as const } : {}),
       createdAt: c.createdAt,
     })),
     activityRows.map((a) => ({

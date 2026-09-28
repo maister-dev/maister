@@ -18,6 +18,7 @@ import {
   resolveProjectTaskByNumber,
   resolveTaskByKeyRef,
 } from "@/lib/social/task-lookup";
+import { tokenAuditIdentity } from "@/lib/tokens/audit";
 import {
   handleExt,
   httpStatusForExtCode,
@@ -102,9 +103,8 @@ async function refuseCrossProjectTarget(
   const auditRefusal = (statusCode: number) =>
     recordRequiredTokenAudit(
       {
-        tokenId: ctx.actor.tokenId,
+        ...tokenAuditIdentity(ctx.actor),
         projectId: targetProjectId,
-        actorLabel: ctx.actor.actorLabel,
         scopeUsed: audit.scopeUsed,
         endpoint: audit.endpoint,
         method: audit.method,
@@ -161,7 +161,7 @@ async function refuseCrossProjectTarget(
     );
   }
 
-  if (ctx.actor.tokenKind === "user" && ctx.actor.ownerUserId !== null) {
+  if ((ctx.actor.tokenKind === "user" || ctx.actor.tokenKind === "librarian") && ctx.actor.ownerUserId !== null) {
     try {
       await requireProjectActionForUser(
         ctx.actor.ownerUserId,
@@ -240,7 +240,7 @@ function makeCounterpartAuthorizer(
       // project, so a foreign counterpart is always redacted for it.
       if (ctx.actor.projectId !== null) return false;
 
-      if (ctx.actor.tokenKind === "user" && ctx.actor.ownerUserId) {
+      if ((ctx.actor.tokenKind === "user" || ctx.actor.tokenKind === "librarian") && ctx.actor.ownerUserId) {
         try {
           await requireProjectActionForUser(
             ctx.actor.ownerUserId,
@@ -293,6 +293,7 @@ export async function GET(
     {
       slug,
       scopeLabel: "relations:read",
+      admitLibrarian: true,
       endpoint: ENDPOINT_RELATIONS_GET,
       method: "GET",
       db,
@@ -351,9 +352,15 @@ async function handleMutation(
     {
       slug,
       scopeLabel,
+      admitLibrarian: true,
       endpoint,
       method,
       successAuditInWork: true,
+      idempotency: {
+        kind: mode === "add" ? "relation_add" : "relation_remove",
+        target: { slug, taskId },
+        parseBody: async (request) => opBodySchema.parse(await request.json()),
+      },
       db,
     },
     async (ctx) => {
@@ -422,6 +429,7 @@ async function handleMutation(
         kind: body.kind,
         toTaskId: to.task.id,
         actor,
+        viaOperationId: ctx.operationId,
         ...(mode === "remove" && reachAgentId !== null
           ? {
               onlyAuthoredBy: {
@@ -439,32 +447,39 @@ async function handleMutation(
               ? await addTaskRelation(input, tx)
               : await removeTaskRelation(input, tx);
 
+          const response = mode === "add"
+            ? { ok: true, created: "created" in outcome && outcome.created }
+            : { ok: true, removed: "removed" in outcome && outcome.removed };
+
           await recordRequiredTokenAudit(
             {
-              tokenId: ctx.actor.tokenId,
+              ...tokenAuditIdentity(ctx.actor),
               projectId: ctx.projectId,
-              actorLabel: ctx.actor.actorLabel,
               scopeUsed: scopeLabel,
               endpoint,
               method,
               result: "ok",
               statusCode: mode === "add" ? 201 : 200,
+              operationId: ctx.operationId,
+              operation: ctx.operationId
+                ? { id: ctx.operationId, result: { statusCode: mode === "add" ? 201 : 200, body: response } }
+                : undefined,
             },
             tx,
           );
 
-          return outcome;
+          return response;
         });
 
         if (mode === "add") {
           return NextResponse.json(
-            { ok: true, created: (result as { created: boolean }).created },
+            result,
             { status: 201 },
           );
         }
 
         return NextResponse.json(
-          { ok: true, removed: (result as { removed: boolean }).removed },
+          result,
           { status: 200 },
         );
       } catch (err) {

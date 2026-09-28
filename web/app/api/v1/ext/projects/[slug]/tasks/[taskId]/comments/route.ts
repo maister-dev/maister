@@ -13,6 +13,7 @@ import {
   listTaskComments,
   toCommentDTOs,
 } from "@/lib/social/comments";
+import { tokenAuditIdentity } from "@/lib/tokens/audit";
 import {
   handleExt,
   httpStatusForExtCode,
@@ -71,6 +72,7 @@ export async function GET(
     {
       slug,
       scopeLabel: "comments:read",
+      admitLibrarian: true,
       endpoint: ENDPOINT_COMMENTS_GET,
       method: "GET",
       db,
@@ -114,9 +116,15 @@ export async function POST(
     {
       slug,
       scopeLabel: "comments:create",
+      admitLibrarian: true,
       endpoint: ENDPOINT_COMMENTS_POST,
       method: "POST",
       successAuditInWork: true,
+      idempotency: {
+        kind: "comment_create",
+        target: { slug, taskId },
+        parseBody: async (request) => postBodySchema.parse(await request.json()),
+      },
       db,
     },
     async (ctx) => {
@@ -154,6 +162,7 @@ export async function POST(
               taskId,
               body: body.body,
               actor,
+              viaOperationId: ctx.operationId,
               // ADR-156: server-derived from the deterministic
               // `agent-run:<runId>` token name, never a request field — and
               // existence-checked, or a token outliving its run row FKs the
@@ -169,38 +178,45 @@ export async function POST(
                       tokenId: ctx.actor.tokenId,
                     },
                   }
-                : {}),
+                : ctx.operationId
+                  ? { activityPayloadExtra: { via: "librarian", operationId: ctx.operationId } }
+                  : {}),
             },
             tx,
           );
 
+          const [comment] = await toCommentDTOs([result.comment], tx);
+          const response = {
+            comment,
+            ...(result.mentionedAgents.length > 0
+              ? { mentionedAgents: result.mentionedAgents }
+              : {}),
+          };
+
           await recordRequiredTokenAudit(
             {
-              tokenId: ctx.actor.tokenId,
+              ...tokenAuditIdentity(ctx.actor),
               projectId: ctx.projectId,
-              actorLabel: ctx.actor.actorLabel,
               scopeUsed: "comments:create",
               endpoint: ENDPOINT_COMMENTS_POST,
               method: "POST",
               result: "ok",
               statusCode: 201,
+              operationId: ctx.operationId,
+              operation: ctx.operationId
+                ? { id: ctx.operationId, result: { statusCode: 201, body: response } }
+                : undefined,
             },
             tx,
           );
 
-          return result;
+          return response;
         });
-        const [comment] = await toCommentDTOs([added.comment], db);
 
         // (ADR-151) Same response contract as the session route — the
         // assistant-over-MCP is a first-class author of summoning comments.
         return NextResponse.json(
-          {
-            comment,
-            ...(added.mentionedAgents.length > 0
-              ? { mentionedAgents: added.mentionedAgents }
-              : {}),
-          },
+          added,
           { status: 201 },
         );
       } catch (err) {

@@ -30,7 +30,7 @@ import pino from "pino";
 import { assertRuntimeObjectsReferenceable } from "@/lib/execution-host/runtime-object-holds";
 import { assertCurrentSessionBinding } from "@/lib/execution-host/session-binding";
 import { PromptIncarnationPending } from "@/lib/execution-host/prompt-incarnation";
-import { requireActiveSession, requireProjectAction } from "@/lib/authz";
+import { requireActiveSession, requireProjectAction, requireProjectActionForUser } from "@/lib/authz";
 import { ensureLocalPackageGitExclude } from "@/lib/local-packages/git";
 import { assertHoldsLock } from "@/lib/local-packages/lock";
 import { assertLocalPackageAssistantActor } from "@/lib/scratch-runs/authorization";
@@ -2647,6 +2647,9 @@ async function appendScratchUserMessage(args: {
   // ADR-182 D-D5: local-package assistant runs keep the `WaitingForUser`-only
   // gate (their actor/lock model and one-action-per-reply postprocessing).
   acceptWhileBusy?: boolean;
+  operatorUserId?: string;
+  viaOperationId?: string;
+  recordAccepted?: (tx: Db, messageId: string, delivery: ScratchMessageDelivery) => Promise<void>;
 }) {
   const runRows = await args.db
     .select()
@@ -2666,7 +2669,14 @@ async function appendScratchUserMessage(args: {
   // requires a live working-dir lock to drive a turn — so no other active user
   // (and not the launcher after a lock takeover) can write into the locked dir.
   if (run.projectId) {
-    await requireProjectAction(run.projectId, "operateScratchRun");
+    if (args.operatorUserId) {
+      if (run.createdByUserId !== args.operatorUserId) {
+        throw new MaisterError("UNAUTHORIZED", "only the scratch run owner can send an operator message");
+      }
+      await requireProjectActionForUser(args.operatorUserId, run.projectId, "operateScratchRun");
+    } else {
+      await requireProjectAction(run.projectId, "operateScratchRun");
+    }
   } else {
     const user = await requireActiveSession();
 
@@ -2782,6 +2792,7 @@ async function appendScratchUserMessage(args: {
         content: args.body.content,
         delivery,
         ...(steer ? { steerCommandId: steer.commandId } : {}),
+        viaOperationId: args.viaOperationId,
       });
       const now = new Date();
 
@@ -2843,6 +2854,8 @@ async function appendScratchUserMessage(args: {
         );
       }
 
+      await args.recordAccepted?.(tx, messageId, delivery);
+
       return {
         messageId,
         sequence,
@@ -2892,6 +2905,9 @@ export async function sendScratchUserMessage(args: {
   body: ScratchMessageInput;
   uploadedFiles?: readonly ScratchUploadedFileInput[];
   executionHosts?: ExecutionHosts;
+  operatorUserId?: string;
+  viaOperationId?: string;
+  recordAccepted?: (tx: Db, messageId: string, delivery: ScratchMessageDelivery) => Promise<void>;
 }): Promise<ScratchMessageResponse> {
   const db = getDb() as Db;
   const appended = await appendScratchUserMessage({
@@ -2901,6 +2917,9 @@ export async function sendScratchUserMessage(args: {
     uploadedFiles: args.uploadedFiles ?? [],
     executionHosts: args.executionHosts,
     acceptWhileBusy: true,
+    operatorUserId: args.operatorUserId,
+    viaOperationId: args.viaOperationId,
+    recordAccepted: args.recordAccepted,
   });
 
   if (appended.delivery !== "prompted") {

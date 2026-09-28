@@ -398,9 +398,9 @@ describe("P0-2 durable workers in the production web boot", () => {
         ...new Set(PROMPT_OWNER_SHAPES.map((shape) => shape.kind)),
       ];
 
-      expect(kinds).toHaveLength(5);
+      expect(kinds).toHaveLength(6);
       // Drop exactly one family: the composition must refuse rather than start
-      // a worker that owns four of five kinds.
+      // a worker that owns only a subset of the six kinds.
       const { flowPromptOwners } = await import(
         "@/lib/flows/graph/prompt-owner"
       );

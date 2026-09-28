@@ -2,6 +2,7 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 import { type AuthContext, resolveAuthHeader } from "./auth";
 import { callExt, hitlRespondToolError, restResponseToToolError } from "./rest";
+import { isToolsetName, TOOLSETS } from "./toolsets";
 
 export type ToolSpec = {
   description: string;
@@ -18,9 +19,193 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
         slug: { type: "string" },
         title: { type: "string", minLength: 1 },
         prompt: { type: "string", minLength: 1 },
+        statement: {
+          type: "object",
+          properties: {
+            context: { type: "string", minLength: 1 },
+            goal: { type: "string", minLength: 1 },
+            acceptance: {
+              type: "array",
+              items: { type: "string", minLength: 1 },
+            },
+            constraints: {
+              type: "array",
+              items: { type: "string", minLength: 1 },
+            },
+            outOfScope: {
+              type: "array",
+              items: { type: "string", minLength: 1 },
+            },
+            links: { type: "array", items: { type: "string", minLength: 1 } },
+            openQuestions: {
+              type: "array",
+              items: { type: "string", minLength: 1 },
+            },
+          },
+          required: [
+            "context",
+            "goal",
+            "acceptance",
+            "constraints",
+            "outOfScope",
+            "links",
+            "openQuestions",
+          ],
+        },
         flowId: { type: "string", minLength: 1 },
+        operationKey: {
+          type: "string",
+          minLength: 1,
+          maxLength: 128,
+          description:
+            "Idempotency key for this effect (sent as the Idempotency-Key header). Required when acting as the librarian: reuse the SAME key when retrying the same effect, and a new key for a new effect.",
+        },
       },
-      required: ["slug", "title", "prompt"],
+      required: ["slug", "title"],
+    },
+  },
+  task_statement_accept: {
+    description:
+      "Accept a typed task statement at the current task revision. The task must still be in Backlog.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: { type: "string" },
+        taskId: { type: "string" },
+        statement: {
+          type: "object",
+          properties: {
+            context: { type: "string", minLength: 1 },
+            goal: { type: "string", minLength: 1 },
+            acceptance: {
+              type: "array",
+              items: { type: "string", minLength: 1 },
+            },
+            constraints: {
+              type: "array",
+              items: { type: "string", minLength: 1 },
+            },
+            outOfScope: {
+              type: "array",
+              items: { type: "string", minLength: 1 },
+            },
+            links: { type: "array", items: { type: "string", minLength: 1 } },
+            openQuestions: {
+              type: "array",
+              items: { type: "string", minLength: 1 },
+            },
+          },
+          required: [
+            "context",
+            "goal",
+            "acceptance",
+            "constraints",
+            "outOfScope",
+            "links",
+            "openQuestions",
+          ],
+        },
+        expectedRevision: { type: "integer", minimum: 0 },
+        operationKey: { type: "string", minLength: 1, maxLength: 128 },
+      },
+      required: [
+        "slug",
+        "taskId",
+        "statement",
+        "expectedRevision",
+        "operationKey",
+      ],
+    },
+  },
+  task_send_to_triage: {
+    description:
+      "Send a task to triage and choose whether a later triage verdict may auto-launch it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: { type: "string" },
+        taskId: { type: "string" },
+        launchIntent: {
+          type: "string",
+          enum: ["triage_only", "triage_then_launch"],
+        },
+        operationKey: { type: "string", minLength: 1, maxLength: 128 },
+      },
+      required: ["slug", "taskId", "launchIntent", "operationKey"],
+    },
+  },
+  task_publish_excerpt: {
+    description:
+      "Explicitly publish a quoted excerpt from this conversation as a task comment visible to project members. The private transcript stays private.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: { type: "string" },
+        taskId: { type: "string" },
+        excerpt: { type: "string", minLength: 1, maxLength: 5000 },
+        operationKey: { type: "string", minLength: 1, maxLength: 128 },
+      },
+      required: ["slug", "taskId", "excerpt", "operationKey"],
+    },
+  },
+  clarification_request: {
+    description:
+      "Ask a specific project member to clarify a task before execution. A blocking request holds launch until answered or cancelled.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: { type: "string" },
+        taskId: { type: "string" },
+        recipientUserId: { type: "string", minLength: 1 },
+        question: { type: "string", minLength: 1 },
+        reason: { type: "string", minLength: 1 },
+        answerFormat: { type: "string", enum: ["text", "choice", "yes_no"] },
+        blocking: { type: "boolean" },
+        operationKey: { type: "string", minLength: 1, maxLength: 128 },
+      },
+      required: [
+        "slug",
+        "taskId",
+        "recipientUserId",
+        "question",
+        "reason",
+        "answerFormat",
+        "blocking",
+        "operationKey",
+      ],
+    },
+  },
+  clarification_cancel: {
+    description: "Cancel an open task clarification you requested.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: { type: "string" },
+        taskId: { type: "string" },
+        clarificationId: { type: "string" },
+        operationKey: { type: "string", minLength: 1, maxLength: 128 },
+      },
+      required: ["slug", "taskId", "clarificationId", "operationKey"],
+    },
+  },
+  clarification_list: {
+    description: "List task clarifications and their current states.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: { type: "string" },
+        taskId: { type: "string" },
+      },
+      required: ["slug", "taskId"],
+    },
+  },
+  project_members_list: {
+    description:
+      "List active project members eligible to receive an addressed clarification.",
+    inputSchema: {
+      type: "object",
+      properties: { slug: { type: "string" } },
+      required: ["slug"],
     },
   },
   task_list: {
@@ -256,6 +441,13 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
         taskId: { type: "string" },
         title: { type: "string", minLength: 1 },
         prompt: { type: "string", minLength: 1 },
+        operationKey: {
+          type: "string",
+          minLength: 1,
+          maxLength: 128,
+          description:
+            "Idempotency key for this effect (sent as the Idempotency-Key header). Required when acting as the librarian: reuse the SAME key when retrying the same effect, and a new key for a new effect.",
+        },
       },
       required: ["slug", "taskId"],
     },
@@ -271,6 +463,13 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
         executorOverrideId: { type: "string", minLength: 1 },
         baseBranch: { type: "string", minLength: 1 },
         targetBranch: { type: "string", minLength: 1 },
+        operationKey: {
+          type: "string",
+          minLength: 1,
+          maxLength: 128,
+          description:
+            "Idempotency key for this effect (sent as the Idempotency-Key header). Required when acting as the librarian: reuse the SAME key when retrying the same effect, and a new key for a new effect.",
+        },
       },
       required: ["taskId"],
     },
@@ -470,6 +669,92 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       required: ["childRunId"],
     },
   },
+  run_stop: {
+    description:
+      "Stop a run through the operator stop path. Returns the run's resulting status.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        runId: { type: "string", minLength: 1 },
+        operationKey: { type: "string", minLength: 1, maxLength: 128 },
+      },
+      required: ["runId", "operationKey"],
+    },
+  },
+  run_operator_message: {
+    description:
+      "Send an owner message to a scratch or persistent agent run. A Flow run returns the rework controls needed instead.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        runId: { type: "string", minLength: 1 },
+        message: { type: "string", minLength: 1, maxLength: 60_000 },
+        operationKey: { type: "string", minLength: 1, maxLength: 128 },
+      },
+      required: ["runId", "message", "operationKey"],
+    },
+  },
+  librarian_memory_remember: {
+    description:
+      "Remember an explicit fact, goal, commitment or preference the owner asked to retain. Only an owner-message turn may call this tool.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        kind: {
+          type: "string",
+          enum: ["preference", "goal", "commitment", "fact"],
+        },
+        content: { type: "string", minLength: 1, maxLength: 2000 },
+        scope: { type: "string", enum: ["general", "project"] },
+        projectSlug: { type: "string", minLength: 1 },
+        validUntil: { type: "string" },
+        operationKey: { type: "string", minLength: 1, maxLength: 128 },
+      },
+      required: ["kind", "content", "scope", "operationKey"],
+    },
+  },
+  librarian_history_search: {
+    description:
+      "Search the owner's librarian conversation history. Results from older segments are labeled and current project visibility is enforced.",
+    inputSchema: {
+      type: "object",
+      properties: { q: { type: "string", minLength: 1, maxLength: 200 } },
+      required: ["q"],
+    },
+  },
+  librarian_card_propose: {
+    description:
+      "Propose a statement change, human confirmation, or inferred memory suggestion card. The owner reviews and decides it in the MAIster panel; this tool never performs the proposed action.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: [
+            "statement_accept",
+            "hitl_respond",
+            "run_promote",
+            "run_discard",
+            "memory_suggest",
+          ],
+        },
+        taskId: { type: "string" },
+        expectedRevision: { type: "integer", minimum: 0 },
+        statement: { type: "object" },
+        runId: { type: "string" },
+        hitlRequestId: { type: "string" },
+        response: { type: "object" },
+        mode: {
+          type: "string",
+          enum: ["local_merge", "rebase_merge", "pull_request"],
+        },
+        reviewedTargetCommit: { type: "string" },
+        memory: { type: "object" },
+        operationKey: { type: "string", minLength: 1, maxLength: 128 },
+      },
+      required: ["action", "operationKey"],
+    },
+  },
   run_message: {
     description:
       "Send a follow-up to a PERSISTENT child agent in the calling orchestrator's run-tree by exactly one of addressableKey or childRunId. Input is saved before dispatch. A busy session or full agent pool leaves it queued for normal resume; a completed turn re-parks the child. Reuse requestKey to retry the same message without duplicating it; different input under that key is refused. Addressing stays within the caller's own tree. Flow children have no addressable agent session and are refused PRECONDITION. mode 'steer' injects the prompt into the child's RUNNING turn when its session supports it and queues it otherwise; mode 'queue' (default) always waits for the next turn. Returns { childRunId, messageId, status, messageState, delivery }; delivery 'steered' means it reached the running turn, 'queued' that it awaits the next turn.",
@@ -519,6 +804,13 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
         agent: { type: "boolean" },
         push: { type: "boolean" },
         runnerId: { type: "string" },
+        operationKey: {
+          type: "string",
+          minLength: 1,
+          maxLength: 128,
+          description:
+            "Idempotency key for this effect (sent as the Idempotency-Key header). Required when acting as the librarian: reuse the SAME key when retrying the same effect, and a new key for a new effect.",
+        },
       },
       required: ["runId"],
     },
@@ -530,6 +822,13 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       type: "object",
       properties: {
         runId: { type: "string", minLength: 1 },
+        operationKey: {
+          type: "string",
+          minLength: 1,
+          maxLength: 128,
+          description:
+            "Idempotency key for this effect (sent as the Idempotency-Key header). Required when acting as the librarian: reuse the SAME key when retrying the same effect, and a new key for a new effect.",
+        },
       },
       required: ["runId"],
     },
@@ -541,6 +840,13 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       type: "object",
       properties: {
         runId: { type: "string", minLength: 1 },
+        operationKey: {
+          type: "string",
+          minLength: 1,
+          maxLength: 128,
+          description:
+            "Idempotency key for this effect (sent as the Idempotency-Key header). Required when acting as the librarian: reuse the SAME key when retrying the same effect, and a new key for a new effect.",
+        },
       },
       required: ["runId"],
     },
@@ -653,6 +959,13 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
         slug: { type: "string" },
         taskId: { type: "string" },
         body: { type: "string", minLength: 1 },
+        operationKey: {
+          type: "string",
+          minLength: 1,
+          maxLength: 128,
+          description:
+            "Idempotency key for this effect (sent as the Idempotency-Key header). Required when acting as the librarian: reuse the SAME key when retrying the same effect, and a new key for a new effect.",
+        },
       },
       required: ["slug", "taskId", "body"],
     },
@@ -720,6 +1033,13 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
         },
         toNumber: { type: "integer", minimum: 1 },
         toTaskKey: { type: "string" },
+        operationKey: {
+          type: "string",
+          minLength: 1,
+          maxLength: 128,
+          description:
+            "Idempotency key for this effect (sent as the Idempotency-Key header). Required when acting as the librarian: reuse the SAME key when retrying the same effect, and a new key for a new effect.",
+        },
       },
       required: ["slug", "taskId", "kind"],
     },
@@ -744,8 +1064,63 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
         },
         toNumber: { type: "integer", minimum: 1 },
         toTaskKey: { type: "string" },
+        operationKey: {
+          type: "string",
+          minLength: 1,
+          maxLength: 128,
+          description:
+            "Idempotency key for this effect (sent as the Idempotency-Key header). Required when acting as the librarian: reuse the SAME key when retrying the same effect, and a new key for a new effect.",
+        },
       },
       required: ["slug", "taskId", "kind"],
+    },
+  },
+  project_list: {
+    description:
+      "List the projects the token's owner can see (id, slug, name). Nothing outside the owner's visibility is ever listed.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  project_get: {
+    description:
+      "A project's routing directory: purpose (first README paragraph, or null when the owner may not read repository files), launchable flows, default runner, whether a triager is configured, whether Project Brain is enabled, and `asOf`. A project the owner cannot see answers like a missing one (404).",
+    inputSchema: {
+      type: "object",
+      properties: { slug: { type: "string" } },
+      required: ["slug"],
+    },
+  },
+  task_search: {
+    description:
+      "Search tasks by title, prompt or key (`KEY-12`) across the owner's visible projects, 25 per page, newest first. `truncated: true` means more matches exist — pass `nextCursor` as `cursor` or narrow `q`; never treat a truncated page as the complete answer.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        q: { type: "string", minLength: 1 },
+        cursor: { type: "string" },
+      },
+      required: ["q"],
+    },
+  },
+  work_list: {
+    description:
+      "The owner's cross-project work table: every task in the owner's visible projects with its derived work stage, blocked flag, latest run, readiness and who it waits on.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  decisions_list: {
+    description:
+      "The owner's own decision queue (HITL questions, promotable, crashed and triage-flagged work). Read-only: a human-only decision is answered by the owner in the UI, never through this tool.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  activity_feed: {
+    description:
+      "The owner's cross-project activity feed, newest first. `projectId` narrows to one visible project (a project the owner cannot see yields an empty feed).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string" },
+        kind: { type: "string" },
+        limit: { type: "integer", minimum: 1, maximum: 200 },
+      },
     },
   },
 };
@@ -775,15 +1150,30 @@ export async function dispatchTool(opts: {
     return { isError: true, status: 401, message: "Missing bearer token" };
   }
 
+  // ADR-187: the librarian's operation key rides the `Idempotency-Key` header,
+  // never the body — the ext routes validate their bodies strictly.
+  const { operationKey, ...routedArgs } = args;
   const { method, path, body } = resolveRouting(
     name,
-    coerceNumericArgs(name, args),
+    coerceNumericArgs(name, routedArgs),
   );
+  const headers =
+    typeof operationKey === "string" && operationKey.length > 0
+      ? { "Idempotency-Key": operationKey }
+      : undefined;
 
   let res: Response;
 
   try {
-    res = await callExt({ baseUrl, authHeader, method, path, body, signal });
+    res = await callExt({
+      baseUrl,
+      authHeader,
+      method,
+      path,
+      body,
+      headers,
+      signal,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
 
@@ -858,15 +1248,59 @@ function resolveRouting(
   body?: unknown;
 } {
   switch (name) {
+    case "project_list":
+      return { method: "GET", path: `/api/v1/ext/projects` };
+    case "project_get": {
+      const { slug } = args as { slug: string };
+
+      return {
+        method: "GET",
+        path: `/api/v1/ext/projects/${slug}/directory`,
+      };
+    }
+    case "task_search": {
+      const { q, cursor } = args as { q: string; cursor?: string };
+      const sp = new URLSearchParams({ q });
+
+      if (cursor !== undefined) sp.set("cursor", cursor);
+
+      return {
+        method: "GET",
+        path: `/api/v1/ext/tasks/search?${sp.toString()}`,
+      };
+    }
+    case "work_list":
+      return { method: "GET", path: `/api/v1/ext/work` };
+    case "decisions_list":
+      return { method: "GET", path: `/api/v1/ext/decisions` };
+    case "activity_feed": {
+      const { projectId, kind, limit } = args as {
+        projectId?: string;
+        kind?: string;
+        limit?: number;
+      };
+      const sp = new URLSearchParams();
+
+      if (projectId !== undefined) sp.set("projectId", projectId);
+      if (kind !== undefined) sp.set("kind", kind);
+      if (limit !== undefined) sp.set("limit", String(limit));
+
+      const suffix = sp.size > 0 ? `?${sp.toString()}` : "";
+
+      return { method: "GET", path: `/api/v1/ext/activity/feed${suffix}` };
+    }
     case "task_create": {
-      const { slug, title, prompt, flowId } = args as {
+      const { slug, title, prompt, statement, flowId } = args as {
         slug: string;
         title: string;
-        prompt: string;
+        prompt?: string;
+        statement?: Record<string, unknown>;
         flowId?: string;
       };
-      const body: Record<string, unknown> = { title, prompt };
+      const body: Record<string, unknown> = { title };
 
+      if (prompt !== undefined) body.prompt = prompt;
+      if (statement !== undefined) body.statement = statement;
       if (flowId !== undefined) body.flowId = flowId;
 
       return {
@@ -874,6 +1308,96 @@ function resolveRouting(
         path: `/api/v1/ext/projects/${slug}/tasks`,
         body,
       };
+    }
+    case "task_statement_accept": {
+      const { slug, taskId, statement, expectedRevision } = args as {
+        slug: string;
+        taskId: string;
+        statement: Record<string, unknown>;
+        expectedRevision: number;
+      };
+
+      return {
+        method: "POST",
+        path: `/api/v1/ext/projects/${slug}/tasks/${taskId}/statement`,
+        body: { statement, expectedRevision },
+      };
+    }
+    case "task_send_to_triage": {
+      const { slug, taskId, launchIntent } = args as {
+        slug: string;
+        taskId: string;
+        launchIntent: "triage_only" | "triage_then_launch";
+      };
+
+      return {
+        method: "POST",
+        path: `/api/v1/ext/projects/${slug}/tasks/${taskId}/send-to-triage`,
+        body: { launchIntent },
+      };
+    }
+    case "task_publish_excerpt": {
+      const { slug, taskId, excerpt } = args as {
+        slug: string;
+        taskId: string;
+        excerpt: string;
+      };
+
+      return {
+        method: "POST",
+        path: `/api/v1/ext/projects/${slug}/tasks/${taskId}/publish-excerpt`,
+        body: { excerpt },
+      };
+    }
+    case "clarification_request": {
+      const {
+        slug,
+        taskId,
+        recipientUserId,
+        question,
+        reason,
+        answerFormat,
+        blocking,
+      } = args as {
+        slug: string;
+        taskId: string;
+        recipientUserId: string;
+        question: string;
+        reason: string;
+        answerFormat: "text" | "choice" | "yes_no";
+        blocking: boolean;
+      };
+
+      return {
+        method: "POST",
+        path: `/api/v1/ext/projects/${slug}/tasks/${taskId}/clarifications`,
+        body: { recipientUserId, question, reason, answerFormat, blocking },
+      };
+    }
+    case "clarification_cancel": {
+      const { slug, taskId, clarificationId } = args as {
+        slug: string;
+        taskId: string;
+        clarificationId: string;
+      };
+
+      return {
+        method: "DELETE",
+        path: `/api/v1/ext/projects/${slug}/tasks/${taskId}/clarifications/${clarificationId}`,
+      };
+    }
+    case "clarification_list": {
+      const { slug, taskId } = args as { slug: string; taskId: string };
+
+      return {
+        method: "GET",
+        path: `/api/v1/ext/projects/${slug}/tasks/${taskId}/clarifications`,
+      };
+    }
+    case "project_members_list": {
+      const { slug } = args as { slug: string };
+
+      return { method: "GET", path: `/api/v1/ext/projects/${slug}/members` };
     }
     case "task_list": {
       const { slug } = args as { slug: string };
@@ -1197,15 +1721,103 @@ function resolveRouting(
         body: { childRunId },
       };
     }
+    case "run_stop": {
+      const { runId } = args as { runId: string };
+
+      return {
+        method: "POST",
+        path: `/api/v1/ext/runs/${runId}/stop`,
+        body: {},
+      };
+    }
+    case "run_operator_message": {
+      const { runId, message } = args as { runId: string; message: string };
+
+      return {
+        method: "POST",
+        path: `/api/v1/ext/runs/${runId}/operator-message`,
+        body: { message },
+      };
+    }
+    case "librarian_memory_remember": {
+      const { kind, content, scope, projectSlug, validUntil } = args as {
+        kind: string;
+        content: string;
+        scope: string;
+        projectSlug?: string;
+        validUntil?: string;
+      };
+
+      return {
+        method: "POST",
+        path: "/api/v1/ext/librarian/memory",
+        body: {
+          kind,
+          content,
+          scope,
+          ...(projectSlug ? { projectSlug } : {}),
+          ...(validUntil ? { validUntil } : {}),
+        },
+      };
+    }
+    case "librarian_history_search": {
+      const { q } = args as { q: string };
+
+      return {
+        method: "GET",
+        path: `/api/v1/ext/librarian/history/search?q=${encodeURIComponent(q)}`,
+      };
+    }
+    case "librarian_card_propose": {
+      const {
+        action,
+        taskId,
+        expectedRevision,
+        statement,
+        runId,
+        hitlRequestId,
+        response,
+        mode,
+        reviewedTargetCommit,
+        memory,
+      } = args as {
+        action:
+          | "statement_accept"
+          | "hitl_respond"
+          | "run_promote"
+          | "run_discard"
+          | "memory_suggest";
+        taskId?: string;
+        expectedRevision?: number;
+        statement?: Record<string, unknown>;
+        runId?: string;
+        hitlRequestId?: string;
+        response?: Record<string, unknown>;
+        mode?: string;
+        reviewedTargetCommit?: string;
+        memory?: Record<string, unknown>;
+      };
+      const body =
+        action === "statement_accept"
+          ? { action, taskId, expectedRevision, statement }
+          : action === "hitl_respond"
+            ? { action, runId, hitlRequestId, response }
+            : action === "run_promote"
+              ? { action, runId, mode, reviewedTargetCommit }
+              : action === "memory_suggest"
+                ? { action, memory }
+                : { action, runId };
+
+      return { method: "POST", path: "/api/v1/ext/librarian/cards", body };
+    }
     case "run_message": {
-      const { addressableKey, childRunId, prompt, requestKey, mode } =
-        args as {
-          addressableKey?: string;
-          childRunId?: string;
-          prompt: string;
-          requestKey?: string;
-          mode?: "steer" | "queue";
-        };
+      const { addressableKey, childRunId, prompt, requestKey, mode } = args as {
+        addressableKey?: string;
+        childRunId?: string;
+        prompt: string;
+        requestKey?: string;
+        mode?: "steer" | "queue";
+      };
       const body: Record<string, unknown> = { prompt };
 
       if (addressableKey !== undefined) body.addressableKey = addressableKey;
@@ -1467,4 +2079,24 @@ function resolveRouting(
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
+}
+
+// The tools a facade process exposes. An unnamed or unknown toolset exposes
+// every registered tool — the default for project and agent tokens.
+export function toolNamesForToolset(toolset: string | undefined): string[] {
+  if (!isToolsetName(toolset)) return Object.keys(TOOL_SPECS);
+
+  const allowed = new Set<string>(TOOLSETS[toolset]);
+
+  return Object.keys(TOOL_SPECS).filter((name) => allowed.has(name));
+}
+
+export function isToolInToolset(
+  name: string,
+  toolset: string | undefined,
+): boolean {
+  return (
+    Object.hasOwn(TOOL_SPECS, name) &&
+    toolNamesForToolset(toolset).includes(name)
+  );
 }

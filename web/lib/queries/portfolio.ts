@@ -47,7 +47,10 @@ import {
 import * as schema from "@/lib/db/schema";
 import { computeReadinessByRun } from "@/lib/queries/readiness-batch";
 import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
-import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
+import {
+  requireRunProjectId,
+  withProjectRunKind,
+} from "@/lib/runs/run-kind-invariants";
 import { worktreePresence } from "@/lib/workbench-git/presence";
 import {
   deriveWorkbenchLifecycleActions,
@@ -1309,7 +1312,9 @@ export async function getCrossProjectHitlInbox(
     )
     .orderBy(asc(hitlRequests.createdAt));
 
-  const visibleRows = rows.filter(isInboxVisibleHitlRow);
+  const visibleRows = rows
+    .map(withProjectRunKind)
+    .filter(isInboxVisibleHitlRow);
 
   if (visibleRows.length === 0) {
     return { items: [], count: 0 };

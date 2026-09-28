@@ -21,6 +21,7 @@ type TableName =
   | "platform_runtime_settings"
   | "project_flow_runner_defaults"
   | "projects"
+  | "task_clarifications"
   | "tasks";
 type Row = Record<string, unknown>;
 
@@ -32,6 +33,7 @@ const state: Record<TableName, Row[]> = {
   platform_runtime_settings: [],
   project_flow_runner_defaults: [],
   projects: [],
+  task_clarifications: [{ count: 0 }],
   tasks: [],
 };
 
@@ -406,6 +408,7 @@ describe("consensus runner preview", () => {
 });
 
 function seedBase(): void {
+  state.task_clarifications = [{ count: 0 }];
   state.tasks = [{ id: "task-1", projectId: "project-1", flowId: "flow-1" }];
   state.projects = [
     {
@@ -495,6 +498,22 @@ describe("GET /api/runs/launch-options per-session resolution (M42)", () => {
     // Single default session -> the single selectedRunnerId selector covers it.
     expect(body.selectedRunnerId).toBe("claude-platform");
     expect(body.sessions).toEqual([]);
+  });
+
+  it("holds launch and relaunch while a blocking user clarification is open", async () => {
+    state.task_clarifications = [{ count: 1 }];
+    const response = await invoke();
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.launchability).toMatchObject({
+      launchable: false,
+      reason: "clarification_pending",
+    });
+    expect(body.relaunch).toMatchObject({
+      launchable: false,
+      reason: "clarification_pending",
+    });
   });
 
   it.each([

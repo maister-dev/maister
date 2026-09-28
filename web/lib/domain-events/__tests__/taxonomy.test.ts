@@ -135,12 +135,14 @@ describe("run.review cause", () => {
 });
 
 describe("domain-event taxonomy", () => {
-  it("contains exactly the 15 taxonomy kinds (ADR-086, ADR-136, run.review, B3 run.escalated, ADR-160 rework round-trip, ADR-169 decision-opening)", () => {
+  it("contains the 17 registered domain kinds, including user clarifications", () => {
     expect([...DOMAIN_EVENT_KINDS]).toEqual([
       "task.created",
       "task.comment_added",
       "task.triage_requeued",
+      "task.clarification_requested",
       "task.clarification_answered",
+      "task.clarification_cancelled",
       "run.done",
       "run.failed",
       "run.crashed",
@@ -236,22 +238,23 @@ describe("UT-ATN-09 attention/twinned partition of the taxonomy", () => {
     }
   });
 
-  it("classifies the three twinned kinds as twinned, not as attention", () => {
+  it("classifies activity twins outside the updates population", () => {
     for (const kind of [
       "task.created",
       "task.comment_added",
       "task.triage_requeued",
+      "task.clarification_answered",
+      "task.clarification_cancelled",
     ]) {
       expect([...TASK_ACTIVITY_TWINNED_EVENT_KINDS]).toContain(kind);
       expect([...ATTENTION_EVENT_KINDS]).not.toContain(kind);
     }
   });
 
-  // The one `task.*` kind with no `task_activity` twin. Dropping it because it
-  // starts with `task.` would make answering an agent's question invisible
-  // everywhere — which is why this is a classification, not a prefix match.
-  it("keeps task.clarification_answered on the attention side", () => {
-    expect([...ATTENTION_EVENT_KINDS]).toContain("task.clarification_answered");
+  it("counts a clarification request as a decision opening", () => {
+    expect([...DECISION_OPENING_EVENT_KINDS]).toContain(
+      "task.clarification_requested",
+    );
   });
 
   it("leaves no run or gate kind invisible to the attention plane", () => {

@@ -1,12 +1,5 @@
-// ADR-183 T4.6 — RED D2: the operator's permission answer meets the host's
-// HARD outbox bound. The soft gate admits a resolve command (D1 proves that at
-// the host seam); only at hard is an answer refused. The respond route then
-// answers 503 EXECUTOR_UNAVAILABLE with the P0-4 reason, the answer stays
-// retryable (the refused input's delivery intent is void), and once the host
-// prunes below hard the SAME answer, retried, reaches the agent, which then
-// finishes its turn. The prune needs the turn to end first: an open prompt's
-// v2 span pins every later row, so the keep-alive checkpoint is what frees
-// the host here.
+// ADR-183 D2: an operator's permission answer remains deliverable while the
+// host is soft pressured. Hard refusal is covered at the supervisor boundary.
 import type { Db } from "@/lib/execution-host/db";
 import type { ExecutionCommand } from "@/lib/db/schema";
 import type { RealSupervisor } from "@/test-support/real-supervisor";
@@ -39,10 +32,6 @@ import {
 } from "@/lib/execution-host/resolver";
 import { createLocalDirectTransport } from "@/lib/execution-host/transports/local-direct";
 import { runFlow } from "@/lib/flows/runner";
-import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
-import { applyHostPressureSample } from "@/lib/scheduler/system-sweeps";
-import { resolveHitlErrorMessage } from "@/lib/ui-error-message";
-import en from "@/messages/en.json";
 import { addWorktree, initRepo } from "@/test-support/git-fixture";
 import { seedGraphRun } from "@/test-support/graph-run-seed";
 import {
@@ -114,12 +103,17 @@ async function waitFor<T>(
 
 async function hostStream(): Promise<{
   retainedCount: number;
-  unacknowledgedCount: number;
+  pressured: boolean;
+  newWorkRefusedBy: string | null;
 }> {
   const health = (await (
     await fetch(`${sup.url}/health?includeStream=true`)
   ).json()) as {
-    stream: { retainedCount: number; unacknowledgedCount: number };
+    stream: {
+      retainedCount: number;
+      pressured: boolean;
+      newWorkRefusedBy: string | null;
+    };
   };
 
   return health.stream;
@@ -161,7 +155,7 @@ async function respond(
 
 beforeAll(async () => {
   testDatabase = await startMainPostgresTestDb({
-    databaseName: "adr183_respond_hard_bound",
+    databaseName: "adr183_respond_soft_pressure",
   });
   db = testDatabase.db as unknown as Db;
   const journalDir = await mkdtemp(join(tmpdir(), "adr183-d2-journal-"));
@@ -205,8 +199,8 @@ afterAll(async () => {
   await testDatabase?.stop();
 });
 
-describe("ADR-183 D2 — an answer under the HARD outbox bound", () => {
-  it("is refused retryably with the P0-4 reason, and the same answer delivers once the host prunes below hard", async () => {
+describe("ADR-183 D2 — a permission answer under soft host pressure", () => {
+  it("delivers the answer while new work is fenced", async () => {
     const runtimeRoot = process.env.MAISTER_RUNTIME_ROOT as string;
     const repoPath = await initRepo(`${sup.runtimeRoot}/repo-d2`);
     const worktreePath = await addWorktree(
@@ -247,8 +241,8 @@ describe("ADR-183 D2 — an answer under the HARD outbox bound", () => {
       return row && run.status === "NeedsInput" ? row : null;
     }, "the permission park");
 
-    // A second, unrelated session whose walletless checkpoints — never
-    // refused — fill the outbox while the manager ACKs nothing.
+    // A second, unrelated session fills the outbox while the manager ACKs
+    // nothing. Its checkpoints remain available during soft pressure.
     const transport = createLocalDirectTransport();
     const health = await transport.health();
 
@@ -292,10 +286,10 @@ describe("ADR-183 D2 — an answer under the HARD outbox bound", () => {
       { caseId: "adr183-d2-behind", method: "GET", path: /^\/runtime-events$/ },
       "hold-events",
     );
-    let refused: { status: number; body: Record<string, any> };
+    let delivered: { status: number; body: Record<string, any> };
 
     try {
-      while ((await hostStream()).retainedCount < HARD_ROWS)
+      while (!(await hostStream()).pressured)
         await transport.checkpointSession(
           filler.sessionId,
           buildEnvelope({
@@ -306,81 +300,27 @@ describe("ADR-183 D2 — an answer under the HARD outbox bound", () => {
           }),
         );
 
-      refused = await respond(seeded.runId, hitl.id);
+      const stream = await hostStream();
+
+      expect(stream.retainedCount).toBeLessThan(HARD_ROWS);
+      expect(stream.newWorkRefusedBy).toBe("unacknowledged");
+      delivered = await respond(seeded.runId, hitl.id);
     } finally {
       held.release();
     }
 
-    // 503, the P0-4 reason, and copy the UI can resolve.
-    expect(refused.status).toBe(503);
-    expect(refused.body).toMatchObject({
-      code: "EXECUTOR_UNAVAILABLE",
-      details: { reason: "event_outbox_backpressure" },
-    });
-    const message = resolveHitlErrorMessage(refused.body);
-
-    expect(message.key).toBe("errorReasons.event_outbox_backpressure");
-    expect(en.run.errorReasons.event_outbox_backpressure).toBeTruthy();
-    // The answer is still owed: nothing was delivered.
-    const [owed] = (await db
+    expect([200, 202]).toContain(delivered.status);
+    const [answered] = (await db
       .select()
       .from(schema.hitlRequests)
       .where(eq(schema.hitlRequests.id, hitl.id))) as Array<
       Record<string, any>
     >;
 
-    expect(owed.respondedAt).toBeNull();
-    const [refusedInput] = await inputsOf(seeded.runId);
-
-    expect(refusedInput).toMatchObject({
-      state: "failed",
-      lastError: {
-        code: "PRECONDITION",
-        details: { reason: "event_outbox_backpressure" },
-      },
+    expect(answered.respondedAt).not.toBeNull();
+    expect((await inputsOf(seeded.runId))[0]).toMatchObject({
+      state: "succeeded",
     });
-
-    // The open prompt's v2 span pins every later row, so ACKs alone cannot
-    // bring the host below hard while the turn waits on this answer. The
-    // keep-alive checkpoint ends the turn — a teardown is never refused —
-    // which releases the span; the host then prunes below hard.
-    await db
-      .update(schema.runs)
-      .set({ keepaliveUntil: new Date(0) })
-      .where(eq(schema.runs.id, seeded.runId));
-    await runSweepTick({
-      db: db as never,
-      executionHosts: createExecutionHosts({ db }),
-    });
-    await waitFor(async () => {
-      const [run] = (await db
-        .select()
-        .from(schema.runs)
-        .where(eq(schema.runs.id, seeded.runId))) as Array<Record<string, any>>;
-
-      return run.status === "NeedsInputIdle";
-    }, "the keep-alive park");
-    await waitFor(
-      async () => (await hostStream()).retainedCount < HARD_ROWS,
-      "the host to prune below its hard bound",
-    );
-    // The refusal also wrote the manager's pressure record, which fences
-    // resumes until the sweep's next health sample clears it.
-    await waitFor(
-      async () =>
-        (
-          await applyHostPressureSample(
-            await createExecutionHosts({ db }).local().platformStatus(),
-          )
-        )?.transition === "cleared",
-      "the sweep's sample to clear the pressure record",
-    );
-    // The SAME answer, retried, resumes the checkpointed permission and
-    // reaches the agent (ADR-180's path) — the refused input left no intent
-    // behind to reattach.
-    const delivered = await respond(seeded.runId, hitl.id);
-
-    expect([200, 202]).toContain(delivered.status);
     await waitFor(async () => {
       const [run] = (await db
         .select()

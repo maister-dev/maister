@@ -275,6 +275,7 @@ describe("ADR-111 launch-time config snapshot", () => {
       sourceHitlRequestId: hitlRequestId,
       originRunId: sourceRunId,
       originAgentId: agentId,
+      originKind: "agent_run",
       question: "Which deployment target should be used?",
       questionSchema: {
         schemaVersion: 1,
@@ -391,6 +392,7 @@ describe("ADR-111 launch-time config snapshot", () => {
       sourceHitlRequestId: hitlRequestId,
       originRunId: sourceRunId,
       originAgentId: agentId,
+      originKind: "agent_run",
       question: "Which deployment target should be used?",
       questionSchema: {
         schemaVersion: 1,

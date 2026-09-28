@@ -58,6 +58,11 @@ Project -> Flow package -> Task / Evaluation Study / Scratch run -> External ope
   base branch, optional scratch branch/name, executor profile, work mode,
   reasoning effort, prompt, optional issue/files, and capability profile. It is
   an active workspace outside the task board unless explicitly linked to a task.
+- **Personal librarian** — an owner-only conversation that can read visible
+  work, prepare tasks and statements, request clarification, and report later
+  domain-event updates. Each turn runs on a project-less librarian run with
+  MCP-only tools and a short-lived, owner-bound token. Human-only actions
+  require a confirmation card that the owner accepts in the web UI.
 - **External operation** — audited project-scoped API or MCP action, such as
   creating a task, launching a run, attaching artifact metadata, reporting an
   external gate, or reading readiness.
@@ -107,6 +112,7 @@ Project -> Flow package -> Task / Evaluation Study / Scratch run -> External ope
 | Launch a controlled run | Turn a backlog task into an isolated worktree and Flow execution. |
 | Compare implementation variants | Run the same task several ways from one pinned base commit, inspect evidence side by side, and record a human rubric verdict without losing ordinary run history. |
 | Start a scratch workspace | Open a conversation-like coding-agent session for exploratory work without creating a task board card. |
+| Coordinate work across projects | Ask the personal librarian to find, prepare, launch, and follow up on visible work, with explicit confirmation for human-only actions. |
 | Pick the right branch | Choose the base branch and target branch so work can happen on `main`, `develop`, release branches, or any engineer-selected branch. |
 | Constrain node capabilities | See and edit what each AI or human node is allowed to use: agents, MCP servers, tools, skills, roles, restrictions, and rework paths. |
 | Reach agreement on risky plans | Run several read-only draft agents through an engine-owned consensus node, see why they agree or disagree, and resolve unresolved disagreements through HITL. |
@@ -143,6 +149,10 @@ Project -> Flow package -> Task / Evaluation Study / Scratch run -> External ope
   optional issue/files, and run-scoped platform/project/Flow-package
   MCP/skill/rule/agent-pack profile tucked into expandable controls; show it in
   project-grouped active workspace lists and open it as a coding-agent dialog.
+- The personal librarian has a right-side panel, a durable owner conversation,
+  a separate turn pool, delegated per-turn authority with live project RBAC,
+  task and statement operations, addressed clarification, follow-up updates,
+  memory controls, and reset and clear-history barriers.
 - ACP supervisor process with code-owned Claude, Codex, Gemini CLI, and
   OpenCode/MiMo adapter families; Gemini/OpenCode/MiMo stay gated by diagnostics and
   smoke-proven readiness before production launch.

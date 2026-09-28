@@ -518,6 +518,7 @@ async function seedAgentQuestion(args: {
     sourceHitlRequestId: hitlRequestId,
     originRunId: args.runId,
     originAgentId: args.sourceAgentId,
+    originKind: "agent_run",
     question: "Which target should receive this deployment?",
     questionSchema,
     reTriggerMode: "agent",

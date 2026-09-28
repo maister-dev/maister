@@ -73,6 +73,19 @@ export const TOKEN_SCOPES = [
   "evaluations:evidence:read",
   "evaluations:objective:read",
   "evaluations:result:submit",
+  // ADR-186 (personal librarian): cross-project discovery and read surfaces.
+  // Every list/search/count filters by the caller's visible projects first.
+  "projects:read",
+  "work:read",
+  "activity:read",
+  // ADR-187 D10b: an operator message to an existing run, as its human owner.
+  // Never `runs:delegate` — the librarian does not impersonate a coordinator.
+  "runs:message",
+  // ADR-187 / ADR-190: the librarian's own personal surfaces. The routes behind
+  // them admit ONLY a librarian token.
+  "librarian:cards",
+  "librarian:memory",
+  "librarian:history",
 ] as const;
 
 // M34 (ADR-089): the fixed scope set issued to per-launch ephemeral agent
@@ -144,6 +157,76 @@ export const CROSS_PROJECT_AGENT_SCOPES = [
   "relations:create",
   "relations:delete",
 ] as const satisfies readonly (typeof TOKEN_SCOPES)[number][];
+
+// ADR-186 D3: the explicit grant a librarian turn token carries — the owner's
+// business-work surface. Deliberately absent: `hitl:respond`,
+// `hitl:respond:human`, `runs:promote`, `runs:delegate`, `runs:collect`,
+// `agent_memory:write`, `memory:write`, `notifications:subscriptions`,
+// `agents:trigger` and every evaluation scope. Human-only decisions reach the
+// owner as confirmation cards instead. The live project role is re-checked on
+// every request, so holding a scope never exceeds what the owner may do.
+export const LIBRARIAN_TOKEN_SCOPES = [
+  "projects:read",
+  "work:read",
+  "activity:read",
+  "decisions:read",
+  "tasks:read",
+  "tasks:create",
+  "tasks:update",
+  "tasks:triage",
+  "comments:read",
+  "comments:create",
+  "relations:read",
+  "relations:create",
+  "relations:delete",
+  "flows:read",
+  "runners:read",
+  "memory:read",
+  "runs:read",
+  "runs:launch",
+  "runs:cancel",
+  "runs:recover",
+  "runs:sync",
+  "runs:message",
+  "readiness:read",
+  "hitl:read",
+  "hitl:inbox:read",
+  "hitl:request",
+  "librarian:cards",
+  "librarian:memory",
+  "librarian:history",
+] as const satisfies readonly (typeof TOKEN_SCOPES)[number][];
+
+// ADR-186 D3: the read-only subset an Explain turn receives. Update text and
+// teammate answers are data, never authority, so no scope here can effect.
+export const LIBRARIAN_READ_SCOPES = [
+  "projects:read",
+  "work:read",
+  "activity:read",
+  "decisions:read",
+  "tasks:read",
+  "comments:read",
+  "relations:read",
+  "flows:read",
+  "runners:read",
+  "memory:read",
+  "runs:read",
+  "readiness:read",
+  "hitl:read",
+  "hitl:inbox:read",
+  "librarian:history",
+] as const satisfies readonly (typeof LIBRARIAN_TOKEN_SCOPES)[number][];
+
+// ADR-186: scopes whose routes admit ONLY a librarian turn token. They are
+// machine-only — never offered in a personal token picker.
+export const LIBRARIAN_ONLY_TOKEN_SCOPES = [
+  "librarian:cards",
+  "librarian:memory",
+  "librarian:history",
+] as const satisfies readonly (typeof LIBRARIAN_TOKEN_SCOPES)[number][];
+
+export type LibrarianOnlyTokenScope =
+  (typeof LIBRARIAN_ONLY_TOKEN_SCOPES)[number];
 
 // Scopes the `*` wildcard deliberately does NOT imply: they are a separate
 // axis, granted only by naming them exactly. `normalizeTokenScopes` keeps them

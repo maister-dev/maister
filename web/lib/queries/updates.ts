@@ -72,6 +72,7 @@ export async function getUpdatesCount(
       .select({
         id: inboxItems.id,
         taskId: inboxItems.taskId,
+        eventKind: inboxItems.eventKind,
         activityId: sql<string | null>`${inboxItems.sourceRef}->>'activityId'`,
       })
       .from(inboxItems)
@@ -84,7 +85,15 @@ export async function getUpdatesCount(
         ),
       ),
     client
-      .select({ id: taskActivity.id, taskId: taskActivity.taskId })
+      .select({
+        id: taskActivity.id,
+        taskId: taskActivity.taskId,
+        eventKind: taskActivity.eventKind,
+        actorId: taskActivity.actorId,
+        recipientUserId: sql<
+          string | null
+        >`${taskActivity.payload}->>'recipientUserId'`,
+      })
       .from(taskActivity)
       .where(
         and(
@@ -122,9 +131,17 @@ export async function getUpdatesCount(
   );
   const unrepresentedActivity = activityRows
     .filter(unblocked)
-    .filter((row) => !representedActivityIds.has(row.id));
+    .filter((row) => !representedActivityIds.has(row.id))
+    .filter(
+      (row) =>
+        row.eventKind !== "clarification_requested" ||
+        (row.actorId !== userId && row.recipientUserId !== userId),
+    );
   const events = eventRows.filter(unblocked);
-  const count = unread.length + unrepresentedActivity.length + events.length;
+  const count =
+    unread.filter((row) => row.eventKind !== "clarification_requested").length +
+    unrepresentedActivity.length +
+    events.length;
 
   log.debug(
     {

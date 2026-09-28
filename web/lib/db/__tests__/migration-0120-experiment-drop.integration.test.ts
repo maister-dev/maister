@@ -86,14 +86,10 @@ describe("migration 0120 — seeded legacy experiments backfill then drop", () =
       },
       schemaVersion: 1,
     });
-    await db.insert(schema.tasks).values({
-      number: Number.parseInt(randomUUID().slice(0, 6), 16),
-      id: taskId,
-      projectId,
-      title: "Test task",
-      prompt: "do the thing",
-      flowId,
-    });
+    await db.execute(sql`
+      INSERT INTO tasks (id, project_id, number, title, prompt, flow_id)
+      VALUES (${taskId}, ${projectId}, ${Number.parseInt(randomUUID().slice(0, 6), 16)}, 'Test task', 'do the thing', ${flowId})
+    `);
     // Raw SQL rather than `db.insert(schema.runs)`: this database is stopped at
     // an OLDER migration, while the drizzle `runs` object is the CURRENT schema
     // and emits every column it knows (ADR-152 added `agent_memory_hash` at

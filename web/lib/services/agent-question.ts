@@ -254,6 +254,7 @@ async function persistPendingQuestion(
       sourceHitlRequestId: hitlRequestId,
       originRunId: input.sourceRunId,
       originAgentId: input.sourceAgentId,
+      originKind: "agent_run",
       question: input.question,
       questionSchema: input.schema,
       reTriggerMode: input.reTriggerMode,
@@ -591,7 +592,11 @@ export async function cancelOpenAgentQuestionsForTaskInTransaction(
     .where(inArray(hitlRequests.id, ids));
   await tx
     .update(taskClarifications)
-    .set({ supersededAt, supersededByRunId: args.supersedingRunId })
+    .set({
+      supersededAt,
+      supersededByRunId: args.supersedingRunId,
+      status: "superseded",
+    })
     .where(inArray(taskClarifications.sourceHitlRequestId, ids));
 
   for (const hitlRequestId of ids) {

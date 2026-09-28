@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { NextRequest } from "next/server";
 import {
@@ -13,12 +14,18 @@ import {
 } from "vitest";
 
 import { MaisterError } from "@/lib/errors";
+import { issueLibrarianTurnToken } from "@/lib/librarian/authority";
 import { issueToken } from "@/lib/tokens/issue";
 import {
   testPlatformRunnerRow,
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
+import {
+  addProjectMember,
+  seedActiveUser,
+  seedLibrarianTurn,
+} from "@/test-support/librarian-seed";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -39,8 +46,14 @@ const { syncRunTargetMock, reopenRunMock, loadRunnerCatalogMock } = vi.hoisted(
   }),
 );
 
-vi.mock("@/lib/runs/sync-target", () => ({ syncRunTarget: syncRunTargetMock }));
-vi.mock("@/lib/runs/reopen", () => ({ reopenRun: reopenRunMock }));
+vi.mock("@/lib/runs/sync-target", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/runs/sync-target")>()),
+  syncRunTarget: syncRunTargetMock,
+}));
+vi.mock("@/lib/runs/reopen", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/runs/reopen")>()),
+  reopenRun: reopenRunMock,
+}));
 vi.mock("@/lib/acp-runners/catalog", () => ({
   loadRunnerCatalog: loadRunnerCatalogMock,
 }));
@@ -68,6 +81,74 @@ afterAll(async () => {
   await testDatabase?.stop();
 });
 
+describe("librarian uncertain external run actions", () => {
+  it("refuses a removed sync workspace before the effect and settles the operation", async () => {
+    const { projectId, executorId } = await seedProject(
+      `lib-sync-refused-${randomUUID().slice(0, 8)}`,
+    );
+    const runId = await seedReviewRun(projectId, executorId);
+
+    await db
+      .update(schema.workspaces)
+      .set({ removedAt: new Date(), removalKind: "discard" })
+      .where(eq(schema.workspaces.runId, runId));
+    const request = await librarianRequest("sync", projectId, runId);
+    const key = request.headers.get("idempotency-key")!;
+
+    const response = await syncPOST(request);
+    const [operation] = await db
+      .select()
+      .from(schema.librarianOperations)
+      .where(eq(schema.librarianOperations.idempotencyKey, key));
+
+    expect(response.status).toBe(409);
+    expect((await response.json()).code).toBe("PRECONDITION");
+    expect(syncRunTargetMock).not.toHaveBeenCalled();
+    expect(operation.status).toBe("refused");
+  });
+
+  it.each(["sync", "reopen"] as const)(
+    "keeps %s unknown after a post-effect error and does not repeat it",
+    async (action) => {
+      const { projectId, executorId } = await seedProject(
+        `lib-${action}-${randomUUID().slice(0, 8)}`,
+      );
+      const runId = await seedReviewRun(
+        projectId,
+        executorId,
+        action === "reopen" ? "Done" : "Review",
+      );
+      const request = await librarianRequest(action, projectId, runId);
+      const retry = request.clone() as NextRequest;
+      const effect = action === "sync" ? syncRunTargetMock : reopenRunMock;
+
+      effect.mockImplementation(async () => {
+        await db
+          .update(schema.runs)
+          .set({ status: "Done" })
+          .where(eq(schema.runs.id, runId));
+        throw new MaisterError("CRASH", "lost response after the run changed");
+      });
+
+      const route = action === "sync" ? syncPOST : reopenPOST;
+      const first = await route(request);
+      const body = await first.json();
+      const replay = await route(retry);
+
+      expect(first.status).toBe(202);
+      expect(body).toMatchObject({ status: "unknown" });
+      expect(await replay.json()).toEqual(body);
+      expect(effect).toHaveBeenCalledTimes(1);
+      const operations = await db
+        .select()
+        .from(schema.librarianOperations)
+        .where(eq(schema.librarianOperations.id, body.operationId));
+
+      expect(operations[0].status).toBe("unknown");
+    },
+  );
+});
+
 async function seedProject(slug: string) {
   const projectId = randomUUID();
   const flowId = randomUUID();
@@ -89,7 +170,11 @@ async function seedProject(slug: string) {
   return { slug, projectId, flowId, executorId };
 }
 
-async function seedReviewRun(projectId: string, executorId: string) {
+async function seedReviewRun(
+  projectId: string,
+  executorId: string,
+  status: "Review" | "Done" = "Review",
+) {
   const runId = randomUUID();
   const workspaceId = randomUUID();
 
@@ -99,7 +184,7 @@ async function seedReviewRun(projectId: string, executorId: string) {
     runnerId: executorId,
     capabilityAgent: "claude",
     runnerSnapshot: testRunnerSnapshot(executorId, "claude"),
-    status: "Review",
+    status,
     runKind: "flow",
     flowVersion: "v1.0.0",
   });
@@ -111,6 +196,7 @@ async function seedReviewRun(projectId: string, executorId: string) {
     branch: "maister/test",
     worktreePath: `/tmp/wt-${runId}`,
     parentRepoPath: `/tmp/repo`,
+    prState: status === "Done" ? "open" : null,
   });
 
   return runId;
@@ -129,6 +215,32 @@ async function auditRows() {
     .select()
     .from(schema.tokenAuditLog as any)
     .execute();
+}
+
+async function librarianRequest(
+  path: "sync" | "reopen",
+  projectId: string,
+  runId: string,
+): Promise<NextRequest> {
+  const userId = await seedActiveUser(db);
+
+  await addProjectMember(db, { projectId, userId, role: "owner" });
+  const turnId = await seedLibrarianTurn(db, userId);
+  const token = await issueLibrarianTurnToken(
+    {
+      ownerUserId: userId,
+      turnId,
+      scopes: ["runs:sync"],
+      expiresAt: new Date(Date.now() + 60_000),
+    },
+    db,
+  );
+  const req = makeReq(path, { runId });
+
+  req.headers.set("authorization", `Bearer ${token.secret}`);
+  req.headers.set("idempotency-key", randomUUID());
+
+  return req;
 }
 
 beforeEach(async () => {
@@ -518,7 +630,7 @@ describe("POST /api/v1/ext/runs/reopen", () => {
     const { projectId, executorId } = await seedProject(
       `ext-reopen-ok-${randomUUID().slice(0, 8)}`,
     );
-    const runId = await seedReviewRun(projectId, executorId);
+    const runId = await seedReviewRun(projectId, executorId, "Done");
     const token = await issueToken(
       { projectId, name: "ok", scopes: ["runs:sync"] },
       db,
@@ -552,10 +664,6 @@ describe("POST /api/v1/ext/runs/reopen", () => {
       db,
     );
 
-    reopenRunMock.mockRejectedValue(
-      new MaisterError("PRECONDITION", "run is not Done"),
-    );
-
     const req = makeReq("reopen", { runId });
 
     req.headers.set("authorization", `Bearer ${token.secret}`);
@@ -564,5 +672,6 @@ describe("POST /api/v1/ext/runs/reopen", () => {
 
     expect(res.status).toBe(409);
     expect((await res.json()).code).toBe("PRECONDITION");
+    expect(reopenRunMock).not.toHaveBeenCalled();
   });
 });

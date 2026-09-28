@@ -204,6 +204,28 @@ and any backup bytes. It has no client projection, blocks competing package
 mutations, and enables deterministic crash recovery across the DB, working
 tree, and initial git commit.
 
+### Personal librarian references (Designed — ADR-185, ADR-190)
+
+Two librarian references reach this domain: the platform setting naming the
+runner every librarian turn uses (migration `0184`), and project-scoped personal
+memory (migration `0190`). The librarian tables are drawn in
+[`librarian-domain.md`](librarian-domain.md); only the edges appear here.
+
+```mermaid
+erDiagram
+    PLATFORM_ACP_RUNNERS |o--o| PLATFORM_RUNTIME_SETTINGS : "librarian_runner_id (Designed, SET NULL)"
+    PROJECTS |o--o{ LIBRARIAN_MEMORY_ITEMS : "scope project (Designed, cascade)"
+
+    PLATFORM_RUNTIME_SETTINGS {
+        boolean librarian_enabled "Designed 0184: NOT NULL DEFAULT false"
+        text librarian_runner_id FK "Designed 0184: NULL -> platform_acp_runners SET NULL"
+    }
+```
+
+Deleting the runner clears `librarian_runner_id`; the librarian then has no
+ready runner and admission refuses. Deleting a project removes the
+project-scoped memory items its members kept about it.
+
 ## Constraints
 
 - `projects.slug` UNIQUE — kebab-case slug derivation collisions

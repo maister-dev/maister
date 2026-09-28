@@ -1662,6 +1662,38 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       ],
     ),
     ...classified(
+      "lib/librarian/workspace.ts",
+      "repository-worktree",
+      "ADR-185: the manager creates the librarian conversation's empty working directory under the reserved `_librarian` runtime slug before adopting it — Stage C workspace cut",
+      [["ensureLibrarianWorkspace", "node:fs/promises.mkdir", "write"]],
+    ),
+    ...classified(
+      "lib/librarian/session-profile.ts",
+      "repository-worktree",
+      "ADR-185 D5 L2: adapter deny settings written into the librarian's private conversation directory before its session starts — Stage C workspace cut",
+      [
+        [
+          "materializeLibrarianAdapterSettings",
+          "lib/atomic.ts#atomicWriteText",
+          "wrapper",
+        ],
+        [
+          "materializeLibrarianSummaryAdapterSettings",
+          "lib/atomic.ts#atomicWriteText",
+          "wrapper",
+        ],
+      ],
+    ),
+    ...classified(
+      "lib/queries/project-directory.ts",
+      "repository-worktree",
+      "ADR-186 project directory: a bounded, symlink-refusing read of the registered repository's README first paragraph — Stage C repository cut",
+      [
+        ["readReadmePurpose", "node:fs/promises.lstat", "stat"],
+        ["readReadmePurpose", "node:fs/promises.open", "open"],
+      ],
+    ),
+    ...classified(
       "lib/worktree-provenance.ts",
       "repository-worktree",
       "git/worktree operations the manager keeps until the Stage C repository cut",
@@ -1965,6 +1997,12 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
   ]),
   ...wrappers("lib/agents/dirty-watchdog.ts", "repository-worktree", [
     ["materializeAgentReadOnlySettings", false],
+  ]),
+  ...wrappers("lib/queries/project-directory.ts", "repository-worktree", [
+    ["getProjectDirectory", false],
+  ]),
+  ...wrappers("lib/librarian/workspace.ts", "repository-worktree", [
+    ["ensureLibrarianWorkspace", false],
   ]),
   ...wrappers("lib/agents/effective.ts", "repository-worktree", [
     ["resolveEffectiveAgentDefinition", false],

@@ -28,6 +28,7 @@ import {
 } from "@/lib/services/triage";
 import { subscribe } from "@/lib/social/subscriptions";
 import { applyQueueWriteFields } from "@/lib/tasks/queue-fields";
+import { cancelClarificationsForAbandonedTasks } from "@/lib/tasks/clarification-requests";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches app/api/projects/[slug]/tasks/route.ts).
 const { projects, runs, tasks } = schemaModule as unknown as Record<
@@ -60,6 +61,7 @@ export type CreateTaskInput = {
 export type CreateTaskContext = {
   projectId: string;
   actorUserId?: string | null;
+  librarianOperationId?: string;
   // ADR-156: the run that authored this task, when one did. Without it
   // `domain_events.run_id` is NULL for agent-authored `task.created` and the
   // agent-chain-depth walk has nothing to resolve, so the cap never binds on
@@ -155,6 +157,10 @@ export async function createTask(
         agentId: input.agentId ?? null,
         triggerEventId: input.triggerEventId ?? null,
         createdByUserId: ctx.actorUserId ?? null,
+        revision: ctx.librarianOperationId ? 1 : 0,
+        statementRevision: ctx.librarianOperationId ? 1 : null,
+        launchIntent: ctx.librarianOperationId ? "none" : null,
+        createdViaOperationId: ctx.librarianOperationId ?? null,
         status: "Backlog",
         stage: "Backlog",
       })
@@ -256,6 +262,7 @@ export type TaskDTO = {
   taskKey: string;
   title: string;
   prompt: string;
+  revision: number;
   status: string;
   stage: string;
   flowId: string | null;
@@ -294,6 +301,7 @@ async function taskToDTO(row: any, db: { select: any }): Promise<TaskDTO> {
     taskKey: keyRows[0]?.taskKey ?? "",
     title: row.title,
     prompt: row.prompt,
+    revision: row.revision,
     status: row.status,
     stage: row.stage,
     flowId: row.flowId ?? null,
@@ -340,6 +348,7 @@ export async function listTaskDTOs(
 }
 
 export type UpdateTaskInput = {
+  expectedRevision?: number;
   title?: string;
   prompt?: string;
   flowId?: string | null;
@@ -417,68 +426,100 @@ export async function updateTask(
   input: UpdateTaskInput,
   db?: Db,
 ): Promise<TaskDTO> {
-  const _db = (db ?? getDb()) as unknown as { select: any; update: any };
-  const rows = await (_db as any)
-    .select()
-    .from(tasks)
-    .where(and(eq(tasks.id, taskId), eq(tasks.projectId, projectId)));
+  const _db = db ?? getDb();
 
-  if (rows.length === 0) {
-    throw new MaisterError("PRECONDITION", `task not found: ${taskId}`);
-  }
+  return _db.transaction(async (tx: Db) => {
+    const rows = await tx
+      .select()
+      .from(tasks)
+      .where(and(eq(tasks.id, taskId), eq(tasks.projectId, projectId)))
+      .for("update");
 
-  const task = rows[0];
+    if (rows.length === 0) {
+      throw new MaisterError("PRECONDITION", `task not found: ${taskId}`);
+    }
 
-  // ADR-121 (INV-10): the pause valve works while a task is InFlight (to dequeue
-  // a resume / stop an auto-relaunch); config fields stay Backlog-gated. Terminal
-  // tasks accept neither.
-  if (task.status !== "Backlog" && hasBacklogGatedField(input)) {
-    throw new MaisterError(
-      "PRECONDITION",
-      `task is not in Backlog (got ${task.status})`,
+    const task = rows[0];
+
+    if (
+      input.expectedRevision !== undefined &&
+      task.revision !== input.expectedRevision
+    ) {
+      log.warn(
+        {
+          taskId,
+          expectedRevision: input.expectedRevision,
+          actualRevision: task.revision,
+        },
+        "task revision is stale",
+      );
+      throw new MaisterError(
+        "CONFLICT",
+        "task has changed; reload before updating",
+        {
+          details: { reason: "stale_revision", actualRevision: task.revision },
+        },
+      );
+    }
+
+    // ADR-121 (INV-10): the pause valve works while a task is InFlight (to dequeue
+    // a resume / stop an auto-relaunch); config fields stay Backlog-gated. Terminal
+    // tasks accept neither.
+    if (task.status !== "Backlog" && hasBacklogGatedField(input)) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `task is not in Backlog (got ${task.status})`,
+      );
+    }
+
+    if (
+      input.queuePaused !== undefined &&
+      task.status !== "Backlog" &&
+      task.status !== "InFlight"
+    ) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `task is terminal (got ${task.status}); cannot change pause`,
+      );
+    }
+
+    const patch = updateColumns(input);
+
+    if (Object.keys(patch).length === 1) {
+      throw new MaisterError("CONFIG", "at least one task field is required");
+    }
+
+    const resolvedVerdict = await validateVerdictRefs(
+      projectId,
+      verdictPatch(input),
+      tx,
     );
-  }
 
-  if (
-    input.queuePaused !== undefined &&
-    task.status !== "Backlog" &&
-    task.status !== "InFlight"
-  ) {
-    throw new MaisterError(
-      "PRECONDITION",
-      `task is terminal (got ${task.status}); cannot change pause`,
+    // `patch` was built before validation, so the resolved id has to be applied
+    // onto it explicitly — otherwise a flowId given as a ref is written verbatim.
+    if (resolvedVerdict.flowId !== undefined) {
+      patch.flowId = resolvedVerdict.flowId;
+    }
+
+    patch.revision = sql`${tasks.revision} + 1`;
+
+    await tx
+      .update(tasks)
+      .set(patch)
+      .where(and(eq(tasks.id, taskId), eq(tasks.projectId, projectId)));
+
+    const updatedRows = await tx
+      .select()
+      .from(tasks)
+      .where(and(eq(tasks.id, taskId), eq(tasks.projectId, projectId)));
+
+    log.debug(
+      { taskId, from: task.revision, to: updatedRows[0].revision },
+      "task revision advanced",
     );
-  }
 
-  const patch = updateColumns(input);
-
-  if (Object.keys(patch).length === 1) {
-    throw new MaisterError("CONFIG", "at least one task field is required");
-  }
-
-  const resolvedVerdict = await validateVerdictRefs(
-    projectId,
-    verdictPatch(input),
-    _db,
-  );
-
-  // `patch` was built before validation, so the resolved id has to be applied
-  // onto it explicitly — otherwise a flowId given as a ref is written verbatim.
-  if (resolvedVerdict.flowId !== undefined) {
-    patch.flowId = resolvedVerdict.flowId;
-  }
-
-  await (_db as any)
-    .update(tasks)
-    .set(patch)
-    .where(and(eq(tasks.id, taskId), eq(tasks.projectId, projectId)));
-
-  const updatedRows = await (_db as any)
-    .select()
-    .from(tasks)
-    .where(and(eq(tasks.id, taskId), eq(tasks.projectId, projectId)));
-
-  return taskToDTO(updatedRows[0], _db);
+    return taskToDTO(updatedRows[0], tx);
+  });
 }
 
 /**
@@ -512,5 +553,9 @@ export async function abandonUnlaunchedTasks(
     )
     .returning({ id: tasks.id })) as { id: string }[];
 
-  return rows.map((row) => row.id);
+  const abandonedIds = rows.map((row) => row.id);
+
+  await cancelClarificationsForAbandonedTasks(db, abandonedIds);
+
+  return abandonedIds;
 }

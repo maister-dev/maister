@@ -102,6 +102,7 @@ table agent_turns {
   logical_key text [not null]
   prompt text [not null]
   parent_turn_id text
+  requested_by_user_id text
   state text [not null, default: 'queued']
   execution_assignment_id text
   assignment_epoch integer
@@ -1423,6 +1424,270 @@ table inbox_items {
   }
 }
 
+table librarian_cards {
+  id text [pk, not null]
+  conversation_id text [not null]
+  segment_id text [not null]
+  message_id text
+  kind text [not null]
+  status text [not null]
+  target jsonb [not null]
+  target_revision text
+  payload jsonb [not null]
+  payload_digest text [not null]
+  requires_owner boolean [not null]
+  expires_at "timestamp with time zone" [not null]
+  decided_at "timestamp with time zone"
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    conversation_id [name: 'librarian_cards_pending_idx']
+
+
+  }
+}
+
+table librarian_context_snapshots {
+  id text [pk, not null]
+  turn_id text [not null]
+  instructions_version text [not null]
+  message_ids text[] [not null]
+  summary_revisions jsonb [not null]
+  memory_item_revisions jsonb [not null]
+  authz_fingerprint text [not null]
+  context_epoch integer [not null]
+  char_count integer [not null]
+  truncated boolean [not null]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    turn_id [name: 'librarian_context_snapshots_turn_idx']
+  }
+}
+
+table librarian_conversations {
+  id text [pk, not null]
+  user_id text [not null]
+  run_id text
+  context_epoch integer [not null, default: 0]
+  forget_generation integer [not null, default: 0]
+  history_generation integer [not null, default: 0]
+  current_segment_id text
+  reset_state text [not null, default: 'none']
+  subject jsonb
+  read_through_seq bigint [not null, default: `0`]
+  last_seq bigint [not null, default: `0`]
+  memory_enabled_next_segment boolean [not null, default: true]
+  daily_turn_date date
+  daily_turn_count integer [not null, default: 0]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    user_id [name: 'librarian_conversations_user_uq', unique]
+    run_id [name: 'librarian_conversations_run_uq', unique]
+
+  }
+}
+
+table librarian_memory_item_revisions {
+  item_id text [not null]
+  revision integer [not null]
+  content text [not null]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (item_id, revision) [pk]
+
+  }
+}
+
+table librarian_memory_items {
+  id text [pk, not null]
+  user_id text [not null]
+  kind text [not null]
+  content text [not null]
+  scope text [not null]
+  project_id text
+  source_refs jsonb [not null, default: `'[]'::jsonb`]
+  source_project_ids text[] [not null, default: `'{}'::text[]`]
+  origin text [not null]
+  valid_until "timestamp with time zone"
+  revision integer [not null, default: 1]
+  forgotten_at "timestamp with time zone"
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    user_id [name: 'librarian_memory_items_user_active_idx']
+
+
+
+
+
+  }
+}
+
+table librarian_memory_tombstones {
+  user_id text [not null]
+  content_digest text [not null]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (user_id, content_digest) [pk]
+  }
+}
+
+table librarian_messages {
+  id text [pk, not null]
+  conversation_id text [not null]
+  segment_id text [not null]
+  seq bigint [not null]
+  author_kind text [not null]
+  client_message_id text
+  body text [not null]
+  body_tsv tsvector
+  subject jsonb
+  delivery_state text [not null, default: 'accepted']
+  turn_id text
+  source_project_ids text[] [not null, default: `'{}'::text[]`]
+  card_id text
+  update_id text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (conversation_id, seq) [name: 'librarian_messages_seq_uq', unique]
+    (conversation_id, client_message_id) [name: 'librarian_messages_client_id_uq', unique]
+    body_tsv [name: 'librarian_messages_body_tsv_idx']
+
+
+  }
+}
+
+table librarian_operations {
+  id text [pk, not null]
+  conversation_id text [not null]
+  segment_id text [not null]
+  turn_id text
+  card_id text
+  idempotency_key text [not null]
+  kind text [not null]
+  request_digest text [not null]
+  target jsonb [not null]
+  status text [not null]
+  result jsonb
+  error_code text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  settled_at "timestamp with time zone"
+
+  indexes {
+    (conversation_id, idempotency_key) [name: 'librarian_operations_key_uq', unique]
+    (segment_id, request_digest) [name: 'librarian_operations_segment_digest_idx']
+
+
+  }
+}
+
+table librarian_segment_summaries {
+  id text [pk, not null]
+  segment_id text [not null]
+  revision integer [not null]
+  from_seq bigint [not null]
+  to_seq bigint [not null]
+  content jsonb [not null]
+  source_project_ids text[] [not null, default: `'{}'::text[]`]
+  forget_generation integer [not null]
+  history_generation integer [not null]
+  invalidated_at "timestamp with time zone"
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (segment_id, revision) [name: 'librarian_segment_summaries_revision_uq', unique]
+
+  }
+}
+
+table librarian_segments {
+  id text [pk, not null]
+  conversation_id text [not null]
+  ordinal integer [not null]
+  started_at "timestamp with time zone" [not null]
+  ended_at "timestamp with time zone"
+
+  indexes {
+    (conversation_id, ordinal) [name: 'librarian_segments_ordinal_uq', unique]
+  }
+}
+
+table librarian_task_links {
+  id text [pk, not null]
+  conversation_id text [not null]
+  task_id text [not null]
+  meaning text [not null]
+  from_message_id text
+  to_message_id text
+  statement_revision integer
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    task_id [name: 'librarian_task_links_task_idx']
+
+  }
+}
+
+table librarian_turns {
+  id text [pk, not null]
+  conversation_id text [not null]
+  segment_id text [not null]
+  message_id text
+  variant text [not null]
+  status text [not null]
+  failure_reason text
+  context_snapshot_id text
+  runner_snapshot jsonb
+  token_id text
+  start_attempts integer [not null, default: 0]
+  start_lease_at "timestamp with time zone"
+  deadline_at "timestamp with time zone"
+  admitted_at "timestamp with time zone"
+  started_at "timestamp with time zone"
+  ended_at "timestamp with time zone"
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    conversation_id [name: 'librarian_turns_one_active_uq', unique]
+    segment_id [name: 'librarian_turns_one_summary_uq', unique]
+    (conversation_id, status) [name: 'librarian_turns_conversation_status_idx']
+
+
+
+
+  }
+}
+
+table librarian_updates {
+  id text [pk, not null]
+  conversation_id text [not null]
+  domain_event_id bigint [not null]
+  task_id text
+  run_id text
+  kind text [not null]
+  status text [not null]
+  attempts integer [not null, default: 0]
+  message_id text
+  last_error_code text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  delivered_at "timestamp with time zone"
+
+  indexes {
+    (conversation_id, domain_event_id) [name: 'librarian_updates_event_uq', unique]
+    (conversation_id, created_at) [name: 'librarian_updates_conversation_created_idx']
+
+
+
+  }
+}
+
 table local_packages {
   id text [pk, not null]
   name text [not null]
@@ -1631,6 +1896,8 @@ table platform_runtime_settings {
   distill_base_url text
   distill_model text
   distill_api_key_ref text
+  librarian_enabled boolean [not null, default: false]
+  librarian_runner_id text
   updated_at "timestamp with time zone" [not null, default: `now()`]
 }
 
@@ -1719,6 +1986,7 @@ table project_tokens {
   token_kind text [not null, default: 'project']
   owner_user_id text
   agent_id text
+  librarian_turn_id text
   prefix text [not null]
   token_hash text [not null]
   scopes jsonb [not null, default: `["*"]`]
@@ -1738,6 +2006,10 @@ table project_tokens {
 
 
 
+
+
+
+    librarian_turn_id [name: 'project_tokens_librarian_turn_idx']
   }
 }
 
@@ -1877,11 +2149,13 @@ table run_messages {
   prompt_dispatch_key text
   delivery text
   steer_command_id text
+  via_operation_id text
   created_at "timestamp with time zone" [not null, default: `now()`]
 
   indexes {
     (run_id, node_attempt_id, projection_tool_key, sequence) [name: 'run_messages_projection_tool_idx']
     (run_id, node_attempt_id, sequence) [name: 'run_messages_run_node_attempt_sequence_uq', unique]
+    via_operation_id [name: 'run_messages_via_operation_uq', unique]
     (run_id, node_attempt_id, prompt_dispatch_key) [name: 'run_messages_prompt_dispatch_key_uq', unique]
 
     (run_id, sequence) [name: 'run_messages_queued_idx']
@@ -1987,6 +2261,7 @@ table run_sessions {
   resolution_warning jsonb
   execution_assignment_id text
   host_session_id text
+  librarian_context_epoch integer
   created_at "timestamp with time zone" [not null, default: `now()`]
   updated_at "timestamp with time zone" [not null, default: `now()`]
 
@@ -2054,6 +2329,7 @@ table runs {
   scheduled_launch_id text
   agent_schedule_id text
   evaluation_batch_item_id text
+  librarian_operation_id text
   agent_workspace text
   task_id text
   project_id text
@@ -2111,6 +2387,9 @@ table runs {
     (project_id, status) [name: 'runs_project_status_idx']
 
 
+
+
+    librarian_operation_id [name: 'runs_librarian_operation_uq', unique]
     (flow_driver_lease_expires_at, id) [name: 'runs_flow_driver_lease_idx']
     (project_id, status, run_kind) [name: 'runs_project_status_kind_idx']
     task_id [name: 'runs_task_idx']
@@ -2350,12 +2629,23 @@ table task_clarifications {
   id text [pk, not null]
   task_id text [not null]
   seq integer [not null]
-  source_hitl_request_id text [not null]
-  origin_run_id text [not null]
-  origin_agent_id text [not null]
+  source_hitl_request_id text
+  origin_run_id text
+  origin_agent_id text
+  origin_kind text [not null]
   question text [not null]
-  question_schema jsonb [not null]
+  question_schema jsonb
   retrigger_mode text [not null]
+  requester_user_id text
+  recipient_user_id text
+  reason text
+  answer_format text
+  blocking boolean [not null, default: false]
+  status text [not null, default: 'open']
+  cancel_reason text
+  superseded_by_clarification_id text
+  source_message_id text
+  requested_via_operation_id text
   answer jsonb
   answered_by_user_id text
   answered_at "timestamp with time zone"
@@ -2367,7 +2657,13 @@ table task_clarifications {
   indexes {
     (task_id, seq) [name: 'task_clarifications_task_seq_uq', unique]
     source_hitl_request_id [name: 'task_clarifications_source_hitl_request_uq', unique]
+    requested_via_operation_id [name: 'task_clarifications_requested_via_operation_uq', unique]
     (task_id, seq, id) [name: 'task_clarifications_answered_context_idx']
+
+
+
+
+
 
 
 
@@ -2382,10 +2678,12 @@ table task_comments {
   actor_type text [not null]
   actor_id text
   body text [not null]
+  via_operation_id text
   created_at "timestamp with time zone" [not null, default: `now()`]
 
   indexes {
     (task_id, created_at) [name: 'task_comments_task_created_idx']
+    via_operation_id [name: 'task_comments_via_operation_uq', unique]
 
 
   }
@@ -2411,6 +2709,20 @@ table task_relations {
   }
 }
 
+table task_statement_revisions {
+  task_id text [not null]
+  revision integer [not null]
+  statement jsonb [not null]
+  author_actor_type text [not null]
+  author_actor_id text
+  via_operation_id text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (task_id, revision) [pk]
+  }
+}
+
 table task_subscribers {
   id text [pk, not null]
   task_id text [not null]
@@ -2432,6 +2744,10 @@ table tasks {
   number integer [not null]
   title text [not null]
   prompt text [not null]
+  revision integer [not null, default: 0]
+  statement_revision integer
+  launch_intent text
+  created_via_operation_id text
   flow_id text
   status text [not null, default: 'Backlog']
   stage text [not null, default: 'Backlog']
@@ -2457,9 +2773,11 @@ table tasks {
 
   indexes {
     (id, attempt_number) [name: 'tasks_id_attempt_uq', unique]
+    created_via_operation_id [name: 'tasks_created_via_operation_uq', unique]
     (project_id, number) [name: 'tasks_project_number_uq', unique]
     (project_id, status) [name: 'tasks_project_status_idx']
     (agent_id, trigger_event_id) [name: 'tasks_agent_trigger_event_uq', unique]
+
 
 
   }
@@ -2475,10 +2793,14 @@ table token_audit_log {
   method text [not null]
   result text [not null]
   status_code integer [not null]
+  on_behalf_of_user_id text
+  librarian_turn_id text
+  operation_id text
   created_at "timestamp with time zone" [not null, default: `now()`]
 
   indexes {
     token_id [name: 'token_audit_token_idx']
+    librarian_turn_id [name: 'token_audit_librarian_turn_idx']
     (project_id, created_at) [name: 'token_audit_project_created_idx']
   }
 }
@@ -2901,6 +3223,8 @@ ref agent_turns_run_id_runs_id_fk: agent_turns.run_id > runs.id [delete: cascade
 
 ref agent_turns_parent_turn_id_agent_turns_id_fk: agent_turns.parent_turn_id > agent_turns.id [delete: cascade, update: no action]
 
+ref agent_turns_requested_by_user_id_users_id_fk: agent_turns.requested_by_user_id > users.id [delete: set null, update: no action]
+
 ref agent_turns_execution_assignment_id_execution_assignments_id_fk: agent_turns.execution_assignment_id > execution_assignments.id [delete: restrict, update: no action]
 
 ref agent_turns_run_session_id_run_sessions_id_fk: agent_turns.run_session_id > run_sessions.id [delete: restrict, update: no action]
@@ -3195,6 +3519,64 @@ ref inbox_items_project_id_projects_id_fk: inbox_items.project_id > projects.id 
 
 ref inbox_items_task_id_tasks_id_fk: inbox_items.task_id > tasks.id [delete: cascade, update: no action]
 
+ref librarian_cards_conversation_id_librarian_conversations_id_fk: librarian_cards.conversation_id > librarian_conversations.id [delete: cascade, update: no action]
+
+ref librarian_cards_segment_id_librarian_segments_id_fk: librarian_cards.segment_id > librarian_segments.id [delete: no action, update: no action]
+
+ref librarian_cards_message_id_librarian_messages_id_fk: librarian_cards.message_id > librarian_messages.id [delete: set null, update: no action]
+
+ref librarian_context_snapshots_turn_id_librarian_turns_id_fk: librarian_context_snapshots.turn_id > librarian_turns.id [delete: cascade, update: no action]
+
+ref librarian_conversations_user_id_users_id_fk: librarian_conversations.user_id > users.id [delete: cascade, update: no action]
+
+ref librarian_conversations_run_id_runs_id_fk: librarian_conversations.run_id > runs.id [delete: set null, update: no action]
+
+ref librarian_memory_item_revisions_item_id_librarian_memory_items_id_fk: librarian_memory_item_revisions.item_id > librarian_memory_items.id [delete: cascade, update: no action]
+
+ref librarian_memory_items_user_id_users_id_fk: librarian_memory_items.user_id > users.id [delete: cascade, update: no action]
+
+ref librarian_memory_items_project_id_projects_id_fk: librarian_memory_items.project_id > projects.id [delete: cascade, update: no action]
+
+ref librarian_memory_tombstones_user_id_users_id_fk: librarian_memory_tombstones.user_id > users.id [delete: cascade, update: no action]
+
+ref librarian_messages_conversation_id_librarian_conversations_id_fk: librarian_messages.conversation_id > librarian_conversations.id [delete: cascade, update: no action]
+
+ref librarian_messages_segment_id_librarian_segments_id_fk: librarian_messages.segment_id > librarian_segments.id [delete: no action, update: no action]
+
+ref librarian_operations_conversation_id_librarian_conversations_id_fk: librarian_operations.conversation_id > librarian_conversations.id [delete: cascade, update: no action]
+
+ref librarian_operations_segment_id_librarian_segments_id_fk: librarian_operations.segment_id > librarian_segments.id [delete: no action, update: no action]
+
+ref librarian_operations_turn_id_librarian_turns_id_fk: librarian_operations.turn_id > librarian_turns.id [delete: set null, update: no action]
+
+ref librarian_segment_summaries_segment_id_librarian_segments_id_fk: librarian_segment_summaries.segment_id > librarian_segments.id [delete: cascade, update: no action]
+
+ref librarian_segments_conversation_id_librarian_conversations_id_fk: librarian_segments.conversation_id > librarian_conversations.id [delete: cascade, update: no action]
+
+ref librarian_task_links_conversation_id_librarian_conversations_id_fk: librarian_task_links.conversation_id > librarian_conversations.id [delete: cascade, update: no action]
+
+ref librarian_task_links_task_id_tasks_id_fk: librarian_task_links.task_id > tasks.id [delete: cascade, update: no action]
+
+ref librarian_task_links_from_message_id_librarian_messages_id_fk: librarian_task_links.from_message_id > librarian_messages.id [delete: set null, update: no action]
+
+ref librarian_task_links_to_message_id_librarian_messages_id_fk: librarian_task_links.to_message_id > librarian_messages.id [delete: set null, update: no action]
+
+ref librarian_turns_conversation_id_librarian_conversations_id_fk: librarian_turns.conversation_id > librarian_conversations.id [delete: cascade, update: no action]
+
+ref librarian_turns_segment_id_librarian_segments_id_fk: librarian_turns.segment_id > librarian_segments.id [delete: no action, update: no action]
+
+ref librarian_turns_message_id_librarian_messages_id_fk: librarian_turns.message_id > librarian_messages.id [delete: set null, update: no action]
+
+ref librarian_updates_conversation_id_librarian_conversations_id_fk: librarian_updates.conversation_id > librarian_conversations.id [delete: cascade, update: no action]
+
+ref librarian_updates_domain_event_id_domain_events_id_fk: librarian_updates.domain_event_id > domain_events.id [delete: no action, update: no action]
+
+ref librarian_updates_task_id_tasks_id_fk: librarian_updates.task_id > tasks.id [delete: set null, update: no action]
+
+ref librarian_updates_run_id_runs_id_fk: librarian_updates.run_id > runs.id [delete: set null, update: no action]
+
+ref librarian_updates_message_id_librarian_messages_id_fk: librarian_updates.message_id > librarian_messages.id [delete: set null, update: no action]
+
 ref local_packages_source_install_id_package_installs_id_fk: local_packages.source_install_id > package_installs.id [delete: set null, update: no action]
 
 ref local_packages_last_cut_install_id_package_installs_id_fk: local_packages.last_cut_install_id > package_installs.id [delete: set null, update: no action]
@@ -3223,6 +3605,8 @@ ref package_installs_source_local_package_id_local_packages_id_fk: package_insta
 
 ref platform_runtime_settings_default_runner_id_platform_acp_runners_id_fk: platform_runtime_settings.default_runner_id > platform_acp_runners.id [delete: no action, update: no action]
 
+ref platform_runtime_settings_librarian_runner_id_platform_acp_runners_id_fk: platform_runtime_settings.librarian_runner_id > platform_acp_runners.id [delete: set null, update: no action]
+
 ref project_flow_roles_project_id_projects_id_fk: project_flow_roles.project_id > projects.id [delete: cascade, update: no action]
 
 ref project_flow_runner_defaults_project_id_projects_id_fk: project_flow_runner_defaults.project_id > projects.id [delete: cascade, update: no action]
@@ -3248,6 +3632,8 @@ ref project_tokens_owner_user_id_users_id_fk: project_tokens.owner_user_id > use
 ref project_tokens_agent_id_agents_id_fk: project_tokens.agent_id > agents.id [delete: cascade, update: no action]
 
 ref project_tokens_created_by_users_id_fk: project_tokens.created_by > users.id [delete: set null, update: no action]
+
+ref project_tokens_librarian_turn_fk: project_tokens.librarian_turn_id > librarian_turns.id [delete: cascade, update: no action]
 
 ref projects_sync_runner_id_platform_acp_runners_id_fk: projects.sync_runner_id > platform_acp_runners.id [delete: set null, update: no action]
 
@@ -3381,6 +3767,8 @@ ref task_activity_project_id_projects_id_fk: task_activity.project_id > projects
 
 ref task_clarifications_task_id_tasks_id_fk: task_clarifications.task_id > tasks.id [delete: cascade, update: no action]
 
+ref task_clarifications_source_message_id_librarian_messages_id_fk: task_clarifications.source_message_id > librarian_messages.id [delete: set null, update: no action]
+
 ref task_comments_task_id_tasks_id_fk: task_comments.task_id > tasks.id [delete: cascade, update: no action]
 
 ref task_comments_project_id_projects_id_fk: task_comments.project_id > projects.id [delete: cascade, update: no action]
@@ -3390,6 +3778,8 @@ ref task_relations_project_id_projects_id_fk: task_relations.project_id > projec
 ref task_relations_from_task_id_tasks_id_fk: task_relations.from_task_id > tasks.id [delete: cascade, update: no action]
 
 ref task_relations_to_task_id_tasks_id_fk: task_relations.to_task_id > tasks.id [delete: cascade, update: no action]
+
+ref task_statement_revisions_task_id_tasks_id_fk: task_statement_revisions.task_id > tasks.id [delete: cascade, update: no action]
 
 ref task_subscribers_task_id_tasks_id_fk: task_subscribers.task_id > tasks.id [delete: cascade, update: no action]
 
@@ -3406,6 +3796,8 @@ ref tasks_created_by_user_id_users_id_fk: tasks.created_by_user_id > users.id [d
 ref token_audit_log_token_id_project_tokens_id_fk: token_audit_log.token_id > project_tokens.id [delete: cascade, update: no action]
 
 ref token_audit_log_project_id_projects_id_fk: token_audit_log.project_id > projects.id [delete: set null, update: no action]
+
+ref token_audit_log_on_behalf_of_user_id_users_id_fk: token_audit_log.on_behalf_of_user_id > users.id [delete: set null, update: no action]
 
 ref token_lifecycle_events_token_id_project_tokens_id_fk: token_lifecycle_events.token_id > project_tokens.id [delete: cascade, update: no action]
 

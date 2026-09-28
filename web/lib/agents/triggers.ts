@@ -334,6 +334,10 @@ function clarificationAnswerTarget(
     return null;
 
   const payload = event.payload as Record<string, unknown>;
+
+  if (payload.originKind === "user" || payload.reTriggerMode === "triage")
+    return null;
+
   const clarificationId = payload.clarificationId;
   const hitlRequestId = payload.hitlRequestId;
   const requestingAgentId = payload.requestingAgentId;

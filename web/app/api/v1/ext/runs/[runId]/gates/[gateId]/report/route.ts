@@ -12,6 +12,7 @@ import {
 } from "@/lib/flows/graph/gate-store";
 import { resolveGateExternalConfig } from "@/lib/queries/readiness";
 import { recordTokenAudit } from "@/lib/tokens/audit";
+import { tokenAuditIdentity } from "@/lib/tokens/audit";
 import { handleExt } from "@/lib/tokens/ext-handler";
 
 // FIXME(any): remove the schema-module bridge once Drizzle's generated table
@@ -201,9 +202,8 @@ export async function POST(
 
           await recordTokenAudit(
             {
-              tokenId: ctx.actor.tokenId,
+              ...tokenAuditIdentity(ctx.actor),
               projectId: ctx.projectId,
-              actorLabel: ctx.actor.actorLabel,
               scopeUsed: SCOPE,
               endpoint: ENDPOINT,
               method: "POST",

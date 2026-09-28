@@ -25,7 +25,7 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-export type TokenKind = "project" | "user" | "agent";
+export type TokenKind = "project" | "user" | "agent" | "librarian";
 
 export type IssueTokenInput = {
   projectId: string | null;
@@ -72,6 +72,15 @@ export async function issueToken(
   const tokenKind = input.tokenKind ?? "project";
   const ownerUserId = input.ownerUserId ?? null;
   const scopes = normalizeTokenScopes(input.scopes);
+
+  // ADR-186: a librarian token exists only for one librarian turn and is minted
+  // by lib/librarian/authority.ts — never through the human issuance path.
+  if (tokenKind === "librarian") {
+    throw new MaisterError(
+      "CONFIG",
+      "librarian tokens are issued per librarian turn only",
+    );
+  }
 
   if (tokenKind !== "user" && input.projectId === null) {
     throw new MaisterError(

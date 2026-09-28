@@ -7,6 +7,7 @@ export interface TaskTimelineLabels {
   empty: string;
   formerUser: string;
   system: string;
+  viaLibrarian: string;
   // (ADR-151) `%agents%` is the comma-joined list of resolved-but-unsummonable
   // agent ids.
   mentionNotSummonable: string;
@@ -83,6 +84,7 @@ export function TaskTimeline({
             <div className="mb-1.5 flex items-baseline justify-between gap-2">
               <span className="text-[12px] font-semibold text-ink">
                 {actorLabel(item.actor, labels)}
+                {item.via === "librarian" ? ` · ${labels.viaLibrarian}` : ""}
               </span>
               {timestamp(item.createdAt)}
             </div>

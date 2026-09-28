@@ -114,13 +114,12 @@ export async function claimScratchIdleResume(
     return { outcome: "not_locked" };
   }
 
-  // A project run takes the flow pool through the host-pressure fence
-  // (ADR-183 D9): the host would refuse the respawn. The assistant budget is
-  // not fenced — a refused respawn parks it again.
-  const flowCap = run.projectId ? await effectivePoolCap(tx, "flow") : null;
-  const atCap = flowCap
+  // Host pressure fences both project and project-less scratch respawns.
+  const flowCap = await effectivePoolCap(tx, "flow");
+  const atCap = run.projectId
     ? (await countLiveRuns(tx, "flow")) >= flowCap.cap
-    : (await countLiveAssistantRuns(tx)) >= maxConcurrentAssistantRunsCap();
+    : flowCap.fence !== null ||
+      (await countLiveAssistantRuns(tx)) >= maxConcurrentAssistantRunsCap();
 
   if (atCap) {
     await tx

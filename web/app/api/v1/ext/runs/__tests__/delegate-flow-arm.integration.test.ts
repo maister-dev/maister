@@ -708,6 +708,8 @@ describe("run_delegate flow arm — failure and crash windows (ADR-163 REQ-21)",
       classifyManualTaskLaunchability(
         { status: carrier.status, triageStatus: null },
         { status: "Abandoned" },
+        undefined,
+        { openBlocking: 0 },
       ),
     ).toBe("launchable");
   });

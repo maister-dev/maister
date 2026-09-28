@@ -1,0 +1,310 @@
+asyncapi: 2.6.0
+info:
+  title: MAIster Web — personal librarian stream
+  version: "1.0.0"
+  description: |
+    (Designed — ADR-185, ADR-190, ADR-191) Browser-safe change notifications
+    for the session user's personal librarian conversation, delivered by
+    `GET /api/librarian/stream`.
+
+    One `EventSource` per signed-in reader, addressed by the **session user**:
+    a user has exactly one conversation (`librarian_conversations_user_uq`),
+    so the stream needs no conversation id and accepts none. No role —
+    global admin included — can open another user's stream.
+
+    Frames are **notifications, not content**. No frame carries a message
+    body, a prompt, a tool call, a card payload, a memory item or a project
+    name: a client that sees a frame refetches `GET /api/librarian/messages`
+    (transcript) or `GET /api/librarian/conversation` (turn, queue, cards,
+    indicator). The stream therefore never needs its own visibility mask —
+    masking (LMM-09) is applied by those routes at read time.
+
+    Live model tokens of a running turn are NOT on this stream. They ride the
+    existing run stream `GET /api/runs/{runId}/stream` of the conversation's
+    `run_kind='librarian'` run (`web-runs.asyncapi.yaml`), whose project-less
+    authz is `created_by_user_id = viewer`.
+
+    `seq` is the conversation's durable message sequence
+    (`librarian_messages.seq`). It never decreases and is never reused within
+    a conversation — not across a reset, a history clear or the retention
+    purge. Every frame's SSE `id` is its `seq` as a canonical decimal string,
+    so `id` is monotonic (non-decreasing) over the life of a stream.
+
+    `librarian.heartbeat` is a synthetic web-tier message. It carries no SSE
+    `id` and never advances a replay cursor.
+  contact:
+    name: MAIster maintainers
+    url: https://github.com/your-org/mAIster
+  license:
+    name: MIT
+defaultContentType: application/json
+servers:
+  local:
+    url: http://localhost:3000
+    protocol: http
+    description: Local Next.js server.
+channels:
+  /api/librarian/stream:
+    bindings:
+      http:
+        type: response
+        method: GET
+    subscribe:
+      operationId: subscribeLibrarian
+      summary: Follow the session user's librarian conversation
+      description: |
+        Authentication is principal-derived from the active session; there is
+        no path or query parameter naming a user or a conversation, and a
+        project token (librarian, agent or personal) never reaches this route.
+        An unauthenticated request is refused `401` before streaming begins.
+
+        The server polls durable rows — every 500 ms while a turn of the
+        conversation is `admitted` or `running`, every 2 s while enabled and
+        idle, and every 30 s while disabled and idle — and
+        emits one frame per change:
+
+        - `librarian.message` for each new `librarian_messages` row, in `seq`
+          order (owner, librarian, update and system messages alike);
+        - `librarian.turn` when a turn changes status;
+        - `librarian.indicator` when the top-navigation indicator changes;
+        - `librarian.reset` when a reset starts (`resetting`), when it is
+          acknowledged (`none` + the new `segmentId`), and after a history
+          clear (`none` without `segmentId`) — in every case the client drops
+          its cached transcript and refetches.
+
+        Replay is exclusive of `Last-Event-ID`, with a `lastEventId` query
+        fallback for clients that cannot set the header. On (re)connect the
+        server first sends a `librarian.message` frame for every message whose
+        `seq` is greater than the cursor, then the current turn, indicator and
+        reset state as one frame each. State frames are snapshots, so
+        receiving one twice is harmless. A cursor that is not a canonical
+        non-negative decimal is ignored: the stream then opens with the state
+        frames only, because the client loads history through
+        `GET /api/librarian/messages`. There is no in-memory replay buffer; a
+        server restart costs a reader only a reconnect.
+
+        A quiet stream emits `librarian.heartbeat` every 15 s. A stream with no
+        non-heartbeat frame for 5 minutes is closed by the server; the
+        browser's `EventSource` reconnects with its last `id`. Poll interval,
+        heartbeat period and quiet close are module constants, not environment
+        variables.
+      message:
+        oneOf:
+          - $ref: "#/components/messages/LibrarianMessage"
+          - $ref: "#/components/messages/LibrarianTurn"
+          - $ref: "#/components/messages/LibrarianIndicator"
+          - $ref: "#/components/messages/LibrarianReset"
+          - $ref: "#/components/messages/LibrarianHeartbeat"
+components:
+  messages:
+    LibrarianMessage:
+      name: librarian.message
+      title: A conversation message was committed
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/LibrarianMessageEvent"
+    LibrarianTurn:
+      name: librarian.turn
+      title: A turn changed status
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/LibrarianTurnEvent"
+    LibrarianIndicator:
+      name: librarian.indicator
+      title: The top-navigation indicator changed
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/LibrarianIndicatorEvent"
+    LibrarianReset:
+      name: librarian.reset
+      title: A reset barrier or history clear moved
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/LibrarianResetEvent"
+    LibrarianHeartbeat:
+      name: librarian.heartbeat
+      title: Synthetic quiet-window keepalive
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/LibrarianHeartbeatEvent"
+  schemas:
+    LibrarianMessageEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - id
+        - seq
+        - messageId
+      properties:
+        type:
+          type: string
+          enum:
+            - librarian.message
+        id:
+          description: SSE frame id — this frame's `seq`; the exclusive replay cursor.
+          type: string
+          pattern: "^(0|[1-9][0-9]{0,18})$"
+        seq:
+          description: The committed message's `librarian_messages.seq`.
+          type: string
+          pattern: "^(0|[1-9][0-9]{0,18})$"
+        messageId:
+          description: >-
+            `librarian_messages.id`. The body is fetched from
+            `GET /api/librarian/messages`, never carried here.
+          type: string
+          minLength: 1
+      example:
+        type: librarian.message
+        id: "57"
+        seq: "57"
+        messageId: 1c9e0f52-7d4b-4a8e-9f3a-2b6c5d7e8f90
+    LibrarianTurnEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - id
+        - seq
+        - turnId
+        - status
+      properties:
+        type:
+          type: string
+          enum:
+            - librarian.turn
+        id:
+          description: SSE frame id — this frame's `seq`.
+          type: string
+          pattern: "^(0|[1-9][0-9]{0,18})$"
+        seq:
+          description: >-
+            The highest `librarian_messages.seq` committed when the turn state
+            was read, so a state frame never moves the cursor past a message
+            the client has not been sent.
+          type: string
+          pattern: "^(0|[1-9][0-9]{0,18})$"
+        turnId:
+          description: "`librarian_turns.id`."
+          type: string
+          minLength: 1
+        status:
+          description: "`librarian_turns.status` after the change."
+          type: string
+          enum:
+            - queued
+            - admitted
+            - running
+            - completed
+            - stopped
+            - failed
+            - withdrawn
+        reason:
+          description: >-
+            `librarian_turns.failure_reason`; present only when `status` is
+            `failed`. A closed vocabulary — never provider text.
+          type: string
+          enum:
+            - start_failed
+            - host_lost
+            - deadline
+            - capability_trip
+      example:
+        type: librarian.turn
+        id: "57"
+        seq: "57"
+        turnId: 4b2a7c1e-9d3f-4e6a-8b5c-0f1e2d3c4b5a
+        status: failed
+        reason: host_lost
+    LibrarianIndicatorEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - id
+        - seq
+        - state
+      properties:
+        type:
+          type: string
+          enum:
+            - librarian.indicator
+        id:
+          description: SSE frame id — this frame's `seq`.
+          type: string
+          pattern: "^(0|[1-9][0-9]{0,18})$"
+        seq:
+          description: The highest `librarian_messages.seq` committed when the indicator was computed.
+          type: string
+          pattern: "^(0|[1-9][0-9]{0,18})$"
+        state:
+          description: >-
+            The top-navigation indicator (LUI-01), never a numeric count.
+            `running` — a turn is admitted or running; `action_required` — a
+            pending card awaits the owner; `unread` — a message is past
+            `read_through_seq`; `none` — nothing to show. When several hold,
+            the precedence is ADR-191's.
+          type: string
+          enum:
+            - running
+            - unread
+            - action_required
+            - none
+      example:
+        type: librarian.indicator
+        id: "58"
+        seq: "58"
+        state: unread
+    LibrarianResetEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - id
+        - seq
+        - resetState
+      properties:
+        type:
+          type: string
+          enum:
+            - librarian.reset
+        id:
+          description: SSE frame id — this frame's `seq`.
+          type: string
+          pattern: "^(0|[1-9][0-9]{0,18})$"
+        seq:
+          description: The highest `librarian_messages.seq` committed when the barrier state was read.
+          type: string
+          pattern: "^(0|[1-9][0-9]{0,18})$"
+        resetState:
+          description: "`librarian_conversations.reset_state`."
+          type: string
+          enum:
+            - none
+            - resetting
+        segmentId:
+          description: >-
+            The new current `librarian_segments.id`; present only on the
+            acknowledgement of a reset. Absent on `resetting` and after a
+            history clear.
+          type: string
+          minLength: 1
+      example:
+        type: librarian.reset
+        id: "58"
+        seq: "58"
+        resetState: none
+        segmentId: 7e5d3c1b-2a4f-4c6e-9d8b-1a2b3c4d5e6f
+    LibrarianHeartbeatEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+      properties:
+        type:
+          type: string
+          enum:
+            - librarian.heartbeat
+      example:
+        type: librarian.heartbeat

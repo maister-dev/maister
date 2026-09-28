@@ -696,6 +696,8 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     roots: opts.workspaceRoots,
     runtimeRoot,
     logger,
+    isWorkspaceLive: (id) => registry.list().some((record) =>
+      record.executionWorkspaceId === id && record.status === "live"),
   });
   const fenceLog = logger.child({ component: "execution-fence" });
 
@@ -2434,7 +2436,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       kind: "workspace.release",
       expectedRunId: handle.runId,
       execute: async () => {
-        const released = workspaces.release(handle.id);
+        const released = await workspaces.release(handle.id);
 
         logger.info(
           { executionWorkspaceId: handle.id, released, status: 200 },

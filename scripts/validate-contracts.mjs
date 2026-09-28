@@ -16,6 +16,7 @@ const OPENAPI_FILES = [
 
 const ASYNCAPI_FILES = [
   "docs/api/async/attention-stream.asyncapi.yaml",
+  "docs/api/async/librarian-stream.asyncapi.yaml",
   "docs/api/async/outbound-webhooks.asyncapi.yaml",
   "docs/api/async/supervisor-sse.asyncapi.yaml",
   "docs/api/async/execution-host-events.asyncapi.yaml",
@@ -380,6 +381,98 @@ function validateAttentionStreamContract(doc, file) {
   }
 }
 
+const LIBRARIAN_STREAM_FILE = "docs/api/async/librarian-stream.asyncapi.yaml";
+const LIBRARIAN_STREAM_CHANNEL = "/api/librarian/stream";
+const LIBRARIAN_STREAM_FRAMES = {
+  LibrarianMessageEvent: ["type", "id", "seq", "messageId"],
+  LibrarianTurnEvent: ["type", "id", "seq", "turnId", "status"],
+  LibrarianIndicatorEvent: ["type", "id", "seq", "state"],
+  LibrarianResetEvent: ["type", "id", "seq", "resetState"],
+};
+
+function derefLocal(doc, node) {
+  if (typeof node?.$ref !== "string") return node;
+
+  let current = doc;
+  for (const segment of pointerSegments(node.$ref)) current = current?.[segment];
+  return current;
+}
+
+function hasPropertyNamed(schema, name) {
+  if (!schema || typeof schema !== "object") return false;
+  if (schema.properties && name in schema.properties) return true;
+
+  return [
+    ...Object.values(schema.properties ?? {}),
+    schema.items,
+    ...(schema.oneOf ?? []),
+    ...(schema.anyOf ?? []),
+    ...(schema.allOf ?? []),
+  ].some((child) => hasPropertyNamed(child, name));
+}
+
+// Keyed on the channel as well as the path, so a copy of the file anywhere
+// (the negative tests) is held to the same contract as the registered one.
+function validateLibrarianStreamContract(doc, file) {
+  const channel = doc.channels?.[LIBRARIAN_STREAM_CHANNEL];
+  if (file !== LIBRARIAN_STREAM_FILE && !channel) return;
+  if (!channel) {
+    throw new Error(`${file}: missing channel ${LIBRARIAN_STREAM_CHANNEL}`);
+  }
+
+  for (const [name, keys] of Object.entries(LIBRARIAN_STREAM_FRAMES)) {
+    const frame = schemaFor(doc, name, file);
+    for (const key of keys) assertRequired(frame, key, `${file}: ${name}`);
+    if (frame.additionalProperties !== false) {
+      throw new Error(`${file}: ${name} must close its spine`);
+    }
+    // The SSE id is the exclusive replay cursor over a bigint sequence, so it
+    // is a canonical decimal string like every other cursor on the wire.
+    for (const key of ["id", "seq"]) {
+      const cursor = frame.properties?.[key];
+      if (cursor?.type !== "string" || !cursor?.pattern?.startsWith("^(0|")) {
+        throw new Error(`${file}: ${name}.${key} must be a canonical decimal string`);
+      }
+    }
+  }
+  assertEnumIncludes(
+    schemaFor(doc, "LibrarianIndicatorEvent", file).properties?.state,
+    ["running", "unread", "action_required", "none"],
+    `${file}: LibrarianIndicatorEvent.state`,
+  );
+  assertEnumIncludes(
+    schemaFor(doc, "LibrarianResetEvent", file).properties?.resetState,
+    ["none", "resetting"],
+    `${file}: LibrarianResetEvent.resetState`,
+  );
+
+  // Synthetic frames carry no SSE id and must never advance a replay cursor.
+  const heartbeat = schemaFor(doc, "LibrarianHeartbeatEvent", file);
+  if (heartbeat.additionalProperties !== false) {
+    throw new Error(`${file}: LibrarianHeartbeatEvent must close its spine`);
+  }
+  if (
+    (heartbeat.properties && "id" in heartbeat.properties) ||
+    heartbeat.required?.includes("id")
+  ) {
+    throw new Error(`${file}: LibrarianHeartbeatEvent must not carry a frame id`);
+  }
+
+  // Frames are notifications: bodies are fetched from /api/librarian/messages,
+  // so no frame reachable from the channel may carry one.
+  const messages = channel.subscribe?.message?.oneOf ?? [];
+  if (messages.length === 0) {
+    throw new Error(`${file}: ${LIBRARIAN_STREAM_CHANNEL} declares no frames`);
+  }
+  for (const ref of messages) {
+    const payload = derefLocal(doc, ref)?.payload;
+    const name = payload?.$ref?.split("/").pop() ?? "an inline frame";
+    if (hasPropertyNamed(derefLocal(doc, payload), "body")) {
+      throw new Error(`${file}: ${name} must not carry a message body`);
+    }
+  }
+}
+
 async function validateOpenApiMetaSchema(file) {
   try {
     await SwaggerParser.validate(file);
@@ -432,6 +525,7 @@ export async function validateAsyncApi(file, { log = true } = {}) {
   visitRefs(doc, doc);
   validateExecutionHostEventContract(doc, file);
   validateAttentionStreamContract(doc, file);
+  validateLibrarianStreamContract(doc, file);
   if (log) console.log(`validate-contracts: ${basename(file)} ok`);
 }
 

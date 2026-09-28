@@ -13,7 +13,7 @@ row here has a blank `Primary test` cell.
 
 **The `Primary test` column names real tests, not scenario aliases.** Test ids follow
 `UT-` unit, `IT-` integration, `CT-` contract, `E2E-` Playwright, suffixed with the
-requirement id. `scripts/validate-m51-coverage.mjs` additionally proves the mapping is
+requirement id. `scripts/validate-requirement-coverage.mjs --group m51` additionally proves the mapping is
 bidirectional: every requirement names at least one task, and every implementation task
 in the plan is named by at least one requirement. T8.4 greps each `Primary test` cell
 against the suite and fails when a name does not resolve to an executed test — which is
@@ -54,7 +54,7 @@ what stops this matrix decaying into the historical aliases the Stage B matrix b
 | EDGE-ATN-05 | viewer gets no unactionable decisions | T8.7 | IT-ATN-14 | Implemented |
 | EDGE-ATN-06 | revocation reaches an open stream | T8.7 | IT-ATN-15 | Implemented |
 | EDGE-ATN-07 | work invalidation covers transitions and node progress | T8.8 | IT-ATN-16 | Implemented |
-| EDGE-ATN-08 | render cursor on the first connect | ADR-171 D7 | IT-ATN-17 plus E2E-ATN-17 | Implemented |
+| EDGE-ATN-08 | render cursor on the first connect | T5.5 (ADR-171 D7 follow-up) | IT-ATN-17 plus E2E-ATN-17 | Implemented |
 | EDGE-ATN-01 | absent cursor row | T5.3, T5.8 | UT-EDGE-ATN-01 plus IT-ATN-03 | Implemented |
 | EDGE-ATN-02 | current-visibility filter, no rewind | T4.2 | IT-EDGE-ATN-02 | Implemented |
 | EDGE-ATN-03 | cursor POST clamp and PRECONDITION | T5.3 | IT-EDGE-ATN-03 | Implemented |

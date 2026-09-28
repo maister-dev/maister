@@ -11,8 +11,13 @@ Implementation status legend: **Implemented** present in the current branch ·
 Current state: web foundation, DB schema, Flow installer/runner, executor
 resolution, scheduler, `POST /api/runs`, durable run SSE, HITL response
 delivery, project registration, diff/promotion routes, keep-alive
-checkpoint/resume, and scratch-run recovery are implemented. GC remains
-designed.
+checkpoint/resume, scratch-run recovery, and the personal librarian are
+implemented. The librarian uses a project-less run, its own scheduler pool,
+per-owner conversation SSE, per-turn owner-bound tokens, MCP-only sessions,
+and a domain-event follow-up consumer. See
+[`system-analytics/librarian-conversation.md`](system-analytics/librarian-conversation.md)
+and [`system-analytics/librarian-authority.md`](system-analytics/librarian-authority.md)
+for the exact boundaries. GC remains designed.
 
 ## C4 Context — system and its world
 

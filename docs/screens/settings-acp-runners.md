@@ -87,6 +87,50 @@ control now backs the platform MCP modal ([`mcps.md`](mcps.md)), the project MCP
 modal, the MCP overlay dialog, and the Studio MCP template editor — and those
 surfaces use the same `literal | env:NAME` grammar this one has always used.
 
+### Librarian card (Designed — ADR-185)
+
+A separate card on the same admin surface configures the personal librarian for
+the whole platform (`platform_runtime_settings.librarian_enabled`,
+`librarian_runner_id`). It contains:
+
+- **Enable toggle** — turning it off stops admission of new turns only: a
+  running turn finishes or reaches its deadline, queued messages stay queued and
+  visible to their owners, admitted operations still reconcile, and nothing is
+  deleted. Turning it on with no ready runner is allowed; the readiness line
+  then says why no turn can start.
+- **Runner select** — lists only enabled runners that are **Ready** and
+  **Read-only capable** (the same signal the catalog rows show above) and never
+  one with `dangerously_skip_permissions`; in this release only the `claude`
+  and `codex` adapter families qualify. A runner that is not eligible is shown
+  disabled with its reason rather than hidden.
+- **Readiness line** — one of: ready (with the runner's name), **not
+  configured** (no runner, or the selected runner was deleted — the column is
+  `ON DELETE SET NULL`), runner not ready or no longer read-only capable (with
+  the catalog's remediation), or disabled. It is the same readiness the panel's
+  disabled and no-runner states report to users.
+
+Every disabled control states its reason. Saving writes both fields in one
+request. Behaviour:
+[`../system-analytics/librarian-conversation.md`](../system-analytics/librarian-conversation.md)
+(admission, `CONFIG` / `EXECUTOR_UNAVAILABLE` refusals) and
+[`chrome/librarian-panel.md`](chrome/librarian-panel.md) (what users see).
+
+The readiness line's states; the toggle and the runner are independent inputs:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Disabled: librarian_enabled false, the default
+    Disabled --> NotConfigured: toggle on with no runner
+    Disabled --> Ready: toggle on with an eligible runner
+    NotConfigured --> Ready: admin selects an eligible runner
+    Ready --> NotConfigured: runner deleted, column set NULL
+    Ready --> RunnerNotReady: runner disabled or loses read-only evidence
+    RunnerNotReady --> Ready: runner ready and read-only capable again
+    Ready --> Disabled: toggle off, admission stops, nothing deleted
+    NotConfigured --> Disabled: toggle off
+    RunnerNotReady --> Disabled: toggle off
+```
+
 ## States
 
 ```mermaid
@@ -116,21 +160,32 @@ stateDiagram-v2
   still refuses `workspace: none | repo_read` with `EXECUTOR_UNAVAILABLE`.
 - Behavior: [`../system-analytics/acp-runners.md`](../system-analytics/acp-runners.md)
   and [`../system-analytics/executors.md`](../system-analytics/executors.md).
+- Librarian card (Designed — ADR-185): `PATCH /api/admin/platform/librarian`
+  `{enabled, runnerId?}` → `200 {settings, readiness}` under
+  `requireGlobalRole("admin")`; a `runnerId` that does not exist, is disabled,
+  or is not read-only capable is refused. The select's options and the
+  readiness line come from the same runner readiness data the catalog uses.
 
 ## i18n
 
 `settings` namespace: runner catalog labels, modal fields, provider labels,
-readiness text, env override labels, validation errors, and actions.
+readiness text, env override labels, validation errors, and actions. The
+Librarian card (Designed) reads its toggle, select, readiness-line and
+disabled-reason copy from the `librarian` namespace, EN + RU.
 
 ## Linked artifacts
 
 - ADR: [ADR-065](../decisions.md#adr-065) — platform ACP runner catalog and
   admin CRUD pattern; [ADR-179](../decisions.md#adr-179) — the key/value rows
-  control extracted from this modal and shared with the MCP surfaces.
+  control extracted from this modal and shared with the MCP surfaces;
+  [ADR-185](../decisions.md#adr-185-librarian-runtime-a-project-less-run-kind-with-per-turn-acp-sessions)
+  — librarian enablement and the read-only-capable runner guard (Designed).
 - Behavior: [`../system-analytics/acp-runners.md`](../system-analytics/acp-runners.md),
   [`../system-analytics/executors.md`](../system-analytics/executors.md).
 - API: [`../api/web.openapi.yaml`](../api/web.openapi.yaml),
   [`../api/supervisor.openapi.yaml`](../api/supervisor.openapi.yaml).
+- Librarian (Designed): [`chrome/librarian-panel.md`](chrome/librarian-panel.md),
+  [`../system-analytics/librarian-conversation.md`](../system-analytics/librarian-conversation.md).
 - Source: `web/components/settings/acp-runners-panel.tsx`,
   `web/components/settings/acp-runner-modal.tsx`,
   `web/lib/acp-runners/runner-form.ts`,

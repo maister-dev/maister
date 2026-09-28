@@ -32,6 +32,7 @@ function row(overrides: Partial<WorkTableRow> = {}): WorkTableRow {
     projectName: "Alpha",
     stage: "Ready",
     blocked: false,
+    clarificationPending: false,
     promotedKind: null,
     progress: null,
     runId: null,

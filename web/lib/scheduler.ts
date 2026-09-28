@@ -2,6 +2,7 @@ import "server-only";
 
 import type { DelegationBounds } from "@/lib/run-results/types";
 import type { ClaimedScratchIdleResume } from "@/lib/scratch-runs/idle-resume";
+import type { RunKind } from "@/lib/db/schema";
 
 import {
   and,
@@ -19,6 +20,7 @@ import {
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
+import { librarianConfig } from "@/lib/librarian/config";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import { resolveNodeRecoverInfo } from "@/lib/flows/graph/current-node-kind";
 import { resolveNodeResumeSessionId } from "@/lib/runs/node-resume-session";
@@ -94,16 +96,27 @@ const DEFAULT_AGENT_CAP = 3;
 // delivery + user scratch runs for the flow pool. Discriminator: local_package_id.
 const DEFAULT_ASSISTANT_CAP = 5;
 
-export type SchedulerPool = "flow" | "agent";
+export type SchedulerPool = "flow" | "agent" | "librarian";
 
 // The flow pool covers delivery + scratch runs; agent runs never consume it.
+// ADR-185: librarian turns hold their own budget
+// (`MAISTER_MAX_CONCURRENT_LIBRARIAN_TURNS`), so a chatty user never starves
+// delivery and a full delivery pool never silences the librarian.
 const POOL_RUN_KINDS: Record<SchedulerPool, string[]> = {
   flow: ["flow", "scratch"],
   agent: ["agent"],
+  librarian: ["librarian"],
 };
 
+const POOL_BY_RUN_KIND = {
+  flow: "flow",
+  scratch: "flow",
+  agent: "agent",
+  librarian: "librarian",
+} as const satisfies Record<RunKind, SchedulerPool>;
+
 export function poolForRunKind(runKind: string): SchedulerPool {
-  return runKind === "agent" ? "agent" : "flow";
+  return POOL_BY_RUN_KIND[runKind as RunKind] ?? "flow";
 }
 
 // Fixed pg_advisory_xact_lock key for the global scheduler. Both
@@ -157,6 +170,8 @@ export function maxConcurrentAssistantRunsCap(): number {
 }
 
 export function capForPool(pool: SchedulerPool): number {
+  if (pool === "librarian") return librarianConfig().maxConcurrentTurns;
+
   return pool === "agent" ? agentCapFromEnv() : capFromEnv();
 }
 
@@ -691,6 +706,14 @@ export async function promoteNextPending(
   const db = opts.db ?? getDb();
 
   const pool: SchedulerPool = opts.pool ?? "flow";
+
+  // ADR-185: the librarian pool admits TURNS, FIFO by admission, not runs by
+  // task priority; its claim and dispatch live with the librarian runtime.
+  if (pool === "librarian") {
+    const { promoteNextLibrarianTurn } = await import("@/lib/librarian/pool");
+
+    return promoteNextLibrarianTurn({ db });
+  }
 
   if (upgradeMaintenanceEngaged()) {
     log.info(

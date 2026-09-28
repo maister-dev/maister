@@ -108,6 +108,7 @@ function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
     blockedBy: [],
     workStage: "Executing",
     workStageBlocked: false,
+    workStageClarificationPending: false,
     workStagePromotedKind: null,
     childTasks: [],
     ...over,

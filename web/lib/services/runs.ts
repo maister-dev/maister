@@ -68,6 +68,7 @@ import { admitDelegatedChild } from "@/lib/orchestrator/admission";
 import { resolveEffectiveFlowRevision } from "@/lib/flows/lifecycle";
 import { runFlow } from "@/lib/flows/runner";
 import { worktreesRoot } from "@/lib/instance-config";
+import { countOpenBlockingClarifications } from "@/lib/tasks/clarification-gate";
 import { runtimeRoot } from "@/lib/runtime-root";
 import {
   launchProgress,
@@ -393,6 +394,9 @@ export type LaunchRunInput = {
   // admission funnel (the auto-launch poll / slot-free gate), never by a manual or
   // ADR-119 force-relaunch launch.
   queueAdmitted?: boolean;
+  // Server-owned operation identity for a librarian launch. The run row is
+  // the durable reconcile target if the request dies before its receipt.
+  librarianOperationId?: string;
   // ADR-122 (T5.3): the launch-time "include ambient Project Brain context"
   // decision, persisted to runs.brain_context. null/absent = inherit the
   // flow/agent default at ambient-inject time. The launch persists ONLY this
@@ -550,7 +554,7 @@ export type LaunchRunContext = {
   actorUserId?: string | null;
   authorize: (projectId: string, action?: ProjectAction) => Promise<void>;
   assertLaunchOwnership?: (db: Db) => Promise<void>;
-  recordSuccessAudit?: (db: Db) => Promise<void>;
+  recordSuccessAudit?: (db: Db, runId: string) => Promise<void>;
 };
 
 // Phase 6 (FR-F1/F2, T6.3): the staged flow launch. Mirrors the scratch seam —
@@ -710,14 +714,23 @@ export async function* launchRunStaged(
   const openBlockers =
     (await getOpenRelationBlockers([input.taskId], _db)).get(input.taskId) ??
     [];
+  const openBlocking = await countOpenBlockingClarifications(
+    input.taskId,
+    _db as unknown as ReturnType<typeof getDb>,
+  );
   // ADR-119: the force flag widens ONLY the run-status gate (busy → launchable)
   // for an additive concurrent run; the task gates flagged/blocked still refuse.
   const classifyLaunchability = allowConcurrentForLaunch
     ? classifyForceRelaunchLaunchability
     : classifyManualTaskLaunchability;
-  const launchability = classifyLaunchability(task, latestFlowRun, {
-    openBlockers,
-  });
+  const launchability = classifyLaunchability(
+    task,
+    latestFlowRun,
+    {
+      openBlockers,
+    },
+    { openBlocking },
+  );
 
   log.debug(
     {
@@ -1707,6 +1720,7 @@ export async function* launchRunStaged(
             // existing run instead of minting a second.
             evaluationBatchItemId: input.evaluationBatchItemId ?? null,
             createdByUserId: ctx.actorUserId,
+            librarianOperationId: input.librarianOperationId ?? null,
             // ADR-121 (INV-9): auto-drain origin marker, set ONLY for runs minted
             // by the unified admission funnel.
             queueAdmittedAt: input.queueAdmitted ? new Date() : null,
@@ -1903,7 +1917,7 @@ export async function* launchRunStaged(
           payload: { runId, attemptNumber: newAttempt },
         });
 
-        await ctx.recordSuccessAudit?.(tx);
+        await ctx.recordSuccessAudit?.(tx, runId);
       });
     } catch (err) {
       // Inner: a failure after the worktree was created. Remove the orphan worktree

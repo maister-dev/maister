@@ -226,6 +226,13 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-182](#adr-182-steering-a-running-agent-turn-as-a-durable-fenced-command) | Steering a running agent turn as a durable fenced command | Implemented; amended 2026-09-26 | 2026-09-25 |
 | [ADR-183](#adr-183-outbox-pressure-means-the-manager-is-behind) | Outbox pressure means the manager is behind | Implemented; amended 2026-09-27, 2026-09-28 | 2026-09-26 |
 | [ADR-184](#adr-184-an-open-prompt-does-not-pin-the-outbox--the-span-feed-reads-its-acked-prefix-canonically) | An open prompt does not pin the outbox — the span feed reads its ACKed prefix canonically | Implemented; amended 2026-09-28 | 2026-09-27 |
+| [ADR-185](#adr-185-librarian-runtime-a-project-less-run-kind-with-per-turn-acp-sessions) | Librarian runtime: a project-less run kind with per-turn ACP sessions | Accepted | 2026-09-26 |
+| [ADR-186](#adr-186-librarian-delegated-authority-per-turn-owner-bound-tokens-with-live-rbac) | Librarian delegated authority: per-turn owner-bound tokens with live RBAC | Accepted | 2026-09-26 |
+| [ADR-187](#adr-187-librarian-operation-ledger-confirmation-cards-and-launch-intent) | Librarian operation ledger, confirmation cards and launch intent | Accepted | 2026-09-26 |
+| [ADR-188](#adr-188-task-statements-task-revision-and-conversation-provenance) | Task statements, task revision and conversation provenance | Accepted | 2026-09-26 |
+| [ADR-189](#adr-189-addressed-task-clarification-before-execution) | Addressed task clarification before execution | Accepted | 2026-09-26 |
+| [ADR-190](#adr-190-librarian-memory-summaries-reset-barrier-and-history-deletion) | Librarian memory, summaries, reset barrier and history deletion | Accepted | 2026-09-26 |
+| [ADR-191](#adr-191-librarian-surface-top-navigation-entry-and-right-side-panel) | Librarian surface: top-navigation entry and right-side panel | Accepted | 2026-09-26 |
 
 ---
 
@@ -1871,6 +1878,69 @@ Full record: [`decisions/adr-183.md`](decisions/adr-183.md)
 **Date:** 2026-09-27
 
 Full record: [`decisions/adr-184.md`](decisions/adr-184.md)
+
+---
+
+### ADR-185: Librarian runtime: a project-less run kind with per-turn ACP sessions
+
+**Status:** Accepted
+**Date:** 2026-09-26
+
+Full record: [`decisions/adr-185.md`](decisions/adr-185.md)
+
+---
+
+### ADR-186: Librarian delegated authority: per-turn owner-bound tokens with live RBAC
+
+**Status:** Accepted
+**Date:** 2026-09-26
+
+Full record: [`decisions/adr-186.md`](decisions/adr-186.md)
+
+---
+
+### ADR-187: Librarian operation ledger, confirmation cards and launch intent
+
+**Status:** Accepted
+**Date:** 2026-09-26
+
+Full record: [`decisions/adr-187.md`](decisions/adr-187.md)
+
+---
+
+### ADR-188: Task statements, task revision and conversation provenance
+
+**Status:** Accepted
+**Date:** 2026-09-26
+
+Full record: [`decisions/adr-188.md`](decisions/adr-188.md)
+
+---
+
+### ADR-189: Addressed task clarification before execution
+
+**Status:** Accepted
+**Date:** 2026-09-26
+
+Full record: [`decisions/adr-189.md`](decisions/adr-189.md)
+
+---
+
+### ADR-190: Librarian memory, summaries, reset barrier and history deletion
+
+**Status:** Accepted
+**Date:** 2026-09-26
+
+Full record: [`decisions/adr-190.md`](decisions/adr-190.md)
+
+---
+
+### ADR-191: Librarian surface: top-navigation entry and right-side panel
+
+**Status:** Accepted
+**Date:** 2026-09-26
+
+Full record: [`decisions/adr-191.md`](decisions/adr-191.md)
 
 ---
 

@@ -816,6 +816,20 @@ paths:
         every path from the handle. Filesystem errors map to 409, never 500.
         Refusal messages name only the offending path — the configured roots
         and `repoPath` are logged at debug, never echoed.
+
+        (Designed — ADR-185, amending ADR-166 D7) `projectSlug` also accepts
+        the one reserved literal `_librarian`, used by the personal librarian's
+        project-less `run_kind='librarian'` run. The host never resolves a slug
+        against registered projects — it only derives `run_dir`
+        (`<runtimeRoot>/.maister/_librarian/runs/<runId>`) — and web project
+        slugs are kebab-case, so the literal cannot collide with a project.
+        The web adopts it only as `kind: directory` at
+        `<runtimeRoot>/.maister/_librarian/<conversationId>/`, an empty
+        directory the web creates before adopting (a missing path is refused
+        `not_found`); it holds no repository and carries no `contextMounts`.
+        The default `MAISTER_WORKSPACE_ROOTS` already contains
+        `<runtimeRoot>/.maister`, so the ordinary `directory` rules apply
+        unchanged.
       operationId: adoptWorkspace
       requestBody:
         required: true
@@ -841,6 +855,23 @@ paths:
                     kind: "git_worktree"
                     path: "/home/maister/.maister/worktrees/myapp/run-abc"
                     repoPath: "/repos/myapp"
+              librarianDirectory:
+                summary: (Designed — ADR-185) Adopt a librarian conversation's empty directory
+                value:
+                  command:
+                    id: "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b"
+                    kind: "workspace.adopt"
+                    issuedAt: "2026-09-26T10:00:00.000Z"
+                  fence:
+                    hostKey: "eh_0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+                    assignmentId: "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
+                    assignmentEpoch: 3
+                    runId: "run-lib-7f3e"
+                  payload:
+                    runId: "run-lib-7f3e"
+                    projectSlug: "_librarian"
+                    kind: "directory"
+                    path: "/home/maister/.maister/_librarian/2d4f6a8c-1b3e-4c5d-9e7f-0a1b2c3d4e5f"
       responses:
         "200":
           description: Handle minted (or replayed for the same active `(runId, realpath)`).
@@ -933,6 +964,24 @@ paths:
         `workspace.release` command by the GC workspace reconciler after
         worktree removal and by run-terminal drop paths. The fence is checked
         against the handle's stored `run_id` (server state) → `run_mismatch`.
+
+        (Designed — ADR-190, amending ADR-166 D7) Releasing deletes nothing on
+        disk, with one exception: a `directory` handle whose stored
+        `projectSlug` is `_librarian`. For that handle the host, in the same
+        release, removes the adopted directory (by its stored realpath — which
+        also removes a codex session home composed inside it) and the claude
+        adapter transcript directory for that cwd,
+        `~/.claude/projects/<encoded realpath>/` in the host user's home (`/`
+        and `.` of the realpath encoded as `-`). Both removals are idempotent —
+        an absent directory is success — and a later release of the same
+        handle (answered `released: false`) performs them again, so a crash
+        between the release stamp and the removal is repaired by re-issuing
+        the release. A removal failure is logged with the handle id, never
+        the path. The host-private run dir
+        (`<runtimeRoot>/.maister/_librarian/runs/<runId>/`) is not touched.
+        The next librarian turn re-adopts: a released handle is refused
+        `workspace_released`, and the web re-creates the directory and adopts
+        it once.
       operationId: releaseWorkspace
       parameters:
         - $ref: "#/components/parameters/ExecutionWorkspaceId"
@@ -1149,6 +1198,26 @@ paths:
         `409 PRECONDITION missing_envelope`; a payload carrying a pre-ADR-166
         path field is `409 PRECONDITION legacy_field` naming the field
         (`details.field`).
+
+        (Designed — ADR-185/184) A personal-librarian session (`run_kind =
+        librarian`, a `_librarian` directory handle) passes its OWN
+        `enforcementProfile`, built by the librarian runtime rather than from a
+        node declaration: `tools.allow` = the librarian tool names
+        (`mcp__maister__<tool>`), `mcps.allowServers: ["maister"]`,
+        `enforcedClasses: ["tools", "mcps"]`, `escalationThreshold: 3`; a
+        summary turn attaches no MCP server and sends `mcps.allowServers: []`
+        with `enforcedClasses: ["mcps"]`. It sends NO `readOnlySession`:
+        read-only arbitration answers first and returns, so `capability_guard`
+        would never run, and it auto-allows `read`/`search`/`fetch` (host
+        files, generic HTTP). The runner's `permissionPolicy` is never
+        `dangerously_skip_permissions`, and `mcpServers` carries only the
+        generated `maister` facade entry with that turn's token. The host
+        applies the profile exactly as for a flow node — a deny answers the
+        tool call `cancelled` inline and the Nth consecutive deny halts the
+        session (`hook_trip … halt`). The web raises no `hook_trip` HITL for a
+        librarian run (it has no project and no inbox); it fails the turn
+        `capability_trip`. Nothing in the host is librarian-specific except
+        the reserved slug and its release cleanup.
       operationId: createSession
       requestBody:
         required: true
@@ -3239,6 +3308,11 @@ components:
             Each class key is present iff that class is strict-enforced; an
             out-of-profile tool call is denied at the seam (deny-and-continue) and the
             Nth consecutive deny halts. See `system-analytics/guardrail-hooks.md`.
+            (Designed — ADR-185/184) Also present on every personal-librarian
+            session, where the librarian runtime builds it (MCP-only: the
+            librarian tool names + `allowServers: ["maister"]`, or
+            `allowServers: []` for a tool-less summary turn) and no
+            `readOnlySession` is sent beside it.
           properties:
             tools:
               type: object
@@ -3828,6 +3902,8 @@ components:
         - unknown_workspace
         - workspace_released
         - workspace_rejected
+        - workspace_in_use
+        - invalid_librarian_workspace
         - legacy_field
         - missing_envelope
         - stream_health_unavailable
@@ -4173,8 +4249,16 @@ components:
           type: string
           minLength: 1
           maxLength: 64
-          pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$"
-          description: Stored on the handle; the host derives `run_dir` from it.
+          pattern: "^(?:[a-z0-9]+(?:-[a-z0-9]+)*|_librarian)$"
+          description: |
+            Stored on the handle; the host derives `run_dir` from it and never
+            resolves it against registered projects. Kebab-case, or
+            (Designed — ADR-185) the one reserved literal `_librarian` for the
+            personal librarian's project-less run — a web project slug can
+            never produce it. The web adopts a `_librarian` handle only as
+            `kind: directory`; releasing such a handle also removes the
+            directory and the claude transcript for that cwd
+            (`DELETE /workspaces/{id}`).
         kind: { $ref: "#/components/schemas/WorkspaceKind" }
         path:
           type: string

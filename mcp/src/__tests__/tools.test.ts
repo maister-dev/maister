@@ -54,11 +54,16 @@ describe("TOOL_SPECS registry", () => {
   it("registers every external tool", () => {
     expect(Object.keys(TOOL_SPECS).sort()).toEqual(
       [
+        "activity_feed",
         "activity_pulse",
         "agent_memory_write",
         "ask_human",
+        "clarification_cancel",
+        "clarification_list",
+        "clarification_request",
         "comment_create",
         "comment_list",
+        "decisions_list",
         "evaluation_context_get",
         "evaluation_evidence_list",
         "evaluation_evidence_read",
@@ -69,10 +74,12 @@ describe("TOOL_SPECS registry", () => {
         "hitl_inbox",
         "hitl_list",
         "hitl_respond",
-        "memory_recall",
         "memory_clusters",
         "memory_propose",
+        "memory_recall",
         "memory_retain",
+        "project_get",
+        "project_list",
         "readiness_get",
         "relation_add",
         "relation_list",
@@ -91,20 +98,31 @@ describe("TOOL_SPECS registry", () => {
         "run_reopen",
         "run_rework",
         "run_sync",
+        "run_stop",
+        "run_operator_message",
+        "librarian_card_propose",
+        "librarian_history_search",
+        "librarian_memory_remember",
+        "project_members_list",
         "runner_list",
         "task_create",
         "task_get",
         "task_list",
+        "task_publish_excerpt",
+        "task_search",
+        "task_send_to_triage",
+        "task_statement_accept",
         "task_update",
         "triage_set",
+        "work_list",
       ].sort(),
     );
   });
 
-  it("task_create no longer requires flowId (M34 simple-intent creation)", () => {
+  it("task_create supports prompt or statement and does not require flowId", () => {
     expect(
       (TOOL_SPECS.task_create.inputSchema as { required: string[] }).required,
-    ).toEqual(["slug", "title", "prompt"]);
+    ).toEqual(["slug", "title"]);
   });
 
   it("documents that hitl_respond can answer human gates only with exact personal-token scope", () => {
@@ -146,6 +164,122 @@ describe("TOOL_SPECS registry", () => {
 });
 
 describe("dispatchTool — per-tool outbound request mapping", () => {
+  it("librarian_card_propose routes a human confirmation without performing it", async () => {
+    mockOnce({ cardId: "c1", status: "pending" }, 201);
+
+    await dispatchTool({
+      name: "librarian_card_propose",
+      args: { action: "run_discard", runId: "r1", operationKey: "card-1" },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { url, init } = lastRequest();
+
+    expect(url).toBe(`${BASE_URL}/api/v1/ext/librarian/cards`);
+    expect(parsedBody(init)).toEqual({ action: "run_discard", runId: "r1" });
+    expect(new Headers(init.headers).get("Idempotency-Key")).toBe("card-1");
+  });
+
+  it("run_operator_message passes the owner message and operation key", async () => {
+    mockOnce({ outcome: "queued" }, 202);
+
+    await dispatchTool({
+      name: "run_operator_message",
+      args: { runId: "r1", message: "Continue with this detail", operationKey: "message-1" },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { url, init } = lastRequest();
+
+    expect(init.method).toBe("POST");
+    expect(url).toBe(`${BASE_URL}/api/v1/ext/runs/r1/operator-message`);
+    expect(parsedBody(init)).toEqual({ message: "Continue with this detail" });
+    expect(new Headers(init.headers).get("Idempotency-Key")).toBe("message-1");
+  });
+
+  it("run_stop calls the operator stop path with an operation key", async () => {
+    mockOnce({ runId: "r1", status: "Review" }, 200);
+
+    await dispatchTool({
+      name: "run_stop",
+      args: { runId: "r1", operationKey: "stop-1" },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { url, init } = lastRequest();
+
+    expect(init.method).toBe("POST");
+    expect(url).toBe(`${BASE_URL}/api/v1/ext/runs/r1/stop`);
+    expect(parsedBody(init)).toEqual({});
+    expect(new Headers(init.headers).get("Idempotency-Key")).toBe("stop-1");
+  });
+
+  it("task_publish_excerpt sends an explicit excerpt with its operation key", async () => {
+    mockOnce({ comment: { id: "c1" } }, 201);
+
+    await dispatchTool({
+      name: "task_publish_excerpt",
+      args: { slug: "demo", taskId: "t1", excerpt: "Decision text", operationKey: "excerpt-1" },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { url, init } = lastRequest();
+
+    expect(init.method).toBe("POST");
+    expect(url).toBe(`${BASE_URL}/api/v1/ext/projects/demo/tasks/t1/publish-excerpt`);
+    expect(parsedBody(init)).toEqual({ excerpt: "Decision text" });
+    expect(new Headers(init.headers).get("Idempotency-Key")).toBe("excerpt-1");
+  });
+
+  it("task_send_to_triage carries launch intent and idempotency key", async () => {
+    mockOnce({ ok: true }, 200);
+
+    await dispatchTool({
+      name: "task_send_to_triage",
+      args: { slug: "demo", taskId: "t1", launchIntent: "triage_only", operationKey: "triage-1" },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { url, init } = lastRequest();
+
+    expect(init.method).toBe("POST");
+    expect(url).toBe(`${BASE_URL}/api/v1/ext/projects/demo/tasks/t1/send-to-triage`);
+    expect(parsedBody(init)).toEqual({ launchIntent: "triage_only" });
+    expect(new Headers(init.headers).get("Idempotency-Key")).toBe("triage-1");
+  });
+
+  it("task_statement_accept sends the typed statement and operation key to the task route", async () => {
+    mockOnce({ taskId: "t1", revision: 2 }, 200);
+    const statement = {
+      context: "Project",
+      goal: "Ship",
+      acceptance: ["Tests pass"],
+      constraints: [],
+      outOfScope: [],
+      links: [],
+      openQuestions: [],
+    };
+
+    await dispatchTool({
+      name: "task_statement_accept",
+      args: { slug: "demo", taskId: "t1", statement, expectedRevision: 1, operationKey: "accept-1" },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { url, init } = lastRequest();
+
+    expect(init.method).toBe("POST");
+    expect(url).toBe(`${BASE_URL}/api/v1/ext/projects/demo/tasks/t1/statement`);
+    expect(parsedBody(init)).toEqual({ statement, expectedRevision: 1 });
+    expect(new Headers(init.headers).get("Idempotency-Key")).toBe("accept-1");
+  });
+
   it("task_create → POST /api/v1/ext/projects/{slug}/tasks (strips executorOverrideId — the strict route refuses it)", async () => {
     mockOnce({ taskId: "t1" }, 201);
 

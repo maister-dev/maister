@@ -1254,6 +1254,69 @@
       "when": 1790586271260,
       "tag": "0182_execution_host_pressure",
       "breakpoints": true
+    },
+    {
+      "idx": 183,
+      "version": "7",
+      "when": 1790586271261,
+      "tag": "0183_librarian_token_kind",
+      "breakpoints": true
+    },
+    {
+      "idx": 184,
+      "version": "7",
+      "when": 1790586271262,
+      "tag": "0184_librarian_conversations",
+      "breakpoints": true
+    },
+    {
+      "idx": 185,
+      "version": "7",
+      "when": 1790586271263,
+      "tag": "0185_librarian_run_kind",
+      "breakpoints": true
+    },
+    {
+      "idx": 186,
+      "version": "7",
+      "when": 1790586271264,
+      "tag": "0186_task_revision_launch_intent",
+      "breakpoints": true
+    },
+    {
+      "idx": 187,
+      "version": "7",
+      "when": 1790586271265,
+      "tag": "0187_librarian_operations",
+      "breakpoints": true
+    },
+    {
+      "idx": 188,
+      "version": "7",
+      "when": 1790586271266,
+      "tag": "0188_task_clarifications_user_origin",
+      "breakpoints": true
+    },
+    {
+      "idx": 189,
+      "version": "7",
+      "when": 1790586271267,
+      "tag": "0189_librarian_updates",
+      "breakpoints": true
+    },
+    {
+      "idx": 190,
+      "version": "7",
+      "when": 1790586271268,
+      "tag": "0190_librarian_memory",
+      "breakpoints": true
+    },
+    {
+      "idx": 191,
+      "version": "7",
+      "when": 1790586271269,
+      "tag": "0191_librarian_start_lease",
+      "breakpoints": true
     }
   ]
 }

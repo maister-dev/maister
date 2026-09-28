@@ -12,6 +12,7 @@ import { memoryHarvestConsumer } from "@/lib/domain-events/memory-harvest";
 import { sourceReindexConsumer } from "@/lib/brain/index-triggers";
 import { orchestratorResumeConsumer } from "@/lib/domain-events/orchestrator-resume";
 import { ralphLoopConsumer } from "@/lib/runs/ralph-loop";
+import { librarianFollowupConsumer } from "@/lib/librarian/followup";
 
 const log = pino({
   name: "domain-events-noop",
@@ -87,4 +88,5 @@ export const DOMAIN_EVENT_CONSUMERS: DomainEventConsumer[] = [
   // ADR-127: source-indexed Brain tier reindexes enabled project sources after
   // run-terminal domain events. External repo edits remain manual reindex.
   sourceReindexConsumer,
+  librarianFollowupConsumer,
 ];

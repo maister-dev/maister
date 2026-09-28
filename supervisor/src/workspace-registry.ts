@@ -8,7 +8,7 @@ import type {
 } from "./types";
 
 import { randomUUID } from "node:crypto";
-import { lstat, readFile, realpath, stat } from "node:fs/promises";
+import { lstat, readFile, realpath, rm, stat } from "node:fs/promises";
 import path from "node:path";
 
 import { SupervisorError } from "./types";
@@ -111,6 +111,7 @@ export type WorkspaceRegistryOptions = {
   runtimeRoot: string;
   logger: Logger;
   now?: () => Date;
+  isWorkspaceLive?: (id: string) => boolean;
 };
 
 export class WorkspaceRegistry {
@@ -189,7 +190,59 @@ export class WorkspaceRegistry {
     return this.opts.state.getWorkspace(id);
   }
 
-  release(id: string): boolean {
+  async release(id: string): Promise<boolean> {
+    const handle = this.opts.state.getWorkspace(id);
+
+    if (!handle)
+      throw new SupervisorError("PRECONDITION", "unknown execution workspace", {
+        details: { reason: "unknown_workspace" },
+      });
+    const librarianRoot =
+      handle.kind === "directory" && handle.projectSlug === "_librarian"
+        ? await realpath(
+            path.join(this.opts.runtimeRoot, ".maister", "_librarian"),
+          )
+        : null;
+
+    if (librarianRoot && path.dirname(handle.realPath) !== librarianRoot)
+      throw new SupervisorError(
+        "PRECONDITION",
+        "librarian workspace path escaped runtime root",
+        {
+          details: { reason: "invalid_librarian_workspace" },
+        },
+      );
+    if (librarianRoot && this.opts.isWorkspaceLive?.(id))
+      throw new SupervisorError(
+        "CONFLICT",
+        "librarian workspace has a live session",
+        {
+          details: { reason: "workspace_in_use" },
+        },
+      );
+    if (librarianRoot) {
+      const claudeDir =
+        process.env.CLAUDE_CONFIG_DIR ??
+        (process.env.HOME ? path.join(process.env.HOME, ".claude") : null);
+
+      if (!claudeDir)
+        throw new SupervisorError(
+          "PRECONDITION",
+          "HOME or CLAUDE_CONFIG_DIR is required to purge librarian transcripts",
+        );
+      await rm(handle.realPath, { recursive: true, force: true });
+      const encoded = handle.realPath.replace(/[^a-zA-Z0-9]/g, "-");
+
+      await rm(path.join(claudeDir, "projects", encoded), {
+        recursive: true,
+        force: true,
+      });
+      this.log.info(
+        { executionWorkspaceId: id },
+        "librarian workspace and transcripts purged",
+      );
+    }
+
     const released = this.opts.state.releaseWorkspace(
       id,
       this.now().toISOString(),

@@ -6,6 +6,7 @@ import { z } from "zod";
 import { getDb } from "@/lib/db/client";
 import { isMaisterError } from "@/lib/errors";
 import { getTaskDTO, updateTask } from "@/lib/services/tasks";
+import { tokenAuditIdentity } from "@/lib/tokens/audit";
 import {
   handleExt,
   httpStatusForExtCode,
@@ -19,6 +20,7 @@ const patchBodySchema = z
   .object({
     title: z.string().min(1).optional(),
     prompt: z.string().min(1).optional(),
+    expectedRevision: z.number().int().nonnegative().optional(),
   })
   .strict();
 
@@ -39,6 +41,7 @@ export async function GET(
     {
       slug,
       scopeLabel: "tasks:read",
+      admitLibrarian: true,
       endpoint: ENDPOINT_TASK_GET,
       method: "GET",
       db,
@@ -70,9 +73,15 @@ export async function PATCH(
     {
       slug,
       scopeLabel: "tasks:update",
+      admitLibrarian: true,
       endpoint: ENDPOINT_TASK_PATCH,
       method: "PATCH",
       successAuditInWork: true,
+      idempotency: {
+        kind: "task_update",
+        target: { slug, taskId },
+        parseBody: async (request) => patchBodySchema.parse(await request.json()),
+      },
       db,
     },
     async (ctx) => {
@@ -107,14 +116,17 @@ export async function PATCH(
 
             await recordRequiredTokenAudit(
               {
-                tokenId: ctx.actor.tokenId,
+                ...tokenAuditIdentity(ctx.actor),
                 projectId: ctx.projectId,
-                actorLabel: ctx.actor.actorLabel,
                 scopeUsed: "tasks:update",
                 endpoint: ENDPOINT_TASK_PATCH,
                 method: "PATCH",
                 result: "ok",
                 statusCode: 200,
+                operationId: ctx.operationId,
+                operation: ctx.operationId
+                  ? { id: ctx.operationId, result: { statusCode: 200, body: { ...task } } }
+                  : undefined,
               },
               tx,
             );
@@ -127,7 +139,7 @@ export async function PATCH(
       } catch (err) {
         if (isMaisterError(err)) {
           return NextResponse.json(
-            { code: err.code, message: err.message },
+            { code: err.code, message: err.message, details: err.details },
             { status: httpStatusForExtCode(err.code) },
           );
         }

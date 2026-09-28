@@ -30,7 +30,7 @@ vi.mock("@/lib/social/task-lookup", () => ({
 }));
 
 vi.mock("@/lib/services/tasks", () => ({
-  updateTask: vi.fn(async () => undefined),
+  updateTask: vi.fn(async () => ({ revision: 1 })),
 }));
 
 async function invokePatch(body: unknown): Promise<Response> {
@@ -78,7 +78,7 @@ beforeEach(() => {
     } as never);
   vi.mocked(updateTask)
     .mockReset()
-    .mockResolvedValue(undefined as never);
+    .mockResolvedValue({ revision: 1 } as never);
 });
 
 describe("PATCH /api/projects/[slug]/tasks/[number]", () => {
@@ -103,6 +103,7 @@ describe("PATCH /api/projects/[slug]/tasks/[number]", () => {
     });
 
     expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, revision: 1 });
     expect(updateTask).toHaveBeenCalledWith("task-1", "project-1", {
       title: "Updated title",
       prompt: "Updated prompt",
@@ -129,6 +130,7 @@ describe("PUT /api/projects/[slug]/tasks/[number]", () => {
     const res = await invokePut(body);
 
     expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, revision: 1 });
     expect(updateTask).toHaveBeenCalledWith("task-1", "project-1", body);
   });
 });

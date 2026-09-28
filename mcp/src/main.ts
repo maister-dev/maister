@@ -15,7 +15,12 @@ import {
 import pino from "pino";
 
 import { httpAuthContext, type AuthContext } from "./auth";
-import { dispatchTool, TOOL_SPECS } from "./tools";
+import {
+  dispatchTool,
+  isToolInToolset,
+  TOOL_SPECS,
+  toolNamesForToolset,
+} from "./tools";
 
 const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
@@ -26,6 +31,9 @@ const log = pino({
 }).child({ service: "maister-mcp" });
 
 const BASE_URL = process.env.MAISTER_API_BASE_URL ?? "http://localhost:3000";
+// ADR-186: a librarian turn's facade lists only the librarian toolset. The
+// routes still refuse anything a librarian token may not do.
+const TOOLSET = process.env.MAISTER_MCP_TOOLSET;
 
 // --- publish the canonical JSON Schemas and dispatch external facade tools ---
 
@@ -38,9 +46,9 @@ function buildServer(transportType: "stdio" | "http"): Server {
   // A generic Zod record serializes to an empty object schema in the SDK.
   // Publish the JSON Schemas directly; the ext routes own input validation.
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: Object.entries(TOOL_SPECS).map(([name, spec]) => ({
+    tools: toolNamesForToolset(TOOLSET).map((name) => ({
       name,
-      ...spec,
+      ...TOOL_SPECS[name],
       execution: { taskSupport: "forbidden" as const },
     })),
   }));
@@ -48,7 +56,7 @@ function buildServer(transportType: "stdio" | "http"): Server {
   server.setRequestHandler(CallToolRequestSchema, async ({ params }, extra) => {
     const toolName = params.name;
 
-    if (!Object.hasOwn(TOOL_SPECS, toolName)) {
+    if (!isToolInToolset(toolName, TOOLSET)) {
       return {
         isError: true,
         content: [

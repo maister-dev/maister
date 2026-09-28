@@ -33,6 +33,7 @@ import { computeReadinessByRun } from "@/lib/queries/readiness-batch";
 import { getVisibleProjectIds } from "@/lib/queries/visible-projects";
 import { queryTokensByTaskIds } from "@/lib/runs/cost-rollups";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
+import { countOpenBlockingClarificationsByTask } from "@/lib/tasks/clarification-gate";
 import { deriveWorkStage } from "@/lib/work/stage";
 
 const {
@@ -95,6 +96,7 @@ export interface WorkTableRow {
   projectName: string;
   stage: WorkStage;
   blocked: boolean;
+  clarificationPending: boolean;
   promotedKind: PromotedKind | null;
   progress: WorkProgress | null;
   runId: string | null;
@@ -300,6 +302,11 @@ export async function getWorkTable(
   const readinessByRun = await computeReadinessByRun(client, latestRunIds);
   const tokensByTask = await queryTokensByTaskIds(taskIds, { client });
   const blockersByTask = await getOpenRelationBlockers(taskIds, client);
+  const openBlockingClarificationsByTask =
+    await countOpenBlockingClarificationsByTask(
+      taskIds,
+      client as ReturnType<typeof getDb>,
+    );
 
   const rows: WorkTableRow[] = [];
 
@@ -327,6 +334,8 @@ export async function getWorkTable(
       promotionState: run?.promotionState ?? null,
       workspaceRemoved: run?.removedAt != null,
       blockingRelationCount: blockers.length,
+      openBlockingClarificationCount:
+        openBlockingClarificationsByTask.get(task.taskId) ?? 0,
       progress: progressOfSpine(spine),
     });
 
@@ -340,6 +349,7 @@ export async function getWorkTable(
       projectName: project.name,
       stage: derived.stage,
       blocked: derived.blocked,
+      clarificationPending: derived.clarificationPending,
       promotedKind: derived.promotedKind,
       progress: derived.progress,
       runId: run?.runId ?? null,

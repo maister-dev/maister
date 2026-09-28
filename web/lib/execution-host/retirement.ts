@@ -88,6 +88,7 @@ type Candidate = {
   terminalHostSequence: bigint | null;
   ackConfirmedSequence: bigint | null;
   runStatus: string;
+  runKind: string;
 };
 
 // Every disqualifying fact is read in ONE keyset page so the scan cost is a
@@ -131,6 +132,7 @@ async function loadCandidates(
       terminalHostSequence: executionEvents.hostSequence,
       ackConfirmedSequence: executionEventStreams.lastAckConfirmedSequence,
       runStatus: runs.status,
+      runKind: runs.runKind,
     })
     .from(executionCommands)
     .innerJoin(runs, eq(runs.id, executionCommands.runId))
@@ -159,7 +161,17 @@ export function classifyCommandRetirement(
   row: Candidate,
   opts: { now: Date; graceMs: number },
 ): CommandProtectedReason | null {
-  if (RETAINED_RUN_STATUSES.includes(row.runStatus as never)) {
+  // ADR-185 / ADR-167 amendment: a parked librarian run is its owner's idle
+  // conversation, parked indefinitely between turns. Every command it holds
+  // belongs to an ended turn — the next turn mints a new assignment and never
+  // replays one — so parking does not retain them.
+  const parkedLibrarian =
+    row.runKind === "librarian" && row.runStatus === "NeedsInputIdle";
+
+  if (
+    !parkedLibrarian &&
+    RETAINED_RUN_STATUSES.includes(row.runStatus as never)
+  ) {
     return "run_retained";
   }
   if (row.completedAt.getTime() + opts.graceMs > opts.now.getTime()) {

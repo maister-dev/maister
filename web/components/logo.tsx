@@ -5,9 +5,16 @@ import clsx from "clsx";
 export interface LogoProps {
   size?: number;
   className?: string;
+  /** Extra classes for the wordmark — the home link's only accessible name,
+   * so a narrow header hides it visually (`sr-only`), never from the DOM. */
+  wordmarkClassName?: string;
 }
 
-export function Logo({ size = 22, className }: LogoProps): ReactElement {
+export function Logo({
+  size = 22,
+  className,
+  wordmarkClassName,
+}: LogoProps): ReactElement {
   return (
     <span
       className={clsx(
@@ -36,7 +43,12 @@ export function Logo({ size = 22, className }: LogoProps): ReactElement {
         <circle cx="11" cy="12" fill="currentColor" r="1.2" stroke="none" />
         <circle cx="16" cy="12" fill="currentColor" r="1.2" stroke="none" />
       </svg>
-      <span className="font-sans font-semibold tracking-[-0.02em]">
+      <span
+        className={clsx(
+          "font-sans font-semibold tracking-[-0.02em]",
+          wordmarkClassName,
+        )}
+      >
         m<strong className="font-extrabold tracking-[-0.015em]">ai</strong>ster
       </span>
     </span>

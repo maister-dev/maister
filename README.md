@@ -172,6 +172,7 @@ is pinned by its own git tag and installs from **Settings → Package sources**.
 | --------------------------------------------------- | ------------------------------------------------ |
 | [Public docs](https://docs.imaister.dev)            | How to understand and operate MAIster            |
 | [Getting Started](docs/getting-started.md)          | How to install, configure, and run locally       |
+| [Personal librarian](docs/librarian.md)             | Conversation, task routing, privacy and setup    |
 | [Configuration](docs/configuration.md)              | Environment, `maister.yaml`, and Flow contracts  |
 | [Architecture](docs/architecture.md)                | Process boundaries and data flows                |
 | [System analytics](docs/system-analytics/README.md) | Domain behavior and state machines               |

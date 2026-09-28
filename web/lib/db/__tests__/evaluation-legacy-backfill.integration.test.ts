@@ -69,14 +69,10 @@ beforeAll(async () => {
     },
     schemaVersion: 1,
   });
-  await db.insert(schema.tasks).values({
-    number: Number.parseInt(randomUUID().slice(0, 6), 16),
-    id: taskId,
-    projectId,
-    title: "Test task",
-    prompt: "do the thing",
-    flowId,
-  });
+  await db.execute(sql`
+    INSERT INTO tasks (id, project_id, number, title, prompt, flow_id)
+    VALUES (${taskId}, ${projectId}, ${Number.parseInt(randomUUID().slice(0, 6), 16)}, 'Test task', 'do the thing', ${flowId})
+  `);
 }, 180_000);
 
 afterAll(async () => {

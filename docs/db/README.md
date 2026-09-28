@@ -35,6 +35,7 @@ Two kinds of view live here (ADR-159):
 | [`scheduler-domain.md`](scheduler-domain.md) | Scheduler jobs + run schedules + scheduled task launches (ADR-060/071, ADR-139). |
 | [`execution-hosts-domain.md`](execution-hosts-domain.md) | Execution-host placement/command tables (ADR-166, Implemented) plus Stage B event streams, canonical events, session incarnations, consumer cursors, import lanes, and ingest failures (ADR-167, migrations `0131`–`0132`, Designed). |
 | [`attention-domain.md`](attention-domain.md) | Attention plane: per-user activity read cursor + notification/web-push subscriptions (ADR-169/172, migrations `0163`–`0165`, Implemented). |
+| [`librarian-domain.md`](librarian-domain.md) | Personal librarian: conversation, segments, messages, turns, context snapshots, operation ledger, cards, task links and statements, follow-up updates, memory and summaries, plus the librarian columns on shared tables (ADR-185..188, migrations `0183`–`0190`, Designed). |
 | [`webhooks.md`](webhooks.md) | Webhook subscriptions + events outbox + deliveries + attempts (ADR-077). |
 
 ## Cardinality notation

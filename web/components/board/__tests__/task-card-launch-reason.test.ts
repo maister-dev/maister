@@ -42,6 +42,7 @@ const card: BacklogCard = {
   awaitingClarification: false,
   runCount: 0,
   blockedBy: [],
+  clarificationPending: false,
   flowId: "flow-1",
   triageStatus: "triaged",
   runnerId: null,

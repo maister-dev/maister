@@ -20,9 +20,13 @@ import {
   testPlatformRunnerRow,
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
+import type { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
+import { proposeLibrarianCard } from "@/lib/librarian/cards";
+import { decideLibrarianCard } from "@/lib/librarian/card-decisions";
 import { respondToHitl, HitlActor } from "@/lib/services/hitl";
+import { seedActiveUser, seedLibrarianTurn } from "@/test-support/librarian-seed";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -42,6 +46,11 @@ vi.mock("@/lib/runs/exec-policy-audit", async (importOriginal) => {
     await importOriginal<typeof import("@/lib/runs/exec-policy-audit")>();
 
   return { ...actual, logExecPolicyAction: vi.fn(actual.logExecPolicyAction) };
+});
+vi.mock("@/lib/services/hitl", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/services/hitl")>();
+
+  return { ...actual, respondToHitl: vi.fn(actual.respondToHitl) };
 });
 // Partial mock: the service graph reads other client members at module load
 // (gate-chat's default api); the checkpoint itself now rides the execution-host
@@ -94,6 +103,7 @@ vi.mock("@/lib/runs/resume-driver", () => ({
 }));
 vi.mock("@/lib/authz", () => ({
   requireProjectAction: vi.fn(async () => {}),
+  requireProjectActionForUser: vi.fn(async () => ({})),
 }));
 vi.mock("@/lib/workbench-lifecycle/service", () => ({
   archiveWorkbench: vi.fn(async (runId: string) => ({
@@ -112,6 +122,7 @@ vi.mock("@/lib/workbench-lifecycle/service", () => ({
     workspaceRemoved: true,
     archivedBranch: null,
   })),
+  discardWorkbench: vi.fn(async (runId: string) => ({ ok: true, runId })),
   getWorkbenchHandoffMetadata: vi.fn(async () => ({
     defaultRemote: "origin",
   })),
@@ -374,6 +385,55 @@ const userActor: HitlActor = {
   userId: "u-1",
   label: "Test User",
 };
+
+describe("librarian human confirmation for a budget breach", () => {
+  it("IT-LOP-09: the card restarts through the human HITL response path", async () => {
+    const projectId = await seedProject(`card-budget-${randomUUID().slice(0, 8)}`);
+    const userId = await seedActiveUser(db);
+    const turnId = await seedLibrarianTurn(db, userId);
+    const [turn] = await db.select().from(schema.librarianTurns)
+      .where(eq(schema.librarianTurns.id, turnId));
+    const runId = await seedRun(projectId, null, {
+      executionPolicy: {
+        preset: "supervised",
+        overrides: { budget: { run: { maxTokens: 1000 } } },
+      },
+    });
+    const hitlRequestId = await seedBudgetBreachHitl(runId);
+    await seedOpenAssignment(projectId, runId, hitlRequestId);
+    const proposed = await proposeLibrarianCard({
+      conversationId: turn.conversationId,
+      segmentId: turn.segmentId,
+      ownerUserId: userId,
+      proposal: {
+        action: "hitl_respond",
+        runId,
+        hitlRequestId,
+        response: { optionId: "raise", raiseTo: 4000 },
+      },
+      recordCreated: async () => {},
+    }, db as unknown as ReturnType<typeof getDb>);
+
+    const result = await decideLibrarianCard({
+      cardId: proposed.cardId,
+      user: { id: userId, role: "member", name: "Human owner" },
+      decision: "accept",
+    }, db as unknown as ReturnType<typeof getDb>);
+
+    expect(result.statusCode).toBe(200);
+    expect(vi.mocked(respondToHitl)).toHaveBeenCalledWith(
+      expect.objectContaining({ runId, hitlRequestId }),
+      { kind: "user", userId, label: "Human owner" },
+      expect.any(Object),
+    );
+    const [question] = await db.select().from(schema.hitlRequests)
+      .where(eq(schema.hitlRequests.id, hitlRequestId));
+    expect(question.respondedAt).not.toBeNull();
+    const [operation] = await db.select().from(schema.librarianOperations)
+      .where(eq(schema.librarianOperations.idempotencyKey, `card:${proposed.cardId}`));
+    expect(operation.status).toBe("succeeded");
+  });
+});
 
 describe("respondToHitl budget_breach integration — abandon", () => {
   it("abandon → run Failed (BUDGET_EXCEEDED), assignment cancelled, run.failed emitted", async () => {

@@ -19,6 +19,7 @@ export type TaskLaunchability =
   | "crashed"
   | "target_terminal"
   | "flagged"
+  | "clarification_pending"
   | "blocked"
   | "unconfigured";
 
@@ -27,6 +28,8 @@ export type TaskLaunchability =
 export type RelationGate = {
   openBlockers: Array<{ key: string; number: number }>;
 };
+
+export type ClarificationGate = { openBlocking: number };
 
 // `tasks.status` is a one-way latch (create→Backlog, launch→InFlight; nothing
 // writes Backlog back), so the latest flow run — not the task row — decides
@@ -69,7 +72,8 @@ export function classifyTaskLaunchability(
     triageStatus: "triaged" | "flagged" | null;
   },
   latestRun: { status: RunStatus; workspaceRemoved?: boolean } | null,
-  relationGate?: RelationGate,
+  relationGate: RelationGate | undefined,
+  clarificationGate: ClarificationGate,
 ): TaskLaunchability {
   if (task.status === "Done" || task.status === "Abandoned") {
     return "target_terminal";
@@ -94,6 +98,10 @@ export function classifyTaskLaunchability(
   if (base === "launchable") {
     if (task.triageStatus === "flagged") {
       return "flagged";
+    }
+
+    if (clarificationGate.openBlocking > 0) {
+      return "clarification_pending";
     }
 
     if ((relationGate?.openBlockers.length ?? 0) > 0) {
@@ -123,7 +131,8 @@ function hasOpenBlockers(relationGate?: RelationGate): boolean {
 export function classifyManualTaskLaunchability(
   task: { status: TaskStatus; triageStatus: "triaged" | "flagged" | null },
   latestRun: { status: RunStatus } | null,
-  relationGate?: RelationGate,
+  relationGate: RelationGate | undefined,
+  clarificationGate: ClarificationGate,
 ): TaskLaunchability {
   const base =
     latestRun === null
@@ -139,6 +148,10 @@ export function classifyManualTaskLaunchability(
   if (base === "launchable") {
     if (isFlaggedTask(task)) {
       return "flagged";
+    }
+
+    if (clarificationGate.openBlocking > 0) {
+      return "clarification_pending";
     }
 
     if (hasOpenBlockers(relationGate)) {
@@ -160,10 +173,15 @@ export function classifyManualTaskLaunchability(
 export function classifyForceRelaunchLaunchability(
   task: { status: TaskStatus; triageStatus: "triaged" | "flagged" | null },
   _latestRun: { status: RunStatus } | null,
-  relationGate?: RelationGate,
+  relationGate: RelationGate | undefined,
+  clarificationGate: ClarificationGate,
 ): TaskLaunchability {
   if (isFlaggedTask(task)) {
     return "flagged";
+  }
+
+  if (clarificationGate.openBlocking > 0) {
+    return "clarification_pending";
   }
 
   if (hasOpenBlockers(relationGate)) {

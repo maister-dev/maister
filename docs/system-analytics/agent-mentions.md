@@ -253,6 +253,12 @@ description · agent inbox rows or agent chat surfaces · cooldown frameworks
 beyond suppression and dedup · cross-project mentions · widening
 `inbox_items_event_kind_check` (tracked separately).
 
+The personal librarian is not a summon (Designed —
+[ADR-185](../decisions.md#adr-185-librarian-runtime-a-project-less-run-kind-with-per-turn-acp-sessions)):
+it is not an `agents` row, no `@` handle resolves to it, and it runs only from
+its owner's panel as a project-less `run_kind='librarian'` turn — see
+[`librarian-conversation.md`](librarian-conversation.md).
+
 ## Linked artifacts
 
 - ADR: [ADR-151](../decisions.md#adr-151-agent-mentions-in-task-comments-as-directed-summons),

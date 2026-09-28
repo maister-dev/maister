@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { TokenActor } from "@/lib/tokens/verify";
+
 import { eq } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
@@ -23,7 +25,35 @@ export type TokenAuditInput = {
   method: string;
   result: "ok" | "error";
   statusCode: number;
+  // ADR-186: delegated-authority attribution, set for librarian tokens only.
+  onBehalfOfUserId?: string | null;
+  librarianTurnId?: string | null;
+  operationId?: string | null;
 };
+
+// The identity half of every audit row a token request writes. A librarian
+// token additionally names the human it acted for and the turn that issued it,
+// so a route never has to remember to add them.
+export function tokenAuditIdentity(
+  actor: Pick<TokenActor, "tokenId" | "actorLabel" | "ownerUserId"> & {
+    tokenKind: string;
+    librarianTurnId?: string | null;
+  },
+): {
+  tokenId: string;
+  actorLabel: string;
+  onBehalfOfUserId: string | null;
+  librarianTurnId: string | null;
+} {
+  const librarian = actor.tokenKind === "librarian";
+
+  return {
+    tokenId: actor.tokenId,
+    actorLabel: actor.actorLabel,
+    onBehalfOfUserId: librarian ? actor.ownerUserId : null,
+    librarianTurnId: librarian ? (actor.librarianTurnId ?? null) : null,
+  };
+}
 
 /** INSERT one token_audit_log row. */
 export async function recordTokenAudit(
@@ -41,6 +71,9 @@ export async function recordTokenAudit(
     method: input.method,
     result: input.result,
     status_code: input.statusCode,
+    on_behalf_of_user_id: input.onBehalfOfUserId ?? null,
+    librarian_turn_id: input.librarianTurnId ?? null,
+    operation_id: input.operationId ?? null,
   });
 }
 

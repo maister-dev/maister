@@ -154,7 +154,7 @@ export async function createOwnedSession(input: {
         throw hostPressuredError(failure, original.id);
       if (
         failure.code === "CHECKPOINT" &&
-        owner.variant !== "agent" &&
+        "nodeAttemptId" in owner &&
         envelope.payload.resumeSessionId &&
         intent.generation < 2
       ) {
@@ -275,7 +275,7 @@ export async function createOwnedSession(input: {
         commandId: current.id,
         runId: current.runId,
         assignmentId: current.executionAssignmentId,
-        nodeAttemptId: owner.variant === "agent" ? null : owner.nodeAttemptId,
+        nodeAttemptId: "nodeAttemptId" in owner ? owner.nodeAttemptId : null,
         sessionName: envelope.payload.sessionName ?? "default",
         result: {
           ...result,

@@ -316,6 +316,7 @@ describe("PATCH /api/v1/ext/projects/[slug]/tasks/[taskId]", () => {
     expect(body).toHaveProperty("id", taskId);
     expect(body).toHaveProperty("title", "Updated Title");
     expect(body).toHaveProperty("prompt", "New prompt");
+    expect(body).toHaveProperty("revision", 1);
 
     const auditRows = await db
       .select()
@@ -356,7 +357,7 @@ describe("PATCH /api/v1/ext/projects/[slug]/tasks/[taskId]", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toHaveProperty("prompt", "Sharpened statement");
+    expect(await res.json()).toMatchObject({ prompt: "Sharpened statement", revision: 1 });
   });
 
   it("forced success-audit failure rolls back the task update", async () => {

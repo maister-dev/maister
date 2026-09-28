@@ -1,13 +1,61 @@
 import type { RunStatus, TaskStatus } from "@/lib/db/schema";
-import type { RelationGate } from "@/lib/runs/launchability";
+import type {
+  ClarificationGate,
+  RelationGate,
+  TaskLaunchability,
+} from "@/lib/runs/launchability";
 
 import { describe, expect, it } from "vitest";
 
 import {
-  classifyForceRelaunchLaunchability,
-  classifyManualTaskLaunchability,
-  classifyTaskLaunchability,
+  classifyForceRelaunchLaunchability as classifyForceRelaunchLaunchabilityWithGate,
+  classifyManualTaskLaunchability as classifyManualTaskLaunchabilityWithGate,
+  classifyTaskLaunchability as classifyTaskLaunchabilityWithGate,
 } from "@/lib/runs/launchability";
+
+const noClarifications: ClarificationGate = { openBlocking: 0 };
+
+function classifyTaskLaunchability(
+  task: Parameters<typeof classifyTaskLaunchabilityWithGate>[0],
+  latestRun: Parameters<typeof classifyTaskLaunchabilityWithGate>[1],
+  relationGate?: RelationGate,
+  clarificationGate: ClarificationGate = noClarifications,
+): TaskLaunchability {
+  return classifyTaskLaunchabilityWithGate(
+    task,
+    latestRun,
+    relationGate,
+    clarificationGate,
+  );
+}
+
+function classifyManualTaskLaunchability(
+  task: Parameters<typeof classifyManualTaskLaunchabilityWithGate>[0],
+  latestRun: Parameters<typeof classifyManualTaskLaunchabilityWithGate>[1],
+  relationGate?: RelationGate,
+  clarificationGate: ClarificationGate = noClarifications,
+): TaskLaunchability {
+  return classifyManualTaskLaunchabilityWithGate(
+    task,
+    latestRun,
+    relationGate,
+    clarificationGate,
+  );
+}
+
+function classifyForceRelaunchLaunchability(
+  task: Parameters<typeof classifyForceRelaunchLaunchabilityWithGate>[0],
+  latestRun: Parameters<typeof classifyForceRelaunchLaunchabilityWithGate>[1],
+  relationGate?: RelationGate,
+  clarificationGate: ClarificationGate = noClarifications,
+): TaskLaunchability {
+  return classifyForceRelaunchLaunchabilityWithGate(
+    task,
+    latestRun,
+    relationGate,
+    clarificationGate,
+  );
+}
 
 // M28/T2.1 — the shared launch-gate classifier. `tasks.status` is a one-way
 // latch (nothing writes Backlog back after launch), so the latest flow run
@@ -453,6 +501,62 @@ describe("classifyForceRelaunchLaunchability — task gates are preserved", () =
         task("InFlight", "flow-1", "triaged"),
         run("NeedsInput"),
       ),
+    ).toBe("launchable");
+  });
+});
+
+describe("blocking user clarification launch hold", () => {
+  const relationGate: RelationGate = {
+    openBlockers: [{ key: "MAI", number: 7 }],
+  };
+  const pending = { openBlocking: 1 };
+
+  it("holds all three launch paths before relation blockers", () => {
+    const backlog = task("Backlog");
+
+    expect(
+      classifyTaskLaunchability(backlog, null, relationGate, pending),
+    ).toBe("clarification_pending");
+    expect(
+      classifyManualTaskLaunchability(backlog, null, relationGate, pending),
+    ).toBe("clarification_pending");
+    expect(
+      classifyForceRelaunchLaunchability(backlog, null, relationGate, pending),
+    ).toBe("clarification_pending");
+  });
+
+  it("keeps terminal, crashed, busy and flagged precedence", () => {
+    expect(
+      classifyTaskLaunchability(task("Done"), null, undefined, pending),
+    ).toBe("target_terminal");
+    expect(
+      classifyTaskLaunchability(
+        task("InFlight"),
+        run("Crashed"),
+        undefined,
+        pending,
+      ),
+    ).toBe("crashed");
+    expect(
+      classifyTaskLaunchability(
+        task("InFlight"),
+        run("Running"),
+        undefined,
+        pending,
+      ),
+    ).toBe("busy");
+    expect(
+      classifyTaskLaunchability(
+        task("Backlog", "flow-1", "flagged"),
+        null,
+        undefined,
+        pending,
+      ),
+    ).toBe("flagged");
+    expect(
+      classifyTaskLaunchability(task("Backlog"), null, undefined, {
+        openBlocking: 0,
+      }),
     ).toBe("launchable");
   });
 });

@@ -77,6 +77,41 @@ Pointing it at one `push_subscriptions` row would silently stop notifying the
 others as soon as a second browser appeared. The owner column is the join, and
 it is indexed on both sides.
 
+## Personal librarian additions (Designed — ADR-189, ADR-190)
+
+The librarian adds no attention table. It adds one inbox kind and one decisions
+population that the two counters already read, and keeps its own read cursor
+beside the attention cursor rather than inside it.
+
+```mermaid
+erDiagram
+    USERS ||--o| USER_ACTIVITY_CURSORS : "updates cursor"
+    USERS ||--o| LIBRARIAN_CONVERSATIONS : "read_through_seq, the librarian's own cursor"
+    TASK_CLARIFICATIONS ||--o{ INBOX_ITEMS : "clarification_requested for the recipient (source_ref, no FK)"
+    TASK_CLARIFICATIONS ||--o{ TASK_ACTIVITY : "clarification_requested|answered|cancelled twins"
+
+    INBOX_ITEMS {
+        text event_kind "Designed 0188: + clarification_requested"
+        jsonb source_ref "Designed: + kind clarification, taskId, clarificationId, activityId"
+    }
+
+    LIBRARIAN_CONVERSATIONS {
+        bigint read_through_seq "Designed 0184: GREATEST only; drives the unread indicator, never a count"
+    }
+```
+
+- **`decisions`** gains a fifth population read into the same array: open
+  user-origin `task_clarifications` whose `recipient_user_id` is the reader, so
+  the count still equals the list length.
+- **`updates`** counts a clarification request once: the inbox row's
+  `source_ref->>'activityId'` names its `task_activity` twin, and
+  `task.clarification_answered` moves to the twinned kinds (ADR-169 D4 applied,
+  not changed).
+- **`read_through_seq`** is the librarian panel's cursor over
+  `librarian_messages.seq`; it never moves `user_activity_cursors` and neither
+  counter reads it. See [`librarian-domain.md`](librarian-domain.md) and
+  [`../system-analytics/attention.md`](../system-analytics/attention.md).
+
 ## Linked artifacts
 
 - [ADR-169](../decisions.md#adr-169) · [ADR-173](../decisions.md#adr-173)

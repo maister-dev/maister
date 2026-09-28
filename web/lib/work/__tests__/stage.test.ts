@@ -32,12 +32,28 @@ function input(over: Partial<DeriveWorkStageInput> = {}): DeriveWorkStageInput {
     promotionState: "none",
     workspaceRemoved: false,
     blockingRelationCount: 0,
+    openBlockingClarificationCount: 0,
     progress: null,
     ...over,
   };
 }
 
 const STAGE_SET = new Set<string>(WORK_STAGES);
+
+describe("blocking clarification work attribute", () => {
+  it("does not change the derived stage", () => {
+    const clear = deriveWorkStage(
+      input({ runStatus: null, openBlockingClarificationCount: 0 }),
+    );
+    const held = deriveWorkStage(
+      input({ runStatus: null, openBlockingClarificationCount: 1 }),
+    );
+
+    expect(clear.clarificationPending).toBe(false);
+    expect(held.clarificationPending).toBe(true);
+    expect(held.stage).toBe(clear.stage);
+  });
+});
 
 describe("UT-STG-01 deriveWorkStage is total", () => {
   it("returns a defined WorkStage for every cell of the full cross-product", () => {
@@ -315,6 +331,7 @@ describe("UT-STG-12 terminal task status wins over triage when no run exists", (
     promotionState: null,
     workspaceRemoved: false,
     blockingRelationCount: 0,
+    openBlockingClarificationCount: 0,
     progress: null,
   };
 

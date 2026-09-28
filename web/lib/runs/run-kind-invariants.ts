@@ -27,20 +27,41 @@ export type RunScratchMetadataInvariantInput = {
   localPackageId?: string | null;
 };
 
+const RUN_KIND_INVARIANTS = {
+  flow: assertFlowRunInvariant,
+  agent: assertAgentRunInvariant,
+  scratch: assertScratchRunInvariant,
+  librarian: assertLibrarianRunInvariant,
+} satisfies Record<RunKind, (input: RunKindInvariantInput) => void>;
+
 export function assertRunKindInvariant(input: RunKindInvariantInput): void {
-  if (input.runKind === "flow") {
-    assertFlowRunInvariant(input);
+  RUN_KIND_INVARIANTS[input.runKind](input);
+}
 
-    return;
-  }
+/** Narrows a project-scoped row's `runKind` (see `asProjectRunKind`). */
+export function withProjectRunKind<
+  T extends { runKind: RunKind; runId?: string },
+>(row: T): Omit<T, "runKind"> & { runKind: ProjectRunKind } {
+  return { ...row, runKind: asProjectRunKind(row.runKind, row.runId) };
+}
 
-  if (input.runKind === "agent") {
-    assertAgentRunInvariant(input);
+/** Every run kind that can belong to a project. */
+export type ProjectRunKind = Exclude<RunKind, "librarian">;
 
-    return;
-  }
+/** A row read through a project (`runs.project_id = …` or an inner join to
+ * `projects`) can never be a librarian run: `runs_librarian_shape_check` keeps
+ * its `project_id` NULL. Reaching the throw means that invariant broke. */
+export function asProjectRunKind(
+  kind: RunKind,
+  runId?: string,
+): ProjectRunKind {
+  if (kind === "librarian")
+    throw new MaisterError(
+      "CONFIG",
+      `run ${runId ?? "?"} is a librarian run on a project-scoped path`,
+    );
 
-  assertScratchRunInvariant(input);
+  return kind;
 }
 
 export function assertRunScratchMetadataInvariant(
@@ -131,6 +152,23 @@ function assertAgentRunInvariant(input: RunKindInvariantInput): void {
     throw new MaisterError(
       "CONFIG",
       "agent run requires flowVersion=agent and flowRevision=manual",
+    );
+  }
+}
+
+// ADR-185: the librarian run is the conversation's cache, never a unit of work.
+function assertLibrarianRunInvariant(input: RunKindInvariantInput): void {
+  if (input.taskId || input.flowId || input.flowRevisionId || input.agentId) {
+    throw new MaisterError(
+      "CONFIG",
+      "librarian run must not store taskId, flowId, flowRevisionId or agentId",
+    );
+  }
+
+  if (input.flowVersion !== "librarian") {
+    throw new MaisterError(
+      "CONFIG",
+      "librarian run requires flowVersion=librarian",
     );
   }
 }

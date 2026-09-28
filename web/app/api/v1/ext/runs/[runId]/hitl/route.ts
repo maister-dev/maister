@@ -13,6 +13,7 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { projectHitlAnswer } from "@/lib/hitl-answer-view";
 import { extractOptions, getHitlRequestsForRun } from "@/lib/queries/hitl";
+import { runProjectResolver } from "@/lib/tokens/run-project";
 import { handleExt } from "@/lib/tokens/ext-handler";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -77,6 +78,8 @@ export async function GET(
     req,
     {
       scopeLabel: SCOPE,
+      admitLibrarian: true,
+      resolveLibrarianProjectId: runProjectResolver(runId),
       endpoint: ENDPOINT,
       method: "GET",
       requireScope: true,

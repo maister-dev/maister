@@ -22,7 +22,10 @@ export function DecisionCard({
   item,
   labels,
 }: {
-  item: Extract<DecisionItem, { kind: "crashed" | "promotable" | "flagged" }>;
+  item: Extract<
+    DecisionItem,
+    { kind: "crashed" | "promotable" | "flagged" | "clarification" }
+  >;
   labels: DecisionCardLabels;
 }): ReactElement {
   const taskHref =
@@ -60,7 +63,9 @@ export function DecisionCard({
       </div>
 
       <p className="m-0 text-[13px] leading-[1.45] text-ink">
-        {item.taskTitle ?? item.taskKey ?? item.projectName}
+        {item.kind === "clarification"
+          ? item.clarification.question
+          : (item.taskTitle ?? item.taskKey ?? item.projectName)}
       </p>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -78,7 +83,8 @@ export function DecisionCard({
             {labels.review}
           </Link>
         ) : null}
-        {item.kind === "flagged" && taskHref !== null ? (
+        {(item.kind === "flagged" || item.kind === "clarification") &&
+        taskHref !== null ? (
           <Link
             className="inline-flex h-8 items-center rounded-[10px] border border-line bg-ivory px-3 text-[12.5px] font-semibold text-ink no-underline"
             href={taskHref}

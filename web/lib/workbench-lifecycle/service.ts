@@ -26,7 +26,10 @@ import * as schema from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { emitDelegatedReviewIfChild } from "@/lib/runs/delegated-review-emit";
 import { requireReworkClaimOwner } from "@/lib/runs/rework-claim";
-import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
+import {
+  requireRunProjectId,
+  withProjectRunKind,
+} from "@/lib/runs/run-kind-invariants";
 import { DISPOSABLE_WORKSPACE_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 import {
   ABANDONABLE_STATUSES,
@@ -2231,14 +2234,17 @@ async function loadLifecycleContext(runId: string): Promise<LifecycleContext> {
     })
     .from(runs)
     .where(eq(runs.id, runId));
-  const run = runRows[0];
+  const found = runRows[0];
 
-  if (!run) {
+  // ADR-185: a librarian run is its owner's conversation, never a workbench
+  // target — to every lifecycle route it does not exist.
+  if (!found || found.runKind === "librarian") {
     // C29: an unknown run is a 404 at every family-A route, not a 409.
     throw new MaisterError("PRECONDITION", `run not found: ${runId}`, {
       details: { reason: "run_not_found" },
     });
   }
+  const run = withProjectRunKind(found);
   // Workbench lifecycle ops act on a project worktree; a project-less
   // local-package assistant run (ADR-097) has none and is not a valid target.
   const projectId = requireRunProjectId(run.projectId, runId);

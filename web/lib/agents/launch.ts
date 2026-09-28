@@ -2345,6 +2345,8 @@ export async function sendAgentMessage(
     // ADR-182 D-C1: `steer` reaches the running turn when it can and queues
     // otherwise; `queue` (the default) always queues.
     mode?: "steer" | "queue";
+    requestedByUserId?: string;
+    recordAccepted?: (tx: Db, turn: AgentTurn) => Promise<void>;
   } = {},
 ): Promise<SendAgentMessageResult> {
   const _db = opts.db ?? getDb();
@@ -2372,6 +2374,8 @@ export async function sendAgentMessage(
   } else {
     turn = await acceptAgentMessage(_db, childRunId, prompt, {
       requestKey: opts.requestKey,
+      requestedByUserId: opts.requestedByUserId,
+      recordAccepted: opts.recordAccepted,
     });
     // ADR-183 D-M3: a message the host parked mid-turn was superseded by a
     // successor carrying the same text; a same-key retry answers with it.

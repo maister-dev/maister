@@ -34,6 +34,7 @@ import {
 } from "@/lib/queries/hitl-stage";
 import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
 import { type NodeInterruptOptionMatrix } from "@/lib/runs/node-interrupt";
+import { withProjectRunKind } from "@/lib/runs/run-kind-invariants";
 import {
   budgetBreachClaimStage,
   getBudgetBreachAvailableOptions,
@@ -473,7 +474,9 @@ export async function getHitlInbox(
       ),
     )
     .orderBy(asc(hitlRequests.createdAt));
-  const visibleRows = rows.filter(isInboxVisibleHitlRow);
+  const visibleRows = rows
+    .map(withProjectRunKind)
+    .filter(isInboxVisibleHitlRow);
   const hitlIds = visibleRows.map((row) => row.hitlRequestId);
   const assignmentRows =
     hitlIds.length > 0

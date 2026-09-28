@@ -13,6 +13,7 @@ import type {
 
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 
+import { asProjectRunKind } from "@/lib/runs/run-kind-invariants";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import {
@@ -106,7 +107,7 @@ async function loadRunRow(
   return {
     runId: row.runId,
     projectId: row.projectId ?? projectId,
-    runKind: row.runKind,
+    runKind: asProjectRunKind(row.runKind, row.runId),
     status: row.status,
     currentStepId: row.currentStepId ?? null,
     startedAt: row.startedAt ?? null,
@@ -152,7 +153,7 @@ async function loadActiveRunRows(
   return rows.map((row) => ({
     runId: row.runId,
     projectId: row.projectId ?? projectId,
-    runKind: row.runKind,
+    runKind: asProjectRunKind(row.runKind, row.runId),
     status: row.status as (typeof ACTIVE_PULSE_RUN_STATUSES)[number],
     currentStepId: row.currentStepId ?? null,
     startedAt: row.startedAt ?? null,

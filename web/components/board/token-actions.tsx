@@ -13,6 +13,8 @@ import { useModalA11y } from "@/components/use-modal-a11y";
 import { readApiError } from "@/lib/api-error";
 import {
   EXACT_ONLY_TOKEN_SCOPES,
+  LIBRARIAN_ONLY_TOKEN_SCOPES,
+  type LibrarianOnlyTokenScope,
   TOKEN_SCOPE_VALUES,
   type TokenScope,
 } from "@/types/token-scopes";
@@ -32,12 +34,22 @@ const JUDGE_TOKEN_SCOPES = [
 
 type JudgeTokenScope = (typeof JUDGE_TOKEN_SCOPES)[number];
 
-type UserTokenScope = Exclude<TokenScope, JudgeTokenScope>;
+type UserTokenScope = Exclude<
+  TokenScope,
+  JudgeTokenScope | LibrarianOnlyTokenScope
+>;
+
+// ADR-186: the librarian's personal surfaces admit only a librarian turn token,
+// so a person granting them to a personal token would grant nothing.
+const MACHINE_ONLY_TOKEN_SCOPES: readonly TokenScope[] = [
+  ...JUDGE_TOKEN_SCOPES,
+  ...LIBRARIAN_ONLY_TOKEN_SCOPES,
+];
 
 export const USER_TOKEN_SCOPE_VALUES: readonly UserTokenScope[] =
   TOKEN_SCOPE_VALUES.filter(
     (scope): scope is UserTokenScope =>
-      !(JUDGE_TOKEN_SCOPES as readonly TokenScope[]).includes(scope),
+      !MACHINE_ONLY_TOKEN_SCOPES.includes(scope),
   );
 
 const BTN_NEUTRAL =
@@ -290,6 +302,14 @@ function scopeText(labels: TokenLabels, scope: UserTokenScope): string {
       return labels.scopeMemoryWrite;
     case "agent_memory:write":
       return labels.scopeAgentMemoryWrite;
+    case "projects:read":
+      return labels.scopeProjectsRead;
+    case "work:read":
+      return labels.scopeWorkRead;
+    case "activity:read":
+      return labels.scopeActivityRead;
+    case "runs:message":
+      return labels.scopeRunsMessage;
   }
 }
 

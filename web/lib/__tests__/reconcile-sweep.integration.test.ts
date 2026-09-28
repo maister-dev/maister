@@ -433,6 +433,7 @@ describe("runReconcileSweep (integration)", () => {
       sourceHitlRequestId: hitlRequestId,
       originRunId: runId,
       originAgentId: "test:clarifier",
+      originKind: "agent_run",
       question: "Which deployment target should be used?",
       questionSchema: {
         schemaVersion: 1,

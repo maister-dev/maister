@@ -196,6 +196,23 @@ prompt/permission probe that actually exercised the permission wire. See
 in [`api/supervisor.openapi.yaml`](api/supervisor.openapi.yaml), plus
 [`system-analytics/guardrail-hooks.md`](system-analytics/guardrail-hooks.md).)
 
+**Personal-librarian sessions (Designed — ADR-185/184).** A session of the
+project-less `run_kind='librarian'` run passes its OWN `enforcementProfile`,
+built by the librarian runtime instead of from a node declaration:
+`tools.allow` = the librarian tool names (`mcp__maister__<tool>`),
+`mcps.allowServers: ["maister"]`, `enforcedClasses: ["tools", "mcps"]`,
+`escalationThreshold: 3` (a tool-less summary turn sends
+`mcps.allowServers: []`, `enforcedClasses: ["mcps"]`). It sends **no**
+`readOnlySession`: read-only arbitration answers first and returns, so
+`capability_guard` would never run, and it auto-allows `read` / `search` /
+`fetch`. `mcpServers` carries only the generated `maister` facade entry with
+the turn's token, and the runner is never `dangerously_skip_permissions`. The
+host enforces the profile exactly as for a flow node — deny-and-continue, the
+Nth consecutive deny halts the session (`hook_trip … halt`); the web raises no
+HITL for it and fails the turn `capability_trip`. The workspace is the reserved
+`_librarian` directory handle
+([`POST /workspaces/adopt`](#post-workspacesadopt-implemented--adr-166)).
+
 The web tier resolves runner ids, checks readiness, materializes safe launch
 metadata, and sends only normalized spawn intent. The supervisor remains the
 only layer that resolves env refs into values and maps typed permission
@@ -498,6 +515,19 @@ server state (`workspaces.worktree_path`, `projects.repo_path`,
 `local_packages.working_dir`, the agent launch snapshot,
 `runs.context_mounts`).
 
+**Reserved slug `_librarian` (Designed — ADR-185, amending ADR-166 D7).**
+`projectSlug` is `^[a-z0-9]+(?:-[a-z0-9]+)*$` **or** the literal
+`_librarian`. The host never resolves a slug against registered projects —
+`workspace-registry.ts` only derives `run_dir =
+<runtimeRoot>/.maister/<projectSlug>/runs/<runId>` from it, and
+`workspace-roots.ts` validates a `directory` path by realpath against the
+configured roots — so the only code change is the wire schema
+(`projectSlugSchema` in `types.ts`). Web project slugs are kebab-case and can
+never produce the literal. The web adopts a librarian conversation only as
+`kind: directory` at `<runtimeRoot>/.maister/_librarian/<conversationId>/`,
+which it creates empty first (a missing path is refused `not_found`); the
+default roots already include `<runtimeRoot>/.maister`.
+
 ### `GET /workspaces/:id` · `DELETE /workspaces/:id` _(Implemented — ADR-166)_
 
 `GET` returns the path-free projection `{ executionWorkspaceId, runId,
@@ -507,6 +537,21 @@ logs `workspace-handle-lost`; the next create re-adopts). `DELETE` takes a
 refused `workspace_released`), and returns `{ released }`; issued as a
 `driverless` command by GC after worktree removal and by run-terminal drop
 paths.
+
+**Librarian release purge (Designed — ADR-190, amending ADR-166 D7).** Release
+deletes nothing on disk except for a `directory` handle whose stored
+`projectSlug` is `_librarian`: then the host also removes the adopted directory
+by its stored realpath (codex keeps its composed per-session home inside that
+cwd, so this covers codex rollouts) and the claude transcript directory for
+that cwd, `~/.claude/projects/<encoded realpath>/` (`/` and `.` encoded as
+`-`; outside the cwd). Both removals are idempotent and repeated by any later
+release of the same handle (`released: false`); a failure is logged with the
+handle id, never the path. The run dir
+(`<runtimeRoot>/.maister/_librarian/runs/<runId>/`) is not touched. The web
+issues this release after a history clear commits; the next turn is refused
+`workspace_released`, re-creates the directory and re-adopts once. Adapters
+other than claude and codex are not selectable as the librarian runner, so no
+other transcript location exists to purge.
 
 ### `GET /commands/:commandId` _(Implemented — ADR-166)_
 

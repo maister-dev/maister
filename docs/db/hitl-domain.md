@@ -237,6 +237,57 @@ erDiagram
 Exactly one supersession provenance is allowed. A history row persists after its
 source request or run is removed; question and answer bodies are never logged.
 
+### User-origin clarification extension (Designed — ADR-189)
+
+Migration `0188` widens `task_clarifications` so a user can address a question
+about a task to another user before any run exists — no `hitl_requests` row and
+no run back it, and `hitl_requests.run_id` stays NOT NULL. Agent-origin rows are
+backfilled `origin_kind='agent_run'` and keep their shape.
+
+```mermaid
+erDiagram
+    TASKS ||--o{ TASK_CLARIFICATIONS : "owns history (both origins)"
+    HITL_REQUESTS |o--o| TASK_CLARIFICATIONS : "agent_run origin only, snapshot"
+    LIBRARIAN_MESSAGES |o--o{ TASK_CLARIFICATIONS : "source_message_id (SET NULL)"
+    TASK_CLARIFICATIONS |o..o| TASK_CLARIFICATIONS : "superseded_by_clarification_id (no FK)"
+    LIBRARIAN_OPERATIONS |o..o| TASK_CLARIFICATIONS : "requested_via_operation_id (UNIQUE, no FK)"
+
+    TASK_CLARIFICATIONS {
+        text origin_kind "agent_run|user"
+        text source_hitl_request_id "now NULL for user origin"
+        text origin_run_id "now NULL for user origin"
+        text origin_agent_id "now NULL for user origin"
+        jsonb question_schema "now nullable"
+        text retrigger_mode "agent|triage|none; none iff user origin"
+        text requester_user_id "user origin, snapshot"
+        text recipient_user_id "user origin, snapshot"
+        text reason "NULL"
+        text answer_format "NULL|text|choice|yes_no"
+        boolean blocking "DEFAULT false"
+        text status "open|answered|cancelled|superseded"
+        text cancel_reason "required when cancelled"
+        text superseded_by_clarification_id "correction successor"
+        text source_message_id FK "NULL -> librarian_messages SET NULL"
+        text requested_via_operation_id "NULL, UNIQUE"
+    }
+```
+
+- `task_clarifications_origin_shape_check` — an `agent_run` row keeps its HITL,
+  run, agent and schema snapshot and a non-`none` retrigger mode; a `user` row
+  has none of them, names requester and recipient, and has
+  `retrigger_mode='none'`.
+- `task_clarifications_status_shape_check` — `answered` exactly when answered
+  and not superseded, `superseded` exactly when `superseded_at` is set, and
+  `cancelled` requires `cancel_reason`; an answer is never overwritten — a
+  correction creates the successor first.
+- `task_clarifications_supersession_check` is re-derived: a superseded row names
+  exactly one successor — HITL request, run or clarification.
+- An open, blocking user-origin row makes the task's launchability
+  `clarification_pending`; its creation also writes an `inbox_items` row
+  (`clarification_requested`) for the recipient — see
+  [`attention-domain.md`](attention-domain.md).
+- Exact DDL: [`../database-schema.md`](../database-schema.md#personal-librarian-tables-designed--adr-183188-migrations-01810188).
+
 ### Agent checkpoint pause extension (Implemented)
 
 Source-bound agent permissions also use `superseded_at` and
