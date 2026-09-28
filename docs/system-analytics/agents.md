@@ -786,8 +786,16 @@ flowchart TD
   so it keeps the create-failure settlement — `Failed
   {agent_session_create_failed}`, whether the host refused its workspace
   adoption or its create — reachable only in the W9 window, since the refusal
-  itself sets the pressure record. *(Implemented — ADR-183, recovery
-  window W8.)*
+  itself sets the pressure record and, since the ADR-183 amendment of
+  2026-09-28, only a health sample reporting `newWorkRefusedBy: null` lifts
+  the fence again, so the fence never reopens into a host that still refuses.
+  *(Implemented — ADR-183, recovery window W8.)*
+- **The turn's prompt is quarantined while still `accepted`** — its terminal
+  event could not be stored (`execution_event_skips` `payload_unstorable`,
+  `causeCode: "terminal_unstorable"`) or its receipt disagreed → the wait meets
+  the conflict with `details.settled: false` and stops yielding: the run is
+  finalized `Crashed` with reason `owner_poisoned`, instead of a `Running` turn
+  nobody applies (Implemented — ADR-184 amendment 2026-09-28).
 - **Crash between claim and spawn** → the run row is `Pending`;
   `promoteNextPending(kind='agent')` on the next tick recovers it.
 - **Human edits the parent checkout during a `repo_read` run** → possible

@@ -337,8 +337,11 @@ different things ([ADR-183](../decisions.md#adr-183-outbox-pressure-means-the-ma
   bit: runtime-file pressure refuses `session.*` admissions with 503
   `EXECUTOR_UNAVAILABLE {reason: "runtime_storage_pressure"}`, and physical
   headroom refuses every non-teardown admission with the same 409
-  `event_outbox_backpressure` token as the outbox, which the manager cannot
-  tell apart from outbox pressure.
+  `event_outbox_backpressure` token as the outbox. The refusal names its cause
+  in `details.outboxLimit` and `/health` names the limit that would refuse new
+  work in `stream.newWorkRefusedBy`, so the manager's admission fence follows
+  what the host actually refuses, not the pressure bit (ADR-183 amendment
+  2026-09-28; [execution hosts](execution-hosts.md#host-pressure-on-the-manager-implemented--adr-183)).
 - **Retained is housekeeping.** ACKed rows stay on disk for the replay grace
   (`MAISTER_EVENT_ACK_GRACE_MS`, 24 h), which is the retention *target*. When
   retained rows reach the soft budget in either lane, the pruner runs a
@@ -360,12 +363,12 @@ pass stalls short of low, kicks wait until the manager's ACK watermark moves —
 and kicks coalesce to one pass in flight. The replay
 floor advances only over rows a page deleted, so it never passes the manager's
 confirmed watermark. An open v2 prompt's span does NOT stop the walk (ADR-184,
-Designed): its ACKed rows are pruned like any other, because every reader of a
+Implemented): its ACKed rows are pruned like any other, because every reader of a
 prompt span reads its prefix up to the manager's contiguous frontier from
 `execution_events` ([prompt lifecycle, span reads](execution-prompt-lifecycle.md#span-reads-adr-184)),
 and host floor ≤ host ACK ≤ manager `last_contiguous_sequence` keeps every
-row above that frontier on the host. A backward clock cannot skip a protected
-range and advance the replay floor over retained evidence. Low/soft/hard hysteresis prevents
+row above that frontier on the host. A backward clock cannot shorten the grace
+window and advance the replay floor over retained evidence. Low/soft/hard hysteresis prevents
 repeated admission at the soft boundary. Regular storage is separate from
 control and the emergency floor; the exact validated defaults are owned by
 [configuration](../configuration.md).
@@ -905,7 +908,7 @@ checkpoints — and, once nine producers waited at hard, a supervisor pegged at
 - **EDGE-EVT-01:** An identical duplicate is a no-op insert and is covered by the pass's current contiguous ACK — the catch-up ACK at pass start, or the batch ACK when the watermark moved; a duplicate inside one batch is classified against its first occurrence (`IT-EVT-03`).
 - **EDGE-EVT-02:** A conflicting event ID or stream position degrades the stream without ACKing past it (`IT-EVT-03-CONFLICT`).
 - **EDGE-EVT-03:** A missing sequence below replay floor produces `event_gap_unrecoverable` and explicit recovery work (`IT-EVT-06-FLOOR`). An ABSENT cursor is not a lost cursor: omission starts at the retained floor, as the route contract states. Conflating the two refused every cursor-less consumer against any host that had ever pruned.
-- **EDGE-EVT-08:** A payload PostgreSQL cannot represent is escaped losslessly at ingest; one it still refuses is skipped as `payload_unstorable` and the walk advances. Inside a batch the poisoned event alone is quarantined: the batch is re-run as single-envelope batches and the others commit (Implemented — ADR-167 amendment 2026-09-25).
+- **EDGE-EVT-08:** A payload PostgreSQL cannot represent is escaped losslessly at ingest; one it still refuses is skipped as `payload_unstorable` and the walk advances. Inside a batch the poisoned event alone is quarantined: the batch is re-run as single-envelope batches and the others commit (Implemented — ADR-167 amendment 2026-09-25). A skipped event that is a prompt's TERMINAL quarantines its command `prompt_terminal_conflict {causeCode: "terminal_unstorable"}` and its owner ends visibly — it is never left waiting for a canonical row that cannot exist (Implemented — ADR-184 amendment 2026-09-28; [prompt lifecycle](execution-prompt-lifecycle.md)).
 - **EDGE-EVT-04:** An ACK for a replaced stream fails with `event_stream_mismatch` (`IT-EVT-07-ACK-RACE`).
 - **EDGE-EVT-05:** Invalid decimal sequences fail with `invalid_event_sequence`; valid skew is metadata and increments a metric (`CT-EVT-05`).
 - **EDGE-EVT-06:** Unknown schema or redaction failure retains only bounded spine/error metadata (`CT-EVT-08`, `IT-EVT-08-QUARANTINE`).

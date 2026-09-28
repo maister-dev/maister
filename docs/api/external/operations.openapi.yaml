@@ -1466,6 +1466,15 @@ paths:
                     type: integer
                     minimum: 1
                     description: Present iff `status == "Pending"`.
+                  queueReason:
+                    type: string
+                    enum: [host_pressured]
+                    description: |
+                      (Implemented — ADR-183) Present iff the run was queued
+                      because the execution host refuses new work (the
+                      manager's pressure record is set); absent when it was
+                      queued by the budget alone. The run starts when the host
+                      admits new work again.
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
         "403":

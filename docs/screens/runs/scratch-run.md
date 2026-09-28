@@ -175,7 +175,7 @@ stateDiagram-v2
 | --- | --- |
 | `Starting` | Transcript; composer editable for drafting, Stop only (no session to send to yet) |
 | `Running` | Transcript with latest tool group expanded; composer editable with Send primary (steer or queue) and a secondary Stop button to interrupt the turn |
-| `WaitingForUser` | Transcript plus enabled composer and live slash-command suggestions; while `errorMetadata.cause = host_pressure` a notice above the composer reads `scratch.hostPaused` ("Paused by the execution host — send again when it recovers"; Implemented — ADR-183) |
+| `WaitingForUser` | Transcript plus enabled composer and live slash-command suggestions; while `errorMetadata.cause = host_pressure` a notice above the composer reads `scratch.hostPaused` ("Paused by the execution host — send again when it recovers"; Implemented — ADR-183); a turn whose prompt was quarantined (`errorMetadata.reason = prompt_terminal_conflict`) shows the turn's error like any failed turn (Implemented — ADR-184 amendment 2026-09-28) |
 | `NeedsInput` | Pending permission/HITL prompt in the conversation |
 | `Review` | Transcript plus inspector action shortcuts and change size |
 | `Crashed` | Transcript plus recover composer and failure context; the hint carries the run's terminal cause line. Send routes to `/recover` only when both `runs.status` and the dialog are `Crashed`; a `scratch_not_recoverable` refusal renders localized copy by `details.status` (Implemented) |

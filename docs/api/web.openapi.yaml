@@ -7472,8 +7472,12 @@ paths:
             host is pressured the claim is deferred and the `system_sweep`
             re-drives it. The runner owns `NeedsInput → Running` and the agent
             continues the SAME attempt via `session/resume` on the handle the
-            park wrote, so context is preserved. Returns 202.
-          - `restart_node` (**default**) / `restart_from` → close the parked
+            park wrote, so context is preserved. Returns 202 `state:
+            "resume-in-progress"`, or `state: "resume-queued"` when the claim
+            was deferred (ADR-183 amendment 2026-09-28). `resume` is the
+            default for a host-paused interrupt (`schema.cause:
+            "host_pressure"`).
+          - `restart_node` (**default** for an operator interrupt) / `restart_from` → close the parked
             attempt `Reworked` with `decision='operator_interrupt'`, apply the
             operator's `workspacePolicy` against the target's `checkpoint_ref`
             **before** the ledger transaction, stale downstream when the target
@@ -19906,9 +19910,15 @@ components:
               description: |
                 (Implemented — ADR-183) `{cause: "host_pressure"}` while the
                 dialog's last turn was parked or refused by the execution
-                host's outbox pressure; `null` otherwise.
+                host's outbox pressure; `{reason: "prompt_terminal_conflict",
+                causeCode}` when the last turn's prompt was quarantined while
+                still accepted — e.g. `causeCode: "terminal_unstorable"`, its
+                terminal event could not be stored (ADR-184 amendment
+                2026-09-28); `null` otherwise.
               properties:
                 cause: { type: string, enum: [host_pressure] }
+                reason: { type: string, enum: [prompt_terminal_conflict] }
+                causeCode: { type: string }
         workspace:
           type: object
           nullable: true

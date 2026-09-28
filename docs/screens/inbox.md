@@ -143,8 +143,8 @@ the project-group header) with three disclosure tiers:
   same loader run detail uses, so an interrupt raised anywhere is answerable
   here without falling back to a raw JSON response body. A host-paused
   interrupt (`schema.cause = host_pressure`, ADR-183) renders the
-  `nodeInterrupt.hostPaused` notice above the same options; the system resumes
-  it when the host recovers.
+  `nodeInterrupt.hostPaused` notice above the same options, with *Resume* as the
+  marked default; the system resumes it when the host recovers.
 - **Run (deep dive):** `View run` opens the full run page.
 
 Per-card criticality accent (critical red / high amber / medium info / low

@@ -191,11 +191,11 @@ sequenceDiagram
     R->>D: action_completion {EXECUTOR_UNAVAILABLE, host_pressured}
     R->>D: ONE tx: node_interrupt{cause host_pressure, actor system} +<br/>CAS Running→NeedsInput + same attempt NeedsInput +<br/>completion cleared, ordinal +1,<br/>action_resume{kind interrupt, resumeSessionId} + run.escalated
     Note over D: keep-alive Pass 1b idles the run to NeedsInputIdle, slot freed
-    S->>H: GET /health?includeStream=true → pressured false
+    S->>H: GET /health?includeStream=true → newWorkRefusedBy null
     S->>D: for up to 25 open host-pressure interrupts<br/>applyNodeInterruptResume(actor system)
     D->>R: claimNodeInterruptResume → runFlow, or markResumed when idle<br/>(deferred when over cap or fenced)
     R->>H: session.create {resumeSessionId} → session/resume, same attempt
-    S->>D: record deleted → promoteNextPending up to each pool's cap
+    S->>D: record deleted (pressured_since ≤ sampledAt) → promoteNextPending up to each pool's cap, on every admitting sample
 ```
 
 The system answer is a server-internal call of `applyNodeInterruptResume`, the
@@ -207,14 +207,22 @@ locks the row, sets `responded_at` and `response = {optionId: "resume", actor:
 the fenced flow cap, whose hook `authorizeNodeInterruptResume` rebinds the
 parked attempt and its handle; over cap or fenced the claim is deferred —
 never `resume_requested_at`, whose promotion re-enters through crash recovery.
-On any `pressured: false` sample the sweep answers only rows whose
+On any sample on which the host admits new work (`newWorkRefusedBy: null`;
+an older host: `pressured: false`) the sweep answers only rows whose
 `schema.cause` is `host_pressure`, at most `HOST_PRESSURE_RESUME_BATCH = 25`
 per tick oldest first; a row the operator answered meanwhile is skipped by the
 `responded_at` guard. Every sample it also re-claims up to 25 interrupts
 already answered `resume` whose run is still parked (operator answers
-included). A throwing claim logs `run-host-pressure-resume-failed` and is
-retried next tick; a row failing three times in this process is left to the
-operator. The
+included). A throwing claim logs `run-host-pressure-resume-failed` and backs
+off: after k consecutive throws the row is retried after 2^(k−1) ticks (at most
+16), for the auto-resume and the re-drive alike; the third consecutive throw and
+every doubling after it log `run-host-pressure-resume-stuck` at ERROR, and a
+success resets the count — the sweep never gives up on a row (ADR-183
+amendment 2026-09-28: an answered row has no card, so "left to the operator"
+had no operator). Keep-alive Pass 2 never TTL-abandons a host-parked run: it
+skips a flow run whose latest `node_interrupt` at its current node carries
+`cause: "host_pressure"` (open or answered `resume`) and every run with
+`resume_requested_at` set. The
 operator keeps every option (`stop`, `restart_node`, `restart_from`, `resume`)
 with unchanged semantics; the card reads `nodeInterrupt.hostPaused`.
 
@@ -230,6 +238,11 @@ Recovery windows (normative — the implementation must satisfy each):
 | W6 | Operator answered `stop` / `restart_*` before the auto-resume | the operator's arm; the auto-resume finds no open row |
 | W7 | Manager restart with open host-pressure interrupts and a stale record | the next sweep re-samples health: clears and resumes, or keeps them parked |
 | W9 | Refusal set the record; the host cleared within the sweep interval | at most one sweep of unnecessary queueing |
+| W10 | A sample fetched before a refusal committed | the delete matches `pressured_since <= sampledAt`: the record survives (`held`) |
+| W11 | Record deleted, drain not run (process death or a throw) | the next admitting sample drains both pools |
+| W12 | Local host re-registered while its old row held a record | the next admitting sample drains |
+| W13 | Auto-resume or re-drive keeps throwing | per-row backoff + ERROR `run-host-pressure-resume-stuck`; retried until it succeeds or an operator answers |
+| W14 | Host-parked run idle past `MAISTER_NEEDSINPUTIDLE_TTL_HOURS` | not abandoned: Pass 2 skips it; the auto-resume owns it |
 
 (W8 is the agent park — [agents](agents.md).)
 

@@ -224,8 +224,8 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-180](#adr-180-permission-deadline-has-one-owner) | Permission deadline has one owner | Implemented; amended 2026-09-26 | 2026-09-22 |
 | [ADR-181](#adr-181-run-git-panel-status-independent-worktree-git-operations-public-branch-names-and-pr-before-promotion) | Run git panel: status-independent worktree git operations, public branch names, and PR before promotion | Implemented | 2026-09-22 |
 | [ADR-182](#adr-182-steering-a-running-agent-turn-as-a-durable-fenced-command) | Steering a running agent turn as a durable fenced command | Implemented; amended 2026-09-26 | 2026-09-25 |
-| [ADR-183](#adr-183-outbox-pressure-means-the-manager-is-behind) | Outbox pressure means the manager is behind | Implemented; amended 2026-09-27 | 2026-09-26 |
-| [ADR-184](#adr-184-an-open-prompt-does-not-pin-the-outbox--the-span-feed-reads-its-acked-prefix-canonically) | An open prompt does not pin the outbox — the span feed reads its ACKed prefix canonically | Implemented | 2026-09-27 |
+| [ADR-183](#adr-183-outbox-pressure-means-the-manager-is-behind) | Outbox pressure means the manager is behind | Implemented; amended 2026-09-27, 2026-09-28 | 2026-09-26 |
+| [ADR-184](#adr-184-an-open-prompt-does-not-pin-the-outbox--the-span-feed-reads-its-acked-prefix-canonically) | An open prompt does not pin the outbox — the span feed reads its ACKed prefix canonically | Implemented; amended 2026-09-28 | 2026-09-27 |
 
 ---
 
@@ -1858,7 +1858,7 @@ Full record: [`decisions/adr-182.md`](decisions/adr-182.md)
 
 ### ADR-183: Outbox pressure means the manager is behind
 
-**Status:** Implemented; amended 2026-09-27 (an open prompt no longer pins the retained-pressure prune)
+**Status:** Implemented; amended 2026-09-27 (an open prompt no longer pins the retained-pressure prune); amended 2026-09-28 (the refusal names its cause and the fence follows the host's new-work signal; the drain is a backstop; host parks survive the TTL)
 **Date:** 2026-09-26
 
 Full record: [`decisions/adr-183.md`](decisions/adr-183.md)
@@ -1867,7 +1867,7 @@ Full record: [`decisions/adr-183.md`](decisions/adr-183.md)
 
 ### ADR-184: An open prompt does not pin the outbox — the span feed reads its ACKed prefix canonically
 
-**Status:** Implemented
+**Status:** Implemented; amended 2026-09-28 (a skipped terminal is quarantined and ends its owner)
 **Date:** 2026-09-27
 
 Full record: [`decisions/adr-184.md`](decisions/adr-184.md)

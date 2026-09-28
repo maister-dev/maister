@@ -286,9 +286,12 @@ and turn claims — so launches queue `Pending` with `queueReason:
 "host_pressured"` and idle resumes stay queued (a node-interrupt resume is
 deferred instead). The scratch/assistant budgets and the `maxConcurrentRunsCap`
 readers (crash recover, the ADR-160 rework claim, schedule dispatch) are not
-fenced. The `system_sweep` job keeps sampling host health: any `pressured:
-false` sample auto-resumes the host-pressure node interrupts, and a sample that
-deletes the record also promotes queued work up to each pool's cap. The
+fenced. The `system_sweep` job keeps sampling host health: every sample on
+which the host admits new work (`newWorkRefusedBy: null`; an older host:
+`pressured: false`) auto-resumes the host-pressure node interrupts and drains
+both pools with `promoteNextPending` up to their caps — each step under its own
+error boundary, so a crash or a throw between the record delete and the drain
+is finished by the next sample (ADR-183 amendment 2026-09-28). The
 maintenance fence is not widened by this and still gates only the tick and the
 two promotion edges.
 

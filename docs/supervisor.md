@@ -108,6 +108,11 @@ read failure returns `503`; it is never disguised as an older host.
 manager is behind — and nothing else, and the block also carries `pressure:
 {since, unacknowledgedCountAtStart, unacknowledgedBytesAtStart, episodes}` while
 pressured (`null` otherwise), read from the v14 `runtime_event_pressure` row.
+(Implemented — ADR-183 amendment 2026-09-28) `newWorkRefusedBy` names the first
+host-wide outbox limit a `session.create` without output bindings or a
+`session.prompt` would meet right now — `unacknowledged`, `retained`,
+`physical` (recomputed on read) or `control` — or `null`; the manager's
+admission fence follows it.
 
 ### `POST /sessions`
 
@@ -587,11 +592,14 @@ reserves the producer wallet), `resolve` (`session.input`, `session.steer`) or
 liveness, `workspace.release`, `runtime_object.delete`). Outbox pressure
 (unacknowledged rows at the soft budget) refuses `new_work` and `producer` only;
 the hard budget (retained rows) and physical state headroom also refuse
-`resolve`; pressure never refuses a teardown (the one teardown refusal is the
-producer wallet's own serialization: a teardown of the same wallet already in
-progress, or, while pressured, an already-admitted step under a new command id
-— replay the original id). A refusal is `409 PRECONDITION {reason: event_outbox_backpressure}`
-with no receipt, logged `outbox-admission-refused`. The table is in
+`resolve`; pressure never refuses a teardown (its only refusals come from the
+producer wallet itself: a teardown of the same wallet already in progress, while
+pressured an already-admitted step under a new command id — replay the original
+id — or exhausted wallet credit). A refusal is `409 PRECONDITION {reason:
+event_outbox_backpressure, outboxLimit}` with no receipt, logged
+`outbox-admission-refused` with the limit: `unacknowledged`, `retained`,
+`physical`, `control` (a new producer wallet cannot be funded) or `wallet`
+(ADR-183 amendment 2026-09-28). The table is in
 [execution-event-plane.md](system-analytics/execution-event-plane.md#outbox-partitions-and-producer-pressure-implemented--adr-183).
 
 ### `DELETE /sessions/:id`
@@ -808,7 +816,8 @@ held by the supervisor's `PendingPermissionRegistry` with
 - `409 { code: "PRECONDITION" }` — Zod validation failure on the
   request body (e.g. `action="select"` with no `optionId`); or (ADR-183)
   `event_outbox_backpressure` while retained outbox rows are at the hard
-  budget. An answer is a `resolve` admission: soft outbox pressure never
+  budget or physical state headroom is short (`outboxLimit` `retained` /
+  `physical`). An answer is a `resolve` admission: soft outbox pressure never
   refuses it.
 
 The supervisor never writes input artifacts: durable form / human
@@ -1307,8 +1316,8 @@ the host-private file internally, and forwards only the resulting confined ACP
 resource link. The manager never receives that path. Other ACP blocks are
 forwarded unchanged after session-bound URI confinement. `prompt` stays the
 plain-text equivalent. (Implemented — ADR-183) A prompt is a `new_work`
-admission, refused `409 PRECONDITION {reason: event_outbox_backpressure}` under
-outbox pressure. A prompt whose session the host checkpoints mid-turn — the
+admission, refused `409 PRECONDITION {reason: event_outbox_backpressure,
+outboxLimit}` under outbox pressure. A prompt whose session the host checkpoints mid-turn — the
 producer pause bound below — settles `rejected` with `code: ACP_PROTOCOL` and
 `details: {reason: "session_checkpointed", cause}`, written after the
 session's `session.exited`. Response:

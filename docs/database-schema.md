@@ -2506,8 +2506,11 @@ agent path drives `Review→Running→…→Review`. Behavior:
   errorMessage?,
   errorMetadata?,                // jsonb; {cause: "host_pressure"} when the
                                  //   execution host's outbox pressure parked or
-                                 //   refused the turn (ADR-183 — no migration,
-                                 //   unconstrained)
+                                 //   refused the turn (ADR-183), or {reason:
+                                 //   "prompt_terminal_conflict", causeCode} when
+                                 //   the turn's prompt was quarantined while
+                                 //   still accepted (ADR-184 amendment
+                                 //   2026-09-28) — no migration, unconstrained
   createdByUserId,               // FK -> users.id
   lastUserMessageAt?,
   lastAgentMessageAt?,

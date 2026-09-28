@@ -41,7 +41,11 @@ details. There is no API or mutation route for this screen.
    missing marker when the host does not report it
    (`adminExecutionHost.pressure.*`). Pressure is
    the manager being behind (unacknowledged rows at the soft budget), never a
-   lag verdict.
+   lag verdict. Whenever the host reports `newWorkRefusedBy`, the cell also
+   shows a warning badge "Refusing new work" with the limit (unacknowledged,
+   retained, physical, control) — a host can refuse new work without being
+   pressured, e.g. when SQLite headroom is short (Implemented — ADR-183
+   amendment 2026-09-28).
 3. Top 20 eligible consumer/run backlogs with exact totals and truncation.
 4. Stable poison pagination, including terminal runs. A complete row exposes a
    copy-only, shell-quoted `execution:projection:rearm` command containing
