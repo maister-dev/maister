@@ -171,7 +171,7 @@ flowchart LR
 
 ## Edge cases
 
-- **EDGE-CLR-01:** The recipient loses membership while the request is open — an answer attempt is refused [`MaisterError("UNAUTHORIZED")`](../error-taxonomy.md#codes) by the live `member` check, and deactivation cancels the row with a reason and a delivered update (CLR-08), so the hold never becomes an unaddressable wait (Implemented).
+- **EDGE-CLR-01:** Removing a recipient's project membership or downgrading it to `viewer` cancels their open user-origin clarifications in the same transaction, with reason `recipient_access_removed`, activity and a delivered update; deactivation uses `recipient_deactivated`. The live `member` check also refuses an answer attempt with [`MaisterError("UNAUTHORIZED")`](../error-taxonomy.md#codes). A blocking request cannot remain an unaddressable hold (Implemented).
 - **EDGE-CLR-02:** Two answers race — the row lock plus status CAS lets one win, the other is refused [`MaisterError("CONFLICT")`](../error-taxonomy.md#codes), and the stored answer is never overwritten (Implemented).
 
 ## Linked artifacts

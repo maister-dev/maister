@@ -1463,6 +1463,7 @@ and the librarian documents it links.
 | `0188_task_clarifications_user_origin` | — | `task_clarifications`, `task_activity`, `inbox_items`, `domain_events` |
 | `0189_librarian_updates` | `librarian_updates` | — |
 | `0190_librarian_memory` | `librarian_memory_items`, `librarian_memory_item_revisions`, `librarian_memory_tombstones`, `librarian_segment_summaries` | — |
+| `0191_librarian_start_lease` | `librarian_turns.start_lease_at` for bounded start recovery | — |
 
 The `runs` and `tasks` constraint changes sit in migrations of their own
 (`0185`, `0186`), so each is reviewable and revertable alone.
@@ -1578,6 +1579,7 @@ CREATE TABLE librarian_turns (
   runner_snapshot     jsonb,
   token_id            text,
   start_attempts      integer     NOT NULL DEFAULT 0,
+  start_lease_at       timestamptz,
   deadline_at         timestamptz,
   admitted_at         timestamptz,
   started_at          timestamptz,

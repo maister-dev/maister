@@ -176,11 +176,12 @@ flowchart TD
     Q -- yes --> Q1["next admission pass admits it"]
     A --> AD{"admitted"}
     AD -- "run Pending" --> AD1["pool promotion, no token yet"]
-    AD -- "Running, no prompt after 60 s" --> AD2["re-issue start by logical key"]
+    AD -- "Running, no prompt and stale start lease after 60 s" --> AD2["re-issue start with new attempt key"]
     AD2 --> AD3{"3 failures?"}
     AD3 -- yes --> AD4["failed start_failed"]
     A --> RU{"running"}
     RU -- "live session" --> RU1["deadline watchdog only"]
+    RU -- "no prompt and stale start lease" --> AD2
     RU -- "run not live" --> RU2["failed host_lost, revoke token, park, admit next"]
     RU -- "past deadline" --> RU3["cancel prompt, failed deadline"]
     RU -- "guard halt observed" --> RU4["failed capability_trip"]
@@ -219,7 +220,7 @@ flowchart LR
 - **LCV-09:** After a restart or adapter loss, a `running` turn with no live session MUST resolve to `failed{host_lost}` through the reconcile `librarian` arm with the run parked, and queued messages MUST stay queued and admit afterwards (Implemented).
 - **LCV-10:** The turn deadline, context character cap and per-user daily turn cap (`MAISTER_LIBRARIAN_TURN_MAX_MINUTES`, `MAISTER_LIBRARIAN_CONTEXT_MAX_CHARS`, `MAISTER_LIBRARIAN_DAILY_TURNS_PER_USER`) MUST be finite, exhaustion MUST refuse with `MaisterError("BUDGET_EXCEEDED")` in a visible state, and the owner's latest message MUST NEVER be truncated away by the composer (Implemented).
 - **LCV-11:** With the librarian disabled or no ready runner, admission MUST refuse with `MaisterError("CONFIG")` or `MaisterError("EXECUTOR_UNAVAILABLE")` while admitted operations still reconcile and nothing is deleted, enforced by the admission check over `platform_runtime_settings.librarian_enabled` and `librarian_runner_id` (Implemented).
-- **LCV-12:** `GET /api/librarian/stream` MUST emit only the owner's conversation and replay from durable `seq` via `lastEventId`, and live tokens of the running turn MUST ride the existing run stream whose project-less authz is `created_by_user_id = viewer` (Implemented).
+- **LCV-12:** `GET /api/librarian/stream` MUST emit only the owner's conversation and replay from durable `seq` via `lastEventId`; the existing run stream, whose project-less authz is `created_by_user_id = viewer`, supplies the running/responding state. Reply text appears after settlement (Implemented).
 
 ## Edge cases
 

@@ -11,6 +11,7 @@ import {
   librarianConversations,
   librarianMessages,
   librarianTurns,
+  platformRuntimeSettings,
 } from "@/lib/db/schema";
 
 const log = pino({
@@ -22,6 +23,7 @@ const log = pino({
 export const LIBRARIAN_STREAM_TIMINGS = {
   activePollMs: 500,
   idlePollMs: 2_000,
+  disabledPollMs: 30_000,
   heartbeatMs: 15_000,
   quietCloseMs: 5 * 60_000,
 };
@@ -203,8 +205,19 @@ export async function* librarianStreamFrames(input: {
         lastHeartbeatAt = now;
         yield sse({ type: "librarian.heartbeat" }, null);
       }
+      const [settings] = active
+        ? [{ enabled: true }]
+        : await input.db
+            .select({ enabled: platformRuntimeSettings.librarianEnabled })
+            .from(platformRuntimeSettings)
+            .where(eq(platformRuntimeSettings.id, "singleton"));
+
       await sleep(
-        active ? timings.activePollMs : timings.idlePollMs,
+        active
+          ? timings.activePollMs
+          : settings?.enabled
+            ? timings.idlePollMs
+            : timings.disabledPollMs,
         input.signal,
       );
     }

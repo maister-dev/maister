@@ -96,9 +96,55 @@ type PreparedStart = {
   epoch: number;
   tokenSecret: string | null;
   deadlineAt: Date;
+  startAttempt: number;
 };
 
 type StartRefusal = { refused: true; reason: string };
+
+class StartSupersededError extends Error {
+  constructor() {
+    super("Librarian start attempt was superseded");
+  }
+}
+
+async function renewStartLease(
+  db: Db,
+  turnId: string,
+  startAttempt: number,
+): Promise<void> {
+  const renewed = await db
+    .update(librarianTurns)
+    .set({ startLeaseAt: new Date() })
+    .where(
+      and(
+        eq(librarianTurns.id, turnId),
+        eq(librarianTurns.status, "running"),
+        eq(librarianTurns.startAttempts, startAttempt),
+      ),
+    )
+    .returning({ id: librarianTurns.id });
+
+  if (renewed.length === 0) throw new StartSupersededError();
+}
+
+async function assertCurrentStart(
+  db: Db,
+  turnId: string,
+  startAttempt: number,
+): Promise<void> {
+  const [turn] = await db
+    .select({ id: librarianTurns.id })
+    .from(librarianTurns)
+    .where(
+      and(
+        eq(librarianTurns.id, turnId),
+        eq(librarianTurns.status, "running"),
+        eq(librarianTurns.startAttempts, startAttempt),
+      ),
+    );
+
+  if (!turn) throw new StartSupersededError();
+}
 
 async function latestFingerprint(
   tx: Db,
@@ -150,6 +196,12 @@ async function prepareStart(
       turn.startAttempts >= LIBRARIAN_MAX_START_ATTEMPTS
     )
       return { refused: true, reason: `turn_${turn?.status ?? "missing"}` };
+    if (
+      turn.status === "running" &&
+      turn.startLeaseAt &&
+      turn.startLeaseAt.getTime() > now.getTime() - 60_000
+    )
+      return { refused: true, reason: "start_in_progress" };
     const runId = locked.conversation.runId;
     const [run] = runId
       ? await tx
@@ -290,6 +342,7 @@ async function prepareStart(
       .set({
         status: "running",
         startedAt: turn.startedAt ?? now,
+        startLeaseAt: now,
         deadlineAt,
         runnerSnapshot: runner as never,
         tokenId: token?.tokenId ?? null,
@@ -327,6 +380,7 @@ async function prepareStart(
       epoch,
       tokenSecret: token?.secret ?? null,
       deadlineAt,
+      startAttempt: turn.startAttempts + 1,
     };
   });
 }
@@ -407,12 +461,27 @@ export async function startLibrarianTurn(
     return;
   }
   const hosts = deps.hosts ?? createExecutionHosts({ db });
+  const lease = setInterval(() => {
+    void renewStartLease(db, turnId, prepared.startAttempt).catch(
+      (err: unknown) => {
+        if (err instanceof StartSupersededError) clearInterval(lease);
+        else
+          log.error(
+            { turnId, startAttempt: prepared.startAttempt, err },
+            "librarian start lease renewal failed",
+          );
+      },
+    );
+  }, 15_000);
+
+  lease.unref?.();
   let promptIssued: { sessionId: string } | null = null;
   let client: Awaited<ReturnType<ExecutionHosts["forAssignment"]>> | null =
     null;
   const deadline = setTimeout(
     () => {
       void (async () => {
+        await assertCurrentStart(db, turnId, prepared.startAttempt);
         if (promptIssued && client)
           await client.cancelPrompt(promptIssued.sessionId).catch(() => {});
         await endLibrarianTurn(db, turnId, {
@@ -456,8 +525,13 @@ export async function startLibrarianTurn(
 
     if (prepared.mode === "resume" && prepared.resumeSessionId) {
       try {
+        await renewStartLease(db, turnId, prepared.startAttempt);
         session = await bound.createOwnedSession(
-          { variant: "librarian", turnId, promptOrdinal: 0 },
+          {
+            variant: "librarian",
+            turnId,
+            promptOrdinal: (prepared.startAttempt - 1) * 2,
+          },
           async () => sessionPayload(prepared, prepared.resumeSessionId),
         );
         prompt = prepared.resumePrompt;
@@ -471,28 +545,50 @@ export async function startLibrarianTurn(
       }
     }
     if (!session) {
+      await renewStartLease(db, turnId, prepared.startAttempt);
       session = await bound.createOwnedSession(
-        { variant: "librarian", turnId, promptOrdinal: freshOrdinal },
+        {
+          variant: "librarian",
+          turnId,
+          promptOrdinal: (prepared.startAttempt - 1) * 2 + freshOrdinal,
+        },
         async () => sessionPayload(prepared, null),
       );
       prompt = prepared.freshPrompt;
-      await db
-        .update(runSessions)
-        .set({
-          librarianContextEpoch: prepared.epoch,
-          runnerId: prepared.runner.id,
-          runnerSnapshot: prepared.runner as never,
-          capabilityAgent: prepared.runner.capabilityAgent as never,
-          updatedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(runSessions.runId, prepared.runId),
-            eq(runSessions.sessionName, "default"),
-          ),
-        );
+      await db.transaction(async (tx: Db) => {
+        const [current] = await tx
+          .select({ id: librarianTurns.id })
+          .from(librarianTurns)
+          .where(
+            and(
+              eq(librarianTurns.id, turnId),
+              eq(librarianTurns.status, "running"),
+              eq(librarianTurns.startAttempts, prepared.startAttempt),
+            ),
+          )
+          .for("update");
+
+        if (!current) throw new StartSupersededError();
+        await tx
+          .update(runSessions)
+          .set({
+            librarianContextEpoch: prepared.epoch,
+            runnerId: prepared.runner.id,
+            runnerSnapshot: prepared.runner as never,
+            capabilityAgent: prepared.runner.capabilityAgent as never,
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(runSessions.runId, prepared.runId),
+              eq(runSessions.sessionName, "default"),
+            ),
+          );
+      });
     }
     const hostSessionId = session.hostSessionId;
+
+    await renewStartLease(db, turnId, prepared.startAttempt);
 
     // Set BEFORE the call: a prompt call that fails may still have reached
     // the host, and cancelling an idle session is harmless.
@@ -505,6 +601,7 @@ export async function startLibrarianTurn(
           admitLibrarianPrompt(tx, bound, hostSessionId, {
             turnId,
             variant: prepared.variant,
+            startAttempt: prepared.startAttempt,
           }),
       },
     );
@@ -513,10 +610,24 @@ export async function startLibrarianTurn(
       owners: librarianPromptOwners,
     });
   } catch (err) {
+    if (err instanceof StartSupersededError) {
+      log.warn(
+        { turnId, startAttempt: prepared.startAttempt },
+        "librarian start superseded by recovery",
+      );
+
+      return;
+    }
     const superseded =
       isMaisterError(err) && err.details?.reason === "prompt_owner_superseded";
 
     if (superseded) return;
+    try {
+      await assertCurrentStart(db, turnId, prepared.startAttempt);
+    } catch (cause) {
+      if (cause instanceof StartSupersededError) return;
+      throw cause;
+    }
     log.error(
       {
         turnId,
@@ -555,6 +666,7 @@ export async function startLibrarianTurn(
       ),
     );
   } finally {
+    clearInterval(lease);
     clearTimeout(deadline);
   }
 }

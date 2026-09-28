@@ -281,9 +281,11 @@ function LibrarianPanelBody(): ReactElement {
                 : "assistant",
           content: message.masked
             ? t("messageUnavailable")
-            : message.authorKind === "system"
-              ? systemText(t, message.body)
-              : (message.body ?? ""),
+            : message.turnVariant === "explain"
+              ? t("explainRequest")
+              : message.authorKind === "system"
+                ? systemText(t, message.body)
+                : (message.body ?? ""),
           createdAt: message.createdAt,
         })),
     [messages, t],

@@ -5738,6 +5738,7 @@
     "updateMergedUnknown": "Слито · развёртывание неизвестно",
     "updateOpenTask": "Открыть задачу",
     "updateExplain": "Объяснить",
+    "explainRequest": "Объяснить это обновление",
     "errorExplain": "Не удалось объяснить обновление. Попробуйте ещё раз.",
     "memoryTitle": "Память",
     "memoryClose": "Закрыть",

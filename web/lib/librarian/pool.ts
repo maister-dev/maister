@@ -11,7 +11,7 @@ import { getDb } from "@/lib/db/client";
 import { librarianConversations, librarianTurns, runs } from "@/lib/db/schema";
 import { localHost } from "@/lib/execution-host/resolver";
 import { upgradeMaintenanceEngaged } from "@/lib/maintenance/upgrade-fence";
-import { capForPool, countLiveRuns, takeSchedulerLock } from "@/lib/scheduler";
+import { countLiveRuns, effectivePoolCap, takeSchedulerLock } from "@/lib/scheduler";
 
 const log = pino({
   name: "librarian.pool",
@@ -58,7 +58,7 @@ export async function promoteNextLibrarianTurn(
   const promoted = await db.transaction(async (tx) => {
     await takeSchedulerLock(tx);
     const live = await countLiveRuns(tx, "librarian");
-    const cap = capForPool("librarian");
+    const { cap } = await effectivePoolCap(tx, "librarian");
 
     if (live >= cap) {
       log.debug({ live, cap }, "librarian pool full; turns stay admitted");

@@ -128,7 +128,7 @@ async function executeHumanAction(
         "PRECONDITION",
         "HITL response was refused by the run",
         {
-          details: { status: response.status },
+          details: { reason: "hitl_response_refused", status: response.status },
         },
       );
     }
@@ -222,7 +222,10 @@ export async function decideLibrarianCard(
         .where(eq(librarianConversations.id, card.conversationId))
         .for("update");
       const [operation] = await tx
-        .select({ id: librarianOperations.id })
+        .select({
+          id: librarianOperations.id,
+          status: librarianOperations.status,
+        })
         .from(librarianOperations)
         .where(
           and(
@@ -231,7 +234,7 @@ export async function decideLibrarianCard(
           ),
         );
 
-      if (operation) throw changed();
+      if (operation && operation.status !== "refused") throw changed();
       const [rejected] = await tx
         .update(librarianCards)
         .set({
@@ -506,6 +509,31 @@ export async function decideLibrarianCard(
 
     return receipt;
   } catch (err) {
+    if (
+      isMaisterError(err) &&
+      err.details?.reason === "hitl_response_refused"
+    ) {
+      const receipt: LibrarianOperationResult = {
+        statusCode: 409,
+        body: { code: err.code, message: err.message, details: err.details },
+      };
+
+      await refuseLibrarianOperation(
+        {
+          id: operation.id,
+          errorCode: err.code,
+          statusCode: receipt.statusCode,
+          body: receipt.body,
+        },
+        db,
+      );
+      log.warn(
+        { cardId: card.id, kind: card.kind, status: 409 },
+        "librarian card effect refused",
+      );
+
+      return receipt;
+    }
     await markLibrarianOperationUnknown(
       {
         id: operation.id,

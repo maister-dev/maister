@@ -1,13 +1,61 @@
 import type { RunStatus, TaskStatus } from "@/lib/db/schema";
-import type { RelationGate } from "@/lib/runs/launchability";
+import type {
+  ClarificationGate,
+  RelationGate,
+  TaskLaunchability,
+} from "@/lib/runs/launchability";
 
 import { describe, expect, it } from "vitest";
 
 import {
-  classifyForceRelaunchLaunchability,
-  classifyManualTaskLaunchability,
-  classifyTaskLaunchability,
+  classifyForceRelaunchLaunchability as classifyForceRelaunchLaunchabilityWithGate,
+  classifyManualTaskLaunchability as classifyManualTaskLaunchabilityWithGate,
+  classifyTaskLaunchability as classifyTaskLaunchabilityWithGate,
 } from "@/lib/runs/launchability";
+
+const noClarifications: ClarificationGate = { openBlocking: 0 };
+
+function classifyTaskLaunchability(
+  task: Parameters<typeof classifyTaskLaunchabilityWithGate>[0],
+  latestRun: Parameters<typeof classifyTaskLaunchabilityWithGate>[1],
+  relationGate?: RelationGate,
+  clarificationGate: ClarificationGate = noClarifications,
+): TaskLaunchability {
+  return classifyTaskLaunchabilityWithGate(
+    task,
+    latestRun,
+    relationGate,
+    clarificationGate,
+  );
+}
+
+function classifyManualTaskLaunchability(
+  task: Parameters<typeof classifyManualTaskLaunchabilityWithGate>[0],
+  latestRun: Parameters<typeof classifyManualTaskLaunchabilityWithGate>[1],
+  relationGate?: RelationGate,
+  clarificationGate: ClarificationGate = noClarifications,
+): TaskLaunchability {
+  return classifyManualTaskLaunchabilityWithGate(
+    task,
+    latestRun,
+    relationGate,
+    clarificationGate,
+  );
+}
+
+function classifyForceRelaunchLaunchability(
+  task: Parameters<typeof classifyForceRelaunchLaunchabilityWithGate>[0],
+  latestRun: Parameters<typeof classifyForceRelaunchLaunchabilityWithGate>[1],
+  relationGate?: RelationGate,
+  clarificationGate: ClarificationGate = noClarifications,
+): TaskLaunchability {
+  return classifyForceRelaunchLaunchabilityWithGate(
+    task,
+    latestRun,
+    relationGate,
+    clarificationGate,
+  );
+}
 
 // M28/T2.1 — the shared launch-gate classifier. `tasks.status` is a one-way
 // latch (nothing writes Backlog back after launch), so the latest flow run

@@ -36,6 +36,7 @@ type ActiveTurn = {
   id: string;
   status: "admitted" | "running";
   startedAt: Date | null;
+  startLeaseAt: Date | null;
   admittedAt: Date | null;
   startAttempts: number;
   deadlineAt: Date | null;
@@ -51,6 +52,7 @@ async function activeTurnOfRun(
       id: librarianTurns.id,
       status: librarianTurns.status,
       startedAt: librarianTurns.startedAt,
+      startLeaseAt: librarianTurns.startLeaseAt,
       admittedAt: librarianTurns.admittedAt,
       startAttempts: librarianTurns.startAttempts,
       deadlineAt: librarianTurns.deadlineAt,
@@ -288,7 +290,7 @@ export async function runLibrarianTurnSweep(
         inArray(librarianTurns.status, ["admitted", "running"]),
         eq(runs.status, "Running"),
         lt(
-          sql`coalesce(${librarianTurns.startedAt}, ${librarianTurns.admittedAt})`,
+          sql`coalesce(${librarianTurns.startLeaseAt}, ${librarianTurns.startedAt}, ${librarianTurns.admittedAt})`,
           new Date(now.getTime() - LIBRARIAN_START_GRACE_MS),
         ),
       ),
@@ -298,6 +300,15 @@ export async function runLibrarianTurnSweep(
   for (const turn of stranded) {
     try {
       if (await promptCommandOf(db, turn.id)) continue;
+      const current = await activeTurnOfRun(db, turn.runId!);
+
+      if (
+        current?.status === "running" &&
+        current.startLeaseAt &&
+        current.startLeaseAt.getTime() >
+          now.getTime() - LIBRARIAN_START_GRACE_MS
+      )
+        continue;
       const outcome = await failLibrarianTurnForHostLoss(db, turn.runId!);
 
       if (outcome === "restarted") summary.restarts += 1;

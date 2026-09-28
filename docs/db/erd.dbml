@@ -1647,6 +1647,7 @@ table librarian_turns {
   runner_snapshot jsonb
   token_id text
   start_attempts integer [not null, default: 0]
+  start_lease_at "timestamp with time zone"
   deadline_at "timestamp with time zone"
   admitted_at "timestamp with time zone"
   started_at "timestamp with time zone"

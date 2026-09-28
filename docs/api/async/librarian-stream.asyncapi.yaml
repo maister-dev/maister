@@ -59,7 +59,8 @@ channels:
         An unauthenticated request is refused `401` before streaming begins.
 
         The server polls durable rows — every 500 ms while a turn of the
-        conversation is `admitted` or `running`, every 2 s otherwise — and
+        conversation is `admitted` or `running`, every 2 s while enabled and
+        idle, and every 30 s while disabled and idle — and
         emits one frame per change:
 
         - `librarian.message` for each new `librarian_messages` row, in `seq`

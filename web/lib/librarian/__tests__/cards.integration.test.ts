@@ -42,6 +42,9 @@ let db: ReturnType<typeof getDb>;
 let proposePost: typeof import("@/app/api/v1/ext/librarian/cards/route").POST;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
+vi.mock("@/lib/services/hitl", () => ({
+  respondToHitl: vi.fn(async () => ({ status: 409 })),
+}));
 
 beforeAll(async () => {
   database = await startMainPostgresTestDb({ databaseName: "librarian_cards" });
@@ -212,8 +215,13 @@ describe("librarian statement cards", () => {
     );
 
     expect(response.status).toBe(403);
-    const cards = await db.select().from(librarianCards)
-      .innerJoin(librarianConversations, eq(librarianConversations.id, librarianCards.conversationId))
+    const cards = await db
+      .select()
+      .from(librarianCards)
+      .innerJoin(
+        librarianConversations,
+        eq(librarianConversations.id, librarianCards.conversationId),
+      )
       .where(eq(librarianConversations.userId, owner.userId));
 
     expect(cards).toHaveLength(0);
@@ -410,5 +418,66 @@ describe("librarian statement cards", () => {
       title: null,
       projectSlug: null,
     });
+  });
+});
+
+describe("IT-LOP-09: a refused human effect", () => {
+  it("settles the card operation as refused and still lets the owner reject it", async () => {
+    const owner = await fixture();
+    const runId = await seedRun(db as unknown as NodePgDatabase, {
+      projectId: owner.projectId,
+      status: "Pending",
+    });
+    const hitlRequestId = randomUUID();
+
+    await db.execute(sql`
+      INSERT INTO hitl_requests (id, run_id, step_id, kind, prompt)
+      VALUES (${hitlRequestId}, ${runId}, 'review', 'human', 'Continue?')
+    `);
+    const proposed = await proposePost(
+      new NextRequest("http://localhost/api/v1/ext/librarian/cards", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${owner.token}`,
+          "content-type": "application/json",
+          "idempotency-key": randomUUID(),
+        },
+        body: JSON.stringify({
+          action: "hitl_respond",
+          runId,
+          hitlRequestId,
+          response: { answer: "yes" },
+        }),
+      }),
+    );
+
+    expect(proposed.status).toBe(201);
+    const { cardId } = (await proposed.json()) as { cardId: string };
+    const refused = await decideLibrarianCard(
+      {
+        cardId,
+        user: { id: owner.userId, role: "member" },
+        decision: "accept",
+      },
+      db,
+    );
+    const [operation] = await db
+      .select({ status: librarianOperations.status })
+      .from(librarianOperations)
+      .where(eq(librarianOperations.idempotencyKey, `card:${cardId}`));
+
+    expect(refused.statusCode).toBe(409);
+    expect(refused.body.code).toBe("PRECONDITION");
+    expect(operation.status).toBe("refused");
+    expect(
+      await decideLibrarianCard(
+        {
+          cardId,
+          user: { id: owner.userId, role: "member" },
+          decision: "reject",
+        },
+        db,
+      ),
+    ).toMatchObject({ body: { status: "rejected" } });
   });
 });

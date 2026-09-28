@@ -60,6 +60,7 @@ export type LibrarianMessageDto = {
   deliveryState: LibrarianMessageRow["deliveryState"];
   subject: LibrarianSubject | null;
   turnId: string | null;
+  turnVariant?: "explain";
   card: null;
   update: LibrarianUpdateDto | null;
   taskChips: never[];
@@ -105,6 +106,7 @@ export function librarianMessageDto(
     masked?: boolean;
     update?: LibrarianUpdateDto | null;
     usedMemoryItemIds?: string[];
+    turnVariant?: LibrarianTurnRow["variant"];
   } = {},
 ): LibrarianMessageDto {
   return {
@@ -112,11 +114,18 @@ export function librarianMessageDto(
     seq: row.seq.toString(),
     segmentId: row.segmentId,
     authorKind: row.authorKind,
-    body: options.masked ? null : row.body,
+    body:
+      options.masked ||
+      (row.authorKind === "owner" && options.turnVariant === "explain")
+        ? null
+        : row.body,
     masked: options.masked ?? false,
     deliveryState: row.deliveryState,
     subject: (row.subject ?? null) as LibrarianSubject | null,
     turnId: row.turnId ?? null,
+    ...(row.authorKind === "owner" && options.turnVariant === "explain"
+      ? { turnVariant: "explain" as const }
+      : {}),
     card: null,
     update: options.masked ? null : (options.update ?? null),
     taskChips: [],
@@ -141,6 +150,19 @@ export async function librarianMessageDtos(
   const visibleIds = new Set(visible.map((project) => project.id));
   const visibleSlugs = new Map(
     visible.map((project) => [project.id, project.slug]),
+  );
+  const ownerTurnIds = rows
+    .filter((row) => row.authorKind === "owner" && row.turnId)
+    .map((row) => row.turnId!);
+  const ownerTurnRows =
+    ownerTurnIds.length > 0
+      ? await db
+          .select({ id: librarianTurns.id, variant: librarianTurns.variant })
+          .from(librarianTurns)
+          .where(inArray(librarianTurns.id, ownerTurnIds))
+      : [];
+  const ownerTurnVariantById = new Map(
+    ownerTurnRows.map((turn) => [turn.id, turn.variant]),
   );
   const replyTurnIds = rows
     .filter((row) => row.authorKind === "librarian" && row.turnId)
@@ -314,6 +336,9 @@ export async function librarianMessageDtos(
 
     return librarianMessageDto(row, {
       masked,
+      turnVariant: row.turnId
+        ? ownerTurnVariantById.get(row.turnId)
+        : undefined,
       usedMemoryItemIds: row.turnId
         ? Object.keys(
             snapshotByTurnId.get(row.turnId)?.memoryItemRevisions ?? {},

@@ -2512,9 +2512,15 @@ paths:
           description: |
             Conflict with `agent=true` — a resolver session was launched
             (`outcome` = `agent_launched`); the run is now `Running`.
+            For a librarian token, a lost external outcome instead returns
+            `{operationId, status: "unknown"}`. Query the operation receipt;
+            never repeat the effect with a new key.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ExtRunSyncResult" }
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ExtRunSyncResult"
+                  - $ref: "#/components/schemas/LibrarianUnknownOutcome"
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
         "403":
@@ -2593,6 +2599,11 @@ paths:
                   status:
                     type: string
                     enum: [Review]
+        "202":
+          description: A librarian-token effect may have applied, but its outcome was lost; query the operation receipt.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LibrarianUnknownOutcome" }
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
         "403":
@@ -2733,6 +2744,11 @@ paths:
                     type: string
                   status:
                     type: string
+        "202":
+          description: A librarian-token stop may have applied, but its outcome was lost; query the operation receipt.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LibrarianUnknownOutcome" }
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
         "403":
@@ -2827,10 +2843,15 @@ paths:
           description: |
             The global concurrency cap was full, so the run was queued as
             `Pending` with its session handle retained. No supervisor session was
-            created; the scheduler resumes it when a slot frees.
+            created; the scheduler resumes it when a slot frees. For a
+            librarian token, a lost external outcome instead returns
+            `{operationId, status: "unknown"}`; query the receipt.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ExtRecoverAccepted" }
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ExtRecoverAccepted"
+                  - $ref: "#/components/schemas/LibrarianUnknownOutcome"
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
         "403":
@@ -8138,6 +8159,14 @@ components:
         clarificationId: { type: string, format: uuid }
         cardId: { type: string, format: uuid }
         memoryItemId: { type: string, format: uuid }
+
+    LibrarianUnknownOutcome:
+      type: object
+      additionalProperties: false
+      required: [operationId, status]
+      properties:
+        operationId: { type: string, format: uuid }
+        status: { type: string, enum: [unknown] }
 
     LibrarianOperationReceipt:
       type: object

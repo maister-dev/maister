@@ -8,7 +8,11 @@ import * as schemaModule from "@/lib/db/schema";
 import { resumeCrashedRun } from "@/lib/runs/recover";
 import { recoverHttpResponse } from "@/lib/runs/recover-http";
 import { tokenAuditIdentity } from "@/lib/tokens/audit";
-import { handleExt, recordRequiredTokenAudit, unknownLibrarianEffectResponse } from "@/lib/tokens/ext-handler";
+import {
+  handleExt,
+  recordRequiredTokenAudit,
+  unknownLibrarianEffectResponse,
+} from "@/lib/tokens/ext-handler";
 import { runProjectResolver } from "@/lib/tokens/run-project";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -69,7 +73,7 @@ export async function POST(
       // as 404 — `runs.id` is `text`, so a malformed id is a lookup miss here,
       // never a database error.
       const rows = await db
-        .select({ id: runs.id })
+        .select({ id: runs.id, status: runs.status })
         .from(runs)
         .where(and(eq(runs.id, runId), eq(runs.projectId, ctx.projectId)));
 
@@ -79,38 +83,52 @@ export async function POST(
           { status: 404 },
         );
       }
+      if (rows[0].status !== "Crashed") {
+        const refusal = recoverHttpResponse({ state: "conflict" });
+
+        return NextResponse.json(refusal.body, { status: refusal.httpStatus });
+      }
 
       try {
         const result = await resumeCrashedRun(runId);
         const { httpStatus, body } = recoverHttpResponse(result);
 
         if (result.state === "transient" && ctx.operationId) {
-          return unknownLibrarianEffectResponse({
-            actor: ctx.actor,
-            projectId: ctx.projectId,
-            operationId: ctx.operationId,
-            scopeLabel: SCOPE,
-            endpoint: ENDPOINT,
-            method: "POST",
-            error: new Error("recover outcome is transient"),
-          }, db);
+          return unknownLibrarianEffectResponse(
+            {
+              actor: ctx.actor,
+              projectId: ctx.projectId,
+              operationId: ctx.operationId,
+              scopeLabel: SCOPE,
+              endpoint: ENDPOINT,
+              method: "POST",
+              error: new Error("recover outcome is transient"),
+            },
+            db,
+          );
         }
 
         if (httpStatus < 400) {
           await db.transaction(async (tx: Db) => {
-            await recordRequiredTokenAudit({
-              ...tokenAuditIdentity(ctx.actor),
-              projectId: ctx.projectId,
-              scopeUsed: SCOPE,
-              endpoint: ENDPOINT,
-              method: "POST",
-              result: "ok",
-              statusCode: httpStatus,
-              operationId: ctx.operationId,
-              operation: ctx.operationId
-                ? { id: ctx.operationId, result: { statusCode: httpStatus, body } }
-                : undefined,
-            }, tx);
+            await recordRequiredTokenAudit(
+              {
+                ...tokenAuditIdentity(ctx.actor),
+                projectId: ctx.projectId,
+                scopeUsed: SCOPE,
+                endpoint: ENDPOINT,
+                method: "POST",
+                result: "ok",
+                statusCode: httpStatus,
+                operationId: ctx.operationId,
+                operation: ctx.operationId
+                  ? {
+                      id: ctx.operationId,
+                      result: { statusCode: httpStatus, body },
+                    }
+                  : undefined,
+              },
+              tx,
+            );
           });
         }
 
@@ -118,15 +136,18 @@ export async function POST(
       } catch (err) {
         if (!ctx.operationId) throw err;
 
-        return unknownLibrarianEffectResponse({
-          actor: ctx.actor,
-          projectId: ctx.projectId,
-          operationId: ctx.operationId,
-          scopeLabel: SCOPE,
-          endpoint: ENDPOINT,
-          method: "POST",
-          error: err,
-        }, db);
+        return unknownLibrarianEffectResponse(
+          {
+            actor: ctx.actor,
+            projectId: ctx.projectId,
+            operationId: ctx.operationId,
+            scopeLabel: SCOPE,
+            endpoint: ENDPOINT,
+            method: "POST",
+            error: err,
+          },
+          db,
+        );
       }
     },
   );

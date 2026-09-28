@@ -72,8 +72,8 @@ export function classifyTaskLaunchability(
     triageStatus: "triaged" | "flagged" | null;
   },
   latestRun: { status: RunStatus; workspaceRemoved?: boolean } | null,
-  relationGate?: RelationGate,
-  clarificationGate?: ClarificationGate,
+  relationGate: RelationGate | undefined,
+  clarificationGate: ClarificationGate,
 ): TaskLaunchability {
   if (task.status === "Done" || task.status === "Abandoned") {
     return "target_terminal";
@@ -100,7 +100,7 @@ export function classifyTaskLaunchability(
       return "flagged";
     }
 
-    if ((clarificationGate?.openBlocking ?? 0) > 0) {
+    if (clarificationGate.openBlocking > 0) {
       return "clarification_pending";
     }
 
@@ -131,8 +131,8 @@ function hasOpenBlockers(relationGate?: RelationGate): boolean {
 export function classifyManualTaskLaunchability(
   task: { status: TaskStatus; triageStatus: "triaged" | "flagged" | null },
   latestRun: { status: RunStatus } | null,
-  relationGate?: RelationGate,
-  clarificationGate?: ClarificationGate,
+  relationGate: RelationGate | undefined,
+  clarificationGate: ClarificationGate,
 ): TaskLaunchability {
   const base =
     latestRun === null
@@ -150,7 +150,7 @@ export function classifyManualTaskLaunchability(
       return "flagged";
     }
 
-    if ((clarificationGate?.openBlocking ?? 0) > 0) {
+    if (clarificationGate.openBlocking > 0) {
       return "clarification_pending";
     }
 
@@ -173,14 +173,14 @@ export function classifyManualTaskLaunchability(
 export function classifyForceRelaunchLaunchability(
   task: { status: TaskStatus; triageStatus: "triaged" | "flagged" | null },
   _latestRun: { status: RunStatus } | null,
-  relationGate?: RelationGate,
-  clarificationGate?: ClarificationGate,
+  relationGate: RelationGate | undefined,
+  clarificationGate: ClarificationGate,
 ): TaskLaunchability {
   if (isFlaggedTask(task)) {
     return "flagged";
   }
 
-  if ((clarificationGate?.openBlocking ?? 0) > 0) {
+  if (clarificationGate.openBlocking > 0) {
     return "clarification_pending";
   }
 

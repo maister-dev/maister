@@ -9,14 +9,23 @@ import { getDb } from "@/lib/db/client";
 import { socialActorForToken } from "@/lib/tokens/verify";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
-import { syncRunTarget, type SyncActor } from "@/lib/runs/sync-target";
-import { handleExt, httpStatusForExtCode, unknownLibrarianEffectResponse } from "@/lib/tokens/ext-handler";
+import { isLaunchedLineageRun } from "@/lib/evaluations/membership";
+import {
+  assertSyncEligible,
+  syncRunTarget,
+  type SyncActor,
+} from "@/lib/runs/sync-target";
+import {
+  handleExt,
+  httpStatusForExtCode,
+  unknownLibrarianEffectResponse,
+} from "@/lib/tokens/ext-handler";
 import { recordRequiredTokenAudit } from "@/lib/tokens/ext-handler";
 import { tokenAuditIdentity } from "@/lib/tokens/audit";
 import { runProjectResolver } from "@/lib/tokens/run-project";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { runs } = schemaModule as unknown as Record<string, any>;
+const { runs, workspaces } = schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -56,9 +65,16 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       requireScope: true,
       successAuditInWork: true,
       resolveLibrarianProjectId: async (handlerCtx) => {
-        const parsed = bodySchema.safeParse(await req.clone().json().catch(() => null));
+        const parsed = bodySchema.safeParse(
+          await req
+            .clone()
+            .json()
+            .catch(() => null),
+        );
 
-        return parsed.success ? runProjectResolver(parsed.data.runId)(handlerCtx) : null;
+        return parsed.success
+          ? runProjectResolver(parsed.data.runId)(handlerCtx)
+          : null;
       },
       idempotency: {
         kind: "run_sync",
@@ -86,7 +102,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       // indistinguishable from one that does not exist. projectId is NEVER a
       // body field.
       const rows = await db
-        .select({ id: runs.id })
+        .select({
+          id: runs.id,
+          status: runs.status,
+          runKind: runs.runKind,
+          parentRunId: runs.parentRunId,
+          workspaceMode: runs.workspaceMode,
+        })
         .from(runs)
         .where(and(eq(runs.id, body.runId), eq(runs.projectId, ctx.projectId)));
 
@@ -94,6 +116,39 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         return NextResponse.json(
           { code: "NOT_FOUND", message: "run not found" },
           { status: 404 },
+        );
+      }
+      const [workspace] = await db
+        .select({ removedAt: workspaces.removedAt })
+        .from(workspaces)
+        .where(eq(workspaces.runId, body.runId));
+
+      if (!workspace) {
+        return NextResponse.json(
+          {
+            code: "PRECONDITION",
+            message: `workspace not found: ${body.runId}`,
+          },
+          { status: httpStatusForExtCode("PRECONDITION") },
+        );
+      }
+      try {
+        assertSyncEligible(
+          {
+            status: rows[0].status,
+            runKind: rows[0].runKind,
+            parentRunId: rows[0].parentRunId,
+            workspaceMode: rows[0].workspaceMode,
+            isLaunchedLineage: await isLaunchedLineageRun(db, body.runId),
+          },
+          workspace,
+        );
+      } catch (err) {
+        if (!isMaisterError(err)) throw err;
+
+        return NextResponse.json(
+          { code: err.code, message: err.message },
+          { status: httpStatusForExtCode(err.code) },
         );
       }
 
@@ -129,42 +184,48 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         });
 
         const receipt = {
-            runId: body.runId,
-            attemptId: result.attemptId,
-            outcome: result.outcome,
-            behind: result.behind,
-            pushed: result.pushed,
-          };
+          runId: body.runId,
+          attemptId: result.attemptId,
+          outcome: result.outcome,
+          behind: result.behind,
+          pushed: result.pushed,
+        };
         const statusCode = result.outcome === "agent_launched" ? 202 : 200;
 
         await db.transaction(async (tx: Db) => {
-          await recordRequiredTokenAudit({
-            ...tokenAuditIdentity(ctx.actor),
-            projectId: ctx.projectId,
-            scopeUsed: SCOPE,
-            endpoint: ENDPOINT,
-            method: "POST",
-            result: "ok",
-            statusCode,
-            operationId: ctx.operationId,
-            operation: ctx.operationId
-              ? { id: ctx.operationId, result: { statusCode, body: receipt } }
-              : undefined,
-          }, tx);
+          await recordRequiredTokenAudit(
+            {
+              ...tokenAuditIdentity(ctx.actor),
+              projectId: ctx.projectId,
+              scopeUsed: SCOPE,
+              endpoint: ENDPOINT,
+              method: "POST",
+              result: "ok",
+              statusCode,
+              operationId: ctx.operationId,
+              operation: ctx.operationId
+                ? { id: ctx.operationId, result: { statusCode, body: receipt } }
+                : undefined,
+            },
+            tx,
+          );
         });
 
         return NextResponse.json(receipt, { status: statusCode });
       } catch (err) {
         if (ctx.operationId) {
-          return unknownLibrarianEffectResponse({
-            actor: ctx.actor,
-            projectId: ctx.projectId,
-            operationId: ctx.operationId,
-            scopeLabel: SCOPE,
-            endpoint: ENDPOINT,
-            method: "POST",
-            error: err,
-          }, db);
+          return unknownLibrarianEffectResponse(
+            {
+              actor: ctx.actor,
+              projectId: ctx.projectId,
+              operationId: ctx.operationId,
+              scopeLabel: SCOPE,
+              endpoint: ENDPOINT,
+              method: "POST",
+              error: err,
+            },
+            db,
+          );
         }
         if (isMaisterError(err)) {
           return NextResponse.json(

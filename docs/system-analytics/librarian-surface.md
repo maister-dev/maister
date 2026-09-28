@@ -34,8 +34,10 @@ The whole domain is **Implemented**.
   D6): on the wide routes (`/runs/`, `/studio/edit/`, `/studio/local`) it docks only
   at ≥ `2xl`, and while another assistant composer (scratch, Studio AI) is visible
   it opens as the sheet, so two composers are never side by side.
-- **Message list** (Implemented) — built on `TranscriptView`; live tokens of the active
-  turn via `useRunStream` on its run; jump-to-latest when the reader has scrolled up.
+- **Message list** (Implemented) — built on `TranscriptView`; the active turn
+  shows a live responding state via `useRunStream` on its run. The reply text
+  appears when the turn finishes; jump-to-latest appears when the reader has
+  scrolled up.
 - **Subject chip** (Implemented) — **General / Общий вопрос** or the selected task(s);
   stored on the message at send (`librarian_messages.subject`).
 - **Composer** (Implemented) — Send, Stop response, queued-message chips with Withdraw,
@@ -102,7 +104,7 @@ sequenceDiagram
     U->>P: navigate to another route
     Note over P: subject of the queued message unchanged
     S-->>P: librarian.turn running
-    P->>P: live tokens from the run stream
+    P->>P: show responding state from the run stream
     S-->>P: librarian.message reply
     P->>P: append without moving a scrolled-up reader, show jump-to-latest
 ```

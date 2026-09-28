@@ -16499,9 +16499,9 @@ paths:
         reload in one read: the conversation and its current segment, the
         top-navigation indicator, pending cards, queued messages, the active
         turn, the conversation's non-terminal operations, and availability. The
-        active turn's live tokens are not here: they ride the existing
-        `GET /api/runs/{runId}/stream` of `conversation.runId`, whose
-        project-less authorization is `created_by_user_id = viewer`.
+        active turn's responding state uses the existing run stream; reply
+        text appears after the turn settles. The project-less run stream uses
+        `created_by_user_id = viewer` authorization.
 
         Never refused for a disabled librarian or a missing runner: the
         response says so in `availability`, and nothing is deleted.
@@ -16554,7 +16554,8 @@ paths:
         exist. Older segments are included: the history is the owner's,
         whatever the automatic context holds. A librarian or update message
         whose source projects the owner can no longer see renders masked
-        (`masked: true`, `body: null`); the owner's own messages always render.
+        (`masked: true`, `body: null`). An internal Explain request has
+        `turnVariant: explain` and `body: null`; the UI shows a localized label.
       operationId: listLibrarianMessages
       parameters:
         - name: beforeSeq
@@ -16600,8 +16601,9 @@ paths:
         keeps the draft: the librarian is disabled (`422 CONFIG`); no ready
         librarian runner is configured (`503 EXECUTOR_UNAVAILABLE`); the
         per-user daily turn cap `MAISTER_LIBRARIAN_DAILY_TURNS_PER_USER` is
-        spent (`429 BUDGET_EXCEEDED`); the conversation is `resetting`
-        (`409 CONFLICT`).
+        spent (`429 BUDGET_EXCEEDED`, `details.reason: librarian_daily_cap`);
+        the conversation is `resetting` (`409 CONFLICT`,
+        `details.reason: reset_in_progress`).
       operationId: postLibrarianMessage
       requestBody:
         required: true
@@ -16634,7 +16636,8 @@ paths:
       description: |
         (Designed — ADR-185, `LCV-03`.) Withdraws a message whose
         `deliveryState` is `queued`; its turn never runs. Any other state —
-        accepted, processed, already withdrawn — is refused `409 CONFLICT`.
+        accepted, processed, already withdrawn — is refused `409 CONFLICT`
+        with `details.reason: message_not_queued`.
         `messageId` is compared with the owner's conversation (server-state); a
         mismatch or unknown id is `404`.
       operationId: withdrawLibrarianMessage
@@ -16742,7 +16745,12 @@ paths:
             schema: { $ref: "#/components/schemas/LibrarianCardDecisionBody" }
       responses:
         "200":
-          description: The decided card and, for an accept, its operation receipt.
+          description: The decision result; accepted actions return their domain result.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LibrarianCardDecisionResult" }
+        "202":
+          description: A human action may have applied, but its outcome is unknown; query the operation receipt and do not repeat with a new key.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/LibrarianCardDecisionResult" }
@@ -16859,7 +16867,7 @@ paths:
         conversation row lock sets `reset_state='resetting'`, withdraws queued
         messages (`withdrawn_by_reset`), requests a stop of the current turn and
         revokes its token. The reset is acknowledged only when no operation of
-        the old segment is `admitted` or `unknown` and no turn is `admitted` or
+        the old segment is `admitted` or recently `unknown` and no turn is `admitted` or
         `running`: the acknowledgement inserts the new segment, bumps
         `context_epoch`, marks pending cards `cleared_by_reset`, clears the
         subject and returns to `none`. A barrier pass runs inline and as a
@@ -16867,7 +16875,10 @@ paths:
         the acknowledgement. Repeating the call while `resetting` returns the
         same state. Nothing is deleted: tasks, statements, operations and
         history stay; older segments are reachable only through explicit history
-        search.
+        search. An external operation whose outcome remains `unknown` is never
+        reissued; after its reconciliation window the barrier may proceed and
+        its 202 receipt remains available. A concurrent clear refuses with
+        `details.reason: clear_in_progress`.
       operationId: resetLibrarianConversation
       responses:
         "202":
@@ -16877,6 +16888,8 @@ paths:
               schema: { $ref: "#/components/schemas/LibrarianResetResult" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
 
   /api/librarian/history/clear-preview:
     get:
@@ -16904,8 +16917,8 @@ paths:
       description: |
         (Designed — ADR-190 D14, `LMM-08`, `TST-06`.) A destructive action,
         separate from reset. `previewDigest` must match a fresh preview; a stale
-        digest (anything changed since) is refused `409 CONFLICT` and nothing is
-        deleted.
+        digest (anything changed since) is refused `409 CONFLICT` with
+        `details.reason: stale_preview` and nothing is deleted.
 
         One transaction deletes messages, summaries, context snapshots, cards
         and search rows, nulls message references on task links and
@@ -16984,9 +16997,9 @@ paths:
         every 15 s carries no `id`. Frame schemas live in
         `async/librarian-stream.asyncapi.yaml`.
 
-        The running turn's live tokens are NOT on this stream: they ride the
-        existing `GET /api/runs/{runId}/stream` of the conversation's run, whose
-        project-less authorization is `created_by_user_id = viewer`.
+        The run stream supplies a responding state while the turn is active;
+        reply text arrives after settlement. Its project-less authorization is
+        `created_by_user_id = viewer`.
       operationId: streamLibrarian
       parameters:
         - name: Last-Event-ID
@@ -22756,6 +22769,30 @@ components:
         expiresAt: { type: string, format: date-time, nullable: true }
         deletedAt: { type: string, format: date-time, nullable: true }
 
+    LibrarianRefusalReason:
+      type: string
+      description: "details.reason values on the librarian session and delegated-effect surfaces."
+      enum:
+        - librarian_not_admitted
+        - librarian_disabled
+        - librarian_daily_cap
+        - message_not_queued
+        - idempotency_payload_mismatch
+        - duplicate_of_operation
+        - target_changed
+        - stale_revision
+        - reset_in_progress
+        - clear_in_progress
+        - conversation_busy
+        - stale_preview
+        - generation_changed
+        - forgotten_memory
+        - hitl_response_refused
+        - clarification_not_open
+        - task_not_backlog
+        - no_active_turn
+        - not_found
+
     MaisterErrorBody:
       type: object
       required: [code, message]
@@ -22820,7 +22857,8 @@ components:
             editor edit-lock's `{reason: "edit_lock_not_held"}` (ADR-149) —
             the discriminator that separates a lock refusal from a stale-CAS
             refusal, since both surface as 409 `CONFLICT`.
-            Never a server-only handle.
+            Never a server-only handle. Librarian endpoints use the documented
+            `LibrarianRefusalReason` values where a reason is present.
             (ADR-181 — Implemented) Every run workbench route (the lifecycle routes
             and the git panel's `export-branch`, `sync`, `git-state`,
             `discard-changes`, `pr`, `pr/finalize`, `reattach`) forwards
@@ -26091,7 +26129,11 @@ components:
         body:
           type: string
           nullable: true
-          description: Null exactly when `masked`.
+          description: Null when `masked`, or for an internal Explain request.
+        turnVariant:
+          type: string
+          enum: [explain]
+          description: Present for an Explain request; the internal prompt is not projected.
         masked:
           type: boolean
           description: |
@@ -26213,14 +26255,18 @@ components:
     LibrarianCardDecisionResult:
       type: object
       additionalProperties: false
-      required: [card, operation]
+      required: [cardId, status]
       properties:
-        card: { $ref: "#/components/schemas/LibrarianCard" }
-        operation:
-          allOf:
-            - $ref: "#/components/schemas/LibrarianOperationReceipt"
-          nullable: true
-          description: The effect's receipt (key `card:<cardId>`); null for `reject`.
+        cardId: { type: string, format: uuid }
+        status: { type: string, enum: [accepted, rejected, unknown] }
+        taskId: { type: string, format: uuid }
+        revision: { type: integer, minimum: 1 }
+        memoryItemId: { type: string, format: uuid }
+        operationId: { type: string, format: uuid }
+        result:
+          type: object
+          additionalProperties: true
+          description: Domain result of a human-only action; present for an accepted HITL answer, promote, or discard.
 
     LibrarianMemoryItem:
       type: object

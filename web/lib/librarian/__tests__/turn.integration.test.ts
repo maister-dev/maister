@@ -294,6 +294,101 @@ describe("IT-LCV-04 part 3: a turn round-trips through its own prompt owner", ()
   });
 });
 
+describe("IT-LCV-04 start recovery lease", () => {
+  it("keeps a live start and fences a late session create before it can issue a prompt", async () => {
+    const ownerId = await seedActiveUser(db);
+    let release!: () => void;
+    let entered!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const atHost = new Promise<void>((resolve) => (entered = resolve));
+    const delayedHosts: ExecutionHosts = {
+      ...hosts,
+      async executionFor(runId, options) {
+        const execution = await hosts.executionFor(runId, options);
+
+        return {
+          ...execution,
+          client: {
+            ...execution.client,
+            async createOwnedSession(...args) {
+              const session = await execution.client.createOwnedSession(
+                ...args,
+              );
+
+              entered();
+              await gate;
+
+              return session;
+            },
+          },
+        };
+      },
+    };
+    const sent = await submitOwnerMessage(
+      ownerId,
+      {
+        clientMessageId: randomUUID(),
+        body: "recover a slow start",
+        subject: null,
+      },
+      {
+        db: db as unknown as Db,
+        start: (turnId) => {
+          running.push(
+            startLibrarianTurn(turnId, {
+              db: db as unknown as Db,
+              hosts: delayedHosts,
+            }),
+          );
+
+          return Promise.resolve();
+        },
+      },
+    );
+    const turnId = sent.turn!.id;
+
+    await atHost;
+    await startLibrarianTurn(turnId, { db: db as unknown as Db, hosts });
+    let [turn] = rows<{ start_attempts: number }>(
+      await db.execute(sql`
+        SELECT start_attempts FROM librarian_turns WHERE id = ${turnId}
+      `),
+    );
+
+    expect(turn.start_attempts).toBe(1);
+    expect(await tokenRevoked(turnId)).toBe(false);
+    await db.execute(sql`
+      UPDATE librarian_turns SET start_lease_at = now() - interval '61 seconds'
+      WHERE id = ${turnId}
+    `);
+    await startLibrarianTurn(turnId, { db: db as unknown as Db, hosts });
+    release();
+    await settle();
+    [turn] = rows<{ start_attempts: number }>(
+      await db.execute(sql`
+        SELECT start_attempts FROM librarian_turns WHERE id = ${turnId}
+      `),
+    );
+    const createKeys = rows<{ operation_key: string }>(
+      await db.execute(sql`
+        SELECT create_intent->>'operationKey' AS operation_key
+        FROM execution_commands
+        WHERE create_intent->'owner'->>'turnId' = ${turnId}
+          AND kind = 'session.create'
+      `),
+    );
+
+    expect(turn.start_attempts).toBe(2);
+    expect((await turnRow(turnId)).status).toBe("completed");
+    expect(createKeys).toContainEqual({
+      operation_key: `librarian-create:${turnId}:2`,
+    });
+    expect(
+      prompts.filter((prompt) => prompt.includes("recover a slow start")),
+    ).toHaveLength(1);
+  });
+});
+
 describe("IT-LAU-11 part 2: a guard halt fails the turn without a HITL row", () => {
   it("ends the turn failed{capability_trip} and writes no hitl_requests row", async () => {
     const ownerId = await seedActiveUser(db);

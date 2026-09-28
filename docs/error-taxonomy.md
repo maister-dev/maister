@@ -853,23 +853,31 @@ An applied empty/non-`end_turn` synthesis is not an empty successful plan and
 is not an ordinary `PRECONDITION` node failure. No new `MaisterError` code or
 run-level error column is introduced.
 
-## Personal librarian reasons (Designed — ADR-185..188)
+## Personal librarian reasons (Implemented — ADR-185..190)
 
 The personal librarian introduces **no new `MaisterError` code**
 ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror) closed
 union). Every refusal reuses an existing code; the `details.reason` vocabulary
-grows by the ten tokens below. The UI still branches on `code`;
+includes the tokens below. The UI still branches on `code`;
 `details.reason` selects the localized copy and is what tests assert.
 
 | `details.reason` | Code / HTTP | Raised when | Recovery |
 | --- | --- | --- | --- |
 | `idempotency_payload_mismatch` | `CONFLICT` / 409 | An effectful librarian-token request reuses an `Idempotency-Key` (the tool's `operationKey`) already recorded for the conversation with a different canonical request digest (LOP-02). Raised by the `idempotency: "required"` arm of `handleExt` against UNIQUE `librarian_operations_key_uq`. | Nothing moved; the stored operation and its result are untouched. A different request needs a new key. |
 | `duplicate_of_operation` | `CONFLICT` / 409 | A new key whose digest equals a `succeeded` operation of the same segment, and the call did not set `allowDuplicate` (LOP-02). | The librarian reports the existing result, or repeats with `allowDuplicate` when the owner asked for a second identical effect. |
+| `librarian_not_admitted` | `UNAUTHORIZED` / 403 | A librarian turn token calls an external endpoint that does not admit librarian authority. | Use a listed librarian tool; the token cannot gain that route's authority. |
+| `librarian_daily_cap` | `BUDGET_EXCEEDED` / 429 | The owner's daily turn counter reached the configured limit under the conversation lock. | Wait for the next UTC day or ask an administrator to adjust the cap. |
+| `message_not_queued` | `CONFLICT` / 409 | Withdraw reaches a message whose turn has already started or whose delivery state is no longer queued. | Read the latest message state; Stop response is available for a running turn. |
 | `target_changed` | `CONFLICT` / 409 | `POST /api/librarian/cards/{cardId}/decide` re-reads the bound target under its lock and finds it drifted — task `revision`, reviewed head SHA, HITL request or question revision, run status — or finds the card past `expires_at` (LOP-08). | The card executes nothing. The librarian proposes a fresh card against the current target. |
 | `stale_revision` | `CONFLICT` / 409 | A task PATCH (session or ext) or a statement accept carries `expectedRevision` ≠ `tasks.revision`, compared under `SELECT … FOR UPDATE` (TST-02). | Re-read the task and re-apply on its current revision. |
 | `capability_trip` | `PRECONDITION` — a stored turn outcome, never an HTTP response | The supervisor's `capability_guard` halted a librarian session after `escalationThreshold` consecutive out-of-profile tool calls (`hook_trip … halt`), or a tool-less summary turn emitted any tool call (LAU-11, EDGE-LAU-04). Recorded as `librarian_turns.failure_reason` and the `librarian.turn` frame's `reason`; no `hook_trip` HITL is raised for a librarian run. The same classification as the ADR-032 declared-limit kill: a declared boundary, not a crash. | The turn is `failed`, its token revoked, the run parked. The owner can send the next message. A runner that trips on ordinary turns is a blocking runner defect (ADR-185). |
 | `task_not_backlog` | `PRECONDITION` / 409 | A statement accept (`POST /api/v1/ext/projects/{slug}/tasks/{taskId}/statement`) targets a task whose `status` is not `Backlog` — the existing `BACKLOG_GATED_FIELDS` gate, because a running flow re-reads `tasks.prompt` at every re-entry (TST-07, ADR-188). | The receipt names the operator-message seam and the rework claim as next steps; the task is unchanged. |
 | `reset_in_progress` | `CONFLICT` / 409 | A message, Explain or memory write arrives while `librarian_conversations.reset_state` is `resetting` or `clearing` (ADR-190). | Retry after the reset barrier acknowledges; the panel shows the barrier state. |
+| `clear_in_progress` | `CONFLICT` / 409 | Reset is requested while a history clear is running. | Wait for the clear barrier to finish. |
+| `stale_preview` | `CONFLICT` / 409 | The clear-history digest no longer matches the preview the owner confirmed. | Review the new preview before clearing. |
+| `generation_changed` | `CONFLICT` / 409 | A memory or summary writer lost its segment, context, forget or history fence. | Re-read the current conversation before writing again. |
+| `forgotten_memory` | `CONFLICT` / 409 | A suggestion or writer attempts to restore content covered by a forget tombstone. | Make a new, materially different request if the owner wants a new memory. |
+| `hitl_response_refused` | `PRECONDITION` / 409 | The run refused the owner's proposed HITL answer before applying it. | Review the run and reject this stale card; a fresh proposal can use the current question. |
 | `conversation_busy` | `CONFLICT` / 409 | Reset or clear history is requested while another reset or clear is already in progress for the conversation (ADR-190). | Wait for the running barrier to acknowledge. |
 | `clarification_not_open` | `CONFLICT` / 409 | An answer or cancel reaches a clarification that is no longer `open` — including the loser of two racing answers (CLR-04, EDGE-CLR-02, ADR-189). | Re-read the clarification; a correction is a new, superseding request. |
 | `host_lost` | `CRASH` — a stored turn outcome | A `running` turn has no live session after a web or supervisor restart or adapter loss (the reconcile `librarian` arm), or its prompt resolves `turn_lost` (LCV-09). | The turn is `failed`, its token revoked, the run parked `NeedsInputIdle` — never `Crashed`. Queued messages admit afterwards; operations settle by reconcile. |
@@ -877,6 +885,7 @@ grows by the ten tokens below. The UI still branches on `code`;
 The remaining turn outcomes are stored vocabulary without an HTTP surface:
 `librarian_turns.failure_reason` also takes `start_failed` (three start
 attempts failed) and `deadline` (`MAISTER_LIBRARIAN_TURN_MAX_MINUTES` passed),
+and `summary_invalid` when the summary adapter returns invalid JSON,
 and an operation reconciled without a result row settles `failed` as
 `not_applied`. Admission refusals reuse existing codes without a new token:
 librarian disabled → `CONFIG`; no ready librarian runner →

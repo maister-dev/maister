@@ -275,9 +275,10 @@ export async function lockCreateOwner(
       run.status === "Running" &&
       conversation?.runId === run.id &&
       turn?.status === "running" &&
-      // 0 = the turn's session (a resume when the context still matches);
-      // 1 = the fresh session that replaces a refused resume.
-      input.owner.promptOrdinal <= 1
+      // Each recovery attempt gets its own create key; the second ordinal
+      // within that attempt replaces a refused resume.
+      input.owner.promptOrdinal >= (turn.startAttempts - 1) * 2 &&
+      input.owner.promptOrdinal <= (turn.startAttempts - 1) * 2 + 1
     );
   }
   if (input.owner.variant === "agent") {

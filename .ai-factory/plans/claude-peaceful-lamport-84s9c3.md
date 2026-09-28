@@ -114,7 +114,7 @@ every Phase 1–6 task is named by ≥ 1 requirement.
 | LCV-09 | After a restart or adapter loss, a `running` turn with no live session resolves to `failed{host_lost}` through the reconcile `librarian` arm and the run is parked; queued messages stay queued and admit afterwards | reconcile arm + `IT-LCV-09` |
 | LCV-10 | Turn deadline, context character cap and per-user daily turn cap are finite; exhaustion refuses with `BUDGET_EXCEEDED` in a visible state, and the owner's latest message is never truncated away | `IT-LCV-10` |
 | LCV-11 | With the librarian disabled or no ready runner, admission refuses (`CONFIG` / `EXECUTOR_UNAVAILABLE`); admitted operations still reconcile; nothing is deleted | `IT-LCV-11` |
-| LCV-12 | `GET /api/librarian/stream` emits only the owner's conversation and replays from durable `seq` via `lastEventId`; live tokens of the running turn ride the existing run stream, whose project-less authz is `created_by_user_id = viewer` | `IT-LCV-12` |
+| LCV-12 | `GET /api/librarian/stream` emits only the owner's conversation and replays from durable `seq` via `lastEventId`; the existing run stream supplies a running/responding state, with reply text after settlement, and project-less authz is `created_by_user_id = viewer` | `IT-LCV-12` |
 
 Edge: `EDGE-LCV-01` two tabs submit one `client_message_id` concurrently · `EDGE-LCV-02`
 message arrives while a turn runs · `EDGE-LCV-03` the configured runner is disabled
@@ -200,7 +200,7 @@ Edge: `EDGE-CLR-01` recipient loses membership while the request is open ·
 
 | Id | Expectation | Enforced by |
 | --- | --- | --- |
-| LMM-01 | Memory items are written only on an explicit "remember" in an owner-message turn or on acceptance of a visible suggestion card; inferred items stay suggestions | `IT-LMM-01` |
+| LMM-01 | Direct memory writes require an owner-message turn token; the instructions require an explicit owner "remember" request, while the server cannot prove the meaning of free-form text. Other inferred items use a visible suggestion card accepted by the owner | `IT-LMM-01` |
 | LMM-02 | An item carries kind, scope, source refs, origin, validity and revision; an edit writes a new revision | `IT-LMM-02` |
 | LMM-03 | Every use re-checks visibility of each item's and summary's source projects; a mixed summary with an invisible source is dropped and queued for rebuild | `IT-LMM-03` |
 | LMM-04 | Automatic context includes only the active segment's messages and summaries; older segments are reachable only through the explicit history-search tool, labelled in the reply | `IT-LMM-04` |
@@ -787,7 +787,7 @@ T0.17.
 | --- | --- |
 | `queued` × any | admitted by the next admission pass (event-driven + `system_sweep` backstop) |
 | `admitted` × `Pending` | pool promotion (`promoteNextPending` librarian arm); no token issued yet |
-| `admitted` × `Running`, no prompt command after 60 s | re-issue start (logical key `librarian_turn:<variant>:<assignmentId>:<ordinal>` makes it idempotent); 3 failures → `failed{reason:"start_failed"}` |
+| `admitted` or `running` × `Running`, no prompt command and no live start lease after 60 s | re-issue start using the attempt-specific session and prompt keys; 3 failures → `failed{reason:"start_failed"}` |
 | `running` × `Running`, live session | none (deadline watchdog); after a web restart the prompt command is settled by the owner-registry worker (`workers/runtime.ts`), which is registry-generic |
 | `running` × run not live (restart, adapter loss) | reconcile `librarian` arm (`reconcile.ts` crash arm gains the kind) → turn `failed{reason:"host_lost"}`, token revoked, run parked `NeedsInputIdle`, next queued turn admitted |
 | `running` past deadline | watchdog: cancel prompt, turn `failed{reason:"deadline"}` |

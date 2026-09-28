@@ -96,8 +96,8 @@ Regions, top to bottom:
    the domain on every render (never copied chat text), so the owner can return
    to work without scrolling.
 3. **Transcript** — owner and librarian messages, rendered on the shared
-   `TranscriptView`; the running turn's live tokens stream beside it from the
-   run stream. Message cards: statement proposal (a diff against the task's
+   `TranscriptView`; the running turn shows a responding state until its reply
+   arrives. Message cards: statement proposal (a diff against the task's
    current revision), confirmation card (human-only action, bound to a target
    revision and expiring), clarification request, operation receipt (per-item
    status for a batch), follow-up update card with **Explain**, memory

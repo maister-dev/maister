@@ -66,7 +66,11 @@ export async function admitLibrarianPrompt(
   tx: Db,
   client: BoundClient,
   hostSessionId: string,
-  input: { turnId: string; variant: LibrarianPromptVariant },
+  input: {
+    turnId: string;
+    variant: LibrarianPromptVariant;
+    startAttempt: number;
+  },
 ): Promise<PromptOwnerAdmission> {
   const runId = client.assignment.runId;
   const assignment = await lockCurrentSessionAssignment(tx, {
@@ -80,7 +84,10 @@ export async function admitLibrarianPrompt(
     .from(runs)
     .where(eq(runs.id, runId));
   const [turn] = await tx
-    .select({ status: librarianTurns.status })
+    .select({
+      status: librarianTurns.status,
+      startAttempts: librarianTurns.startAttempts,
+    })
     .from(librarianTurns)
     .where(eq(librarianTurns.id, input.turnId))
     .for("update");
@@ -88,7 +95,8 @@ export async function admitLibrarianPrompt(
   if (
     run?.runKind !== "librarian" ||
     run.status !== "Running" ||
-    turn?.status !== "running"
+    turn?.status !== "running" ||
+    turn.startAttempts !== input.startAttempt
   )
     throw new PromptOwnerInvariantError("librarian_admission_turn");
   const [binding] = await tx
@@ -124,7 +132,7 @@ export async function admitLibrarianPrompt(
     assignmentId: assignment.id,
     assignmentEpoch: assignment.epoch,
     turnId: input.turnId,
-    promptOrdinal: 0,
+    promptOrdinal: input.startAttempt - 1,
   };
 
   return {
@@ -132,7 +140,7 @@ export async function admitLibrarianPrompt(
     logicalOperationKey: librarianPromptOperationKey(
       input.variant,
       assignment.id,
-      0,
+      input.startAttempt - 1,
     ),
   };
 }
@@ -158,7 +166,9 @@ async function readTurnOutcome(
     )
       halted = true;
     if (event.eventType !== "session.update") continue;
-    const update = event.payload?.update as { sessionUpdate?: string } | undefined;
+    const update = event.payload?.update as
+      | { sessionUpdate?: string }
+      | undefined;
 
     if (variant === "summary" && update?.sessionUpdate === "tool_call")
       toolCalled = true;
@@ -168,7 +178,8 @@ async function readTurnOutcome(
       reply += text;
   }
   // D5: a guard halt fails the turn — never a HITL row; the run has no inbox.
-  if (halted || toolCalled) return { status: "failed", reason: "capability_trip" };
+  if (halted || toolCalled)
+    return { status: "failed", reason: "capability_trip" };
   if (outcome.response.stopReason === "cancelled") return { status: "stopped" };
 
   return {

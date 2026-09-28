@@ -5738,6 +5738,7 @@
     "updateMergedUnknown": "Merged · deployment unknown",
     "updateOpenTask": "Open task",
     "updateExplain": "Explain",
+    "explainRequest": "Explain this update",
     "errorExplain": "The update could not be explained. Try again.",
     "memoryTitle": "Memory",
     "memoryClose": "Close",

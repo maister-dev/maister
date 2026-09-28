@@ -411,6 +411,8 @@ describe("user-origin task clarification", () => {
     const initial = classifyTaskLaunchability(
       { status: "Backlog", flowId: "flow", triageStatus: null },
       null,
+      undefined,
+      { openBlocking: 0 },
     );
 
     expect(initial).toBe("launchable");

@@ -150,6 +150,22 @@ describe("IT-LOP-11 IT-LOP-12 IT-CLR-06: domain event follow-up", () => {
     expect((explainTurn.rows[0] as { variant: string }).variant).toBe(
       "explain",
     );
+    const [storedExplainMessage] = await db
+      .select()
+      .from(librarianMessages)
+      .where(eq(librarianMessages.turnId, explained.turnId));
+    const [explainMessage] = await librarianMessageDtos(
+      [storedExplainMessage],
+      ownerId,
+      db as never,
+    );
+
+    expect(storedExplainMessage.body).toContain("untrusted data");
+    expect(explainMessage).toMatchObject({
+      authorKind: "owner",
+      body: null,
+      turnVariant: "explain",
+    });
 
     await removeProjectMember(db, { projectId, userId: ownerId });
     await expect(

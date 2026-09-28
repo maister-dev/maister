@@ -175,6 +175,37 @@ describe("IT-LAU-09 IT-EDGE-LAU-02: a global admin reaches only their own conver
 });
 
 describe("IT-LCV-12: the stream replays by seq and carries no foreign frame", () => {
+  it("uses the quiet poll interval while the librarian is disabled", async () => {
+    const owner = await seedActiveUser(db);
+    const abort = new AbortController();
+    const delays: number[] = [];
+
+    await db.execute(sql`
+      UPDATE platform_runtime_settings SET librarian_enabled = false
+      WHERE id = 'singleton'
+    `);
+    try {
+      const frames = librarianStreamFrames({
+        db: db as unknown as Db,
+        ownerId: owner,
+        cursor: null,
+        signal: abort.signal,
+        sleep: async (ms) => {
+          delays.push(ms);
+          abort.abort();
+        },
+      });
+
+      expect((await frames.next()).done).toBe(true);
+      expect(delays).toEqual([30_000]);
+    } finally {
+      await db.execute(sql`
+        UPDATE platform_runtime_settings SET librarian_enabled = true
+        WHERE id = 'singleton'
+      `);
+    }
+  });
+
   it("replays the messages after the cursor, then the state frames", async () => {
     const owner = await seedActiveUser(db);
     const other = await seedActiveUser(db);

@@ -10,7 +10,7 @@ import { librarianTurns, runs } from "@/lib/db/schema";
 import { releaseAssignmentForRun } from "@/lib/execution-host/assignments";
 import { mintPlacement } from "@/lib/execution-host/placement";
 import { upgradeMaintenanceEngaged } from "@/lib/maintenance/upgrade-fence";
-import { capForPool, countLiveRuns, takeSchedulerLock } from "@/lib/scheduler";
+import { countLiveRuns, effectivePoolCap, takeSchedulerLock } from "@/lib/scheduler";
 
 const log = pino({
   name: "librarian.park",
@@ -93,7 +93,7 @@ export async function claimLibrarianResumeInTransaction(
     return { claimed: false, reason: "not_claimable" };
   }
   const live = await countLiveRuns(tx, "librarian");
-  const cap = capForPool("librarian");
+  const { cap } = await effectivePoolCap(tx, "librarian");
 
   if (upgradeMaintenanceEngaged() || live >= cap) {
     log.debug(

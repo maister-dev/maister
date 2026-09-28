@@ -8336,6 +8336,10 @@ export const librarianTurns = pgTable(
     tokenId: text("token_id"),
     // Start attempts spent on this turn; the D19 re-issue arm stops at 3.
     startAttempts: integer("start_attempts").notNull().default(0),
+    startLeaseAt: timestamp("start_lease_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
     deadlineAt: timestamp("deadline_at", { withTimezone: true, mode: "date" }),
     admittedAt: timestamp("admitted_at", { withTimezone: true, mode: "date" }),
     startedAt: timestamp("started_at", { withTimezone: true, mode: "date" }),

@@ -170,7 +170,7 @@ sequenceDiagram
 
 ## Expectations
 
-- **LMM-01:** Memory items MUST be written only on an explicit "remember" in an owner-message turn or on acceptance of a visible suggestion card, and inferred items MUST stay suggestions, enforced by `POST /api/v1/ext/librarian/memory` (owner-message turns only) and the card decide route (Implemented).
+- **LMM-01:** Direct memory writes MUST require an owner-message turn token. Instructions require an explicit owner "remember" request, but the server cannot infer the meaning of free-form text; other inferred items MUST remain visible suggestions until the owner accepts a card. The turn-kind gate on `POST /api/v1/ext/librarian/memory` and the card decide route enforce the server-observable boundary (Implemented).
 - **LMM-02:** An item MUST carry kind, scope, source refs, origin, validity and revision, and an edit MUST write a new revision, enforced by `librarian_memory_item_revisions` and trigger `librarian_memory_items_content_immutable` (Implemented).
 - **LMM-03:** Every use MUST re-check visibility of each item's and summary's source projects, and a mixed summary with an invisible source MUST be dropped and queued for rebuild, enforced by the composer's `source_project_ids` re-check (Implemented).
 - **LMM-04:** Automatic context MUST include only the active segment's messages and summaries, and older segments MUST be reachable only through the explicit history-search tool, labelled in the reply, enforced by the composer and `librarian_history_search` (Implemented).
