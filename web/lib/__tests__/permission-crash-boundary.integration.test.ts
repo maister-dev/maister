@@ -24,7 +24,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
@@ -593,6 +593,15 @@ describe("the crash boundary with a permission pending (G0, no answer sent)", ()
     process.kill(await adapterPid(runId), "SIGKILL");
     await settled(runId, "scratch-sigkill");
     await driver;
+    // The scratch consumer settles the run from the session stream, ahead of
+    // the canonical lifecycle projection of the same crash.
+    await waitFor(
+      async () =>
+        (await boundaryState(runId)).incarnations.every(
+          (state) => state === "crashed",
+        ),
+      "scratch-sigkill: the incarnation projects crashed",
+    );
     expect(await boundaryState(runId)).toEqual(SCRATCH_CHILD_KILLED);
   }, 180_000);
 
@@ -653,22 +662,53 @@ describe("an answer to a dead session never fails the run (G1, D-G2)", () => {
     ).toBe(false);
   }, 240_000);
 
-  // No event hold is shared by these two kinds' own stream consumers, so the
-  // answer may land before or after the boundary settles the run; either way
-  // it is a 409 that writes nothing, and the end state is the no-answer one.
+  // The crash's canonical event is held, as in (i): the scratch and agent
+  // drivers read the same event plane, so the answer lands while nothing has
+  // settled — the host names `session_ended` and the route answers 409 and
+  // writes nothing. (Unheld, the boundary could win and a `not_awaiting_input`
+  // 409 would pass on master too.)
+  async function answerHeldCrash(runId: string, hitlId: string, what: string) {
+    const held = proxy.arm(
+      {
+        caseId: `crashed-event-${runId}`,
+        method: "GET",
+        path: /^\/runtime-events$/,
+        eventType: "session.crashed",
+      },
+      "hold-events",
+    );
+    let released = false;
+
+    try {
+      process.kill(await adapterPid(runId), "SIGKILL");
+      await held.awaitReached();
+      const response = await answer(runId, hitlId);
+
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toMatchObject({
+        code: "CONFLICT",
+        details: { reason: "session_ended" },
+      });
+      expect((await runRow(runId)).status).toBe("NeedsInput");
+      const [row] = await hitlRows(runId);
+
+      expect(row).toMatchObject({ respondedAt: null });
+      expect(row.response).toMatchObject({ optionId: "allow" });
+      held.release();
+      released = true;
+    } finally {
+      // A reached barrier must be released even when an assertion failed, or
+      // it parks the next case's events.
+      if (!released && held.observations.length > 0) held.release();
+    }
+    await settled(runId, what);
+  }
+
   it("(iii-a) scratch: the answer writes nothing; the boundary settles the dialog", async () => {
     const { runId, hitl, driver } =
       await launchScratchOnPermission("scratch-answer");
 
-    process.kill(await adapterPid(runId), "SIGKILL");
-    const response = await answer(runId, hitl.id);
-
-    expect(response.status).toBe(409);
-    expect(["session_ended", "not_awaiting_input"]).toContain(
-      ((await response.json()) as { details?: { reason?: string } }).details
-        ?.reason,
-    );
-    await settled(runId, "scratch-answer");
+    await answerHeldCrash(runId, hitl.id, "scratch-answer");
     await driver;
     // The scratch consumer settles the run from the session stream, ahead of
     // the canonical lifecycle projection of the same crash.
@@ -682,18 +722,47 @@ describe("an answer to a dead session never fails the run (G1, D-G2)", () => {
     expect(await boundaryState(runId)).toEqual(SCRATCH_CHILD_KILLED);
   }, 180_000);
 
+  // T3.3 on the real host: the session is live but no longer holds the
+  // request the row names (answered or cancelled on another path). The host
+  // answers `permission_not_pending`; the route closes the row — marked as
+  // never delivered, so a retry is refused the same way — and moves nothing.
+  it("(iv) live session, request no longer pending: 410 permission_not_pending, row closed undelivered, run untouched", async () => {
+    const { runId, hitl, driver } = await launchScratchOnPermission(
+      "scratch-not-pending",
+    );
+
+    await db
+      .update(schema.hitlRequests)
+      .set({
+        schema: sql`jsonb_set(${schema.hitlRequests.schema}, '{requestId}', to_jsonb(${randomUUID()}::text))`,
+      })
+      .where(eq(schema.hitlRequests.id, hitl.id));
+    const response = await answer(runId, hitl.id);
+
+    expect(response.status).toBe(410);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "HITL_TIMEOUT",
+      details: { reason: "permission_not_pending" },
+    });
+    const [row] = await hitlRows(runId);
+
+    expect(row.respondedAt).not.toBeNull();
+    expect(row.response).toMatchObject({
+      optionId: "allow",
+      _closed: { reason: "permission_not_pending" },
+    });
+    expect((await runRow(runId)).status).toBe("NeedsInput");
+    expect((await answer(runId, hitl.id)).status).toBe(410);
+    // End the dialog so the next case starts clean.
+    process.kill(await adapterPid(runId), "SIGKILL");
+    await settled(runId, "scratch-not-pending");
+    await driver;
+  }, 180_000);
+
   it("(iii-b) agent: the answer writes nothing; finalization settles the run and closes the row", async () => {
     const { runId, hitl, driver } = await agentOnPermission("agent-answer");
 
-    process.kill(await adapterPid(runId), "SIGKILL");
-    const response = await answer(runId, hitl.id);
-
-    expect(response.status).toBe(409);
-    expect(["session_ended", "not_awaiting_input"]).toContain(
-      ((await response.json()) as { details?: { reason?: string } }).details
-        ?.reason,
-    );
-    await settled(runId, "agent-answer");
+    await answerHeldCrash(runId, hitl.id, "agent-answer");
     await driver;
     expect(await boundaryState(runId)).toEqual(AGENT_CHILD_KILLED);
   }, 180_000);

@@ -43,9 +43,16 @@ function tableOf(t: unknown): keyof Tables {
   throw new Error("unknown table");
 }
 
+// A `where` result is awaitable and, like a Drizzle builder, lockable.
+const rowsOf = (table: unknown) => {
+  const rows = Promise.resolve(dbState.tables[tableOf(table)]);
+
+  return Object.assign(rows, { for: () => rows });
+};
+
 const selectChain = () => ({
   from: (table: unknown) => ({
-    where: async () => dbState.tables[tableOf(table)],
+    where: () => rowsOf(table),
   }),
 });
 

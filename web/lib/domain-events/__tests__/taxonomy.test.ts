@@ -6,6 +6,8 @@ import {
   ATTENTION_EVENT_KINDS,
   causeReason,
   parseTerminalCause,
+  terminalCauseReason,
+  TERMINAL_CAUSE_REASONS,
   DECISION_OPENING_EVENT_KINDS,
   AUTO_PROMOTABLE_REVIEW_CAUSES,
   DOMAIN_EVENT_KINDS,
@@ -51,7 +53,7 @@ describe("terminal cause", () => {
     ]);
   });
 
-  it("reason tokens are snake_case, and a stored cause with free text is unreadable", () => {
+  it("reason tokens are snake_case, and a stored cause keeps its code when its reason is free text", () => {
     expect(causeReason("agent-session-gone")).toBe("agent_session_gone");
     expect(causeReason("supervisor-EXECUTOR_UNAVAILABLE")).toBe(
       "supervisor_executor_unavailable",
@@ -74,15 +76,35 @@ describe("terminal cause", () => {
         source: "orchestrator",
       }),
     ).toEqual({ code: null, reason: "cascade/user", source: "orchestrator" });
+    // The reason is dropped, never the whole cause: its code still says why.
     expect(
       parseTerminalCause({
         code: "CRASH",
         reason: "adapter exited with code 1",
         source: "graph",
       }),
-    ).toBeNull();
+    ).toEqual({ code: "CRASH", source: "graph" });
     expect(parseTerminalCause({ code: "NOPE", source: "graph" })).toBeNull();
     expect(parseTerminalCause({ code: null, source: "elsewhere" })).toBeNull();
+  });
+
+  // D-B1: the write keeps a token and nothing else — `cause` reaches agent
+  // prompts and `distill`, so a message must never ride it.
+  it("the write-side normalizer keeps a token, strips a message suffix and refuses prose", () => {
+    expect(terminalCauseReason("prompt-failed:Session 3f1c not found")).toBe(
+      "prompt_failed",
+    );
+    expect(terminalCauseReason("cascade/user_stopped")).toBe(
+      "cascade/user_stopped",
+    );
+    expect(terminalCauseReason("project row vanished before spawn")).toBe(
+      undefined,
+    );
+    expect(terminalCauseReason("a".repeat(65))).toBe(undefined);
+    expect(terminalCauseReason(undefined)).toBe(undefined);
+    // Every registered token survives the normalizer unchanged.
+    for (const token of TERMINAL_CAUSE_REASONS)
+      expect(terminalCauseReason(token)).toBe(token);
   });
 });
 

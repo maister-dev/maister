@@ -6,7 +6,7 @@ import type { StrandedAgentTurnRow } from "@/types/execution-host-observability"
 
 import { sql, type SQL } from "drizzle-orm";
 
-import { OWNED_TURN_VARIANTS } from "./turn-variants";
+import { MESSAGE_TURN_VARIANTS, OWNED_TURN_VARIANTS } from "./turn-variants";
 
 /** A queued agent message older than this, on a run with nothing in flight, is
  * reported. Not configurable: it is an alarm threshold, not a policy. */
@@ -26,12 +26,13 @@ export type StrandedAgentTurnsQueryRow = {
   rows: StrandedRow[];
 };
 
-const MESSAGE_VARIANTS = ["live_message", "persistent_message"] as const;
-
 /** The oldest queued message per run whose run has no owned turn claimed or
  * dispatched and no agent prompt whose application is still open — nothing
- * that would ever pick the message up. Shared by the sweep's report and the
- * admin read model so the two can never disagree about what "stranded" is. */
+ * that would ever pick the message up. A run parked `NeedsInputIdle` with a
+ * queue key is excluded: the continuation worker's resume arm and the
+ * freed-slot gate own it while it waits for capacity. Shared by the sweep's
+ * report and the admin read model so the two can never disagree about what
+ * "stranded" is. */
 export function strandedAgentTurnsQuery(now: Date, limit: number): SQL {
   const before = new Date(now.getTime() - STRANDED_AGENT_TURN_MS);
   const owned = sql.join(
@@ -39,7 +40,7 @@ export function strandedAgentTurnsQuery(now: Date, limit: number): SQL {
     sql`, `,
   );
   const messages = sql.join(
-    MESSAGE_VARIANTS.map((variant) => sql`${variant}`),
+    MESSAGE_TURN_VARIANTS.map((variant) => sql`${variant}`),
     sql`, `,
   );
 
@@ -53,6 +54,7 @@ export function strandedAgentTurnsQuery(now: Date, limit: number): SQL {
       WHERE t.state = 'queued'
         AND t.variant IN (${messages})
         AND t.created_at < ${before.toISOString()}::timestamptz
+        AND NOT (r.status = 'NeedsInputIdle' AND r.resume_requested_at IS NOT NULL)
         AND NOT EXISTS (
           SELECT 1 FROM agent_turns busy
           WHERE busy.run_id = t.run_id
@@ -95,15 +97,17 @@ export function mapStrandedAgentTurns(
 
 /** The queued-message invariant's alarm (ADR-182 / D-A6): a message that is
  * neither delivered nor superseded and has no owner left to deliver it. Read
- * only — no repair; one WARN per run. Never throws: a failed read is an
- * `errors` entry, the `reportPoisonedConsumers` contract. */
+ * only — no repair; with a logger, one WARN per stranded run per call. Never
+ * throws: a failed read is an `errors` entry, the `reportPoisonedConsumers`
+ * contract. */
 export async function reportStrandedAgentTurns(input: {
   db: Db;
   logger?: Logger;
   now?: Date;
   limit?: number;
 }): Promise<{
-  count: number;
+  // null: the read failed — distinct from "none stranded".
+  count: number | null;
   rows: StrandedAgentTurnRow[];
   errors: string[];
 }> {
@@ -125,7 +129,7 @@ export async function reportStrandedAgentTurns(input: {
     input.logger?.error({ err: message }, "stranded agent turn report failed");
 
     return {
-      count: 0,
+      count: null,
       rows: [],
       errors: [`stranded agent turn report failed: ${message}`],
     };

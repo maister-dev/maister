@@ -4,6 +4,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import pino from "pino";
 
 import { hitlRequests } from "@/lib/db/schema";
+import { closedAnswerResponse } from "@/lib/hitl-closed-answer";
 
 const log = pino({
   name: "scratch-open-permissions",
@@ -25,7 +26,10 @@ export async function closeOpenScratchPermissions(
 ): Promise<number> {
   const closed = await tx
     .update(hitlRequests)
-    .set({ respondedAt: at })
+    .set({
+      respondedAt: at,
+      response: closedAnswerResponse("session_ended", at),
+    })
     .where(
       and(
         eq(hitlRequests.runId, runId),

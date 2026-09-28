@@ -29,15 +29,15 @@ import {
   sharedAgentWorktreePath,
 } from "./workspace-paths";
 import { revokeAgentRunTokensForRun } from "./tokens";
-
-import { getDb } from "@/lib/db/client";
 import {
-  agentTurns,
-  hitlRequests,
-  projects,
-  runs,
-  workspaces,
-} from "@/lib/db/schema";
+  CLOSES_MESSAGE_TURNS,
+  supersedeUndispatchedMessageTurns,
+} from "./turns";
+
+import { terminalCauseReason } from "@/lib/domain-events/taxonomy";
+import { closedAnswerResponse } from "@/lib/hitl-closed-answer";
+import { getDb } from "@/lib/db/client";
+import { hitlRequests, projects, runs, workspaces } from "@/lib/db/schema";
 import { releaseRunContextMounts } from "@/lib/context-mounts/terminal";
 import {
   cancelActiveAssignmentsForRun,
@@ -158,9 +158,10 @@ function agentTerminalCause(
 ): TerminalCause {
   if (resultFailure)
     return { code: "CONFIG", reason: resultFailure, source: "agent" };
+  // A code as the reason says nothing the code does not.
   const token =
-    reason !== undefined && /^[a-z][a-z0-9_]*$/.test(reason)
-      ? reason
+    reason !== undefined && !isMaisterErrorCode(reason)
+      ? terminalCauseReason(reason)
       : undefined;
 
   return {
@@ -540,25 +541,15 @@ async function prepareAgentFinalization(
     // Review child re-enters through a NEW generation on rework/re-message).
     await releaseAssignmentForRun(tx, runId, "run_terminal");
 
-    // D-M1 (ADR-182): a message queued behind the ending turn can never be
+    // D-M1 (ADR-182): a message behind the ending turn can never be
     // dispatched now. Superseded in THIS transaction, so a same-key retry
     // answers `superseded` rather than finding it queued forever.
-    if (
-      effectiveStatus === "Failed" ||
-      effectiveStatus === "Crashed" ||
-      effectiveStatus === "Abandoned"
-    ) {
-      const superseded = await tx
-        .update(agentTurns)
-        .set({ state: "superseded", completedAt: endedAt, updatedAt: endedAt })
-        .where(
-          and(
-            eq(agentTurns.runId, runId),
-            eq(agentTurns.state, "queued"),
-            inArray(agentTurns.variant, ["live_message", "persistent_message"]),
-          ),
-        )
-        .returning({ id: agentTurns.id });
+    if (CLOSES_MESSAGE_TURNS[effectiveStatus]) {
+      const superseded = await supersedeUndispatchedMessageTurns(
+        tx,
+        [runId],
+        endedAt,
+      );
 
       if (superseded.length > 0)
         log.info(
@@ -623,7 +614,10 @@ async function prepareAgentFinalization(
     if (opts.closeOpenHitl) {
       await tx
         .update(hitlRequests)
-        .set({ respondedAt: endedAt })
+        .set({
+          respondedAt: endedAt,
+          response: closedAnswerResponse("session_ended", endedAt),
+        })
         .where(
           and(eq(hitlRequests.runId, runId), isNull(hitlRequests.respondedAt)),
         );

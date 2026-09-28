@@ -2072,7 +2072,9 @@ export async function runReconcileSweep(
           const { applied } = await markScratchCrashed({
             db,
             runId: cand.runId,
-            err: new MaisterError("CRASH", `reconcile: ${reason}`),
+            err: new MaisterError("CRASH", `reconcile: ${reason}`, {
+              details: { reason: causeReason(reason) },
+            }),
           });
 
           if (!applied) {

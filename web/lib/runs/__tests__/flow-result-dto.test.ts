@@ -307,29 +307,6 @@ describe("buildFlowRunResultDto", () => {
     });
   });
 
-  // B6: the run page's cause rides the DTO; a run the detail load never gave
-  // a cause (the agent center's older callers) reads null, not undefined.
-  it("carries the run's terminal cause, null when none was loaded", () => {
-    const cause = {
-      code: "BUDGET_EXCEEDED",
-      reason: "budget_breach",
-      source: "sweeper",
-    } as const;
-    const failed = buildFlowRunResultDto(
-      baseInput({
-        run: {
-          ...baseInput().run,
-          status: "Failed",
-          endedAt: "2026-06-15T09:10:00.000Z",
-          terminalCause: cause,
-        },
-      }),
-    );
-
-    expect(failed.run.terminalCause).toEqual(cause);
-    expect(buildFlowRunResultDto(baseInput()).run.terminalCause).toBeNull();
-  });
-
   it("returns a missing-manifest graph DTO when no pinned topology is available", () => {
     const dto = buildFlowRunResultDto(
       baseInput({

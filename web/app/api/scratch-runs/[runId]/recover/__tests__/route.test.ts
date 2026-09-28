@@ -496,6 +496,37 @@ beforeEach(() => {
 });
 
 describe("POST /api/scratch-runs/[runId]/recover", () => {
+  // Auth-first (review 2026-09-27): an unauthenticated caller with a malformed
+  // body learns neither the body schema (422/400) nor whether the run exists.
+  it("refuses an unauthenticated caller before parsing the body or reading the run", async () => {
+    const { requireActiveSession } = await import("@/lib/authz");
+
+    vi.mocked(requireActiveSession).mockRejectedValueOnce(
+      new MaisterError("UNAUTHENTICATED", "no session"),
+    );
+    const res = await invokePost("no-such-run", { prompt: 42 });
+
+    expect(res.status).toBe(401);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "UNAUTHENTICATED",
+    });
+  });
+
+  it("authorizes before the full load can refuse with the run's state", async () => {
+    const { requireProjectAction } = await import("@/lib/authz");
+    const runId = seedScratchRun({ dialogStatus: "Crashed" });
+
+    // A run whose workspace row is gone would refuse PRECONDITION — but only
+    // to a caller allowed to operate it.
+    dbState.tables.workspaces = [];
+    vi.mocked(requireProjectAction).mockRejectedValueOnce(
+      new MaisterError("UNAUTHORIZED", "not a member"),
+    );
+    const res = await invokePost(runId, {});
+
+    expect(res.status).toBe(403);
+  });
+
   it("returns open when the stored supervisor session is still live", async () => {
     const runId = seedScratchRun({ dialogStatus: "WaitingForUser" });
 
@@ -672,6 +703,28 @@ describe("POST /api/scratch-runs/[runId]/recover", () => {
     expect(dbState.tables.runs[0].status).toBe("Running");
     expect(releaseAssignmentForRunSpy).not.toHaveBeenCalled();
     expect(sendScratchPromptAndProjectEvents).not.toHaveBeenCalled();
+  });
+
+  // The recovery prompt was issued and awaits its owner's durable
+  // application: the recovery is under way, so the answer is 202 — never a 409
+  // that reads as a refused recovery — and the run is not crashed.
+  it("answers 202 in progress when the recovery prompt awaits its owner's application", async () => {
+    const { ScratchPromptContinuationPending } = await import(
+      "@/lib/scratch-runs/prompt-owner"
+    );
+    const runId = seedScratchRun();
+
+    vi.mocked(sendScratchPromptAndProjectEvents).mockRejectedValueOnce(
+      new ScratchPromptContinuationPending("cmd-recover", new Error("pending")),
+    );
+    const res = await invokePost(runId, { prompt: "continue from here" });
+
+    expect(res.status).toBe(202);
+    await expect(res.json()).resolves.toMatchObject({
+      runId,
+      action: "recover",
+    });
+    expect(dbState.tables.runs[0].status).toBe("Running");
   });
 
   // ADR-167 D5 amendment (2026-09-23): an admission fence timeout after the

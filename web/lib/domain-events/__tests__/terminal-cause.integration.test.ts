@@ -228,4 +228,56 @@ describe("the terminal cause on each writer (D-B2)", () => {
       source: "operator",
     });
   });
+
+  // Two operators stop the same dialog at once: both pass the unlocked
+  // pre-check, and the second must find it ended under the lock — or the
+  // event's consumers (memory harvest, agent triggers) fire twice.
+  it("two concurrent stops emit run.abandoned exactly once", async () => {
+    const runId = await seedScratchRun();
+    // Hold the run row so both stops pass the pre-check and park on the lock
+    // before either can end the dialog: the window the guard closes.
+    const blocker = await testDatabase.pool.connect();
+    let committed = false;
+
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query("SELECT id FROM runs WHERE id = $1 FOR UPDATE", [
+        runId,
+      ]);
+      const racers = Promise.all([
+        stopScratchWorkbench(runId, { db: db as never }),
+        stopScratchWorkbench(runId, { db: db as never }),
+      ]);
+      const deadline = Date.now() + 30_000;
+
+      for (;;) {
+        const { rows } = await testDatabase.pool.query<{ waiting: number }>(
+          `SELECT count(*)::int AS waiting FROM pg_stat_activity
+            WHERE wait_event_type = 'Lock' AND query ILIKE '%FROM runs WHERE id%FOR UPDATE%'`,
+        );
+
+        if (rows[0].waiting >= 2) break;
+        if (Date.now() > deadline)
+          throw new Error("both stops never parked on the run lock");
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      await blocker.query("COMMIT");
+      committed = true;
+      await racers;
+    } finally {
+      if (!committed) await blocker.query("ROLLBACK");
+      blocker.release();
+    }
+    const events = await db
+      .select({ id: schema.domainEvents.id })
+      .from(schema.domainEvents)
+      .where(
+        and(
+          eq(schema.domainEvents.runId, runId),
+          eq(schema.domainEvents.kind, "run.abandoned"),
+        ),
+      );
+
+    expect(events).toHaveLength(1);
+  });
 });

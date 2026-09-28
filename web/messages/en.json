@@ -2631,7 +2631,7 @@
       "EXECUTOR_UNAVAILABLE": "The execution service is unavailable. Retry when it is ready.",
       "EXECUTOR_UNAVAILABLE_HITL": "{answerState, select, answer_stored {Your answer is saved; delivery is pending. Retry delivery to send it.} other {Delivery could not be confirmed. Refresh the run to check whether your answer was saved.}}",
       "ACP_PROTOCOL": "The agent rejected the response. Reload and try again.",
-      "HITL_TIMEOUT": "The agent session ended before your answer arrived. Relaunch the run.",
+      "HITL_TIMEOUT": "This request is no longer pending; the run has moved on.",
       "CONFLICT": "This conflicts with the run's current state. Check the refreshed view before retrying.",
       "CONFIG": "The request or configuration is invalid. Check the values and settings.",
       "FLOW_INSTALL": "The Flow is not ready to run. Check its installation and try again.",
@@ -2659,6 +2659,7 @@
       "session_ended": "The agent session ended before your answer arrived, so it was not delivered. The run is being reconciled; if it can be recovered, Recover will ask again.",
       "session_ended_scratch": "The agent session ended before your answer arrived, so it was not delivered. The dialog is being reconciled; if it can be recovered, Recover will ask again.",
       "permission_not_pending": "This request is no longer pending; the run has moved on.",
+      "edit_lock_not_held": "Your edit lock on this package expired or passed to someone else. Reopen the package editor, then answer again to resume.",
       "delivery_unavailable": "Your answer is saved; delivery is pending. Retry delivery to send it.",
       "permission_delivery_rejected": "The checkpointed permission could not accept your answer. Relaunch the run.",
       "permission_delivery_rejected_scratch": "The checkpointed permission could not accept your answer. Recover the run or relaunch it."
@@ -2774,12 +2775,16 @@
         "BUDGET_EXCEEDED": "The run reached its budget limit. Review the budget before restarting.",
         "CHECKPOINT": "The agent session could not resume from its checkpoint. Check adapter resume support and supervisor logs.",
         "PRECONDITION": "A prerequisite for this step was not met. Check the Flow inputs and required resources.",
-        "HITL_TIMEOUT": "The agent session ended before the answer arrived. Relaunch the run.",
+        "HITL_TIMEOUT": "A permission answer could not be delivered to the agent. Relaunch the run.",
         "CONFLICT": "The step encountered a conflicting operation. Check the run state and active operations.",
         "NEEDS_INPUT": "The run stopped waiting for input it could not get.",
         "FLOW_INSTALL": "The Flow package could not be installed. Check its source and version.",
         "STEP_CHECKPOINTED": "The step was checkpointed and could not continue.",
-        "EMBEDDING_UNAVAILABLE": "The embedding service was unavailable."
+        "EMBEDDING_UNAVAILABLE": "The embedding service was unavailable.",
+        "UNAUTHENTICATED": "The run's credentials were not accepted.",
+        "UNAUTHORIZED": "The run was not allowed to perform an action.",
+        "PASSWORD_CHANGE_REQUIRED": "An account the run acts for must change its password first.",
+        "ACCOUNT_INACTIVE": "An account the run acts for is disabled."
       }
     },
     "terminalCause": {
@@ -2789,10 +2794,11 @@
         "Abandoned": "Why this run was abandoned"
       },
       "reasonLabel": "Reason",
+      "unknownReason": "No further detail was recorded.",
       "reasons": {
         "agent_turn_lost": "The execution host restarted and lost the agent's turn.",
         "turn_lost": "The execution host restarted and lost the agent's turn.",
-        "session_crashed": "The agent process crashed while the run waited for an answer.",
+        "session_crashed": "The agent process crashed.",
         "agent_session_gone": "The agent session was gone and did not come back.",
         "agent_prompt_failed": "The agent's turn failed.",
         "stream_lost": "The execution host's event stream was lost, so the turn's result can never arrive.",
@@ -2818,7 +2824,34 @@
         "permission_persist_failed": "An agent permission request could not be saved.",
         "permission_delivery_rejected": "The checkpointed permission could not accept the answer.",
         "infra_recovery_abandoned": "An infrastructure recovery was abandoned.",
-        "hook_trip_abandoned": "A guardrail stopped the run and it was abandoned."
+        "hook_trip_abandoned": "A guardrail stopped the run and it was abandoned.",
+        "agent_session_create_failed": "The agent's session could not be created.",
+        "agent_session_spawn_failed": "The agent process could not be started.",
+        "consensus_draft_incomplete": "A consensus draft did not finish.",
+        "consensus_draft_spawn_failed": "A consensus draft could not be started.",
+        "effective_definition_unresolved": "The agent's definition could not be resolved for this project.",
+        "judge_attempt_timeout": "The judging attempt ran out of time.",
+        "repo_read_checkout_failed": "The read-only checkout of the repository failed.",
+        "operator": "Stopped by an operator.",
+        "cascade/user_stopped": "Its coordinating run was stopped by an operator.",
+        "cascade/orchestrator_stuck": "Its coordinating run had nothing left to wait for.",
+        "cascade/budget_exceeded": "Its coordinating run reached its budget limit.",
+        "budget_abandoned": "The run was abandoned at its budget limit.",
+        "budget_restart": "The run was replaced by a restart with a new budget.",
+        "prompt_failed": "The resumed session's prompt failed.",
+        "consumer_failed": "The resumed session's events could not be read.",
+        "driver_uncaught": "The resume stopped on an unexpected error.",
+        "deliver_permission_failed": "The stored permission answer could not be delivered to the resumed session.",
+        "resume_prompt_no_permission": "The resumed session did not ask for the permission it was parked on.",
+        "resume_timeout": "The resumed session did not respond in time.",
+        "missing_acp_session_id": "The run had no agent session to resume.",
+        "runner_snapshot_missing": "The run's runner could not be determined.",
+        "workspace_missing": "The run's worktree was missing.",
+        "project_missing": "The run's project was missing.",
+        "supervisor_refused": "The execution host refused to resume the session.",
+        "supervisor_empty_acp_session": "The execution host resumed no agent session.",
+        "unknown_error": "The resume stopped on an unknown error.",
+        "legacy_steps_engine_3_cutover": "The run used the retired step engine and ended at the engine 3 cut-over."
       }
     }
   },
@@ -3218,7 +3251,8 @@
       "strandedTitle": "Stranded agent messages",
       "strandedHelp": "Queued agent messages older than 10 minutes on a run with nothing in flight that would deliver them. Read-only: open the run to act.",
       "strandedEmpty": "No stranded agent messages.",
-      "strandedRow": "message #{ordinal} · queued {age}"
+      "strandedUnavailable": "unavailable",
+      "strandedRow": "turn #{ordinal} · queued {age}"
     },
     "clock": {
       "title": "Scheduler clock",

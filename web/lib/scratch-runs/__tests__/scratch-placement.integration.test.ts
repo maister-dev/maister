@@ -921,28 +921,25 @@ describe("scratch retryable failure keeps the row in the queue (ADR-182 A4)", ()
     ]);
   }, 90_000);
 
+  // The launch answers with the run it created and its prompt queued — an
+  // error here would invite a second launch of the same work, as a send
+  // answers `202 queued` instead.
   it("a launch prompt whose admission yields re-queues the launch row (NULL → queued) for the worker", async () => {
     await yieldOnce();
     const gen = launchScratchRunStaged(
       { body: launchBody(), userId: USER_ID },
       { executionHosts: hosts },
     );
-    let runId: string | null = null;
+    let step = await gen.next();
 
-    await expect(
-      (async () => {
-        let step = await gen.next();
+    while (!step.done) step = await gen.next();
+    const runId: string = step.value.runId;
 
-        while (!step.done) {
-          const value = step.value as { stage: string; runId?: string };
-
-          if (value.runId) runId = value.runId;
-          step = await gen.next();
-        }
-      })(),
-    ).rejects.toMatchObject({ code: "EXECUTOR_UNAVAILABLE" });
-    expect(runId).not.toBeNull();
-    const [launchRow] = await userRows(runId as unknown as string);
+    expect(step.value.status).toMatchObject({
+      runStatus: "Running",
+      dialogStatus: "WaitingForUser",
+    });
+    const [launchRow] = await userRows(runId);
 
     expect(launchRow).toMatchObject({
       content: "say hello",
@@ -950,10 +947,10 @@ describe("scratch retryable failure keeps the row in the queue (ADR-182 A4)", ()
     });
     await withWorker(async () => {
       await expect
-        .poll(
-          async () => (await userRows(runId as unknown as string))[0].delivery,
-          { timeout: 30_000, interval: 100 },
-        )
+        .poll(async () => (await userRows(runId))[0].delivery, {
+          timeout: 30_000,
+          interval: 100,
+        })
         .toBe("prompted");
     });
   }, 90_000);

@@ -981,7 +981,6 @@ export default async function RunDetailLayout({
       agent: detail.agent,
       runKind: detail.runKind,
       recoverable: detail.recoverable,
-      terminalCause: detail.terminalCause,
       takeoverOwnerUserId: detail.takeoverOwnerUserId,
       ttlState: detail.ttlState,
       effectiveRemovalAt: detail.effectiveRemovalAt,

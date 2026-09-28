@@ -33,6 +33,7 @@ import { getDb } from "@/lib/db/client";
 import { loadActiveRunSessionsByRunId } from "@/lib/runs/active-run-session";
 import * as schemaModule from "@/lib/db/schema";
 import { RUN_SYNC_TERMINAL_PHASES, agentTurns } from "@/lib/db/schema";
+import { closedAnswerResponse } from "@/lib/hitl-closed-answer";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { commandStreamLost } from "@/lib/execution-host/events/stream-health";
@@ -486,9 +487,14 @@ export async function runPass2(db: Db): Promise<number> {
       // Audit metadata (abandonedReason) lives in the run-level audit
       // surface (M9+ inbox); a hitl_requests-level audit column would
       // require a migration and is intentionally deferred.
+      const closedAt = new Date();
+
       await tx
         .update(hitlRequests)
-        .set({ respondedAt: new Date() })
+        .set({
+          respondedAt: closedAt,
+          response: closedAnswerResponse("session_ended", closedAt),
+        })
         .where(
           and(eq(hitlRequests.runId, row.id), isNull(hitlRequests.respondedAt)),
         );
@@ -2035,12 +2041,17 @@ async function actBudgetTerminateRun(
   if (candidate.runKind === "scratch") {
     const { markScratchCrashed } = await import("@/lib/scratch-runs/service");
 
-    await markScratchCrashed({
+    const { applied } = await markScratchCrashed({
       db,
       runId: candidate.id,
-      err: new MaisterError("BUDGET_EXCEEDED", budgetBreachPrompt(verdict)),
+      err: new MaisterError("BUDGET_EXCEEDED", budgetBreachPrompt(verdict), {
+        details: { reason: "budget_breach" },
+      }),
       terminal: "failed",
     });
+
+    // A lost CAS killed nothing: no slot freed, nothing to report.
+    if (!applied) return false;
     await promoteAfterTimeoutKill(db);
     logBudgetTerminated(candidate, verdict);
 
@@ -2239,12 +2250,17 @@ async function actBudgetTerminateTree(
   if (candidate.runKind === "scratch") {
     const { markScratchCrashed } = await import("@/lib/scratch-runs/service");
 
-    await markScratchCrashed({
+    const { applied } = await markScratchCrashed({
       db,
       runId: candidate.id,
-      err: new MaisterError("BUDGET_EXCEEDED", budgetBreachPrompt(verdict)),
+      err: new MaisterError("BUDGET_EXCEEDED", budgetBreachPrompt(verdict), {
+        details: { reason: "budget_breach" },
+      }),
       terminal: "failed",
     });
+
+    // A lost CAS killed nothing: no slot freed, nothing to report.
+    if (!applied) return false;
     await promoteAfterTimeoutKill(db);
     logBudgetTerminated(candidate, verdict);
 

@@ -8,6 +8,7 @@ import pino from "pino";
 import { getDb } from "@/lib/db/client";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import * as schemaModule from "@/lib/db/schema";
+import { closedAnswerMarker } from "@/lib/hitl-closed-answer";
 import { isMaisterError } from "@/lib/errors";
 import { MaisterError } from "@/lib/errors";
 import {
@@ -207,16 +208,19 @@ async function markIntentAbandoned(
   intent: StoredIntent,
   abandonedReason: string,
 ): Promise<void> {
+  const at = new Date();
+
   await db
     .update(hitlRequests)
     .set({
-      respondedAt: new Date(),
+      respondedAt: at,
       response: {
         optionId: intent.optionId,
         _audit: {
           originalRequestId: intent.originalRequestId,
           abandonedReason,
         },
+        ...closedAnswerMarker("session_ended", at),
       },
     })
     .where(eq(hitlRequests.id, intent.id));

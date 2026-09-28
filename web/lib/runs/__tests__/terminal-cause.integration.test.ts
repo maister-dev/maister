@@ -13,6 +13,7 @@ import * as fullSchema from "@/lib/db/schema";
 import {
   loadRunTerminalCause,
   loadScratchTerminalCause,
+  terminalCauseEventQuery,
 } from "@/lib/runs/terminal-cause";
 import {
   startMainPostgresTestDb,
@@ -194,11 +195,15 @@ describe("loadRunTerminalCause (D-B3)", () => {
       [projectId, runIds],
     );
     await testDatabase.pool.query("ANALYZE domain_events");
+    // The reader's own statement, bound as it runs — not a hand copy of it.
+    const statement = terminalCauseEventQuery(
+      db as never,
+      runIds[7],
+      "Failed",
+    ).toSQL();
     const { rows } = await testDatabase.pool.query<{ "QUERY PLAN": string }>(
-      `EXPLAIN SELECT payload FROM domain_events
-       WHERE run_id = $1 AND kind = 'run.failed'
-       ORDER BY occurred_at DESC, id DESC LIMIT 1`,
-      [runIds[7]],
+      `EXPLAIN ${statement.sql}`,
+      statement.params as unknown[],
     );
     const plan = rows.map((row) => row["QUERY PLAN"]).join("\n");
 
@@ -207,7 +212,9 @@ describe("loadRunTerminalCause (D-B3)", () => {
     expect(plan).not.toContain("Sort");
   });
 
-  it("a project-less scratch run with no event falls back to the dialog's own code", async () => {
+  // A project-less assistant run never has a terminal event; any scratch run
+  // without one reads the same fallback.
+  it("a scratch run with no terminal event falls back to the dialog's own code", async () => {
     const runId = await seedRun("Crashed");
 
     expect(

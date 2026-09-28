@@ -76,6 +76,7 @@ import {
   metadataAttachmentRow,
   safeUploadFileName,
   scratchUploadLogicalName,
+  promptAttachmentOrder,
   scratchPromptContentBlocks,
   uploadedFileMetadata,
   validateScratchAttachments,
@@ -1361,12 +1362,12 @@ export async function* launchScratchRunStaged(
       err.code === "EXECUTOR_UNAVAILABLE"
     ) {
       noteScratchAdmissionYield(runId, err);
-      await markScratchPromptRetryable({
+      const { requeued } = await markScratchPromptRetryable({
         db,
         runId,
         err,
         messageId,
-      }).catch((markErr) =>
+      }).catch((markErr) => {
         log.error(
           {
             runId,
@@ -1374,8 +1375,32 @@ export async function* launchScratchRunStaged(
               markErr instanceof Error ? markErr.message : String(markErr),
           },
           "failed to mark scratch launch prompt retryable",
-        ),
-      );
+        );
+
+        return { requeued: false };
+      });
+
+      // The run exists and its prompt waits in the queue for the continuation
+      // worker's re-drive: a launch error here would invite a second launch of
+      // the same work, as a send answers `202 queued` instead.
+      if (requeued) {
+        log.info({ runId }, "scratch launch prompt queued after a yield");
+
+        return launchResponse({
+          runId,
+          projectId: project.id,
+          name,
+          runStatus: runStatusForDialogStatus("WaitingForUser"),
+          dialogStatus: "WaitingForUser",
+          branchName: branch,
+          baseBranch: args.body.baseBranch,
+          baseCommit,
+          targetBranch: args.body.baseBranch,
+          workMode: policy.workMode,
+          reasoningEffort: policy.reasoningEffort,
+          planMode: policy.planMode,
+        });
+      }
       throw err;
     }
 
@@ -2338,7 +2363,10 @@ export async function dispatchQueuedScratchMessages(
   runId: string,
   executionHosts?: ExecutionHosts,
   opts: { source?: "redrive" } = {},
-): Promise<{ dispatched: boolean }> {
+): Promise<{
+  dispatched: boolean;
+  skipped?: "not_waiting" | "nothing_queued" | "cas_lost";
+}> {
   const claim = await db.transaction(async (tx: Db) => {
     await lockRunRows(tx, runId);
     const [scratch] = await tx
@@ -2420,16 +2448,7 @@ export async function dispatchQueuedScratchMessages(
       hostSessionId: activeSession.hostSessionId as string,
       capabilityAgent: activeSession.capabilityAgent ?? null,
       remaining: remaining?.count ?? 0,
-      // The prompt carries metadata attachments ahead of uploaded files, as
-      // a directly sent message does.
-      attachments: [
-        ...attachments.filter(
-          (row: { kind: string }) => row.kind !== "uploaded_file",
-        ),
-        ...attachments.filter(
-          (row: { kind: string }) => row.kind === "uploaded_file",
-        ),
-      ],
+      attachments: promptAttachmentOrder(attachments),
     };
   });
 
@@ -2439,7 +2458,7 @@ export async function dispatchQueuedScratchMessages(
       "scratch-queued-dispatch-skipped",
     );
 
-    return { dispatched: false };
+    return { dispatched: false, skipped: claim.skipped };
   }
   const { message } = claim;
 
@@ -2505,7 +2524,8 @@ export async function dispatchQueuedScratchMessages(
 export async function failScratchMessageTurn(args: {
   db: Db;
   runId: string;
-  messageId: string;
+  // The failed turn's row, when it may go back to the queue.
+  messageId: string | null;
   hostSessionId: string;
   isLocalPackageAssistant: boolean;
   err: unknown;
@@ -2524,8 +2544,14 @@ export async function failScratchMessageTurn(args: {
 
     return { requeued: false };
   }
-  if (isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE") {
-    noteScratchAdmissionYield(runId, err);
+  const unavailable =
+    isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE";
+
+  // Nothing was issued (the host could not be bound, whatever the code), so
+  // nothing can have reached the agent: the row goes back to the queue rather
+  // than read as sent under a dialog that nobody will pick up.
+  if (unavailable || args.nothingIssued) {
+    if (unavailable) noteScratchAdmissionYield(runId, err);
 
     return markScratchPromptRetryable({
       db,
@@ -3244,7 +3270,18 @@ export async function stopScratchWorkbench(
     );
   }
 
-  await db.transaction(async (tx: Db) => {
+  const stopped = await db.transaction(async (tx: Db) => {
+    // Re-checked under the run's locks (`runs`, then the dialog): a concurrent
+    // stop, discard or crash that ended the dialog first wins, and this one
+    // writes — and emits — nothing.
+    await lockRunRows(tx, runId);
+    const [locked] = await tx
+      .select({ dialogStatus: scratchRuns.dialogStatus })
+      .from(scratchRuns)
+      .where(eq(scratchRuns.runId, runId));
+
+    if (!locked || isTerminalScratchDialogStatus(locked.dialogStatus))
+      return false;
     await tx
       .update(scratchRuns)
       .set({
@@ -3281,7 +3318,31 @@ export async function stopScratchWorkbench(
         },
         cause: { code: null, reason: "stop", source: "operator" },
       });
+
+    return true;
   });
+
+  if (!stopped) {
+    const [current] = await db
+      .select({ dialogStatus: scratchRuns.dialogStatus })
+      .from(scratchRuns)
+      .where(eq(scratchRuns.runId, runId));
+
+    log.info(
+      { runId, dialogStatus: current?.dialogStatus ?? null },
+      "scratch stop lost to a concurrent terminal transition",
+    );
+
+    return {
+      runId,
+      dialogStatus: current?.dialogStatus ?? scratch.dialogStatus,
+      runStatus: runStatusForDialogStatus(
+        current?.dialogStatus ?? scratch.dialogStatus,
+      ),
+      supervisorStopped,
+      workspaceActive,
+    };
+  }
 
   if (nextDialogStatus === "Abandoned" && run.localPackageId) {
     const packageRows = await db

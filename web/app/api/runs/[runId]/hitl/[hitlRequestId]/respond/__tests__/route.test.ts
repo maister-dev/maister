@@ -1089,14 +1089,32 @@ describe("HITL respond route — kind=permission", () => {
   });
 
   it("already-delivered (respondedAt set) → 409", async () => {
+    // Delivered with the other option: a delivered permission always carries
+    // its answer.
     const { runId, hitlRequestId } = seedPermissionRow({
       respondedAt: new Date(),
+      response: { optionId: "deny" },
     });
 
     const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
 
     expect(res.status).toBe(409);
     expect((await res.json()).details).toEqual({ reason: "already_delivered" });
+    expect(deliverPermissionSpy).not.toHaveBeenCalled();
+  });
+
+  it("a row closed before anyone answered it → 409 not_awaiting_input, never 'already delivered'", async () => {
+    const { runId, hitlRequestId } = seedPermissionRow({
+      respondedAt: new Date(),
+      response: null,
+    });
+
+    const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).details).toEqual({
+      reason: "not_awaiting_input",
+    });
     expect(deliverPermissionSpy).not.toHaveBeenCalled();
   });
 

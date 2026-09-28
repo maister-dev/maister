@@ -15,6 +15,7 @@ import {
   domainEvents,
   projects,
   runResults,
+  runSessions,
   runs,
 } from "@/lib/db/schema";
 import {
@@ -22,6 +23,8 @@ import {
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 import { mkdtempReal } from "@/test-support/worktree-test-root";
+import { mintAssignment } from "@/lib/execution-host/assignments";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 
 let database: StartedPostgresTestDb;
 let db: Db;
@@ -172,47 +175,78 @@ describe("Agent terminal application transaction", () => {
     await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  // D-M1 (ADR-182): a message queued behind the ending turn can never be
-  // dispatched once the run is terminal, so the finalization closes it in its
-  // OWN transaction — a rollback must leave it queued, a commit superseded.
-  it("a Crashed finalization supersedes queued messages atomically with the status flip", async () => {
-    const { runId } = await seedRun();
-    const queued = randomUUID();
-    const running = randomUUID();
+  // A turn bound to the run's generation, as a claim leaves it (the state
+  // check refuses a claimed turn without its assignment and session).
+  async function claimedTurn(
+    runId: string,
+    input: { ordinal: number; variant: "live_message" },
+  ): Promise<string> {
+    const { hostId } = await fakeExecutionHosts(db);
+    const assignment = await db.transaction((tx) =>
+      mintAssignment(tx as unknown as Db, { runId, hostId, reason: "launch" }),
+    );
+    const runSessionId = randomUUID();
+    const id = randomUUID();
 
-    await db.insert(agentTurns).values([
-      {
-        id: running,
-        runId,
-        ordinal: 0,
-        variant: "initial",
-        logicalKey: `initial:${running}`,
-        prompt: "work",
-        state: "queued",
-      },
-      {
-        id: queued,
-        runId,
-        ordinal: 1,
-        variant: "live_message",
-        logicalKey: `message:auto:${queued}`,
-        prompt: "also this",
-        state: "queued",
-      },
-    ]);
+    await db.insert(runSessions).values({
+      id: runSessionId,
+      runId,
+      sessionName: `s-${input.ordinal}`,
+      executionAssignmentId: assignment.id,
+    });
+    await db.insert(agentTurns).values({
+      id,
+      runId,
+      ordinal: input.ordinal,
+      variant: input.variant,
+      logicalKey: `${input.variant}:${id}`,
+      prompt: "work",
+      state: "claimed",
+      executionAssignmentId: assignment.id,
+      assignmentEpoch: assignment.epoch,
+      runSessionId,
+    });
+
+    return id;
+  }
+
+  async function turnStates(runId: string) {
+    return Object.fromEntries(
+      (
+        await db
+          .select({ id: agentTurns.id, state: agentTurns.state })
+          .from(agentTurns)
+          .where(eq(agentTurns.runId, runId))
+      ).map((row) => [row.id, row.state]),
+    );
+  }
+
+  // D-M1 (ADR-182): a message behind the ending turn can never be dispatched
+  // once the run is terminal, so the finalization closes it in its OWN
+  // transaction — a rollback must leave it queued, a commit superseded. A
+  // message claimed as the run's active turn but never dispatched is closed
+  // too: its admission refuses a superseded turn.
+  it("a Crashed finalization supersedes undispatched messages atomically with the status flip", async () => {
+    const { runId } = await seedRun();
+    const claimed = await claimedTurn(runId, {
+      ordinal: 1,
+      variant: "live_message",
+    });
+    const queued = randomUUID();
+
+    await db.insert(agentTurns).values({
+      id: queued,
+      runId,
+      ordinal: 2,
+      variant: "live_message",
+      logicalKey: `message:auto:${queued}`,
+      prompt: "also this",
+      state: "queued",
+    });
     const prepared = await prepareAgentRunFinalization(runId, "Crashed", {
       db,
       reason: "agent_turn_lost",
     });
-    const states = async () =>
-      Object.fromEntries(
-        (
-          await db
-            .select({ id: agentTurns.id, state: agentTurns.state })
-            .from(agentTurns)
-            .where(eq(agentTurns.runId, runId))
-        ).map((row) => [row.id, row.state]),
-      );
     const rollback = new Error("rollback");
 
     await expect(
@@ -221,7 +255,10 @@ describe("Agent terminal application transaction", () => {
         throw rollback;
       }),
     ).rejects.toBe(rollback);
-    expect(await states()).toEqual({ [running]: "queued", [queued]: "queued" });
+    expect(await turnStates(runId)).toEqual({
+      [claimed]: "claimed",
+      [queued]: "queued",
+    });
 
     const committed = await db.transaction(prepared.apply);
 
@@ -237,11 +274,37 @@ describe("Agent terminal application transaction", () => {
       reason: "agent_turn_lost",
       source: "agent",
     });
-    // Only the message: a generation turn is not the queue's to close.
-    expect(await states()).toEqual({
-      [running]: "queued",
+    expect(await turnStates(runId)).toEqual({
+      [claimed]: "superseded",
       [queued]: "superseded",
     });
+  });
+
+  // `CLOSES_MESSAGE_TURNS` marks `Done` too: a finished run dispatches
+  // nothing either.
+  it("a Done finalization supersedes a queued message as well", async () => {
+    const { runId } = await seedRun();
+    const queued = randomUUID();
+
+    await db.insert(agentTurns).values({
+      id: queued,
+      runId,
+      ordinal: 1,
+      variant: "live_message",
+      logicalKey: `message:auto:${queued}`,
+      prompt: "one more thing",
+      state: "queued",
+    });
+    const prepared = await prepareAgentRunFinalization(runId, "Done", {
+      db,
+      finalText,
+    });
+
+    await expect(db.transaction(prepared.apply)).resolves.toMatchObject({
+      finalized: true,
+      status: "Done",
+    });
+    expect(await turnStates(runId)).toEqual({ [queued]: "superseded" });
   });
 
   it("refuses a result contract changed after preparation", async () => {

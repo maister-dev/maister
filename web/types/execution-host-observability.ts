@@ -134,7 +134,8 @@ export type OpenExecutionCommands = Readonly<{
   hostSpan: readonly HostSpanSettlementCounts[];
   // D-M3 (ADR-182): the queue invariant's alarm, read live — never through the
   // persisted observation blob.
-  strandedAgentTurns: number;
+  // null: the read failed (the rest of the model still stands).
+  strandedAgentTurns: number | null;
   strandedAgentTurnRows: readonly StrandedAgentTurnRow[];
 }>;
 

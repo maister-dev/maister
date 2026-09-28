@@ -133,6 +133,9 @@ export function ScratchConversation({
         requestKey: string;
         terminal: boolean;
         descriptor: HitlErrorMessage;
+        // The response's `details.reason`: the UI branches on the contract,
+        // never on the copy key it resolved to.
+        reason: string | null;
       }
     | {
         requestKey: string;
@@ -565,7 +568,15 @@ export function ScratchConversation({
             detail.pendingHitl.answerState,
           );
 
-          setHitlError({ requestKey, terminal, descriptor });
+          setHitlError({
+            requestKey,
+            terminal,
+            descriptor,
+            reason:
+              typeof body?.details?.reason === "string"
+                ? body.details.reason
+                : null,
+          });
           if (body?.details?.reason === "delivery_unavailable") {
             setLocalAnswer({
               requestKey,
@@ -755,10 +766,8 @@ export function ScratchConversation({
             pendingHitl={visiblePendingHitl}
             retryBlocked={
               visibleHitlError !== null &&
-              ("descriptor" in visibleHitlError
-                ? visibleHitlError.descriptor.key
-                : visibleHitlError.key
-              ).startsWith("errorReasons.session_ended")
+              "reason" in visibleHitlError &&
+              visibleHitlError.reason === "session_ended"
             }
             onAnswer={(payload) => void answerHitl(payload)}
             onRefresh={() => void loadDetail()}

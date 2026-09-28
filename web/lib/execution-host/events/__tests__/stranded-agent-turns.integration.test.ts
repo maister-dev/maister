@@ -33,6 +33,9 @@ vi.mock("@/lib/db/client", () => ({
 
 let projectId: string;
 let hostId: string;
+// Every run this file leaves stranded: the report is database-wide, so the
+// expected count is what was seeded, never the function under test's answer.
+const strandedRuns = new Set<string>();
 
 beforeAll(async () => {
   testDatabase = await startMainPostgresTestDb({
@@ -57,13 +60,16 @@ afterAll(async () => {
   await testDatabase?.stop();
 });
 
-async function seedRun(status: string): Promise<string> {
+async function seedRun(
+  status: string,
+  opts: { resumeRequested?: boolean } = {},
+): Promise<string> {
   const runId = randomUUID();
 
   await testDatabase.pool.query(
-    `insert into runs (id, project_id, run_kind, status, flow_version, flow_revision, persistent)
-     values ($1, $2, 'agent', $3, 'agent', 'manual', true)`,
-    [runId, projectId, status],
+    `insert into runs (id, project_id, run_kind, status, flow_version, flow_revision, persistent, resume_requested_at)
+     values ($1, $2, 'agent', $3, 'agent', 'manual', true, $4)`,
+    [runId, projectId, status, opts.resumeRequested ? new Date() : null],
   );
 
   return runId;
@@ -129,6 +135,8 @@ async function claimedGeneration(runId: string): Promise<void> {
 describe("stranded agent turns (D-M3)", () => {
   it("reports a queued message on a run with nothing in flight — once per run — and skips a run whose turn is running", async () => {
     const stranded = await seedRun("NeedsInputIdle");
+
+    strandedRuns.add(stranded);
     const oldest = await seedTurn(stranded, {
       ordinal: 1,
       variant: "persistent_message",
@@ -159,6 +167,16 @@ describe("stranded agent turns (D-M3)", () => {
       state: "queued",
       ageMs: 1_000,
     });
+    // Parked with a queue key: the resume arm and the freed-slot gate own it
+    // while it waits for capacity, so it is not stranded.
+    const waiting = await seedRun("NeedsInputIdle", { resumeRequested: true });
+
+    await seedTurn(waiting, {
+      ordinal: 1,
+      variant: "persistent_message",
+      state: "queued",
+      ageMs: STRANDED_AGENT_TURN_MS + 60_000,
+    });
     const warn = vi.fn();
 
     const report = await reportStrandedAgentTurns({
@@ -183,6 +201,17 @@ describe("stranded agent turns (D-M3)", () => {
   });
 
   it("the system sweep carries the count through the real tick, and the admin lag model serves the rows live", async () => {
+    // Its own stranded run: the case does not lean on the one above.
+    const mine = await seedRun("NeedsInputIdle");
+
+    strandedRuns.add(mine);
+    await seedTurn(mine, {
+      ordinal: 1,
+      variant: "live_message",
+      state: "queued",
+      ageMs: STRANDED_AGENT_TURN_MS + 60_000,
+    });
+    const expected = strandedRuns.size;
     const { runSchedulerTick } = await import("@/lib/scheduler/tick-service");
     const tick = await runSchedulerTick({ jobKind: "system_sweep" });
     const attempt = tick.attempts.find((row) => row.jobKind === "system_sweep");
@@ -195,7 +224,7 @@ describe("stranded agent turns (D-M3)", () => {
       .from(schedulerJobRuns)
       .where(eq(schedulerJobRuns.id, attempt!.attemptId));
 
-    expect(run.summary).toMatchObject({ strandedAgentTurns: 1 });
+    expect(run.summary).toMatchObject({ strandedAgentTurns: expected });
     const { collectExecutionEventLag } = await import(
       "@/lib/execution-host/events/lag-read-model"
     );
@@ -204,9 +233,9 @@ describe("stranded agent turns (D-M3)", () => {
       health: { kind: "unavailable" } as never,
     });
 
-    expect(model.commands.strandedAgentTurns).toBe(1);
-    expect(model.commands.strandedAgentTurnRows).toEqual([
-      expect.objectContaining({ runStatus: "NeedsInputIdle", ordinal: 1 }),
-    ]);
+    expect(model.commands.strandedAgentTurns).toBe(expected);
+    expect(model.commands.strandedAgentTurnRows).toContainEqual(
+      expect.objectContaining({ runId: mine, runStatus: "NeedsInputIdle" }),
+    );
   }, 120_000);
 });

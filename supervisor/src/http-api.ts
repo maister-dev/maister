@@ -3002,13 +3002,12 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
 
         if (!ok) {
           // Distinct from "unknown session": the session is known but the
-          // requested deferred is missing. Two different situations share the
-          // 410 (ADR-180):
-          //
-          //   the session was PARKED with its deferreds cancelled — the answer
-          //   is still good and the web resumes on it; every other case (the
-          //   absolute cap released it under a different session, another
-          //   request already resolved it) stays terminal.
+          // requested deferred is missing. The 410 names why (ADR-180, ADR-177
+          // 2026-09-26): the session was PARKED with its deferreds cancelled
+          // (`session_checkpointed` — the answer is still good and the web
+          // resumes on it), it ENDED otherwise (`session_ended`), or it is live
+          // and holds no such request (`permission_not_pending`). None of them
+          // is terminal for the run by itself.
           //
           // The park is recognized by an allow-list, never a single-value
           // equality: `fenced` is excluded because a fenced session means a

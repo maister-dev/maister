@@ -275,8 +275,9 @@ describe("scratch delivery feedback (ADR-182)", () => {
     await refresh("Crashed", "Failed");
     expect(container.textContent).toContain(en.scratch.recoverRefused.Failed);
     expect(container.textContent).not.toContain(en.scratch.recoverHint);
-    expect(causeLine()).toContain(en.run.failure.codes.BUDGET_EXCEEDED);
+    // The reason's copy leads; the code's stands in only when it has none.
     expect(causeLine()).toContain(en.run.terminalCause.reasons.budget_breach);
+    expect(causeLine()).not.toContain(en.run.failure.codes.BUDGET_EXCEEDED);
   });
 
   it("a delivery notice ends with its turn and is not revived by the next dispatched turn", async () => {

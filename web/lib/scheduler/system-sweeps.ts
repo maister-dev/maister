@@ -63,7 +63,8 @@ export type SystemSweepSummary = GcCompatibilitySummary & {
   // D-M3 (ADR-182): queued agent messages that nothing will ever deliver — the
   // queue invariant's alarm. Read-only; the owners are finalization and the
   // continuation worker's arms.
-  strandedAgentTurns: number;
+  // null: the report's read failed (its error is in `errors`).
+  strandedAgentTurns: number | null;
   // Service-level failures mean the scheduler bundle did not complete and must
   // consume the scheduler attempt's retry budget. Candidate failures remain in
   // `errors` only because their own durable rows carry retry/quarantine state.
@@ -313,7 +314,7 @@ export async function runSystemSweep(
   let cost: SystemSweepSummary["cost"] = null;
   let executionEventPlane: SystemSweepSummary["executionEventPlane"] = null;
   let streamHealth: SystemSweepSummary["streamHealth"] = null;
-  let strandedAgentTurns = 0;
+  let strandedAgentTurns: number | null = 0;
   let digest: SystemSweepSummary["digest"] = null;
   let executionObservability: ExecutionObservabilitySummary | null = null;
 

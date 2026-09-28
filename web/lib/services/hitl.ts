@@ -17,6 +17,7 @@ import {
   isNotNull,
   isNull,
   ne,
+  notExists,
   sql,
 } from "drizzle-orm";
 import { NextResponse } from "next/server";
@@ -70,6 +71,12 @@ import {
   buildReviewFeedbackPreview,
 } from "@/lib/review-comments/feedback-packet";
 import { runtimeRoot } from "@/lib/runtime-root";
+import { assertParkedAssistantAnswerable } from "@/lib/scratch-runs/authorization";
+import {
+  closedAnswerReason,
+  closedAnswerResponse,
+  type HitlClosedReason,
+} from "@/lib/hitl-closed-answer";
 import {
   classifyForceRelaunchLaunchability,
   classifyManualTaskLaunchability,
@@ -757,20 +764,103 @@ async function recordSuccessAuditInTransaction(
   });
 }
 
+// The answer reached the agent, so the dialog that waited on it runs again —
+// only while it still waits on it: `NeedsInput` with no other request open. A
+// stale retry of a delivered answer must not restart a turn that has moved on
+// (`WaitingForUser`) or unblock the NEXT request's dialog.
 async function markScratchPermissionDelivered(
   db: any,
   runRow: any,
   runId: string,
+  // The delivered request's session: only ITS other open requests hold the
+  // dialog. An earlier session's row is held by no live session.
+  hostSessionId: string,
 ): Promise<void> {
   if (runRow.runKind !== "scratch") return;
 
   const now = new Date();
-
-  await db
+  const resumed = await db
     .update(scratchRuns)
     .set({ dialogStatus: "Running", updatedAt: now })
-    .where(eq(scratchRuns.runId, runId));
-  await db.update(runs).set({ status: "Running" }).where(eq(runs.id, runId));
+    .where(
+      and(
+        eq(scratchRuns.runId, runId),
+        eq(scratchRuns.dialogStatus, "NeedsInput"),
+        notExists(
+          db
+            .select({ id: hitlRequests.id })
+            .from(hitlRequests)
+            .where(
+              and(
+                eq(hitlRequests.runId, runId),
+                eq(hitlRequests.kind, "permission"),
+                isNull(hitlRequests.respondedAt),
+                isNull(hitlRequests.supersededAt),
+                sql`${hitlRequests.schema}->>'supervisorSessionId' = ${hostSessionId}`,
+              ),
+            ),
+        ),
+      ),
+    )
+    .returning({ runId: scratchRuns.runId });
+
+  if (resumed.length === 0) return;
+  await db
+    .update(runs)
+    .set({ status: "Running" })
+    .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInput")));
+}
+
+// Closed before anyone answered it (its session ended, or a resume retired
+// it): nothing was delivered, and nothing can be now.
+function closedUnansweredRefusal(): MaisterError {
+  return new MaisterError("CONFLICT", "hitl request is no longer pending", {
+    details: { reason: "not_awaiting_input" },
+  });
+}
+
+// The refusal an answer earns when its request closed without the answer
+// reaching the agent — the same bodies the live 409/410 arms answer.
+function closedAnswerRefusal(reason: HitlClosedReason): NextResponse {
+  if (reason === "permission_not_pending")
+    return NextResponse.json(
+      {
+        code: "HITL_TIMEOUT",
+        message: "This request is no longer pending; the run has moved on.",
+        details: { reason: "permission_not_pending" },
+      },
+      { status: 410 },
+    );
+  if (reason === "delivery_rejected")
+    return NextResponse.json(
+      {
+        code: "HITL_TIMEOUT",
+        message:
+          "The checkpointed permission could not accept your answer. Relaunch the run.",
+        details: { reason: "permission_delivery_rejected" },
+        terminal: true,
+      },
+      { status: 410 },
+    );
+  if (reason === "session_ended")
+    return NextResponse.json(
+      {
+        code: "CONFLICT",
+        message:
+          "The agent session ended before your answer arrived, so it was not delivered.",
+        details: { reason: "session_ended" },
+      },
+      { status: 409 },
+    );
+
+  return NextResponse.json(
+    {
+      code: "CONFLICT",
+      message: "This request is no longer pending; the run has moved on.",
+      details: { reason: "not_awaiting_input" },
+    },
+    { status: 409 },
+  );
 }
 
 // ADR-141: a branch-sync AI-resolver run parks in NeedsInput on a resolver
@@ -878,6 +968,7 @@ type PermissionClaim =
       client: BoundClient | null;
     }
   | { kind: "already-delivered"; runStatus: string }
+  | { kind: "closed-undelivered"; reason: HitlClosedReason }
   | {
       kind: "noop-idempotent";
       runStatus: string;
@@ -955,6 +1046,15 @@ async function handlePermissionResponse(
     );
   }
 
+  // A closed row answers why before the assignment claim: the closers cancel
+  // the assignment, whose refusal would hide the reason. Both states are
+  // final, so the unlocked read is enough; Phase 1 re-reads them.
+  if (hitlRow.respondedAt) {
+    const closedBefore = closedAnswerReason(hitlRow.response);
+
+    if (closedBefore) return closedAnswerRefusal(closedBefore);
+    if (hitlRow.response === null) throw closedUnansweredRefusal();
+  }
   const assignmentClaim = await claimAssignmentForResponse({
     db,
     hitlRequestId,
@@ -989,6 +1089,13 @@ async function handlePermissionResponse(
         "permission was superseded by a checkpoint pause",
         { details: { reason: "not_awaiting_input" } },
       );
+    // Closed, but its answer never reached the agent: refuse with why. Before
+    // the terminal check — most boundaries that close a row end the run too.
+    const closed = lockedHitl.respondedAt
+      ? closedAnswerReason(lockedHitl.response)
+      : null;
+
+    if (closed) return { kind: "closed-undelivered", reason: closed } as const;
     if (TERMINAL_RUN_STATUS.has(lockedRun.status)) {
       throw new MaisterError(
         "CONFLICT",
@@ -996,7 +1103,28 @@ async function handlePermissionResponse(
         { details: { reason: "not_awaiting_input" } },
       );
     }
+    // Before anything is stored: a refused answer leaves no trace.
+    if (
+      lockedRun.runKind === "scratch" &&
+      lockedRun.projectId === null &&
+      lockedRun.status === "NeedsInputIdle"
+    ) {
+      const [scratch] = await tx
+        .select({
+          createdByUserId: scratchRuns.createdByUserId,
+          localPackageId: scratchRuns.localPackageId,
+        })
+        .from(scratchRuns)
+        .where(eq(scratchRuns.runId, runId));
+
+      await assertParkedAssistantAnswerable(
+        scratch ?? { createdByUserId: null, localPackageId: null },
+        args.actor.kind === "user" ? args.actor.userId : null,
+        tx,
+      );
+    }
     if (lockedHitl.respondedAt) {
+      if (lockedHitl.response === null) throw closedUnansweredRefusal();
       const stored = (lockedHitl.response ?? {}) as { optionId?: string };
 
       if (stored.optionId === optionId) {
@@ -1083,6 +1211,22 @@ async function handlePermissionResponse(
     } as const;
   });
 
+  if (claim.kind === "closed-undelivered") {
+    log.info(
+      {
+        runId,
+        hitlRequestId,
+        kind: "permission",
+        phase: "closed-undelivered",
+        closedReason: claim.reason,
+        latencyMs: Date.now() - startedAt,
+      },
+      "permission answer closed without delivery — refusing the retry",
+    );
+
+    return closedAnswerRefusal(claim.reason);
+  }
+
   if (claim.kind === "already-delivered") {
     // Self-heal a crash between the respondedAt marker and the scratch
     // status flip below: a process death after `respondedAt` committed but
@@ -1090,7 +1234,12 @@ async function handlePermissionResponse(
     // run (HITL delivered, dialogStatus never advanced). Idempotent — no-op for
     // flow runs and for an already-Running scratch run.
     await db.transaction(async (tx: any) => {
-      await markScratchPermissionDelivered(tx, runRow, runId);
+      await markScratchPermissionDelivered(
+        tx,
+        runRow,
+        runId,
+        schema.supervisorSessionId,
+      );
       await markSyncResolverPermissionDelivered(tx, runId);
       await completeResponseAssignment(tx, assignmentClaim, { optionId });
       await args.recordSuccessAudit?.(tx, 200);
@@ -1463,6 +1612,8 @@ async function handlePermissionResponse(
     const { claimScratchIdleResume, driveScratchIdleResume } = await import(
       "@/lib/scratch-runs/idle-resume"
     );
+    // Whether Phase 1 stored this request's answer, or found it already stored.
+    const storedHere = claim.kind === "claimed";
     const retryable = (err: unknown): NextResponse => {
       log.warn(
         {
@@ -1503,16 +1654,76 @@ async function handlePermissionResponse(
     }
     const claimed = await db.transaction(async (tx: any) => {
       await takeSchedulerLock(tx);
+      // Every entry into an assistant resume passes the ADR-097 gate here —
+      // the checkpointed-session arm too, whose answer was stored while the run
+      // still looked live. Only a parked run: one another admission already
+      // moved is that admission's, and the claim below answers the race.
+      const [parked] =
+        runRow.projectId === null
+          ? await tx
+              .select({ status: runs.status })
+              .from(runs)
+              .where(eq(runs.id, runId))
+              .for("update")
+          : [];
+
+      if (parked?.status === "NeedsInputIdle") {
+        const [scratch] = await tx
+          .select({
+            createdByUserId: scratchRuns.createdByUserId,
+            localPackageId: scratchRuns.localPackageId,
+          })
+          .from(scratchRuns)
+          .where(eq(scratchRuns.runId, runId));
+
+        try {
+          await assertParkedAssistantAnswerable(
+            scratch ?? { createdByUserId: null, localPackageId: null },
+            args.actor.kind === "user" ? args.actor.userId : null,
+            tx,
+          );
+        } catch (err) {
+          if (!isMaisterError(err)) throw err;
+          // A refused answer this request stored is withdrawn, so nothing
+          // resumes on it later and its owner can answer afresh. An identical
+          // answer already stored belongs to whoever gave it.
+          if (storedHere)
+            await tx
+              .update(hitlRequests)
+              .set({ response: null })
+              .where(
+                and(
+                  eq(hitlRequests.id, hitlRequestId),
+                  isNull(hitlRequests.respondedAt),
+                ),
+              );
+          log.warn(
+            { runId, hitlRequestId, code: err.code, withdrawn: storedHere },
+            "[FIX:assistant-resume-gate] scratch assistant resume refused",
+          );
+
+          return { outcome: "refused", error: err } as const;
+        }
+      }
       const claim = await claimScratchIdleResume(tx, runId, {
         host: placementHost,
       });
 
-      // A claimed resume's 202 is audited with the respawn it depends on.
-      if (claim.outcome !== "claimed") await args.recordSuccessAudit?.(tx, 202);
+      // A claimed resume's 202 is audited with the respawn it depends on; a
+      // refused one (`not_locked`) answers 409 and records no success.
+      if (claim.outcome === "queued" || claim.outcome === "noop")
+        await args.recordSuccessAudit?.(tx, 202);
 
       return claim;
     });
 
+    if (claimed.outcome === "refused") throw claimed.error;
+    if (claimed.outcome === "not_locked")
+      throw new MaisterError(
+        "CONFLICT",
+        "edit-lock not held — reopen the package editor to continue",
+        { details: { reason: "edit_lock_not_held" } },
+      );
     if (claimed.outcome !== "claimed") {
       log.info(
         {
@@ -1543,6 +1754,7 @@ async function handlePermissionResponse(
         hosts: args.executionHosts,
         runId,
         assignmentId: claimed.assignmentId,
+        observed: claimed.observed,
         recordSuccessAudit: async (tx: any) => {
           await args.recordSuccessAudit?.(tx, 202);
         },
@@ -1638,7 +1850,12 @@ async function handlePermissionResponse(
           hitlRequestId,
           prepared.commandId,
         );
-        await markScratchPermissionDelivered(tx, runRow, runId);
+        await markScratchPermissionDelivered(
+          tx,
+          runRow,
+          runId,
+          schema.supervisorSessionId,
+        );
         await markSyncResolverPermissionDelivered(tx, runId);
         await completeResponseAssignment(tx, assignmentClaim, { optionId });
         await args.recordSuccessAudit?.(tx, 200);
@@ -1739,7 +1956,13 @@ async function handlePermissionResponse(
         const lockedHitl = await lockHitlRow(tx, hitlRequestId);
 
         if (lockedHitl?.respondedAt) {
-          return { transition: "already-delivered" } as const;
+          // A boundary (the crash projection, the finalization) closed it
+          // while this delivery was in flight: never "delivered".
+          const closed = closedAnswerReason(lockedHitl.response);
+
+          return closed
+            ? ({ transition: "closed-undelivered", reason: closed } as const)
+            : ({ transition: "already-delivered" } as const);
         }
         // ADR-180: the session was PARKED with its deferreds cancelled, so the
         // stored answer is still good — the run resumes rather than failing.
@@ -1794,21 +2017,35 @@ async function handlePermissionResponse(
         }
         // The live session holds no such request: it was answered, cancelled
         // or never raised. The row closes; the run is not the route's to move.
+        const closedAt = new Date();
+
         await tx
           .update(hitlRequests)
-          .set({ respondedAt: new Date() })
+          .set({
+            respondedAt: closedAt,
+            response: closedAnswerResponse("permission_not_pending", closedAt),
+          })
           .where(
             and(
               eq(hitlRequests.id, hitlRequestId),
               isNull(hitlRequests.respondedAt),
             ),
           );
+        // The request is closed; so is the operator's claim on it — in the
+        // same transaction, never an open assignment on a closed row.
+        if (runRow.projectId)
+          await systemCloseActiveAssignmentsForHitlRequest({
+            db: tx,
+            hitlRequestId,
+            projectId: runRow.projectId,
+            reason: "permission no longer pending on the live session",
+          });
 
         return { transition: "not-pending", incarnationState } as const;
       });
 
       if (outcome.transition === "checkpointed-resume") {
-        // Park through the SHARED CAS: a mismatch means one of the other three
+        // Park through the SHARED CAS: a mismatch means one of the other four
         // writers already parked this run, which is not an error here.
         const { markCheckpointed } = await import(
           "@/lib/runs/state-transitions"
@@ -1854,6 +2091,23 @@ async function handlePermissionResponse(
         );
       }
 
+      if (outcome.transition === "closed-undelivered") {
+        log.warn(
+          {
+            runId,
+            hitlRequestId,
+            kind: "permission",
+            phase: "closed-undelivered",
+            closedReason: outcome.reason,
+            hostReason,
+            latencyMs: Date.now() - startedAt,
+          },
+          "permission answer closed by a boundary while its delivery was in flight",
+        );
+
+        return closedAnswerRefusal(outcome.reason);
+      }
+
       if (outcome.transition === "already-delivered") {
         await db.transaction(async (tx: any) => {
           await completeResponseAssignment(tx, assignmentClaim, { optionId });
@@ -1891,25 +2145,9 @@ async function handlePermissionResponse(
           "permission-answer-after-session-ended",
         );
 
-        return NextResponse.json(
-          {
-            code: "CONFLICT",
-            message:
-              "The agent session ended before your answer arrived, so it was not delivered.",
-            details: { reason: "session_ended" },
-          },
-          { status: 409 },
-        );
+        return closedAnswerRefusal("session_ended");
       }
 
-      // The request is closed; so is the operator's claim on it.
-      if (runRow.projectId)
-        await systemCloseActiveAssignmentsForHitlRequest({
-          db,
-          hitlRequestId,
-          projectId: runRow.projectId,
-          reason: "permission no longer pending on the live session",
-        });
       log.info(
         {
           runId,
@@ -1922,14 +2160,7 @@ async function handlePermissionResponse(
         "permission-answer-not-pending",
       );
 
-      return NextResponse.json(
-        {
-          code: "HITL_TIMEOUT",
-          message: "This request is no longer pending; the run has moved on.",
-          details: { reason: "permission_not_pending" },
-        },
-        { status: 410 },
-      );
+      return closedAnswerRefusal("permission_not_pending");
     }
 
     if (isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE") {

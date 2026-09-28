@@ -105,7 +105,7 @@ import { escalateHookTrip } from "@/lib/runs/hook-trip";
 import { haltRuleFromEvent } from "@/lib/runs/hook-trip-rule";
 import { staleSessionBinding } from "@/lib/execution-host/session-binding";
 import { PromptOwnerInvariantError } from "@/lib/execution-host/prompt-owners";
-import { isMaisterError } from "@/lib/errors";
+import { isMaisterError, MaisterError } from "@/lib/errors";
 import { SessionCreatePending } from "@/lib/execution-host/owned-session-create";
 import { PromptIncarnationPending } from "@/lib/execution-host/prompt-incarnation";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
@@ -1112,10 +1112,16 @@ async function reattachNodePrompt(
   );
 
   if (!existing) return null;
+  // The boundary settled the run `Crashed`: this driver yields — the cause
+  // names what happened, not an invariant break.
   if (await settleCrashedPermissionPark(db, ctx.runId, owner, existing))
     throw new FlowPromptContinuationPending(
       existing.id,
-      new PromptOwnerInvariantError("node_session_crashed"),
+      new MaisterError(
+        "CRASH",
+        "the node's agent session crashed; the run was settled Crashed",
+        { details: { reason: "session_crashed" } },
+      ),
     );
   const bound =
     execution ??

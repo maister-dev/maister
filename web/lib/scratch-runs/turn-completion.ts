@@ -14,6 +14,7 @@ import {
 import { hitlRequests, runs, scratchRuns } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
+import { closedAnswerResponse } from "@/lib/hitl-closed-answer";
 
 const log = pino({
   name: "scratch-turn-completion",
@@ -87,9 +88,13 @@ async function closeAnswersOfEarlierSessions(
   const session = await loadActiveRunSession(tx, runId);
 
   if (!session?.hostSessionId) return;
+  const at = new Date();
   const closed = await tx
     .update(hitlRequests)
-    .set({ respondedAt: new Date() })
+    .set({
+      respondedAt: at,
+      response: closedAnswerResponse("not_requested", at),
+    })
     .where(
       and(
         eq(hitlRequests.runId, runId),

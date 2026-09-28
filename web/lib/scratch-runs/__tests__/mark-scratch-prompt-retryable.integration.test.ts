@@ -14,6 +14,7 @@ import { createExecutionHosts } from "@/lib/execution-host/client";
 import { PromptIncarnationPending } from "@/lib/execution-host/prompt-incarnation";
 import {
   dispatchQueuedScratchMessages,
+  failScratchMessageTurn,
   markScratchPromptRetryable,
 } from "@/lib/scratch-runs/service";
 import { runStatusForDialogStatus } from "@/lib/scratch-runs/state";
@@ -349,6 +350,34 @@ describe("markScratchPromptRetryable — the failed turn's row goes back to the 
       dialogStatus: "WaitingForUser",
       runStatus: "Running",
       errorCode: "EXECUTOR_UNAVAILABLE",
+    });
+  });
+
+  // Any bind failure after the claim issued nothing, whatever its code (a
+  // concurrent release makes the bind refuse `assignment_missing`): the row
+  // goes back to the queue too, never read as sent.
+  it("a claimed turn whose bind is refused for another reason returns its row to the queue too", async () => {
+    const { runId } = await seedScratchRun("Running");
+    const messageId = await seedUserRow(runId, "prompted", 4);
+
+    await expect(
+      failScratchMessageTurn({
+        db: db as never,
+        runId,
+        messageId,
+        hostSessionId: `sup-${runId}`,
+        isLocalPackageAssistant: false,
+        err: new MaisterError("PRECONDITION", "no active assignment", {
+          details: { reason: "assignment_missing" },
+        }),
+        nothingIssued: true,
+      }),
+    ).resolves.toEqual({ requeued: true });
+    expect({ row: await rowOf(messageId), ...(await stateOf(runId)) }).toEqual({
+      row: { delivery: "queued", sequence: 4 },
+      dialogStatus: "WaitingForUser",
+      runStatus: "Running",
+      errorCode: "PRECONDITION",
     });
   });
 });

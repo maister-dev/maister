@@ -10,6 +10,7 @@ import type {
 import pino from "pino";
 
 import { domainEvents } from "@/lib/db/schema";
+import { terminalCauseReason } from "@/lib/domain-events/taxonomy";
 import { armFailedCoordinatorWake } from "@/lib/domain-events/coordinator-wake-intent";
 
 const log = pino({
@@ -65,6 +66,26 @@ export type EmitDomainEventInput =
       cause?: never;
     });
 
+function tokenOnlyCause(
+  cause: TerminalCause,
+  kind: DomainEventKind,
+  runId: string | null | undefined,
+): TerminalCause {
+  const reason = terminalCauseReason(cause.reason);
+
+  if (cause.reason !== undefined && reason !== cause.reason)
+    log.warn(
+      { kind, runId, kept: reason ?? null },
+      "terminal-cause-reason-normalized",
+    );
+
+  return {
+    code: cause.code,
+    ...(reason === undefined ? {} : { reason }),
+    source: cause.source,
+  };
+}
+
 // A plain INSERT with no RETURNING — the id is identity-generated and nothing
 // on the write path needs it (dispatch reads by PK range later). Keeping the
 // statement minimal also matches the webhook-outbox idiom and the db stubs the
@@ -92,13 +113,16 @@ export async function emitDomainEvent(
   }
 
   // Run-terminal kinds fold parent_run_id into the payload (null for top-level),
-  // and the failure kinds their typed cause.
+  // and the failure kinds their typed cause — a reason only as a token (D-B1),
+  // enforced here, the one write every terminal emitter goes through.
   const payload = {
     ...input.payload,
     ...(input.parentRunId === undefined
       ? {}
       : { parentRunId: input.parentRunId }),
-    ...(input.cause === undefined ? {} : { cause: input.cause }),
+    ...(input.cause === undefined
+      ? {}
+      : { cause: tokenOnlyCause(input.cause, input.kind, input.runId) }),
   };
 
   await input.db.insert(domainEvents).values({

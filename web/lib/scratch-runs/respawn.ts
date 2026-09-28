@@ -218,6 +218,15 @@ async function loadScratchLaunchExecutor(
   );
 }
 
+/** The pre-claim state a failed respawn restores. `resumeRequestedAt` is the
+ * queue key an idle-resume claim cleared (absent for Recover, which never
+ * touches it). */
+export type ScratchClaimObserved = {
+  status: string;
+  currentStepId: string | null;
+  resumeRequestedAt?: Date | null;
+};
+
 /** A failed respawn after a claim: `Running` → the observed pre-claim status
  * (predicated on `Running` so a concurrent transition is never clobbered) and
  * the never-driven generation released, in ONE tx — mirrors rollbackResumedRun.
@@ -226,7 +235,7 @@ async function loadScratchLaunchExecutor(
 export async function rollbackScratchClaim(
   db: Db,
   runId: string,
-  observed: { status: string; currentStepId: string | null },
+  observed: ScratchClaimObserved,
   releaseReason: string,
 ): Promise<void> {
   await db.transaction(async (tx: Db) => {
@@ -236,6 +245,9 @@ export async function rollbackScratchClaim(
         status: observed.status,
         currentStepId: observed.currentStepId,
         resumeStartedAt: null,
+        ...(observed.resumeRequestedAt === undefined
+          ? {}
+          : { resumeRequestedAt: observed.resumeRequestedAt }),
       })
       .where(and(eq(runs.id, runId), eq(runs.status, "Running")))
       .returning({ id: runs.id });
@@ -267,7 +279,7 @@ export async function respawnScratchSession(args: {
   // `session/new` that silently orphans the dialog.
   acpSessionId: string;
   rows: Pick<ScratchRespawnRows, "executor" | "runnerSnapshot" | "profile">;
-  observed: { status: string; currentStepId: string | null };
+  observed: ScratchClaimObserved;
   releaseReason: string;
 }) {
   const { db, runId, rows } = args;

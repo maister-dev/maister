@@ -32,6 +32,7 @@ const REASON_CODES: Record<HitlRespondReason, string> = {
   permission_delivery_rejected: "HITL_TIMEOUT",
   session_ended: "CONFLICT",
   permission_not_pending: "HITL_TIMEOUT",
+  edit_lock_not_held: "CONFLICT",
 };
 
 export function resolveHitlErrorMessage(input: {

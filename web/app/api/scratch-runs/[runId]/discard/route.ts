@@ -269,7 +269,22 @@ export async function POST(
 
     const now = new Date();
 
-    await db.transaction(async (tx: Db) => {
+    const discarded = await db.transaction(async (tx: Db) => {
+      // Re-checked under the run's locks (`runs`, then the dialog): a
+      // concurrent discard that ended it first wins, and this one emits
+      // nothing. A worktree this request already removed is recorded either
+      // way — the removal happened.
+      await tx
+        .select({ id: runs.id })
+        .from(runs)
+        .where(eq(runs.id, runId))
+        .for("update");
+      const [locked] = await tx
+        .select({ dialogStatus: scratchRuns.dialogStatus })
+        .from(scratchRuns)
+        .where(eq(scratchRuns.runId, runId))
+        .for("update");
+
       if (shouldRemoveWorkspace && workspace && removalResult) {
         await tx
           .update(workspaces)
@@ -283,6 +298,12 @@ export async function POST(
           })
           .where(eq(workspaces.id, workspace.id));
       }
+      if (
+        !locked ||
+        locked.dialogStatus === "Abandoned" ||
+        locked.dialogStatus === "Done"
+      )
+        return false;
       await tx
         .update(scratchRuns)
         .set({
@@ -321,7 +342,15 @@ export async function POST(
           },
           cause: { code: null, reason: "discard", source: "operator" },
         });
+
+      return true;
     });
+
+    if (!discarded)
+      log.info(
+        { runId, workspaceRemoved },
+        "scratch discard lost to a concurrent terminal transition",
+      );
 
     if (run.localPackageId) {
       const packageRows = await db

@@ -12,9 +12,12 @@ import {
   inArray,
   isNotNull,
   isNull,
+  or,
   sql,
 } from "drizzle-orm";
 import pino from "pino";
+
+import { canonicalCommandJson } from "../../../runtime/command-json";
 
 import {
   admitScratchPrompt,
@@ -28,6 +31,7 @@ import { waitForPromptIncarnation } from "@/lib/execution-host/prompt-incarnatio
 import * as schemaModule from "@/lib/db/schema";
 import { appendScratchMessage } from "@/lib/scratch-runs/messages";
 import { closeOpenScratchPermissions } from "@/lib/scratch-runs/open-permissions";
+import { closedAnswerResponse } from "@/lib/hitl-closed-answer";
 import { runStatusForDialogStatus } from "@/lib/scratch-runs/state";
 import {
   encodeHookTripPayload,
@@ -255,6 +259,36 @@ type PermissionRequestEvent = Extract<
  * `NeedsInput` flip. Returns false when there is no stored answer to use (the
  * caller then records a fresh request).
  */
+// What the operator approved: the tool, its input and the offered choices. The
+// adapter mints a fresh `toolCallId` (and a subagent call's `_meta` parent id)
+// for every call, `status` is the call's lifecycle, and an option's `name` can
+// carry session state (ExitPlanMode's context usage) — none says whether a
+// re-raised request is the same one. The option ids alone never do: they are
+// the same for every tool. Null when the request cannot be canonicalized: an
+// unreadable request never fits.
+function permissionIdentity(
+  toolCall: unknown,
+  options: unknown,
+): string | null {
+  const {
+    toolCallId: _toolCallId,
+    status: _status,
+    _meta,
+    ...call
+  } = (toolCall ?? {}) as Record<string, unknown>;
+  const choices = (Array.isArray(options) ? options : []).map((option) => {
+    const { optionId, kind } = (option ?? {}) as Record<string, unknown>;
+
+    return { optionId: optionId ?? null, kind: kind ?? null };
+  });
+
+  try {
+    return canonicalCommandJson({ toolCall: call, options: choices });
+  } catch {
+    return null;
+  }
+}
+
 async function deliverStoredPermissionAnswer(args: {
   db: DbClientLike;
   runId: string;
@@ -264,7 +298,15 @@ async function deliverStoredPermissionAnswer(args: {
 }): Promise<boolean> {
   const { event } = args;
   const rebound = await args.db.transaction(async (tx: DbClientLike) => {
-    const [stored] = await tx
+    // The run row first, the respond route's order: the input command this
+    // transaction issues takes a key-share lock on `runs`, so taking the HITL
+    // row first would invert the route's `runs` → HITL order.
+    await tx
+      .select({ id: runs.id })
+      .from(runs)
+      .where(eq(runs.id, args.runId))
+      .for("update");
+    const candidates = await tx
       .select()
       .from(hitlRequests)
       .where(
@@ -281,24 +323,69 @@ async function deliverStoredPermissionAnswer(args: {
         ),
       )
       .orderBy(desc(hitlRequests.createdAt))
-      .limit(1)
       .for("update");
+    const requested = permissionIdentity(event.toolCall, event.options);
+    const identityOf = (row: { schema: unknown }) => {
+      const schema = (row.schema ?? {}) as Record<string, unknown>;
+
+      return permissionIdentity(schema.toolCall, schema.options);
+    };
+    // The answer for THIS request when several are stored (parallel requests
+    // parked together) — else the newest, which a mismatch then retires.
+    const stored =
+      candidates.find(
+        (row: { schema: unknown }) =>
+          requested !== null && identityOf(row) === requested,
+      ) ?? candidates[0];
     const optionId = (stored?.response as { optionId?: unknown } | null)
       ?.optionId;
 
     if (!stored || typeof optionId !== "string") return null;
     const schemaBefore = (stored.schema ?? {}) as Record<string, unknown>;
+    const approved = identityOf(stored);
 
-    if (
-      !(event.options ?? []).some(
-        (option: { optionId?: unknown }) => option.optionId === optionId,
-      )
-    ) {
-      // The re-raised request does not offer the stored choice: the answer
-      // does not fit it, so it is retired and the operator is asked afresh.
+    if (approved === null || approved !== requested) {
+      // A park that held several requests (parallel tool calls): this one may
+      // be another of them, re-raised first. Nothing is retired — the stored
+      // answers wait for their own re-raise or the turn's completion
+      // (`not_requested`) — and this request is asked afresh.
+      const [held] = await tx
+        .select({ count: sql<number>`count(*)::int` })
+        .from(hitlRequests)
+        .where(
+          and(
+            eq(hitlRequests.runId, args.runId),
+            eq(hitlRequests.kind, "permission"),
+            sql`${hitlRequests.schema}->>'supervisorSessionId' = ${String(schemaBefore.supervisorSessionId ?? "")}`,
+            or(isNull(hitlRequests.respondedAt), isNull(hitlRequests.response)),
+          ),
+        );
+
+      if ((held?.count ?? 0) > 1) {
+        log.info(
+          {
+            runId: args.runId,
+            requestId: event.requestId,
+            parkedRequests: held.count,
+          },
+          "scratch-permission-stored-answers-kept-for-their-own-request",
+        );
+
+        return null;
+      }
+      // The resumed agent asked for something else — another tool, other
+      // input, other choices. The operator never approved it, so the stored
+      // answer is closed undelivered and the operator is asked afresh. Closed,
+      // not superseded: a permission row supersedes only under an agent
+      // checkpoint pause (the 0155 trigger).
+      const at = new Date();
+
       await tx
         .update(hitlRequests)
-        .set({ supersededAt: new Date() })
+        .set({
+          respondedAt: at,
+          response: closedAnswerResponse("request_changed", at),
+        })
         .where(eq(hitlRequests.id, stored.id));
       log.warn(
         {
@@ -345,6 +432,9 @@ async function deliverStoredPermissionAnswer(args: {
   if (!rebound) return false;
   try {
     await rebound.prepared.deliver({
+      // No status write: the idle resume set the dialog `Running` before it
+      // prompted, and this path never parks it. An ack can land after the turn
+      // completed or the run ended, and must not overwrite either.
       onAck: async (tx: DbClientLike) => {
         const now = new Date();
 
@@ -368,14 +458,6 @@ async function deliverStoredPermissionAnswer(args: {
               isNull(hitlRequests.respondedAt),
             ),
           );
-        await tx
-          .update(scratchRuns)
-          .set({ dialogStatus: "Running", updatedAt: now })
-          .where(eq(scratchRuns.runId, args.runId));
-        await tx
-          .update(runs)
-          .set({ status: "Running" })
-          .where(eq(runs.id, args.runId));
       },
     });
     log.info(
@@ -389,17 +471,72 @@ async function deliverStoredPermissionAnswer(args: {
   } catch (err) {
     // The answer stays stored on the rebound row; surfacing the request as a
     // pending permission lets the operator's identical retry deliver it
-    // through the live respond path.
-    await applyDialogStatus({
-      db: args.db,
-      runId: args.runId,
-      dialogStatus: "NeedsInput",
+    // through the live respond path. Only while this delivery still owns the
+    // dialog: a failure can land after the session crashed, the turn ended or
+    // the run was stopped, and must not overwrite that.
+    const surface = () =>
+      args.db.transaction(async (tx: DbClientLike) => {
+        const [run] = await tx
+          .select({ status: runs.status })
+          .from(runs)
+          .where(eq(runs.id, args.runId))
+          .for("update");
+        const [scratch] = await tx
+          .select({ dialogStatus: scratchRuns.dialogStatus })
+          .from(scratchRuns)
+          .where(eq(scratchRuns.runId, args.runId));
+        const [row] = await tx
+          .select({
+            respondedAt: hitlRequests.respondedAt,
+            schema: hitlRequests.schema,
+          })
+          .from(hitlRequests)
+          .where(eq(hitlRequests.id, rebound.hitlRequestId))
+          .for("update");
+        const bound = (row?.schema ?? {}) as Record<string, unknown>;
+
+        if (
+          run?.status !== "Running" ||
+          scratch?.dialogStatus !== "Running" ||
+          !row ||
+          row.respondedAt !== null ||
+          bound.supervisorSessionId !== args.sessionId ||
+          bound.requestId !== event.requestId
+        )
+          return false;
+        await applyDialogStatus({
+          db: tx,
+          runId: args.runId,
+          dialogStatus: "NeedsInput",
+        });
+
+        return true;
+      });
+    // One retry (a deadlock victim, say). A second failure escapes to the
+    // caller's catch, which cancels the agent's request: better than leaving
+    // it waiting on an answer nobody can deliver.
+    const surfaced = await surface().catch((surfaceErr: unknown) => {
+      log.warn(
+        {
+          runId: args.runId,
+          hitlRequestId: rebound.hitlRequestId,
+          err:
+            surfaceErr instanceof Error
+              ? surfaceErr.message
+              : String(surfaceErr),
+        },
+        "scratch-permission-stored-answer-surface-retried",
+      );
+
+      return surface();
     });
+
     log.warn(
       {
         runId: args.runId,
         hitlRequestId: rebound.hitlRequestId,
         requestId: event.requestId,
+        surfaced,
         err: err instanceof Error ? err.message : String(err),
       },
       "scratch-permission-stored-answer-delivery-failed",
@@ -601,11 +738,14 @@ async function parkPendingPermission(
     .where(eq(scratchRuns.runId, runId));
 
   if (scratch?.dialogStatus !== "NeedsInput") return false;
-  const { markCheckpointed } = await import("@/lib/runs/state-transitions");
+  const { markCheckpointedFromExit } = await import(
+    "@/lib/runs/state-transitions"
+  );
   // The shared `NeedsInput → NeedsInputIdle` CAS: the keep-alive sweeper's
   // checkpointed arm and the respond route's race-window arm park through it
-  // too, so whichever writer comes first wins and the others no-op.
-  const parked = await markCheckpointed(runId, { db });
+  // too, so whichever writer comes first wins and the others no-op. This one
+  // observed the checkpoint exit, and its audit line says so.
+  const parked = await markCheckpointedFromExit(runId, { db });
 
   log.info({ runId, parked: parked.ok }, "scratch-permission-parked");
   if (parked.ok) {

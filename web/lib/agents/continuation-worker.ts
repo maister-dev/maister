@@ -67,8 +67,9 @@ function redriveScratchQueue(
         source: "redrive",
       }),
     )
-    .then(({ dispatched }) => {
-      if (!dispatched) log.debug({ runId }, "scratch-redrive-skipped");
+    .then(({ dispatched, skipped }) => {
+      if (!dispatched)
+        log.debug({ runId, reason: skipped }, "scratch-redrive-skipped");
     })
     .catch((error: unknown) =>
       log.warn(

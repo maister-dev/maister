@@ -23,6 +23,7 @@ import {
 import { RELEASED_LIFECYCLE_CLAIM } from "@/lib/runs/lifecycle-claim";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
+import { closedAnswerResponse } from "@/lib/hitl-closed-answer";
 import { RUN_SYNC_TERMINAL_PHASES } from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import {
@@ -208,12 +209,12 @@ async function idleFromNeedsInput(db: Db, runId: string): Promise<boolean> {
   });
 }
 
-// ADR-180: FOUR paths now perform NeedsInput → NeedsInputIdle — the sweeper's
+// ADR-180: FIVE paths now perform NeedsInput → NeedsInputIdle — the sweeper's
 // keep-alive arm, the sweeper's checkpointed arm (`runPass1Checkpointed`), the
-// flow driver's `markCheckpointedFromExit` when it sees
-// `session.exited{reason:"checkpoint"}` on its own stream, and the HITL
-// response service's race-window branch. They are safe because all four go
-// through `idleFromNeedsInput`'s CAS below. The invariant is not "one writer"
+// flow driver's and the scratch event consumer's `markCheckpointedFromExit`
+// when each sees `session.exited{reason:"checkpoint"}` on its own stream, and
+// the HITL response service's race-window branch. They are safe because all
+// five go through `idleFromNeedsInput`'s CAS below. The invariant is not "one writer"
 // but "every writer shares the CAS": a writer that bypassed it could double-park
 // a run that had already moved on.
 //
@@ -929,15 +930,18 @@ export type FailReason = string;
 
 // B6 (ADR-177 amendment): a resume failure's cause. The reason names a code
 // itself (`CHECKPOINT`) or the host's (`supervisor-<CODE>`); every other token
-// is a crash of the resume itself.
+// is a crash of the resume itself. A driver reason may carry the failure's
+// text after a colon (`prompt-failed:<message>`): only the token is kept, and a
+// reason that only repeats the code adds nothing.
 function resumeFailureCause(reason: FailReason): TerminalCause {
-  const named = /^supervisor-(.+)$/.exec(reason)?.[1] ?? reason;
+  const token = reason.split(":")[0]!;
+  const hostCode = /^supervisor-(.+)$/.exec(token)?.[1];
 
-  return {
-    code: isMaisterErrorCode(named) ? named : "CRASH",
-    reason: causeReason(reason),
-    source: "resume",
-  };
+  if (hostCode !== undefined && isMaisterErrorCode(hostCode))
+    return { code: hostCode, reason: "supervisor_refused", source: "resume" };
+  if (isMaisterErrorCode(token)) return { code: token, source: "resume" };
+
+  return { code: "CRASH", reason: causeReason(token), source: "resume" };
 }
 
 // M8 D7 failure rows that produce terminal Failed via failResumedRun:
@@ -1485,9 +1489,14 @@ export async function crashRunningRun(
     // row. Close it in the SAME tx, mirroring the keep-alive TTL abandon, so the
     // operator surfaces show it as settled rather than answerable under a
     // Crashed run. A no-op for a Running run, which has none open.
+    const closedAt = new Date();
+
     await tx
       .update(hitlRequests)
-      .set({ respondedAt: new Date() })
+      .set({
+        respondedAt: closedAt,
+        response: closedAnswerResponse("session_ended", closedAt),
+      })
       .where(
         and(eq(hitlRequests.runId, runId), isNull(hitlRequests.respondedAt)),
       );

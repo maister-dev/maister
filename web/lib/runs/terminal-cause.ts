@@ -1,13 +1,21 @@
 import "server-only";
 
-import type { TerminalCause } from "@/lib/domain-events/taxonomy";
+import type {
+  TerminalCause,
+  TerminalCauseStatus,
+} from "@/lib/domain-events/taxonomy";
 
 import { and, desc, eq } from "drizzle-orm";
 import pino from "pino";
 
 import { domainEvents } from "@/lib/db/schema";
 import { isMaisterErrorCode } from "@/lib/errors-core";
-import { causeReason, parseTerminalCause } from "@/lib/domain-events/taxonomy";
+import {
+  causeReason,
+  isTerminalCauseStatus,
+  parseTerminalCause,
+  TERMINAL_CAUSE_KIND_FOR_STATUS,
+} from "@/lib/domain-events/taxonomy";
 
 const log = pino({
   name: "terminal-cause",
@@ -20,17 +28,6 @@ type Db = any;
 // Kind-matched: a run that crashed, recovered and then failed reads its
 // `run.failed`, never the older `run.crashed` — and a recovered run that ended
 // `Done` reads nothing at all.
-const KIND_FOR_STATUS = {
-  Failed: "run.failed",
-  Crashed: "run.crashed",
-  Abandoned: "run.abandoned",
-} as const;
-
-type TerminalStatus = keyof typeof KIND_FOR_STATUS;
-
-function isTerminalStatus(status: string): status is TerminalStatus {
-  return status in KIND_FOR_STATUS;
-}
 
 /** An event written before `cause` existed (and the 0094 cut-over rows) is
  * read from its own `reason` / `errorCode` keys. An old reason could be prose
@@ -71,18 +68,8 @@ export async function loadRunTerminalCause(
   runId: string,
   status: string,
 ): Promise<TerminalCause | null> {
-  if (!isTerminalStatus(status)) return null;
-  const [event] = await db
-    .select({ payload: domainEvents.payload })
-    .from(domainEvents)
-    .where(
-      and(
-        eq(domainEvents.runId, runId),
-        eq(domainEvents.kind, KIND_FOR_STATUS[status]),
-      ),
-    )
-    .orderBy(desc(domainEvents.occurredAt), desc(domainEvents.id))
-    .limit(1);
+  if (!isTerminalCauseStatus(status)) return null;
+  const [event] = await terminalCauseEventQuery(db, runId, status);
 
   if (!event) return null;
   const payload = (event.payload ?? {}) as Record<string, unknown>;
@@ -93,6 +80,26 @@ export async function loadRunTerminalCause(
     log.warn({ runId, status }, "terminal-cause-unreadable");
 
   return legacyCause(payload);
+}
+
+/** The newest event of the kind `status` records — the one query the read
+ * issues, exported so its plan can be checked against the index. */
+export function terminalCauseEventQuery(
+  db: Db,
+  runId: string,
+  status: TerminalCauseStatus,
+) {
+  return db
+    .select({ payload: domainEvents.payload })
+    .from(domainEvents)
+    .where(
+      and(
+        eq(domainEvents.runId, runId),
+        eq(domainEvents.kind, TERMINAL_CAUSE_KIND_FOR_STATUS[status]),
+      ),
+    )
+    .orderBy(desc(domainEvents.occurredAt), desc(domainEvents.id))
+    .limit(1);
 }
 
 /**
@@ -107,7 +114,7 @@ export async function loadScratchTerminalCause(
   status: string,
   errorCode: string | null,
 ): Promise<TerminalCause | null> {
-  if (!isTerminalStatus(status)) return null;
+  if (!isTerminalCauseStatus(status)) return null;
   const cause = await loadRunTerminalCause(db, runId, status);
 
   if (cause || status === "Abandoned") return cause;

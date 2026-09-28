@@ -8,10 +8,11 @@ import type { Db } from "@/lib/execution-host/db";
 import type { ProjectionWorker } from "@/lib/execution-host/events/projection-worker";
 import type { RealSupervisor } from "@/test-support/real-supervisor";
 import type { ScratchLaunchInput } from "@/lib/scratch-runs/types";
+import type { SupervisorFaultProxy } from "@/test-support/supervisor-fault-proxy";
 
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -29,7 +30,7 @@ import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer"
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
 import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
-import { promoteNextPending } from "@/lib/scheduler";
+import { countLiveRuns, promoteNextPending } from "@/lib/scheduler";
 import { respondToHitl, type HitlActor } from "@/lib/services/hitl";
 import { applyScratchPromptCompletion } from "@/lib/scratch-runs/turn-completion";
 import {
@@ -40,6 +41,7 @@ import {
   startRealSupervisor,
   useRealSupervisorUrl,
 } from "@/test-support/real-supervisor";
+import { startSupervisorFaultProxy } from "@/test-support/supervisor-fault-proxy";
 
 const execFileAsync = promisify(execFile);
 const USER_ID = "scratch-idle-user";
@@ -63,6 +65,8 @@ let service: Service;
 let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase<typeof schema>;
 let supervisor: RealSupervisor;
+// Every host call goes through it, so a case can hold one answer on the wire.
+let proxy: SupervisorFaultProxy;
 let worker: ProjectionWorker;
 let restoreUrl: () => void = () => {};
 let projectId: string;
@@ -84,7 +88,8 @@ beforeAll(async () => {
       MAISTER_PERMISSION_MAX_HOURS: "0.00222",
     },
   });
-  restoreUrl = useRealSupervisorUrl(supervisor.url);
+  proxy = await startSupervisorFaultProxy(supervisor.url);
+  restoreUrl = useRealSupervisorUrl(proxy.url);
   resetRegistrarStateForTests();
   resetResolverForTests();
   worker = startProjectionWorker({
@@ -157,6 +162,7 @@ afterAll(async () => {
   await stopRuntimeEventConsumers();
   restoreUrl();
   await worker?.stop();
+  await proxy?.close();
   await supervisor?.kill();
   await testDatabase?.stop();
   await rm(journalDir, { recursive: true, force: true });
@@ -284,6 +290,32 @@ function answer(runId: string, hitlRequestId: string) {
   );
 }
 
+// Fills the flow pool exactly: a filler `Running` run holds a slot, and the cap
+// is set to the live count. Returns the release — the filler finishes and the
+// cap is restored — so the next freed-slot pass has room.
+async function atCapacity(): Promise<() => Promise<void>> {
+  const previous = process.env.MAISTER_MAX_CONCURRENT_RUNS;
+  const fillerId = randomUUID();
+
+  await db.insert(schema.runs).values({
+    id: fillerId,
+    projectId,
+    flowVersion: "v1.0.0",
+    status: "Running",
+  });
+  process.env.MAISTER_MAX_CONCURRENT_RUNS = String(
+    await countLiveRuns(db as never, "flow"),
+  );
+
+  return async () => {
+    await db
+      .update(schema.runs)
+      .set({ status: "Done", endedAt: new Date() })
+      .where(eq(schema.runs.id, fillerId));
+    process.env.MAISTER_MAX_CONCURRENT_RUNS = previous;
+  };
+}
+
 async function resumedAndDelivered(runId: string) {
   await waitFor(
     async () => (await dialogOf(runId)) === "WaitingForUser",
@@ -351,18 +383,8 @@ describe("scratch idle resume after a host park (D-A8)", () => {
 
   it("T1.5 (b): at capacity the answer is queued with a coalesced key, and the freed-slot gate's scratch arm admits it", async () => {
     const { runId, hitlId } = await parkedDialog();
-    const previous = process.env.MAISTER_MAX_CONCURRENT_RUNS;
-    const live = await db
-      .select({ id: schema.runs.id })
-      .from(schema.runs)
-      .where(
-        and(
-          eq(schema.runs.status, "Running"),
-          eq(schema.runs.projectId, projectId),
-        ),
-      );
+    const release = await atCapacity();
 
-    process.env.MAISTER_MAX_CONCURRENT_RUNS = String(Math.max(1, live.length));
     try {
       const first = await answer(runId, hitlId);
 
@@ -382,7 +404,7 @@ describe("scratch idle resume after a host park (D-A8)", () => {
         queuedAt?.getTime(),
       );
     } finally {
-      process.env.MAISTER_MAX_CONCURRENT_RUNS = previous;
+      await release();
     }
     // A slot frees: the gate admits the queued scratch resume through the
     // same claim the respond route takes, and respawns it.
@@ -463,7 +485,440 @@ describe("scratch idle resume after a host park (D-A8)", () => {
     expect(await dialogOf(runId)).toBe("WaitingForUser");
     const [closed] = await hitlOf(runId);
 
+    // Closed, and marked as never delivered: an identical retry is refused.
     expect(closed.respondedAt).not.toBeNull();
-    expect(closed.response).toEqual({ optionId: "allow" });
+    expect(closed.response).toMatchObject({
+      optionId: "allow",
+      _closed: { reason: "not_requested" },
+    });
+  }, 180_000);
+
+  // The respawned agent re-plans before it asks again: the resumed session
+  // raises whatever request the parked session's journal holds, so rewriting
+  // it here is the agent asking for something else.
+  async function replanParkedRequest(
+    runId: string,
+    toolCall: Record<string, unknown>,
+    options?: Array<Record<string, unknown>>,
+  ): Promise<void> {
+    const [session] = await db
+      .select({ acpSessionId: schema.runSessions.acpSessionId })
+      .from(schema.runSessions)
+      .where(eq(schema.runSessions.runId, runId));
+    const path = join(journalDir, `${session.acpSessionId}.json`);
+    const journal = JSON.parse(await readFile(path, "utf8")) as {
+      pendingPermission: Record<string, unknown>;
+    };
+
+    expect(journal.pendingPermission).toBeDefined();
+    journal.pendingPermission = {
+      ...journal.pendingPermission,
+      toolCall,
+      ...(options ? { options } : {}),
+    };
+    await writeFile(path, JSON.stringify(journal));
+  }
+
+  it("C4: a freed-slot respawn that fails puts the answered run back in the queue at its place", async () => {
+    const { runId, hitlId } = await parkedDialog();
+    const release = await atCapacity();
+    let queuedAt: Date | null = null;
+
+    try {
+      expect((await answer(runId, hitlId)).status).toBe(202);
+      queuedAt = (await runOf(runId)).resumeRequestedAt;
+      expect(queuedAt).not.toBeNull();
+    } finally {
+      await release();
+    }
+    // The gate admits the run on a freed slot, but the host is down when the
+    // session is respawned: the claim rolls back.
+    await supervisor.stop();
+    try {
+      await promoteNextPending({ db: db as never, pool: "flow" });
+      await waitFor(async () => {
+        const rolledBack = await db
+          .select({ id: schema.executionAssignments.id })
+          .from(schema.executionAssignments)
+          .where(
+            and(
+              eq(schema.executionAssignments.runId, runId),
+              eq(
+                schema.executionAssignments.releasedReason,
+                "scratch_idle_resume_rollback",
+              ),
+            ),
+          );
+
+        return rolledBack.length === 1;
+      }, "the failed respawn rolls the claim back");
+      const run = await runOf(runId);
+
+      // Parked again, and still queued at its original place — not dropped
+      // from the queue with the operator's answer undelivered.
+      expect(run.status).toBe("NeedsInputIdle");
+      expect(run.resumeRequestedAt?.getTime()).toBe(queuedAt?.getTime());
+    } finally {
+      supervisor = await supervisor.restart();
+      resetRegistrarStateForTests();
+      resetResolverForTests();
+    }
+    // The next freed-slot pass admits it again and delivers the answer.
+    await promoteNextPending({ db: db as never, pool: "flow" });
+    await resumedAndDelivered(runId);
+  }, 180_000);
+
+  it("C3: the resumed session is re-prompted with the interrupted turn's own message, never a newer queued one", async () => {
+    const { runId, hitlId } = await parkedDialog();
+    // Sent while the first turn ran: queued behind it, its own turn next.
+    const { appendScratchMessage } = await import(
+      "@/lib/scratch-runs/messages"
+    );
+    const queued = await db.transaction((tx) =>
+      appendScratchMessage(tx as never, {
+        runId,
+        role: "user",
+        content: "queued later",
+        delivery: "queued",
+      }),
+    );
+
+    expect((await answer(runId, hitlId)).status).toBe(202);
+    // The resumed turn completes and the queued row goes out as its own turn
+    // right behind it (whose own permission request then parks the dialog
+    // again), so wait on the row, not on a transient dialog status.
+    await waitFor(async () => {
+      const [row] = await db
+        .select({ delivery: schema.runMessages.delivery })
+        .from(schema.runMessages)
+        .where(eq(schema.runMessages.id, queued.id));
+
+      return row.delivery === "prompted";
+    }, "the queued row's own dispatch");
+    const echoes = async (text: string) =>
+      (
+        await db
+          .select({ content: schema.runMessages.content })
+          .from(schema.runMessages)
+          .where(eq(schema.runMessages.runId, runId))
+      ).filter((row) => row.content.includes(`echo: ${text}`)).length;
+
+    await waitFor(
+      async () => (await echoes("queued later")) >= 1,
+      "the queued turn's reply",
+    );
+    // The launch prompt went out twice — the parked session, then the
+    // resumed one — and the queued text once, on its own turn.
+    expect(await echoes("needs a permission")).toBe(2);
+    expect(await echoes("queued later")).toBe(1);
+    const [stored] = await hitlOf(runId);
+
+    expect(stored.response).toMatchObject({
+      optionId: "allow",
+      _audit: { deliveredViaResume: true },
+    });
+  }, 180_000);
+
+  it("C1: the stored answer reaches the same request re-raised under a fresh toolCallId", async () => {
+    const { runId, hitlId } = await parkedDialog();
+
+    // The adapter mints a new id for every call (and a subagent call's parent
+    // id), and an option label can carry session state; the tool, its input
+    // and the choices are what the operator approved.
+    await replanParkedRequest(
+      runId,
+      {
+        toolCallId: "tc-9",
+        title: "Mock tool",
+        kind: "execute",
+        _meta: { claudeCode: { toolName: "Mock", parentToolUseId: "tu-9" } },
+      },
+      [
+        { optionId: "allow", kind: "allow_always", name: "Allow (41% used)" },
+        { optionId: "deny", kind: "reject_once", name: "Deny" },
+      ],
+    );
+    expect((await answer(runId, hitlId)).status).toBe(202);
+    await resumedAndDelivered(runId);
+  }, 180_000);
+
+  it("C1: the stored answer never reaches a request for a different tool — it is retired and the operator is asked afresh", async () => {
+    const { runId, hitlId } = await parkedDialog();
+    const other = {
+      toolCallId: "tc-2",
+      title: "Delete the build",
+      kind: "delete",
+      rawInput: { command: "rm -rf build" },
+    };
+
+    await replanParkedRequest(runId, other);
+    expect((await answer(runId, hitlId)).status).toBe(202);
+    const rows = await waitFor(async () => {
+      const current = await hitlOf(runId);
+
+      return current.length === 2 && (await dialogOf(runId)) === "NeedsInput"
+        ? current
+        : null;
+    }, "a fresh request for the other tool");
+
+    // The operator's "allow" was for "Mock tool": closed, never delivered.
+    expect(rows[0]).toMatchObject({ id: hitlId, supersededAt: null });
+    expect(rows[0].respondedAt).not.toBeNull();
+    expect(rows[0].response).toMatchObject({
+      optionId: "allow",
+      _closed: { reason: "request_changed" },
+    });
+    expect(rows[0].schema).toMatchObject({ toolCall: { title: "Mock tool" } });
+    expect(rows[1]).toMatchObject({ respondedAt: null, response: null });
+    expect(rows[1].schema).toMatchObject({ toolCall: other });
+    expect((await runOf(runId)).status).toBe("NeedsInput");
+  }, 180_000);
+
+  // The stored answer's acknowledgement is an HTTP answer, outside the event
+  // stream's order. Held on the wire, the answer has still reached the agent,
+  // so the run moves on first; the late acknowledgement must not undo that.
+  function holdStoredAnswerAck(
+    runId: string,
+    label: string,
+    action: "hold-response" | "hold-request" = "hold-response",
+  ) {
+    return proxy.arm(
+      {
+        caseId: `idle-late-ack-${label}-${runId}`,
+        method: "POST",
+        path: /^\/sessions\/[^/]+\/input$/,
+      },
+      action,
+    );
+  }
+
+  async function storedAnswerAckSettled(runId: string): Promise<boolean> {
+    const inputs = await db
+      .select({ state: schema.executionCommands.state })
+      .from(schema.executionCommands)
+      .where(
+        and(
+          eq(schema.executionCommands.runId, runId),
+          eq(schema.executionCommands.kind, "session.input"),
+        ),
+      );
+
+    return (
+      inputs.length > 0 &&
+      inputs.every(
+        (row) => !["queued", "delivering", "accepted"].includes(row.state),
+      )
+    );
+  }
+
+  it("a late acknowledgement of the stored answer never moves the dialog its completed turn settled", async () => {
+    const { runId, hitlId } = await parkedDialog();
+    const held = holdStoredAnswerAck(runId, "turn");
+
+    try {
+      expect((await answer(runId, hitlId)).status).toBe(202);
+      await held.awaitReached(60_000);
+      await waitFor(
+        async () => (await dialogOf(runId)) === "WaitingForUser",
+        "the turn completes under the held acknowledgement",
+      );
+    } finally {
+      held.release();
+    }
+    await waitFor(
+      () => storedAnswerAckSettled(runId),
+      "the late acknowledgement applied",
+    );
+    expect((await hitlOf(runId))[0].respondedAt).not.toBeNull();
+    expect(await dialogOf(runId)).toBe("WaitingForUser");
+  }, 180_000);
+
+  it("a late acknowledgement of the stored answer never resurrects a run stopped while it was on the wire", async () => {
+    const { runId, hitlId } = await parkedDialog();
+    const held = holdStoredAnswerAck(runId, "stop");
+    let stopped: { status: string; dialogStatus: string } | null = null;
+
+    try {
+      expect((await answer(runId, hitlId)).status).toBe(202);
+      await held.awaitReached(60_000);
+      await service.stopScratchWorkbench(runId, {
+        db: db as never,
+        executionHosts: hosts(),
+      });
+      stopped = {
+        status: (await runOf(runId)).status,
+        dialogStatus: await dialogOf(runId),
+      };
+      expect(stopped.dialogStatus).not.toBe("Running");
+    } finally {
+      held.release();
+    }
+    await waitFor(
+      () => storedAnswerAckSettled(runId),
+      "the late acknowledgement settled",
+    );
+    expect({
+      status: (await runOf(runId)).status,
+      dialogStatus: await dialogOf(runId),
+    }).toEqual(stopped);
+  }, 180_000);
+
+  // The host keeps several requests pending per session (parallel tool
+  // calls). The mock raises one, so the others are seeded beside it, bound to
+  // the parked session as the consumer records them.
+  async function seedParallelRequest(
+    runId: string,
+    parked: Awaited<ReturnType<typeof hitlOf>>[number],
+    opts: { title: string; answered: boolean },
+  ): Promise<string> {
+    const id = randomUUID();
+
+    await db.insert(schema.hitlRequests).values({
+      id,
+      runId,
+      stepId: parked.stepId,
+      kind: "permission",
+      prompt: `Approve ${opts.title}?`,
+      schema: {
+        ...(parked.schema as Record<string, unknown>),
+        requestId: `req-${id.slice(0, 8)}`,
+        toolCall: {
+          toolCallId: "tc-parallel",
+          title: opts.title,
+          kind: "read",
+        },
+      },
+      response: opts.answered ? { optionId: "allow" } : null,
+      // Newer than the parked request.
+      createdAt: new Date(parked.createdAt.getTime() + 1_000),
+    });
+
+    return id;
+  }
+
+  it("a request the parked session raised that nobody answered is closed at the resume", async () => {
+    const { runId, hitlId } = await parkedDialog();
+    const [parked] = await hitlOf(runId);
+    const parallelId = await seedParallelRequest(runId, parked, {
+      title: "Parallel tool",
+      answered: false,
+    });
+
+    expect((await answer(runId, hitlId)).status).toBe(202);
+    await waitFor(
+      async () => (await dialogOf(runId)) === "WaitingForUser",
+      "the resumed turn completes",
+    );
+    const [parallel] = await db
+      .select()
+      .from(schema.hitlRequests)
+      .where(eq(schema.hitlRequests.id, parallelId));
+
+    // No live session holds it: left open it would pin the dialog.
+    expect(parallel.respondedAt).not.toBeNull();
+    expect(parallel.response).toBeNull();
+  }, 180_000);
+
+  it("with several answers stored, the re-raised request gets its own, not the newest", async () => {
+    const { runId, hitlId } = await parkedDialog();
+    const [parked] = await hitlOf(runId);
+    const otherId = await seedParallelRequest(runId, parked, {
+      title: "Other tool",
+      answered: true,
+    });
+
+    expect((await answer(runId, hitlId)).status).toBe(202);
+    await waitFor(
+      async () => (await dialogOf(runId)) === "WaitingForUser",
+      "the resumed turn completes on its own stored answer",
+    );
+    const rows = await hitlOf(runId);
+
+    expect(rows).toHaveLength(2);
+    expect(rows.find((row) => row.id === hitlId)?.response).toMatchObject({
+      optionId: "allow",
+      _audit: { deliveredViaResume: true },
+    });
+    // Never asked again, so the turn's completion closes it.
+    expect(rows.find((row) => row.id === otherId)?.response).toMatchObject({
+      _closed: { reason: "not_requested" },
+    });
+  }, 180_000);
+
+  it("in a park of parallel requests, another one re-raised first keeps the stored answer, and answering it unblocks the dialog", async () => {
+    const { runId, hitlId } = await parkedDialog();
+    const [parked] = await hitlOf(runId);
+    const parallelId = await seedParallelRequest(runId, parked, {
+      title: "Parallel tool",
+      answered: false,
+    });
+
+    // The resumed agent re-raises the parallel request first.
+    await replanParkedRequest(runId, {
+      toolCallId: "tc-parallel",
+      title: "Parallel tool",
+      kind: "read",
+    });
+    expect((await answer(runId, hitlId)).status).toBe(202);
+    const fresh = await waitFor(async () => {
+      const row = (await hitlOf(runId)).find(
+        (candidate) => candidate.id !== hitlId && candidate.id !== parallelId,
+      );
+
+      return row && (await dialogOf(runId)) === "NeedsInput" ? row : null;
+    }, "the re-raised parallel request asked afresh");
+    const kept = (await hitlOf(runId)).find((row) => row.id === hitlId)!;
+
+    expect(kept.respondedAt).toBeNull();
+    expect(kept.response).toEqual({ optionId: "allow" });
+    // The earlier session's stored row holds no live request: answering the
+    // fresh one moves the dialog on, and the turn's completion closes it.
+    const live = await respondToHitl(
+      { runId, hitlRequestId: fresh.id, body: { optionId: "allow" } },
+      actor,
+      { db: db as never, executionHosts: hosts() },
+    );
+
+    expect(live.status).toBe(200);
+    await waitFor(
+      async () => (await dialogOf(runId)) === "WaitingForUser",
+      "the turn completes",
+    );
+    expect(
+      (await hitlOf(runId)).find((row) => row.id === hitlId)?.response,
+    ).toMatchObject({
+      optionId: "allow",
+      _closed: { reason: "not_requested" },
+    });
+  }, 180_000);
+
+  it("a failed delivery of the stored answer never re-opens a run stopped while it was on the wire", async () => {
+    const { runId, hitlId } = await parkedDialog();
+    const held = holdStoredAnswerAck(runId, "failed", "hold-request");
+    let stopped: { status: string; dialogStatus: string } | null = null;
+
+    try {
+      expect((await answer(runId, hitlId)).status).toBe(202);
+      await held.awaitReached(60_000);
+      await service.stopScratchWorkbench(runId, {
+        db: db as never,
+        executionHosts: hosts(),
+      });
+      stopped = {
+        status: (await runOf(runId)).status,
+        dialogStatus: await dialogOf(runId),
+      };
+    } finally {
+      // The answer never reaches the host: its delivery fails.
+      held.cut();
+    }
+    await waitFor(
+      () => storedAnswerAckSettled(runId),
+      "the failed delivery settled",
+    );
+    expect({
+      status: (await runOf(runId)).status,
+      dialogStatus: await dialogOf(runId),
+    }).toEqual(stopped);
   }, 180_000);
 });

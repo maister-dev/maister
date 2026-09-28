@@ -203,8 +203,8 @@ describe("T-E5 — paired domain emission at terminal state transitions", () => 
       runKind: "flow",
       reason: "CHECKPOINT",
       parentRunId: null,
-      // B6: a reason that names a code carries it.
-      cause: { code: "CHECKPOINT", reason: "checkpoint", source: "resume" },
+      // B6: a reason that names a code carries it, and nothing more.
+      cause: { code: "CHECKPOINT", source: "resume" },
     });
   });
 
@@ -252,6 +252,40 @@ describe("T-E5 — paired domain emission at terminal state transitions", () => 
     expect((rows[0].payload as Record<string, unknown>).cause).toEqual({
       code: "CRASH",
       reason: "resume_timeout",
+      source: "resume",
+    });
+  });
+
+  // D-B1 (review 2026-09-27): the resume driver's reasons carry the failure's
+  // text after a colon. Only the token reaches the cause — a path or session
+  // id in it would ride into agent prompts, and a prose reason used to make
+  // the whole cause unreadable.
+  it("crashResumedRun keeps only the token of a reason that carries a message", async () => {
+    const ids = await seedRun("NeedsInput");
+
+    await crashResumedRun(
+      ids.runId,
+      "prompt-failed:Session 3f1c not found at /Users/x/.maister",
+      { db },
+    );
+    const [row] = await domainRows(ids.runId);
+
+    expect((row.payload as Record<string, unknown>).cause).toEqual({
+      code: "CRASH",
+      reason: "prompt_failed",
+      source: "resume",
+    });
+  });
+
+  it("failResumedRun names the host's refusal by its code", async () => {
+    const ids = await seedRun("NeedsInputIdle");
+
+    await failResumedRun(ids.runId, "supervisor-EXECUTOR_UNAVAILABLE", { db });
+    const [row] = await domainRows(ids.runId);
+
+    expect((row.payload as Record<string, unknown>).cause).toEqual({
+      code: "EXECUTOR_UNAVAILABLE",
+      reason: "supervisor_refused",
       source: "resume",
     });
   });

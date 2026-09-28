@@ -23,7 +23,10 @@ import {
 } from "@/lib/scratch-runs/events";
 import { scratchStepId } from "@/lib/scratch-runs/launch";
 import { appendScratchMessage } from "@/lib/scratch-runs/messages";
-import { isYieldedScratchTurn } from "@/lib/scratch-runs/prompt-owner";
+import {
+  isYieldedScratchTurn,
+  ScratchPromptContinuationPending,
+} from "@/lib/scratch-runs/prompt-owner";
 import {
   loadScratchRecoveryRows,
   respawnScratchSession,
@@ -161,38 +164,53 @@ export async function POST(
   { params }: RouteParams,
 ): Promise<NextResponse> {
   const { runId } = await params;
-  let body: RecoverBody;
 
   try {
-    body = recoverBodySchema.parse(await req.json());
-  } catch (err) {
-    return errorResponse(
-      new MaisterError(
-        "CONFIG",
-        `invalid POST body: ${(err as Error).message}`,
-      ),
-      runId,
-    );
-  }
-
-  try {
+    // Auth-first: before the body is parsed or any row is read, so an
+    // unauthenticated caller learns neither the body schema nor the run.
     const user = await requireActiveSession();
+    let body: RecoverBody;
+
+    try {
+      body = recoverBodySchema.parse(await req.json());
+    } catch (err) {
+      return errorResponse(
+        new MaisterError(
+          "CONFIG",
+          `invalid POST body: ${(err as Error).message}`,
+        ),
+        runId,
+      );
+    }
 
     const db = getDb() as unknown as Db;
-    const rows = await loadScratchRecoveryRows(db, runId);
-    const { run, scratch, workspaceRemoved, acpSessionId, hostSessionId } =
-      rows;
+    // Authorized on the one lookup that names the run's owner, before the
+    // full load can refuse with anything about the run's state.
+    const [owner] = await db
+      .select({
+        runKind: runs.runKind,
+        projectId: runs.projectId,
+        createdByUserId: runs.createdByUserId,
+        localPackageId: runs.localPackageId,
+      })
+      .from(runs)
+      .where(eq(runs.id, runId));
 
+    if (!owner || owner.runKind !== "scratch")
+      throw new MaisterError("PRECONDITION", `run not found: ${runId}`);
     // ADR-097: project scratch runs keep the project-scoped operate gate; a
     // project-less assistant run is bound to its launching user AND a live
     // working-dir lock — driving a resume writes into the locked dir.
-    if (run.projectId) {
-      await requireProjectAction(run.projectId, "operateScratchRun");
+    if (owner.projectId) {
+      await requireProjectAction(owner.projectId, "operateScratchRun");
     } else {
-      await assertLocalPackageAssistantActor(run, user.id, {
+      await assertLocalPackageAssistantActor(owner, user.id, {
         requireLock: true,
       });
     }
+    const rows = await loadScratchRecoveryRows(db, runId);
+    const { run, scratch, workspaceRemoved, acpSessionId, hostSessionId } =
+      rows;
 
     const hosts = createExecutionHosts({ db: db as unknown as ExecutionDb });
     const placementHost = await localHost({
@@ -436,6 +454,18 @@ export async function POST(
           },
           "driver-yielded",
         );
+        // The recovery prompt was issued and its owner applies the outcome:
+        // the recovery is under way, not refused. A fenced or superseded
+        // turn is another generation's, and stays a refusal.
+        if (err instanceof ScratchPromptContinuationPending)
+          return NextResponse.json(
+            {
+              runId,
+              action,
+              dialogStatus: await readScratchDialogStatus(db as never, runId),
+            },
+            { status: 202 },
+          );
         throw err;
       }
       // The recovered session is live and nothing was admitted: keep the run

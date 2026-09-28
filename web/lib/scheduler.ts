@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { DelegationBounds } from "@/lib/run-results/types";
+import type { ClaimedScratchIdleResume } from "@/lib/scratch-runs/idle-resume";
 
 import {
   and,
@@ -523,7 +524,10 @@ export type PromoteNextPendingOptions = {
   startAgentRun?: DispatchFn;
   // The respawn half of a scratch idle resume the C3 gate claimed. Injectable
   // for tests; defaults to `driveScratchIdleResume` on the claimed placement.
-  resumeScratchRun?: DispatchFn;
+  resumeScratchRun?: (
+    runId: string,
+    claim: ClaimedScratchIdleResume,
+  ) => void | Promise<void>;
   // ADR-121 (T13, C2): the heavy fresh-Backlog-task launcher, dispatched OUTSIDE
   // the scheduler lock (worktree-first). Injectable for tests; defaults to the
   // real launchRun via dynamic import (services/runs imports this module — a
@@ -664,29 +668,24 @@ export async function promoteNextPending(
 
       await m.startAgentSession(id);
     });
-  const resumeScratchFn: DispatchFn =
+  const resumeScratchFn =
     opts.resumeScratchRun ??
-    (async (id: string) => {
+    (async (id: string, claim: ClaimedScratchIdleResume) => {
       const [{ driveScratchIdleResume }, { createExecutionHosts }] =
         await Promise.all([
           import("@/lib/scratch-runs/idle-resume"),
           import("@/lib/execution-host"),
         ]);
-      const [run]: Array<{ executionAssignmentId: string | null }> = await db
-        .select({ executionAssignmentId: runs.executionAssignmentId })
-        .from(runs)
-        .where(eq(runs.id, id));
 
-      if (!run?.executionAssignmentId)
-        throw new MaisterError(
-          "PRECONDITION",
-          `claimed scratch resume has no assignment: ${id}`,
-        );
+      // The placement THIS claim minted, never a re-read of the run row: a
+      // newer generation minted since would otherwise be driven — and rolled
+      // back — in its place.
       await driveScratchIdleResume({
         db,
         hosts: createExecutionHosts({ db }),
         runId: id,
-        assignmentId: run.executionAssignmentId,
+        assignmentId: claim.assignmentId,
+        observed: claim.observed,
       });
     });
   // ADR-121 (T13, C2): the heavy fresh-Backlog-task launcher, dispatched OUTSIDE
@@ -1028,6 +1027,7 @@ export async function promoteNextPending(
             isResume: true,
             isAgent: false,
             isScratchResume: true,
+            scratchClaim: resumed,
           };
         }
         if (isAgent) {
@@ -1261,8 +1261,10 @@ export async function promoteNextPending(
       { runId: decision.id },
       "[scheduler] promoting queued scratch resume",
     );
+    const { scratchClaim } = decision;
+
     dispatch(
-      resumeScratchFn,
+      (id) => resumeScratchFn(id, scratchClaim),
       decision.id,
       "promoteNextPending scratch idle resume dispatch failed",
     );

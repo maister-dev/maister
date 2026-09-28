@@ -40,3 +40,20 @@ const STARTS_A_GENERATION: Readonly<Record<AgentTurn["variant"], boolean>> = {
 export const GENERATION_TURN_VARIANTS: readonly AgentTurn["variant"][] = (
   Object.keys(STARTS_A_GENERATION) as AgentTurn["variant"][]
 ).filter((variant) => STARTS_A_GENERATION[variant]);
+
+// Which turn variants carry an operator's message — the turns a run that ends
+// must supersede rather than leave queued forever (D-M1). Exhaustive, like the
+// maps above, so a new message variant cannot escape the supersede.
+const IS_A_MESSAGE: Readonly<Record<AgentTurn["variant"], boolean>> = {
+  live_message: true,
+  persistent_message: true,
+  initial: false,
+  resume: false,
+  rework: false,
+  consensus_draft: false,
+  steer: false,
+};
+
+export const MESSAGE_TURN_VARIANTS: readonly AgentTurn["variant"][] = (
+  Object.keys(IS_A_MESSAGE) as AgentTurn["variant"][]
+).filter((variant) => IS_A_MESSAGE[variant]);

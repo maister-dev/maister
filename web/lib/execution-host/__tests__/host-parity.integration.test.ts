@@ -374,6 +374,38 @@ const SCENARIOS: Array<{
     },
   },
   {
+    // ADR-180: a parked session's cancelled deferred is still a good answer —
+    // the web resumes on it rather than treating the session as ended.
+    name: "input after a checkpoint → 410 HITL_TIMEOUT session_checkpointed",
+    expected: {
+      ok: false,
+      code: "HITL_TIMEOUT",
+      httpStatus: 410,
+      reason: "session_checkpointed",
+    },
+    run: async (lab) => {
+      const fence = newRun();
+      const created = await liveSession(lab, fence);
+
+      await lab.transport.checkpointSession(
+        created.sessionId,
+        envelope(lab, "session.checkpoint", fence, {}),
+      );
+
+      return normalize(() =>
+        lab.transport.deliverInput(
+          created.sessionId,
+          envelope(lab, "session.input", fence, {
+            kind: "permission",
+            action: "select",
+            requestId: randomUUID(),
+            optionId: "allow",
+          }),
+        ),
+      );
+    },
+  },
+  {
     name: "create with a released handle → workspace_released",
     expected: {
       ok: false,

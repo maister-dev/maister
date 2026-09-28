@@ -626,7 +626,8 @@ function StrandedAgentTurns({
   rows,
   format,
 }: {
-  count: number;
+  // null: the read failed.
+  count: number | null;
   rows: readonly StrandedAgentTurnRow[];
   format: Format;
 }): ReactElement {
@@ -644,12 +645,16 @@ function StrandedAgentTurns({
         >
           {t("commands.strandedTitle")}
         </h3>
-        <Badge tone={count > 0 ? "warn" : "good"}>{count}</Badge>
+        {count === null ? (
+          <Badge tone="warn">{t("commands.strandedUnavailable")}</Badge>
+        ) : (
+          <Badge tone={count > 0 ? "warn" : "good"}>{count}</Badge>
+        )}
       </div>
       <p className="mt-1 text-xs leading-[1.5] text-mute">
         {t("commands.strandedHelp")}
       </p>
-      {rows.length === 0 ? (
+      {count === null ? null : rows.length === 0 ? (
         <p className="mt-3 text-xs text-mute">{t("commands.strandedEmpty")}</p>
       ) : (
         <ul className="mt-3 flex flex-col gap-2">

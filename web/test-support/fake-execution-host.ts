@@ -156,6 +156,10 @@ export type FakeSession = {
   // Set when a command with a HIGHER assignment epoch evicted this session:
   // its pending prompt answers 409 FENCED (X-EH-19).
   fencedByEpoch?: number;
+  // Why the host ended it on purpose, like the host's `intentionalReason`: a
+  // `checkpoint` or `intentional` park answers input `session_checkpointed`,
+  // anything else that ended answers `session_ended`.
+  intentionalReason?: "checkpoint" | "intentional" | "fenced";
   // Permission request ids the host holds a deferred for. A transport-created
   // session tracks the ids streamed on its stream (an unknown id is 410
   // HITL_TIMEOUT, like the host); an INJECTED record leaves it undefined —
@@ -383,15 +387,18 @@ function steerRefusal(
 }
 
 // ADR-177 2026-09-26 amendment: like the host, the 410 names why no deferred
-// exists — a live session holds no such request, an ended one holds none.
+// exists — a live session holds no such request, a parked one cancelled its
+// deferreds for the resume, any other ended one holds none.
 function hitlTimeoutError(
-  reason: "permission_not_pending" | "session_ended",
+  reason: "permission_not_pending" | "session_checkpointed" | "session_ended",
 ): MaisterError {
   return new MaisterError(
     "HITL_TIMEOUT",
     reason === "session_ended"
       ? "fake: session ended before the answer arrived"
-      : "fake: no pending permission with that requestId",
+      : reason === "session_checkpointed"
+        ? "fake: session was checkpointed — resume and re-deliver"
+        : "fake: no pending permission with that requestId",
     { details: { reason, httpStatus: 410 } },
   );
 }
@@ -796,6 +803,7 @@ export function createFakeExecutionHost(
       session.exitedAt = new Date().toISOString();
       session.exitCode = 143;
       session.fencedByEpoch = epoch;
+      session.intentionalReason = "fenced";
       session.pending?.clear();
       settleInflightPrompts(
         session.sessionId,
@@ -2005,7 +2013,10 @@ export function createFakeExecutionHost(
             throw hitlTimeoutError(
               session.status === "live"
                 ? "permission_not_pending"
-                : "session_ended",
+                : session.intentionalReason === "checkpoint" ||
+                    session.intentionalReason === "intentional"
+                  ? "session_checkpointed"
+                  : "session_ended",
             );
 
           return { status: 200, body: { ok: true, replayed: false } };
@@ -2119,6 +2130,7 @@ export function createFakeExecutionHost(
           session.status = "exited";
           session.exitedAt = new Date().toISOString();
           session.exitCode = 143;
+          session.intentionalReason = "checkpoint";
           settleInflightPrompts(
             sessionId,
             new MaisterError(
@@ -2162,6 +2174,7 @@ export function createFakeExecutionHost(
             session.status = "exited";
             session.exitedAt = new Date().toISOString();
             session.exitCode = 143;
+            session.intentionalReason = "intentional";
             settleInflightPrompts(
               sessionId,
               new MaisterError(

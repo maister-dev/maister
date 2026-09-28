@@ -221,6 +221,14 @@ describe("the queued-message invariant (D-A6)", () => {
     });
 
     expect(accepted.messageState).toBe("queued");
+    // No session is admissible yet: the claim deferred the message and left
+    // the run its queue key (C9).
+    const [waiting] = await db
+      .select({ resumeRequestedAt: runs.resumeRequestedAt })
+      .from(runs)
+      .where(eq(runs.id, runId));
+
+    expect(waiting.resumeRequestedAt).not.toBeNull();
     // The run is `Running` (its launch committed), so the message is live.
     expect((await turnsOf(runId)).map((turn) => turn.variant)).toEqual([
       "live_message",
