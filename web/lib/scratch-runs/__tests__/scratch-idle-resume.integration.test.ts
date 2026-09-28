@@ -413,6 +413,40 @@ describe("scratch idle resume after a host park (D-A8)", () => {
     expect((await runOf(runId)).resumeRequestedAt).toBeNull();
   }, 180_000);
 
+  // ADR-183 D9: an answer's resume claim is a pool admission, so the host's
+  // pressure record fences it like a full pool — the host would refuse the
+  // respawn anyway. Found at the rebase onto the residuals merge, whose new
+  // claim read `capForPool` directly (the pool-cap-fence guard).
+  it("T1.5 (b′): under the host's pressure record the answer is queued as at capacity, and resumes once the record clears", async () => {
+    const { runId, hitlId } = await parkedDialog();
+    const [host] = await db
+      .select({ id: schema.executionHosts.id })
+      .from(schema.executionHosts)
+      .where(eq(schema.executionHosts.kind, "local_direct"));
+
+    await db
+      .insert(schema.executionHostPressure)
+      .values({ executionHostId: host!.id, pressuredSince: new Date() });
+    try {
+      const response = await answer(runId, hitlId);
+
+      expect(response.status).toBe(202);
+      await expect(response.json()).resolves.toMatchObject({
+        runStatus: "NeedsInputIdle",
+        state: "resume-in-progress",
+      });
+      expect(await runOf(runId)).toMatchObject({ status: "NeedsInputIdle" });
+      expect((await runOf(runId)).resumeRequestedAt).not.toBeNull();
+    } finally {
+      await db
+        .delete(schema.executionHostPressure)
+        .where(eq(schema.executionHostPressure.executionHostId, host!.id));
+    }
+    await promoteNextPending({ db: db as never, pool: "flow" });
+    await resumedAndDelivered(runId);
+    expect((await runOf(runId)).resumeRequestedAt).toBeNull();
+  }, 180_000);
+
   it("T1.5 (c)/(f): a host that is down at respawn answers 503 and leaves the run parked with the answer kept; the retry once it is back delivers it", async () => {
     const { runId, hitlId } = await parkedDialog();
 

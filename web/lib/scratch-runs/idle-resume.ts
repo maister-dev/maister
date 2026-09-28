@@ -13,9 +13,9 @@ import { isMaisterError, MaisterError } from "@/lib/errors";
 import { mintPlacement } from "@/lib/execution-host";
 import { assertUserHoldsLock } from "@/lib/local-packages/lock";
 import {
-  capForPool,
   countLiveAssistantRuns,
   countLiveRuns,
+  effectivePoolCap,
   maxConcurrentAssistantRunsCap,
 } from "@/lib/scheduler";
 import {
@@ -114,8 +114,12 @@ export async function claimScratchIdleResume(
     return { outcome: "not_locked" };
   }
 
-  const atCap = run.projectId
-    ? (await countLiveRuns(tx, "flow")) >= capForPool("flow")
+  // A project run takes the flow pool through the host-pressure fence
+  // (ADR-183 D9): the host would refuse the respawn. The assistant budget is
+  // not fenced — a refused respawn parks it again.
+  const flowCap = run.projectId ? await effectivePoolCap(tx, "flow") : null;
+  const atCap = flowCap
+    ? (await countLiveRuns(tx, "flow")) >= flowCap.cap
     : (await countLiveAssistantRuns(tx)) >= maxConcurrentAssistantRunsCap();
 
   if (atCap) {
@@ -126,7 +130,11 @@ export async function claimScratchIdleResume(
       })
       .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInputIdle")));
     log.info(
-      { runId, pool: run.projectId ? "flow" : "assistant" },
+      {
+        runId,
+        pool: run.projectId ? "flow" : "assistant",
+        fence: flowCap?.fence ?? null,
+      },
       "scratch-idle-resume-queued",
     );
 

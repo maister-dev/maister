@@ -556,7 +556,7 @@ holds the edit lock (outcome `not_locked`: the freed-slot gate — which has no
 actor — leaves the run queued behind the others, `resume_requested_at =
 now()`; the respond route's own resume gate refuses first, in the same
 transaction, and withdraws the answer when that request stored it), cap-gates (a project run against the
-flow/scratch pool, a project-less assistant against
+flow/scratch pool through the host-pressure fence `effectivePoolCap` — a pressured host queues it like a full pool, ADR-183 D9 — a project-less assistant against
 `MAISTER_MAX_CONCURRENT_ASSISTANTS`; at cap it stamps `resume_requested_at =
 coalesce(resume_requested_at, now())` and answers `202 {state:
 "resume-in-progress", runStatus: "NeedsInputIdle"}`), otherwise CASes
