@@ -77,7 +77,7 @@ Pointing it at one `push_subscriptions` row would silently stop notifying the
 others as soon as a second browser appeared. The owner column is the join, and
 it is indexed on both sides.
 
-## Personal librarian additions (Designed — ADR-187, ADR-188)
+## Personal librarian additions (Designed — ADR-189, ADR-190)
 
 The librarian adds no attention table. It adds one inbox kind and one decisions
 population that the two counters already read, and keeps its own read cursor
@@ -91,12 +91,12 @@ erDiagram
     TASK_CLARIFICATIONS ||--o{ TASK_ACTIVITY : "clarification_requested|answered|cancelled twins"
 
     INBOX_ITEMS {
-        text event_kind "Designed 0186: + clarification_requested"
+        text event_kind "Designed 0188: + clarification_requested"
         jsonb source_ref "Designed: + kind clarification, taskId, clarificationId, activityId"
     }
 
     LIBRARIAN_CONVERSATIONS {
-        bigint read_through_seq "Designed 0182: GREATEST only; drives the unread indicator, never a count"
+        bigint read_through_seq "Designed 0184: GREATEST only; drives the unread indicator, never a count"
     }
 ```
 

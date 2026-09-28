@@ -49,7 +49,7 @@ async function readConversation(db: Db, ownerId: string) {
   return row ?? null;
 }
 
-/** ADR-183 (LCV-12): the owner's conversation stream. A server-side poll of
+/** ADR-185 (LCV-12): the owner's conversation stream. A server-side poll of
  * durable rows; frames are pointers the client refetches, each carrying the
  * conversation's `seq` as its SSE id. Only the caller's own conversation is
  * ever read — there is no parameter naming a user or a conversation. */

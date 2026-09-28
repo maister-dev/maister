@@ -12,7 +12,7 @@ import {
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 
-// ADR-183 / ADR-188 (migrations 0182, 0183): the conversation, turn and run
+// ADR-185 / ADR-190 (migrations 0184, 0185): the conversation, turn and run
 // invariants the librarian relies on are database constraints, so a buggy
 // writer is refused rather than trusted.
 

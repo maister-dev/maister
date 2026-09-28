@@ -128,16 +128,16 @@ export type ReconcileAction =
   // session to resume, and stop the scheduler starting it under a dead
   // coordinator later.
   | "abandon"
-  // ADR-183 (D19): a librarian run whose running turn lost its host. The turn
+  // ADR-185 (D19): a librarian run whose running turn lost its host. The turn
   // fails `host_lost`, its token dies, the run parks and the next queued turn
   // is admitted — a librarian run is never `Crashed`.
   | "librarian-park";
 
 export type ReconcileReason =
   | "not-running"
-  // ADR-183: the librarian turn's session is live — its owner settles it.
+  // ADR-185: the librarian turn's session is live — its owner settles it.
   | "live-librarian-session"
-  // ADR-183 (D19): `running` turn × run not live, past grace.
+  // ADR-185 (D19): `running` turn × run not live, past grace.
   | "librarian-host-lost"
   | "worktree-gone"
   | "live-session"
@@ -342,7 +342,7 @@ const ORPHANABLE_PAUSED_STATUSES: ReadonlySet<string> = new Set([
   "Review",
 ]);
 
-// ADR-183 (D19): a librarian run is driven by its current turn, never by a
+// ADR-185 (D19): a librarian run is driven by its current turn, never by a
 // graph, and parks between turns. Reconcile owns exactly one window: a
 // `Running` run whose session is gone past grace. Queued and admitted turns
 // belong to admission; a live session belongs to the turn's prompt owner.
@@ -1042,7 +1042,7 @@ async function latestScratchMessageAt(
   return rows[0]?.createdAt ?? null;
 }
 
-// The start of the conversation's admitted or running turn.
+// ADR-185: the start of the conversation's admitted or running turn.
 async function activeLibrarianTurnStartedAt(
   db: Db,
   runId: string,

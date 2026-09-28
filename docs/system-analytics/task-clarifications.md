@@ -16,7 +16,7 @@ counter definition ([`attention.md`](attention.md)), the work-stage classifier
 ([`work-stages.md`](work-stages.md)) or conversation delivery
 ([`librarian-operations.md`](librarian-operations.md)). No dummy run and no
 `hitl_requests` row is created to address a person. The decision is
-[ADR-187](../decisions.md#adr-187-addressed-task-clarification-before-execution),
+[ADR-189](../decisions.md#adr-189-addressed-task-clarification-before-execution),
 amending ADR-169 and ADR-170. The whole domain is **Implemented**.
 
 ## Domain entities
@@ -36,7 +36,7 @@ amending ADR-169 and ADR-170. The whole domain is **Implemented**.
   `status='answered'` exactly when `answered_at` is set and `superseded_at` is
   not, `status='superseded'` exactly when `superseded_at` is set (so an answered
   row can still be superseded), and `cancelled` requires `cancel_reason`
-  ([ADR-187](../decisions.md#adr-187) D2).
+  ([ADR-189](../decisions.md#adr-189) D2).
 - **Inbox item** (persisted, Implemented) — `inbox_items.event_kind='clarification_requested'`
   with `InboxSourceRef` `{kind:"clarification", taskId, clarificationId, activityId}`.
 - **Decision kind `clarification`** (Implemented) — the fifth population of
@@ -53,7 +53,7 @@ amending ADR-169 and ADR-170. The whole domain is **Implemented**.
   have a `task_activity` twin, they move OUT of `ATTENTION_EVENT_KINDS` into
   `TASK_ACTIVITY_TWINNED_EVENT_KINDS`, and `task.clarification_requested` joins
   `DECISION_OPENING_EVENT_KINDS`, so one answer counts once in `updates`
-  ([ADR-187](../decisions.md#adr-187) D9).
+  ([ADR-189](../decisions.md#adr-189) D9).
 - **Answer routes** (Implemented) —
   `POST /api/projects/{slug}/tasks/{number}/clarifications/{id}/answer` (session) and
   its ext twin requiring exact `hitl:respond:human` on a global personal token.
@@ -176,7 +176,7 @@ flowchart LR
 
 ## Linked artifacts
 
-- [ADR-187 — addressed task clarification before execution](../decisions.md#adr-187-addressed-task-clarification-before-execution) · [record](../decisions/adr-187.md)
+- [ADR-189 — addressed task clarification before execution](../decisions.md#adr-189-addressed-task-clarification-before-execution) · [record](../decisions/adr-189.md)
 - [ADR-169 — attention counters](../decisions.md#adr-169) · [ADR-170 — work-stage vocabulary](../decisions.md#adr-170)
 - [Librarian requirement traceability](librarian-traceability.md)
 - [Product brief — personal librarian](../pv/personal-librarian.md)

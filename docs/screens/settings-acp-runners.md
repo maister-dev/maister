@@ -87,7 +87,7 @@ control now backs the platform MCP modal ([`mcps.md`](mcps.md)), the project MCP
 modal, the MCP overlay dialog, and the Studio MCP template editor — and those
 surfaces use the same `literal | env:NAME` grammar this one has always used.
 
-### Librarian card (Designed — ADR-183)
+### Librarian card (Designed — ADR-185)
 
 A separate card on the same admin surface configures the personal librarian for
 the whole platform (`platform_runtime_settings.librarian_enabled`,
@@ -160,7 +160,7 @@ stateDiagram-v2
   still refuses `workspace: none | repo_read` with `EXECUTOR_UNAVAILABLE`.
 - Behavior: [`../system-analytics/acp-runners.md`](../system-analytics/acp-runners.md)
   and [`../system-analytics/executors.md`](../system-analytics/executors.md).
-- Librarian card (Designed — ADR-183): `PATCH /api/admin/platform/librarian`
+- Librarian card (Designed — ADR-185): `PATCH /api/admin/platform/librarian`
   `{enabled, runnerId?}` → `200 {settings, readiness}` under
   `requireGlobalRole("admin")`; a `runnerId` that does not exist, is disabled,
   or is not read-only capable is refused. The select's options and the
@@ -178,7 +178,7 @@ disabled-reason copy from the `librarian` namespace, EN + RU.
 - ADR: [ADR-065](../decisions.md#adr-065) — platform ACP runner catalog and
   admin CRUD pattern; [ADR-179](../decisions.md#adr-179) — the key/value rows
   control extracted from this modal and shared with the MCP surfaces;
-  [ADR-183](../decisions.md#adr-183-librarian-runtime-a-project-less-run-kind-with-per-turn-acp-sessions)
+  [ADR-185](../decisions.md#adr-185-librarian-runtime-a-project-less-run-kind-with-per-turn-acp-sessions)
   — librarian enablement and the read-only-capable runner guard (Designed).
 - Behavior: [`../system-analytics/acp-runners.md`](../system-analytics/acp-runners.md),
   [`../system-analytics/executors.md`](../system-analytics/executors.md).

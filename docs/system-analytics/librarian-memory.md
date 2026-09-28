@@ -16,7 +16,7 @@ Brain ([`project-brain.md`](project-brain.md)) or an agent's per-project memory
 ([`agent-memory.md`](agent-memory.md)) — personal memory never writes to either.
 Every change that could let retained context repeat a revoked or forgotten fact bumps
 `context_epoch`, which forces the next turn onto a fresh ACP session. The decision is
-[ADR-188](../decisions.md#adr-188-librarian-memory-summaries-reset-barrier-and-history-deletion).
+[ADR-190](../decisions.md#adr-190-librarian-memory-summaries-reset-barrier-and-history-deletion).
 The whole domain is **Implemented**.
 
 ## Domain entities
@@ -144,7 +144,7 @@ commit the host workspace is released, which deletes the cwd and the claude tran
 directory for it. The conversation stays closed to admission until the release is
 confirmed — the barrier pass re-issues it after a host outage — so a new turn can
 never re-adopt the folder mid-purge; then `reset_state` returns to `none` and the next
-turn re-adopts ([ADR-188](../decisions.md#adr-188) D8) (Implemented).
+turn re-adopts ([ADR-190](../decisions.md#adr-190) D8) (Implemented).
 
 ```mermaid
 sequenceDiagram
@@ -190,8 +190,8 @@ sequenceDiagram
 
 ## Linked artifacts
 
-- [ADR-188 — memory, summaries, reset barrier and history deletion](../decisions.md#adr-188-librarian-memory-summaries-reset-barrier-and-history-deletion) · [record](../decisions/adr-188.md)
-- [ADR-183 — librarian runtime](../decisions.md#adr-183-librarian-runtime-a-project-less-run-kind-with-per-turn-acp-sessions) · [ADR-166 — execution-host contract](../decisions.md#adr-166)
+- [ADR-190 — memory, summaries, reset barrier and history deletion](../decisions.md#adr-190-librarian-memory-summaries-reset-barrier-and-history-deletion) · [record](../decisions/adr-190.md)
+- [ADR-185 — librarian runtime](../decisions.md#adr-185-librarian-runtime-a-project-less-run-kind-with-per-turn-acp-sessions) · [ADR-166 — execution-host contract](../decisions.md#adr-166)
 - [Librarian requirement traceability](librarian-traceability.md)
 - [Product brief — personal librarian](../pv/personal-librarian.md)
 - [Librarian ERD](../db/librarian-domain.md)

@@ -71,7 +71,7 @@ const SessionCreateOwnerSchema = z.discriminatedUnion("variant", [
       promptOrdinal: z.number().int().nonnegative(),
     })
     .strict(),
-  // ADR-183: a librarian turn opens its own session on the conversation run.
+  // ADR-185: a librarian turn opens its own session on the conversation run.
   z
     .object({
       variant: z.literal("librarian"),

@@ -14,7 +14,7 @@ const navTool = clsx(
   "text-mute transition-colors hover:border-mute hover:text-ink",
 );
 
-// ADR-189 D1/D2: the entry names the indicator STATE in its accessible name
+// ADR-191 D1/D2: the entry names the indicator STATE in its accessible name
 // and shows it as a dot — never a number. Only `action_required` wears the
 // attention tone; it is the one state the reader can act on.
 export function LibrarianTrigger(): ReactElement | null {

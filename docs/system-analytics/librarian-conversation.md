@@ -14,7 +14,7 @@ conversation stream. It does **not** own the delegated token and its checks
 ([`librarian-surface.md`](librarian-surface.md)). The durable records are the source
 of truth; an ACP session is a cache that a turn may resume only when it is provably
 current. The runtime decision is
-[ADR-183](../decisions.md#adr-183-librarian-runtime-a-project-less-run-kind-with-per-turn-acp-sessions).
+[ADR-185](../decisions.md#adr-185-librarian-runtime-a-project-less-run-kind-with-per-turn-acp-sessions).
 The whole domain is **Implemented**.
 
 ## Domain entities
@@ -231,7 +231,7 @@ flowchart LR
 
 ## Linked artifacts
 
-- [ADR-183 — librarian runtime](../decisions.md#adr-183-librarian-runtime-a-project-less-run-kind-with-per-turn-acp-sessions) · [record](../decisions/adr-183.md)
+- [ADR-185 — librarian runtime](../decisions.md#adr-185-librarian-runtime-a-project-less-run-kind-with-per-turn-acp-sessions) · [record](../decisions/adr-185.md)
 - [ADR-166 — execution-host contract](../decisions.md#adr-166) · [ADR-167 — execution data plane](../decisions.md#adr-167)
 - [Librarian requirement traceability](librarian-traceability.md)
 - [Product brief — personal librarian](../pv/personal-librarian.md)

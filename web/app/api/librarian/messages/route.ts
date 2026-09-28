@@ -20,7 +20,7 @@ import {
   librarianMessageDtos,
 } from "@/lib/librarian/view";
 
-// ADR-183 (LCV-02, LCV-03, LUI-04): page back through, and send to, the
+// ADR-185 (LCV-02, LCV-03, LUI-04): page back through, and send to, the
 // caller's own conversation.
 
 export async function GET(request: NextRequest): Promise<NextResponse> {

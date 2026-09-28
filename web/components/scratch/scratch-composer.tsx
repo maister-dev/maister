@@ -90,7 +90,7 @@ export function ScratchComposer({
 }: ScratchComposerProps): ReactElement {
   const t = useTranslations("scratch");
 
-  // ADR-189 D6: while this composer is on screen the librarian opens as a sheet.
+  // ADR-191 D6: while this composer is on screen the librarian opens as a sheet.
   useLibrarianHostComposer(true);
   const [content, setContent] = useState("");
   const [composerAttachments, setComposerAttachments] = useState<

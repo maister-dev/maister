@@ -255,7 +255,7 @@ export function LocalPackageEditor({
   // it hides the inspector; selecting a node in the graph closes it again.
   const [aiOpen, setAiOpen] = useState(false);
 
-  // ADR-189 D6: while the AI drawer is open the librarian opens as a sheet.
+  // ADR-191 D6: while the AI drawer is open the librarian opens as a sheet.
   useLibrarianHostComposer(aiOpen);
   const [aiHeader, setAiHeader] = useState<ScratchHeaderInfo | null>(null);
   const [inspectorEl, setInspectorEl] = useState<HTMLDivElement | null>(null);

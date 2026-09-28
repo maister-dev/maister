@@ -26,7 +26,7 @@ import { requireActiveUserById } from "@/lib/authz";
 const SCOPE = "notifications:subscriptions";
 
 // A notification subscription is a PERSON's, and a librarian must never change
-// where its owner is told (ADR-173 D10, ADR-184).
+// where its owner is told (ADR-173 D10, ADR-186).
 function refuseNonPersonal(ctx: {
   actor: Parameters<typeof requirePersonalOrLibrarianActor>[0];
 }): NextResponse | null {

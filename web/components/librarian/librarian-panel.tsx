@@ -67,7 +67,7 @@ function writeDraft(ownerId: string, draft: string): void {
 }
 
 /** The page the owner may attach explicitly — a run or a project by the id
- * or slug in the URL, never the page's history (ADR-189 D6). */
+ * or slug in the URL, never the page's history (ADR-191 D6). */
 export function attachableSubject(pathname: string): LibrarianSubject | null {
   const run = /^\/runs\/([^/]+)/.exec(pathname);
 
@@ -370,7 +370,7 @@ function LibrarianPanelBody(): ReactElement {
 
   const activeTurn = view?.activeTurn ?? null;
   const responding = open && activeTurn?.status === "running";
-  // ADR-189 D8: the run stream ticks while the turn runs; the durable reply
+  // ADR-191 D8: the run stream ticks while the turn runs; the durable reply
   // arrives as a `librarian.message` frame and replaces the live line.
   const { eventCount } = useRunStream(
     responding ? (view?.conversation.runId ?? null) : null,

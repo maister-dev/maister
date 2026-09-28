@@ -74,8 +74,8 @@ comment/activity/subscription/inbox substrate around tasks is owned by
   `PATCH /api/projects/{slug}/tasks/{number}` (one aggregating endpoint,
   explicit `null` clears a field) before launching.
 - **Task revision** (Designed —
-  [ADR-186](../decisions.md#adr-186-task-statements-task-revision-and-conversation-provenance))
-  — `tasks.revision integer NOT NULL DEFAULT 0` (migration `0184`), incremented
+  [ADR-188](../decisions.md#adr-188-task-statements-task-revision-and-conversation-provenance))
+  — `tasks.revision integer NOT NULL DEFAULT 0` (migration `0186`), incremented
   by every content write (UI PATCH, ext PATCH, statement accept) inside
   `updateTask` under `SELECT … FOR UPDATE`. `TaskDTO` carries `revision`; the UI
   PATCH (`patchBodySchema`) and the ext PATCH both accept an optional
@@ -83,14 +83,14 @@ comment/activity/subscription/inbox substrate around tasks is owned by
   `MaisterError("CONFLICT")` with `details.reason:"stale_revision"`. The UI
   PATCH's `{ok:true}` response gains `revision`. Contract owner:
   [task-statements.md](task-statements.md) (`TST-02`).
-- **Task statement** (Designed — ADR-186) — `tasks.statement_revision integer
+- **Task statement** (Designed — ADR-188) — `tasks.statement_revision integer
   NULL` names the accepted row of the immutable `task_statement_revisions`
   ledger. Accepting a statement is a task content write: it renders
   `tasks.prompt` deterministically (`renderStatementPrompt`), bumps
   `tasks.revision`, and passes the same `BACKLOG_GATED_FIELDS` gate as a prompt
   edit. See [task-statements.md](task-statements.md).
 - **Librarian provenance columns** (Designed —
-  [ADR-185](../decisions.md#adr-185-librarian-operation-ledger-confirmation-cards-and-launch-intent))
+  [ADR-187](../decisions.md#adr-187-librarian-operation-ledger-confirmation-cards-and-launch-intent))
   — `tasks.created_via_operation_id` (UNIQUE, nullable) records the librarian
   operation that created the task: a racing retry of the same operation hits the
   unique and returns the existing task, and an operation whose outcome is
@@ -98,7 +98,7 @@ comment/activity/subscription/inbox substrate around tasks is owned by
   (`none | triage_only | triage_then_launch`, `NULL` = today's behaviour) bounds
   triage-driven auto-launch; see [`triage.md`](triage.md).
 - **Clarification hold** (Designed —
-  [ADR-187](../decisions.md#adr-187-addressed-task-clarification-before-execution))
+  [ADR-189](../decisions.md#adr-189-addressed-task-clarification-before-execution))
   — an open blocking user-origin `task_clarifications` row. It adds the
   launchability value `clarification_pending`; it is NOT a task status. See
   [task-clarifications.md](task-clarifications.md).
@@ -185,7 +185,7 @@ sequenceDiagram
     W-->>EXT: 201 { id, status, ... }
 ```
 
-(Designed — ADR-185 / ADR-186) With a librarian turn token the same route
+(Designed — ADR-187 / ADR-188) With a librarian turn token the same route
 requires an `Idempotency-Key`, may carry a `statement` instead of a raw prompt,
 and writes, in one transaction: the task with `revision = 1`, the rendered
 `tasks.prompt`, the accepted statement revision, `launch_intent='none'`,
@@ -195,7 +195,7 @@ the librarian's owner. The Flow is set when the owner named one or the project
 has exactly one launchable Flow; otherwise the receipt reports the task as
 `unconfigured` with the next step (triage or pick a Flow), never as launchable. Behaviour in [librarian-operations.md](librarian-operations.md).
 
-### Accept a statement through the Backlog gate (Designed — ADR-186)
+### Accept a statement through the Backlog gate (Designed — ADR-188)
 
 A statement accept is refused off-Backlog for the same reason a prompt edit is:
 a flow run re-reads `tasks.prompt` at every re-entry (resume, recover, rework,
@@ -224,7 +224,7 @@ sequenceDiagram
     end
 ```
 
-### Clarification hold on launch (Designed — ADR-187)
+### Clarification hold on launch (Designed — ADR-189)
 
 An open **blocking** user-origin clarification classifies the task
 `clarification_pending`, placed after `flagged` and before `blocked`:
@@ -717,14 +717,14 @@ Abandoned`. Failure to terminate the session does NOT block the task
 - **(Implemented, ADR-078) Hole-y numbering** — deleting a task leaves a
   permanent gap in `KEY-N`; `next_task_number` never decrements. Not an
   error.
-- **(Designed, ADR-186) Two writers race on one `expectedRevision`** → the
+- **(Designed, ADR-188) Two writers race on one `expectedRevision`** → the
   second waits on the task row lock and is refused `MaisterError("CONFLICT")`
   with `details.reason:"stale_revision"` (409); nothing it sent is written.
-- **(Designed, ADR-186) Statement accept on an `InFlight` task** →
+- **(Designed, ADR-188) Statement accept on an `InFlight` task** →
   `MaisterError("PRECONDITION")`; `tasks.prompt` and `tasks.revision` are
   unchanged and the refusal names the operator-message seam and the rework
   claim (`EDGE-TST-01`).
-- **(Designed, ADR-187) Launch while a blocking clarification is open** →
+- **(Designed, ADR-189) Launch while a blocking clarification is open** →
   `MaisterError("PRECONDITION")` with classification `clarification_pending` at
   every entry point; the schedules dispatcher and C2 skip rather than fail.
 
@@ -754,7 +754,7 @@ passes only `effectivePrompt` to a fresh standalone agent. Ordered history is
 deterministic by `(seq, id)` and presentation-bounded; legacy templates do not
 observe a silent rewrite.
 
-(Designed — ADR-187) A clarification may also be addressed by one user to
+(Designed — ADR-189) A clarification may also be addressed by one user to
 another before any run exists (`origin_kind='user'`, no source run, agent or
 HITL row). `composeEffectivePrompt` folds its answer exactly like an
 agent-origin answer; answering never edits the statement or launches work.
@@ -767,9 +767,9 @@ Task detail lists open, answered and cancelled requests — see
   [ADR-083 Social board substrate](../decisions.md#adr-083-social-board-substrate--per-project-task-numbering-typed-relations-polymorphic-actor),
   [ADR-141 Branch sync with AI conflict resolver and reopen](../decisions.md#adr-141-branch-sync-with-ai-conflict-resolver-and-reopen)
   (Implemented — reopen board/relation effect);
-  (Designed) [ADR-185 Librarian operation ledger and launch intent](../decisions.md#adr-185-librarian-operation-ledger-confirmation-cards-and-launch-intent),
-  [ADR-186 Task statements and task revision](../decisions.md#adr-186-task-statements-task-revision-and-conversation-provenance),
-  [ADR-187 Addressed task clarification](../decisions.md#adr-187-addressed-task-clarification-before-execution).
+  (Designed) [ADR-187 Librarian operation ledger and launch intent](../decisions.md#adr-187-librarian-operation-ledger-confirmation-cards-and-launch-intent),
+  [ADR-188 Task statements and task revision](../decisions.md#adr-188-task-statements-task-revision-and-conversation-provenance),
+  [ADR-189 Addressed task clarification](../decisions.md#adr-189-addressed-task-clarification-before-execution).
 - Librarian-side contracts (Designed): [`task-statements.md`](task-statements.md),
   [`task-clarifications.md`](task-clarifications.md),
   [`librarian-operations.md`](librarian-operations.md).

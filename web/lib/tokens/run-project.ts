@@ -10,7 +10,7 @@ const { runs } = schemaModule as unknown as Record<string, any>;
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
 
-// ADR-184: a resource-addressed ext route finds its project from the run, so a
+// ADR-186: a resource-addressed ext route finds its project from the run, so a
 // global token's owner RBAC is checked against the project that owns the
 // resource. An unknown or project-less run resolves to null — an
 // existence-hidden 404.

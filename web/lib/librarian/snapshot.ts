@@ -21,7 +21,7 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-/** ADR-183 D3: sha256 over what decides what the owner may see — account
+/** ADR-185 D3: sha256 over what decides what the owner may see — account
  * state, global role and the sorted (project, role) visibility set. A change
  * bumps the conversation's context epoch, so a resumed session can never
  * repeat a fact the owner lost access to. */

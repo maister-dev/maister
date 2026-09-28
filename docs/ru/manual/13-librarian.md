@@ -46,6 +46,6 @@
 
 Для владельца инстанса: библиотекарь включается в настройках ACP-исполнителей.
 Нужен готовый исполнитель Claude. Лимиты и сроки хранения задаются в
-окружении веб-процесса; см. [Configuration](../../configuration.md#personal-librarian--platform_runtime_settings-implemented--adr-183).
+окружении веб-процесса; см. [Configuration](../../configuration.md#personal-librarian--platform_runtime_settings-implemented--adr-185).
 Codex пока недоступен для библиотекаря: встроенное чтение файлов хоста не
 имеет проверенного механизма запрета.

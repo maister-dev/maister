@@ -1,7 +1,7 @@
 # Personal librarian live-adapter qualification
 
 **Date:** 2026-09-27
-**Scope:** ADR-183..189, plan T7.2. This is an opt-in local qualification, not a CI gate.
+**Scope:** ADR-185..189, plan T7.2. This is an opt-in local qualification, not a CI gate.
 
 ## Environment and provenance
 

@@ -70,9 +70,9 @@ dedup modelling, and the flow-task auto-launcher.
   value the triager sets, and only the `auto_launch_triaged` tick consumes it.
   Disjoint from the orchestrator's `auto_launch_run_plan` producer.
 - **`tasks.launch_intent`** (Designed —
-  [ADR-185](../decisions.md#adr-185-librarian-operation-ledger-confirmation-cards-and-launch-intent))
+  [ADR-187](../decisions.md#adr-187-librarian-operation-ledger-confirmation-cards-and-launch-intent))
   — nullable text, CHECK `none | triage_only | triage_then_launch`
-  (migration `0184`). `NULL` keeps today's behaviour on every non-librarian path.
+  (migration `0186`). `NULL` keeps today's behaviour on every non-librarian path.
   A task the personal librarian creates is written `none`; the librarian's
   send-to-triage op records `triage_only` or `triage_then_launch`. The intent
   bounds the enqueue intent above: only `NULL` (today's `enqueue` rule) or
@@ -121,7 +121,7 @@ stateDiagram-v2
     end note
 ```
 
-(Designed — ADR-185) The `Triaged → Triaged` enqueue self-transition gains a
+(Designed — ADR-187) The `Triaged → Triaged` enqueue self-transition gains a
 precondition: `tasks.launch_intent` is `NULL` or `triage_then_launch`. Under
 `none` or `triage_only` a verdict still stamps `triaged`, but `launch_mode`
 stays `NULL` whatever the triager's `enqueue` says, so the tick never sees the
@@ -216,7 +216,7 @@ flowchart TD
     TICK --> GB[give-up backstop: a flow that becomes unlaunchable AFTER a valid triage<br/>or the latest run carries the durable graph-only cut-over event<br/>→ shared CAS clears launch_mode, does not loop]
 ```
 
-### (d) Launch intent from the personal librarian (Designed — ADR-185)
+### (d) Launch intent from the personal librarian (Designed — ADR-187)
 
 A librarian-created task is triaged like any other (the triager still runs on
 `task.created` for dedup and clarifying questions) but is never auto-launched
@@ -225,7 +225,7 @@ unless its owner asked for that. The new ext route
 (scope `tasks:triage`, effectful, `Idempotency-Key` required for librarian
 tokens) wraps `sendTaskToTriage` and writes the intent in the SAME transaction
 that clears `triage_status` and emits `task.triage_requeued`. The full
-triager `enqueue` × intent × project auto-enqueue outcome table is ADR-185's
+triager `enqueue` × intent × project auto-enqueue outcome table is ADR-187's
 D8 interaction table, tested by `IT-LOP-06`.
 
 ```mermaid
@@ -354,7 +354,7 @@ auto, flow, launch_armed_at)` tuple so a concurrent re-triage is never
 - **`triage_set` referencing a disabled-flow target via any path** →
   `MaisterError("CONFIG")` (the enablement/trust validation is the single guard).
 - **Triager says `enqueue:true` on a task with `launch_intent='none'`**
-  (Designed — ADR-185, `EDGE-LOP-04`) → the verdict is stamped `triaged`,
+  (Designed — ADR-187, `EDGE-LOP-04`) → the verdict is stamped `triaged`,
   `launch_mode` stays `NULL`, and C2 admits nothing. No `MaisterError` (a
   domain outcome). A send-to-triage retry with a different `launchIntent` under
   the same `Idempotency-Key` → `MaisterError("CONFLICT")`
@@ -373,7 +373,7 @@ extends the triage op.
 | --------------------------- | ------------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | `flow_list` (Implemented)   | `{ slug }`    | `GET /api/v1/ext/projects/{slug}/flows`   | per project flow `{ id, ref, metadata: { title, summary, route_when, labels } }`, **launchable-only** (read-side guard) |
 | `runner_list` (Implemented) | `{ slug }`    | `GET /api/v1/ext/projects/{slug}/runners` | per enabled runner `{ id, adapter, model, capabilityAgent, readinessStatus }`                                           |
-| `task_send_to_triage` (Designed — ADR-185) | `{ slug, taskId, launchIntent: "triage_only" \| "triage_then_launch", operationKey }` | `POST /api/v1/ext/projects/{slug}/tasks/{taskId}/send-to-triage` | the requeued task with its recorded `launchIntent`; `operationKey` is sent as `Idempotency-Key` |
+| `task_send_to_triage` (Designed — ADR-187) | `{ slug, taskId, launchIntent: "triage_only" \| "triage_then_launch", operationKey }` | `POST /api/v1/ext/projects/{slug}/tasks/{taskId}/send-to-triage` | the requeued task with its recorded `launchIntent`; `operationKey` is sent as `Idempotency-Key` |
 
 - `flow_list` returns the "when/what to apply" the triager matches against
   (`metadata.route_when` / `metadata.summary`); all attached-package flows are
@@ -416,7 +416,7 @@ triage activity. Other agents retain the target-only clarification event.
   clarity, `duplicate_of`/`flagged`, `auto_launch_triaged` tick disjoint from
   ADR-098, `flow_list`/`runner_list`, `flows:read`/`runners:read` scopes, triage
   `flag`/`enqueue`, the no-silent-stall contract). See [decisions.md](../decisions.md).
-  (Designed) [ADR-185](../decisions.md#adr-185-librarian-operation-ledger-confirmation-cards-and-launch-intent)
+  (Designed) [ADR-187](../decisions.md#adr-187-librarian-operation-ledger-confirmation-cards-and-launch-intent)
   (`tasks.launch_intent`, the send-to-triage route, the D8 interaction table);
   contract owner [librarian-operations.md](librarian-operations.md).
 - **Substrate this builds on:** [agents.md](agents.md) (platform-agent catalog,

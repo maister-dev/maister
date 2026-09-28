@@ -20,7 +20,7 @@ import {
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 
-// ADR-183 (T2.12): every librarian session route addresses the SESSION user's
+// ADR-185 (T2.12): every librarian session route addresses the SESSION user's
 // own conversation. A `userId` is never read from a request, a global admin
 // sees only their own rows, and the stream replays by `seq` without a foreign
 // frame. The conversation's run stream admits its owner and no one else.

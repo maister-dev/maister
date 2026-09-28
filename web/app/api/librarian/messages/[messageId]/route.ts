@@ -10,7 +10,7 @@ import { getDb } from "@/lib/db/client";
 import { withdrawMessage } from "@/lib/librarian/conversation";
 import { librarianErrorResponse } from "@/lib/librarian/http";
 
-// ADR-183 (LCV-03): withdraw a queued message of the caller's conversation.
+// ADR-185 (LCV-03): withdraw a queued message of the caller's conversation.
 // The id is compared with the caller's own conversation; any other is 404.
 
 export async function DELETE(

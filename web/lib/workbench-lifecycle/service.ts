@@ -2236,7 +2236,7 @@ async function loadLifecycleContext(runId: string): Promise<LifecycleContext> {
     .where(eq(runs.id, runId));
   const found = runRows[0];
 
-  // ADR-183: a librarian run is its owner's conversation, never a workbench
+  // ADR-185: a librarian run is its owner's conversation, never a workbench
   // target — to every lifecycle route it does not exist.
   if (!found || found.runKind === "librarian") {
     // C29: an unknown run is a 404 at every family-A route, not a 409.

@@ -156,7 +156,7 @@ function assertAgentRunInvariant(input: RunKindInvariantInput): void {
   }
 }
 
-// ADR-183: the librarian run is the conversation's cache, never a unit of work.
+// ADR-185: the librarian run is the conversation's cache, never a unit of work.
 function assertLibrarianRunInvariant(input: RunKindInvariantInput): void {
   if (input.taskId || input.flowId || input.flowRevisionId || input.agentId) {
     throw new MaisterError(

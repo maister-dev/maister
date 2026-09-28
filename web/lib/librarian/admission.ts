@@ -374,7 +374,7 @@ async function turnForMessage(
   return turn ?? null;
 }
 
-/** ADR-183: commits the owner's message, then admits or queues its turn. A
+/** ADR-185: commits the owner's message, then admits or queues its turn. A
  * repeated `clientMessageId` returns the stored message before any refusal is
  * considered; every refusal is decided before anything is written. */
 export async function submitOwnerMessage(

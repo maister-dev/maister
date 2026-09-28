@@ -14,7 +14,7 @@ import {
   parseSeq,
 } from "@/lib/librarian/http";
 
-// ADR-183 (LUI-01): a monotonic GREATEST upsert of the caller's own cursor.
+// ADR-185 (LUI-01): a monotonic GREATEST upsert of the caller's own cursor.
 
 const bodySchema = z.object({ seq: z.string() }).strict();
 

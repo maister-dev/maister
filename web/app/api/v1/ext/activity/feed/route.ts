@@ -40,7 +40,7 @@ function feedRowDTO(row: ActivityFeedRow) {
   };
 }
 
-// ADR-184: the owner's cross-project activity feed. A `project` filter naming a
+// ADR-186: the owner's cross-project activity feed. A `project` filter naming a
 // project the owner cannot see intersects to nothing (never refused, so its
 // existence is not revealed).
 export async function GET(req: NextRequest): Promise<NextResponse> {

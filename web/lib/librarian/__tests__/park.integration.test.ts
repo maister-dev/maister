@@ -31,7 +31,7 @@ import {
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 
-// ADR-183 D3 (T2.9): the librarian's own park and resume primitives. Park
+// ADR-185 D3 (T2.9): the librarian's own park and resume primitives. Park
 // frees the slot and releases the assignment as `parked`; the claim takes a
 // slot and places the run, and is refused on a run that is not parked.
 

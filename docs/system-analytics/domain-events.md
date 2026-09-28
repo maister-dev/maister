@@ -142,10 +142,10 @@ observe its failed child; success-gated dependents do not launch.
   it, but `agent_triggers` forwards the whole payload, `cause` included, into a
   triggered agent's prompt — which is why `cause` carries tokens only — and
   `run.review` keeps its own string `cause`.
-  **(Designed — ADR-187)** two new kinds, `task.clarification_requested` and
+  **(Designed — ADR-189)** two new kinds, `task.clarification_requested` and
   `task.clarification_cancelled`, for the user-origin clarification a person
   addresses to another before any run exists; the existing
-  `task.clarification_answered` is reused for its answer. Migration `0186`
+  `task.clarification_answered` is reused for its answer. Migration `0188`
   re-derives `domain_events_kind_check` as migration `0167`'s 15 kinds plus
   these two, and fixes the `schema.ts` CHECK mirror, which still lists 13. Each
   new kind is emitted inside the clarification service's transaction beside a
@@ -253,7 +253,7 @@ observe its failed child; success-gated dependents do not launch.
   job guard plus the recorded `domainEventId` in `resumable_cursor`; external
   repository edits are still manual reindex, not watched.
 - **`librarian_followup` consumer** (Designed —
-  [ADR-185](../decisions.md#adr-185-librarian-operation-ledger-confirmation-cards-and-launch-intent))
+  [ADR-187](../decisions.md#adr-187-librarian-operation-ledger-confirmation-cards-and-launch-intent))
   — the personal librarian's follow-up delivery (`startFrom: "now"`), registered
   in `DOMAIN_EVENT_CONSUMERS`. Kinds: `run.done | run.failed | run.crashed |
   run.abandoned | run.review | run.review_opened | run.needs_input |
@@ -551,7 +551,7 @@ attachment, disablement, quarantine, or an existing active run; it never fans
 out through ordinary event-trigger schedules. The triager mode emits the
 pre-existing `task.triage_requeued` event instead.
 
-(Designed — ADR-187) A user-origin answer emits the same kind with no
+(Designed — ADR-189) A user-origin answer emits the same kind with no
 requesting agent (`origin_kind='user'`, `retrigger_mode='none'`). The re-trigger
 branch treats it as handled without a launch decision; its reader is the
 `librarian_followup` consumer, which delivers the answer to the requester's
@@ -560,9 +560,9 @@ conversation only while the requester can still read the task.
 ## Linked artifacts
 
 - **Decision:** [ADR-086](../decisions.md#adr-086-domain-event-outbox-as-the-shared-trigger-bus).
-- **Librarian additions (Designed):** [ADR-185](../decisions.md#adr-185-librarian-operation-ledger-confirmation-cards-and-launch-intent)
+- **Librarian additions (Designed):** [ADR-187](../decisions.md#adr-187-librarian-operation-ledger-confirmation-cards-and-launch-intent)
   (the `librarian_followup` consumer) and
-  [ADR-187](../decisions.md#adr-187-addressed-task-clarification-before-execution)
+  [ADR-189](../decisions.md#adr-189-addressed-task-clarification-before-execution)
   (`task.clarification_requested`, `task.clarification_cancelled`); contracts in
   [librarian-operations.md](librarian-operations.md) and
   [task-clarifications.md](task-clarifications.md).

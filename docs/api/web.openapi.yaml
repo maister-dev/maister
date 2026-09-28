@@ -81,7 +81,7 @@ info:
       and bounded bytes. URL values select only the run/object IDs; the server
       derives project authorization and host binding from Postgres.
 
-    - Personal librarian (Designed — ADR-183..189) — `/api/librarian/*`
+    - Personal librarian (Designed — ADR-185..189) — `/api/librarian/*`
       (conversation, messages, withdraw, stop, read cursor, card decisions,
       personal memory, reset, history clear, Explain, SSE stream), the admin
       `PATCH /api/admin/platform/librarian`, and the clarification answer
@@ -175,7 +175,7 @@ tags:
       proposal review, project settings, and admin defaults (ADR-122/127/128).
   - name: librarian
     description: >-
-      (Designed — ADR-183..189) The signed-in user's personal librarian —
+      (Designed — ADR-185..189) The signed-in user's personal librarian —
       one durable conversation, its turns and cards, personal memory, reset and
       history deletion, the conversation SSE stream, and the admin enablement.
 paths:
@@ -2456,7 +2456,7 @@ paths:
         `triage_status` — that is the triager's mark (ext triage op) or the
         send-to-triage action.
 
-        (Designed — ADR-186, `TST-02`) `updateTask` runs under the task row lock
+        (Designed — ADR-188, `TST-02`) `updateTask` runs under the task row lock
         (`SELECT … FOR UPDATE`) and increments `tasks.revision` on every
         successful write; the response carries the new `revision`. An optional
         `expectedRevision` that differs from the current revision is refused
@@ -2505,7 +2505,7 @@ paths:
                   type: integer
                   minimum: 0
                   description: |
-                    (Designed — ADR-186) Optional optimistic guard — the task
+                    (Designed — ADR-188) Optional optimistic guard — the task
                     `revision` the editor last read.
       responses:
         "200":
@@ -2520,7 +2520,7 @@ paths:
                   revision:
                     type: integer
                     minimum: 1
-                    description: (Designed — ADR-186) The task's `revision` after this write.
+                    description: (Designed — ADR-188) The task's `revision` after this write.
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404":
@@ -2530,7 +2530,7 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "409":
           description: |
-            (Designed — ADR-186) `CONFLICT` with `details.reason:
+            (Designed — ADR-188) `CONFLICT` with `details.reason:
             "stale_revision"` — `expectedRevision` is no longer current; or
             `PRECONDITION` — a Backlog-gated field was edited while the task is
             not in `Backlog`.
@@ -2680,9 +2680,9 @@ paths:
   /api/projects/{slug}/tasks/{number}/clarifications/{clarificationId}/answer:
     post:
       tags: [projects]
-      summary: (ADR-187 — Designed) Answer a clarification addressed to you
+      summary: (ADR-189 — Designed) Answer a clarification addressed to you
       description: |
-        (Designed — ADR-187, `CLR-02`, `CLR-04`, `CLR-06`, `CLR-07`, `CLR-09`.)
+        (Designed — ADR-189, `CLR-02`, `CLR-04`, `CLR-06`, `CLR-07`, `CLR-09`.)
         Session auth. Only the addressed human recipient answers: the session
         user must be the row's recipient AND hold `member` or above in the
         task's project (`answerHitl`) at answer time — otherwise `403
@@ -2744,9 +2744,9 @@ paths:
   /api/projects/{slug}/tasks/{number}/clarifications/{clarificationId}:
     delete:
       tags: [projects]
-      summary: (ADR-187 — Designed) Cancel a clarification you requested
+      summary: (ADR-189 — Designed) Cancel a clarification you requested
       description: |
-        (Designed — ADR-187, `CLR-04`, `CLR-08`.) Session auth. Only the
+        (Designed — ADR-189, `CLR-04`, `CLR-08`.) Session auth. Only the
         row's requester cancels, and the requester must still hold `member`
         or above in the task's project — otherwise `403 UNAUTHORIZED`. One
         transaction under the row lock with a status CAS `open → cancelled`
@@ -16479,7 +16479,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
 
-  # ── ADR-183..189 Personal librarian — session routes (Designed) ─────────────
+  # ── ADR-185..189 Personal librarian — session routes (Designed) ─────────────
   # Owner = the session user (auth-context) on every route below. No route
   # accepts a user id, none returns another user's conversation, memory or
   # snapshots (a global admin included), and none is reachable with a token.
@@ -16487,9 +16487,9 @@ paths:
   /api/librarian/conversation:
     get:
       tags: [librarian]
-      summary: (ADR-183 — Designed) Read the caller's librarian conversation
+      summary: (ADR-185 — Designed) Read the caller's librarian conversation
       description: |
-        (Designed — ADR-183, `LCV-01`, `LCV-11`, `LAU-01`, `LAU-09`, `LUI-02`.)
+        (Designed — ADR-185, `LCV-01`, `LCV-11`, `LAU-01`, `LAU-09`, `LUI-02`.)
         Requires an active session. The owner is the SESSION USER; there is one
         conversation per user (UNIQUE `librarian_conversations_user_uq`),
         created by the first call — two concurrent first calls still yield one
@@ -16516,9 +16516,9 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
     patch:
       tags: [librarian]
-      summary: (ADR-188 — Designed) Change the conversation's own settings
+      summary: (ADR-190 — Designed) Change the conversation's own settings
       description: |
-        (Designed — ADR-188, `LMM-04`.) Requires an active session; the owner
+        (Designed — ADR-190, `LMM-04`.) Requires an active session; the owner
         is the session user. `memoryEnabledNextSegment` decides whether
         personal memory items are composed into the NEXT segment's turns — it
         never changes the current segment and never deletes an item.
@@ -16546,9 +16546,9 @@ paths:
   /api/librarian/messages:
     get:
       tags: [librarian]
-      summary: (ADR-183 — Designed) Page back through the caller's messages
+      summary: (ADR-185 — Designed) Page back through the caller's messages
       description: |
-        (Designed — ADR-183, `LMM-04`, `LMM-09`.) The `limit` messages of the
+        (Designed — ADR-185, `LMM-04`, `LMM-09`.) The `limit` messages of the
         caller's conversation immediately before `beforeSeq` (absent = the
         latest), in ascending `seq` order; `hasMore` says whether older ones
         exist. Older segments are included: the history is the owner's,
@@ -16576,9 +16576,9 @@ paths:
         "422": { $ref: "#/components/responses/Config" }
     post:
       tags: [librarian]
-      summary: (ADR-183 — Designed) Send a message to the librarian
+      summary: (ADR-185 — Designed) Send a message to the librarian
       description: |
-        (Designed — ADR-183, `LCV-02`, `LCV-03`, `LCV-05`, `LCV-10`, `LCV-11`,
+        (Designed — ADR-185, `LCV-02`, `LCV-03`, `LCV-05`, `LCV-10`, `LCV-11`,
         `LUI-04`.) Commits the owner's message, then admits or queues one turn
         for it. `clientMessageId` is the dedup key within the owner's
         conversation (partial UNIQUE `librarian_messages_client_id_uq`): a
@@ -16630,9 +16630,9 @@ paths:
   /api/librarian/messages/{messageId}:
     delete:
       tags: [librarian]
-      summary: (ADR-183 — Designed) Withdraw a queued message
+      summary: (ADR-185 — Designed) Withdraw a queued message
       description: |
-        (Designed — ADR-183, `LCV-03`.) Withdraws a message whose
+        (Designed — ADR-185, `LCV-03`.) Withdraws a message whose
         `deliveryState` is `queued`; its turn never runs. Any other state —
         accepted, processed, already withdrawn — is refused `409 CONFLICT`.
         `messageId` is compared with the owner's conversation (server-state); a
@@ -16654,9 +16654,9 @@ paths:
   /api/librarian/turns/current/stop:
     post:
       tags: [librarian]
-      summary: (ADR-183 — Designed) Stop the librarian's current response
+      summary: (ADR-185 — Designed) Stop the librarian's current response
       description: |
-        (Designed — ADR-183, `LCV-08`, `LUI-07`.) "Stop response" — distinct
+        (Designed — ADR-185, `LCV-08`, `LUI-07`.) "Stop response" — distinct
         from any run's "Stop run". Cancels the active turn's prompt through the
         execution host (`BoundClient`), revokes the turn's token, and ends the
         turn `stopped`; the conversation's run parks. It never cancels a task
@@ -16675,9 +16675,9 @@ paths:
   /api/librarian/read-cursor:
     post:
       tags: [librarian]
-      summary: (ADR-183 — Designed) Advance the caller's read cursor
+      summary: (ADR-185 — Designed) Advance the caller's read cursor
       description: |
-        (Designed — ADR-183, `LUI-01`.) Sets `read_through_seq` with a monotonic
+        (Designed — ADR-185, `LUI-01`.) Sets `read_through_seq` with a monotonic
         `GREATEST` upsert: a stale or replayed value is a no-op and never
         resurfaces read messages as unread. A value above the conversation's
         latest `seq` is clamped to it. Drives the `unread` indicator.
@@ -16702,9 +16702,9 @@ paths:
   /api/librarian/cards/{cardId}/decide:
     post:
       tags: [librarian]
-      summary: (ADR-185 — Designed) Accept or reject a librarian card
+      summary: (ADR-187 — Designed) Accept or reject a librarian card
       description: |
-        (Designed — ADR-185 D7, `LOP-08`, `LOP-09`, `LAU-08`, `LMM-01`.) The
+        (Designed — ADR-187 D7, `LOP-08`, `LOP-09`, `LAU-08`, `LMM-01`.) The
         owner's one click on a card. `cardId` is checked against the owner's
         conversation (`404` otherwise). Under the card row lock the server
         re-reads the bound target: a card whose target moved since it was
@@ -16756,9 +16756,9 @@ paths:
   /api/librarian/memory:
     get:
       tags: [librarian]
-      summary: (ADR-188 — Designed) List the caller's personal memory
+      summary: (ADR-190 — Designed) List the caller's personal memory
       description: |
-        (Designed — ADR-188, `LMM-02`, `LMM-03`.) The owner's active (not
+        (Designed — ADR-190, `LMM-02`, `LMM-03`.) The owner's active (not
         forgotten) memory items and the "use memory in the next segment"
         setting. `excludedReason` says why an item is not used in context now:
         it expired, or a source project is no longer visible to the owner —
@@ -16774,9 +16774,9 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
     post:
       tags: [librarian]
-      summary: (ADR-188 — Designed) Add a personal memory item
+      summary: (ADR-190 — Designed) Add a personal memory item
       description: |
-        (Designed — ADR-188, `LMM-01`, `LMM-02`, `LMM-11`.) The owner writes an
+        (Designed — ADR-190, `LMM-01`, `LMM-02`, `LMM-11`.) The owner writes an
         item from the Memory dialog (`origin='explicit'`, revision 1). A
         `project`-scoped item names a project the owner can see (`404`
         otherwise). Explicitly re-remembering previously forgotten content
@@ -16808,9 +16808,9 @@ paths:
         schema: { type: string, format: uuid }
     patch:
       tags: [librarian]
-      summary: (ADR-188 — Designed) Edit a personal memory item
+      summary: (ADR-190 — Designed) Edit a personal memory item
       description: |
-        (Designed — ADR-188, `LMM-02`.) An edit writes a NEW revision
+        (Designed — ADR-190, `LMM-02`.) An edit writes a NEW revision
         (`librarian_memory_item_revisions`); content is never updated in place.
         `expectedRevision` must equal the item's current revision, else
         `409 CONFLICT` with `details.reason: "stale_revision"`. At least one
@@ -16834,9 +16834,9 @@ paths:
         "422": { $ref: "#/components/responses/Config" }
     delete:
       tags: [librarian]
-      summary: (ADR-188 — Designed) Forget a personal memory item
+      summary: (ADR-190 — Designed) Forget a personal memory item
       description: |
-        (Designed — ADR-188, `LMM-06`.) Forget: sets `forgotten_at`, writes a
+        (Designed — ADR-190, `LMM-06`.) Forget: sets `forgotten_at`, writes a
         tombstone digest of the content, and bumps the conversation's
         `forget_generation` and `context_epoch`. Summary and suggestion writers
         refuse tombstoned content, so a delayed summarizer cannot recreate it;
@@ -16853,9 +16853,9 @@ paths:
   /api/librarian/reset:
     post:
       tags: [librarian]
-      summary: (ADR-188 — Designed) Start a new context segment (reset barrier)
+      summary: (ADR-190 — Designed) Start a new context segment (reset barrier)
       description: |
-        (Designed — ADR-188 D13, `LMM-05`.) One transaction under the
+        (Designed — ADR-190 D13, `LMM-05`.) One transaction under the
         conversation row lock sets `reset_state='resetting'`, withdraws queued
         messages (`withdrawn_by_reset`), requests a stop of the current turn and
         revokes its token. The reset is acknowledged only when no operation of
@@ -16881,9 +16881,9 @@ paths:
   /api/librarian/history/clear-preview:
     get:
       tags: [librarian]
-      summary: (ADR-188 — Designed) Preview what clearing history deletes
+      summary: (ADR-190 — Designed) Preview what clearing history deletes
       description: |
-        (Designed — ADR-188 D14, `LMM-08`, `TST-06`.) Counts of what
+        (Designed — ADR-190 D14, `LMM-08`, `TST-06`.) Counts of what
         `POST /api/librarian/history/clear` would delete and what it keeps,
         plus a `previewDigest` over that scope. The clear must present the
         same digest.
@@ -16900,9 +16900,9 @@ paths:
   /api/librarian/history/clear:
     post:
       tags: [librarian]
-      summary: (ADR-188 — Designed) Delete the caller's librarian history
+      summary: (ADR-190 — Designed) Delete the caller's librarian history
       description: |
-        (Designed — ADR-188 D14, `LMM-08`, `TST-06`.) A destructive action,
+        (Designed — ADR-190 D14, `LMM-08`, `TST-06`.) A destructive action,
         separate from reset. `previewDigest` must match a fresh preview; a stale
         digest (anything changed since) is refused `409 CONFLICT` and nothing is
         deleted.
@@ -16934,9 +16934,9 @@ paths:
   /api/librarian/updates/{updateId}/explain:
     post:
       tags: [librarian]
-      summary: (ADR-185 — Designed) Ask the librarian to explain a follow-up update
+      summary: (ADR-187 — Designed) Ask the librarian to explain a follow-up update
       description: |
-        (Designed — ADR-185 D11, `LOP-11`, `LAU-05`.) Enqueues an `explain` turn
+        (Designed — ADR-187 D11, `LOP-11`, `LAU-05`.) Enqueues an `explain` turn
         for one follow-up update card. The turn's token holds only the
         read-only `LIBRARIAN_READ_SCOPES`, so nothing in the update text or a
         teammate's answer can cause an effect. `updateId` is checked against
@@ -16967,9 +16967,9 @@ paths:
   /api/librarian/stream:
     get:
       tags: [librarian]
-      summary: (ADR-183 — Designed) SSE — the caller's librarian conversation stream
+      summary: (ADR-185 — Designed) SSE — the caller's librarian conversation stream
       description: |
-        (Designed — ADR-183, `LCV-12`.) Requires an active session, checked as
+        (Designed — ADR-185, `LCV-12`.) Requires an active session, checked as
         the FIRST await. Addressed by the SESSION USER: it emits only the
         owner's conversation, and there is no parameter naming a user or a
         conversation.
@@ -17019,9 +17019,9 @@ paths:
   /api/admin/platform/librarian:
     get:
       tags: [admin, librarian]
-      summary: (ADR-183 — Designed) Read the librarian settings and readiness
+      summary: (ADR-185 — Designed) Read the librarian settings and readiness
       description: |
-        (Designed — ADR-183, `LCV-11`.) Global admin only. The settings card's
+        (Designed — ADR-185, `LCV-11`.) Global admin only. The settings card's
         read: `librarian_enabled`, `librarian_runner_id` and the resulting
         readiness. Carries no user's conversation data.
       operationId: getAdminLibrarianSettings
@@ -17035,9 +17035,9 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
     patch:
       tags: [admin, librarian]
-      summary: (ADR-183 — Designed) Enable the librarian and choose its runner
+      summary: (ADR-185 — Designed) Enable the librarian and choose its runner
       description: |
-        (Designed — ADR-183, `LCV-11`.) Global admin only
+        (Designed — ADR-185, `LCV-11`.) Global admin only
         (`requireGlobalRole('admin')`). Writes `librarian_enabled` and
         `librarian_runner_id` on the singleton `platform_runtime_settings` row.
         `enabled` is required. `runnerId` absent leaves the runner unchanged;
@@ -17231,7 +17231,7 @@ components:
           schema: { $ref: "#/components/schemas/MaisterErrorBody" }
     BudgetExceeded:
       description: |
-        A finite budget is spent (`BUDGET_EXCEEDED`) — e.g. (Designed — ADR-183)
+        A finite budget is spent (`BUDGET_EXCEEDED`) — e.g. (Designed — ADR-185)
         the per-user daily librarian turn cap. Retry after the budget resets.
       content:
         application/json:
@@ -22830,7 +22830,7 @@ components:
             `PRECONDITION`); the top-level `reason` enum above is unchanged.
             HITL respond errors refine this open object to the bounded
             `HitlRespondDetails` contract; unrelated error details remain open.
-            (Designed — ADR-185/186) The librarian session routes and the task
+            (Designed — ADR-187/186) The librarian session routes and the task
             PATCH set `details.reason` to `target_changed` (a card whose target
             moved or expired) or `stale_revision` (a stale `expectedRevision`).
 
@@ -25480,7 +25480,7 @@ components:
           enum: [timeout, network, http, config]
           description: Present only when `ok` is false; classified failure cause.
 
-    # ── Personal librarian schemas (Designed — ADR-183..189) ──────────────────
+    # ── Personal librarian schemas (Designed — ADR-185..189) ──────────────────
     # Explicit DTOs: none of them is a database row. They mirror the same-named
     # schemas in `external/operations.openapi.yaml` where both surfaces carry
     # the object.
@@ -25488,7 +25488,7 @@ components:
     TaskStatement:
       type: object
       description: |
-        (Designed — ADR-186, `TST-01`) The agreed, self-contained task
+        (Designed — ADR-188, `TST-01`) The agreed, self-contained task
         statement. Every key is required; arrays may be empty except
         `acceptance`. Accepting a statement stores an immutable
         `task_statement_revisions` row and renders `tasks.prompt` from it
@@ -25541,7 +25541,7 @@ components:
 
     TaskClarificationAnswer:
       description: |
-        (Designed — ADR-187) Exactly one form, matching the request's
+        (Designed — ADR-189) Exactly one form, matching the request's
         `answerFormat`: `text`, `choice` (one of the request's `choices`), or
         `yesNo`.
       oneOf:
@@ -25572,7 +25572,7 @@ components:
       type: object
       additionalProperties: false
       description: |
-        (Designed — ADR-187) Explicit projection of one USER-origin
+        (Designed — ADR-189) Explicit projection of one USER-origin
         `task_clarifications` row.
       required:
         [
@@ -25658,7 +25658,7 @@ components:
       type: string
       pattern: "^(0|[1-9][0-9]{0,18})$"
       description: |
-        (Designed — ADR-183) A conversation message sequence
+        (Designed — ADR-185) A conversation message sequence
         (`librarian_messages.seq`, bigint) as a canonical decimal string, like
         every other cursor on the wire — the same value the stream frames carry
         as their SSE `id`.
@@ -25668,7 +25668,7 @@ components:
       additionalProperties: false
       required: [state]
       description: |
-        (Designed — ADR-183, `LCV-11`) Whether a message can be admitted now.
+        (Designed — ADR-185, `LCV-11`) Whether a message can be admitted now.
         `disabled` — an admin turned the librarian off; `not_configured` — no
         librarian runner is set; `runner_not_ready` — the runner fails its
         readiness diagnostics. Every non-`ready` state disables Send with this
@@ -25683,11 +25683,11 @@ components:
       additionalProperties: false
       required: [state]
       description: |
-        (Designed — ADR-189, `LUI-01`) The top-navigation indicator — a state,
+        (Designed — ADR-191, `LUI-01`) The top-navigation indicator — a state,
         never a numeric global count: `running` (a turn is admitted or
         running), `action_required` (a pending card awaits the owner), `unread`
         (a message past `readThroughSeq`), or `none`. When several hold, the
-        precedence is ADR-189's; the stream's `librarian.indicator` frame
+        precedence is ADR-191's; the stream's `librarian.indicator` frame
         carries the same value.
       properties:
         state:
@@ -25736,7 +25736,7 @@ components:
       type: object
       additionalProperties: false
       description: |
-        (Designed — ADR-189, `LUI-04`) What the owner was looking at when the
+        (Designed — ADR-191, `LUI-04`) What the owner was looking at when the
         message was sent, captured at send time and never retargeted. Every id
         is visibility-checked; a foreign or unknown one is refused `404`.
       properties:
@@ -25751,7 +25751,7 @@ components:
       type: object
       additionalProperties: false
       description: |
-        (Designed — ADR-186, `TST-08`) A task chip read live, in one batched,
+        (Designed — ADR-188, `TST-08`) A task chip read live, in one batched,
         visibility-filtered read. When the task is gone or no longer visible to
         the owner, `available` is false and every other field but `taskId` is
         null — an explicit unavailable state, never a stale title.
@@ -25775,7 +25775,7 @@ components:
       type: object
       additionalProperties: false
       description: |
-        (Designed — ADR-185 D11, `LOP-11`) A deterministic follow-up card for
+        (Designed — ADR-187 D11, `LOP-11`) A deterministic follow-up card for
         one domain event on followed work, rendered without a model turn. Run
         status and stage are read live at render. A merged run never claims
         deployment: `promotedKind: merge` reads "merged · deployment unknown".
@@ -25834,7 +25834,7 @@ components:
       type: object
       additionalProperties: false
       description: |
-        (Designed — ADR-185, `LOP-01`..`LOP-04`) Explicit projection of one
+        (Designed — ADR-187, `LOP-01`..`LOP-04`) Explicit projection of one
         `librarian_operations` row. The receipt UI renders the target's live
         status from a batched read (`TST-08`), never from `result`.
       required:
@@ -25887,7 +25887,7 @@ components:
       additionalProperties: false
       required: [kind, content, scope]
       description: |
-        (Designed — ADR-188, `LMM-02`) A personal memory item to write.
+        (Designed — ADR-190, `LMM-02`) A personal memory item to write.
         `projectSlug` is required when `scope` is `project` and refused
         otherwise (`422 CONFIG`).
       properties:
@@ -25947,7 +25947,7 @@ components:
       type: object
       additionalProperties: false
       description: |
-        (Designed — ADR-185 D7, `LOP-08`) Explicit projection of one
+        (Designed — ADR-187 D7, `LOP-08`) Explicit projection of one
         `librarian_cards` row. A statement proposal renders as a diff against
         the task's current revision.
       required:
@@ -25996,7 +25996,7 @@ components:
       type: object
       additionalProperties: false
       description: |
-        (Designed — ADR-183) Explicit projection of one `librarian_turns` row.
+        (Designed — ADR-185) Explicit projection of one `librarian_turns` row.
         `queued → admitted → running → completed | stopped | failed`;
         `queued → withdrawn`.
       required:
@@ -26062,7 +26062,7 @@ components:
       type: object
       additionalProperties: false
       description: |
-        (Designed — ADR-183, `LMM-09`, `LMM-12`, `TST-08`) Explicit projection
+        (Designed — ADR-185, `LMM-09`, `LMM-12`, `TST-08`) Explicit projection
         of one `librarian_messages` row with its live chips.
       required:
         [
@@ -26225,7 +26225,7 @@ components:
     LibrarianMemoryItem:
       type: object
       additionalProperties: false
-      description: (Designed — ADR-188, `LMM-02`) Explicit projection of one personal memory item.
+      description: (Designed — ADR-190, `LMM-02`) Explicit projection of one personal memory item.
       required:
         [
           id,

@@ -15,9 +15,9 @@
 > ([ADR-156](../decisions.md#adr-156-cross-project-agent-facade-reach)).
 >
 > **Designed (personal librarian):** the `librarian` token kind with per-request
-> live RBAC ([ADR-184](../decisions.md#adr-184-librarian-delegated-authority-per-turn-owner-bound-tokens-with-live-rbac)),
+> live RBAC ([ADR-186](../decisions.md#adr-186-librarian-delegated-authority-per-turn-owner-bound-tokens-with-live-rbac)),
 > `Idempotency-Key` on effectful routes, the new ext routes and the librarian MCP
-> toolset ([ADR-185](../decisions.md#adr-185-librarian-operation-ledger-confirmation-cards-and-launch-intent)).
+> toolset ([ADR-187](../decisions.md#adr-187-librarian-operation-ledger-confirmation-cards-and-launch-intent)).
 > See "Librarian external surface" below.
 
 ## Purpose
@@ -196,12 +196,12 @@ surface exists.
   cross-project pending HITL listing. `hitl:respond:human` is an exact critical
   scope for human, infra-recovery, and budget-breach HITL responses; `*` does
   not imply it.
-- **Librarian turn tokens** (Designed — ADR-184) — `token_kind='librarian'`
+- **Librarian turn tokens** (Designed — ADR-186) — `token_kind='librarian'`
   rows: one per personal-librarian turn, `owner_user_id` NOT NULL, `project_id`
   and `agent_id` NULL, `librarian_turn_id` set, `expires_at` = the turn
   deadline, named `librarian-turn:<turnId>`, issued when the conversation's run
   flips `Running` and revoked in the turn-end transaction (CHECK
-  `project_tokens_librarian_check`, migration `0181`). The owner is the only
+  `project_tokens_librarian_check`, migration `0183`). The owner is the only
   principal: `actorUserIdForToken` / `socialActorForToken` return the owner, and
   `token_audit_log` gains `on_behalf_of_user_id`, `librarian_turn_id` and
   `operation_id`. Scopes, admission and the MCP toolset are in "Librarian
@@ -563,7 +563,7 @@ boundary, but their semantic reduction and liveness rules are owned by
 [assistant-activity.md](assistant-activity.md). This domain owns only auth,
 scope, audit, and MCP forwarding for that surface.
 
-### Librarian turn token request (Designed — ADR-184 / ADR-185)
+### Librarian turn token request (Designed — ADR-186 / ADR-187)
 
 A librarian token is a global token like a personal one, but every request
 re-proves the owner's authority live and every effect is recorded in the
@@ -605,7 +605,7 @@ sequenceDiagram
     end
 ```
 
-## Librarian external surface (Designed — ADR-184 / ADR-185)
+## Librarian external surface (Designed — ADR-186 / ADR-187)
 
 The personal librarian reaches MAIster only through the `maister` MCP server
 attached to its turn session, over the ext routes below. Its token acts as its
@@ -863,23 +863,23 @@ allow-list come from one source with a drift test
   (Designed)
 - **Librarian token replayed after its turn ended** (revoked, expired, or the
   turn no longer `running`) → 401/403 with a failure audit row carrying
-  `librarian_turn_id`; no route work runs. (Designed — ADR-184)
+  `librarian_turn_id`; no route work runs. (Designed — ADR-186)
 - **Owner loses membership, or is deactivated, mid-turn** → the next request of
   the same turn is refused (existence-hidden 404 for the project, 403 for the
   account) because admission re-reads the live role on every request.
-  (Designed — ADR-184)
+  (Designed — ADR-186)
 - **Librarian token on an excluded route** (`hitl_respond` of any kind,
   `run_promote`, `run_discard`, `run_delegate`, `run_collect`, token, settings
   or admin routes) → 403 `UNAUTHORIZED`; **agent token on
-  `/api/v1/ext/librarian/*`** → 403. (Designed — ADR-184)
+  `/api/v1/ext/librarian/*`** → 403. (Designed — ADR-186)
 - **Effectful librarian request without `Idempotency-Key`** → 422 `CONFIG`,
   nothing admitted. **Same key, different body** → 409 `CONFLICT`
   `details.reason:"idempotency_payload_mismatch"`; **new key, digest of a
   succeeded operation** → 409 `CONFLICT` `details.reason:"duplicate_of_operation"`.
-  (Designed — ADR-185)
+  (Designed — ADR-187)
 - **Audit write fails on a librarian request** → the request fails and its
   route transaction rolls back; no effect exists without its audit row.
-  (Designed — ADR-184)
+  (Designed — ADR-186)
 
 ## Agent clarification request (Implemented — ADR-136)
 
@@ -903,9 +903,9 @@ a global personal token with exact `hitl:respond:human`; `*` is insufficient.
   [ADR-156](../decisions.md#adr-156-cross-project-agent-facade-reach)
   (cross-project agent facade reach — `CROSS_PROJECT_AGENT_SCOPES`, the
   attachment-as-grant model, `runs.agent_chain_depth`; Designed),
-  [ADR-184](../decisions.md#adr-184-librarian-delegated-authority-per-turn-owner-bound-tokens-with-live-rbac)
+  [ADR-186](../decisions.md#adr-186-librarian-delegated-authority-per-turn-owner-bound-tokens-with-live-rbac)
   (librarian turn tokens, live RBAC, scope policy; Designed),
-  [ADR-185](../decisions.md#adr-185-librarian-operation-ledger-confirmation-cards-and-launch-intent)
+  [ADR-187](../decisions.md#adr-187-librarian-operation-ledger-confirmation-cards-and-launch-intent)
   (operation ledger, `Idempotency-Key`, new ext routes and MCP tools; Designed).
 - Librarian contracts (Designed): [`librarian-authority.md`](librarian-authority.md),
   [`librarian-operations.md`](librarian-operations.md).

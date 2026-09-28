@@ -10,7 +10,7 @@ import { personalOwner } from "@/lib/tokens/personal-actor";
 
 const ENDPOINT = "GET /api/v1/ext/tasks/search";
 
-// ADR-184 LAU-06: a search across the owner's visible projects only. The page
+// ADR-186 LAU-06: a search across the owner's visible projects only. The page
 // is bounded and says when it is not the whole answer.
 export async function GET(req: NextRequest): Promise<NextResponse> {
   const db = getDb();

@@ -51,7 +51,7 @@ every implementation task is named by at least one row.
 | EDGE-LCV-03 | admission runner-ready check, EXECUTOR_UNAVAILABLE, queue kept | T2.5 | IT-EDGE-LCV-03 | Implemented |
 | EDGE-LCV-04 | deadline watchdog, token revoke, operation settles by reconcile lookup | T2.11 | IT-EDGE-LCV-04 | Implemented |
 | EDGE-LCV-05 | keep-alive Pass2 persistent exemption for a parked librarian run | T2.3 | IT-EDGE-LCV-05 | Implemented |
-| LAU-01 | ADR-184 route identifier table; owner from auth-context only | T2.12 | IT-LAU-01 | Implemented |
+| LAU-01 | ADR-186 route identifier table; owner from auth-context only | T2.12 | IT-LAU-01 | Implemented |
 | LAU-02 | CHECK project_tokens_kind_check and project_tokens_librarian_check; issueLibrarianTurnToken and revokeLibrarianTurnToken | T1.1, T1.2, T2.10 | IT-LAU-02 | Implemented |
 | LAU-03 | handleExt librarian arm; requireProjectActionForUser per request; turn running check | T1.3, T2.10, T2.11 | IT-LAU-03 | Implemented |
 | LAU-04 | deny-by-default admitLibrarian opt-in; LIBRARIAN_TOKEN_SCOPES exclusions; agent-token refusal on /ext/librarian routes | T1.3, T3.9 | IT-LAU-04 | Implemented |
@@ -170,6 +170,6 @@ the scenarios the live-adapter qualification repeats against real runners also c
 
 ## Linked artifacts
 
-- [ADR-183](../decisions.md#adr-183-librarian-runtime-a-project-less-run-kind-with-per-turn-acp-sessions) · [ADR-184](../decisions.md#adr-184-librarian-delegated-authority-per-turn-owner-bound-tokens-with-live-rbac) · [ADR-185](../decisions.md#adr-185-librarian-operation-ledger-confirmation-cards-and-launch-intent) · [ADR-186](../decisions.md#adr-186-task-statements-task-revision-and-conversation-provenance) · [ADR-187](../decisions.md#adr-187-addressed-task-clarification-before-execution) · [ADR-188](../decisions.md#adr-188-librarian-memory-summaries-reset-barrier-and-history-deletion) · [ADR-189](../decisions.md#adr-189-librarian-surface-top-navigation-entry-and-right-side-panel)
+- [ADR-185](../decisions.md#adr-185-librarian-runtime-a-project-less-run-kind-with-per-turn-acp-sessions) · [ADR-186](../decisions.md#adr-186-librarian-delegated-authority-per-turn-owner-bound-tokens-with-live-rbac) · [ADR-187](../decisions.md#adr-187-librarian-operation-ledger-confirmation-cards-and-launch-intent) · [ADR-188](../decisions.md#adr-188-task-statements-task-revision-and-conversation-provenance) · [ADR-189](../decisions.md#adr-189-addressed-task-clarification-before-execution) · [ADR-190](../decisions.md#adr-190-librarian-memory-summaries-reset-barrier-and-history-deletion) · [ADR-191](../decisions.md#adr-191-librarian-surface-top-navigation-entry-and-right-side-panel)
 - [`librarian-conversation.md`](librarian-conversation.md) · [`librarian-authority.md`](librarian-authority.md) · [`librarian-operations.md`](librarian-operations.md) · [`task-statements.md`](task-statements.md) · [`task-clarifications.md`](task-clarifications.md) · [`librarian-memory.md`](librarian-memory.md) · [`librarian-surface.md`](librarian-surface.md)
 - [Product brief — personal librarian](../pv/personal-librarian.md)

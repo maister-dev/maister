@@ -238,7 +238,7 @@ type OwnerAdmissionOpts = {
 
 // A global token acts as its owner, so a project-addressed request is admitted
 // only when the owner's LIVE project role allows the scope's action (ADR-046
-// for personal tokens, ADR-184 for librarian tokens). A project the owner cannot
+// for personal tokens, ADR-186 for librarian tokens). A project the owner cannot
 // see answers exactly like a missing one. A librarian token whose owner CAN see
 // the project but lacks the action gets a 403 naming the action, so the
 // librarian can tell the owner why instead of claiming the project is absent.
@@ -347,11 +347,11 @@ export async function handleExt(
     auditProjectId?: string | null;
     resolveProjectId?: (ctx: ResolveProjectCtx) => Promise<string | null>;
     resolveScopeLabel?: (ctx: ResolveScopeCtx) => Promise<string>;
-    // ADR-184: a librarian token is refused unless the route opts in. Opting in
+    // ADR-186: a librarian token is refused unless the route opts in. Opting in
     // is a statement that the route is part of the owner's business-work
     // surface; human-only and coordinator routes never set it.
     admitLibrarian?: boolean;
-    // ADR-184: how a project-less librarian token finds the project a
+    // ADR-186: how a project-less librarian token finds the project a
     // resource-addressed route acts in (the run's project, for example). Other
     // kinds keep their existing admission, so a global personal token's answer
     // on these routes does not change.

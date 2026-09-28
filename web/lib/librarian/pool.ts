@@ -46,7 +46,7 @@ export function dispatchLibrarianTurn(
   });
 }
 
-/** ADR-183 D2: one slot of the librarian pool freed — admit the admitted turn
+/** ADR-185 D2: one slot of the librarian pool freed — admit the admitted turn
  * that has waited longest (FIFO by `admitted_at`). Queued, never refused. */
 export async function promoteNextLibrarianTurn(
   opts: { db?: Db; start?: LibrarianTurnStarter } = {},

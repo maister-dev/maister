@@ -42,7 +42,7 @@ import {
   type PromotedKind,
 } from "@/lib/work/stage";
 
-// ADR-183 / web.openapi.yaml: explicit DTO projections — never a row.
+// ADR-185 / web.openapi.yaml: explicit DTO projections — never a row.
 
 export type LibrarianIndicatorState =
   | "none"
@@ -366,7 +366,7 @@ export function librarianTurnDto(
   };
 }
 
-/** ADR-189 D2: pending owner confirmations precede running and unread state. */
+/** ADR-191 D2: pending owner confirmations precede running and unread state. */
 export async function librarianIndicator(
   db: Db,
   conversation: { id: string; readThroughSeq: bigint | string },
@@ -415,7 +415,7 @@ export async function librarianIndicator(
   return unread ? "unread" : "none";
 }
 
-/** ADR-189 D2: the layout's read. It never creates a conversation — a user
+/** ADR-191 D2: the layout's read. It never creates a conversation — a user
  * who has not opened the librarian simply has no indicator. */
 export async function readLibrarianIndicator(
   ownerId: string,

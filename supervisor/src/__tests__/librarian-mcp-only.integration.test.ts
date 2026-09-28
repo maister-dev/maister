@@ -1,4 +1,4 @@
-// ADR-183 D5 (IT-LAU-11): a librarian turn is MCP-only. The web sends an
+// ADR-185 D5 (IT-LAU-11): a librarian turn is MCP-only. The web sends an
 // enforcement profile that admits exactly the maister facade's librarian tools;
 // capability_guard denies every built-in (file, shell, web) inline, admits the
 // facade tool without a HITL deferred, and halts the session on the third
@@ -117,7 +117,7 @@ describe("IT-LAU-11: a librarian session reaches only the maister facade", () =>
   });
 });
 
-describe("ADR-183: the reserved librarian workspace slug", () => {
+describe("ADR-185: the reserved librarian workspace slug", () => {
   it("adopts a directory under `_librarian` and refuses other non-kebab slugs", async () => {
     booted = await bootHost({
       fixture: "mock-acp-guardrail.mjs",

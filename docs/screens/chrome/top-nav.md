@@ -26,7 +26,7 @@ account actions (change password, sign out); admin destinations live in the
 - **Mobile rail trigger (Implemented):** below `md`, an icon button opens the
   one on-demand mobile left-rail drawer; it has an accessible name and receives
   restored focus when that drawer closes.
-- **Librarian entry (Designed — ADR-189):** opens the personal
+- **Librarian entry (Designed — ADR-191):** opens the personal
   [librarian panel](librarian-panel.md) in place (no navigation) and receives
   restored focus when the panel closes. It binds no keyboard shortcut —
   Cmd/Ctrl+K stays the scratch launcher.
@@ -52,7 +52,7 @@ Heroicons: a sun for light mode and a moon for dark mode. After WI-3 the
 breadcrumb no longer carries a supervisor status dot — supervisor status is
 shown once in the footer ([`status-bar.md`](status-bar.md)).
 
-**Librarian entry (Designed — ADR-189).** The right group gains the Librarian
+**Librarian entry (Designed — ADR-191).** The right group gains the Librarian
 entry, rendered for every authenticated user on every `(app)` route: icon and
 label where the width allows, the icon alone below `md` with an explicit
 `aria-label`, and — like the mobile rail trigger — never dropped. It carries at
@@ -74,7 +74,7 @@ the same way at the widths where it is shown. The mobile rail trigger, the only
 route to navigation below `md`, is never dropped. This replaced a header that
 overflowed a 390px viewport on every route (`/work` 471px, `/inbox` 479px) and
 made the whole page scroll sideways. Below `md` the logo's wordmark is
-`sr-only` (ADR-189 amendment): the mark stays visible and the wordmark stays the
+`sr-only` (ADR-191 amendment): the mark stays visible and the wordmark stays the
 home link's accessible name, which is the room the Librarian entry needs.
 
 ## States
@@ -87,7 +87,7 @@ Authenticated only (the `(app)` group redirects unauthenticated requests to
 No data fetch of its own. The breadcrumb is static; the user identity comes from
 the session resolved in the layout.
 
-(Designed — ADR-189) The Librarian entry's indicator is read once by the
+(Designed — ADR-191) The Librarian entry's indicator is read once by the
 `(app)` layout (`readLibrarianIndicator`, which never creates a conversation —
 `none` for a user who never opened it) and is kept fresh by the
 `librarian.indicator` frames of `GET /api/librarian/stream`
@@ -116,4 +116,4 @@ indicator names live in the `librarian` namespace (Designed).
   (`NAV-04`, `NAV-05`).
 - Librarian entry (Designed): [`librarian-panel.md`](librarian-panel.md),
   [`../../system-analytics/librarian-surface.md`](../../system-analytics/librarian-surface.md),
-  [ADR-189](../../decisions.md#adr-189-librarian-surface-top-navigation-entry-and-right-side-panel).
+  [ADR-191](../../decisions.md#adr-191-librarian-surface-top-navigation-entry-and-right-side-panel).

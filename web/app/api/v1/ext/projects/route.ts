@@ -14,7 +14,7 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-// ADR-184: the projects the token's owner can see — the librarian's entry
+// ADR-186: the projects the token's owner can see — the librarian's entry
 // point for discovery. Nothing outside the owner's visibility is listed.
 export async function GET(req: NextRequest): Promise<NextResponse> {
   const db = getDb();

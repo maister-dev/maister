@@ -15,7 +15,7 @@ does **not** own task status, the board or launch
 ([`librarian-operations.md`](librarian-operations.md)), or deletion of the private
 conversation ([`librarian-memory.md`](librarian-memory.md)). Tasks own work; a
 conversation is their source, never their dependency. The decision is
-[ADR-186](../decisions.md#adr-186-task-statements-task-revision-and-conversation-provenance).
+[ADR-188](../decisions.md#adr-188-task-statements-task-revision-and-conversation-provenance).
 The whole domain is **Implemented**.
 
 ## Domain entities
@@ -133,8 +133,8 @@ flowchart LR
 
 ## Linked artifacts
 
-- [ADR-186 — task statements, task revision and provenance](../decisions.md#adr-186-task-statements-task-revision-and-conversation-provenance) · [record](../decisions/adr-186.md)
-- [ADR-185 — operation ledger](../decisions.md#adr-185-librarian-operation-ledger-confirmation-cards-and-launch-intent) · [ADR-160](../decisions.md#adr-160) · [ADR-161](../decisions.md#adr-161)
+- [ADR-188 — task statements, task revision and provenance](../decisions.md#adr-188-task-statements-task-revision-and-conversation-provenance) · [record](../decisions/adr-188.md)
+- [ADR-187 — operation ledger](../decisions.md#adr-187-librarian-operation-ledger-confirmation-cards-and-launch-intent) · [ADR-160](../decisions.md#adr-160) · [ADR-161](../decisions.md#adr-161)
 - [Librarian requirement traceability](librarian-traceability.md)
 - [Product brief — personal librarian](../pv/personal-librarian.md)
 - [Librarian ERD](../db/librarian-domain.md)

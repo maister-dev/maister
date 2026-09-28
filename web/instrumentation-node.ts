@@ -43,7 +43,7 @@ export async function registerNodeRuntime(): Promise<void> {
   projectionLimitsFromEnv();
   const { librarianConfig } = await import("@/lib/librarian/config");
 
-  // ADR-183 D17: a garbage librarian budget refuses boot with CONFIG, and the
+  // ADR-185 D17: a garbage librarian budget refuses boot with CONFIG, and the
   // resolved numbers are logged once.
   librarianConfig();
 

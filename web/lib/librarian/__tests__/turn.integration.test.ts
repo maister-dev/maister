@@ -49,7 +49,7 @@ import {
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 
-// ADR-183 (T2.10, T2.11): a librarian turn end to end over the fake host —
+// ADR-185 (T2.10, T2.11): a librarian turn end to end over the fake host —
 // context snapshot before the prompt, an MCP-only session, the reply stored,
 // the token revoked and the run parked by the turn's own prompt owner; and the
 // stop, host-loss and deadline arms that end a turn by another path.

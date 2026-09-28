@@ -4,8 +4,8 @@
   on every `(app)` screen).
 - **Route:** none of its own — the panel is mounted once in
   `web/app/(app)/layout.tsx`, so it survives route changes.
-- **Status:** Designed (ADR-189; runtime ADR-183, authority ADR-184,
-  operations ADR-185, memory and reset ADR-188).
+- **Status:** Designed (ADR-191; runtime ADR-185, authority ADR-186,
+  operations ADR-187, memory and reset ADR-190).
 - **Source:** `web/components/librarian/librarian-trigger.tsx`,
   `web/components/librarian/librarian-panel.tsx`,
   `web/components/librarian/librarian-provider.tsx` (open state, indicator, the
@@ -208,15 +208,15 @@ Work-stage chips reuse `workStage`.
 
 ## Linked artifacts
 
-- ADRs: [ADR-189](../../decisions.md#adr-189-librarian-surface-top-navigation-entry-and-right-side-panel)
+- ADRs: [ADR-191](../../decisions.md#adr-191-librarian-surface-top-navigation-entry-and-right-side-panel)
   (entry, panel, breakpoints, focus, no Cmd/Ctrl+K),
-  [ADR-183](../../decisions.md#adr-183-librarian-runtime-a-project-less-run-kind-with-per-turn-acp-sessions)
+  [ADR-185](../../decisions.md#adr-185-librarian-runtime-a-project-less-run-kind-with-per-turn-acp-sessions)
   (turn runtime and run stream),
-  [ADR-184](../../decisions.md#adr-184-librarian-delegated-authority-per-turn-owner-bound-tokens-with-live-rbac)
+  [ADR-186](../../decisions.md#adr-186-librarian-delegated-authority-per-turn-owner-bound-tokens-with-live-rbac)
   (owner-bound authority),
-  [ADR-185](../../decisions.md#adr-185-librarian-operation-ledger-confirmation-cards-and-launch-intent)
+  [ADR-187](../../decisions.md#adr-187-librarian-operation-ledger-confirmation-cards-and-launch-intent)
   (cards and receipts),
-  [ADR-188](../../decisions.md#adr-188-librarian-memory-summaries-reset-barrier-and-history-deletion)
+  [ADR-190](../../decisions.md#adr-190-librarian-memory-summaries-reset-barrier-and-history-deletion)
   (memory, reset, clear history).
 - Behaviour: [`../../system-analytics/librarian-surface.md`](../../system-analytics/librarian-surface.md),
   [`../../system-analytics/librarian-conversation.md`](../../system-analytics/librarian-conversation.md),

@@ -304,7 +304,7 @@ async function requireProjectRoleForActiveUser(
   projectId: string,
   min: ProjectRole,
 ): Promise<ProjectAccess> {
-  // ADR-183: a project-less run (a librarian conversation, a local-package
+  // ADR-185: a project-less run (a librarian conversation, a local-package
   // assistant) has no project to grant access to. A route that cast its NULL
   // `project_id` to a string must not turn a global admin's implicit ownership
   // of every project into access to another user's private run.

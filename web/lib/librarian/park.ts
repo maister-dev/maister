@@ -21,7 +21,7 @@ export type LibrarianParkApplication =
   | Readonly<{ parked: false }>
   | Readonly<{ parked: true; checkpointAt: Date; assignmentId: string | null }>;
 
-/** ADR-183 D3: between turns the conversation run is parked, holding neither
+/** ADR-185 D3: between turns the conversation run is parked, holding neither
  * a slot nor an assignment. The scheduler lock is taken FIRST so a parking
  * transaction and a pool promotion order run-row locks the same way. It never
  * touches `agent_turns` or `resume_requested_at` — `librarian_turns` is the
@@ -68,7 +68,7 @@ export type LibrarianResumeClaim =
   | Readonly<{ claimed: true; assignmentId: string }>
   | Readonly<{ claimed: false; reason: "pool_full" | "not_claimable" }>;
 
-/** ADR-183 D3: takes a slot of the librarian pool for an ADMITTED turn and
+/** ADR-185 D3: takes a slot of the librarian pool for an ADMITTED turn and
  * places the run. A parked run (`NeedsInputIdle`) or a first turn's queued run
  * (`Pending`) becomes `Running`; anything else — above all a run that is
  * already `Running` — is refused. Under a full pool the run stays where it is

@@ -46,7 +46,7 @@ function workRowDTO(row: WorkTableRow) {
   };
 }
 
-// ADR-184: the owner's cross-project work table (`/work`), computed over the
+// ADR-186: the owner's cross-project work table (`/work`), computed over the
 // owner's visible projects only.
 export async function GET(req: NextRequest): Promise<NextResponse> {
   const db = getDb();

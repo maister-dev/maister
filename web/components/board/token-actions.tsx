@@ -39,7 +39,7 @@ type UserTokenScope = Exclude<
   JudgeTokenScope | LibrarianOnlyTokenScope
 >;
 
-// ADR-184: the librarian's personal surfaces admit only a librarian turn token,
+// ADR-186: the librarian's personal surfaces admit only a librarian turn token,
 // so a person granting them to a personal token would grant nothing.
 const MACHINE_ONLY_TOKEN_SCOPES: readonly TokenScope[] = [
   ...JUDGE_TOKEN_SCOPES,

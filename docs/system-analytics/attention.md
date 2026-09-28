@@ -37,7 +37,7 @@ Both are **Implemented**.
 - **Decision-queue item** — a projected DTO carrying kind, criticality, age and
   a next action. Never a database row.
 - **Clarification item** (Designed —
-  [ADR-187](../decisions.md#adr-187-addressed-task-clarification-before-execution))
+  [ADR-189](../decisions.md#adr-189-addressed-task-clarification-before-execution))
   — a fifth `decisions` population and a fifth `DecisionKind`,
   `clarification`: an open user-origin `task_clarifications` row whose
   `recipient_user_id` is the reader. See "Clarification population" below.
@@ -74,7 +74,7 @@ flowchart TD
     V --> P["promotable runs"]
     V --> C["Crashed runs"]
     V --> F["triage-flagged tasks"]
-    V --> K["open clarifications addressed to the reader, Designed ADR-187"]
+    V --> K["open clarifications addressed to the reader, Designed ADR-189"]
     H --> Q["one decision-queue query"]
     P --> Q
     C --> Q
@@ -155,7 +155,7 @@ sequenceDiagram
   No gate enumerates routes against paths, so the pairing is a convention a
   reviewer has to hold.
 
-## Clarification population (Designed — ADR-187)
+## Clarification population (Designed — ADR-189)
 
 The personal librarian lets one user ask another a question about a task before
 any run exists. That question is work blocked on the recipient, so it belongs to
@@ -168,7 +168,7 @@ any run exists. That question is work blocked on the recipient, so it belongs to
   its population list gains this member. The kind fans out through
   `DECISION_KINDS`, `NON_HITL_RANK`, `STAGE_BY_KIND`, `compareDecisions`,
   `nextActionOf` in the ext decisions route and the inbox card; the rank and
-  stage values it takes are ADR-187's. ATN-07's order among the four existing
+  stage values it takes are ADR-189's. ATN-07's order among the four existing
   kinds is unchanged, and `tasks.priority` is still never consulted.
 - **Addressed, not broadcast.** Unlike the other four populations the item is
   counted only for its `recipient_user_id`; the requester's count and list never
@@ -234,7 +234,7 @@ flowchart LR
 
 - [ADR-169 — two canonical attention counters](../decisions.md#adr-169-two-canonical-attention-counters-decisions-and-updates)
 - [ADR-171 — user-scoped attention SSE stream](../decisions.md#adr-171-user-scoped-attention-sse-stream)
-- [ADR-187 — addressed task clarification before execution](../decisions.md#adr-187-addressed-task-clarification-before-execution) (Designed — the fifth population)
+- [ADR-189 — addressed task clarification before execution](../decisions.md#adr-189-addressed-task-clarification-before-execution) (Designed — the fifth population)
 - [Task clarifications](task-clarifications.md) (Designed)
 - [M51 requirement traceability](m51-traceability.md)
 - [Social board — inbox, mentions, subscriptions](social-board.md)

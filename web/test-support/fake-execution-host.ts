@@ -1513,7 +1513,7 @@ export function createFakeExecutionHost(
             typeof payload.projectSlug !== "string" ||
             !(
               KEBAB.test(payload.projectSlug) ||
-              // ADR-183: the supervisor's one reserved non-kebab slug.
+              // ADR-185: the supervisor's one reserved non-kebab slug.
               payload.projectSlug === "_librarian"
             )
           ) {

@@ -580,10 +580,10 @@ erDiagram
 > See [`../system-analytics/social-board.md`](../system-analytics/social-board.md)
 > and [ADR-083](../decisions.md#adr-083-social-board-substrate--per-project-task-numbering-typed-relations-polymorphic-actor).
 
-### Personal librarian additions (Designed — ADR-183..187)
+### Personal librarian additions (Designed — ADR-185..187)
 
 The personal librarian adds a fourth run kind and a few columns to the shared
-run and task tables (migrations `0183`–`0186`). Its own tables are drawn in
+run and task tables (migrations `0185`–`0188`). Its own tables are drawn in
 [`librarian-domain.md`](librarian-domain.md); only the shared-table deltas and
 their edges appear here.
 
@@ -597,31 +597,31 @@ erDiagram
     LIBRARIAN_OPERATIONS |o..o| RUNS : "librarian_operation_id (UNIQUE, no FK)"
 
     RUNS {
-        text run_kind "Designed 0183: flow|scratch|agent|librarian, runs_run_kind_check"
-        text librarian_operation_id "Designed 0183: NULL, UNIQUE runs_librarian_operation_uq"
+        text run_kind "Designed 0185: flow|scratch|agent|librarian, runs_run_kind_check"
+        text librarian_operation_id "Designed 0185: NULL, UNIQUE runs_librarian_operation_uq"
     }
 
     RUN_SESSIONS {
-        integer librarian_context_epoch "Designed 0183: NULL, epoch the ACP session was created under"
+        integer librarian_context_epoch "Designed 0185: NULL, epoch the ACP session was created under"
     }
 
     TASKS {
-        integer revision "Designed 0184: NOT NULL DEFAULT 0, +1 per content write"
-        integer statement_revision "Designed 0184: NULL, accepted revision rendered into prompt"
-        text launch_intent "Designed 0184: NULL|none|triage_only|triage_then_launch"
-        text created_via_operation_id "Designed 0184: NULL, UNIQUE tasks_created_via_operation_uq"
+        integer revision "Designed 0186: NOT NULL DEFAULT 0, +1 per content write"
+        integer statement_revision "Designed 0186: NULL, accepted revision rendered into prompt"
+        text launch_intent "Designed 0186: NULL|none|triage_only|triage_then_launch"
+        text created_via_operation_id "Designed 0186: NULL, UNIQUE tasks_created_via_operation_uq"
     }
 
     TASK_COMMENTS {
-        text via_operation_id "Designed 0185: NULL, UNIQUE task_comments_via_operation_uq"
+        text via_operation_id "Designed 0187: NULL, UNIQUE task_comments_via_operation_uq"
     }
 
     TASK_ACTIVITY {
-        text event_kind "Designed: + statement_accepted (0185), clarification_requested|answered|cancelled (0186)"
+        text event_kind "Designed: + statement_accepted (0187), clarification_requested|answered|cancelled (0188)"
     }
 
     INBOX_ITEMS {
-        text event_kind "Designed 0186: + clarification_requested"
+        text event_kind "Designed 0188: + clarification_requested"
         jsonb source_ref "Designed: + kind clarification with taskId, clarificationId, activityId"
     }
 ```
@@ -636,7 +636,7 @@ erDiagram
 - `tasks.launch_intent` NULL keeps today's behaviour for every non-librarian
   path; only `triage_then_launch` lets a triage verdict arm `launch_mode='auto'`.
 - `agent_turns` (drawn in [`agents-domain.md`](agents-domain.md)) gains
-  `requested_by_user_id` (FK `users`, `SET NULL`, migration `0185`) for a
+  `requested_by_user_id` (FK `users`, `SET NULL`, migration `0187`) for a
   persistent-agent message sent through the librarian's operator-message seam.
 - Exact DDL: [`../database-schema.md`](../database-schema.md#personal-librarian-tables-designed--adr-183188-migrations-01810188).
 

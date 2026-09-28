@@ -73,7 +73,7 @@ export async function issueToken(
   const ownerUserId = input.ownerUserId ?? null;
   const scopes = normalizeTokenScopes(input.scopes);
 
-  // ADR-184: a librarian token exists only for one librarian turn and is minted
+  // ADR-186: a librarian token exists only for one librarian turn and is minted
   // by lib/librarian/authority.ts — never through the human issuance path.
   if (tokenKind === "librarian") {
     throw new MaisterError(

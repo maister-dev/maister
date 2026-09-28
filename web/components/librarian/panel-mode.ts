@@ -1,4 +1,4 @@
-// ADR-189 D4: the one rule that picks the panel's presentation. Pure, so the
+// ADR-191 D4: the one rule that picks the panel's presentation. Pure, so the
 // breakpoints are tested without a browser and every caller agrees on them.
 
 export type LibrarianPanelMode = "docked" | "sheet" | "fullscreen";

@@ -99,7 +99,7 @@ const DEFAULT_ASSISTANT_CAP = 5;
 export type SchedulerPool = "flow" | "agent" | "librarian";
 
 // The flow pool covers delivery + scratch runs; agent runs never consume it.
-// ADR-183: librarian turns hold their own budget
+// ADR-185: librarian turns hold their own budget
 // (`MAISTER_MAX_CONCURRENT_LIBRARIAN_TURNS`), so a chatty user never starves
 // delivery and a full delivery pool never silences the librarian.
 const POOL_RUN_KINDS: Record<SchedulerPool, string[]> = {
@@ -707,7 +707,7 @@ export async function promoteNextPending(
 
   const pool: SchedulerPool = opts.pool ?? "flow";
 
-  // ADR-183: the librarian pool admits TURNS, FIFO by admission, not runs by
+  // ADR-185: the librarian pool admits TURNS, FIFO by admission, not runs by
   // task priority; its claim and dispatch live with the librarian runtime.
   if (pool === "librarian") {
     const { promoteNextLibrarianTurn } = await import("@/lib/librarian/pool");

@@ -62,7 +62,7 @@ deny mechanism for librarian sessions.
 
 The web tier reads the finite turn, concurrency, context, daily-use,
 confirmation, operation-reconciliation and retention limits at boot. Set them
-in the host environment and see [Configuration](configuration.md#personal-librarian--platform_runtime_settings-implemented--adr-183)
+in the host environment and see [Configuration](configuration.md#personal-librarian--platform_runtime_settings-implemented--adr-185)
 for names, defaults and validation. The supervisor and MCP facade must be
 reachable on the same supported execution host. If a turn fails, inspect its
 visible error and the librarian Run/operation receipt before retrying; do not

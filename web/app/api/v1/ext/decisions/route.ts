@@ -51,7 +51,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       // A decision queue is a PERSON's queue. A project token has no person, and
       // an agent token must never read one — so this is the narrowest of the ext
       // actors: a global personal token and nothing else.
-      // ADR-184: the librarian reads its owner's queue with the owner's human
+      // ADR-186: the librarian reads its owner's queue with the owner's human
       // authority; it never answers from it (human-only decisions become
       // confirmation cards).
       const refused = requirePersonalOrLibrarianActor(ctx.actor, {

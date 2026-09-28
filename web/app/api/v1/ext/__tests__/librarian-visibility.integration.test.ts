@@ -19,7 +19,7 @@ import {
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 
-// ADR-184 LAU-06: every cross-project read filters by the owner's visible
+// ADR-186 LAU-06: every cross-project read filters by the owner's visible
 // projects BEFORE it aggregates, and a foreign project answers exactly like a
 // missing one. Each case feeds data that DOES exist in a foreign project.
 

@@ -1,6 +1,6 @@
 {
-  "id": "1104fe4b-5c70-4675-b6c0-c086dd9f598e",
-  "prevId": "89916a2b-a571-493f-9ef5-5fd141ab1881",
+  "id": "fb5242e6-b8f8-40c3-b751-7ea80b57bac1",
+  "prevId": "35192113-d95f-4809-a7dd-deec57a5b989",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -3027,7 +3027,7 @@
       "checkConstraints": {
         "domain_events_kind_check": {
           "name": "domain_events_kind_check",
-          "value": "\"domain_events\".\"kind\" in ('task.created', 'task.comment_added', 'task.triage_requeued', 'task.clarification_answered', 'run.done', 'run.failed', 'run.crashed', 'run.abandoned', 'run.review', 'run.escalated', 'run.rework_claimed', 'run.rework_returned', 'gate.failed')"
+          "value": "\"domain_events\".\"kind\" in ('task.created', 'task.comment_added', 'task.triage_requeued', 'task.clarification_requested', 'task.clarification_answered', 'task.clarification_cancelled', 'run.done', 'run.failed', 'run.crashed', 'run.abandoned', 'run.review', 'run.review_opened', 'run.needs_input', 'run.escalated', 'run.rework_claimed', 'run.rework_returned', 'gate.failed')"
         },
         "domain_events_actor_type_check": {
           "name": "domain_events_actor_type_check",
@@ -10820,7 +10820,7 @@
         },
         "inbox_items_event_kind_check": {
           "name": "inbox_items_event_kind_check",
-          "value": "\"inbox_items\".\"event_kind\" in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched', 'triage_set', 'triage_requeued', 'agent_quarantined', 'experiment_concluded', 'run_pr_merged')"
+          "value": "\"inbox_items\".\"event_kind\" in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched', 'triage_set', 'triage_requeued', 'agent_quarantined', 'experiment_concluded', 'run_pr_merged', 'clarification_requested')"
         }
       },
       "isRLSEnabled": false
@@ -11265,6 +11265,292 @@
       },
       "isRLSEnabled": false
     },
+    "public.librarian_memory_item_revisions": {
+      "name": "librarian_memory_item_revisions",
+      "schema": "",
+      "columns": {
+        "item_id": {
+          "name": "item_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "content": {
+          "name": "content",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "librarian_memory_item_revisions_item_id_librarian_memory_items_id_fk": {
+          "name": "librarian_memory_item_revisions_item_id_librarian_memory_items_id_fk",
+          "tableFrom": "librarian_memory_item_revisions",
+          "tableTo": "librarian_memory_items",
+          "columnsFrom": [
+            "item_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "librarian_memory_item_revisions_item_id_revision_pk": {
+          "name": "librarian_memory_item_revisions_item_id_revision_pk",
+          "columns": [
+            "item_id",
+            "revision"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "librarian_memory_item_revisions_revision_check": {
+          "name": "librarian_memory_item_revisions_revision_check",
+          "value": "\"librarian_memory_item_revisions\".\"revision\" >= 1"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.librarian_memory_items": {
+      "name": "librarian_memory_items",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "content": {
+          "name": "content",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "scope": {
+          "name": "scope",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "project_id": {
+          "name": "project_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_refs": {
+          "name": "source_refs",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "source_project_ids": {
+          "name": "source_project_ids",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::text[]"
+        },
+        "origin": {
+          "name": "origin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "valid_until": {
+          "name": "valid_until",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "forgotten_at": {
+          "name": "forgotten_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "librarian_memory_items_user_active_idx": {
+          "name": "librarian_memory_items_user_active_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"librarian_memory_items\".\"forgotten_at\" IS NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "librarian_memory_items_user_id_users_id_fk": {
+          "name": "librarian_memory_items_user_id_users_id_fk",
+          "tableFrom": "librarian_memory_items",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "librarian_memory_items_project_id_projects_id_fk": {
+          "name": "librarian_memory_items_project_id_projects_id_fk",
+          "tableFrom": "librarian_memory_items",
+          "tableTo": "projects",
+          "columnsFrom": [
+            "project_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "librarian_memory_items_kind_check": {
+          "name": "librarian_memory_items_kind_check",
+          "value": "\"librarian_memory_items\".\"kind\" IN ('preference', 'goal', 'commitment', 'fact')"
+        },
+        "librarian_memory_items_scope_check": {
+          "name": "librarian_memory_items_scope_check",
+          "value": "\"librarian_memory_items\".\"scope\" IN ('general', 'project')"
+        },
+        "librarian_memory_items_origin_check": {
+          "name": "librarian_memory_items_origin_check",
+          "value": "\"librarian_memory_items\".\"origin\" IN ('explicit', 'accepted_suggestion')"
+        },
+        "librarian_memory_items_revision_check": {
+          "name": "librarian_memory_items_revision_check",
+          "value": "\"librarian_memory_items\".\"revision\" >= 1"
+        },
+        "librarian_memory_items_project_scope_check": {
+          "name": "librarian_memory_items_project_scope_check",
+          "value": "(\"librarian_memory_items\".\"scope\" = 'project') = (\"librarian_memory_items\".\"project_id\" IS NOT NULL)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.librarian_memory_tombstones": {
+      "name": "librarian_memory_tombstones",
+      "schema": "",
+      "columns": {
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "content_digest": {
+          "name": "content_digest",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "librarian_memory_tombstones_user_id_users_id_fk": {
+          "name": "librarian_memory_tombstones_user_id_users_id_fk",
+          "tableFrom": "librarian_memory_tombstones",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "librarian_memory_tombstones_user_id_content_digest_pk": {
+          "name": "librarian_memory_tombstones_user_id_content_digest_pk",
+          "columns": [
+            "user_id",
+            "content_digest"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.librarian_messages": {
       "name": "librarian_messages",
       "schema": "",
@@ -11632,6 +11918,115 @@
         "librarian_operations_terminal_shape_check": {
           "name": "librarian_operations_terminal_shape_check",
           "value": "\"librarian_operations\".\"status\" NOT IN ('refused', 'failed') OR \"librarian_operations\".\"error_code\" IS NOT NULL"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.librarian_segment_summaries": {
+      "name": "librarian_segment_summaries",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "segment_id": {
+          "name": "segment_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "from_seq": {
+          "name": "from_seq",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "to_seq": {
+          "name": "to_seq",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "content": {
+          "name": "content",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_project_ids": {
+          "name": "source_project_ids",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::text[]"
+        },
+        "forget_generation": {
+          "name": "forget_generation",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "history_generation": {
+          "name": "history_generation",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "invalidated_at": {
+          "name": "invalidated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "librarian_segment_summaries_segment_id_librarian_segments_id_fk": {
+          "name": "librarian_segment_summaries_segment_id_librarian_segments_id_fk",
+          "tableFrom": "librarian_segment_summaries",
+          "tableTo": "librarian_segments",
+          "columnsFrom": [
+            "segment_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "librarian_segment_summaries_revision_uq": {
+          "name": "librarian_segment_summaries_revision_uq",
+          "nullsNotDistinct": false,
+          "columns": [
+            "segment_id",
+            "revision"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "librarian_segment_summaries_range_check": {
+          "name": "librarian_segment_summaries_range_check",
+          "value": "\"librarian_segment_summaries\".\"from_seq\" <= \"librarian_segment_summaries\".\"to_seq\""
         }
       },
       "isRLSEnabled": false
@@ -12056,6 +12451,203 @@
         "librarian_turns_failed_has_reason_check": {
           "name": "librarian_turns_failed_has_reason_check",
           "value": "\"librarian_turns\".\"status\" <> 'failed' OR \"librarian_turns\".\"failure_reason\" IS NOT NULL"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.librarian_updates": {
+      "name": "librarian_updates",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "conversation_id": {
+          "name": "conversation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "domain_event_id": {
+          "name": "domain_event_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "task_id": {
+          "name": "task_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "run_id": {
+          "name": "run_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "attempts": {
+          "name": "attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "message_id": {
+          "name": "message_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_error_code": {
+          "name": "last_error_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "delivered_at": {
+          "name": "delivered_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "librarian_updates_conversation_created_idx": {
+          "name": "librarian_updates_conversation_created_idx",
+          "columns": [
+            {
+              "expression": "conversation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "librarian_updates_conversation_id_librarian_conversations_id_fk": {
+          "name": "librarian_updates_conversation_id_librarian_conversations_id_fk",
+          "tableFrom": "librarian_updates",
+          "tableTo": "librarian_conversations",
+          "columnsFrom": [
+            "conversation_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "librarian_updates_domain_event_id_domain_events_id_fk": {
+          "name": "librarian_updates_domain_event_id_domain_events_id_fk",
+          "tableFrom": "librarian_updates",
+          "tableTo": "domain_events",
+          "columnsFrom": [
+            "domain_event_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "librarian_updates_task_id_tasks_id_fk": {
+          "name": "librarian_updates_task_id_tasks_id_fk",
+          "tableFrom": "librarian_updates",
+          "tableTo": "tasks",
+          "columnsFrom": [
+            "task_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "librarian_updates_run_id_runs_id_fk": {
+          "name": "librarian_updates_run_id_runs_id_fk",
+          "tableFrom": "librarian_updates",
+          "tableTo": "runs",
+          "columnsFrom": [
+            "run_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "librarian_updates_message_id_librarian_messages_id_fk": {
+          "name": "librarian_updates_message_id_librarian_messages_id_fk",
+          "tableFrom": "librarian_updates",
+          "tableTo": "librarian_messages",
+          "columnsFrom": [
+            "message_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "librarian_updates_event_uq": {
+          "name": "librarian_updates_event_uq",
+          "nullsNotDistinct": false,
+          "columns": [
+            "conversation_id",
+            "domain_event_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "librarian_updates_status_check": {
+          "name": "librarian_updates_status_check",
+          "value": "\"librarian_updates\".\"status\" IN ('pending', 'delivered', 'skipped_no_access', 'failed')"
+        },
+        "librarian_updates_attempts_check": {
+          "name": "librarian_updates_attempts_check",
+          "value": "\"librarian_updates\".\"attempts\" >= 0"
+        },
+        "librarian_updates_failed_has_error_check": {
+          "name": "librarian_updates_failed_has_error_check",
+          "value": "\"librarian_updates\".\"status\" <> 'failed' OR \"librarian_updates\".\"last_error_code\" IS NOT NULL"
         }
       },
       "isRLSEnabled": false
@@ -19327,7 +19919,7 @@
       "checkConstraints": {
         "task_activity_event_kind_check": {
           "name": "task_activity_event_kind_check",
-          "value": "\"task_activity\".\"event_kind\" in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched', 'triage_set', 'triage_requeued', 'agent_quarantined', 'experiment_concluded', 'run_pr_merged', 'evaluation_decided', 'agent_summon_suppressed', 'statement_accepted')"
+          "value": "\"task_activity\".\"event_kind\" in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched', 'triage_set', 'triage_requeued', 'agent_quarantined', 'experiment_concluded', 'run_pr_merged', 'evaluation_decided', 'agent_summon_suppressed', 'statement_accepted', 'clarification_requested', 'clarification_answered', 'clarification_cancelled')"
         },
         "task_activity_actor_type_check": {
           "name": "task_activity_actor_type_check",
@@ -19366,16 +19958,22 @@
           "name": "source_hitl_request_id",
           "type": "text",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "origin_run_id": {
           "name": "origin_run_id",
           "type": "text",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "origin_agent_id": {
           "name": "origin_agent_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "origin_kind": {
+          "name": "origin_kind",
           "type": "text",
           "primaryKey": false,
           "notNull": true
@@ -19390,13 +19988,75 @@
           "name": "question_schema",
           "type": "jsonb",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "retrigger_mode": {
           "name": "retrigger_mode",
           "type": "text",
           "primaryKey": false,
           "notNull": true
+        },
+        "requester_user_id": {
+          "name": "requester_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "recipient_user_id": {
+          "name": "recipient_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "answer_format": {
+          "name": "answer_format",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "blocking": {
+          "name": "blocking",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'open'"
+        },
+        "cancel_reason": {
+          "name": "cancel_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "superseded_by_clarification_id": {
+          "name": "superseded_by_clarification_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_message_id": {
+          "name": "source_message_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "requested_via_operation_id": {
+          "name": "requested_via_operation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         },
         "answer": {
           "name": "answer",
@@ -19485,6 +20145,19 @@
           ],
           "onDelete": "cascade",
           "onUpdate": "no action"
+        },
+        "task_clarifications_source_message_id_librarian_messages_id_fk": {
+          "name": "task_clarifications_source_message_id_librarian_messages_id_fk",
+          "tableFrom": "task_clarifications",
+          "tableTo": "librarian_messages",
+          "columnsFrom": [
+            "source_message_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -19503,6 +20176,13 @@
           "columns": [
             "source_hitl_request_id"
           ]
+        },
+        "task_clarifications_requested_via_operation_uq": {
+          "name": "task_clarifications_requested_via_operation_uq",
+          "nullsNotDistinct": false,
+          "columns": [
+            "requested_via_operation_id"
+          ]
         }
       },
       "policies": {},
@@ -19517,11 +20197,31 @@
         },
         "task_clarifications_supersession_check": {
           "name": "task_clarifications_supersession_check",
-          "value": "(\n        \"task_clarifications\".\"superseded_at\" IS NULL\n        AND \"task_clarifications\".\"superseded_by_hitl_request_id\" IS NULL\n        AND \"task_clarifications\".\"superseded_by_run_id\" IS NULL\n      ) OR (\n        \"task_clarifications\".\"superseded_at\" IS NOT NULL\n        AND (\n          (\"task_clarifications\".\"superseded_by_hitl_request_id\" IS NOT NULL AND \"task_clarifications\".\"superseded_by_run_id\" IS NULL)\n          OR (\"task_clarifications\".\"superseded_by_hitl_request_id\" IS NULL AND \"task_clarifications\".\"superseded_by_run_id\" IS NOT NULL)\n        )\n      )"
+          "value": "(\n        \"task_clarifications\".\"superseded_at\" IS NULL\n        AND num_nonnulls(\"task_clarifications\".\"superseded_by_hitl_request_id\", \"task_clarifications\".\"superseded_by_run_id\", \"task_clarifications\".\"superseded_by_clarification_id\") = 0\n      ) OR (\n        \"task_clarifications\".\"superseded_at\" IS NOT NULL\n        AND num_nonnulls(\"task_clarifications\".\"superseded_by_hitl_request_id\", \"task_clarifications\".\"superseded_by_run_id\", \"task_clarifications\".\"superseded_by_clarification_id\") = 1\n      )"
         },
         "task_clarifications_retrigger_mode_check": {
           "name": "task_clarifications_retrigger_mode_check",
-          "value": "\"task_clarifications\".\"retrigger_mode\" IN ('agent', 'triage')"
+          "value": "\"task_clarifications\".\"retrigger_mode\" IN ('agent', 'triage', 'none')"
+        },
+        "task_clarifications_origin_kind_check": {
+          "name": "task_clarifications_origin_kind_check",
+          "value": "\"task_clarifications\".\"origin_kind\" IN ('agent_run', 'user')"
+        },
+        "task_clarifications_origin_shape_check": {
+          "name": "task_clarifications_origin_shape_check",
+          "value": "(\n        \"task_clarifications\".\"origin_kind\" = 'agent_run'\n        AND \"task_clarifications\".\"source_hitl_request_id\" IS NOT NULL\n        AND \"task_clarifications\".\"origin_run_id\" IS NOT NULL\n        AND \"task_clarifications\".\"origin_agent_id\" IS NOT NULL\n        AND \"task_clarifications\".\"question_schema\" IS NOT NULL\n        AND \"task_clarifications\".\"retrigger_mode\" <> 'none'\n      ) OR (\n        \"task_clarifications\".\"origin_kind\" = 'user'\n        AND \"task_clarifications\".\"source_hitl_request_id\" IS NULL\n        AND \"task_clarifications\".\"origin_run_id\" IS NULL\n        AND \"task_clarifications\".\"origin_agent_id\" IS NULL\n        AND \"task_clarifications\".\"requester_user_id\" IS NOT NULL\n        AND \"task_clarifications\".\"recipient_user_id\" IS NOT NULL\n        AND \"task_clarifications\".\"reason\" IS NOT NULL\n        AND \"task_clarifications\".\"answer_format\" IS NOT NULL\n        AND \"task_clarifications\".\"retrigger_mode\" = 'none'\n      )"
+        },
+        "task_clarifications_answer_format_check": {
+          "name": "task_clarifications_answer_format_check",
+          "value": "\"task_clarifications\".\"answer_format\" IS NULL OR \"task_clarifications\".\"answer_format\" IN ('text', 'choice', 'yes_no')"
+        },
+        "task_clarifications_status_check": {
+          "name": "task_clarifications_status_check",
+          "value": "\"task_clarifications\".\"status\" IN ('open', 'answered', 'cancelled', 'superseded')"
+        },
+        "task_clarifications_status_shape_check": {
+          "name": "task_clarifications_status_shape_check",
+          "value": "(\"task_clarifications\".\"status\" <> 'answered' OR \"task_clarifications\".\"answered_at\" IS NOT NULL)\n        AND (\"task_clarifications\".\"status\" NOT IN ('open', 'cancelled') OR \"task_clarifications\".\"answered_at\" IS NULL)\n        AND (\"task_clarifications\".\"status\" <> 'cancelled' OR \"task_clarifications\".\"cancel_reason\" IS NOT NULL)\n        AND ((\"task_clarifications\".\"status\" = 'superseded') = (\"task_clarifications\".\"superseded_at\" IS NOT NULL))"
         }
       },
       "isRLSEnabled": false

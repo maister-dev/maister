@@ -787,7 +787,7 @@
   making subscription scope two independent axes. Migrations `01640`–`01660`.
   Specifications are Phase 0 and carry machine-enforced requirement IDs
   (`STG`/`ATN`/`NAV`/`NTF`) with a bidirectional coverage gate. **(F) The
-  personal librarian** (ADR-183..189, added 2026-09-26 by owner choice): one
+  personal librarian** (ADR-185..189, added 2026-09-26 by owner choice): one
   durable personal conversation per user on a project-less `librarian` run kind
   with MCP-only per-turn sessions, per-turn owner-bound delegated tokens under
   live RBAC, an idempotent operation ledger, typed task statements with

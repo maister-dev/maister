@@ -3,7 +3,7 @@ import type { RunnerSnapshot } from "@/lib/acp-runners/resolve";
 
 import { isDeepStrictEqual } from "node:util";
 
-// ADR-183 D3: the durable records are the source of truth and the ACP session
+// ADR-185 D3: the durable records are the source of truth and the ACP session
 // is a cache. Each turn composes a bounded context from the rows it is given;
 // this module is pure so the selection is testable without a database.
 
@@ -144,7 +144,7 @@ export function composeResumePrompt(input: {
     .join("\n\n");
 }
 
-/** ADR-183 D3 (LIB-13): retained ACP context may be reused only when neither
+/** ADR-185 D3 (LIB-13): retained ACP context may be reused only when neither
  * the conversation's context epoch nor the runner changed since the session
  * was created — otherwise it could repeat revoked facts. */
 export function decideSessionMode(input: {

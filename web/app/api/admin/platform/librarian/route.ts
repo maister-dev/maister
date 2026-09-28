@@ -12,7 +12,7 @@ import {
   type LibrarianSettings,
 } from "@/lib/librarian/settings";
 
-// ADR-183 (LCV-11): the librarian's platform settings. Global admin only; no
+// ADR-185 (LCV-11): the librarian's platform settings. Global admin only; no
 // admin route reads any user's conversation.
 
 function result(settings: LibrarianSettings) {

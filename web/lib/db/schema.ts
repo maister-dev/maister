@@ -333,7 +333,7 @@ export const platformRuntimeSettings = pgTable("platform_runtime_settings", {
   distillBaseUrl: text("distill_base_url"),
   distillModel: text("distill_model"),
   distillApiKeyRef: text("distill_api_key_ref"),
-  // ADR-183 (migration 0182): the personal librarian is off until an admin
+  // ADR-185 (migration 0184): the personal librarian is off until an admin
   // enables it and names a read-only-capable runner.
   librarianEnabled: boolean("librarian_enabled").notNull().default(false),
   librarianRunnerId: text("librarian_runner_id").references(
@@ -1674,7 +1674,7 @@ export const flowRunnerRemaps = pgTable(
   }),
 );
 
-// ADR-183: `librarian` is the personal librarian's project-less conversation run.
+// ADR-185: `librarian` is the personal librarian's project-less conversation run.
 export const RUN_KINDS = ["flow", "scratch", "agent", "librarian"] as const;
 export type RunKind = (typeof RUN_KINDS)[number];
 
@@ -1839,7 +1839,7 @@ export const runs = pgTable(
     // batch_item_id -> run_id lookup double-launches across the crash window.
     // No FK: a claim token, not a relation (the batch item may be GC'd apart).
     evaluationBatchItemId: text("evaluation_batch_item_id"),
-    // ADR-185 (migration 0183): the librarian launch operation that created
+    // ADR-187 (migration 0185): the librarian launch operation that created
     // this flow/agent run — never set on the librarian run itself. No FK: the
     // operation ledger lands later and references outlive a history clear.
     librarianOperationId: text("librarian_operation_id"),
@@ -2131,7 +2131,7 @@ export const runs = pgTable(
       "runs_run_kind_check",
       inLiteralList(t.runKind, RUN_KINDS),
     ),
-    // ADR-183: a librarian run is project-less, task-less, persistent (never
+    // ADR-185: a librarian run is project-less, task-less, persistent (never
     // TTL-abandoned while parked), owned by its user and workspace-less.
     librarianShapeCheck: check(
       "runs_librarian_shape_check",
@@ -3954,7 +3954,7 @@ export const runSessions = pgTable(
         "agentDefault",
         // ADR-141: branch-sync AI-resolver default (projects.sync_runner_id).
         "syncDefault",
-        // ADR-183: platform_runtime_settings.librarian_runner_id.
+        // ADR-185: platform_runtime_settings.librarian_runner_id.
         "librarianDefault",
       ],
     }),
@@ -3977,7 +3977,7 @@ export const runSessions = pgTable(
       { onDelete: "set null" },
     ),
     hostSessionId: text("host_session_id"),
-    // ADR-183 (migration 0183): the librarian conversation's context_epoch
+    // ADR-185 (migration 0185): the librarian conversation's context_epoch
     // this session's ACP context was created under; session/resume is used
     // only while it still matches.
     librarianContextEpoch: integer("librarian_context_epoch"),
@@ -7233,7 +7233,7 @@ export const projectTokens = pgTable(
     agent_id: text("agent_id").references(() => agents.id, {
       onDelete: "cascade",
     }),
-    // ADR-184: a librarian token is minted for exactly one librarian turn and
+    // ADR-186: a librarian token is minted for exactly one librarian turn and
     // revoked when that turn ends.
     librarian_turn_id: text("librarian_turn_id"),
     prefix: text("prefix").notNull(),
@@ -7281,13 +7281,13 @@ export const projectTokens = pgTable(
       "project_tokens_kind_check",
       sql`${t.token_kind} IN ('project', 'user', 'agent', 'librarian')`,
     ),
-    // ADR-184 (migration 0182): the token dies with its turn.
+    // ADR-186 (migration 0184): the token dies with its turn.
     librarianTurnFk: foreignKey({
       name: "project_tokens_librarian_turn_fk",
       columns: [t.librarian_turn_id],
       foreignColumns: [librarianTurns.id],
     }).onDelete("cascade"),
-    // ADR-184: owner-bound, project-less, agent-less, turn-bound, expiring.
+    // ADR-186: owner-bound, project-less, agent-less, turn-bound, expiring.
     librarianCheck: check(
       "project_tokens_librarian_check",
       sql`${t.token_kind} <> 'librarian' OR (${t.owner_user_id} IS NOT NULL AND ${t.project_id} IS NULL AND ${t.agent_id} IS NULL AND ${t.librarian_turn_id} IS NOT NULL AND ${t.expires_at} IS NOT NULL)`,
@@ -7320,7 +7320,7 @@ export const tokenAuditLog = pgTable(
     method: text("method").notNull(),
     result: text("result", { enum: ["ok", "error"] }).notNull(),
     status_code: integer("status_code").notNull(),
-    // ADR-184: delegated-authority attribution. A librarian-token request names
+    // ADR-186: delegated-authority attribution. A librarian-token request names
     // the human it acted for, the turn that issued it and, for an effect, the
     // librarian operation it settled.
     on_behalf_of_user_id: text("on_behalf_of_user_id").references(
@@ -8131,7 +8131,7 @@ export type NotificationSubscriptionRow =
 export type NotificationSubscriptionInsert =
   typeof notificationSubscriptions.$inferInsert;
 
-// ADR-183 / ADR-188 (migration 0182): the personal librarian's durable
+// ADR-185 / ADR-190 (migration 0184): the personal librarian's durable
 // conversation. One conversation per user; the ACP session is only a cache of
 // what these rows hold.
 const tsvector = customType<{ data: string }>({

@@ -1150,7 +1150,7 @@ export async function dispatchTool(opts: {
     return { isError: true, status: 401, message: "Missing bearer token" };
   }
 
-  // ADR-185: the librarian's operation key rides the `Idempotency-Key` header,
+  // ADR-187: the librarian's operation key rides the `Idempotency-Key` header,
   // never the body — the ext routes validate their bodies strictly.
   const { operationKey, ...routedArgs } = args;
   const { method, path, body } = resolveRouting(

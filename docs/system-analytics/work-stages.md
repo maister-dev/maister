@@ -22,7 +22,7 @@ domain is **Implemented**.
 - **`blocked`** — a boolean attribute riding beside `stage`, set from the task's
   blocking relation count. Never a `WorkStage` member.
 - **`clarificationPending`** (Designed —
-  [ADR-187](../decisions.md#adr-187-addressed-task-clarification-before-execution),
+  [ADR-189](../decisions.md#adr-189-addressed-task-clarification-before-execution),
   an ADR-170 amendment) — a second boolean attribute beside `stage`, mirroring
   `blocked`: set from the new classifier input `openBlockingClarificationCount`
   (open blocking user-origin `task_clarifications` rows on the task). Never a
@@ -34,7 +34,7 @@ domain is **Implemented**.
   See the [ERD](../db/erd.dbml).
 - **`runs`** (persisted) — supplies `status`, `run_kind`, `promotion_state`.
 - **`task_relations`** (persisted) — supplies the blocking count behind `blocked`.
-- **`task_clarifications`** (persisted; Designed — ADR-187) — supplies the open
+- **`task_clarifications`** (persisted; Designed — ADR-189) — supplies the open
   blocking count behind `clarificationPending`.
 
 ## State machine
@@ -108,7 +108,7 @@ flowchart LR
     B --> D["buildFlightProgress, one batched node_attempts read"]
     B --> E["queryTokensByTaskIds"]
     B --> F["blocking relation counts"]
-    B --> K["open blocking clarification counts, Designed ADR-187"]
+    B --> K["open blocking clarification counts, Designed ADR-189"]
     C --> G["deriveWorkStage per row, pure"]
     D --> G
     E --> G
@@ -117,7 +117,7 @@ flowchart LR
     G --> H["work table rows"]
 ```
 
-(Designed — ADR-187) `deriveWorkStage` gains the input
+(Designed — ADR-189) `deriveWorkStage` gains the input
 `openBlockingClarificationCount` and returns `clarificationPending` beside
 `blocked`; the stage itself is unchanged by it, exactly as `blocked` leaves the
 stage alone. Both callers — the `/work` read model and the board read model —
@@ -165,7 +165,7 @@ already had (a task that never ran reads `Triage`, `Ready` or `Held`) with
 
 - [ADR-170 — derived work-stage vocabulary](../decisions.md#adr-170-derived-work-stage-vocabulary-distinct-from-the-board-columns)
 - [ADR-169 — the two canonical attention counters](../decisions.md#adr-169-two-canonical-attention-counters-decisions-and-updates)
-- [ADR-187 — addressed task clarification before execution](../decisions.md#adr-187-addressed-task-clarification-before-execution) (Designed — the `clarificationPending` attribute)
+- [ADR-189 — addressed task clarification before execution](../decisions.md#adr-189-addressed-task-clarification-before-execution) (Designed — the `clarificationPending` attribute)
 - [M51 requirement traceability](m51-traceability.md)
 - [Tasks and the board](tasks.md)
 - [Screen reference — `/work`](../screens/work.md)

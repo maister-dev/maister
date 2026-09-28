@@ -15,7 +15,7 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-/** ADR-183 D5 L1: the supervisor's capability_guard admits exactly the
+/** ADR-185 D5 L1: the supervisor's capability_guard admits exactly the
  * librarian's facade tools; every built-in is denied inline and the third
  * consecutive denial halts the session. `readOnlySession` is deliberately NOT
  * used — it arbitrates first and auto-allows read/search/fetch. */
@@ -67,7 +67,7 @@ const CLAUDE_SETTINGS_RELATIVE = path.join(".claude", "settings.local.json");
 /** D5 L2: adapter settings that deny the built-ins. The conversation's
  * directory is created by and private to the librarian, so the file is
  * written whole — there is no user-owned settings file to preserve. Codex has
- * no settings-level deny surface and is refused by the runner guard (ADR-184). */
+ * no settings-level deny surface and is refused by the runner guard (ADR-186). */
 export async function materializeLibrarianAdapterSettings(
   cwd: string,
   capabilityAgent: string,
@@ -120,7 +120,7 @@ export type LibrarianFacadeServer = {
 };
 
 /** The maister MCP facade for ONE turn, authenticated by that turn's token
- * (ADR-184) and listing only the librarian toolset. One facade process per
+ * (ADR-186) and listing only the librarian toolset. One facade process per
  * turn session, so a token never outlives its turn in a live process. */
 export function librarianFacadeServer(
   tokenSecret: string,

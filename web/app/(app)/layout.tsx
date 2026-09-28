@@ -74,7 +74,7 @@ export default async function AppLayout({
     loadRunnerReadinessRows(),
     sessionUser ? getDecisionsCount(sessionUser.id, sessionUser.role) : 0,
     sessionUser ? getUpdatesCount(sessionUser.id, sessionUser.role) : 0,
-    // ADR-189 D2: a state, computed once here like the counters.
+    // ADR-191 D2: a state, computed once here like the counters.
     sessionUser
       ? readLibrarianIndicator(sessionUser.id, getDb() as never).catch(
           () => "none" as const,
@@ -175,7 +175,7 @@ export default async function AppLayout({
     </div>
   );
 
-  // ADR-189 D3: one provider around the trigger and the panel, so a route
+  // ADR-191 D3: one provider around the trigger and the panel, so a route
   // change remounts neither.
   return sessionUser ? (
     <LibrarianProvider

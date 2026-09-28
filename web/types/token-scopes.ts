@@ -73,15 +73,15 @@ export const TOKEN_SCOPES = [
   "evaluations:evidence:read",
   "evaluations:objective:read",
   "evaluations:result:submit",
-  // ADR-184 (personal librarian): cross-project discovery and read surfaces.
+  // ADR-186 (personal librarian): cross-project discovery and read surfaces.
   // Every list/search/count filters by the caller's visible projects first.
   "projects:read",
   "work:read",
   "activity:read",
-  // ADR-185 D10b: an operator message to an existing run, as its human owner.
+  // ADR-187 D10b: an operator message to an existing run, as its human owner.
   // Never `runs:delegate` — the librarian does not impersonate a coordinator.
   "runs:message",
-  // ADR-185 / ADR-188: the librarian's own personal surfaces. The routes behind
+  // ADR-187 / ADR-190: the librarian's own personal surfaces. The routes behind
   // them admit ONLY a librarian token.
   "librarian:cards",
   "librarian:memory",
@@ -158,7 +158,7 @@ export const CROSS_PROJECT_AGENT_SCOPES = [
   "relations:delete",
 ] as const satisfies readonly (typeof TOKEN_SCOPES)[number][];
 
-// ADR-184 D3: the explicit grant a librarian turn token carries — the owner's
+// ADR-186 D3: the explicit grant a librarian turn token carries — the owner's
 // business-work surface. Deliberately absent: `hitl:respond`,
 // `hitl:respond:human`, `runs:promote`, `runs:delegate`, `runs:collect`,
 // `agent_memory:write`, `memory:write`, `notifications:subscriptions`,
@@ -197,7 +197,7 @@ export const LIBRARIAN_TOKEN_SCOPES = [
   "librarian:history",
 ] as const satisfies readonly (typeof TOKEN_SCOPES)[number][];
 
-// ADR-184 D3: the read-only subset an Explain turn receives. Update text and
+// ADR-186 D3: the read-only subset an Explain turn receives. Update text and
 // teammate answers are data, never authority, so no scope here can effect.
 export const LIBRARIAN_READ_SCOPES = [
   "projects:read",
@@ -217,7 +217,7 @@ export const LIBRARIAN_READ_SCOPES = [
   "librarian:history",
 ] as const satisfies readonly (typeof LIBRARIAN_TOKEN_SCOPES)[number][];
 
-// ADR-184: scopes whose routes admit ONLY a librarian turn token. They are
+// ADR-186: scopes whose routes admit ONLY a librarian turn token. They are
 // machine-only — never offered in a personal token picker.
 export const LIBRARIAN_ONLY_TOKEN_SCOPES = [
   "librarian:cards",

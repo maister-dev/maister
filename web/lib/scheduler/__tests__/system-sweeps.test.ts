@@ -87,7 +87,7 @@ vi.mock("@/lib/gc/agent-materialization-gc", () => ({
 vi.mock("@/lib/runs/sync-recovery", () => ({
   runSyncRecoverySweep: runSyncRecoverySweepMock,
 }));
-// ADR-183 (D19/D20): the librarian backstop reads the DB; mocked for the same
+// ADR-185 (D19/D20): the librarian backstop reads the DB; mocked for the same
 // reason, so `errors: []` keeps guarding the composition.
 vi.mock("@/lib/librarian/turn-recovery", () => ({
   runLibrarianTurnSweep: runLibrarianTurnSweepMock,
@@ -685,7 +685,7 @@ describe("scheduler system sweeps", () => {
     expect(summary.syncRecovery).toBeNull();
   });
 
-  it("ADR-183 D19: reports the librarian backstop summary", async () => {
+  it("ADR-185 D19: reports the librarian backstop summary", async () => {
     runLibrarianTurnSweepMock.mockResolvedValueOnce({
       deadlines: 1,
       restarts: 2,
@@ -704,7 +704,7 @@ describe("scheduler system sweeps", () => {
     });
   });
 
-  it("ADR-183 D19: surfaces a thrown librarian sweep as an error (207 contract)", async () => {
+  it("ADR-185 D19: surfaces a thrown librarian sweep as an error (207 contract)", async () => {
     runLibrarianTurnSweepMock.mockRejectedValueOnce(
       new Error("librarian boom"),
     );

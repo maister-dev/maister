@@ -411,7 +411,7 @@ const runIdSchema = z
   .max(128)
   .regex(SAFE_PATH_SEGMENT, safeSegmentMessage("runId"));
 
-// ADR-183: the personal librarian's project-less conversation workspaces live
+// ADR-185: the personal librarian's project-less conversation workspaces live
 // under the ONE reserved slug `_librarian`, which no kebab-case project slug
 // can collide with.
 export const LIBRARIAN_PROJECT_SLUG = "_librarian";

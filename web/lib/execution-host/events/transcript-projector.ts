@@ -109,7 +109,7 @@ export async function projectTranscriptEvent(
 
   if (!run)
     throw new ExecutionEventProjectionError("transcript run is missing", true);
-  // ADR-183 / ADR-167 amendment: a librarian's transcript is its conversation
+  // ADR-185 / ADR-167 amendment: a librarian's transcript is its conversation
   // (`librarian_messages`); its live tokens ride the run stream's canonical
   // events. A second copy in `run_messages` would outlive a history clear.
   if (run.kind === "librarian") return false;

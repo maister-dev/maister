@@ -18,8 +18,8 @@ const supersededId = randomUUID();
 
 beforeAll(async () => {
   database = await startMainPostgresTestDbUpTo(
-    { databaseName: "migration_0186_clarifications" },
-    "0185_librarian_operations",
+    { databaseName: "migration_0188_clarifications" },
+    "0187_librarian_operations",
   );
   const db = database.db;
   const project = await seedProjectRow(db);
@@ -49,7 +49,7 @@ beforeAll(async () => {
     VALUES (${supersededId}, ${taskId}, 3, ${randomUUID()}, ${randomUUID()}, 'core:triager',
       'Superseded question', '{}'::jsonb, 'agent', now(), ${randomUUID()})
   `);
-  await applyMainMigration(db, "0186_task_clarifications_user_origin");
+  await applyMainMigration(db, "0188_task_clarifications_user_origin");
 }, 180_000);
 
 afterAll(async () => {
@@ -66,7 +66,7 @@ async function refused(query: ReturnType<typeof sql>): Promise<string> {
   throw new Error("expected the database to refuse an invalid clarification");
 }
 
-describe("IT-CLR-01: migration 0186 keeps agent rows and checks origin shape", () => {
+describe("IT-CLR-01: migration 0188 keeps agent rows and checks origin shape", () => {
   it("backfills existing open, answered, and superseded agent rows", async () => {
     const rows = await database.db.execute(sql`
       SELECT id, origin_kind, status FROM task_clarifications WHERE task_id = ${taskId} ORDER BY seq

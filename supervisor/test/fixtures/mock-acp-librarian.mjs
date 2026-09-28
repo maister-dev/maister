@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// ADR-183 (T2.14): a mock ACP adapter for the personal librarian round trip.
+// ADR-185 (T2.14): a mock ACP adapter for the personal librarian round trip.
 // The prompt carries a scripted plan as a fenced ```json block:
 //   {"calls":[{"tool":"project_list","args":{}}],"reply":"Found {{results}}"}
 // For each call the adapter asks permission for `mcp__maister__<tool>` — the

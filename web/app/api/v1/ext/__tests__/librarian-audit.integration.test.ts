@@ -20,7 +20,7 @@ import {
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 
-// ADR-184: every librarian-token request is attributed to the human it acted
+// ADR-186: every librarian-token request is attributed to the human it acted
 // for and the turn that issued it, and an audit that cannot be written fails
 // the request with it.
 

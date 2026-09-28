@@ -25,7 +25,7 @@ const REFUSAL_KEYS: Record<string, string> = {
   reserved_env: "librarianIneligible_reserved_env",
 };
 
-// ADR-183 (LCV-11): the admin's enable toggle, runner choice and the
+// ADR-185 (LCV-11): the admin's enable toggle, runner choice and the
 // resulting readiness. Disabling stops admission only; nothing is deleted.
 export function LibrarianSettingsCard({ view }: Props): ReactElement {
   const t = useTranslations("settings");

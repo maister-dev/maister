@@ -53,7 +53,7 @@ export type TokenActor = {
   // `agent-run:<id>`). A delegation route reads the PARENT runId from here,
   // never from the request body.
   boundRunId: string | null;
-  // ADR-184: the librarian turn a `librarian` token was minted for; absent or
+  // ADR-186: the librarian turn a `librarian` token was minted for; absent or
   // null for every other kind.
   librarianTurnId?: string | null;
 };
@@ -118,7 +118,7 @@ export async function verifyToken(
   const agentId: string | null = row.agent_id ?? null;
   const ownerUserId: string | null = row.owner_user_id ?? null;
 
-  // ADR-184: a librarian token acts for its owner, so it inherits the user
+  // ADR-186: a librarian token acts for its owner, so it inherits the user
   // token's per-request owner checks — deactivation or a pending password
   // change refuses the next request of an in-flight turn.
   if (tokenKind === "user" || tokenKind === "librarian") {
@@ -152,7 +152,7 @@ export async function verifyToken(
     }
   }
 
-  // ADR-184: a turn token is good only while its turn runs. The turn-end
+  // ADR-186: a turn token is good only while its turn runs. The turn-end
   // transaction revokes it; this is the backstop for a stop, a deadline or a
   // host loss that ended the turn by another path.
   if (tokenKind === "librarian") {

@@ -26,7 +26,7 @@ import {
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 
-// ADR-183 (T2.13, LCV-11): the admin's enablement. The runner column survives
+// ADR-185 (T2.13, LCV-11): the admin's enablement. The runner column survives
 // the SET → CLEAR → re-SET round trip and a runner deletion; disabling stops
 // admission only — queued messages stay queued and visible.
 

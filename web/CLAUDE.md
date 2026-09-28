@@ -14,7 +14,7 @@ Drizzle DB access + SSE bridge to `supervisor/`. Agent processes (`claude`,
 this slice is the human-facing surface and the registry/board/HITL UX.
 The personal librarian lives in `lib/librarian/`, `components/librarian/`, and
 `app/api/librarian/`; it keeps per-user history and delegates turn-scoped MCP
-access through the supervisor (ADR-183..189).
+access through the supervisor (ADR-185..189).
 
 Current state: scaffolded from the official HeroUI Next.js template
 (`heroui-inc/next-app-template`). The `app/`, `components/`, `config/` content

@@ -72,7 +72,7 @@ async function sourceProjectIds(tx: Db, turnId: string): Promise<string[]> {
     .sort();
 }
 
-/** ADR-183 D3/D19: the ONE turn-end transaction. Under the conversation lock:
+/** ADR-185 D3/D19: the ONE turn-end transaction. Under the conversation lock:
  * the turn reaches its terminal status exactly once, the reply or a system
  * line lands, the token dies, the run parks, and the next queued turn is
  * admitted. Returns null when another path already ended the turn. */

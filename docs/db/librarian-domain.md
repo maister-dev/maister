@@ -1,13 +1,13 @@
 # Librarian domain ERD
 
 Tables of the personal librarian: one conversation per user on a project-less
-`run_kind='librarian'` run ([ADR-183](../decisions.md#adr-183)), per-turn
-owner-bound tokens and their audit ([ADR-184](../decisions.md#adr-184)), the
+`run_kind='librarian'` run ([ADR-185](../decisions.md#adr-185)), per-turn
+owner-bound tokens and their audit ([ADR-186](../decisions.md#adr-186)), the
 operation ledger, confirmation cards and follow-up updates
-([ADR-185](../decisions.md#adr-185)), task statements and conversation
-provenance ([ADR-186](../decisions.md#adr-186)), user-origin clarifications
-([ADR-187](../decisions.md#adr-187)), and memory, summaries, reset and history
-deletion ([ADR-188](../decisions.md#adr-188)). Behaviour lives in
+([ADR-187](../decisions.md#adr-187)), task statements and conversation
+provenance ([ADR-188](../decisions.md#adr-188)), user-origin clarifications
+([ADR-189](../decisions.md#adr-189)), and memory, summaries, reset and history
+deletion ([ADR-190](../decisions.md#adr-190)). Behaviour lives in
 [`../system-analytics/librarian-conversation.md`](../system-analytics/librarian-conversation.md),
 [`librarian-authority.md`](../system-analytics/librarian-authority.md),
 [`librarian-operations.md`](../system-analytics/librarian-operations.md),
@@ -17,7 +17,7 @@ deletion ([ADR-188](../decisions.md#adr-188)). Behaviour lives in
 constraint names and index names are in
 [`../database-schema.md`](../database-schema.md#personal-librarian-tables-designed--adr-183188-migrations-01810188).
 
-> **Status: Designed.** Migrations `0181`–`0188` specify every table and column
+> **Status: Designed.** Migrations `0183`–`0190` specify every table and column
 > drawn here; none has shipped. The generated [`erd.dbml`](erd.dbml) follows the
 > Drizzle schema and gains them only when the migrations land. Shared tables
 > (`users`, `runs`, `tasks`, …) are drawn with the librarian columns only; their
@@ -423,9 +423,9 @@ the first attempt hits it and reads the existing result, and reconciling an
 
 ## Linked artifacts
 
-- [ADR-183](../decisions.md#adr-183) · [ADR-184](../decisions.md#adr-184) ·
-  [ADR-185](../decisions.md#adr-185) · [ADR-186](../decisions.md#adr-186) ·
-  [ADR-187](../decisions.md#adr-187) · [ADR-188](../decisions.md#adr-188)
+- [ADR-185](../decisions.md#adr-185) · [ADR-186](../decisions.md#adr-186) ·
+  [ADR-187](../decisions.md#adr-187) · [ADR-188](../decisions.md#adr-188) ·
+  [ADR-189](../decisions.md#adr-189) · [ADR-190](../decisions.md#adr-190)
 - [`../database-schema.md`](../database-schema.md) — exact DDL
 - [`../api/async/librarian-stream.asyncapi.yaml`](../api/async/librarian-stream.asyncapi.yaml) — the stream over `librarian_messages.seq`
 - [`runs-domain.md`](runs-domain.md) · [`hitl-domain.md`](hitl-domain.md) ·

@@ -29,7 +29,7 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-// ADR-184: the reserved name every librarian turn token carries. Human issuance
+// ADR-186: the reserved name every librarian turn token carries. Human issuance
 // refuses it (`assertTokenNameAllowed`), so it can only come from here.
 export const LIBRARIAN_TOKEN_NAME_PREFIX = "librarian-turn:";
 
@@ -52,7 +52,7 @@ export type IssuedLibrarianToken = {
   expiresAt: Date;
 };
 
-// ADR-184 D1: one token per librarian turn, owner-bound, project-less, with an
+// ADR-186 D1: one token per librarian turn, owner-bound, project-less, with an
 // explicit scope list (never `*`) and a hard expiry at the turn deadline. The
 // secret is returned once and only injected into that turn's facade process.
 export async function issueLibrarianTurnToken(

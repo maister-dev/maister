@@ -817,7 +817,7 @@ paths:
         Refusal messages name only the offending path — the configured roots
         and `repoPath` are logged at debug, never echoed.
 
-        (Designed — ADR-183, amending ADR-166 D7) `projectSlug` also accepts
+        (Designed — ADR-185, amending ADR-166 D7) `projectSlug` also accepts
         the one reserved literal `_librarian`, used by the personal librarian's
         project-less `run_kind='librarian'` run. The host never resolves a slug
         against registered projects — it only derives `run_dir`
@@ -856,7 +856,7 @@ paths:
                     path: "/home/maister/.maister/worktrees/myapp/run-abc"
                     repoPath: "/repos/myapp"
               librarianDirectory:
-                summary: (Designed — ADR-183) Adopt a librarian conversation's empty directory
+                summary: (Designed — ADR-185) Adopt a librarian conversation's empty directory
                 value:
                   command:
                     id: "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b"
@@ -965,7 +965,7 @@ paths:
         worktree removal and by run-terminal drop paths. The fence is checked
         against the handle's stored `run_id` (server state) → `run_mismatch`.
 
-        (Designed — ADR-188, amending ADR-166 D7) Releasing deletes nothing on
+        (Designed — ADR-190, amending ADR-166 D7) Releasing deletes nothing on
         disk, with one exception: a `directory` handle whose stored
         `projectSlug` is `_librarian`. For that handle the host, in the same
         release, removes the adopted directory (by its stored realpath — which
@@ -1199,7 +1199,7 @@ paths:
         path field is `409 PRECONDITION legacy_field` naming the field
         (`details.field`).
 
-        (Designed — ADR-183/184) A personal-librarian session (`run_kind =
+        (Designed — ADR-185/184) A personal-librarian session (`run_kind =
         librarian`, a `_librarian` directory handle) passes its OWN
         `enforcementProfile`, built by the librarian runtime rather than from a
         node declaration: `tools.allow` = the librarian tool names
@@ -3308,7 +3308,7 @@ components:
             Each class key is present iff that class is strict-enforced; an
             out-of-profile tool call is denied at the seam (deny-and-continue) and the
             Nth consecutive deny halts. See `system-analytics/guardrail-hooks.md`.
-            (Designed — ADR-183/184) Also present on every personal-librarian
+            (Designed — ADR-185/184) Also present on every personal-librarian
             session, where the librarian runtime builds it (MCP-only: the
             librarian tool names + `allowServers: ["maister"]`, or
             `allowServers: []` for a tool-less summary turn) and no
@@ -4253,7 +4253,7 @@ components:
           description: |
             Stored on the handle; the host derives `run_dir` from it and never
             resolves it against registered projects. Kebab-case, or
-            (Designed — ADR-183) the one reserved literal `_librarian` for the
+            (Designed — ADR-185) the one reserved literal `_librarian` for the
             personal librarian's project-less run — a web project slug can
             never produce it. The web adopts a `_librarian` handle only as
             `kind: directory`; releasing such a handle also removes the

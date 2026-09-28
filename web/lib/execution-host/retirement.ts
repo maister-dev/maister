@@ -161,7 +161,7 @@ export function classifyCommandRetirement(
   row: Candidate,
   opts: { now: Date; graceMs: number },
 ): CommandProtectedReason | null {
-  // ADR-183 / ADR-167 amendment: a parked librarian run is its owner's idle
+  // ADR-185 / ADR-167 amendment: a parked librarian run is its owner's idle
   // conversation, parked indefinitely between turns. Every command it holds
   // belongs to an ended turn — the next turn mints a new assignment and never
   // replays one — so parking does not retain them.

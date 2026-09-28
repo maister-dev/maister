@@ -48,7 +48,7 @@ Runner должен быть не только создан, но и готов 
 сообщений. Отключение не удаляет переписку, задачи и уже принятые действия.
 Лимиты одновременных ответов, времени ответа, дневного использования и сроки
 хранения задаются в окружении веб-процесса; точные параметры приведены в
-[Configuration](../configuration.md#personal-librarian--platform_runtime_settings-implemented--adr-183).
+[Configuration](../configuration.md#personal-librarian--platform_runtime_settings-implemented--adr-185).
 Пользовательские действия с памятью и историей описаны в
 [главе мануала](manual/13-librarian.md).
 

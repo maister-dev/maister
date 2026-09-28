@@ -196,7 +196,7 @@ prompt/permission probe that actually exercised the permission wire. See
 in [`api/supervisor.openapi.yaml`](api/supervisor.openapi.yaml), plus
 [`system-analytics/guardrail-hooks.md`](system-analytics/guardrail-hooks.md).)
 
-**Personal-librarian sessions (Designed — ADR-183/184).** A session of the
+**Personal-librarian sessions (Designed — ADR-185/184).** A session of the
 project-less `run_kind='librarian'` run passes its OWN `enforcementProfile`,
 built by the librarian runtime instead of from a node declaration:
 `tools.allow` = the librarian tool names (`mcp__maister__<tool>`),
@@ -515,7 +515,7 @@ server state (`workspaces.worktree_path`, `projects.repo_path`,
 `local_packages.working_dir`, the agent launch snapshot,
 `runs.context_mounts`).
 
-**Reserved slug `_librarian` (Designed — ADR-183, amending ADR-166 D7).**
+**Reserved slug `_librarian` (Designed — ADR-185, amending ADR-166 D7).**
 `projectSlug` is `^[a-z0-9]+(?:-[a-z0-9]+)*$` **or** the literal
 `_librarian`. The host never resolves a slug against registered projects —
 `workspace-registry.ts` only derives `run_dir =
@@ -538,7 +538,7 @@ refused `workspace_released`), and returns `{ released }`; issued as a
 `driverless` command by GC after worktree removal and by run-terminal drop
 paths.
 
-**Librarian release purge (Designed — ADR-188, amending ADR-166 D7).** Release
+**Librarian release purge (Designed — ADR-190, amending ADR-166 D7).** Release
 deletes nothing on disk except for a `directory` handle whose stored
 `projectSlug` is `_librarian`: then the host also removes the adopted directory
 by its stored realpath (codex keeps its composed per-session home inside that

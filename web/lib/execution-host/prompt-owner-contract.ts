@@ -103,7 +103,7 @@ const scratchRefs = [
     .strict(),
   z.object({ ...packageTurn, variant: z.literal("package_recovery") }).strict(),
 ] as const;
-// ADR-183: one prompt per librarian turn; the turn row is the ledger.
+// ADR-185: one prompt per librarian turn; the turn row is the ledger.
 const librarianRefs = [
   z.object({ ...turn, variant: z.literal("owner_message") }).strict(),
   z.object({ ...turn, variant: z.literal("explain") }).strict(),

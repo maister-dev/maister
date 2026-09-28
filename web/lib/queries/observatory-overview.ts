@@ -334,7 +334,7 @@ function scopePredicate(
 }
 
 // "all" means every DELIVERY kind: a librarian run is its owner's private
-// conversation (ADR-183), and the project-less platform group would otherwise
+// conversation (ADR-185), and the project-less platform group would otherwise
 // count it.
 function runKindPredicate(runKind: ObservatoryRunKind): SQL {
   return runKind === "all"

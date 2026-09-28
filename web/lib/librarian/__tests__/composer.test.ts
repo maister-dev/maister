@@ -6,7 +6,7 @@ import {
   type ComposerMessage,
 } from "@/lib/librarian/composer";
 
-// D3 (ADR-183): the composer is a pure selection over supplied rows. The
+// D3 (ADR-185): the composer is a pure selection over supplied rows. The
 // owner's current message always goes in; older messages fill the remaining
 // budget newest-first; anything left out is recorded as `truncated`.
 

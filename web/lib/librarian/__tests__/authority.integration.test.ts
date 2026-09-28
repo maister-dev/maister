@@ -26,7 +26,7 @@ import {
 } from "@/test-support/pg-container";
 import { LIBRARIAN_READ_SCOPES } from "@/types/token-scopes";
 
-// ADR-184: a librarian turn token is minted for one turn, verified per request
+// ADR-186: a librarian turn token is minted for one turn, verified per request
 // with the owner's live account state, and dies with its turn.
 
 let database: StartedPostgresTestDb;

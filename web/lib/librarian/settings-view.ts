@@ -1,6 +1,6 @@
 import { getAdapterSupportById } from "@/lib/acp-runners/adapter-support";
 
-// ADR-183: the librarian settings as the admin card sees them. Pure — the
+// ADR-185: the librarian settings as the admin card sees them. Pure — the
 // server computes it from rows the settings page already loads.
 
 export type LibrarianAvailabilityState =
@@ -30,7 +30,7 @@ type RunnerShape = {
 };
 
 // Codex host reads need not emit an ACP permission request and it has no
-// equivalent to Claude's built-in deny settings (ADR-184 D10).
+// equivalent to Claude's built-in deny settings (ADR-186 D10).
 const LIBRARIAN_CAPABILITIES: ReadonlySet<string> = new Set(["claude", "codex"]);
 const RESERVED_RUNNER_ENV = ["HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME"];
 

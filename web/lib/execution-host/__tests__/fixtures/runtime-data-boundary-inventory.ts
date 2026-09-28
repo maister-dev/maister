@@ -1664,13 +1664,13 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
     ...classified(
       "lib/librarian/workspace.ts",
       "repository-worktree",
-      "ADR-183: the manager creates the librarian conversation's empty working directory under the reserved `_librarian` runtime slug before adopting it — Stage C workspace cut",
+      "ADR-185: the manager creates the librarian conversation's empty working directory under the reserved `_librarian` runtime slug before adopting it — Stage C workspace cut",
       [["ensureLibrarianWorkspace", "node:fs/promises.mkdir", "write"]],
     ),
     ...classified(
       "lib/librarian/session-profile.ts",
       "repository-worktree",
-      "ADR-183 D5 L2: adapter deny settings written into the librarian's private conversation directory before its session starts — Stage C workspace cut",
+      "ADR-185 D5 L2: adapter deny settings written into the librarian's private conversation directory before its session starts — Stage C workspace cut",
       [
         [
           "materializeLibrarianAdapterSettings",
@@ -1687,7 +1687,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
     ...classified(
       "lib/queries/project-directory.ts",
       "repository-worktree",
-      "ADR-184 project directory: a bounded, symlink-refusing read of the registered repository's README first paragraph — Stage C repository cut",
+      "ADR-186 project directory: a bounded, symlink-refusing read of the registered repository's README first paragraph — Stage C repository cut",
       [
         ["readReadmePurpose", "node:fs/promises.lstat", "stat"],
         ["readReadmePurpose", "node:fs/promises.open", "open"],

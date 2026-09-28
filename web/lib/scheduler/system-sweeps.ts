@@ -89,7 +89,7 @@ export type SystemSweepSummary = GcCompatibilitySummary & {
   // recovery + the W5 active-time duration cap. null when it threw before
   // returning a summary.
   syncRecovery: Awaited<ReturnType<typeof runSyncRecoverySweep>> | null;
-  // ADR-183 (D19/D20): the librarian's turn deadlines, lost starts, queued
+  // ADR-185 (D19/D20): the librarian's turn deadlines, lost starts, queued
   // turns nothing admitted and its pool promotion.
   librarian: LibrarianSweepSummary | null;
   librarianRetention: LibrarianRetentionSummary | null;

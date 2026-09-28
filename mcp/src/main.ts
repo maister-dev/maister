@@ -31,7 +31,7 @@ const log = pino({
 }).child({ service: "maister-mcp" });
 
 const BASE_URL = process.env.MAISTER_API_BASE_URL ?? "http://localhost:3000";
-// ADR-184: a librarian turn's facade lists only the librarian toolset. The
+// ADR-186: a librarian turn's facade lists only the librarian toolset. The
 // routes still refuse anything a librarian token may not do.
 const TOOLSET = process.env.MAISTER_MCP_TOOLSET;
 

@@ -5,7 +5,7 @@ import path from "node:path";
 
 import { runtimeRoot } from "@/lib/runtime-root";
 
-// ADR-183: the reserved runtime slug of every librarian conversation. It is not
+// ADR-185: the reserved runtime slug of every librarian conversation. It is not
 // kebab-case, so no registered project slug can ever equal it; the supervisor
 // wire schema admits exactly this one literal beside kebab-case slugs.
 export const LIBRARIAN_PROJECT_SLUG = "_librarian";

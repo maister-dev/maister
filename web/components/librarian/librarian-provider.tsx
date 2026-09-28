@@ -38,7 +38,7 @@ export function useLibrarian(): LibrarianContextValue | null {
   return useContext(LibrarianContext);
 }
 
-/** ADR-189 D6: an assistant composer (scratch, Studio AI) registers while it
+/** ADR-191 D6: an assistant composer (scratch, Studio AI) registers while it
  * is visible, so the librarian opens only as the sheet beside it. Outside the
  * provider (tests, standalone renders) it does nothing. */
 export function useLibrarianHostComposer(visible: boolean): void {
@@ -67,7 +67,7 @@ function isIndicator(value: unknown): value is LibrarianIndicatorState {
   );
 }
 
-/** ADR-189 D2/D3: one provider around the trigger and the panel, so a route
+/** ADR-191 D2/D3: one provider around the trigger and the panel, so a route
  * change never remounts either. It holds the librarian stream while the tab
  * is visible and resumes it from the last durable id when the tab returns. */
 export function LibrarianProvider({

@@ -87,7 +87,7 @@ function parseTaskRef(
 
 /**
  * Title / prompt / key search over the tasks of the reader's visible projects
- * (ADR-184 LAU-06). Visibility is resolved FIRST and bounds the query, so a
+ * (ADR-186 LAU-06). Visibility is resolved FIRST and bounds the query, so a
  * task in a project the reader cannot see is never selected, counted or paged
  * over. Ordered by `updated_at DESC, id DESC` with an opaque keyset cursor.
  */

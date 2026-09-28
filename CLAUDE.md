@@ -43,7 +43,7 @@ Backend split:
   behind `web/lib/execution-host/` so later stages can move it.
 - The personal librarian is a durable per-user conversation in `web/lib/librarian/`
   and `web/components/librarian/`; its turns use owner-bound MCP tokens and
-  supervisor-hosted ACP sessions (ADR-183..189).
+  supervisor-hosted ACP sessions (ADR-185..189).
 
 ## How to run
 

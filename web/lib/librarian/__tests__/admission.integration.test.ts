@@ -36,7 +36,7 @@ import {
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 
-// ADR-183 (T2.4, T2.5): the durable conversation and its admission. Sends are
+// ADR-185 (T2.4, T2.5): the durable conversation and its admission. Sends are
 // deduplicated, queued behind the one active turn, capped per day, refused
 // before any write when the librarian is unavailable, and admitted FIFO into a
 // dedicated pool. The turn start is stubbed: these suites prove the ledger.

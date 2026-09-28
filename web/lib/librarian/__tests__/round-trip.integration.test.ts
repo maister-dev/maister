@@ -34,7 +34,7 @@ import {
   useRealSupervisorUrl,
 } from "@/test-support/real-supervisor";
 
-// ADR-183 (T2.14, IT-LCV-04 end to end): owner message → admission → the real
+// ADR-185 (T2.14, IT-LCV-04 end to end): owner message → admission → the real
 // supervisor → a mock ACP adapter → the real MCP facade (stdio) → the ext
 // route, authenticated by the turn token → reply stored → token revoked → run
 // parked. The only stand-ins are the adapter (scripted) and the HTTP server

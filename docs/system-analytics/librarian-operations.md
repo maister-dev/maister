@@ -16,7 +16,7 @@ own the domains the effects land in — tasks, triage, runs, HITL, promotion
 ([`librarian-authority.md`](librarian-authority.md)) or statement content
 ([`task-statements.md`](task-statements.md)). A lost response means reconciliation
 until the domain outcome is known, never a repeated effect. The decision is
-[ADR-185](../decisions.md#adr-185-librarian-operation-ledger-confirmation-cards-and-launch-intent).
+[ADR-187](../decisions.md#adr-187-librarian-operation-ledger-confirmation-cards-and-launch-intent).
 The whole domain is **Implemented**.
 
 ## Domain entities
@@ -230,8 +230,8 @@ flowchart TD
 
 ## Linked artifacts
 
-- [ADR-185 — operation ledger, cards and launch intent](../decisions.md#adr-185-librarian-operation-ledger-confirmation-cards-and-launch-intent) · [record](../decisions/adr-185.md)
-- [ADR-184 — librarian delegated authority](../decisions.md#adr-184-librarian-delegated-authority-per-turn-owner-bound-tokens-with-live-rbac) · [ADR-160](../decisions.md#adr-160) · [ADR-161](../decisions.md#adr-161)
+- [ADR-187 — operation ledger, cards and launch intent](../decisions.md#adr-187-librarian-operation-ledger-confirmation-cards-and-launch-intent) · [record](../decisions/adr-187.md)
+- [ADR-186 — librarian delegated authority](../decisions.md#adr-186-librarian-delegated-authority-per-turn-owner-bound-tokens-with-live-rbac) · [ADR-160](../decisions.md#adr-160) · [ADR-161](../decisions.md#adr-161)
 - [Librarian requirement traceability](librarian-traceability.md)
 - [Product brief — personal librarian](../pv/personal-librarian.md)
 - [Librarian ERD](../db/librarian-domain.md)

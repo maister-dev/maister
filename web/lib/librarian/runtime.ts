@@ -379,7 +379,7 @@ function isResumeRefusal(err: unknown): boolean {
   );
 }
 
-/** ADR-183: runs one admitted turn end to end — context, token, session,
+/** ADR-185: runs one admitted turn end to end — context, token, session,
  * prompt — and returns once the turn's owner has applied its outcome. Every
  * failure after `running` ends the turn; a prompt already issued is cancelled
  * first so no agent keeps acting on a turn the conversation gave up on. */

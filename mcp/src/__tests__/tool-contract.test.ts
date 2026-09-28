@@ -210,7 +210,7 @@ const TOOL_OP: Record<string, { method: string; path: string }> = {
     method: "delete",
     path: "/api/v1/ext/projects/{slug}/tasks/{taskId}/relations",
   },
-  // ADR-184: the librarian's visibility-scoped discovery reads.
+  // ADR-186: the librarian's visibility-scoped discovery reads.
   project_list: { method: "get", path: "/api/v1/ext/projects" },
   project_get: {
     method: "get",
@@ -256,7 +256,7 @@ function implementedEntries(
   );
 }
 
-// ADR-185: the librarian's operation key rides the `Idempotency-Key` header.
+// ADR-187: the librarian's operation key rides the `Idempotency-Key` header.
 // The facade advertises it as the `operationKey` argument, so the header is
 // part of the tool's contract under that name.
 function headerParamNames(op: { parameters?: OpParameter[] }): string[] {

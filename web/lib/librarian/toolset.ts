@@ -1,4 +1,4 @@
-// ADR-184 / ADR-185: the librarian's tools — ONE list that feeds the
+// ADR-186 / ADR-187: the librarian's tools — ONE list that feeds the
 // instructions, the facade's `MAISTER_MCP_TOOLSET=librarian` listing (mirrored
 // in `mcp/src/toolsets.ts`) and the supervisor L1 allow-list. The drift test
 // imports the facade's copy and fails on any difference.

@@ -84,7 +84,7 @@ export function availabilityRefusal(
   );
 }
 
-/** ADR-183 (LCV-11): the admin's enable toggle and runner choice. `runnerId`
+/** ADR-185 (LCV-11): the admin's enable toggle and runner choice. `runnerId`
  * undefined leaves the runner as it is; null clears it. A runner must exist,
  * be enabled and be eligible (read-only-capable, never skipping permissions);
  * readiness is reported, not required. Disabling stops admission only. */

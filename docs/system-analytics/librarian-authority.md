@@ -15,7 +15,7 @@ the general token lifecycle ([`token-lifecycle.md`](token-lifecycle.md)), the
 external route surface ([`external-operations.md`](external-operations.md)) or the
 supervisor's guard engine ([`guardrail-hooks.md`](guardrail-hooks.md)). Being an
 instance-level assistant grants no instance-wide data access. The decision is
-[ADR-184](../decisions.md#adr-184-librarian-delegated-authority-per-turn-owner-bound-tokens-with-live-rbac).
+[ADR-186](../decisions.md#adr-186-librarian-delegated-authority-per-turn-owner-bound-tokens-with-live-rbac).
 The whole domain is **Implemented**.
 
 ## Domain entities
@@ -134,7 +134,7 @@ flowchart LR
 
 ## Expectations
 
-- **LAU-01:** The owner MUST come only from the authenticated session (`auth-context`), and no librarian route or tool may accept a user id, enforced by the ADR-184 route identifier table across `/api/librarian/*` and `/api/v1/ext/librarian/*` (Implemented).
+- **LAU-01:** The owner MUST come only from the authenticated session (`auth-context`), and no librarian route or tool may accept a user id, enforced by the ADR-186 route identifier table across `/api/librarian/*` and `/api/v1/ext/librarian/*` (Implemented).
 - **LAU-02:** Each turn MUST get a fresh `project_tokens` row with `token_kind='librarian'`, `owner_user_id` = owner, `project_id` NULL, `agent_id` NULL, `librarian_turn_id` set and `expires_at` = turn deadline, revoked in the turn-end transaction, enforced by CHECK `project_tokens_librarian_check` (Implemented).
 - **LAU-03:** Every librarian-token request MUST re-check at request time that the owner is active, has no pending password change, holds the live project role for the scope's action, holds the scope in the token's scopes and owns a `running` turn, enforced by the `handleExt` librarian arm calling `requireProjectActionForUser` (Implemented).
 - **LAU-04:** A librarian token MUST be refused on `hitl_respond` (any kind), `run_promote`, `run_discard`, `run_delegate`, `run_collect`, `agent_memory_write` and token/settings/admin routes, and an agent token MUST be refused on every `/ext/librarian/*` route, enforced by `LIBRARIAN_TOKEN_SCOPES` and the kind gates in `handleExt` (Implemented).
@@ -155,8 +155,8 @@ flowchart LR
 
 ## Linked artifacts
 
-- [ADR-184 — librarian delegated authority](../decisions.md#adr-184-librarian-delegated-authority-per-turn-owner-bound-tokens-with-live-rbac) · [record](../decisions/adr-184.md)
-- [ADR-183 — librarian runtime](../decisions.md#adr-183-librarian-runtime-a-project-less-run-kind-with-per-turn-acp-sessions) · [ADR-130 — capability guard](../decisions.md#adr-130)
+- [ADR-186 — librarian delegated authority](../decisions.md#adr-186-librarian-delegated-authority-per-turn-owner-bound-tokens-with-live-rbac) · [record](../decisions/adr-186.md)
+- [ADR-185 — librarian runtime](../decisions.md#adr-185-librarian-runtime-a-project-less-run-kind-with-per-turn-acp-sessions) · [ADR-130 — capability guard](../decisions.md#adr-130)
 - [Librarian requirement traceability](librarian-traceability.md)
 - [Product brief — personal librarian](../pv/personal-librarian.md)
 - [Librarian ERD](../db/librarian-domain.md)

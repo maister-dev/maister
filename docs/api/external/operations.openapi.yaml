@@ -42,7 +42,7 @@ info:
     `decision_request`; a direct external response to one returns `403
     UNAUTHORIZED` without mutation. Typed Plan decisions are session-auth-only.
 
-    **(Designed — ADR-184/185) Personal librarian.** A second bearer scheme,
+    **(Designed — ADR-186/185) Personal librarian.** A second bearer scheme,
     `librarianTurnToken`, admits the per-turn, owner-bound token the server
     mints for one turn of a user's personal librarian. An operation admits
     that token exactly when its `security` lists the scheme; every effectful
@@ -126,18 +126,18 @@ tags:
 
   - name: portfolio
     description: |
-      (Designed — ADR-184) Cross-project reads over the token owner's visible
+      (Designed — ADR-186) Cross-project reads over the token owner's visible
       projects: the project list and directory, task search, the work table and
       the activity feed. Every list, search and count is filtered to the
       owner's visible projects before aggregation.
   - name: clarifications
     description: |
-      (Designed — ADR-187) Addressed, user-origin task clarification before any
+      (Designed — ADR-189) Addressed, user-origin task clarification before any
       run exists: request and cancel (the requester), answer (the human
       recipient only).
   - name: librarian
     description: |
-      (Designed — ADR-185/188) Routes only a librarian turn token can call:
+      (Designed — ADR-187/188) Routes only a librarian turn token can call:
       proposal and confirmation cards, explicit personal memory, and search
       over the owner's own conversation history.
 paths:
@@ -158,13 +158,13 @@ paths:
 
         Writes a `token_audit_log` row with scope `tasks:create` after success.
 
-        (Designed — ADR-186) The body carries exactly one of `prompt` or
+        (Designed — ADR-188) The body carries exactly one of `prompt` or
         `statement`. A `statement` (`TaskStatement`) is stored as the task's
         first immutable statement revision and rendered deterministically into
         `tasks.prompt` (`renderStatementPrompt`), so an executor never needs the
         conversation it came from.
 
-        (Designed — ADR-184/185) Also admits a `librarianTurnToken`: the owner's
+        (Designed — ADR-186/185) Also admits a `librarianTurnToken`: the owner's
         live role must allow `createTask` in the slug's project on every
         request, and `Idempotency-Key` is required. The task is written with
         `launch_intent='none'` (creating work never arms auto-launch),
@@ -206,22 +206,22 @@ paths:
                   revision:
                     type: integer
                     minimum: 0
-                    description: (Designed — ADR-186) The new task's `tasks.revision`.
+                    description: (Designed — ADR-188) The new task's `tasks.revision`.
                   statementRevision:
                     type: integer
                     minimum: 1
                     nullable: true
-                    description: (Designed — ADR-186) `1` when the body carried a `statement`, else null.
+                    description: (Designed — ADR-188) `1` when the body carried a `statement`, else null.
                   launchIntent:
                     allOf:
                       - $ref: "#/components/schemas/TaskLaunchIntent"
                     nullable: true
-                    description: (Designed — ADR-185) `none` for a task created with a librarian turn token; null otherwise.
+                    description: (Designed — ADR-187) `none` for a task created with a librarian turn token; null otherwise.
                   launchability:
                     allOf:
                       - $ref: "#/components/schemas/TaskLaunchability"
                     description: |
-                      (Designed — ADR-185) The server launchability
+                      (Designed — ADR-187) The server launchability
                       classification right after create, so a caller never
                       reports an `unconfigured` task as launchable.
         "401":
@@ -247,7 +247,7 @@ paths:
 
         Writes a `token_audit_log` row with scope `tasks:read` after success.
 
-        (Designed — ADR-184) Also admits a `librarianTurnToken`: the project
+        (Designed — ADR-186) Also admits a `librarianTurnToken`: the project
         comes from the URL `slug` and the owner's live role must allow
         `readBoard` there on every request; a project the owner cannot read
         answers `404` exactly like a missing one.
@@ -293,7 +293,7 @@ paths:
 
         Writes a `token_audit_log` row with scope `tasks:read` after success.
 
-        (Designed — ADR-184) Also admits a `librarianTurnToken`: the project
+        (Designed — ADR-186) Also admits a `librarianTurnToken`: the project
         comes from the URL `slug` and the owner's live role must allow
         `readBoard` there on every request; a project the owner cannot read
         answers `404` exactly like a missing one.
@@ -339,13 +339,13 @@ paths:
         Returns the full updated `TaskDTO` on success. Writes a
         `token_audit_log` row with scope `tasks:update` after success.
 
-        (Designed — ADR-186) Optional `expectedRevision`: the update runs under
+        (Designed — ADR-188) Optional `expectedRevision`: the update runs under
         the task row lock (`SELECT … FOR UPDATE`), and a value that differs from
         `tasks.revision` is refused `409 CONFLICT` with `details.reason:
         "stale_revision"`, nothing written. Every successful update increments
         `revision`, returned in the `TaskDTO`.
 
-        (Designed — ADR-184/185) Also admits a `librarianTurnToken`: the owner's
+        (Designed — ADR-186/185) Also admits a `librarianTurnToken`: the owner's
         live role must allow `editTask` on every request, and `Idempotency-Key`
         is required.
       operationId: extUpdateTask
@@ -406,7 +406,7 @@ paths:
         session-auth route. Writes a `token_audit_log` row with scope
         `comments:read` after success.
 
-        (Designed — ADR-184) Also admits a `librarianTurnToken`: the project
+        (Designed — ADR-186) Also admits a `librarianTurnToken`: the project
         comes from the URL `slug` and the owner's live role must allow
         `readBoard` there on every request; a project the owner cannot read
         answers `404` exactly like a missing one.
@@ -480,7 +480,7 @@ paths:
         Writes a `token_audit_log` row with scope `comments:create` inside
         the same transaction (success-audit-in-work, ext idiom).
 
-        (Designed — ADR-184/185) Also admits a `librarianTurnToken`: the owner's
+        (Designed — ADR-186/185) Also admits a `librarianTurnToken`: the owner's
         live role must allow `commentTask` in the addressed project on every
         request, and `Idempotency-Key` is required. The comment's social actor
         is the owner, and `task_comments.via_operation_id` records the
@@ -649,7 +649,7 @@ paths:
         (`from` = the URL task is the relation's from-end). Inverse labels
         are render-time concerns; the wire carries the canonical kind.
 
-        (Designed — ADR-184) Also admits a `librarianTurnToken`: the project
+        (Designed — ADR-186) Also admits a `librarianTurnToken`: the project
         comes from the URL `slug` and the owner's live role must allow
         `readBoard` there on every request; a project the owner cannot read
         answers `404` exactly like a missing one.
@@ -703,7 +703,7 @@ paths:
         but the automation driven by them (auto-launch, abandon cascade) stays
         same-project.
 
-        (Designed — ADR-184/185) Also admits a `librarianTurnToken`: the owner's
+        (Designed — ADR-186/185) Also admits a `librarianTurnToken`: the owner's
         live role must allow `manageTaskRelations` in the addressed project on
         every request, and `Idempotency-Key` is required.
       operationId: extAddTaskRelation
@@ -782,7 +782,7 @@ paths:
             advisory lock (a per-project lock cannot see a cycle whose edges
             are spread over four projects), and it also refuses `CONFLICT`
             when the traversal exceeds its node bound.
-            **(Designed — ADR-185)** With a librarian turn token, also the
+            **(Designed — ADR-187)** With a librarian turn token, also the
             `Idempotency-Key` refusals (`details.reason`
             `idempotency_payload_mismatch` / `duplicate_of_operation`).
           content:
@@ -822,7 +822,7 @@ paths:
         never learns whether the edge exists. Same-project agent tokens and
         user tokens are unaffected.
 
-        (Designed — ADR-184/185) Also admits a `librarianTurnToken`: the owner's
+        (Designed — ADR-186/185) Also admits a `librarianTurnToken`: the owner's
         live role must allow `manageTaskRelations` in the addressed project on
         every request, and `Idempotency-Key` is required.
       operationId: extRemoveTaskRelation
@@ -915,7 +915,7 @@ paths:
 
         Writes a `token_audit_log` row with scope `flows:read` after success.
 
-        (Designed — ADR-184) Also admits a `librarianTurnToken`: the project
+        (Designed — ADR-186) Also admits a `librarianTurnToken`: the project
         comes from the URL `slug` and the owner's live role must allow
         `readBoard` there on every request; a project the owner cannot read
         answers `404` exactly like a missing one.
@@ -964,7 +964,7 @@ paths:
 
         Writes a `token_audit_log` row with scope `runners:read` after success.
 
-        (Designed — ADR-184) Also admits a `librarianTurnToken`: the project
+        (Designed — ADR-186) Also admits a `librarianTurnToken`: the project
         comes from the URL `slug` and the owner's live role must allow
         `readBoard` there on every request; a project the owner cannot read
         answers `404` exactly like a missing one.
@@ -1208,7 +1208,7 @@ paths:
         the token is run-bound, actor always set) recording the query and the
         returned owned/indexed union for audit.
 
-        (Designed — ADR-184) Also admits a `librarianTurnToken`: the project
+        (Designed — ADR-186) Also admits a `librarianTurnToken`: the project
         comes from the URL `slug` and the owner's live role must allow
         `readBrain` there on every request; a project the owner cannot read
         answers `404` exactly like a missing one.
@@ -1590,7 +1590,7 @@ paths:
         or `Running` if a slot was free). Writes a `token_audit_log` row with
         scope `runs:launch` after success.
 
-        (Designed — ADR-184/185) Also admits a `librarianTurnToken`: the owner's
+        (Designed — ADR-186/185) Also admits a `librarianTurnToken`: the owner's
         live role must allow `launchRun` in the addressed project on every
         request, and `Idempotency-Key` is required. The project comes from the
         task row (`resolveProjectId`). Launch preconditions are unchanged;
@@ -2070,7 +2070,7 @@ paths:
 
         A `librarianTurnToken` is refused here (the librarian is not a
         coordinator); it stops a run through
-        `POST /api/v1/ext/runs/{runId}/stop` (ADR-185 D10b).
+        `POST /api/v1/ext/runs/{runId}/stop` (ADR-187 D10b).
       operationId: extCancelRun
       security:
         - projectToken: []
@@ -2379,11 +2379,11 @@ paths:
 
         Writes a `token_audit_log` row with scope `runs:delegate` after success.
 
-        (Designed — ADR-184, open) ADR-184 D4 names this route among those the
+        (Designed — ADR-186, open) ADR-186 D4 names this route among those the
         librarian uses, but its scope is `runs:delegate`, which
         `LIBRARIAN_TOKEN_SCOPES` excludes, and its target must be an agent child
         of the calling orchestrator. The route therefore does NOT list
-        `librarianTurnToken` until ADR-184 fixes the scope and the target rule
+        `librarianTurnToken` until ADR-186 fixes the scope and the target rule
         for a caller with no orchestrator.
       operationId: extReworkRun
       security:
@@ -2460,7 +2460,7 @@ paths:
         confirm the drop; an operator brings those commits in, or confirms
         replacing them, from the run git panel.
 
-        (Designed — ADR-184/185) Also admits a `librarianTurnToken`: the owner's
+        (Designed — ADR-186/185) Also admits a `librarianTurnToken`: the owner's
         live role must allow `promoteRun` in the addressed project on every
         request, and `Idempotency-Key` is required.
       operationId: extSyncRun
@@ -2550,7 +2550,7 @@ paths:
 
         Writes a `token_audit_log` row with scope `runs:sync` after success.
 
-        (Designed — ADR-184/185) Also admits a `librarianTurnToken`: the owner's
+        (Designed — ADR-186/185) Also admits a `librarianTurnToken`: the owner's
         live role must allow `promoteRun` in the addressed project on every
         request, and `Idempotency-Key` is required.
       operationId: extReopenRun
@@ -2615,7 +2615,7 @@ paths:
 
         Writes a `token_audit_log` row with scope `runs:read` after success.
 
-        (Designed — ADR-184) Also admits a `librarianTurnToken`: the project
+        (Designed — ADR-186) Also admits a `librarianTurnToken`: the project
         comes from the run row (`resolveProjectId`) and the owner's live role
         must allow `readBoard` there on every request; a project the owner
         cannot read answers `404` exactly like a missing one.
@@ -2646,9 +2646,9 @@ paths:
   /api/v1/ext/projects/{slug}/members:
     get:
       tags: [projects]
-      summary: (Designed — ADR-187) List who can answer a clarification here
+      summary: (Designed — ADR-189) List who can answer a clarification here
       description: |
-        (Designed — ADR-187, `CLR-02`.) Scope `projects:read`. The project's
+        (Designed — ADR-189, `CLR-02`.) Scope `projects:read`. The project's
         active members holding `member` or above (the `answerHitl` floor) —
         the only eligible clarification recipients — as
         `{userId, name, role}`. No email or account data. Admits a
@@ -2692,9 +2692,9 @@ paths:
   /api/v1/ext/runs/{runId}/stop:
     post:
       tags: [runs]
-      summary: (Designed — ADR-185) Stop a run as its human owner
+      summary: (Designed — ADR-187) Stop a run as its human owner
       description: |
-        (Designed — ADR-185 D10b.) Scope `runs:cancel`, mapped to the
+        (Designed — ADR-187 D10b.) Scope `runs:cancel`, mapped to the
         `recoverRun` project action. The owner-authority "Stop run" — the same
         run-stop service the session-auth workbench Stop uses
         (`stopWorkbenchRunForToken`) — for a run addressed by id rather than as
@@ -2789,7 +2789,7 @@ paths:
 
         Writes a `token_audit_log` row with scope `runs:recover`.
 
-        (Designed — ADR-184/185) Also admits a `librarianTurnToken`: the owner's
+        (Designed — ADR-186/185) Also admits a `librarianTurnToken`: the owner's
         live role must allow `recoverRun` in the addressed project on every
         request, and `Idempotency-Key` is required. The project comes from the
         run row (`resolveProjectId`).
@@ -2938,7 +2938,7 @@ paths:
         mismatch → 404. Writes a `token_audit_log` row with scope
         `readiness:read` after success.
 
-        (Designed — ADR-184) Also admits a `librarianTurnToken`: the project
+        (Designed — ADR-186) Also admits a `librarianTurnToken`: the project
         comes from the run row (`resolveProjectId`) and the owner's live role
         must allow `readBoard` there on every request; a project the owner
         cannot read answers `404` exactly like a missing one.
@@ -3061,7 +3061,7 @@ paths:
         blobs, diff bodies, token material, supervisor handles, and absolute
         paths never cross this boundary.
 
-        (Designed — ADR-184) Also admits a `librarianTurnToken`: the project
+        (Designed — ADR-186) Also admits a `librarianTurnToken`: the project
         comes from the run row (`resolveProjectId`) and the owner's live role
         must allow `readBoard` there on every request; a project the owner
         cannot read answers `404` exactly like a missing one.
@@ -3211,7 +3211,7 @@ paths:
         HTTP status. The audit/log path must not record plaintext token, token
         hash, Authorization header, or held scope list.
 
-        (Designed — ADR-184) Also admits a `librarianTurnToken`, through the
+        (Designed — ADR-186) Also admits a `librarianTurnToken`, through the
         shared `requirePersonalOrLibrarianActor(actor, {allowLibrarian: true})`
         helper that replaces the inline "global personal token only" checks: the
         token reads the owner's cross-project HITL inbox, over the same
@@ -3292,13 +3292,13 @@ paths:
         The audit/log path must not record plaintext token, token hash,
         Authorization header, or held scope list.
 
-        (Designed — ADR-184) Also admits a `librarianTurnToken`, through the
+        (Designed — ADR-186) Also admits a `librarianTurnToken`, through the
         shared `requirePersonalOrLibrarianActor(actor, {allowLibrarian: true})`
         helper that replaces the inline "global personal token only" checks: the
         token reads the owner's decision queue — read, never answered, over the
         same visible-project set.
 
-        (Designed — ADR-187) A fifth population, `clarification`: an `open`
+        (Designed — ADR-189) A fifth population, `clarification`: an `open`
         user-origin clarification addressed to the owner (the recipient). It is
         read from the same array as the other four, so `count` still equals
         `items.length`; its `nextAction` is `answer`, which only the human
@@ -3501,7 +3501,7 @@ paths:
         Writes a `token_audit_log` row with scope `hitl:read` and the
         server-derived run project after success.
 
-        (Designed — ADR-184) Also admits a `librarianTurnToken`: the project
+        (Designed — ADR-186) Also admits a `librarianTurnToken`: the project
         comes from the run row (`resolveProjectId`) and the owner's live role
         must allow `readBoard` there on every request; a project the owner
         cannot read answers `404` exactly like a missing one.
@@ -3822,7 +3822,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ExtErrorBody" }
 
-  # ── Personal librarian surface (Designed — ADR-184..188) ───────────────────
+  # ── Personal librarian surface (Designed — ADR-186..188) ───────────────────
   # Cross-project reads, statement / triage / clarification / operator-message
   # effects, and the librarian-only routes. Each operation lists the token
   # schemes that admit it; effectful operations that admit `librarianTurnToken`
@@ -3831,9 +3831,9 @@ paths:
   /api/v1/ext/projects:
     get:
       tags: [portfolio]
-      summary: (ADR-184 — Designed) List the token owner's visible projects
+      summary: (ADR-186 — Designed) List the token owner's visible projects
       description: |
-        (Designed — ADR-184, `LAU-06`.) Scope `projects:read`. Returns every
+        (Designed — ADR-186, `LAU-06`.) Scope `projects:read`. Returns every
         non-archived project the token owner can currently read — membership at
         `viewer` or above, or every project for a global admin — through the one
         `getVisibleProjects` query, with the owner's effective role in each.
@@ -3871,9 +3871,9 @@ paths:
   /api/v1/ext/projects/{slug}/directory:
     get:
       tags: [portfolio]
-      summary: (ADR-184 — Designed) Read one project's compact directory entry
+      summary: (ADR-186 — Designed) Read one project's compact directory entry
       description: |
-        (Designed — ADR-184.) Scope `projects:read`. A compact orientation card
+        (Designed — ADR-186.) Scope `projects:read`. A compact orientation card
         for one project: its purpose (and where that text came from), its
         launchable flows (the same launchable-only projection as
         `GET /api/v1/ext/projects/{slug}/flows`), its default runner, whether a
@@ -3915,9 +3915,9 @@ paths:
   /api/v1/ext/tasks/search:
     get:
       tags: [portfolio]
-      summary: (ADR-184 — Designed) Search tasks across the token owner's visible projects
+      summary: (ADR-186 — Designed) Search tasks across the token owner's visible projects
       description: |
-        (Designed — ADR-184, `LAU-06`.) Scope `tasks:read`. Matches `q` against
+        (Designed — ADR-186, `LAU-06`.) Scope `tasks:read`. Matches `q` against
         the task key (`KEY-N`), title and prompt of tasks in the owner's visible
         projects only. The visibility filter is applied BEFORE matching and
         ranking, so a project the owner cannot see contributes no hit, no count
@@ -3971,9 +3971,9 @@ paths:
   /api/v1/ext/work:
     get:
       tags: [portfolio]
-      summary: (ADR-184 — Designed) Read the token owner's cross-project work table
+      summary: (ADR-186 — Designed) Read the token owner's cross-project work table
       description: |
-        (Designed — ADR-184, `LAU-06`.) Scope `work:read`. The token-surface
+        (Designed — ADR-186, `LAU-06`.) Scope `work:read`. The token-surface
         projection of the `/work` read model (ADR-170, `getWorkTable`): one row
         per task the owner can see, across projects, with its derived work
         stage. Scope is `getVisibleProjectIds` and nothing else; rows come in
@@ -4001,9 +4001,9 @@ paths:
   /api/v1/ext/activity/feed:
     get:
       tags: [portfolio]
-      summary: (ADR-184 — Designed) Read the token owner's cross-project activity feed
+      summary: (ADR-186 — Designed) Read the token owner's cross-project activity feed
       description: |
-        (Designed — ADR-184, `LAU-06`.) Scope `activity:read`. The token-surface
+        (Designed — ADR-186, `LAU-06`.) Scope `activity:read`. The token-surface
         projection of the `/activity` read model
         (`getCrossProjectActivityFeed`): task activity, domain-event facts and
         settled webhook deliveries across the owner's visible projects, newest
@@ -4063,9 +4063,9 @@ paths:
   /api/v1/ext/projects/{slug}/tasks/{taskId}/statement:
     post:
       tags: [tasks]
-      summary: (ADR-186 — Designed) Accept a task statement revision
+      summary: (ADR-188 — Designed) Accept a task statement revision
       description: |
-        (Designed — ADR-186, `TST-01`, `TST-02`, `TST-03`, `TST-07`.) Scope
+        (Designed — ADR-188, `TST-01`, `TST-02`, `TST-03`, `TST-07`.) Scope
         `tasks:update`. Accepts `statement` as the task's next immutable
         statement revision, in ONE transaction under the task row lock
         (`SELECT … FOR UPDATE`):
@@ -4140,9 +4140,9 @@ paths:
   /api/v1/ext/projects/{slug}/tasks/{taskId}/send-to-triage:
     post:
       tags: [tasks]
-      summary: (ADR-185 — Designed) Send a task to triage with an explicit launch intent
+      summary: (ADR-187 — Designed) Send a task to triage with an explicit launch intent
       description: |
-        (Designed — ADR-185 D8, `LOP-05`, `LOP-06`.) Scope `tasks:triage`. Wraps
+        (Designed — ADR-187 D8, `LOP-05`, `LOP-06`.) Scope `tasks:triage`. Wraps
         `sendTaskToTriage` — `tasks.triage_status = NULL`, the
         `task.triage_requeued` domain event and the `triage_requeued` activity
         entry — and records `tasks.launch_intent` in the SAME transaction.
@@ -4202,9 +4202,9 @@ paths:
   /api/v1/ext/projects/{slug}/tasks/{taskId}/clarifications:
     get:
       tags: [tasks]
-      summary: (Designed — ADR-187) List a task's clarifications
+      summary: (Designed — ADR-189) List a task's clarifications
       description: |
-        (Designed — ADR-187, `CLR-06`.) Scope `tasks:read`. The task's
+        (Designed — ADR-189, `CLR-06`.) Scope `tasks:read`. The task's
         clarification requests with requester, recipient, status and, for an
         answered row, the attributed answer — so the librarian can tell its
         owner what a teammate answered. Answers are task content and follow
@@ -4241,9 +4241,9 @@ paths:
           $ref: "#/components/responses/NotFound"
     post:
       tags: [clarifications]
-      summary: (ADR-187 — Designed) Ask a named teammate to clarify a task before execution
+      summary: (ADR-189 — Designed) Ask a named teammate to clarify a task before execution
       description: |
-        (Designed — ADR-187, `CLR-01`, `CLR-02`, `CLR-03`, `CLR-05`.) Scope
+        (Designed — ADR-189, `CLR-01`, `CLR-02`, `CLR-03`, `CLR-05`.) Scope
         `hitl:request`. Creates a user-origin `task_clarifications` row
         (`origin_kind='user'`, `retrigger_mode='none'`, no source run, agent or
         HITL row). No run is created to address someone, and a clarification
@@ -4324,9 +4324,9 @@ paths:
   /api/v1/ext/projects/{slug}/tasks/{taskId}/clarifications/{clarificationId}:
     delete:
       tags: [clarifications]
-      summary: (ADR-187 — Designed) Cancel an open clarification the token owner requested
+      summary: (ADR-189 — Designed) Cancel an open clarification the token owner requested
       description: |
-        (Designed — ADR-187, `CLR-04`, `CLR-08`.) Scope `hitl:request`. The
+        (Designed — ADR-189, `CLR-04`, `CLR-08`.) Scope `hitl:request`. The
         requester — the token owner — cancels an `open` user-origin request: the
         row becomes `cancelled` with `cancel_reason = requester_cancelled`,
         `task_activity` records `clarification_cancelled`, the
@@ -4385,9 +4385,9 @@ paths:
   /api/v1/ext/projects/{slug}/tasks/{taskId}/clarifications/{clarificationId}/answer:
     post:
       tags: [clarifications]
-      summary: (ADR-187 — Designed) Answer a clarification addressed to the token owner
+      summary: (ADR-189 — Designed) Answer a clarification addressed to the token owner
       description: |
-        (Designed — ADR-187, `CLR-04`, `CLR-07`, `CLR-09`.) Requires a GLOBAL
+        (Designed — ADR-189, `CLR-04`, `CLR-07`, `CLR-09`.) Requires a GLOBAL
         personal user token (`token_kind=user`, `project_id IS NULL`) holding
         the exact scope `hitl:respond:human`; `*` never satisfies it. Librarian
         turn tokens, agent tokens, project tokens and project-scoped user tokens
@@ -4463,9 +4463,9 @@ paths:
   /api/v1/ext/runs/{runId}/operator-message:
     post:
       tags: [runs]
-      summary: (ADR-185 — Designed) Send the owner's message to an existing run
+      summary: (ADR-187 — Designed) Send the owner's message to an existing run
       description: |
-        (Designed — ADR-185 D10b, `LOP-10`.) Scope `runs:message` — never
+        (Designed — ADR-187 D10b, `LOP-10`.) Scope `runs:message` — never
         `runs:delegate`: this is the owner's continuation seam, not a
         coordinator re-message (`POST /api/v1/ext/runs/message` stays
         orchestrator-only). The project comes from the run row
@@ -4582,9 +4582,9 @@ paths:
   /api/v1/ext/librarian/cards:
     post:
       tags: [librarian]
-      summary: (ADR-185 — Designed) Propose a card for the owner to decide
+      summary: (ADR-187 — Designed) Propose a card for the owner to decide
       description: |
-        (Designed — ADR-185 D7, `LOP-08`, `LOP-09`, `LMM-01`.) Scope
+        (Designed — ADR-187 D7, `LOP-08`, `LOP-09`, `LMM-01`.) Scope
         `librarian:cards`; librarian turn tokens ONLY — any other token kind is
         refused `403`. Creates a `pending` card in the owner's conversation,
         bound to the current segment and turn, which the owner decides with one
@@ -4649,9 +4649,9 @@ paths:
   /api/v1/ext/librarian/memory:
     post:
       tags: [librarian]
-      summary: (ADR-188 — Designed) Remember an item the owner explicitly asked to keep
+      summary: (ADR-190 — Designed) Remember an item the owner explicitly asked to keep
       description: |
-        (Designed — ADR-188, `LMM-01`, `LMM-02`, `LMM-07`, `LMM-11`.) Scope
+        (Designed — ADR-190, `LMM-01`, `LMM-02`, `LMM-07`, `LMM-11`.) Scope
         `librarian:memory`; librarian turn tokens only, and only from an
         `owner_message` turn — an Explain or summary turn's token is refused
         `403`. Use it only for an explicit "remember" from the owner; anything
@@ -4702,9 +4702,9 @@ paths:
   /api/v1/ext/librarian/history/search:
     get:
       tags: [librarian]
-      summary: (ADR-188 — Designed) Search the owner's own earlier conversation
+      summary: (ADR-190 — Designed) Search the owner's own earlier conversation
       description: |
-        (Designed — ADR-188 D12, `LMM-04`.) Scope `librarian:history`; librarian
+        (Designed — ADR-190 D12, `LMM-04`.) Scope `librarian:history`; librarian
         turn tokens only. Full-text search (a `simple` tsvector over
         `librarian_messages.body`) of the OWNER's conversation, older segments
         included — the only way older segments reach a turn, since automatic
@@ -4760,7 +4760,7 @@ components:
       type: http
       scheme: bearer
       description: |
-        (Designed — ADR-184) The personal librarian's per-turn delegated token.
+        (Designed — ADR-186) The personal librarian's per-turn delegated token.
         Issued by the SERVER, never user-creatable, and never listed, shown or
         revoked through the token-management routes: when a librarian turn's
         run flips `Running`, the web mints one `project_tokens` row with
@@ -4799,7 +4799,7 @@ components:
       in: header
       required: false
       description: |
-        (Designed — ADR-185, `LOP-01`, `LOP-02`, `LOP-03`) Caller-chosen
+        (Designed — ADR-187, `LOP-01`, `LOP-02`, `LOP-03`) Caller-chosen
         operation key. **Required** on every effectful route when the request
         is authenticated by `librarianTurnToken` — the MCP facade forwards each
         effectful tool's `operationKey` argument here — and a librarian request
@@ -4841,7 +4841,7 @@ components:
       in: header
       required: false
       description: |
-        (Designed — ADR-185, `LOP-02`) Librarian turn tokens only; ignored for
+        (Designed — ADR-187, `LOP-02`) Librarian turn tokens only; ignored for
         other token kinds. `true` lets a NEW `Idempotency-Key` repeat the digest
         of an operation that already succeeded in the current segment — the
         owner explicitly asked for the same effect again. It never relaxes the
@@ -4880,7 +4880,7 @@ components:
         in `Backlog`, project archived, branch/worktree taken). Code `CONFLICT`
         or `PRECONDITION`.
 
-        (Designed — ADR-185/186) `details.reason` discriminates the librarian
+        (Designed — ADR-187/186) `details.reason` discriminates the librarian
         and task-revision refusals: `idempotency_payload_mismatch` (same
         `Idempotency-Key`, different request), `duplicate_of_operation` (a new
         key repeating an operation that already succeeded in the current
@@ -4909,7 +4909,7 @@ components:
           - **Wrong token kind (inbox only)** — `/api/v1/ext/hitl` requires a
             global personal user token; project/agent/project-scoped tokens
             return 403.
-          - **(Designed — ADR-184) Librarian turn token** — presented to an
+          - **(Designed — ADR-186) Librarian turn token** — presented to an
             operation whose `security` does not list `librarianTurnToken`; its
             turn is no longer `running`; or an Explain turn's read-only token on
             an effectful route. Also any other token kind on
@@ -4977,16 +4977,15 @@ components:
             reason:
               type: string
               description: |
-                A snake_case discriminator token the route documents (for
-                example `busy`, `session_ended`); never a message.
-                (Designed — ADR-185/186) Discriminator of a `409 CONFLICT`:
+                A snake_case discriminator token the route documents; never a message.
+                (Designed — ADR-187/186) Discriminator of a `409 CONFLICT`:
                 `idempotency_payload_mismatch`, `duplicate_of_operation`, or
                 `stale_revision`. Absent on other refusals.
             operation:
               allOf:
                 - $ref: "#/components/schemas/LibrarianOperationReceipt"
               description: |
-                (Designed — ADR-185) With `reason: duplicate_of_operation` or
+                (Designed — ADR-187) With `reason: duplicate_of_operation` or
                 `idempotency_payload_mismatch`: the receipt of the operation
                 already recorded, so the caller can report its result instead
                 of repeating the effect.
@@ -5958,20 +5957,20 @@ components:
           type: integer
           minimum: 0
           description: |
-            (Designed — ADR-186, `TST-02`) Optimistic task revision, incremented
+            (Designed — ADR-188, `TST-02`) Optimistic task revision, incremented
             by every content write (UI PATCH, ext PATCH, statement accept) under
             the task row lock. Send it back as `expectedRevision`. Present on
-            every response once migration `0184` lands.
+            every response once migration `0186` lands.
         statementRevision:
           type: integer
           minimum: 1
           nullable: true
-          description: (Designed — ADR-186) The accepted statement revision rendered into `prompt`; null when the task has none.
+          description: (Designed — ADR-188) The accepted statement revision rendered into `prompt`; null when the task has none.
         launchIntent:
           allOf:
             - $ref: "#/components/schemas/TaskLaunchIntent"
           nullable: true
-          description: (Designed — ADR-185) `tasks.launch_intent`; null on every non-librarian path.
+          description: (Designed — ADR-187) `tasks.launch_intent`; null on every non-librarian path.
 
     RunDTO:
       type: object
@@ -6722,7 +6721,7 @@ components:
           allOf:
             - $ref: "#/components/schemas/TaskStatement"
           description: |
-            (Designed — ADR-186) The agreed statement; the server renders
+            (Designed — ADR-188) The agreed statement; the server renders
             `tasks.prompt` from it and stores it as statement revision 1.
         flowId:
           type: string
@@ -6752,7 +6751,7 @@ components:
           type: integer
           minimum: 0
           description: |
-            (Designed — ADR-186, `TST-02`) Optional optimistic guard: the
+            (Designed — ADR-188, `TST-02`) Optional optimistic guard: the
             `TaskDTO.revision` the caller last read. A mismatch is refused
             `409 CONFLICT` with `details.reason: "stale_revision"`.
 
@@ -6878,7 +6877,7 @@ components:
           description: |
             Which `decisions` population this entry came from.
             `decision_request` HITL rows are never surfaced (ADR-137).
-            `clarification` (Designed — ADR-187) is an open user-origin
+            `clarification` (Designed — ADR-189) is an open user-origin
             clarification addressed to the owner.
         projectId: { type: string, format: uuid }
         projectSlug: { type: string }
@@ -6911,13 +6910,13 @@ components:
           type: string
           format: uuid
           nullable: true
-          description: (Designed — ADR-187) Present only when `kind` is `clarification`.
+          description: (Designed — ADR-189) Present only when `kind` is `clarification`.
         nextAction:
           type: string
           enum: [respond, promote, recover, discard, review, answer]
           description: |
             The single action that clears this entry. `answer` (Designed —
-            ADR-187) is performed only by the human recipient.
+            ADR-189) is performed only by the human recipient.
         createdAt:
           type: string
           format: date-time
@@ -7759,7 +7758,7 @@ components:
       type: object
       description: |
         (M37 — Implemented, ADR-098) `run_cancel` payload. `childRunId` must be a
-        child of the calling orchestrator. (Designed — ADR-184) With a librarian
+        child of the calling orchestrator. (Designed — ADR-186) With a librarian
         turn token there is no orchestrator: `childRunId` names any run the
         owner can act on (see `extCancelRun`).
       required: [childRunId]
@@ -7769,13 +7768,13 @@ components:
           type: string
           format: uuid
 
-    # ── Personal librarian schemas (Designed — ADR-184..188) ──────────────────
+    # ── Personal librarian schemas (Designed — ADR-186..188) ──────────────────
 
     TaskLaunchIntent:
       type: string
       enum: [none, triage_only, triage_then_launch]
       description: |
-        (Designed — ADR-185 D8) `tasks.launch_intent`. `none` — created through
+        (Designed — ADR-187 D8) `tasks.launch_intent`. `none` — created through
         the librarian; a triage verdict never arms auto-launch and C2 never
         admits the task. `triage_only` — triage runs, launch waits for a human.
         `triage_then_launch` — the verdict's `enqueue` may arm auto-launch.
@@ -7796,13 +7795,13 @@ components:
         ]
       description: |
         The server launchability classification. `clarification_pending`
-        (Designed — ADR-187) — an open blocking clarification holds launch; it
+        (Designed — ADR-189) — an open blocking clarification holds launch; it
         ranks after `flagged` and before `blocked`.
 
     TaskStatement:
       type: object
       description: |
-        (Designed — ADR-186, `TST-01`) The agreed, self-contained task
+        (Designed — ADR-188, `TST-01`) The agreed, self-contained task
         statement. Every key is required; arrays may be empty except
         `acceptance`. The same bounds hold on every entry point. Accepting a
         statement stores an immutable `task_statement_revisions` row and
@@ -7930,7 +7929,7 @@ components:
       additionalProperties: false
       required: [recipientUserId, question, reason, answerFormat, blocking]
       description: |
-        (Designed — ADR-187, `CLR-01`) A user-origin clarification request.
+        (Designed — ADR-189, `CLR-01`) A user-origin clarification request.
         The requester and the source message are never body fields.
       properties:
         recipientUserId:
@@ -7973,7 +7972,7 @@ components:
 
     TaskClarificationAnswer:
       description: |
-        (Designed — ADR-187) Exactly one form, matching the request's
+        (Designed — ADR-189) Exactly one form, matching the request's
         `answerFormat`: `text`, `choice` (one of the request's `choices`), or
         `yesNo`.
       oneOf:
@@ -8010,7 +8009,7 @@ components:
       type: object
       additionalProperties: false
       description: |
-        (Designed — ADR-187) Explicit projection of one USER-origin
+        (Designed — ADR-189) Explicit projection of one USER-origin
         `task_clarifications` row — never the raw row. Agent-origin rows
         (ADR-136) are not addressed by these routes.
       required:
@@ -8144,7 +8143,7 @@ components:
       type: object
       additionalProperties: false
       description: |
-        (Designed — ADR-185, `LOP-01`..`LOP-04`) Explicit projection of one
+        (Designed — ADR-187, `LOP-01`..`LOP-04`) Explicit projection of one
         `librarian_operations` row, never the raw row. `result` is the stored
         route result; a reader re-reads the target's live status rather than
         trusting it. A batch is a sequence of operations, one receipt each, and
@@ -8215,7 +8214,7 @@ components:
       additionalProperties: false
       required: [kind, content, scope]
       description: |
-        (Designed — ADR-188, `LMM-02`) A personal memory item to write.
+        (Designed — ADR-190, `LMM-02`) A personal memory item to write.
         `projectSlug` is required when `scope` is `project` and refused
         otherwise (`422 CONFIG`).
       properties:
@@ -8325,7 +8324,7 @@ components:
       type: object
       additionalProperties: false
       description: |
-        (Designed — ADR-185 D7, `LOP-08`) Explicit projection of one
+        (Designed — ADR-187 D7, `LOP-08`) Explicit projection of one
         `librarian_cards` row.
       required:
         [
@@ -8382,7 +8381,7 @@ components:
     LibrarianMemoryItem:
       type: object
       additionalProperties: false
-      description: (Designed — ADR-188, `LMM-02`) Explicit projection of one personal memory item.
+      description: (Designed — ADR-190, `LMM-02`) Explicit projection of one personal memory item.
       required:
         [
           id,
@@ -8504,7 +8503,7 @@ components:
       type: object
       additionalProperties: false
       description: |
-        (Designed — ADR-184) A compact, read-only directory entry. Never carries
+        (Designed — ADR-186) A compact, read-only directory entry. Never carries
         a repository path, secret reference or member identity.
       required:
         [
@@ -8682,7 +8681,7 @@ components:
           description: An open blocking relation holds the task.
         clarificationPending:
           type: boolean
-          description: (Designed — ADR-187) An open blocking clarification holds the task.
+          description: (Designed — ADR-189) An open blocking clarification holds the task.
         promotedKind:
           type: string
           nullable: true

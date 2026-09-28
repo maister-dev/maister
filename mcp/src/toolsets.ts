@@ -1,10 +1,10 @@
 // Named tool subsets a facade process may expose (`MAISTER_MCP_TOOLSET`).
 // Listing is a convenience for the model; every refusal is still enforced by
-// the ext routes (ADR-184: a librarian token is refused on any route that does
+// the ext routes (ADR-186: a librarian token is refused on any route that does
 // not admit it). Mirrored by `web/lib/librarian/toolset.ts`, whose drift test
 // imports this file.
 
-// ADR-184 / ADR-185: the tools a librarian turn may call. Human-only decisions
+// ADR-186 / ADR-187: the tools a librarian turn may call. Human-only decisions
 // (`hitl_respond`, `run_promote`, `run_discard`), coordinator tools
 // (`run_delegate`, `run_collect`, `run_cancel`, `run_rework`, `run_message`,
 // `run_plan`), the triager's verdict (`triage_set`) and every agent-memory,

@@ -1,6 +1,6 @@
 import { LIBRARIAN_TOOLSET } from "./toolset";
 
-// ADR-183 / ADR-185 (T2.7): the agent-facing SSOT. Bump the version on ANY
+// ADR-185 / ADR-187 (T2.7): the agent-facing SSOT. Bump the version on ANY
 // wording change; the context snapshot records it, so a reply stays
 // attributable to the instructions it ran under.
 export const LIBRARIAN_INSTRUCTIONS_VERSION = "librarian-instructions.v4";

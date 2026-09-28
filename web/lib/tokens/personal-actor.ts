@@ -11,7 +11,7 @@ import { requireActiveUserById } from "@/lib/authz";
 // subscriptions) accept only a GLOBAL token that acts as that person. A
 // project token has no person and an agent token must never read one. A
 // librarian token acts as its owner, so a read of the owner's own queue may
-// admit it (ADR-184) — never a write that changes where the owner is told.
+// admit it (ADR-186) — never a write that changes where the owner is told.
 export function requirePersonalOrLibrarianActor(
   actor: Pick<TokenActor, "tokenKind" | "ownerUserId" | "projectId">,
   opts: { allowLibrarian: boolean },

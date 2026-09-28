@@ -5,7 +5,7 @@ import {
   readLibrarianConfig,
 } from "@/lib/librarian/config";
 
-// D17 (ADR-183, ADR-188): every librarian budget is finite and validated; a
+// D17 (ADR-185, ADR-190): every librarian budget is finite and validated; a
 // garbage value refuses boot with CONFIG instead of silently falling back.
 
 describe("UT-LCV-10 part: librarian budgets are finite, validated env values", () => {

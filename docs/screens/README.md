@@ -124,7 +124,7 @@ flowchart TD
     Shell --- Rail["chrome/left-rail — nav, active workspaces, runners readiness, launch"]
     Shell --- Status["chrome/status-bar — supervisor status, single source"]
     Rail --> Launch["chrome/launch-dialog — scratch/launch popover, Cmd/Ctrl+K"]
-    TopNav --> Librarian["chrome/librarian-panel — personal librarian panel, Designed ADR-189"]
+    TopNav --> Librarian["chrome/librarian-panel — personal librarian panel, Designed ADR-191"]
 
     Rail --> Desk["desk / — Home, composes decisions, work, activity"]
     Rail --> Portfolio["Portfolio /projects"]
@@ -179,7 +179,7 @@ flowchart TD
 | [`chrome/status-bar.md`](chrome/status-bar.md) | Footer status bar (supervisor, single source) | shell | Implemented (WI-3) |
 | [`chrome/top-nav.md`](chrome/top-nav.md) | Top nav (breadcrumb, locale, theme, user) | shell | Implemented (WI-3) |
 | [`chrome/launch-dialog.md`](chrome/launch-dialog.md) | Launch dialog (scratch/launch popover + Cmd/Ctrl+K) | shell | Implemented (WI-4/WI-5) |
-| [`chrome/librarian-panel.md`](chrome/librarian-panel.md) | Librarian panel (top-nav entry + personal right-side conversation panel) | shell | Designed (ADR-189) |
+| [`chrome/librarian-panel.md`](chrome/librarian-panel.md) | Librarian panel (top-nav entry + personal right-side conversation panel) | shell | Designed (ADR-191) |
 | [`desk.md`](desk.md) | Desk (home: Now strip, work in flight with expandable decision panels, Held, activity) | `/` | Implemented (ADR-172, ADR-174) |
 | [`work.md`](work.md) | Cross-project work table | `/work` | Implemented (ADR-170, ADR-174) |
 | [`activity.md`](activity.md) | Cross-project activity feed + read cursor | `/activity` | Implemented (ADR-169, ADR-171) |

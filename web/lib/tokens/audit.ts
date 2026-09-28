@@ -25,7 +25,7 @@ export type TokenAuditInput = {
   method: string;
   result: "ok" | "error";
   statusCode: number;
-  // ADR-184: delegated-authority attribution, set for librarian tokens only.
+  // ADR-186: delegated-authority attribution, set for librarian tokens only.
   onBehalfOfUserId?: string | null;
   librarianTurnId?: string | null;
   operationId?: string | null;

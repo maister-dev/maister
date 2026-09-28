@@ -44,7 +44,7 @@ export type WorkspaceSpecInput = {
     sharedWorktree: string | null;
   };
   ephemeralReadOnlyCheckoutExists: boolean;
-  /** ADR-183: the conversation's directory; set only for a librarian run. */
+  /** ADR-185: the conversation's directory; set only for a librarian run. */
   librarianWorkdir?: string | null;
 };
 
@@ -70,7 +70,7 @@ export function workspaceSpecFor(
   const base = { runId: run.id, projectSlug: project.slug, ...mounts };
 
   if (run.runKind === "librarian") {
-    // ADR-183: an empty per-conversation directory under the reserved slug.
+    // ADR-185: an empty per-conversation directory under the reserved slug.
     if (!input.librarianWorkdir)
       throw missingWorkspace(run.id, "librarian conversation");
 
@@ -184,7 +184,7 @@ export async function loadWorkspaceSpecInput(
   let project: { slug: string; repoPath: string } | null = null;
 
   if (run.runKind === "librarian") {
-    // ADR-183: a librarian run has no project either; its conversation names
+    // ADR-185: a librarian run has no project either; its conversation names
     // the directory and the reserved slug names the runtime subtree.
     const [conversation] = await db
       .select({ id: librarianConversations.id })

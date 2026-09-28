@@ -1,4 +1,4 @@
-// The librarian's entry and panel, end to end (ADR-189, T2.15):
+// The librarian's entry and panel, end to end (ADR-191, T2.15):
 // `E2E-LUI-01` entry on every route · `E2E-LUI-02` the panel survives
 // navigation, collapse and reload · `E2E-LUI-03` presentation by viewport ·
 // `E2E-LUI-05` focus · `E2E-LUI-09` no Cmd/Ctrl+K of its own.

@@ -24,7 +24,7 @@ import {
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 
-// ADR-184: a librarian token is admitted only on routes that opt in, and every
+// ADR-186: a librarian token is admitted only on routes that opt in, and every
 // admitted request re-checks the owner's LIVE project role for the scope.
 
 let database: StartedPostgresTestDb;

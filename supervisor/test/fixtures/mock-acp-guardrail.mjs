@@ -10,7 +10,7 @@
 //   --scenario no_progress         --count M → M non-write tool_call turns
 //   --scenario no_progress_reset   --count M → (M-1) idle, one write (reset), (M-1) idle
 //   --scenario librarian_mcp_only           → Read + WebFetch denied, a maister
-//                                              facade tool allowed (ADR-183 D5)
+//                                              facade tool allowed (ADR-185 D5)
 //   --scenario librarian_builtin_repeat     → 4 built-in calls; the 3rd deny halts
 //   --scenario deferred_cancel     --count M → open a real HITL deferred, then trip
 //                                              no_progress (M idle turns) → cancel it
@@ -272,7 +272,7 @@ class GuardrailAgent {
         await this.requestTool(sessionId, "WebFetch", `tc-cap-rep-${i}`);
       }
     } else if (scenario === "librarian_mcp_only") {
-      // ADR-183 D5: a librarian turn's MCP-only profile. A built-in file read
+      // ADR-185 D5: a librarian turn's MCP-only profile. A built-in file read
       // and a web fetch are denied; the maister facade tool is allowed inline.
       await this.requestTool(sessionId, "Read", "tc-lib-read", "read");
       await this.requestTool(sessionId, "WebFetch", "tc-lib-fetch", "fetch");

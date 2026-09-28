@@ -13,7 +13,7 @@ import {
   setMemoryEnabledNextSegment,
 } from "@/lib/librarian/view";
 
-// ADR-183 (LCV-01, LAU-01, LAU-09): the caller's own conversation. The owner
+// ADR-185 (LCV-01, LAU-01, LAU-09): the caller's own conversation. The owner
 // is the SESSION user; no parameter names a user or a conversation.
 
 export async function GET(): Promise<NextResponse> {

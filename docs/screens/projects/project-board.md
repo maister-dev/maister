@@ -126,7 +126,7 @@ The board is a horizontally scrollable set of columns:
   saving as inherited task fields unless the operator chooses an override. Its
   comments/activity timeline sits below the run history; a threaded hierarchy can
   be added later without changing the current read flow.
-- **Clarifications section on the task detail page (Designed — ADR-187).** A
+- **Clarifications section on the task detail page (Designed — ADR-189).** A
   section lists the task's user-origin clarifications — questions one person
   (usually through their personal librarian) addressed to another before any
   run exists — grouped as **Open**, **Answered** and **Cancelled**, beside the
@@ -181,7 +181,7 @@ The board is a horizontally scrollable set of columns:
   [`../../system-analytics/branch-sync.md`](../../system-analytics/branch-sync.md).
 - **Relation blockers** disable launch when a task is blocked by open
   `blocks`, `depends_on`, or success-gated `requires` edges.
-- **Clarification hold (Designed — ADR-187)** disables launch on a card whose
+- **Clarification hold (Designed — ADR-189)** disables launch on a card whose
   task has an open blocking clarification, with a reason chip; the card reads
   the shared `clarification_pending` classification (its hand-mirrored copy is
   pinned by a parity test), never a new task status.
@@ -297,7 +297,7 @@ to server-stored mode. The board never renders a stale question as answerable.
   `GET/POST /api/account/tokens` and
   `PATCH/DELETE /api/account/tokens/{tokenId}`.
 
-- Clarifications section (Designed, ADR-187): rows come with the task-detail
+- Clarifications section (Designed, ADR-189): rows come with the task-detail
   read; the recipient's answer posts
   `POST /api/projects/{slug}/tasks/{number}/clarifications/{id}/answer`
   (session auth, human only, recipient must still hold project `member`); a
@@ -328,7 +328,7 @@ Uses `board`, `common`, `launch`, `run`, `readiness`, `taskDetail`, and
 `tokens` namespaces from `web/messages/{locale}.json`. The PR-state chip and
 Reopen labels (Implemented, ADR-140/141) live under the existing `board` / `run`
 namespaces; EN + RU parity required. The clarifications section (Designed,
-ADR-187) adds its keys — group titles, answer-format controls, blocking chip,
+ADR-189) adds its keys — group titles, answer-format controls, blocking chip,
 cancel reasons, the launch-hold reason — to `taskDetail`, with EN + RU parity.
 
 ## Linked Artifacts
@@ -341,7 +341,7 @@ cancel reasons, the launch-hold reason — to `taskDetail`, with EN + RU parity.
   flight cards),
   [#adr-140](../../decisions.md#adr-141-branch-sync-with-ai-conflict-resolver-and-reopen)
   (reopen affordance),
-  [#adr-187](../../decisions.md#adr-187-addressed-task-clarification-before-execution)
+  [#adr-189](../../decisions.md#adr-189-addressed-task-clarification-before-execution)
   (clarifications section and launch hold; Designed).
 - Behaviour (Designed): [`../../system-analytics/task-clarifications.md`](../../system-analytics/task-clarifications.md).
 - Source: `web/components/board/board.tsx`,

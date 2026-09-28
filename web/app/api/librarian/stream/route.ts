@@ -9,7 +9,7 @@ import { getDb } from "@/lib/db/client";
 import { librarianErrorResponse, parseSeq } from "@/lib/librarian/http";
 import { librarianStreamFrames } from "@/lib/librarian/stream";
 
-// ADR-183 (LCV-12): the caller's conversation stream. The session check is
+// ADR-185 (LCV-12): the caller's conversation stream. The session check is
 // the FIRST await; the stream addresses the session user and nothing else.
 
 export const dynamic = "force-dynamic";

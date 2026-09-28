@@ -23,7 +23,7 @@ import {
 import { LibrarianTrigger } from "@/components/librarian/librarian-trigger";
 import { librarianPanelMode } from "@/components/librarian/panel-mode";
 
-// ADR-189 (T2.15): the entry, the panel's scroll rule, its named controls and
+// ADR-191 (T2.15): the entry, the panel's scroll rule, its named controls and
 // their disabled reasons, and the `librarian` namespace in both languages.
 
 const { pathnameRef } = vi.hoisted(() => ({ pathnameRef: { value: "/" } }));
@@ -682,7 +682,7 @@ describe("LUI-05 / LUI-02 in the unit: focus and the kept draft", () => {
   });
 });
 
-describe("ADR-189 D4: the presentation rule", () => {
+describe("ADR-191 D4: the presentation rule", () => {
   const cases: [number, string, boolean, string][] = [
     [390, "/", false, "fullscreen"],
     [390, "/scratch-runs/x", true, "fullscreen"],

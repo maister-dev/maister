@@ -1432,15 +1432,15 @@ expression is wrong once `webhook_events.project_id` can be NULL — see
 [ADR-173](decisions.md#adr-173) D3 and
 [`db/webhooks.md`](db/webhooks.md).
 
-## Personal librarian tables (`0181`–`0183` Implemented; `0184`–`0188` Designed — ADR-183..188)
+## Personal librarian tables (`0183`–`0185` Implemented; `0186`–`0190` Designed — ADR-185..188)
 
 The persistence of the personal librarian: one conversation per user on a
-project-less `run_kind='librarian'` run ([ADR-183](decisions.md#adr-183)),
-per-turn owner-bound tokens ([ADR-184](decisions.md#adr-184)), the operation
-ledger and cards ([ADR-185](decisions.md#adr-185)), task statements and task
-revision ([ADR-186](decisions.md#adr-186)), user-origin clarifications
-([ADR-187](decisions.md#adr-187)), and memory, summaries, reset and history
-deletion ([ADR-188](decisions.md#adr-188)). The DDL below is the
+project-less `run_kind='librarian'` run ([ADR-185](decisions.md#adr-185)),
+per-turn owner-bound tokens ([ADR-186](decisions.md#adr-186)), the operation
+ledger and cards ([ADR-187](decisions.md#adr-187)), task statements and task
+revision ([ADR-188](decisions.md#adr-188)), user-origin clarifications
+([ADR-189](decisions.md#adr-189)), and memory, summaries, reset and history
+deletion ([ADR-190](decisions.md#adr-190)). The DDL below is the
 **specification**: the migrations implement it rather than becoming it.
 Constraint and index names are normative — requirement rows and tests cite
 them; an inline CHECK without a spelled-out name takes Postgres's
@@ -1455,19 +1455,19 @@ and the librarian documents it links.
 
 | Migration | Tables created | Shared tables changed |
 | --- | --- | --- |
-| `0181_librarian_token_kind` | — | `project_tokens`, `token_audit_log` |
-| `0182_librarian_conversations` | `librarian_conversations`, `librarian_segments`, `librarian_messages`, `librarian_turns`, `librarian_context_snapshots` | `platform_runtime_settings`, `project_tokens` (FK) |
-| `0183_librarian_run_kind` | — | `runs`, `run_sessions`, `execution_commands`, `execution_assignments` |
-| `0184_task_revision_launch_intent` | — | `tasks` |
-| `0185_librarian_operations` | `librarian_operations`, `librarian_cards`, `task_statement_revisions`, `librarian_task_links` | `task_comments`, `agent_turns`, `task_activity` |
-| `0186_task_clarifications_user_origin` | — | `task_clarifications`, `task_activity`, `inbox_items`, `domain_events` |
-| `0187_librarian_updates` | `librarian_updates` | — |
-| `0188_librarian_memory` | `librarian_memory_items`, `librarian_memory_item_revisions`, `librarian_memory_tombstones`, `librarian_segment_summaries` | — |
+| `0183_librarian_token_kind` | — | `project_tokens`, `token_audit_log` |
+| `0184_librarian_conversations` | `librarian_conversations`, `librarian_segments`, `librarian_messages`, `librarian_turns`, `librarian_context_snapshots` | `platform_runtime_settings`, `project_tokens` (FK) |
+| `0185_librarian_run_kind` | — | `runs`, `run_sessions`, `execution_commands`, `execution_assignments` |
+| `0186_task_revision_launch_intent` | — | `tasks` |
+| `0187_librarian_operations` | `librarian_operations`, `librarian_cards`, `task_statement_revisions`, `librarian_task_links` | `task_comments`, `agent_turns`, `task_activity` |
+| `0188_task_clarifications_user_origin` | — | `task_clarifications`, `task_activity`, `inbox_items`, `domain_events` |
+| `0189_librarian_updates` | `librarian_updates` | — |
+| `0190_librarian_memory` | `librarian_memory_items`, `librarian_memory_item_revisions`, `librarian_memory_tombstones`, `librarian_segment_summaries` | — |
 
 The `runs` and `tasks` constraint changes sit in migrations of their own
-(`0183`, `0184`), so each is reviewable and revertable alone.
+(`0185`, `0186`), so each is reviewable and revertable alone.
 
-### `0181_librarian_token_kind` (Implemented — ADR-184)
+### `0183_librarian_token_kind` (Implemented — ADR-186)
 
 A librarian token is a `project_tokens` row minted for one turn when the
 librarian run flips `Running`, named `librarian-turn:<turnId>` (a reserved
@@ -1501,9 +1501,9 @@ Every librarian-token request writes its audit row through the mandatory
 `librarian_turn_id`, and `operation_id` for an effect. `DISTINCT project_id`
 over one turn's audit rows is that turn's project set, which the reply's
 `source_project_ids` records. `project_tokens.librarian_turn_id` gains its FK
-in `0182`, once `librarian_turns` exists; the audit columns stay plain text.
+in `0184`, once `librarian_turns` exists; the audit columns stay plain text.
 
-### `0182_librarian_conversations` (Implemented — ADR-183, ADR-188)
+### `0184_librarian_conversations` (Implemented — ADR-185, ADR-190)
 
 ```sql
 CREATE TABLE librarian_conversations (
@@ -1653,7 +1653,7 @@ ALTER TABLE project_tokens ADD CONSTRAINT project_tokens_librarian_turn_fk
   `start_attempts` counts restarts of a turn whose host was lost before any
   prompt command was queued; the recovery pass restarts at most three times,
   then fails the turn `host_lost`. `reset_state = 'clearing'` is the history
-  clear's own barrier ([ADR-188](decisions.md#adr-188)), distinct from a
+  clear's own barrier ([ADR-190](decisions.md#adr-190)), distinct from a
   context reset's `resetting`; both refuse admission with `CONFLICT`
   `reset_in_progress`. `context_snapshot_id` and
   `token_id` carry no FK — the snapshot and the token each reference their
@@ -1663,9 +1663,9 @@ ALTER TABLE project_tokens ADD CONSTRAINT project_tokens_librarian_turn_fk
   command is queued; the snapshot is what makes a reply reproducible and what
   "which memory this reply used" reads.
 - **`platform_runtime_settings`** — see
-  [Configuration](configuration.md#personal-librarian--platform_runtime_settings-implemented--adr-183).
+  [Configuration](configuration.md#personal-librarian--platform_runtime_settings-implemented--adr-185).
 
-### `0183_librarian_run_kind` (Implemented — ADR-183)
+### `0185_librarian_run_kind` (Implemented — ADR-185)
 
 `run_kind` has no DB CHECK before this migration (TypeScript enum only). A
 librarian run is created on the conversation's first turn with
@@ -1739,7 +1739,7 @@ its canonical payload). `run_sessions.runner_resolution_tier` gains the value
 `librarianDefault`: the runner came from
 `platform_runtime_settings.librarian_runner_id`, never from the flow chain.
 
-### `0184_task_revision_launch_intent` (Designed — ADR-185, ADR-186)
+### `0186_task_revision_launch_intent` (Designed — ADR-187, ADR-188)
 
 ```sql
 ALTER TABLE tasks
@@ -1764,7 +1764,7 @@ ALTER TABLE tasks ADD CONSTRAINT tasks_created_via_operation_uq UNIQUE (created_
 - `created_via_operation_id` is the result column of the creating librarian
   operation: a racing retry hits the unique and returns the existing task.
 
-### `0185_librarian_operations` (Designed — ADR-185, ADR-186)
+### `0187_librarian_operations` (Designed — ADR-187, ADR-188)
 
 ```sql
 CREATE TABLE librarian_operations (
@@ -1907,7 +1907,7 @@ ALTER TABLE task_activity ADD CONSTRAINT task_activity_event_kind_check CHECK (e
 - **`task_activity`** — `statement_accepted` is written in the accept
   transaction; it is not fanned out to `inbox_items`.
 
-### `0186_task_clarifications_user_origin` (Designed — ADR-187)
+### `0188_task_clarifications_user_origin` (Designed — ADR-189)
 
 `task_clarifications` is widened rather than paralleled, so
 `composeEffectivePrompt` folds answers of both origins. No `hitl_requests`
@@ -2014,7 +2014,7 @@ ALTER TABLE domain_events ADD CONSTRAINT domain_events_kind_check CHECK (kind IN
   lacks `run.review_opened` and `run.needs_input`) and is corrected in the same
   change.
 
-### `0187_librarian_updates` (Designed — ADR-185)
+### `0189_librarian_updates` (Designed — ADR-187)
 
 ```sql
 CREATE TABLE librarian_updates (
@@ -2047,7 +2047,7 @@ the consumer's cursor advances. `domain_event_id` is `bigint` because
 reference would block those deletes. `task_id` and `run_id` are plain
 references without FK.
 
-### `0188_librarian_memory` (Designed — ADR-188)
+### `0190_librarian_memory` (Designed — ADR-190)
 
 ```sql
 CREATE TABLE librarian_memory_items (
@@ -2127,7 +2127,7 @@ CREATE TABLE librarian_segment_summaries (
   rebuild.
 - Nothing here writes to Project Brain or to an agent's `memory.md`.
 
-### Deletion and retention (Designed — ADR-188)
+### Deletion and retention (Designed — ADR-190)
 
 - **Clear history** is one transaction under the conversation row lock: it
   deletes the conversation's messages (and with them their search rows),
@@ -5081,13 +5081,13 @@ users
   ├── project_members    (FK userId, cascade)
   ├── node_attempts.owner_user_id (FK userId, SET NULL)  ← takeover owner
   ├── review_comments.author_user_id / .resolved_by_user_id (FK userId, SET NULL)  ← ADR-072
-  ├── librarian_conversations (FK userId, cascade)  ← ADR-183 (Designed)
+  ├── librarian_conversations (FK userId, cascade)  ← ADR-185 (Designed)
   │     ├── librarian_segments / _messages / _turns / _operations / _cards / _task_links / _updates (cascade)
   │     ├── librarian_turns → librarian_context_snapshots, project_tokens.librarian_turn_id (cascade)
   │     └── librarian_segments → librarian_segment_summaries (cascade)
-  ├── librarian_memory_items (FK userId, cascade)  ← ADR-188 (Designed)
+  ├── librarian_memory_items (FK userId, cascade)  ← ADR-190 (Designed)
   │     └── librarian_memory_item_revisions (FK itemId, cascade)
-  └── librarian_memory_tombstones (FK userId, cascade)  ← ADR-188 (Designed)
+  └── librarian_memory_tombstones (FK userId, cascade)  ← ADR-190 (Designed)
 
 projects
   ├── project_members    (FK projectId, cascade)
@@ -5101,15 +5101,15 @@ projects
   ├── agent_schedules     (FK projectId, cascade)     ← schedules for attached agents
   ├── project_tokens.agent_id (FK agentId, cascade)   ← ephemeral agent tokens
   ├── runs.agent_id       (FK agentId, SET NULL)      ← history survives catalog deletes
-  ├── librarian_memory_items (FK projectId, cascade)  ← ADR-188 (Designed) project-scoped memory
+  ├── librarian_memory_items (FK projectId, cascade)  ← ADR-190 (Designed) project-scoped memory
   ├── tasks              (FK projectId, cascade)
   │     ├── task_relations   (FK fromTaskId / toTaskId, cascade)   ← ADR-083
   │     ├── task_comments    (FK taskId,   cascade)                ← ADR-083
   │     ├── task_activity    (FK taskId,   cascade)                ← ADR-083
   │     ├── task_subscribers (FK taskId,   cascade)                ← ADR-083
   │     ├── inbox_items      (FK taskId,   cascade)                ← ADR-083
-  │     ├── task_statement_revisions (FK taskId, cascade)          ← ADR-186 (Designed)
-  │     ├── librarian_task_links     (FK taskId, cascade)          ← ADR-186 (Designed)
+  │     ├── task_statement_revisions (FK taskId, cascade)          ← ADR-188 (Designed)
+  │     ├── librarian_task_links     (FK taskId, cascade)          ← ADR-188 (Designed)
   │     └── runs         (FK taskId,    cascade)
   │           ├── workspaces      (FK runId,        cascade)
   │           ├── run_sessions    (FK runId,        cascade)       ← ADR-114

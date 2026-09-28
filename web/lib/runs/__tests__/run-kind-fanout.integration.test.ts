@@ -12,7 +12,7 @@ import {
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 
-// ADR-183 (T2.3): a librarian run is its owner's private conversation. It
+// ADR-185 (T2.3): a librarian run is its owner's private conversation. It
 // never appears in a project-scoped read model or a metric, it is never
 // TTL-abandoned while parked, and reconcile gives it its own arm.
 

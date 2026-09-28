@@ -296,18 +296,18 @@ amends it before code. If an ADR amends it, the plan is amended in the same pass
 
 ### D1 — Reserved numbers
 
-- **ADRs**: `ADR-183` runtime, `ADR-184` authority, `ADR-185` operations,
-  `ADR-186` statements, `ADR-187` clarifications, `ADR-188` memory/history/reset,
-  `ADR-189` surface. Highest at `3c02c739` is ADR-182. Re-verify on master before
+- **ADRs**: `ADR-185` runtime, `ADR-186` authority, `ADR-187` operations,
+  `ADR-188` statements, `ADR-189` clarifications, `ADR-190` memory/history/reset,
+  `ADR-191` surface. Highest at `3c02c739` is ADR-182. Re-verify on master before
   writing stubs: `git show master:docs/decisions.md | grep -o '^### ADR-[0-9]*' | tail -1`.
 - **Migrations** (main lineage; highest at `3c02c739` is idx 180,
   `0180_agent_turn_steering`; brain lineage untouched): see Appendix A for each
-  migration's DDL. `0181` token kind + audit columns · `0182` conversation tables +
-  platform settings + token FK · `0183` `runs` / `execution_commands` /
-  `execution_assignments` changes · `0184` `tasks` changes · `0185` operations, cards,
+  migration's DDL. `0183` token kind + audit columns · `0184` conversation tables +
+  platform settings + token FK · `0185` `runs` / `execution_commands` /
+  `execution_assignments` changes · `0186` `tasks` changes · `0187` operations, cards,
   statement revisions, task links, `task_comments.via_operation_id`, `agent_turns`
-  user source · `0186` clarification widening, inbox/activity kinds, domain-event kinds ·
-  `0187` update deliveries · `0188` memory, tombstones, summaries, search column.
+  user source · `0188` clarification widening, inbox/activity kinds, domain-event kinds ·
+  `0189` update deliveries · `0190` memory, tombstones, summaries, search column.
   Shared-table constraint changes (`runs`, `tasks`, `agent_turns`) sit in their own
   numbers. Each migration is the four-legged set: SQL + `_journal.json` entry +
   `meta/<NNNN>_snapshot.json` + `schema.ts`, ending with `drizzle-kit generate`
@@ -328,7 +328,7 @@ reused across turns and parked between them.
   `keepalive-sweeper.ts:274` — so the parked run is never TTL-abandoned),
   `created_by_user_id`=owner (the project-less run-stream authz —
   `app/api/runs/[runId]/stream/route.ts:337-346` → `createdByUserId === userId`),
-  `agent_workspace='none'`. 0183 adds `runs_run_kind_check` (4 kinds) and
+  `agent_workspace='none'`. 0185 adds `runs_run_kind_check` (4 kinds) and
   `runs_librarian_shape_check`.
 - Placement: `mintPlacement(tx, {runId, reason:"librarian_turn"})`; `PLACEMENT_REASONS`
   (`execution-host/types.ts:26`) gains the reason, the generated CHECK follows.
@@ -343,7 +343,7 @@ reused across turns and parked between them.
   ref `{turnId, promptOrdinal}` + common; added to `PROMPT_OWNER_SHAPES`
   (`prompt-owner-contract.ts:160`) so `execution_commands_request_v2_check` regenerates;
   `owner_kind` enum (`schema.ts:2316`) and `execution_commands_owner_shape_check`
-  (`:2528`) are hard-coded and re-derived in 0183; `create_intent` CHECK
+  (`:2528`) are hard-coded and re-derived in 0185; `create_intent` CHECK
   (`schema.ts:2423-2461`) gains variant `librarian` with keys `{variant, turnId,
   promptOrdinal}` and `operationKey = 'librarian-create:'||turnId||':'||promptOrdinal`.
   Registry `librarianPromptOwners` joins `PRODUCTION_PROMPT_OWNER_REGISTRIES`
@@ -404,7 +404,7 @@ reused across turns and parked between them.
   NULL, `agent_id` NULL, new `librarian_turn_id` NOT NULL for this kind, name
   `librarian-turn:<turnId>` (reserved in `web/lib/tokens/lifecycle.ts`), `expires_at` =
   turn deadline, revoked in the turn-end transaction. `token_kind` has **no DB CHECK
-  today** (TS enum only, `schema.ts:7066`): 0181 adds `project_tokens_kind_check` over
+  today** (TS enum only, `schema.ts:7066`): 0183 adds `project_tokens_kind_check` over
   the four kinds and `project_tokens_librarian_check` (Appendix A). Issued by
   `web/lib/librarian/authority.ts` when the run flips `Running` (not at admission — a
   `Pending` turn holds no token); injected as `MAISTER_ACCESS_TOKEN` into the stdio
@@ -482,7 +482,7 @@ reused across turns and parked between them.
   `dangerously_skip_permissions` (reuse `acp-runners/resolve.ts:215-233`).
   T2.8 proves L1 denies a scripted built-in call; T7.2 proves L1+L2 against the live
   adapters. An adapter that executes a built-in without reaching the seam is recorded in
-  ADR-183 as a blocking defect and is not selectable as the librarian runner.
+  ADR-185 as a blocking defect and is not selectable as the librarian runner.
 
 ### D6 — Operation ledger and crash windows
 
@@ -622,7 +622,7 @@ NULL = today's behaviour for every non-librarian path.
 - Answer: `POST /api/projects/{slug}/tasks/{number}/clarifications/{id}/answer` (session)
   and the ext twin requiring exact `hitl:respond:human` on a global personal token.
 - Domain events `task.clarification_requested`, `task.clarification_cancelled` (the
-  existing `task.clarification_answered` is reused). 0186 re-derives
+  existing `task.clarification_answered` is reused). 0188 re-derives
   `domain_events_kind_check` from migration `0167`'s 15 kinds plus the two —
   `schema.ts:7759` lists only 13 today (drift found at planning); T4.1 fixes
   `schema.ts` in the same change.
@@ -636,7 +636,7 @@ action = the run's existing "send message" action:
 - scratch run → `sendScratchUserMessage` only if the owner is the scratch owner;
 - persistent agent run → `sendAgentMessage` with a user principal: `agent_turns.source`
   gains `user` + `requested_by_user_id`, and trigger `guard_agent_turn_source`
-  (`0153:71`, `0180:37`) is re-derived in 0185 — never `runs:delegate`;
+  (`0153:71`, `0180:37`) is re-derived in 0187 — never `runs:delegate`;
 - flow run → `refused_requires_rework` naming the existing node-interrupt/rework
   controls (ADR-160/161) the owner can use from the run page.
 
@@ -708,7 +708,7 @@ nulls message refs on links and operations; bumps `history_generation` and
 the host refuses a released handle and the client re-adopts).
 **Open (spike T0.9)**: where each ready adapter persists its session transcript for a
 given cwd (claude: `~/.claude/projects/<encoded cwd>/`; codex: its composed
-`CODEX_HOME`). ADR-188 records either a supervisor-side purge of that location on
+`CODEX_HOME`). ADR-190 records either a supervisor-side purge of that location on
 release, or the residual plus the guarantee that the epoch bump makes it unreachable.
 Stating a purge that does not happen is not allowed.
 
@@ -826,12 +826,12 @@ links resolve (`node scripts/validate-docs-links.mjs`). Done during planning.
 one status line naming what `personal-librarian.md` replaces (D1, D2, D5, D7, librarian
 parts of F1/F2, owner decisions §7 rows 2 and 7). Surgical: no other edits (R9).
 
-**T0.3 [x] — Reserve numbers.** ADR stubs `### ADR-183` … `### ADR-189` in
-`docs/decisions.md` + `docs/decisions/adr-183.md` … `adr-189.md` from the template;
-migration numbers 0181–0188 recorded in Appendix A. *Verify*:
+**T0.3 [x] — Reserve numbers.** ADR stubs `### ADR-185` … `### ADR-191` in
+`docs/decisions.md` + `docs/decisions/adr-185.md` … `adr-191.md` from the template;
+migration numbers 0183–0190 recorded in Appendix A. *Verify*:
 `node scripts/validate-docs-adr-anchors.mjs --all`.
 
-**T0.4 [x] — ADR-183: librarian runtime.** D2, D3, D19, D20, D5's runner guard, pool and
+**T0.4 [x] — ADR-185: librarian runtime.** D2, D3, D19, D20, D5's runner guard, pool and
 budgets. Amends ADR-166/167 (owner kind, placement reason, project-less directory
 adoption, reserved `projectSlug='_librarian'`) via their `**Amendments:**` lists.
 **Verification inside the ADR**: read `supervisor/src/workspace-registry.ts` and
@@ -839,28 +839,28 @@ adoption, reserved `projectSlug='_librarian'`) via their `**Amendments:**` lists
 for the reserved slug; if any code path resolves the slug against registered projects,
 record the change needed. Owns `LCV-*`.
 
-**T0.5 [x] — ADR-184: delegated authority.** D4 + D5 + D16. States explicitly: no
+**T0.5 [x] — ADR-186: delegated authority.** D4 + D5 + D16. States explicitly: no
 `AGENT_TOKEN_SCOPES` change, no admin inspection in this release, follow-up turns
 read-only, `readOnlySession` not used and why (`acp-client.ts:516-545`). Owns `LAU-*`.
 
-**T0.6 [x] — ADR-185: operation ledger.** D6, D7, D8, D10b, D11 with the crash-window
+**T0.6 [x] — ADR-187: operation ledger.** D6, D7, D8, D10b, D11 with the crash-window
 and interaction tables. Amends the triage ADR/analytics for `launch_intent`. Owns
 `LOP-*`.
 
-**T0.7 [x] — ADR-186: statements and provenance.** D9 including the Backlog gate and
+**T0.7 [x] — ADR-188: statements and provenance.** D9 including the Backlog gate and
 the re-entry fact behind it; the rendering function contract; `task_activity` kind
 `statement_accepted`. Owns `TST-*`.
 
-**T0.8 [x] — ADR-187: clarification before execution.** D10; amends ADR-169 (fifth
+**T0.8 [x] — ADR-189: clarification before execution.** D10; amends ADR-169 (fifth
 decisions population) and ADR-170 (`clarificationPending` attribute) and the
 launchability precedence. Owns `CLR-*`.
 
-**T0.9 [x] — ADR-188: memory, history, reset, retention + transcript spike.** D12–D14;
+**T0.9 [x] — ADR-190: memory, history, reset, retention + transcript spike.** D12–D14;
 retention defaults (365 / 30 days, owner-chosen). Spike: locate each ready adapter's
 transcript storage for a cwd and whether the supervisor can delete it; record the
 outcome (purge mechanism or honest residual). Owns `LMM-*`.
 
-**T0.10 [x] — ADR-189: librarian surface.** Top-nav entry + right panel (brief §4),
+**T0.10 [x] — ADR-191: librarian surface.** Top-nav entry + right panel (brief §4),
 breakpoints (docked ≥ `xl`, sheet `md`–`xl`, full screen < `md`), Studio/scratch
 composer coexistence (the panel never absorbs their history; focus owner rule), no
 Cmd/Ctrl+K, indicator semantics, live-token streaming via the run stream. Confirm
@@ -916,13 +916,13 @@ coverage gate green. Owner confirms: breakpoints, env defaults (D17), retention,
 confirmation TTL, the transcript-purge outcome, the reserved-slug verification.
 Anything a later task needs that the specs do not state is fixed here.
 
-> **Checkpoint 1** — `docs(librarian): specify runtime, authority, operations, statements, clarifications, memory and surface (ADR-183..189)`
+> **Checkpoint 1** — `docs(librarian): specify runtime, authority, operations, statements, clarifications, memory and surface (ADR-185..189)`
 
 ### Phase 1 — Delegated authority and the read surface · `LAU-02..07`, `LAU-10`
 
-**T1.1 [x] — Migration 0181: librarian token kind + audit columns.** Appendix A/0181.
+**T1.1 [x] — Migration 0183: librarian token kind + audit columns.** Appendix A/0183.
 Adding `project_tokens_kind_check` over existing rows fails loudly on any foreign value
-(none can exist: TS-enforced). Files: `web/lib/db/migrations/0181_*.sql`, journal,
+(none can exist: TS-enforced). Files: `web/lib/db/migrations/0183_*.sql`, journal,
 snapshot, `schema.ts` (`tokenKind` enum + constraints). *RED*:
 `web/lib/db/__tests__/librarian-token-kind.integration.test.ts` `IT-LAU-02` part 1 —
 inserting a librarian token with a `project_id`, or without `librarian_turn_id`, is
@@ -987,14 +987,14 @@ call `{tool, status}` without bodies.
 
 ### Phase 2 — Durable conversation, runtime and panel shell · `LCV-01..12`, `LAU-01`, `LAU-09`, `LAU-11`, `LUI-01..09`
 
-**T2.1 [x] — Migration 0182: conversation tables + platform settings.** Appendix
-A/0182. *RED*: `web/lib/librarian/__tests__/schema.integration.test.ts` `IT-LCV-01`
+**T2.1 [x] — Migration 0184: conversation tables + platform settings.** Appendix
+A/0184. *RED*: `web/lib/librarian/__tests__/schema.integration.test.ts` `IT-LCV-01`
 (second conversation for one user refused), `IT-LCV-03` part 1 (second `running` turn
 refused by `librarian_turns_one_active_uq`), `IT-LCV-07` part 1 (a `running` turn
 without `context_snapshot_id` refused).
 
-**T2.2 [x] — Migration 0183: `runs` / `execution_commands` / assignments.** Appendix
-A/0183: `runs_run_kind_check`, `runs_librarian_shape_check`,
+**T2.2 [x] — Migration 0185: `runs` / `execution_commands` / assignments.** Appendix
+A/0185: `runs_run_kind_check`, `runs_librarian_shape_check`,
 `runs.librarian_operation_id`, `run_sessions.librarian_context_epoch`, owner-kind enum
 + `execution_commands_owner_shape_check` re-derived, `create_intent` variant,
 placement reason. Re-derive shared CHECKs from `schema.ts` at rebase. *RED*:
@@ -1147,7 +1147,7 @@ garbage with `CONFIG`). *RED*: `web/lib/librarian/__tests__/config.test.ts`
 
 ### Phase 3 — Operations and the work cycle · `LOP-01..10`, `TST-01..05`, `TST-07..08`, `LAU-08`, `LUI-10`
 
-**T3.1 [x] — Migrations 0184 + 0185.** Appendix A/0184 (`tasks`) and A/0185
+**T3.1 [x] — Migrations 0186 + 0187.** Appendix A/0186 (`tasks`) and A/0187
 (operations, cards, statement revisions, links, `task_comments.via_operation_id`,
 `agent_turns` user source + trigger, `task_activity` kind `statement_accepted`).
 *RED*: `IT-TST-01` (UPDATE on a statement revision refused by the trigger),
@@ -1238,7 +1238,7 @@ component tests for card states. **Log**: `debug` read-model row counts.
 
 ### Phase 4 — Clarification before execution · `CLR-01..10`
 
-**T4.1 [x] — Migration 0186.** Appendix A/0186: `task_clarifications` widening with
+**T4.1 [x] — Migration 0188.** Appendix A/0188: `task_clarifications` widening with
 backfill `origin_kind='agent_run'`, `retrigger_mode` CHECK + `none`, the origin-shape
 CHECK; `TASK_ACTIVITY_EVENT_KINDS` + `task_activity_event_kind_check`;
 `inbox_items_event_kind_check` + `InboxSourceRef`; `domain_events_kind_check`
@@ -1301,7 +1301,7 @@ inbox card, librarian clarification card. EN/RU. *RED*: component tests;
 
 ### Phase 5 — Follow-up delivery · `LOP-11..12`, `LAU-05`, `LUI-01`
 
-**T5.1 [x] — Migration 0187.** Appendix A/0187 `librarian_updates`. *RED*: `IT-LOP-11`
+**T5.1 [x] — Migration 0189.** Appendix A/0189 `librarian_updates`. *RED*: `IT-LOP-11`
 part 1 (duplicate `(conversation_id, domain_event_id)` refused).
 
 **T5.2 [x] — `librarian_followup` consumer.** `web/lib/librarian/followup.ts`
@@ -1324,7 +1324,7 @@ update text instructs it), `UT-LUI-01` part 2 (indicator states). **Log**: `info
 
 ### Phase 6 — Memory, summaries, reset, forget, history · `LMM-01..12`, `TST-06`
 
-**T6.1 [x] — Migration 0188.** Appendix A/0188. *RED*: `IT-LMM-02` part 1 (edit creates
+**T6.1 [x] — Migration 0190.** Appendix A/0190. *RED*: `IT-LMM-02` part 1 (edit creates
 a revision row; `librarian_memory_items` UPDATE of `content` refused by trigger).
 
 **T6.2 [x] — Memory service, tools, UI.** `web/lib/librarian/memory.ts`; ext `POST
@@ -1392,7 +1392,7 @@ built-in denial check. Records runner, model, package/engine provenance and outc
 per scenario; no private bodies. Not in CI. **Parity**: the scenario table is the same
 one T7.1 runs against the mock adapter, so fake and real peers are compared on one
 table. Codex completed the behavioral probes but failed D5 qualification and is
-ineligible by the runner guard (ADR-184 amendment); it is not counted as a
+ineligible by the runner guard (ADR-186 amendment); it is not counted as a
 supported librarian adapter.
 
 **T7.3 [x] — Operator and user documentation.** EN: how the librarian works, admin
@@ -1432,7 +1432,7 @@ Phase 0 checked every plan statement against the code; these deltas are normativ
 and win over the text above where they disagree. Each one is recorded in the owning
 ADR (named in brackets).
 
-**Runtime (ADR-183, ADR-188)**
+**Runtime (ADR-185, ADR-190)**
 - The supervisor wire schema `projectSlugSchema` is kebab-case; it gains the one
   literal `_librarian`. The web creates `<runtimeRoot>/.maister/_librarian/<conversationId>/`
   before adopting it. `WorkspaceRegistry.release` deletes nothing today: releasing a
@@ -1455,7 +1455,7 @@ ADR (named in brackets).
   librarian run (a global admin otherwise passes `requireProjectAction` on a NULL
   project); T2.3 lists them.
 
-**Authority (ADR-184)**
+**Authority (ADR-186)**
 - Live D5 qualification found no Codex equivalent to Claude's built-in deny
   settings: ordinary host reads need not reach the ACP permission seam. The
   Codex runner is ineligible (`builtin_denial_unverified`) even when previously
@@ -1469,7 +1469,7 @@ ADR (named in brackets).
   personal tokens keep their existing answers.
 - A librarian whose owner can see the project but lacks the scope's action gets
   `403 {requiredAction}`; an invisible project stays the existence-hidden 404.
-- The "turn is running" check needs `librarian_turns` (0182): it lands in T2.10 and
+- The "turn is running" check needs `librarian_turns` (0184): it lands in T2.10 and
   IT-LAU-03's turn-stopped case moves to T2.11. The agent-token-on-`/ext/librarian/*`
   case of IT-LAU-04 moves to T3.9 (the first such route). Phase 1 relies on the
   token being revoked in the turn-end transaction.
@@ -1480,7 +1480,7 @@ ADR (named in brackets).
   the personal-token picker). `runs:cancel` and `runs:message` map to explicit
   project actions (`recoverRun`, `launchRun`).
 
-**Operations (ADR-185, ADR-186, ADR-187)**
+**Operations (ADR-187, ADR-188, ADR-189)**
 - `run_cancel`/`run_rework` are coordinator-only. The librarian stops a run through
   the new `POST /api/v1/ext/runs/{runId}/stop` (`runs:cancel` → `recoverRun`,
   wrapping `stopWorkbenchRunForToken`) with MCP tool `run_stop`; rework is not a
@@ -1515,9 +1515,9 @@ ADR (named in brackets).
 - Schema corrections: `librarian_updates.domain_event_id` is `bigint` FK to
   `domain_events` `ON DELETE CASCADE`; statement-revision immutability lets the
   task's cascade delete through; memory content changes only with `revision + 1`;
-  `segment_id` columns reference `librarian_segments`; `body_tsv` lands in 0182.
+  `segment_id` columns reference `librarian_segments`; `body_tsv` lands in 0184.
 
-**Surface and deployment (ADR-189, D17)**
+**Surface and deployment (ADR-191, D17)**
 - The panel docks only at ≥ `2xl` on the wide routes (`/runs/`, `/studio/edit/`,
   `/studio/local`) and opens as the sheet whenever another assistant composer is
   visible. Focus containment uses `useModalA11y`. The admin settings route gets a
@@ -1540,7 +1540,7 @@ reserved-slug verification are adopted as proposed under the owner's instruction
 | Commit | After | Message |
 | --- | --- | --- |
 | 0 | planning | `docs(pv): add personal librarian brief; plan the first release` |
-| 1 | T0.2–T0.17 | `docs(librarian): specify runtime, authority, operations, statements, clarifications, memory and surface (ADR-183..189)` |
+| 1 | T0.2–T0.17 | `docs(librarian): specify runtime, authority, operations, statements, clarifications, memory and surface (ADR-185..189)` |
 | 2 | T1.1–T1.6 | `feat(librarian): delegated per-turn authority and visibility-scoped read surface` |
 | 3 | T2.1–T2.16 | `feat(librarian): durable personal conversation on a project-less librarian run with MCP-only sessions` |
 | 4 | T3.1–T3.10 | `feat(librarian): operation ledger, statements, triage intent, launch and confirmation cards` |
@@ -1581,7 +1581,7 @@ Types: `text` ids (`randomUUID` default, repo convention), `timestamptz` for tim
 `jsonb` for structured payloads. Constraint names are the ones the traceability rows
 and tests cite.
 
-**0181 `librarian_token_kind`** — `project_tokens`: `token_kind` enum + `'librarian'`;
+**0183 `librarian_token_kind`** — `project_tokens`: `token_kind` enum + `'librarian'`;
 `librarian_turn_id text NULL`; `ADD CONSTRAINT project_tokens_kind_check CHECK
 (token_kind IN ('project','user','agent','librarian'))`; `ADD CONSTRAINT
 project_tokens_librarian_check CHECK (token_kind <> 'librarian' OR (owner_user_id IS
@@ -1592,7 +1592,7 @@ users ON DELETE SET NULL`, `librarian_turn_id text NULL`, `operation_id text NUL
 index `token_audit_librarian_turn_idx`. Existing `project_tokens_agent_kind_check`
 (`(token_kind='agent') = (agent_id IS NOT NULL)`) already holds for the new kind.
 
-**0182 `librarian_conversations`** —
+**0184 `librarian_conversations`** —
 - `librarian_conversations(id PK, user_id NOT NULL REFERENCES users ON DELETE CASCADE,
   run_id text NULL REFERENCES runs ON DELETE SET NULL, context_epoch integer NOT NULL
   DEFAULT 0, forget_generation integer NOT NULL DEFAULT 0, history_generation integer
@@ -1637,7 +1637,7 @@ index `token_audit_librarian_turn_idx`. Existing `project_tokens_agent_kind_chec
 - `project_tokens`: `ADD CONSTRAINT project_tokens_librarian_turn_fk FOREIGN KEY
   (librarian_turn_id) REFERENCES librarian_turns ON DELETE CASCADE`.
 
-**0183 `librarian_run_kind`** — `runs`: `ADD CONSTRAINT runs_run_kind_check CHECK
+**0185 `librarian_run_kind`** — `runs`: `ADD CONSTRAINT runs_run_kind_check CHECK
 (run_kind IN ('flow','scratch','agent','librarian'))`; `ADD CONSTRAINT
 runs_librarian_shape_check CHECK (run_kind <> 'librarian' OR (project_id IS NULL AND
 task_id IS NULL AND persistent = true AND created_by_user_id IS NOT NULL AND
@@ -1649,12 +1649,12 @@ variants with keys `{turnId, promptOrdinal}`); `create_intent` CHECK re-derived 
 variant `'librarian'` and prefix `'librarian-create:'`. `execution_assignments`:
 placement reason CHECK regenerated with `'librarian_turn'`.
 
-**0184 `task_revision_launch_intent`** — `tasks`: `revision integer NOT NULL DEFAULT
+**0186 `task_revision_launch_intent`** — `tasks`: `revision integer NOT NULL DEFAULT
 0`, `statement_revision integer NULL`, `launch_intent text NULL CHECK (launch_intent
 IN ('none','triage_only','triage_then_launch'))`, `created_via_operation_id text NULL`
 UNIQUE `tasks_created_via_operation_uq`.
 
-**0185 `librarian_operations`** —
+**0187 `librarian_operations`** —
 - `librarian_operations(id PK, conversation_id NOT NULL … CASCADE, segment_id NOT
   NULL, turn_id text NULL, card_id text NULL, idempotency_key text NOT NULL, kind text
   NOT NULL, request_digest text NOT NULL, target jsonb NOT NULL, status text NOT NULL
@@ -1688,7 +1688,7 @@ UNIQUE `tasks_created_via_operation_uq`.
   source requires `requested_by_user_id`).
 - `task_activity_event_kind_check` + `'statement_accepted'`.
 
-**0186 `task_clarifications_user_origin`** — `task_clarifications`: `origin_kind text
+**0188 `task_clarifications_user_origin`** — `task_clarifications`: `origin_kind text
 NOT NULL DEFAULT 'agent_run' CHECK (origin_kind IN ('agent_run','user'))` (backfilled
 by the default, then the default dropped); `source_hitl_request_id`, `origin_run_id`,
 `origin_agent_id`, `question_schema` → NULL-able; `retrigger_mode` CHECK + `'none'`;
@@ -1712,7 +1712,7 @@ kinds + `clarification_requested | clarification_answered | clarification_cancel
 `inbox_items_event_kind_check` + `clarification_requested`; `domain_events_kind_check`
 re-derived = 0167's 15 + `task.clarification_requested`, `task.clarification_cancelled`.
 
-**0187 `librarian_updates`** — `librarian_updates(id PK, conversation_id NOT NULL …
+**0189 `librarian_updates`** — `librarian_updates(id PK, conversation_id NOT NULL …
 CASCADE, domain_event_id text NOT NULL REFERENCES domain_events, task_id text NULL,
 run_id text NULL, kind text NOT NULL, status text NOT NULL CHECK (status IN
 ('pending','delivered','skipped_no_access','failed')), attempts integer NOT NULL DEFAULT
@@ -1720,7 +1720,7 @@ run_id text NULL, kind text NOT NULL, status text NOT NULL CHECK (status IN
 created_at, delivered_at NULL)`; UNIQUE `librarian_updates_event_uq (conversation_id,
 domain_event_id)`; CHECK `librarian_updates_failed_has_error_check`.
 
-**0188 `librarian_memory`** —
+**0190 `librarian_memory`** —
 - `librarian_memory_items(id PK, user_id NOT NULL … CASCADE, kind text NOT NULL CHECK
   (kind IN ('preference','goal','commitment','fact')), content text NOT NULL, scope
   text NOT NULL CHECK (scope IN ('general','project')), project_id text NULL REFERENCES

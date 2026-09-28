@@ -237,9 +237,9 @@ erDiagram
 Exactly one supersession provenance is allowed. A history row persists after its
 source request or run is removed; question and answer bodies are never logged.
 
-### User-origin clarification extension (Designed — ADR-187)
+### User-origin clarification extension (Designed — ADR-189)
 
-Migration `0186` widens `task_clarifications` so a user can address a question
+Migration `0188` widens `task_clarifications` so a user can address a question
 about a task to another user before any run exists — no `hitl_requests` row and
 no run back it, and `hitl_requests.run_id` stays NOT NULL. Agent-origin rows are
 backfilled `origin_kind='agent_run'` and keep their shape.

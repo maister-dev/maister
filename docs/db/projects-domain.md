@@ -204,11 +204,11 @@ and any backup bytes. It has no client projection, blocks competing package
 mutations, and enables deterministic crash recovery across the DB, working
 tree, and initial git commit.
 
-### Personal librarian references (Designed — ADR-183, ADR-188)
+### Personal librarian references (Designed — ADR-185, ADR-190)
 
 Two librarian references reach this domain: the platform setting naming the
-runner every librarian turn uses (migration `0182`), and project-scoped personal
-memory (migration `0188`). The librarian tables are drawn in
+runner every librarian turn uses (migration `0184`), and project-scoped personal
+memory (migration `0190`). The librarian tables are drawn in
 [`librarian-domain.md`](librarian-domain.md); only the edges appear here.
 
 ```mermaid
@@ -217,8 +217,8 @@ erDiagram
     PROJECTS |o--o{ LIBRARIAN_MEMORY_ITEMS : "scope project (Designed, cascade)"
 
     PLATFORM_RUNTIME_SETTINGS {
-        boolean librarian_enabled "Designed 0182: NOT NULL DEFAULT false"
-        text librarian_runner_id FK "Designed 0182: NULL -> platform_acp_runners SET NULL"
+        boolean librarian_enabled "Designed 0184: NOT NULL DEFAULT false"
+        text librarian_runner_id FK "Designed 0184: NULL -> platform_acp_runners SET NULL"
     }
 ```
 

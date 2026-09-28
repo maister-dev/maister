@@ -16,7 +16,7 @@ conversation records or turn lifecycle
 in the [screen reference](../screens/chrome/librarian-panel.md). The panel never
 absorbs the Studio assistant's or a scratch run's history — each composer keeps its
 own identity and focus owner. The decision is
-[ADR-189](../decisions.md#adr-189-librarian-surface-top-navigation-entry-and-right-side-panel).
+[ADR-191](../decisions.md#adr-191-librarian-surface-top-navigation-entry-and-right-side-panel).
 The whole domain is **Implemented**.
 
 ## Domain entities
@@ -30,7 +30,7 @@ The whole domain is **Implemented**.
 - **Panel** (Implemented) — `web/components/librarian/librarian-panel.tsx`, mounted in
   `web/app/(app)/layout.tsx`: docked non-modal at ≥ `xl`, modal sheet at
   `md`–`xl`, full screen below `md`; an expanded reading mode for long statements.
-  Two more rules from `librarianPanelMode` ([ADR-189](../decisions.md#adr-189) D4,
+  Two more rules from `librarianPanelMode` ([ADR-191](../decisions.md#adr-191) D4,
   D6): on the wide routes (`/runs/`, `/studio/edit/`, `/studio/local`) it docks only
   at ≥ `2xl`, and while another assistant composer (scratch, Studio AI) is visible
   it opens as the sheet, so two composers are never side by side.
@@ -144,7 +144,7 @@ as visible states rather than adding its own:
 
 ## Linked artifacts
 
-- [ADR-189 — librarian surface](../decisions.md#adr-189-librarian-surface-top-navigation-entry-and-right-side-panel) · [record](../decisions/adr-189.md)
+- [ADR-191 — librarian surface](../decisions.md#adr-191-librarian-surface-top-navigation-entry-and-right-side-panel) · [record](../decisions/adr-191.md)
 - [ADR-172 — home navigation](../decisions.md#adr-172) · [ADR-169 — attention counters](../decisions.md#adr-169)
 - [Librarian requirement traceability](librarian-traceability.md)
 - [Product brief — personal librarian](../pv/personal-librarian.md)

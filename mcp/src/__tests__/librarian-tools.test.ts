@@ -10,7 +10,7 @@ import {
 
 import { dispatchTool, isToolInToolset, toolNamesForToolset } from "@/tools";
 
-// ADR-184 (T1.6): the librarian's discovery/read tools, the operation key a
+// ADR-186 (T1.6): the librarian's discovery/read tools, the operation key a
 // librarian sends as `Idempotency-Key`, and the `librarian` toolset listing.
 
 const BASE_URL = "http://localhost:3000";

@@ -9,7 +9,7 @@ vi.mock("next-intl", () => ({
 import { LibrarianSettingsCard } from "@/components/settings/librarian-settings-card";
 import { librarianSettingsView } from "@/lib/librarian/settings-view";
 
-// ADR-183 (T2.13): the librarian card says why a runner cannot be chosen and
+// ADR-185 (T2.13): the librarian card says why a runner cannot be chosen and
 // what the resulting readiness is, in the admin's language.
 
 const runner = (overrides: Record<string, unknown>) => ({

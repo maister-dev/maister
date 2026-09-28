@@ -1,4 +1,4 @@
-// ADR-189 (LUI-04): what the owner was looking at when a message was sent.
+// ADR-191 (LUI-04): what the owner was looking at when a message was sent.
 // Captured at send, visibility-checked, never retargeted.
 export type LibrarianSubject = {
   projectSlug?: string;

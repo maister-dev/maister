@@ -9,7 +9,7 @@ import { getDb } from "@/lib/db/client";
 import { librarianErrorResponse } from "@/lib/librarian/http";
 import { stopLibrarianTurn } from "@/lib/librarian/turn-recovery";
 
-// ADR-183 (LCV-08, LUI-07): "Stop response" — never a task run's "Stop run".
+// ADR-185 (LCV-08, LUI-07): "Stop response" — never a task run's "Stop run".
 
 export async function POST(): Promise<NextResponse> {
   try {

@@ -12,7 +12,7 @@ import {
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 
-// ADR-184 / migration 0181: the librarian token kind is owner-bound,
+// ADR-186 / migration 0183: the librarian token kind is owner-bound,
 // project-less, agent-less, turn-bound and always expiring — enforced by the
 // database, not only by the issuer.
 
