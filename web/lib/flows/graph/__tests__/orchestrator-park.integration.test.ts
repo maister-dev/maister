@@ -368,6 +368,7 @@ async function failChild(
       actor: { type: "system", id: null },
       parentRunId,
       payload: { runKind: "agent", status: "Failed" },
+      cause: { code: null, source: "agent" },
     });
   });
 }
@@ -449,6 +450,7 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
       actor: { type: "system", id: null },
       parentRunId: runId,
       payload: { runKind: "agent", status: "Failed" },
+      cause: { code: null, source: "agent" },
     });
     const [event] = (await db
       .select()
@@ -642,6 +644,7 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
         actor: { type: "system", id: null },
         parentRunId: runId,
         payload: { runKind: "agent", status: "Failed" },
+        cause: { code: null, source: "agent" },
       });
       const [event] = (await db
         .select()
@@ -707,6 +710,7 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
         actor: { type: "system", id: null },
         parentRunId: runId,
         payload: { runKind: "agent", status: "Failed" },
+        cause: { code: null, source: "agent" },
       });
       const [event] = (await db
         .select()
@@ -783,6 +787,7 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
         actor: { type: "system", id: null },
         parentRunId: runId,
         payload: { runKind: "agent", status: "Failed" },
+        cause: { code: null, source: "agent" },
       });
       const [event] = (await db
         .select()
@@ -900,6 +905,7 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
       actor: { type: "system", id: null },
       parentRunId: runId,
       payload: { runKind: "agent", status: "Failed" },
+      cause: { code: null, source: "agent" },
     });
     const continuation = startWorker(hosts);
 

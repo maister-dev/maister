@@ -110,7 +110,7 @@ export type ExecutionObservabilitySummary = Readonly<{
     {
       status: ObservationSourceStatus;
       impasse: number | null;
-    } & Partial<OpenExecutionCommands>
+    } & Partial<Omit<OpenExecutionCommands, LiveOnlyCommandFields>>
   >;
   workers: Readonly<{
     status: ObservationSourceStatus;
@@ -647,11 +647,27 @@ export function createExecutionObservability(
     },
     commands: {
       status: "available",
-      ...input.model.commands,
+      ...persistedCommands(input.model.commands),
       impasse: input.impasse,
     },
     workers: { status: "available", states: input.workers },
   });
+}
+
+// The stranded-turn alarm is read live by the admin page (D-M3); the persisted
+// observation never carries it.
+type LiveOnlyCommandFields = "strandedAgentTurns" | "strandedAgentTurnRows";
+
+function persistedCommands(
+  commands: OpenExecutionCommands,
+): Omit<OpenExecutionCommands, LiveOnlyCommandFields> {
+  const {
+    strandedAgentTurns: _count,
+    strandedAgentTurnRows: _rows,
+    ...persisted
+  } = commands;
+
+  return persisted;
 }
 
 export function createUnavailableExecutionObservability(

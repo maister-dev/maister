@@ -31,6 +31,7 @@ import type {
   BudgetBreachProgressDto,
 } from "@/lib/runs/budget-breach-fork";
 import type { ResultStatus } from "@/lib/run-results/types";
+import type { TerminalCause } from "@/lib/domain-events/taxonomy";
 
 import {
   and,
@@ -47,6 +48,7 @@ import { alias } from "drizzle-orm/pg-core";
 import { cache } from "react";
 import pino from "pino";
 
+import { loadRunTerminalCause } from "@/lib/runs/terminal-cause";
 import { projectHitlAnswer } from "@/lib/hitl-answer-view";
 import { isMaisterErrorCode } from "@/lib/errors-core";
 import { getDb } from "@/lib/db/client";
@@ -233,6 +235,9 @@ export interface RunDetail {
   // (re-dispatch). Only an agent node with no `acpSessionId` is discard-only.
   // DTO-projected boolean — the raw `acpSessionId` is NEVER surfaced.
   recoverable: boolean;
+  // B6: why a Failed | Crashed | Abandoned run ended (derived on read from its
+  // newest matching terminal event); null otherwise.
+  terminalCause: TerminalCause | null;
   // M19 Phase 5: GC TTL projection for terminal (Abandoned/Done) runs — drives
   // a removal-countdown surface on run-detail. DTO-only enums/booleans/Date.
   ttlState: "active" | "warning" | "due";
@@ -569,6 +574,7 @@ export const getRunDetail = cache(async function getRunDetail(
           nodeId: recoverTargetStepId,
         })
       : null;
+  const terminalCause = await loadRunTerminalCause(client, runId, row.status);
   const recoverable = isRunRecoverable({
     status: row.status,
     acpSessionId: recoverAcpSessionId,
@@ -886,6 +892,7 @@ export const getRunDetail = cache(async function getRunDetail(
     }),
     takeoverOwnerUserId,
     recoverable,
+    terminalCause,
     ttlState: ttl.ttlState,
     effectiveRemovalAt: ttl.effectiveRemovalAt,
     archived: ttl.archived,

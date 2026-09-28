@@ -1091,6 +1091,19 @@ describe("respondToHitl integration — plan-review decision requests", () => {
     expect(recoveredRun.status).toBe("NeedsInputIdle");
     expect(recoveredRun.resumeRequestedAt).toBeInstanceOf(Date);
     expect(runFlow).not.toHaveBeenCalledWith(runId);
+
+    // A second pass at the same cap keeps the run's place: the FIFO key is
+    // coalesced, never re-stamped (D-M4, the flow site).
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await reconcilePlanReviewDecisionHandoffs({ db });
+    const [requeued] = await (db as any)
+      .select({ resumeRequestedAt: schema.runs.resumeRequestedAt })
+      .from(schema.runs)
+      .where(eq(schema.runs.id, runId));
+
+    expect(requeued.resumeRequestedAt.getTime()).toBe(
+      recoveredRun.resumeRequestedAt.getTime(),
+    );
   });
 
   it("serializes a parent rework against a simultaneous child answer", async () => {
@@ -1156,5 +1169,314 @@ describe("respondToHitl integration — plan-review decision requests", () => {
           child.respondedAt instanceof Date,
       ),
     ).toBe(true);
+  });
+});
+
+// C2 (review 2026-09-27): `responded_at` says a permission is no longer
+// pending, not that its answer reached the agent. A row closed WITHOUT
+// delivery (the live session held no such request, or a boundary settled the
+// run first) must refuse an identical retry with that reason — never answer
+// "already delivered" and never move the dialog.
+describe("respondToHitl — an answer closed without delivery is never 'already delivered'", () => {
+  const actor: HitlActor = { kind: "user", userId: "u-1", label: "Test User" };
+
+  async function seedScratchPermission(
+    pending: Set<string> | undefined,
+  ): Promise<{
+    runId: string;
+    hitlRequestId: string;
+    fake: Awaited<ReturnType<typeof fakeExecutionHosts>>["fake"];
+    hosts: Awaited<ReturnType<typeof fakeExecutionHosts>>["hosts"];
+  }> {
+    const projectId = await seedProject(`c2-${randomUUID().slice(0, 8)}`);
+    const runId = randomUUID();
+    const executorId = await seedRunner();
+    const userId = randomUUID();
+
+    await (db as any)
+      .insert(schema.users)
+      .values({ id: userId, email: `c2-${userId.slice(0, 8)}@test.local` });
+    await (db as any).insert(schema.runs).values({
+      id: runId,
+      runKind: "scratch",
+      projectId,
+      runnerId: executorId,
+      capabilityAgent: "claude",
+      runnerSnapshot: testRunnerSnapshot(executorId),
+      status: "NeedsInput",
+      flowVersion: "scratch",
+    });
+    await (db as any).insert(schema.scratchRuns).values({
+      runId,
+      projectId,
+      createdByUserId: userId,
+      initialPrompt: "do the thing",
+      baseBranch: "main",
+      baseCommit: "deadbeef",
+      dialogStatus: "NeedsInput",
+    });
+    const hitlRequestId = await seedPermissionHitl(runId, "scratch");
+    const { hosts, fake } = await fakeExecutionHosts(db, { runId });
+
+    fake.sessions.set("sup-1", {
+      sessionId: "sup-1",
+      runId,
+      stepId: "scratch",
+      acpSessionId: "acp-1",
+      executionWorkspaceId: "ws_seeded",
+      assignmentEpoch: 1,
+      createdByCommandId: "seeded",
+      status: "live",
+      pending,
+    });
+
+    return { runId, hitlRequestId, fake, hosts };
+  }
+
+  async function stateOf(runId: string, hitlRequestId: string) {
+    const [run] = await (db as any)
+      .select({ status: schema.runs.status })
+      .from(schema.runs)
+      .where(eq(schema.runs.id, runId));
+    const [scratch] = await (db as any)
+      .select({ dialogStatus: schema.scratchRuns.dialogStatus })
+      .from(schema.scratchRuns)
+      .where(eq(schema.scratchRuns.runId, runId));
+    const [row] = await (db as any)
+      .select()
+      .from(schema.hitlRequests)
+      .where(eq(schema.hitlRequests.id, hitlRequestId));
+
+    return {
+      runStatus: run.status as string,
+      dialogStatus: scratch.dialogStatus as string,
+      row,
+    };
+  }
+
+  // The turn moved on after the close: what the scratch projector writes when
+  // the turn completes.
+  async function turnCompleted(runId: string) {
+    await (db as any)
+      .update(schema.scratchRuns)
+      .set({ dialogStatus: "WaitingForUser" })
+      .where(eq(schema.scratchRuns.runId, runId));
+    await (db as any)
+      .update(schema.runs)
+      .set({ status: "Running" })
+      .where(eq(schema.runs.id, runId));
+  }
+
+  function answer(
+    runId: string,
+    hitlRequestId: string,
+    hosts: Awaited<ReturnType<typeof fakeExecutionHosts>>["hosts"],
+  ) {
+    return respondToHitl(
+      { runId, hitlRequestId, body: { optionId: "allow" } },
+      actor,
+      { db, executionHosts: hosts },
+    );
+  }
+
+  it("an identical retry after permission_not_pending is refused the same way and leaves a finished turn's dialog alone", async () => {
+    const { runId, hitlRequestId, hosts } = await seedScratchPermission(
+      new Set(),
+    );
+    const first = await answer(runId, hitlRequestId, hosts);
+
+    expect(first.status).toBe(410);
+    const closed = await stateOf(runId, hitlRequestId);
+
+    expect(closed.row.respondedAt).toBeInstanceOf(Date);
+    expect(closed.row.response).toMatchObject({
+      optionId: "allow",
+      _closed: { reason: "permission_not_pending" },
+    });
+    await turnCompleted(runId);
+
+    const retry = await answer(runId, hitlRequestId, hosts);
+
+    expect(retry.status).toBe(410);
+    await expect(retry.json()).resolves.toMatchObject({
+      code: "HITL_TIMEOUT",
+      details: { reason: "permission_not_pending" },
+    });
+    expect(await stateOf(runId, hitlRequestId)).toMatchObject({
+      runStatus: "Running",
+      dialogStatus: "WaitingForUser",
+    });
+  });
+
+  it("a boundary that closes the row while the delivery is in flight answers session_ended, not 'delivered'", async () => {
+    const { runId, hitlRequestId, hosts, fake } =
+      await seedScratchPermission(undefined);
+    const { closeOpenScratchPermissions } = await import(
+      "@/lib/scratch-runs/open-permissions"
+    );
+
+    // The scratch crash projection lands between the claim and the host's
+    // answer: it closes the row, and the host no longer holds the session.
+    fake.onCall("deliverInput", async () => {
+      await (db as any).transaction((tx: unknown) =>
+        closeOpenScratchPermissions(tx, runId, new Date()),
+      );
+      fake.sessions.get("sup-1")!.status = "exited";
+    });
+    const res = await answer(runId, hitlRequestId, hosts);
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "session_ended" },
+    });
+    expect((await stateOf(runId, hitlRequestId)).row.response).toMatchObject({
+      optionId: "allow",
+      _closed: { reason: "session_ended" },
+    });
+  });
+
+  // The boundaries that close a row usually end the run too: the retry must
+  // still answer the close reason, not the generic terminal refusal.
+  it("a retry after the crash settled the run still answers session_ended", async () => {
+    const { runId, hitlRequestId, hosts, fake } =
+      await seedScratchPermission(undefined);
+    const { closeOpenScratchPermissions } = await import(
+      "@/lib/scratch-runs/open-permissions"
+    );
+
+    fake.onCall("deliverInput", async () => {
+      await (db as any).transaction((tx: unknown) =>
+        closeOpenScratchPermissions(tx, runId, new Date()),
+      );
+      fake.sessions.get("sup-1")!.status = "exited";
+    });
+    expect((await answer(runId, hitlRequestId, hosts)).status).toBe(409);
+    await (db as any)
+      .update(schema.runs)
+      .set({ status: "Crashed" })
+      .where(eq(schema.runs.id, runId));
+    await (db as any)
+      .update(schema.scratchRuns)
+      .set({ dialogStatus: "Crashed" })
+      .where(eq(schema.scratchRuns.runId, runId));
+
+    const retry = await answer(runId, hitlRequestId, hosts);
+
+    expect(retry.status).toBe(409);
+    await expect(retry.json()).resolves.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "session_ended" },
+    });
+  });
+
+  it("a retry of an answer the checkpointed permission rejected answers the terminal 410 on the Failed run", async () => {
+    const projectId = await seedProject(`c2-${randomUUID().slice(0, 8)}`);
+    const runId = await seedRun(projectId);
+    const hitlRequestId = await seedPermissionHitl(runId);
+    const rejectedAt = new Date();
+    const { closedAnswerResponse } = await import("@/lib/hitl-closed-answer");
+
+    await (db as any)
+      .update(schema.hitlRequests)
+      .set({ response: { optionId: "allow" }, respondedAt: rejectedAt })
+      .where(eq(schema.hitlRequests.id, hitlRequestId));
+    await (db as any)
+      .update(schema.hitlRequests)
+      .set({ response: closedAnswerResponse("delivery_rejected", rejectedAt) })
+      .where(eq(schema.hitlRequests.id, hitlRequestId));
+    await (db as any)
+      .update(schema.runs)
+      .set({ status: "Failed" })
+      .where(eq(schema.runs.id, runId));
+    // Its closer cancelled the row's assignment too: the refusal must still
+    // name the close reason, not the assignment's state.
+    await (db as any).insert(schema.assignments).values({
+      projectId,
+      runId,
+      hitlRequestId,
+      actionKind: "permission",
+      status: "cancelled",
+      title: "Allow this action?",
+    });
+    const { hosts } = await fakeExecutionHosts(db, { runId });
+
+    const retry = await answer(runId, hitlRequestId, hosts);
+
+    expect(retry.status).toBe(410);
+    await expect(retry.json()).resolves.toMatchObject({
+      code: "HITL_TIMEOUT",
+      details: { reason: "permission_delivery_rejected" },
+      terminal: true,
+    });
+  });
+
+  it("a retry of a flow request closed before anyone answered it answers not_awaiting_input, not its cancelled assignment", async () => {
+    const projectId = await seedProject(`c2-${randomUUID().slice(0, 8)}`);
+    const runId = await seedRun(projectId);
+    // A crash boundary closed it unanswered, and cancelled its assignment.
+    const hitlRequestId = await seedPermissionHitl(runId, "plan", new Date());
+
+    await (db as any)
+      .update(schema.runs)
+      .set({ status: "Crashed" })
+      .where(eq(schema.runs.id, runId));
+    await (db as any).insert(schema.assignments).values({
+      projectId,
+      runId,
+      hitlRequestId,
+      actionKind: "permission",
+      status: "cancelled",
+      title: "Allow this action?",
+    });
+    const { hosts } = await fakeExecutionHosts(db, { runId });
+
+    await expect(answer(runId, hitlRequestId, hosts)).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "not_awaiting_input" },
+    });
+  });
+
+  it("a stale retry of a DELIVERED answer is 200 but never moves a dialog that has moved on", async () => {
+    const { runId, hitlRequestId, hosts } = await seedScratchPermission(
+      new Set(["req-1"]),
+    );
+
+    expect((await answer(runId, hitlRequestId, hosts)).status).toBe(200);
+    expect(await stateOf(runId, hitlRequestId)).toMatchObject({
+      runStatus: "Running",
+      dialogStatus: "Running",
+    });
+    await turnCompleted(runId);
+
+    expect((await answer(runId, hitlRequestId, hosts)).status).toBe(200);
+    expect(await stateOf(runId, hitlRequestId)).toMatchObject({
+      runStatus: "Running",
+      dialogStatus: "WaitingForUser",
+    });
+  });
+
+  it("a stale retry of a delivered answer never unblocks the NEXT pending request's dialog", async () => {
+    const { runId, hitlRequestId, hosts } = await seedScratchPermission(
+      new Set(["req-1"]),
+    );
+
+    expect((await answer(runId, hitlRequestId, hosts)).status).toBe(200);
+    // The turn went on and asked again: a second request is open.
+    await seedPermissionHitl(runId, "scratch");
+    await (db as any)
+      .update(schema.scratchRuns)
+      .set({ dialogStatus: "NeedsInput" })
+      .where(eq(schema.scratchRuns.runId, runId));
+    await (db as any)
+      .update(schema.runs)
+      .set({ status: "NeedsInput" })
+      .where(eq(schema.runs.id, runId));
+
+    expect((await answer(runId, hitlRequestId, hosts)).status).toBe(200);
+    expect(await stateOf(runId, hitlRequestId)).toMatchObject({
+      runStatus: "NeedsInput",
+      dialogStatus: "NeedsInput",
+    });
   });
 });

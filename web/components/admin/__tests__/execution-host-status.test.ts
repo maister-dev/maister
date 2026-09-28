@@ -70,6 +70,8 @@ const status: AdminExecutionHostStatus = {
           postHocConflicts: 1,
         },
       ],
+      strandedAgentTurns: 0,
+      strandedAgentTurnRows: [],
     },
   },
   latestSweep: null,
@@ -261,6 +263,42 @@ describe("ExecutionHostStatus", () => {
 
     expect(html).toContain("commands.hostSpanEmpty(days=7)");
     expect(html).not.toContain("host-span-");
+  });
+
+  it("D-M3: lists stranded agent messages with a link to each run, or says there are none", async () => {
+    const empty = renderToStaticMarkup(await ExecutionHostStatus({ status }));
+
+    expect(empty).toContain("commands.strandedTitle");
+    expect(empty).toContain("commands.strandedEmpty");
+    const html = renderToStaticMarkup(
+      await ExecutionHostStatus({
+        status: {
+          ...status,
+          lag: {
+            ...lag,
+            commands: {
+              ...lag.commands,
+              strandedAgentTurns: 3,
+              strandedAgentTurnRows: [
+                {
+                  runId: "run-stranded",
+                  runStatus: "NeedsInputIdle",
+                  turnId: "turn-1",
+                  ordinal: 4,
+                  ageMs: 660_000,
+                  resumeRequestedAt: null,
+                },
+              ],
+            },
+          },
+        },
+      }),
+    );
+
+    expect(html).toContain('href="/runs/run-stranded"');
+    expect(html).toContain("NeedsInputIdle");
+    expect(html).toContain("commands.strandedRow(ordinal=4,age=11m)");
+    expect(html).not.toContain("commands.strandedEmpty");
   });
 
   it("D6: renders per-panel unavailability instead of failing the page", async () => {

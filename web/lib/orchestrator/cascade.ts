@@ -11,9 +11,11 @@ import pino from "pino";
 import { abandonUnlaunchedTasks } from "@/lib/services/tasks";
 import { teardownLiveSessionsForRuns } from "@/lib/runs/session-teardown";
 import { revokeOrchestratorRunTokensForRun } from "@/lib/agents/tokens";
+import { supersedeUndispatchedMessageTurns } from "@/lib/agents/turns";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
+import { causeReason } from "@/lib/domain-events/taxonomy";
 import { releaseAssignmentForRun } from "@/lib/execution-host";
 import {
   CASCADE_NON_TERMINAL_RUN_STATUSES,
@@ -160,6 +162,19 @@ export async function cascadeAbandonRunTree(
             ),
           );
 
+        // D-M1: an abandoned agent run's undelivered messages end with it, in
+        // this transaction — the cascade never passes through finalization.
+        const superseded = await supersedeUndispatchedMessageTurns(
+          tx,
+          runRows.filter((row) => row.runKind === "agent").map((row) => row.id),
+          endedAt,
+        );
+
+        if (superseded.length > 0)
+          log.info(
+            { orchestratorRunId, reason, count: superseded.length },
+            "agent-queued-turns-superseded",
+          );
         for (const row of runRows) {
           await releaseAssignmentForRun(tx, row.id, "abandoned");
           await emitDomainEvent({
@@ -170,6 +185,11 @@ export async function cascadeAbandonRunTree(
             taskId: row.taskId,
             actor: { type: "system", id: null },
             parentRunId: row.parentRunId,
+            cause: {
+              code: null,
+              reason: `cascade/${causeReason(reason)}`,
+              source: "orchestrator",
+            },
             payload: {
               runId: row.id,
               taskId: row.taskId,

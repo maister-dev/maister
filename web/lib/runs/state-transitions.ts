@@ -23,9 +23,16 @@ import {
 import { RELEASED_LIFECYCLE_CLAIM } from "@/lib/runs/lifecycle-claim";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
+import { closedAnswerResponse } from "@/lib/hitl-closed-answer";
 import { RUN_SYNC_TERMINAL_PHASES } from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
-import { type RunReviewCause } from "@/lib/domain-events/taxonomy";
+import {
+  causeReason,
+  type RunReviewCause,
+  type TerminalCause,
+  type TerminalCauseSource,
+} from "@/lib/domain-events/taxonomy";
+import { isMaisterErrorCode } from "@/lib/errors-core";
 import { emitDelegatedReviewIfChild } from "@/lib/runs/delegated-review-emit";
 import { mintPlacement, releaseAssignmentForRun } from "@/lib/execution-host";
 import { gcAgeDays } from "@/lib/instance-config";
@@ -202,12 +209,12 @@ async function idleFromNeedsInput(db: Db, runId: string): Promise<boolean> {
   });
 }
 
-// ADR-180: FOUR paths now perform NeedsInput → NeedsInputIdle — the sweeper's
+// ADR-180: FIVE paths now perform NeedsInput → NeedsInputIdle — the sweeper's
 // keep-alive arm, the sweeper's checkpointed arm (`runPass1Checkpointed`), the
-// flow driver's `markCheckpointedFromExit` when it sees
-// `session.exited{reason:"checkpoint"}` on its own stream, and the HITL
-// response service's race-window branch. They are safe because all four go
-// through `idleFromNeedsInput`'s CAS below. The invariant is not "one writer"
+// flow driver's and the scratch event consumer's `markCheckpointedFromExit`
+// when each sees `session.exited{reason:"checkpoint"}` on its own stream, and
+// the HITL response service's race-window branch. They are safe because all
+// five go through `idleFromNeedsInput`'s CAS below. The invariant is not "one writer"
 // but "every writer shares the CAS": a writer that bypassed it could double-park
 // a run that had already moved on.
 //
@@ -921,6 +928,22 @@ export async function bumpKeepalive(
 
 export type FailReason = string;
 
+// B6 (ADR-177 amendment): a resume failure's cause. The reason names a code
+// itself (`CHECKPOINT`) or the host's (`supervisor-<CODE>`); every other token
+// is a crash of the resume itself. A driver reason may carry the failure's
+// text after a colon (`prompt-failed:<message>`): only the token is kept, and a
+// reason that only repeats the code adds nothing.
+function resumeFailureCause(reason: FailReason): TerminalCause {
+  const token = reason.split(":")[0]!;
+  const hostCode = /^supervisor-(.+)$/.exec(token)?.[1];
+
+  if (hostCode !== undefined && isMaisterErrorCode(hostCode))
+    return { code: hostCode, reason: "supervisor_refused", source: "resume" };
+  if (isMaisterErrorCode(token)) return { code: token, source: "resume" };
+
+  return { code: "CRASH", reason: causeReason(token), source: "resume" };
+}
+
 // M8 D7 failure rows that produce terminal Failed via failResumedRun:
 //   - supervisor 400 spawn refused (CHECKPOINT)
 //   - supervisor 201 but empty acpSessionId (CHECKPOINT)
@@ -976,6 +999,7 @@ export async function failResumedRun(
       taskId: rows[0].taskId,
       actor: { type: "system", id: null },
       parentRunId: rows[0].parentRunId,
+      cause: resumeFailureCause(reason),
       payload: {
         runId,
         taskId: rows[0].taskId,
@@ -1194,7 +1218,9 @@ export const ABANDONABLE_STATUSES = [
 
 export async function markAbandoned(
   runId: string,
-  opts: StateTransitionOptions = {},
+  // B6: why, when it is not the operator's abandon. The top-level
+  // `payload.reason: "user"` stays as it is; the truth rides `cause`.
+  opts: StateTransitionOptions & { cause?: TerminalCause } = {},
 ): Promise<StateTransitionResult> {
   const db = opts.db ?? getDb();
 
@@ -1256,6 +1282,7 @@ export async function markAbandoned(
       taskId: rows[0].taskId,
       actor: { type: "system", id: null },
       parentRunId: rows[0].parentRunId,
+      cause: opts.cause ?? { code: null, reason: "user", source: "operator" },
       payload: {
         runId,
         taskId: rows[0].taskId,
@@ -1344,6 +1371,7 @@ export async function crashResumedRun(
       taskId: rows[0].taskId,
       actor: { type: "system", id: null },
       parentRunId: rows[0].parentRunId,
+      cause: resumeFailureCause(reason),
       payload: {
         runId,
         taskId: rows[0].taskId,
@@ -1393,6 +1421,12 @@ export type CrashReason =
   // from age — and the run stays recoverable, unlike the `Failed` a decoded
   // lost turn produced before.
   | "turn-lost"
+  // ADR-177 amendment 2026-09-26 (T3.2b): the adapter child crashed under a
+  // live host while the node waited on its permission. The purge failed the
+  // prompt and its owner applied that failure — nothing left to settle the run
+  // but the crashed incarnation itself, which is the evidence. Recoverable,
+  // like a lost turn.
+  | "session-crashed"
   // ADR-177: the holding host's event stream is `lost`, so the turn's evidence
   // can never be ingested. An impasse, not a wait.
   | "stream-lost"
@@ -1410,6 +1444,9 @@ export async function crashRunningRun(
     // reviewing orphan of a dead coordinator can be crashed too — while a run
     // that moved since classification loses the CAS instead of being clobbered.
     fromStatuses?: readonly string[];
+    // B6: who proved the crash — the sweep by default, the node's own owner
+    // application when it closes a lost or crashed turn.
+    causeSource?: TerminalCauseSource;
   } = {},
 ): Promise<StateTransitionResult> {
   const db = opts.db ?? getDb();
@@ -1452,9 +1489,14 @@ export async function crashRunningRun(
     // row. Close it in the SAME tx, mirroring the keep-alive TTL abandon, so the
     // operator surfaces show it as settled rather than answerable under a
     // Crashed run. A no-op for a Running run, which has none open.
+    const closedAt = new Date();
+
     await tx
       .update(hitlRequests)
-      .set({ respondedAt: new Date() })
+      .set({
+        respondedAt: closedAt,
+        response: closedAnswerResponse("session_ended", closedAt),
+      })
       .where(
         and(eq(hitlRequests.runId, runId), isNull(hitlRequests.respondedAt)),
       );
@@ -1478,6 +1520,11 @@ export async function crashRunningRun(
       taskId: rows[0].taskId,
       actor: { type: "system", id: null },
       parentRunId: rows[0].parentRunId,
+      cause: {
+        code: "CRASH",
+        reason: causeReason(reason),
+        source: opts.causeSource ?? "reconcile",
+      },
       payload: {
         runId,
         taskId: rows[0].taskId,
@@ -1566,6 +1613,11 @@ export async function crashWaitingOnChildren(
       taskId: rows[0].taskId,
       actor: { type: "system", id: null },
       parentRunId: rows[0].parentRunId,
+      cause: {
+        code: "CRASH",
+        reason: causeReason(reason),
+        source: "reconcile",
+      },
       payload: {
         runId,
         taskId: rows[0].taskId,

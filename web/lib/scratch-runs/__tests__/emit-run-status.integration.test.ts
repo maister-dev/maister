@@ -213,6 +213,15 @@ describe("live scratch terminal → run.crashed", () => {
     expect(events[0].run_id).toBe(runId);
     expect(events[0].payload).toBeNull();
     expect(events[0].fanout_at).toBeNull();
+    // B6: the domain twin names why — the dialog's live crash.
+    const domain = await db.execute(
+      sql`SELECT payload->'cause' AS cause FROM domain_events
+          WHERE run_id = ${runId} AND kind = 'run.crashed'`,
+    );
+
+    expect(domain.rows.map((row) => row.cause)).toEqual([
+      { code: "CRASH", reason: "session_crashed", source: "scratch" },
+    ]);
     expect(typeof (events[0].data as { errorCode: unknown }).errorCode).toBe(
       "string",
     );

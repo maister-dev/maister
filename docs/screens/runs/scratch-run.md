@@ -146,8 +146,10 @@ Structured saved values appear under “Saved response” in a bounded, formatte
 view; viewers cannot submit a new answer or retry delivery.
 The state survives a detail refresh and a 202 response. The scratch panel
 uses the shared `(code, details.reason)` EN/RU copy, not a generic error; a
-terminal 410 says the agent session ended and directs the operator to Recover
-or relaunch. Its feedback persists after the pending card disappears. An
+409 `session_ended` says the session ended before the answer arrived (no retry
+control — the dialog is settled by the crash boundary, and Recover asks again)
+and a 410 `permission_not_pending` says the request is no longer pending. Its
+feedback persists after the pending card disappears. An
 unknown reason uses the localized per-code fallback; prompt-owner `causeCode`
 appears only as a monospaced diagnostic. A refusal from an older permission
 request does not appear beside a newer request on the same run.
@@ -164,7 +166,7 @@ stateDiagram-v2
     Review --> Done: promote succeeds
     Running --> Crashed
     WaitingForUser --> Crashed
-    Crashed --> Running: recover prompt resumes session
+    Crashed --> Running: recover prompt resumes session (runs.status Crashed only)
     Review --> Abandoned: discard
     Crashed --> Abandoned: discard
 ```
@@ -176,14 +178,23 @@ stateDiagram-v2
 | `WaitingForUser` | Transcript plus enabled composer and live slash-command suggestions |
 | `NeedsInput` | Pending permission/HITL prompt in the conversation |
 | `Review` | Transcript plus inspector action shortcuts and change size |
-| `Crashed` | Transcript plus recover composer and failure context |
+| `Crashed` | Transcript plus recover composer and failure context; the hint carries the run's terminal cause line. Send routes to `/recover` only when both `runs.status` and the dialog are `Crashed`; a `scratch_not_recoverable` refusal renders localized copy by `details.status` (Implemented) |
+| `Crashed` dialog on a `Failed` run | Frozen transcript with a `Failed` hint carrying the cause line; no Recover; queued rows read "Not sent" (Implemented) |
 | `Done` / `Abandoned` | Frozen transcript with Diff, Timeline, and Evidence available |
 
 ## Data & APIs
 
 - `GET /api/scratch-runs/{runId}` loads run metadata, scratch metadata,
-  workspace, messages, attachments, pending HITL, capability profile, and the
-  latest live available-command snapshot extracted from the run event log.
+  workspace, messages, attachments, pending HITL, capability profile, the
+  latest live available-command snapshot extracted from the run event log, and
+  `terminalCause` (`{code, reason?, source}` or null — the terminal domain
+  event's cause; only for a `Crashed` or `Failed` run with no such event, and
+  only when `scratch_runs.error_code` is a `MaisterErrorCode`, it falls back to
+  `{code: <error_code>, source: "scratch"}`; Implemented). The hint renders it
+  with the run page's `TerminalCauseNotice` rule
+  ([`flow-run.md`](flow-run.md)): the reason's copy leads, the code's copy
+  stands in only when the reason has none, and a reason without copy follows
+  muted under the code's copy or a "No further detail was recorded." line.
 - `GET /api/runs/{runId}/stream` triggers live transcript refreshes.
 - `POST /api/scratch-runs/{runId}/messages` sends follow-up messages and
   message attachments; while the agent is busy it answers at acceptance with
@@ -194,7 +205,15 @@ stateDiagram-v2
 - `POST /api/scratch-runs/{runId}/recover` resumes a crashed scratch session
   with a user prompt; with messages still queued from before the crash it
   queues the prompt behind them and answers `delivery: "queued"`, so the
-  oldest is sent first.
+  oldest is sent first. Past the existing answers (a removed workspace or an
+  ended dialog → `409 PRECONDITION`; a `Review` dialog or a live host session
+  → `open`), a run that is not `Crashed` is refused `409 CONFLICT
+  {reason: "scratch_not_recoverable", status, next?}` (Implemented). A
+  Recover prompt that yielded before admission goes back to the queue on a
+  project run (`202 delivery: "queued"`) and answers `503` on a project-less
+  assistant run, whose row stays sent; one issued but still awaiting its
+  owner's durable application answers `202` without `stopReason` — the
+  recovery is under way (2026-09-27 review fix).
 - `POST /api/scratch-runs/{runId}/interrupt` interrupts the agent's in-flight
   turn (composer Stop) without ending the session; the dialog returns to
   `WaitingForUser` on its own.

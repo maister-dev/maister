@@ -515,10 +515,20 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
     });
   });
 
-  it("run_get → GET /api/v1/ext/runs/{runId}", async () => {
-    mockOnce({ id: "run-1" }, 200);
+  it("run_get → GET /api/v1/ext/runs/{runId}, the terminal cause passed through", async () => {
+    const payload = {
+      id: "run-1",
+      status: "Failed",
+      terminalCause: {
+        code: "BUDGET_EXCEEDED",
+        reason: "budget_breach",
+        source: "sweeper",
+      },
+    };
 
-    await dispatchTool({
+    mockOnce(payload, 200);
+
+    const result = await dispatchTool({
       name: "run_get",
       args: { runId: "run-1" },
       ctx: httpCtx,
@@ -531,6 +541,7 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
     expect(url).toBe(`${BASE_URL}/api/v1/ext/runs/run-1`);
     expect(headerAuth(init)).toBe(AUTH);
     expect(parsedBody(init)).toBeUndefined();
+    expect(result).toEqual(payload);
   });
 
   it("activity_pulse → GET /api/v1/ext/activity with query args only", async () => {

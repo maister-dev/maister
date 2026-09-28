@@ -25,11 +25,14 @@ type Tables = {
 type FakeDb = {
   select: () => ReturnType<typeof selectChain>;
   update: (table: unknown) => ReturnType<typeof updateChain>;
+  insert: (table: unknown) => { values: (row: Row) => Promise<void> };
   transaction: <T>(fn: (tx: FakeDb) => Promise<T>) => Promise<T>;
 };
 
-const dbState: { tables: Tables } = {
+const dbState: { tables: Tables; inserted: Row[] } = {
   tables: { local_packages: [], runs: [], scratch_runs: [], workspaces: [] },
+  // Only the domain-event outbox inserts on this route.
+  inserted: [],
 };
 
 function tableOf(t: unknown): keyof Tables {
@@ -40,9 +43,16 @@ function tableOf(t: unknown): keyof Tables {
   throw new Error("unknown table");
 }
 
+// A `where` result is awaitable and, like a Drizzle builder, lockable.
+const rowsOf = (table: unknown) => {
+  const rows = Promise.resolve(dbState.tables[tableOf(table)]);
+
+  return Object.assign(rows, { for: () => rows });
+};
+
 const selectChain = () => ({
   from: (table: unknown) => ({
-    where: async () => dbState.tables[tableOf(table)],
+    where: () => rowsOf(table),
   }),
 });
 
@@ -59,6 +69,11 @@ const updateChain = (table: unknown) => ({
 const fakeDb: FakeDb = {
   select: selectChain,
   update: updateChain,
+  insert: () => ({
+    values: async (row: Row) => {
+      dbState.inserted.push(row);
+    },
+  }),
   transaction: async <T>(fn: (tx: FakeDb) => Promise<T>): Promise<T> => {
     return fn(fakeDb);
   },
@@ -229,6 +244,7 @@ beforeEach(() => {
     scratch_runs: [],
     workspaces: [],
   };
+  dbState.inserted = [];
   vi.mocked(deleteSession).mockClear();
   vi.mocked(removeOwnedWorktree).mockClear();
   vi.mocked(preserveWorktree).mockReset();
@@ -318,6 +334,33 @@ describe("POST /api/scratch-runs/[runId]/discard", () => {
     expect(removeOwnedWorktree).not.toHaveBeenCalled();
     expect(body.workspaceRemoved).toBe(false);
     expect(dbState.tables.workspaces[0].removedAt).toBe(removedAt);
+  });
+
+  // B6 (C17 c): the discard is a terminal writer — on master it emitted
+  // nothing, so a discarded run had no event to read its cause from.
+  it("abandons a Crashed project run whose workspace is gone and emits run.abandoned naming the discard", async () => {
+    const runId = seedScratchRun({
+      runStatus: "Crashed",
+      dialogStatus: "Crashed",
+      removedAt: new Date("2026-05-31T00:00:00.000Z"),
+    });
+
+    const res = await invokePost(runId);
+
+    expect(res.status).toBe(200);
+    expect(dbState.tables.runs[0].status).toBe("Abandoned");
+    expect(dbState.inserted).toEqual([
+      expect.objectContaining({
+        kind: "run.abandoned",
+        projectId: "project-1",
+        runId,
+        payload: expect.objectContaining({
+          reason: "discard",
+          parentRunId: null,
+          cause: { code: null, reason: "discard", source: "operator" },
+        }),
+      }),
+    ]);
   });
 
   it("does not abandon or remove completed scratch runs", async () => {

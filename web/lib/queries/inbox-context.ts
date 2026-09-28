@@ -663,7 +663,9 @@ async function buildBudgetProgress(
           },
     gates: summarizeGates(gates),
     wallclockMinutes: minutes,
-    resumeCount: row.resumeStartedAt === null ? 0 : 1,
+    // A Recover resume marker: only a flow run's `resume_started_at` means one.
+    // A scratch run writes it at every host effect as its grace anchor.
+    resumeCount: row.runKind === "flow" && row.resumeStartedAt !== null ? 1 : 0,
   });
 }
 

@@ -6,9 +6,14 @@ export const HITL_RESPOND_REASONS = [
   "already_delivered",
   "option_mismatch",
   "not_awaiting_input",
+  // Deprecated: no producer since 2026-09-26 (a dead session answers 409
+  // `session_ended`); kept for clients that still branch on it.
   "agent_session_ended",
   "delivery_unavailable",
   "permission_delivery_rejected",
+  "session_ended",
+  "permission_not_pending",
+  "edit_lock_not_held",
 ] as const;
 
 export type HitlRespondReason = (typeof HITL_RESPOND_REASONS)[number];

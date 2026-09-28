@@ -20,3 +20,40 @@ const OWNS_A_TURN: Readonly<Record<AgentTurn["variant"], boolean>> = {
 export const OWNED_TURN_VARIANTS: readonly AgentTurn["variant"][] = (
   Object.keys(OWNS_A_TURN) as AgentTurn["variant"][]
 ).filter((variant) => OWNS_A_TURN[variant]);
+
+// Which turn variants START the work of a driver generation — a launch, a
+// resume, a rework, a consensus draft. A message rides a generation another
+// turn started, so a run whose only turns are messages has not been launched:
+// the continuation worker's launch arm selects it by the absence of these
+// (a message accepted in the launch window, before `startAgentSession` ran).
+// Exhaustive over the variant union, like OWNS_A_TURN.
+const STARTS_A_GENERATION: Readonly<Record<AgentTurn["variant"], boolean>> = {
+  initial: true,
+  resume: true,
+  rework: true,
+  consensus_draft: true,
+  live_message: false,
+  persistent_message: false,
+  steer: false,
+};
+
+export const GENERATION_TURN_VARIANTS: readonly AgentTurn["variant"][] = (
+  Object.keys(STARTS_A_GENERATION) as AgentTurn["variant"][]
+).filter((variant) => STARTS_A_GENERATION[variant]);
+
+// Which turn variants carry an operator's message — the turns a run that ends
+// must supersede rather than leave queued forever (D-M1). Exhaustive, like the
+// maps above, so a new message variant cannot escape the supersede.
+const IS_A_MESSAGE: Readonly<Record<AgentTurn["variant"], boolean>> = {
+  live_message: true,
+  persistent_message: true,
+  initial: false,
+  resume: false,
+  rework: false,
+  consensus_draft: false,
+  steer: false,
+};
+
+export const MESSAGE_TURN_VARIANTS: readonly AgentTurn["variant"][] = (
+  Object.keys(IS_A_MESSAGE) as AgentTurn["variant"][]
+).filter((variant) => IS_A_MESSAGE[variant]);

@@ -504,6 +504,13 @@ describe("Owned Flow completed-command failure handoff", () => {
         expect(prompts[0].id).toBe(source.id);
         expect(placements).toHaveLength(1);
         expect(failedEvents).toHaveLength(1);
+        expect(
+          (failedEvents[0].payload as Record<string, unknown>).cause,
+        ).toEqual({
+          code: "HITL_TIMEOUT",
+          reason: "permission_delivery_rejected",
+          source: "hitl",
+        });
         const remainingAssignments = await db
           .select()
           .from(assignments)

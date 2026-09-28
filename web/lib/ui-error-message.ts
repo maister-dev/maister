@@ -30,6 +30,9 @@ const REASON_CODES: Record<HitlRespondReason, string> = {
   agent_session_ended: "HITL_TIMEOUT",
   delivery_unavailable: "EXECUTOR_UNAVAILABLE",
   permission_delivery_rejected: "HITL_TIMEOUT",
+  session_ended: "CONFLICT",
+  permission_not_pending: "HITL_TIMEOUT",
+  edit_lock_not_held: "CONFLICT",
 };
 
 export function resolveHitlErrorMessage(input: {
@@ -45,6 +48,7 @@ export function resolveHitlErrorMessage(input: {
     const key =
       surface === "scratch" &&
       (reason === "agent_session_ended" ||
+        reason === "session_ended" ||
         reason === "permission_delivery_rejected")
         ? (`errorReasons.${reason}_scratch` as const)
         : (`errorReasons.${reason}` as const);

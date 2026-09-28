@@ -106,6 +106,7 @@ describe("emitDomainEvent — same-transaction capture (AC1)", () => {
         actor: { type: "system", id: null },
         parentRunId: null,
         payload: { runId: "r-1", runKind: "flow" },
+        cause: { code: "CRASH", source: "graph" },
       });
     });
 
@@ -117,11 +118,13 @@ describe("emitDomainEvent — same-transaction capture (AC1)", () => {
     expect(row.actorType).toBe("system");
     expect(row.actorId).toBeNull();
     // M37 (ADR-098): run-terminal kinds fold parent_run_id into the payload;
-    // a top-level run serializes parentRunId: null.
+    // a top-level run serializes parentRunId: null. B6: the failure kinds fold
+    // their typed cause beside it.
     expect(row.payload).toEqual({
       runId: "r-1",
       runKind: "flow",
       parentRunId: null,
+      cause: { code: "CRASH", source: "graph" },
     });
   });
 

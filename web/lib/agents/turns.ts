@@ -5,8 +5,10 @@ import type { AgentTurn, Run, RunStatus } from "@/lib/db/schema";
 
 import { randomUUID } from "node:crypto";
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import pino from "pino";
+
+import { MESSAGE_TURN_VARIANTS } from "./turn-variants";
 
 import { agentTurns, runs } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
@@ -35,7 +37,8 @@ const ACCEPTS_MESSAGE = {
 
 // A message turn on a run in these statuses can never be dispatched: the claim
 // supersedes it, and a steer converted after the run closed leaves no queued
-// successor behind (ADR-182).
+// successor behind (ADR-182). `Crashed` is among them: an agent run has no
+// Recover, so nothing would ever re-enter it (D-M1).
 export const CLOSES_MESSAGE_TURNS = {
   Pending: false,
   Running: false,
@@ -47,8 +50,36 @@ export const CLOSES_MESSAGE_TURNS = {
   Done: true,
   Failed: true,
   Abandoned: true,
-  Crashed: false,
+  Crashed: true,
 } satisfies Record<RunStatus, boolean>;
+
+/** D-M1: once a run is in a `CLOSES_MESSAGE_TURNS` status, a message not yet
+ * dispatched never will be. Every writer that ends agent runs — finalization,
+ * the orchestrator cascade — supersedes them in the transaction that flips the
+ * status, so a same-key retry answers `superseded`. A `claimed` turn is
+ * included: its claimer's admission already fails on the closed run (not
+ * `Running`, its assignment closed) — an error to that caller, not a settled
+ * answer — and one it already dispatched no longer matches. The caller holds
+ * the run rows' locks. */
+export async function supersedeUndispatchedMessageTurns(
+  tx: Db,
+  runIds: readonly string[],
+  at: Date,
+): Promise<Array<{ id: string; runId: string }>> {
+  if (runIds.length === 0) return [];
+
+  return tx
+    .update(agentTurns)
+    .set({ state: "superseded", completedAt: at, updatedAt: at })
+    .where(
+      and(
+        inArray(agentTurns.runId, [...runIds]),
+        inArray(agentTurns.state, ["queued", "claimed"]),
+        inArray(agentTurns.variant, [...MESSAGE_TURN_VARIANTS]),
+      ),
+    )
+    .returning({ id: agentTurns.id, runId: agentTurns.runId });
+}
 
 export function messageLogicalKey(requestKey: string | undefined): string {
   return requestKey === undefined

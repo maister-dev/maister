@@ -1693,7 +1693,7 @@ on terminal transitions (`Review` / `Failed`). Scratch dialog state is stored in
 write the authenticated caller for active-workspace launched-by display and
 audit; v1 authorization remains project-role based, not owner-exclusive.
 
-**(Designed, migration `0015`, additive.)** `resumeStartedAt`
+**(Implemented, migration `0015`, additive.)** `resumeStartedAt`
 (`timestamptz`, nullable) is the durable Recover in-flight marker and the
 reconcile grace anchor. The Recover path stamps it in the same transaction
 that flips `Crashed -> Running` (or `Crashed -> Pending` when the
@@ -1703,8 +1703,15 @@ sweep treats a no-live-session agent run as in-flight (skips it) while
 `resumeStartedAt` (or the latest `node_attempts.started_at`) is within
 `MAISTER_RECONCILE_GRACE_SECONDS`, and only crashes it past the grace window.
 The runner clears it to `NULL` on first progress; `crashRunningRun` also clears
-it so a re-crashed row stays clean. Cascade: lives on `runs`, dropped with the
-run row.
+it so a re-crashed row stays clean. **(Implemented — ADR-175 2026-09-26
+amendment)** A scratch run writes it at every host effect, in the transaction
+that commits the intent — the launch insert, a send's and the queued
+dispatch's dialog flip to `Running`, the Recover claim and the idle-resume
+claim — and clears it on turn completion and in `markScratchCrashed`; a
+retryable prompt failure leaves it. The scratch grace anchor is the newer of it
+and the newest `role = 'user'` `run_messages.created_at`. Only a flow run's
+value counts as a Recover resume for the budget-breach progress read
+(`resumeCount`). Cascade: lives on `runs`, dropped with the run row.
 
 **(Implemented, migration `0016`, additive.)** `resumeTargetStepId`
 (`text`, nullable) is the node id retained at crash time for operator Recover.
@@ -2619,7 +2626,19 @@ row per message) and every other recorded dispatch prompt
 (`prompt_dispatch_key = agent_turn:<variant>:<turnId>:<ordinal>`,
 `delivery = 'prompted'`). NULL on rows written before
 `0180`, on non-user rows, and on a scratch dialog's launch prompt (it is the
-launch turn itself, never queued or steered). `run_messages_queued_idx` (partial, `(run_id,
+launch turn itself, never queued or steered) until that prompt yields.
+**(Implemented — ADR-182 A4 closed 2026-09-26)** A project scratch turn whose
+prompt yields before admission (`PromptIncarnationPending`, no command issued)
+returns its row to the queue in the transaction that sets the dialog
+`WaitingForUser`: `prompted → queued`, and the launch row `NULL → queued`,
+keeping its `sequence`; the agent continuation worker's scratch arm re-drives
+it. So does a queued dispatch whose host bind fails after its claim (nothing
+issued), whatever the bind error's code. An idle-resume re-prompt re-queues
+only the launch row (`delivery` NULL, it owns no message-key command); a
+`prompted` row stays `prompted`, since re-driving it would collide with its
+earlier command under the same `scratch_message:message:<id>` key (2026-09-27
+review fix). A local-package assistant row is never re-queued. Any other
+failure leaves the row `prompted`. `run_messages_queued_idx` (partial, `(run_id,
 sequence) WHERE delivery = 'queued'`) serves the FIFO dispatcher;
 `run_messages_steer_command_uq` (partial unique on `steer_command_id`) lets
 recovery find the scratch row by its steer command.
@@ -3366,6 +3385,23 @@ The ACK transaction writes `respondedAt` and `_audit` fields
 `previousDeliveryCommandId`. These JSON fields add no table or migration and
 are never accepted as caller-supplied delivery authority.
 
+**(Implemented — 2026-09-27 review fix)** `respondedAt` means "no longer
+pending", not "delivered". Every writer that closes an ANSWERED `permission`
+row without delivering its answer adds `response._closed = { reason, at }`
+(`web/lib/hitl-closed-answer.ts`: `closedAnswerResponse` in SQL,
+`closedAnswerMarker` for a writer building the object); an unanswered row and
+every other kind keep their `response` as it is. `reason` is
+`permission_not_pending` (the live host held no such request),
+`session_ended` (its session or run ended first — `crashRunningRun`, scratch
+`closeOpenScratchPermissions`, agent finalization `closeOpenHitl`, the
+keep-alive TTL abandon, the resume driver's abandoned intent),
+`request_changed` (a resumed scratch agent re-raised a request whose tool call
+— without `toolCallId`, `status` and `_meta` — or options (`optionId` + `kind`) differ), `not_requested` (the
+resumed scratch turn completed without asking again) or `delivery_rejected`
+(the flow or agent permission rejection). The respond route refuses an
+identical retry of a `_closed` row with that reason's refusal instead of `200`
+— see [`api/web.openapi.yaml`](api/web.openapi.yaml).
+
 `kind=permission` is binary approve/deny (delivered via ACP
 `session/request_permission`). `kind=form` is a structured payload defined
 by `schema` (see [Configuration](configuration.md) §form_schema versioning).
@@ -3401,7 +3437,8 @@ together encode the delivery state of an HITL row:
 | `NULL`     | `NULL`        | Unclaimed — no user submission yet.                                                                                                                                                                                                                                         |
 | set        | `NULL`        | Claimed — user's intent stored under a row-level `SELECT ... FOR UPDATE`, but the durable side-effect (supervisor `requestPermission` resolve, or `input-<stepId>.json` write) has not been acknowledged yet. Retryable from this state with the SAME payload (idempotent). |
 | set        | set           | Delivered. Same-payload retries return `200`; a retry that finds `runs.status = 'NeedsInput'` re-queues the runner wake-up so a process crash between commit and the original microtask cannot strand the run.                                                              |
-| `NULL`     | set           | Never occurs (invariant).                                                                                                                                                                                                                                                   |
+| set, with `_closed` | set  | Closed without delivery (`permission` only, 2026-09-27 review fix): a same-payload retry is refused with the close reason's refusal (409 / 410), never `200`.                                                                                                              |
+| `NULL`     | set           | Closed unanswered: a boundary (the crash projection, the keep-alive TTL abandon, a terminal finalization, a scratch idle resume retiring an earlier session's request) closed a request nobody answered. A retry answers `409 not_awaiting_input` (2026-09-28 review fix). |
 
 Conflicting-payload submissions are rejected with `409` at the CAS
 step — they never reach the side-effect. Permission rows additionally
@@ -3828,12 +3865,13 @@ only). No UPDATE/DELETE application paths; future pruning MUST honor
 {
   id,                              // bigint GENERATED ALWAYS AS IDENTITY PK —
                                    //   dispatch ordering key
-  kind,                            // one of 13 taxonomy kinds (CHECK):
+  kind,                            // one of 15 taxonomy kinds (CHECK):
                                    //   task.created | task.comment_added |
                                    //   task.triage_requeued |
                                    //   task.clarification_answered |
                                    //   run.done | run.failed | run.crashed |
                                    //   run.abandoned | run.review |
+                                   //   run.review_opened | run.needs_input |
                                    //   run.escalated | run.rework_claimed |
                                    //   run.rework_returned | gate.failed
                                    //   run.review added by migration 0060
@@ -3860,10 +3898,18 @@ only). No UPDATE/DELETE application paths; future pruning MUST honor
 }
 ```
 
-No secondary indexes by design — dispatch reads are PK-range scans
-(`id > cursor ORDER BY id`), gated by the xid8 horizon
-(`tx_id < pg_snapshot_xmin(pg_current_snapshot())`) so a late-committing lower
-`id` is never skipped.
+Dispatch reads are PK-range scans (`id > cursor ORDER BY id`), gated by the
+xid8 horizon (`tx_id < pg_snapshot_xmin(pg_current_snapshot())`) so a
+late-committing lower `id` is never skipped. **(Implemented, migration
+`0181`)** Beside the two engine-3 cut-over partial indexes
+(`domain_events_m43_cutover_run_occurred_idx`,
+`domain_events_m43_cutover_task_occurred_idx`, migration `0096`), one
+secondary index serves the run terminal-cause read:
+`domain_events_run_terminal_idx` on `(run_id, occurred_at DESC, id DESC) WHERE
+kind IN ('run.done', 'run.failed', 'run.crashed', 'run.abandoned')` — the
+newest terminal event of a run, kind-matched to its status. The `cause` block
+on `run.failed | run.crashed | run.abandoned` payloads is described in
+[domain events](system-analytics/domain-events.md#terminal-cause-implemented).
 
 ### `domain_event_consumers`
 

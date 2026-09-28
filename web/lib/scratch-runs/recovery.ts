@@ -7,7 +7,16 @@ export type ScratchRecoveryAction =
   | "open"
   | "recover"
   | "discard_only"
-  | "none";
+  | "none"
+  | "refuse";
+
+/** A Recover is a CAS on `runs.status = 'Crashed'` (ADR-175 2026-09-26). Any
+ * other status names why it is refused: `Failed` is a deliberate budget stop,
+ * `NeedsInputIdle` resumes from the stored answer (`next: "respond"`), and a
+ * live status with a dead host session is the reconcile sweep's to crash. */
+export type ScratchRecoveryDecision =
+  | Readonly<{ action: Exclude<ScratchRecoveryAction, "refuse"> }>
+  | Readonly<{ action: "refuse"; status: string; next?: "respond" }>;
 
 export type ScratchRecoveryInput = {
   runStatus: string;
@@ -30,19 +39,24 @@ export function liveScratchHostSessionIds(
 
 export function classifyScratchRecovery(
   input: ScratchRecoveryInput,
-): ScratchRecoveryAction {
-  if (input.workspaceRemoved) return "none";
+): ScratchRecoveryDecision {
+  if (input.workspaceRemoved) return { action: "none" };
   if (input.dialogStatus === "Done" || input.dialogStatus === "Abandoned") {
-    return "none";
+    return { action: "none" };
   }
-  if (input.dialogStatus === "Review") return "open";
+  if (input.dialogStatus === "Review") return { action: "open" };
 
   if (
     input.hostSessionId &&
     input.liveHostSessionIds.has(input.hostSessionId)
   ) {
-    return "open";
+    return { action: "open" };
+  }
+  if (input.runStatus !== "Crashed" || input.dialogStatus !== "Crashed") {
+    return input.runStatus === "NeedsInputIdle"
+      ? { action: "refuse", status: input.runStatus, next: "respond" }
+      : { action: "refuse", status: input.runStatus };
   }
 
-  return input.acpSessionId ? "recover" : "discard_only";
+  return { action: input.acpSessionId ? "recover" : "discard_only" };
 }

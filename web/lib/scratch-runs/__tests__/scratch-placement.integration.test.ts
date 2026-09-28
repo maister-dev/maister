@@ -46,6 +46,23 @@ const execFileAsync = promisify(execFile);
 const USER_ID = "scratch-placement-user";
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
+
+// The real prompt-admission fence, spied so the A4 cases can force its
+// timeout window (no durable incarnation yet) without faking what follows.
+const admission = vi.hoisted(() => ({
+  wait: null as null | ReturnType<typeof vi.fn>,
+}));
+
+vi.mock("@/lib/execution-host/prompt-incarnation", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("@/lib/execution-host/prompt-incarnation")
+    >();
+
+  admission.wait = vi.fn(actual.waitForPromptIncarnation);
+
+  return { ...actual, waitForPromptIncarnation: admission.wait };
+});
 vi.mock("@/lib/authz", () => ({
   requireActiveSession: vi.fn(async () => ({
     id: "scratch-placement-user",
@@ -656,7 +673,13 @@ describe("scratch run placement (ADR-166 Q1–Q3)", () => {
                   eq(schema.runMessages.role, "user"),
                 ),
               )
-          ).filter((row) => row.delivery !== null),
+          ).filter((row) =>
+            [
+              "long task",
+              "queued before the crash",
+              "continue after the crash",
+            ].includes(row.content),
+          ),
         { timeout: 30_000, interval: 25 },
       )
       .toEqual([
@@ -697,5 +720,238 @@ describe("scratch run placement (ADR-166 Q1–Q3)", () => {
         interval: 25,
       })
       .toBe("WaitingForUser");
+  }, 90_000);
+
+  // ADR-175 2026-09-26 (T1.2 RED A2): Recover is a CAS on `Crashed` for the run
+  // and the dialog. A run parked by the host cap (`NeedsInputIdle`, dialog
+  // `NeedsInput`) resumes from the stored answer, and a budget stop (`Failed`,
+  // dialog `Crashed`) is deliberate — both are refused before any claim,
+  // generation or create. On master both moved to `Running`.
+  it("Q8: a host-parked NeedsInputIdle run is refused with next: respond — nothing moves", async () => {
+    const { session: live } = await scratchAndSession(runId);
+
+    fake.sessions.delete(live.hostSessionId as string);
+    await db
+      .update(schema.runs)
+      .set({ status: "NeedsInputIdle", checkpointAt: new Date() })
+      .where(eq(schema.runs.id, runId));
+    await db
+      .update(schema.scratchRuns)
+      .set({ dialogStatus: "NeedsInput" })
+      .where(eq(schema.scratchRuns.runId, runId));
+    const generations = (await assignmentRows(runId)).length;
+    const creates = fake.callsOf("createSession").length;
+
+    const response = await recover();
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "CONFLICT",
+      details: {
+        reason: "scratch_not_recoverable",
+        status: "NeedsInputIdle",
+        next: "respond",
+      },
+    });
+    expect(
+      (
+        await db
+          .select({ status: schema.runs.status })
+          .from(schema.runs)
+          .where(eq(schema.runs.id, runId))
+      )[0].status,
+    ).toBe("NeedsInputIdle");
+    expect(await assignmentRows(runId)).toHaveLength(generations);
+    expect(fake.callsOf("createSession")).toHaveLength(creates);
+  }, 60_000);
+
+  it("Q9: a budget-Failed run (dialog Crashed) is refused — terminal, no generation", async () => {
+    await markScratchCrashed({
+      db,
+      runId,
+      err: new Error("budget breach"),
+      terminal: "failed",
+    });
+    const generations = (await assignmentRows(runId)).length;
+    const creates = fake.callsOf("createSession").length;
+
+    const response = await recover();
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "scratch_not_recoverable", status: "Failed" },
+    });
+    const { scratch } = await scratchAndSession(runId);
+
+    expect(scratch.dialogStatus).toBe("Crashed");
+    expect(
+      (
+        await db
+          .select({ status: schema.runs.status })
+          .from(schema.runs)
+          .where(eq(schema.runs.id, runId))
+      )[0].status,
+    ).toBe("Failed");
+    expect(await assignmentRows(runId)).toHaveLength(generations);
+    expect(fake.callsOf("createSession")).toHaveLength(creates);
+  }, 60_000);
+});
+
+// ADR-182 A4 (T1.4 RED A4): the admission yield returns the failed turn's row
+// to the queue, and the agent continuation worker's scratch arm sends it again
+// once the settle window passes. On master a direct send's row stayed
+// `prompted` (the operator had to resend it) and the launch prompt's row
+// stayed NULL.
+describe("scratch retryable failure keeps the row in the queue (ADR-182 A4)", () => {
+  async function yieldOnce(): Promise<void> {
+    const { PromptIncarnationPending } = await import(
+      "@/lib/execution-host/prompt-incarnation"
+    );
+
+    admission.wait!.mockRejectedValueOnce(
+      new PromptIncarnationPending({
+        runId: "pending",
+        assignmentId: "pending",
+        hostSessionId: "pending",
+      }),
+    );
+  }
+
+  async function launch(): Promise<string> {
+    const gen = launchScratchRunStaged(
+      { body: launchBody(), userId: USER_ID },
+      { executionHosts: hosts },
+    );
+    let step = await gen.next();
+
+    while (!step.done) step = await gen.next();
+
+    return step.value.runId;
+  }
+
+  async function userRows(runId: string) {
+    return db
+      .select({
+        id: schema.runMessages.id,
+        content: schema.runMessages.content,
+        delivery: schema.runMessages.delivery,
+        sequence: schema.runMessages.sequence,
+      })
+      .from(schema.runMessages)
+      .where(
+        and(
+          eq(schema.runMessages.runId, runId),
+          eq(schema.runMessages.role, "user"),
+        ),
+      )
+      .orderBy(schema.runMessages.sequence);
+  }
+
+  async function withWorker<T>(fn: () => Promise<T>): Promise<T> {
+    const { startAgentContinuationWorker } = await import(
+      "@/lib/agents/continuation-worker"
+    );
+    const worker = startAgentContinuationWorker({
+      db: db as never,
+      executionHosts: hosts,
+    });
+
+    try {
+      return await fn();
+    } finally {
+      await worker.stop();
+    }
+  }
+
+  it("a direct send whose admission yields answers queued, keeps its row, and the worker re-sends it", async () => {
+    const runId = await launch();
+
+    expect((await scratchAndSession(runId)).scratch.dialogStatus).toBe(
+      "WaitingForUser",
+    );
+    const sentBefore = fake.callsOf("sendPrompt").length;
+
+    await yieldOnce();
+    const response = await sendScratchUserMessage({
+      runId,
+      body: { content: "retry me", attachments: [] },
+      executionHosts: hosts,
+    });
+
+    // The message is durable and queued; a transport error here would have
+    // invited the operator to send it twice.
+    expect(response).toMatchObject({
+      delivery: "queued",
+      dialogStatus: "WaitingForUser",
+    });
+    const [, row] = await userRows(runId);
+
+    expect(row).toMatchObject({ content: "retry me", delivery: "queued" });
+    const [scratch] = await db
+      .select({ errorCode: schema.scratchRuns.errorCode })
+      .from(schema.scratchRuns)
+      .where(eq(schema.scratchRuns.runId, runId));
+
+    expect(scratch.errorCode).toBe("EXECUTOR_UNAVAILABLE");
+    await withWorker(async () => {
+      await expect
+        .poll(async () => (await userRows(runId))[1].delivery, {
+          timeout: 30_000,
+          interval: 100,
+        })
+        .toBe("prompted");
+      await expect
+        .poll(
+          async () => (await scratchAndSession(runId)).scratch.dialogStatus,
+          { timeout: 30_000, interval: 100 },
+        )
+        .toBe("WaitingForUser");
+    });
+    const resent = fake
+      .callsOf("sendPrompt")
+      .slice(sentBefore)
+      .map((call) => payloadOf(call).prompt);
+
+    expect(resent.at(-1)).toBe("retry me");
+    // Same row, same place in the queue: no second copy of the message.
+    expect((await userRows(runId)).map((message) => message.content)).toEqual([
+      "say hello",
+      "retry me",
+    ]);
+  }, 90_000);
+
+  // The launch answers with the run it created and its prompt queued — an
+  // error here would invite a second launch of the same work, as a send
+  // answers `202 queued` instead.
+  it("a launch prompt whose admission yields re-queues the launch row (NULL → queued) for the worker", async () => {
+    await yieldOnce();
+    const gen = launchScratchRunStaged(
+      { body: launchBody(), userId: USER_ID },
+      { executionHosts: hosts },
+    );
+    let step = await gen.next();
+
+    while (!step.done) step = await gen.next();
+    const runId: string = step.value.runId;
+
+    expect(step.value.status).toMatchObject({
+      runStatus: "Running",
+      dialogStatus: "WaitingForUser",
+    });
+    const [launchRow] = await userRows(runId);
+
+    expect(launchRow).toMatchObject({
+      content: "say hello",
+      delivery: "queued",
+    });
+    await withWorker(async () => {
+      await expect
+        .poll(async () => (await userRows(runId))[0].delivery, {
+          timeout: 30_000,
+          interval: 100,
+        })
+        .toBe("prompted");
+    });
   }, 90_000);
 });

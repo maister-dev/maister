@@ -33,6 +33,9 @@ type ComposerDraft = {
 
 export interface ScratchComposerProps {
   status: ScratchDialogStatus;
+  // `runs.status`: Recover also requires the RUN to be `Crashed` (a budget-
+  // `Failed` run keeps a `Crashed` dialog and is not recoverable).
+  runStatus: string | null | undefined;
   pending: boolean;
   quickReplies: QuickReply[];
   agent?: AdapterId;
@@ -69,6 +72,7 @@ export interface ScratchComposerProps {
 // Owns its own draft state and clears only on a successful submit.
 export function ScratchComposer({
   status,
+  runStatus,
   pending,
   quickReplies,
   agent = "claude",
@@ -138,9 +142,9 @@ export function ScratchComposer({
   const sendsWhileBusy =
     canSendWhileBusy(status) && sendWhileBusy && disabledReason === null;
   const canUseComposer =
-    canCompose(status) &&
+    canCompose(status, runStatus) &&
     disabledReason === null &&
-    (recoverEnabled || !canRecover(status));
+    (recoverEnabled || !canRecover(status, runStatus));
   // The editor stays editable while the agent is busy so the user can write
   // the next message instead of waiting for the turn.
   const composerEditable =
@@ -159,7 +163,7 @@ export function ScratchComposer({
         ? t("draftWhileBusy")
         : agentBusy
           ? t("agentBusy")
-          : canRecover(status) && recoverEnabled
+          : canRecover(status, runStatus) && recoverEnabled
             ? t("recoverPlaceholder")
             : t("messageDisabled");
 
@@ -195,7 +199,7 @@ export function ScratchComposer({
     if (!trimmed) return;
     if (!canSubmitMessage) return;
 
-    if (canRecover(status)) {
+    if (canRecover(status, runStatus)) {
       const draft = clearDraft();
 
       if (!(await onRecover(trimmed))) restoreDraftIfUntouched(draft);
@@ -256,7 +260,7 @@ export function ScratchComposer({
     >
       {sendPending
         ? t("sending")
-        : canRecover(status)
+        : canRecover(status, runStatus)
           ? t("recover")
           : t("send")}
     </button>

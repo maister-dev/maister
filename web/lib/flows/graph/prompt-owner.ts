@@ -447,6 +447,7 @@ export const flowPromptOwnerAdapter = definePromptOwnerAdapter(
               runId: ref.runId,
               nodeAttemptId: currentAttempt.id,
               reason: "turn-lost",
+              causeSource: "graph",
               fromStatuses: [run.status],
               fromAttemptStatuses: [currentAttempt.status],
               // Gates run AFTER the action persisted its completion on this

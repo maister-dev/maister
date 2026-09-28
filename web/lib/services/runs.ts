@@ -37,6 +37,8 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { type AgentExecutionPolicyRecommendation } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { type TerminalCause } from "@/lib/domain-events/taxonomy";
+import { loadRunTerminalCause } from "@/lib/runs/terminal-cause";
 import {
   formatFlowRefError,
   resolveFlowRef,
@@ -2035,6 +2037,8 @@ export type RunDTO = {
   prHasConflicts: boolean | null;
   // ADR-141: the latest branch-sync attempt (by `attempt` desc), null when none.
   syncAttempt: RunSyncAttemptDTO | null;
+  // B6: why a Failed | Crashed | Abandoned run ended; null otherwise.
+  terminalCause: TerminalCause | null;
 };
 
 export async function getRunDTO(
@@ -2079,6 +2083,7 @@ export async function getRunDTO(
     .orderBy(desc(runSyncAttempts.attempt))
     .limit(1);
   const sync = syncRows[0];
+  const terminalCause = await loadRunTerminalCause(_db, runId, row.status);
 
   return {
     id: row.id,
@@ -2102,5 +2107,6 @@ export async function getRunDTO(
           errorCode: sync.errorCode ?? null,
         }
       : null,
+    terminalCause,
   };
 }

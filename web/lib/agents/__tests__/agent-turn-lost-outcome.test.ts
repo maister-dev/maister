@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 
 import { TERMINAL_CAS_SOURCE } from "@/lib/agents/finalization";
 import { agentTerminalOutcomeFor } from "@/lib/agents/prompt-owner";
+import { CLOSES_MESSAGE_TURNS } from "@/lib/agents/turns";
 
 const TURN_LOST_NESTED = {
   code: "PRECONDITION",
@@ -75,5 +76,13 @@ describe("agentTerminalOutcomeFor", () => {
     expect(new Set(TERMINAL_CAS_SOURCE.Crashed)).toEqual(
       new Set([...TERMINAL_CAS_SOURCE.Failed, "NeedsInputIdle", "Review"]),
     );
+  });
+
+  it("a Crashed run closes its message turns — an agent run has no Recover", () => {
+    // D-M1: a lost turn's run is final. A message left `queued` on it would
+    // never be dispatched, so the claim supersedes it like on Failed/Abandoned.
+    expect(CLOSES_MESSAGE_TURNS.Crashed).toBe(true);
+    expect(CLOSES_MESSAGE_TURNS.Failed).toBe(true);
+    expect(CLOSES_MESSAGE_TURNS.Abandoned).toBe(true);
   });
 });

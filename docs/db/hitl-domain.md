@@ -252,8 +252,18 @@ The private JSONB handoff and runtime transitions are defined once in
 open (response IS NULL, responded_at IS NULL)
   -> claimed (response populated, responded_at IS NULL)
   -> delivered (response populated, responded_at IS NOT NULL)
+  -> closed undelivered (permission only: response carries _closed {reason, at},
+     responded_at IS NOT NULL; an identical retry is refused, never 200)
   -> timed out (permission deferred -> Failed; designed idle timeout -> Abandoned)
+open -> closed unanswered (response IS NULL, responded_at IS NOT NULL: a boundary
+     or a scratch idle resume closed a request nobody answered; a retry answers
+     409 not_awaiting_input)
 ```
+
+`responded_at` means "no longer pending", not "delivered"; the `_closed`
+reasons are listed in
+[`../database-schema.md`](../database-schema.md#hitl_requests) (2026-09-27
+review fix).
 
 The row is never deleted (cascades from `runs` and `projects` only).
 

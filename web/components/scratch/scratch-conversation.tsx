@@ -22,10 +22,15 @@ import {
 import { ScratchComposer } from "@/components/scratch/scratch-composer";
 import { ScratchPermissionPanel } from "@/components/scratch/scratch-permission-panel";
 import {
+  TerminalCauseNotice,
+  type TerminalCauseLabels,
+} from "@/components/runs/terminal-cause-notice";
+import {
   attachmentSummary,
   canCompose,
   canSendWhileBusy,
   errorText,
+  recoverErrorText,
   hitlErrorText,
   queuedMessageUnsendable,
 } from "@/lib/scratch-runs/dialog";
@@ -128,6 +133,9 @@ export function ScratchConversation({
         requestKey: string;
         terminal: boolean;
         descriptor: HitlErrorMessage;
+        // The response's `details.reason`: the UI branches on the contract,
+        // never on the copy key it resolved to.
+        reason: string | null;
       }
     | {
         requestKey: string;
@@ -335,12 +343,12 @@ export function ScratchConversation({
     deliveryBadge: (delivery) =>
       delivery === "steered"
         ? t("deliverySteeredBadge")
-        : queuedMessageUnsendable(status)
+        : queuedMessageUnsendable(status, detail?.run.status)
           ? t("deliveryNotSentBadge")
           : t("deliveryQueuedBadge"),
   };
   const quickReplies = useMemo(() => {
-    if (!canCompose(status)) return [];
+    if (!canCompose(status, detail?.run.status)) return [];
     const messages = detail?.messages ?? [];
 
     for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -352,7 +360,7 @@ export function ScratchConversation({
     }
 
     return [];
-  }, [detail?.messages, status]);
+  }, [detail?.messages, detail?.run.status, status]);
   const renderMessageAttachments = useCallback(
     (messageId: string) => {
       const list = attachmentsByMessage.get(messageId) ?? [];
@@ -467,7 +475,9 @@ export function ScratchConversation({
         });
 
         if (!response.ok) {
-          setError(t(errorText(await response.json().catch(() => null))));
+          setError(
+            t(recoverErrorText(await response.json().catch(() => null))),
+          );
 
           return false;
         }
@@ -558,7 +568,15 @@ export function ScratchConversation({
             detail.pendingHitl.answerState,
           );
 
-          setHitlError({ requestKey, terminal, descriptor });
+          setHitlError({
+            requestKey,
+            terminal,
+            descriptor,
+            reason:
+              typeof body?.details?.reason === "string"
+                ? body.details.reason
+                : null,
+          });
           if (body?.details?.reason === "delivery_unavailable") {
             setLocalAnswer({
               requestKey,
@@ -746,6 +764,11 @@ export function ScratchConversation({
             canAct={canAct}
             pending={pendingHitlKey === currentHitlRequestKey}
             pendingHitl={visiblePendingHitl}
+            retryBlocked={
+              visibleHitlError !== null &&
+              "reason" in visibleHitlError &&
+              visibleHitlError.reason === "session_ended"
+            }
             onAnswer={(payload) => void answerHitl(payload)}
             onRefresh={() => void loadDetail()}
           />
@@ -754,7 +777,24 @@ export function ScratchConversation({
 
       {status === "Crashed" ? (
         <div className="min-w-0 border-t border-line-soft px-4 py-2 text-[12px] leading-[1.5] text-ink-2">
-          {t("recoverHint")}
+          {/* A budget kill leaves the dialog Crashed over a Failed run, which
+          Recover refuses: the hint says so instead of offering a resume. */}
+          {detail?.run.status === "Failed"
+            ? t("recoverRefused.Failed")
+            : t("recoverHint")}
+          <TerminalCauseNotice
+            cause={detail?.terminalCause ?? null}
+            labels={{
+              ...(tRun.raw("terminalCause") as Omit<
+                TerminalCauseLabels,
+                "codes"
+              >),
+              codes: (tRun.raw("failure") as Pick<TerminalCauseLabels, "codes">)
+                .codes,
+            }}
+            showTitle={false}
+            status={detail?.run.status ?? ""}
+          />
         </div>
       ) : null}
 
@@ -792,6 +832,7 @@ export function ScratchConversation({
         pending={pendingAction === "send"}
         quickReplies={quickReplies}
         recoverEnabled={resolvedRecoverEndpoint !== null}
+        runStatus={detail?.run.status}
         // ADR-182 D-D5: only project scratch runs accept a message while busy;
         // the local-package assistant (its own endpoint) keeps the idle gate.
         sendWhileBusy={messageEndpoint === undefined}

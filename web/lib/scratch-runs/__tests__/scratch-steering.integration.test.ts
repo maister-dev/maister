@@ -949,9 +949,10 @@ describe("scratch message while the agent is busy — no steering (ADR-182 S4b)"
         )
         .toBe(2);
       await lock.query("SELECT pg_advisory_unlock_all()");
+      // Both find the dialog no longer waiting once the winner has claimed.
       expect(await Promise.all(racers)).toEqual([
-        { dispatched: false },
-        { dispatched: false },
+        { dispatched: false, skipped: "not_waiting" },
+        { dispatched: false, skipped: "not_waiting" },
       ]);
     } finally {
       await lock.query("SELECT pg_advisory_unlock_all()");

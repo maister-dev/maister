@@ -11,6 +11,7 @@ import { lockRejectedPermissionInputEvidence } from "./permission-result-evidenc
 import { markNodeFailed } from "./ledger";
 import { markGateFailed } from "./gate-store";
 
+import { closedAnswerMarker } from "@/lib/hitl-closed-answer";
 import {
   executionAssignments,
   executionCommands,
@@ -217,10 +218,12 @@ export async function failCheckpointedFlowPermission(
       .update(executionCommands)
       .set({ receiptEvidence: prepared.inputReceipt })
       .where(eq(executionCommands.id, input.id));
+    const rejectedAt = new Date();
+
     await tx
       .update(hitlRequests)
       .set({
-        respondedAt: new Date(),
+        respondedAt: rejectedAt,
         response: {
           ...response,
           _audit: {
@@ -234,6 +237,7 @@ export async function failCheckpointedFlowPermission(
             requestId: source.requestId,
             errorCode: "HITL_TIMEOUT",
           },
+          ...closedAnswerMarker("delivery_rejected", rejectedAt),
         },
       })
       .where(eq(hitlRequests.id, hitl.id));
@@ -289,6 +293,11 @@ export async function failCheckpointedFlowPermission(
       taskId: run.taskId,
       actor: { type: "system", id: null },
       parentRunId: run.parentRunId,
+      cause: {
+        code: "HITL_TIMEOUT",
+        reason: "permission_delivery_rejected",
+        source: "hitl",
+      },
       payload: {
         runId,
         taskId: run.taskId,

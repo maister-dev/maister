@@ -16,7 +16,7 @@ erDiagram
 
     DOMAIN_EVENTS {
         bigint id PK "GENERATED ALWAYS AS IDENTITY — dispatch ordering key"
-        text kind "one of 13 taxonomy kinds; CHECK-enforced"
+        text kind "one of 15 taxonomy kinds; CHECK-enforced"
         text project_id FK "NOT NULL -> projects(id) ON DELETE CASCADE"
         text task_id FK "NULL -> tasks(id) ON DELETE CASCADE; task.* kinds"
         text run_id FK "NULL -> runs(id) ON DELETE CASCADE; run.* and gate.* kinds"
@@ -48,17 +48,21 @@ not a table.
 
 | Table | Constraint | Columns | Purpose |
 | ----- | ---------- | ------- | ------- |
-| `domain_events` | `CHECK` | `kind` | Taxonomy allow-list (13 kinds, ADR-086; widened to 13 by migration `0125` for ADR-160 `run.rework_claimed` / `run.rework_returned`). |
+| `domain_events` | `CHECK` | `kind` | Taxonomy allow-list (15 kinds, ADR-086; widened to 13 by migration `0125` for ADR-160 `run.rework_claimed` / `run.rework_returned`, and to 15 by `0167` for `run.review_opened` / `run.needs_input`). |
 | `domain_events` | `CHECK` | `actor_type` | `user \| system \| agent` (NULL allowed). |
 | `domain_event_consumers` | `PK` | `consumer_id` | One cursor row per registered consumer. |
 
 ## Indexes
 
-No secondary indexes by design: dispatch reads are PK-range scans
-(`id > cursor ORDER BY id`), the table is append-only, and events are trigger
-material rather than a query surface (the `webhook_events` precedent also
-carries no FK indexes). Revisit only when a real consumer needs a
-kind-filtered scan.
+Dispatch reads are PK-range scans (`id > cursor ORDER BY id`); the table is
+append-only and events are trigger material, so it carries only narrow partial
+indexes for the read models that query it:
+
+| Index | Columns | Predicate | Serves |
+| ----- | ------- | --------- | ------ |
+| `domain_events_m43_cutover_run_occurred_idx` | `(run_id, occurred_at)` | `kind = 'run.failed'` and the M43 cut-over `reason`/`source` | cut-over history by run |
+| `domain_events_m43_cutover_task_occurred_idx` | `(task_id, occurred_at)` | the same, `task_id IS NOT NULL` | stale C2 claims by task |
+| `domain_events_run_terminal_idx` (migration `0181`, Implemented) | `(run_id, occurred_at DESC, id DESC)` | `kind IN ('run.done', 'run.failed', 'run.crashed', 'run.abandoned')` | the run terminal-cause read (`loadRunTerminalCause`) — the newest terminal event of a run, kind-matched to its status |
 
 ## Cursor and claim model
 

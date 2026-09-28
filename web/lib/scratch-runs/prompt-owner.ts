@@ -41,6 +41,7 @@ import {
   staleSessionBinding,
 } from "@/lib/execution-host/session-binding";
 import { CANONICAL_PROJECTION_CONSUMERS } from "@/lib/execution-host/events/projection-consumers";
+import { isFencedError } from "@/lib/execution-host/deliverer";
 import { MaisterError } from "@/lib/errors";
 
 const log = pino({
@@ -326,6 +327,23 @@ export class ScratchPromptContinuationPending extends MaisterError {
     });
     Object.setPrototypeOf(this, new.target.prototype);
   }
+}
+
+/** A turn whose driver must write nothing: its assignment was fenced by a
+ * newer generation (ADR-166 E-EH-11), its prompt owner's application was
+ * superseded because the run left that turn — parked by the host's permission
+ * cap, terminal, or re-entered under a newer assignment — or its wait ended
+ * before the owner applied, which leaves the command to the durable owner
+ * worker (the agent and flow drivers' continuation rule). Crashing or
+ * re-queueing from here would clobber the state another owner holds. */
+export function isYieldedScratchTurn(err: unknown): boolean {
+  return (
+    isFencedError(err) ||
+    err instanceof ScratchPromptContinuationPending ||
+    (err instanceof MaisterError &&
+      err.code === "CONFLICT" &&
+      err.details?.reason === "prompt_owner_superseded")
+  );
 }
 
 export async function waitForScratchPrompt(

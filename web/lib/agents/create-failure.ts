@@ -5,7 +5,7 @@ import type { AgentTurn } from "@/lib/db/schema";
 import type { BoundClient } from "@/lib/execution-host/client";
 import type { AgentFinalizationApplication } from "./finalization";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 import { prepareAgentRunFinalization } from "./finalization";
 
@@ -73,6 +73,8 @@ export async function settleAgentCreateFailure(
       const result = await prepared.apply(tx);
 
       if (!result.finalized) return result;
+      // A message turn the finalization already superseded keeps its stamp:
+      // `completed_at` is immutable once set (agent_turns_binding_immutable).
       await tx
         .update(agentTurns)
         .set({
@@ -80,7 +82,9 @@ export async function settleAgentCreateFailure(
           completedAt: new Date(),
           updatedAt: new Date(),
         })
-        .where(eq(agentTurns.id, turn.id));
+        .where(
+          and(eq(agentTurns.id, turn.id), eq(agentTurns.state, "claimed")),
+        );
 
       return result;
     },

@@ -346,6 +346,15 @@ describe("execution-command recovery (real supervisor)", () => {
 
   it("V3 (W4): SIGKILL mid-prompt + restart on the same state dir → turn_lost, same key, new boot id, run reconciled Crashed", async () => {
     const runId = await seedFlowRun("v3");
+
+    // Launched as long ago as its attempt (the fixture seeds it an hour back):
+    // the seed helper's run is a scratch run, whose grace anchor is its own
+    // launch or newest user message, never a node attempt (ADR-175
+    // 2026-09-26).
+    await testDatabase.pool.query(
+      `UPDATE runs SET started_at = now() - interval '1 hour' WHERE id = $1`,
+      [runId],
+    );
     const assignment = await mint(runId);
     const client = await hosts.forAssignment(assignment);
     const created = await client.createSession(CREATE_PAYLOAD);

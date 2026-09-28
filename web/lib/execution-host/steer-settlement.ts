@@ -236,10 +236,15 @@ async function settleAgentSteer(
         eq(runMessages.delivery, "steered"),
       ),
     );
+  // Under the run's lock, the one `insertAgentMessageTurn` requires: a
+  // finalization that ends the run concurrently either commits first (the
+  // status read here closes the successor) or waits for this insert and then
+  // supersedes it — never a `queued` successor under a finished run.
   const [run] = await tx
     .select({ id: runs.id, status: runs.status })
     .from(runs)
-    .where(eq(runs.id, steer.runId));
+    .where(eq(runs.id, steer.runId))
+    .for("update");
   const inserted = await insertAgentMessageTurn(
     tx,
     run,

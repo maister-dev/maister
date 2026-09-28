@@ -311,20 +311,27 @@ describe("orchestrator_resume wakes on a FLOW child (ADR-163 REQ-18/REQ-20)", ()
 
     if (!args.emit) return { runId: childRunId, event: null };
 
-    await emitDomainEvent({
+    const event = {
       db,
-      kind: args.emit,
       projectId,
       taskId: childTaskId,
       runId: childRunId,
-      actor: { type: "system", id: null },
+      actor: { type: "system" as const, id: null },
       parentRunId: args.parentRunId,
       payload: {
         runKind: "flow",
         status: args.status,
         ...(args.payload ?? {}),
       },
-    });
+    };
+
+    if (args.emit === "run.failed")
+      await emitDomainEvent({
+        ...event,
+        kind: args.emit,
+        cause: { code: "CRASH", source: "graph" },
+      });
+    else await emitDomainEvent({ ...event, kind: args.emit });
 
     const rows = await domainEventsFor(childRunId, args.emit);
 

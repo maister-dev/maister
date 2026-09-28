@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { DelegationBounds } from "@/lib/run-results/types";
+import type { ClaimedScratchIdleResume } from "@/lib/scratch-runs/idle-resume";
 
 import {
   and,
@@ -335,14 +336,9 @@ export async function assertAssistantCapacityAvailable(
   );
 }
 
-export async function assertAssistantCapacityAvailableInTransaction(
-  tx: Db,
-): Promise<ScratchCapacityDecision> {
-  assertUpgradeMaintenanceAllows("run_admission");
-  const cap = assistantCapFromEnv();
-
-  await takeSchedulerLock(tx);
-
+/** Live Studio assistant runs (the separate assistant budget). The caller
+ * holds the scheduler lock. */
+export async function countLiveAssistantRuns(tx: Db): Promise<number> {
   const liveRows: Array<{ count: number }> = await tx
     .select({ count: count() })
     .from(runs)
@@ -353,7 +349,18 @@ export async function assertAssistantCapacityAvailableInTransaction(
       ),
     );
 
-  const liveCount = Number(liveRows[0]?.count ?? 0);
+  return Number(liveRows[0]?.count ?? 0);
+}
+
+export async function assertAssistantCapacityAvailableInTransaction(
+  tx: Db,
+): Promise<ScratchCapacityDecision> {
+  assertUpgradeMaintenanceAllows("run_admission");
+  const cap = assistantCapFromEnv();
+
+  await takeSchedulerLock(tx);
+
+  const liveCount = await countLiveAssistantRuns(tx);
   const decision = scratchCapacityDecision(liveCount, cap);
 
   log.debug(
@@ -515,6 +522,12 @@ export type PromoteNextPendingOptions = {
   // pre-existing caller frees a flow/scratch slot).
   pool?: SchedulerPool;
   startAgentRun?: DispatchFn;
+  // The respawn half of a scratch idle resume the C3 gate claimed. Injectable
+  // for tests; defaults to `driveScratchIdleResume` on the claimed placement.
+  resumeScratchRun?: (
+    runId: string,
+    claim: ClaimedScratchIdleResume,
+  ) => void | Promise<void>;
   // ADR-121 (T13, C2): the heavy fresh-Backlog-task launcher, dispatched OUTSIDE
   // the scheduler lock (worktree-first). Injectable for tests; defaults to the
   // real launchRun via dynamic import (services/runs imports this module — a
@@ -654,6 +667,26 @@ export async function promoteNextPending(
       const m = await import("@/lib/agents/launch");
 
       await m.startAgentSession(id);
+    });
+  const resumeScratchFn =
+    opts.resumeScratchRun ??
+    (async (id: string, claim: ClaimedScratchIdleResume) => {
+      const [{ driveScratchIdleResume }, { createExecutionHosts }] =
+        await Promise.all([
+          import("@/lib/scratch-runs/idle-resume"),
+          import("@/lib/execution-host"),
+        ]);
+
+      // The placement THIS claim minted, never a re-read of the run row: a
+      // newer generation minted since would otherwise be driven — and rolled
+      // back — in its place.
+      await driveScratchIdleResume({
+        db,
+        hosts: createExecutionHosts({ db }),
+        runId: id,
+        assignmentId: claim.assignmentId,
+        observed: claim.observed,
+      });
     });
   // ADR-121 (T13, C2): the heavy fresh-Backlog-task launcher, dispatched OUTSIDE
   // the lock. Default uses the real launchRun via dynamic import (services/runs
@@ -927,7 +960,13 @@ export async function promoteNextPending(
             data: { trigger: "queue_promote" },
           });
 
-          return { kind: "run" as const, id: runId, isResume, isAgent };
+          return {
+            kind: "run" as const,
+            id: runId,
+            isResume,
+            isAgent,
+            isScratchResume: false,
+          };
         }
 
         // C3 — answered-idle resume (cap-safe, the D2 reversal). The claim
@@ -941,8 +980,56 @@ export async function promoteNextPending(
         //     miss and strand the run Running forever. driveResume re-issues the
         //     session + delivers the stored intent while the run stays NeedsInput,
         //     exactly like the immediate (uncapped) HITL resume path.
+        //   - scratch → NeedsInputIdle → Running through the SAME claim the
+        //     respond route takes (`claimScratchIdleResume`), then a respawn with
+        //     session/resume — never `markResumed` + the flow drive, which refuses
+        //     a non-flow run and would strand it `NeedsInput` with no session.
         let claimedProjectId: string | null = null;
 
+        if (runKind === "scratch") {
+          const previous = await getLatestAssignment(tx, runId);
+          const host = previous
+            ? await getHostById(tx, previous.executionHostId)
+            : null;
+
+          if (!host || host.retiredAt || host.readiness !== "ready") {
+            log.warn(
+              { runId, assignmentId: previous?.id ?? null },
+              "promoteNextPending → queued scratch resume has no ready host; left queued",
+            );
+            continue;
+          }
+          const { claimScratchIdleResume } = await import(
+            "@/lib/scratch-runs/idle-resume"
+          );
+          const resumed = await claimScratchIdleResume(tx, runId, { host });
+
+          if (resumed.outcome !== "claimed") continue;
+          const [claimed]: Array<{ projectId: string | null }> = await tx
+            .select({ projectId: runs.projectId })
+            .from(runs)
+            .where(eq(runs.id, runId));
+
+          // A project-less assistant run has no project to attribute the
+          // webhook to (ADR-097).
+          if (claimed?.projectId)
+            await emitWebhookEvent({
+              db: tx,
+              type: "run.started",
+              projectId: claimed.projectId,
+              runId,
+              data: { trigger: "queue_resume" },
+            });
+
+          return {
+            kind: "run" as const,
+            id: runId,
+            isResume: true,
+            isAgent: false,
+            isScratchResume: true,
+            scratchClaim: resumed,
+          };
+        }
         if (isAgent) {
           // Resume on the parked generation's host. Dispatch verifies its live
           // identity outside this transaction; no consumer retains a tx handle.
@@ -990,7 +1077,13 @@ export async function promoteNextPending(
           data: { trigger: "queue_resume" },
         });
 
-        return { kind: "run" as const, id: runId, isResume: true, isAgent };
+        return {
+          kind: "run" as const,
+          id: runId,
+          isResume: true,
+          isAgent,
+          isScratchResume: false,
+        };
       }
 
       // C2 — fresh Backlog task. Apply the capacity guards + per-candidate
@@ -1163,7 +1256,19 @@ export async function promoteNextPending(
   };
 
   // decision.kind === "run" (C1 or C3): dispatch outside the lock.
-  if (decision.isAgent) {
+  if (decision.isScratchResume) {
+    log.info(
+      { runId: decision.id },
+      "[scheduler] promoting queued scratch resume",
+    );
+    const { scratchClaim } = decision;
+
+    dispatch(
+      (id) => resumeScratchFn(id, scratchClaim),
+      decision.id,
+      "promoteNextPending scratch idle resume dispatch failed",
+    );
+  } else if (decision.isAgent) {
     log.info({ runId: decision.id }, "[scheduler] promoting queued agent run");
     dispatch(
       startAgentFn,

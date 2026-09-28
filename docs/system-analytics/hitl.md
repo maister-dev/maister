@@ -776,10 +776,11 @@ open: activity pings would otherwise hold `keepalive_until` in the future
 forever, so a session the host already parked would never reach
 `NeedsInputIdle` and the 24 h `Abandoned` rule could never reach it either.
 
-Four paths now write `NeedsInput → NeedsInputIdle` — the sweeper's keep-alive
-arm, its checkpointed arm, the flow driver's `markCheckpointedFromExit`, and the
-race-window answer — and they are safe because all four go through
-`idleFromNeedsInput`'s CAS (Implemented — ADR-180).
+Five paths now write `NeedsInput → NeedsInputIdle` — the sweeper's keep-alive
+arm, its checkpointed arm, the flow driver's `markCheckpointedFromExit`, the
+scratch event consumer's `parkPendingPermission` (also through
+`markCheckpointedFromExit`), and the race-window answer — and they are safe
+because all five go through `idleFromNeedsInput`'s CAS (Implemented — ADR-180).
 
 ## Form schema versioning
 
@@ -974,22 +975,40 @@ boolean | enum | array`; unknown type refused with `CONFIG` at Flow
   - **Phase 2 (durable side-effect).** For permission, the supervisor
     deferred is resolved; for form/human, `input-<stepId>.json` is
     written from the STORED response.
-  - **Phase 3 (delivered marker).** `responded_at` is set ONLY after
-    the side-effect succeeds. The route does NOT flip `runs.status`
+  - **Phase 3 (delivered marker).** The respond route sets `responded_at`
+    ONLY after the side-effect succeeds. The route does NOT flip `runs.status`
     back to `Running` — the runner owns that transition on resume so
-    its `isResume` gate can match.
-  - Retry classification: supervisor 410 → `HITL_TIMEOUT` terminal
-    (run → `Failed`) **except** when `details.reason` is
-    `session_checkpointed` (Implemented — ADR-180), which is the non-terminal
+    its `isResume` gate can match. `responded_at` alone means "no longer
+    pending", not "delivered": a writer that closes an answered `permission`
+    row without delivering it also writes `response._closed` (see
+    [answers closed without delivery](#answers-closed-without-delivery-implemented)).
+  - Retry classification: a supervisor 410 is dispatched on the host's
+    `details.reason` and the permission's incarnation state, in ONE
+    transaction that locks the run row first, then the HITL row, and **never
+    writes `Failed` or `Crashed`** (Implemented — ADR-177 2026-09-26
+    amendment). `session_checkpointed` (ADR-180) is the non-terminal
     race-window arm: an answer landing after the session was checkpointed but
     while the registry entry survives its 30 s terminal grace keeps the stored
     response and a NULL `responded_at`, parks the run through the shared
     `markCheckpointed` CAS, resumes on the existing idle branch of its run
-    KIND (an agent run takes the agent idle claim, never the flow resume),
-    and answers 202 `{state:"resume-in-progress"}` — never `Failed` or
-    `Crashed`. The host itself waits for the child's exit before answering
-    an input that lands between the deferred cancel and the exit, so that
-    window takes the same arm;
+    KIND (an agent run takes the agent idle claim, a scratch run the scratch
+    idle claim, never the flow resume), and answers 202
+    `{state:"resume-in-progress"}`. The host itself waits for the child's exit
+    before answering an input that lands between the deferred cancel and the
+    exit, so that window takes the same arm. `session_ended`, a reason-less
+    410 from an older host (unproven is never terminal), or
+    `permission_not_pending` while the permission's incarnation (the flow
+    prompt's own, else the newest of the row's host session) is `crashed |
+    exited | lost | deleted` keeps the stored answer (`responded_at` NULL),
+    writes no run state and no event, and answers 409 `CONFLICT {reason:
+    "session_ended"}`: the crash boundary that settles the run closes the row.
+    `permission_not_pending` otherwise (a live or unknown incarnation: answered,
+    cancelled or never raised) closes the HITL row (`responded_at = now()`,
+    `_closed.reason = "permission_not_pending"`) and its response assignment in
+    the same transaction and answers 410 `HITL_TIMEOUT {reason:
+    "permission_not_pending"}` — except a same-payload retry, which answers 202
+    `{state:"resume-in-progress"}` and closes nothing (the refusal may be the
+    stale deferred a background resume already re-issued);
     supervisor 503 / network → `EXECUTOR_UNAVAILABLE`
     retryable (row stays claimed, `responded_at` NULL); artifact
     write I/O failure → 503 retryable. The operator-facing response says the
@@ -998,7 +1017,12 @@ boolean | enum | array`; unknown type refused with `CONFIG` at Flow
     failure occurred.
   - Same-payload retry on an already-delivered row re-queues
     `runFlow` so a process crash between Phase 3 commit and the
-    original microtask cannot strand the run in `NeedsInput`.
+    original microtask cannot strand the run in `NeedsInput`; its scratch
+    self-heal (`markScratchPermissionDelivered`) moves the dialog `NeedsInput →
+    Running` only while the dialog is still `NeedsInput` and no other
+    permission row of the same host session is open (an earlier session's row
+    holds no live request), so a stale retry never restarts a finished turn or
+    unblocks the next request (2026-09-27 / 2026-09-28 review fixes).
 - **(Designed)** HITL request lost during supervisor shutdown is
   recoverable via the standard `acp_session_id` resume on next launch —
   no separate reconciliation needed. Depends on checkpoint/resume
@@ -1095,6 +1119,13 @@ type}`; the stage `type` MUST be resolved by compiling each distinct flow
   withdraws the unadmitted delivery intent and sends the stored answer to the
   resumed session (Implemented — ADR-180). The host's own 503 bodies remain
   reason-less; the web does not claim to know which host case occurred.
+- **Permission answered after the session died** — inside the host's 30 s
+  registry grace the host answers 410 `session_ended` (a crashed or exited
+  entry) and the route answers 409 `CONFLICT {reason: "session_ended"}`
+  without touching the run; the crash boundary settles the run and closes the
+  row (see [respond refusal reasons](#respond-refusal-reasons-p0-4--implemented)).
+  Past the grace the entry is gone and the host answers 503, the retryable
+  park above.
 - **Agent checkpoint handoff (ADR-180 correction, Implemented):** the real
   supervisor may record an original permission prompt as `succeeded` after
   checkpoint cancellation without a confirmed original `session.input`. A
@@ -1169,6 +1200,32 @@ on the locked `runs.status` read inside the atomic-claim transaction:
                              audit { originalRequestId, reissuedRequestId,
                              deliveredViaResume: true }.
 ```
+
+The idle branch dispatches on `runs.run_kind`: `flow` → `resumeRun`, `agent`
+→ `runAgentIdleResume`, `scratch` → `runScratchIdleResume` (Implemented). The
+scratch arm cap-gates under the scheduler lock (at cap: `resume_requested_at =
+coalesce(resume_requested_at, now())` and 202 `{state:"resume-in-progress",
+runStatus:"NeedsInputIdle"}`; the freed-slot gate's
+scratch arm admits it later), CASes `NeedsInputIdle → Running`, respawns the
+session with `session/resume`, and re-prompts the interrupted turn's own user
+row (the newest `prompted` or launch row — never a newer `queued` or a
+`steered` one); the scratch permission handler then rebinds the stored row to
+the re-raised request (`requestId`, `supervisorSessionId`) and delivers the
+stored option, keeping the dialog `Running` — only when the re-raised request's
+tool call (less `toolCallId`, `status` and `_meta`) and options (`optionId` +
+`kind`) match the stored ones;
+otherwise the stored row closes `request_changed` and the request is asked
+afresh. A resumed turn that completes without raising the permission goes
+`WaitingForUser` and closes the stored row (`not_requested`). For a
+project-less assistant the parked answer is accepted only from its launching
+user holding the live edit lock (`assertParkedAssistantAnswerable` in the
+claim, before anything is stored: another user `403 UNAUTHORIZED`, no lock
+`409 edit_lock_not_held`), and the shared idle claim re-checks the lock for
+both admissions (2026-09-27 review fix). The resume re-runs the actor gate for
+every entry, the checkpointed-session arm included, while the run is still
+parked, and withdraws a refused answer that request itself stored (2026-09-28
+review fix). See
+[scratch reconciliation](scratch-runs.md#reconciliation-grace-and-recover-implemented).
 
 ### Two-phase commit on the idle branch
 
@@ -1247,7 +1304,8 @@ terminal 410 remains visible after card removal until a newer request appears.
 | 202 `resume-in-progress`, `delivery-in-progress` | `answer_stored` | Show choice and retry delivery, disable new choices. |
 | 202 `resume-queued` | Absent after `responded_at` (plan review) | Show a read-only recorded state until refresh removes the card; do not offer retry delivery. |
 | 409 existing answer | `answer_stored` after reconciliation | Show the authoritative saved choice, not the losing tab's choice. |
-| 410 `agent_session_ended` | Absent after terminal marker | Explain the ended session and next action. |
+| 409 `session_ended` | `answer_stored` until the crash boundary closes the row | Show the saved choice read-only with the ended-session copy and **no** retry control (the answer is not pending delivery); the card leaves when the boundary closes the row. |
+| 410 `permission_not_pending` | Absent after `responded_at` | Explain that the request is no longer pending; complete and refresh. |
 | 503 `delivery_unavailable` | `answer_stored` | Show saved answer; identical retry is allowed. |
 
 ### Respond refusal reasons (P0-4 — Implemented)
@@ -1266,33 +1324,83 @@ from `message`, and fall back to localized per-code copy for unknown reasons.
 | CONFLICT | `prompt_owner_invariant` | Execution consistency failed. | Inspect the diagnostic, then retry. | 409 |
 | CONFLICT | `already_delivered` | The answer was delivered. | Check the refreshed run. | 409 |
 | CONFLICT | `option_mismatch` | A different answer was saved. | Retry delivery of the stored answer. | 409 |
-| CONFLICT | `not_awaiting_input` | The run or request no longer awaits input. | Check the refreshed run. | 409 |
-| HITL_TIMEOUT | `agent_session_ended` | The agent session ended before delivery. | Relaunch a flow run; Recover or relaunch scratch. | 410 |
-| HITL_TIMEOUT | `permission_delivery_rejected` | The checkpointed permission refused the original delivery during idle resume. | Relaunch a flow run; Recover or relaunch scratch. | 410 |
+| CONFLICT | `not_awaiting_input` | The run or request no longer awaits input — also a request closed before anyone answered it (its session ended, or a scratch resume retired it), never "already delivered" (2026-09-28 review fix). | Check the refreshed run. | 409 |
+| CONFLICT | `session_ended` | The agent session ended before the answer arrived; the answer was not delivered. | Wait for the run to be reconciled; if it can be recovered, Recover asks again. | 409 |
+| CONFLICT | `edit_lock_not_held` | A parked (`NeedsInputIdle`) project-less assistant permission answered by its launching user without the live edit lock (refused before the answer is stored), or whose lock lapsed before the resume (the resume refuses, and withdraws the answer if that request stored it). Another user gets 403 `UNAUTHORIZED` on the same paths (2026-09-27 / 2026-09-28 review fixes). | Reopen the package editor, then answer again. | 409 |
+| HITL_TIMEOUT | `permission_not_pending` | The session is live but the request is no longer pending (answered, cancelled or never raised). | Check the refreshed run. | 410 |
+| HITL_TIMEOUT | `agent_session_ended` | Deprecated — no producer since 2026-09-26 (replaced by `session_ended`); kept in the enum for external clients. | — | 410 |
+| HITL_TIMEOUT | `permission_delivery_rejected` | The checkpointed permission refused the original delivery during idle resume. | Relaunch the flow or agent run (a scratch run never reaches `resumeRun`, so never this arm). | 410 |
 | EXECUTOR_UNAVAILABLE | `delivery_unavailable` | The claimed answer could not yet be delivered. | Retry delivery with the identical answer; agent resume may also finish automatically. | 503 |
 
 The `session_checkpointed` token belongs to the **host's** 410; web converts
-that arm to 202 and never exposes it as a terminal HITL refusal. A crash during
-the 30-second grace can still reach the terminal 410/Failed arm, while later
-ADR-177 crash reconciliation would offer Crashed/Recover. That classification
-is a separate follow-up. P0-4 makes no run/attempt state transition change.
-There is no schema migration: `response`, `responded_at`, `human_confidence`
-and `superseded_at` already hold the required read inputs. The terminal flow
-run's durable cause remains a separate B6 follow-up: the existing attempt
-failure helpers would change its execution ledger, so P0-4 shows the 410
-through response feedback without writing attempt metadata.
+that arm to 202 and never exposes it as a terminal HITL refusal. The host's
+two other 410 reasons — `session_ended` (the child crashed or exited) and
+`permission_not_pending` (a live session with no such deferred) — map to 409
+`session_ended` and 410 `permission_not_pending` above (Implemented). **The
+crash boundary owns a dead session's answer** (Implemented — ADR-177
+2026-09-26 amendment): the respond route never writes a terminal run status
+for a permission the host no longer holds. The reconcile sweep does not load a
+`NeedsInput` run (only an orphaned child of a gone coordinator), so the boundary that
+crashes a `NeedsInput` flow run after a host restart is the owner application
+of the prompt's `turn_lost` receipt — `closeTurnLostAttempt` →
+`crashRunningRun`, which stamps `resume_target_step_id`, closes every open
+HITL row and offers Recover; a recovered run asks again through a fresh
+permission. When the adapter dies under a live host, the prompt receipt is
+`rejected` and the node owner's ordinary failed-prompt path applies it. The
+measured end state per class lives in the
+[ADR-177 amendment](../decisions/adr-177.md) table; a flow permission whose
+adapter crashed under a live host is closed at the node's re-entry by the
+`session_crashed` evidence class, and an answer that reached the host first
+keeps its choice but withdraws its refused `_delivery` intent. The terminal cause of a `Failed | Crashed | Abandoned` run is read from
+its terminal domain event's `cause` (see
+[domain events](domain-events.md#terminal-cause-implemented)), not from the
+respond route.
 
 - Retry with same payload while `respondedAt IS NULL` AND
   `runs.status='NeedsInput'` (resume already in progress; runner-agent
   hasn't auto-delivered yet): 202 `{state:"resume-in-progress"}`.
 - Retry with same payload after successful auto-deliver
-  (respondedAt set): 200 idempotent.
+  (respondedAt set): 200 idempotent — unless the row was closed undelivered
+  (`response._closed`), which answers its reason's refusal (below).
 - Retry after terminal `Failed` (Phase 2 failed terminally):
   410 `{terminal:true}`.
 - Retry with different payload: 409 (the atomic-claim CAS rule).
 - Supervisor answered 410 with `details.reason: "session_checkpointed"`
   (Implemented — ADR-180): **not** terminal — park through the shared CAS and
   resume, 202 `{state:"resume-in-progress"}`.
+- Supervisor answered 410 `session_ended`, a reason-less 410, or
+  `permission_not_pending` over a dead incarnation: 409 `session_ended`,
+  answer kept; a same-payload retry asks the
+  host again and lands in the same arm until the boundary closes the row.
+
+#### Answers closed without delivery (Implemented)
+
+`responded_at` says a request is no longer pending, not that its answer reached
+the agent. Every writer that closes an ANSWERED `permission` row without
+delivering it keeps the operator's answer and adds `response._closed = {reason,
+at}` (SQL `closedAnswerResponse`, JS `closedAnswerMarker`,
+`web/lib/hitl-closed-answer.ts`); an unanswered row and every other kind are
+left as they are. The respond route reads the marker before its assignment
+claim (the closers cancel a flow or agent row's assignment, whose refusal would
+hide the reason), again in its Phase 1 claim (an identical retry of a closed
+row — before its terminal-run refusal, since most boundaries that close a row
+end the run too), and in its `HITL_TIMEOUT` arm (a boundary that
+closed the row while this delivery was in flight) and answers the reason's
+refusal — never `200` "already delivered", which would also move a scratch
+dialog that has moved on (2026-09-27 review fix):
+
+| `_closed.reason` | Written by | Retry answers |
+| --- | --- | --- |
+| `permission_not_pending` | the respond route's `HITL_TIMEOUT` arm on a live session that holds no such request | 410 `HITL_TIMEOUT {reason: "permission_not_pending"}` |
+| `session_ended` | `crashRunningRun`'s close-out, scratch `closeOpenScratchPermissions`, agent finalization (`closeOpenHitl`), keep-alive Pass 2's TTL abandon, the resume driver's `markIntentAbandoned` | 409 `CONFLICT {reason: "session_ended"}` |
+| `request_changed` | the scratch stored-answer rebind, when the resumed agent asks for another tool, input or choices | 409 `CONFLICT {reason: "not_awaiting_input"}` |
+| `not_requested` | scratch turn completion (`closeAnswersOfEarlierSessions`), when the resumed turn finished without asking again | 409 `CONFLICT {reason: "not_awaiting_input"}` |
+| `delivery_rejected` | flow and agent checkpointed-permission rejection (`failCheckpointedFlowPermission`, `failCheckpointedAgentPermission`) | 410 `HITL_TIMEOUT {reason: "permission_delivery_rejected", terminal: true}` |
+
+A crash or finalization boundary that closes the row while a delivery is in
+flight therefore turns that delivery's host refusal into 409 `session_ended`,
+never 200. The answer read projections are unaffected: they read only
+`optionId`, and a row with `responded_at` set is never `answer_stored`.
 
 ### Resume failures
 
@@ -1308,7 +1416,9 @@ The classification table mirrors `resumeRun(runId)` results:
 `POST /sessions/:id/input` has its own 410, which is **not** in this table: a
 session parked by a checkpoint answers `HITL_TIMEOUT` with
 `details.reason: "session_checkpointed"` and is the non-terminal resume arm
-(Implemented — ADR-180), never `failResumedRun`.
+(Implemented — ADR-180), never `failResumedRun`; `session_ended` and
+`permission_not_pending` are routed by the respond refusal table above and
+never fail the run either.
 
 ### Resume-prompt watchdog (deferred enforcement)
 

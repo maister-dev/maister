@@ -302,6 +302,11 @@ the 12), `occurredAt` (ISO-8601 UTC), `deliveryId`, `attempt` (int `≥1`),
 | `gate.decided` | `{ gateId: string, kind: "command_check" \| "skill_check" \| "ai_judgment" \| "artifact_required" \| "external_check" \| "human_review", mode: "blocking" \| "advisory", status: "passed" \| "failed" \| "overridden", nodeAttemptId: string \| null }` |
 | `ping` | `{ message: string }` |
 
+The `run.failed | run.crashed | run.abandoned` webhook `data` is unchanged;
+the run's typed terminal cause rides the paired domain event's `cause`
+([domain events](domain-events.md#terminal-cause-implemented)), not the
+webhook (Implemented).
+
 ## Retry and backoff
 
 Per-delivery retry state lives on `webhook_deliveries.next_attempt_at`; the

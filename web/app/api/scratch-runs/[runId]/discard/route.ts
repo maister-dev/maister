@@ -10,6 +10,7 @@ import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { preserveWorktree } from "@/lib/gc/preserve";
 import { worktreesRoot } from "@/lib/instance-config";
 import { assertLocalPackageAssistantActor } from "@/lib/scratch-runs/service";
@@ -268,7 +269,22 @@ export async function POST(
 
     const now = new Date();
 
-    await db.transaction(async (tx: Db) => {
+    const discarded = await db.transaction(async (tx: Db) => {
+      // Re-checked under the run's locks (`runs`, then the dialog): a
+      // concurrent discard that ended it first wins, and this one emits
+      // nothing. A worktree this request already removed is recorded either
+      // way — the removal happened.
+      await tx
+        .select({ id: runs.id })
+        .from(runs)
+        .where(eq(runs.id, runId))
+        .for("update");
+      const [locked] = await tx
+        .select({ dialogStatus: scratchRuns.dialogStatus })
+        .from(scratchRuns)
+        .where(eq(scratchRuns.runId, runId))
+        .for("update");
+
       if (shouldRemoveWorkspace && workspace && removalResult) {
         await tx
           .update(workspaces)
@@ -282,6 +298,12 @@ export async function POST(
           })
           .where(eq(workspaces.id, workspace.id));
       }
+      if (
+        !locked ||
+        locked.dialogStatus === "Abandoned" ||
+        locked.dialogStatus === "Done"
+      )
+        return false;
       await tx
         .update(scratchRuns)
         .set({
@@ -302,7 +324,33 @@ export async function POST(
         runId,
         "abandoned",
       );
+      // B6 (C17 c): the discard is a terminal writer like any other.
+      if (run.projectId)
+        await emitDomainEvent({
+          db: tx,
+          kind: "run.abandoned",
+          projectId: run.projectId,
+          runId,
+          actor: { type: "system", id: null },
+          parentRunId: null,
+          payload: {
+            runId,
+            taskId: null,
+            flowId: null,
+            runKind: "scratch",
+            reason: "discard",
+          },
+          cause: { code: null, reason: "discard", source: "operator" },
+        });
+
+      return true;
     });
+
+    if (!discarded)
+      log.info(
+        { runId, workspaceRemoved },
+        "scratch discard lost to a concurrent terminal transition",
+      );
 
     if (run.localPackageId) {
       const packageRows = await db

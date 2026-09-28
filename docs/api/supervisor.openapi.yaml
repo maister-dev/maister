@@ -1597,16 +1597,36 @@ paths:
             `{state: "resume-in-progress"}`. An input landing after the park
             cancelled the deferreds but before the child exited waits for the
             exit (bounded by the kill grace) and gets the same arm; a park that
-            outlasts the grace answers the retryable 503 instead. Every other
-            410 stays terminal (`HITL_TIMEOUT`).
+            outlasts the grace answers the retryable 503 instead.
+
+            (Implemented — ADR-177 2026-09-26 amendment) Every other 410 names
+            why no deferred exists: `details.reason: "session_ended"` when the
+            registry entry is `crashed` or `exited` and not parking (the child
+            died inside the 30 s removal grace), and
+            `details.reason: "permission_not_pending"` when the entry is `live`
+            (the request was answered, cancelled or never raised). The web tier
+            never fails a run on either: `session_ended` keeps the answer for the
+            crash boundary (409 `session_ended` on `/respond`), and
+            `permission_not_pending` closes the HITL row and its response
+            assignment in one transaction and leaves the run as it is.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
               examples:
-                missing:
+                permissionNotPending:
+                  summary: A live session with no deferred for that requestId
                   value:
                     code: "HITL_TIMEOUT"
                     message: "no pending permission with that requestId"
+                    details:
+                      reason: "permission_not_pending"
+                sessionEnded:
+                  summary: The child crashed or exited before the answer arrived
+                  value:
+                    code: "HITL_TIMEOUT"
+                    message: "session ended before the answer arrived"
+                    details:
+                      reason: "session_ended"
                 sessionCheckpointed:
                   summary: The session was parked by a checkpoint; the answer resumes it
                   value:
@@ -3568,7 +3588,10 @@ components:
         longer means "the host keep-alive window elapsed": that window belongs
         to the web alone. On the `details.reason: "session_checkpointed"` arm
         the code is the same but the meaning is NOT terminal — the answer
-        resumes the parked session.
+        resumes the parked session; `session_ended` (a crashed or exited
+        child) and `permission_not_pending` (a live session with no such
+        deferred) name the other two cases, and the web fails a run on
+        neither.
 
         `CONFLICT` (HTTP 409) is minted by `POST /sessions/{id}/steer`
         (Implemented — ADR-182: `steer_unsupported`, `steer_no_active_turn` or
@@ -3633,6 +3656,8 @@ components:
         - import_seal_conflict
         - import_chunk_too_large
         - session_checkpointed
+        - session_ended
+        - permission_not_pending
         - steer_unsupported
         - steer_no_active_turn
         - steer_timeout

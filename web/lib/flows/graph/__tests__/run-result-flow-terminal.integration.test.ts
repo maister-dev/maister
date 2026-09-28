@@ -224,6 +224,7 @@ describe("terminal gate — required export with no result (AC-15)", () => {
     expect(failed?.payload).toMatchObject({
       reason: "result_missing",
       resultStatus: "missing",
+      cause: { code: "CONFIG", reason: "result_missing", source: "graph" },
     });
     // The invalid row and the flip that emits the wake are ONE transaction, so
     // a woken parent can never see the settle without the reason.

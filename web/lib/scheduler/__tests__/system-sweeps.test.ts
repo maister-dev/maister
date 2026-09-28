@@ -107,6 +107,14 @@ vi.mock("@/lib/execution-host/events/stream-health", () => ({
     errors: [],
   })),
 }));
+// D-M3: the stranded-turn report reads Postgres; its own suite covers it.
+vi.mock("@/lib/agents/stranded-turns", () => ({
+  reportStrandedAgentTurns: vi.fn(async () => ({
+    count: 0,
+    rows: [],
+    errors: [],
+  })),
+}));
 vi.mock("@/lib/brain/decay", () => ({
   runBrainDecaySweep: runBrainDecaySweepMock,
 }));

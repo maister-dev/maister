@@ -522,6 +522,17 @@ describe("createExecutionObservability", () => {
         acceptedWithoutTimestamp: 0,
         oldestAcceptedAt: null,
         oldestAcceptedAgeMs: null,
+        strandedAgentTurns: 1,
+        strandedAgentTurnRows: [
+          {
+            runId: "run-1",
+            runStatus: "NeedsInputIdle",
+            turnId: "turn-1",
+            ordinal: 1,
+            ageMs: 700_000,
+            resumeRequestedAt: null,
+          },
+        ],
       },
     } as never;
     const observation = createExecutionObservability({
@@ -538,5 +549,9 @@ describe("createExecutionObservability", () => {
     // otherwise an open incident could never clear.
     expect(observation.errors).toContain("consumer:cursor_ahead_of_horizon");
     expect(observation.consumers.status).toBe("available");
+    // D-M3: the stranded-turn alarm is read live; the persisted observation
+    // never carries it.
+    expect(observation.commands).not.toHaveProperty("strandedAgentTurns");
+    expect(observation.commands).not.toHaveProperty("strandedAgentTurnRows");
   });
 });

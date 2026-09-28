@@ -4,8 +4,20 @@ import type { ScratchDialogStatus } from "@/lib/db/schema";
 
 import { randomUUID } from "node:crypto";
 
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  gte,
+  inArray,
+  isNotNull,
+  isNull,
+  or,
+  sql,
+} from "drizzle-orm";
 import pino from "pino";
+
+import { canonicalCommandJson } from "../../../runtime/command-json";
 
 import {
   admitScratchPrompt,
@@ -18,6 +30,8 @@ import { getDb } from "@/lib/db/client";
 import { waitForPromptIncarnation } from "@/lib/execution-host/prompt-incarnation";
 import * as schemaModule from "@/lib/db/schema";
 import { appendScratchMessage } from "@/lib/scratch-runs/messages";
+import { closeOpenScratchPermissions } from "@/lib/scratch-runs/open-permissions";
+import { closedAnswerResponse } from "@/lib/hitl-closed-answer";
 import { runStatusForDialogStatus } from "@/lib/scratch-runs/state";
 import {
   encodeHookTripPayload,
@@ -38,8 +52,14 @@ import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import { type AdapterId } from "@/lib/acp-runners/adapter-support";
 import { normalizeCapabilityTokens } from "@/lib/capabilities/token-normalizer";
 
-const { runs, scratchMessages, scratchRuns } =
-  schemaModule as unknown as Record<string, any>;
+const {
+  hitlRequests,
+  runs,
+  runSessionIncarnations,
+  runSessions,
+  scratchMessages,
+  scratchRuns,
+} = schemaModule as unknown as Record<string, any>;
 
 const log = pino({
   name: "scratch-events",
@@ -224,18 +244,323 @@ function permissionPrompt(
     : "Approve tool call?";
 }
 
+type PermissionRequestEvent = Extract<
+  SupervisorEvent,
+  { type: "session.permission_request" }
+>;
+
+/**
+ * A scratch session respawned after a host park re-raises the permission its
+ * interrupted turn was waiting on. The operator's answer is already stored on
+ * that turn's request (response set, `responded_at` NULL), so it is delivered
+ * here instead of asking again: the row is rebound in place to the new
+ * request and session, the stored option goes out through the enveloped input
+ * command, and `responded_at` is stamped on its ack. No new row, no
+ * `NeedsInput` flip. Returns false when there is no stored answer to use (the
+ * caller then records a fresh request).
+ */
+// What the operator approved: the tool, its input and the offered choices. The
+// adapter mints a fresh `toolCallId` (and a subagent call's `_meta` parent id)
+// for every call, `status` is the call's lifecycle, and an option's `name` can
+// carry session state (ExitPlanMode's context usage) — none says whether a
+// re-raised request is the same one. The option ids alone never do: they are
+// the same for every tool. Null when the request cannot be canonicalized: an
+// unreadable request never fits.
+function permissionIdentity(
+  toolCall: unknown,
+  options: unknown,
+): string | null {
+  const {
+    toolCallId: _toolCallId,
+    status: _status,
+    _meta,
+    ...call
+  } = (toolCall ?? {}) as Record<string, unknown>;
+  const choices = (Array.isArray(options) ? options : []).map((option) => {
+    const { optionId, kind } = (option ?? {}) as Record<string, unknown>;
+
+    return { optionId: optionId ?? null, kind: kind ?? null };
+  });
+
+  try {
+    return canonicalCommandJson({ toolCall: call, options: choices });
+  } catch {
+    return null;
+  }
+}
+
+async function deliverStoredPermissionAnswer(args: {
+  db: DbClientLike;
+  runId: string;
+  sessionId: string;
+  event: PermissionRequestEvent;
+  execution: ScratchExecution;
+}): Promise<boolean> {
+  const { event } = args;
+  const rebound = await args.db.transaction(async (tx: DbClientLike) => {
+    // The run row first, the respond route's order: the input command this
+    // transaction issues takes a key-share lock on `runs`, so taking the HITL
+    // row first would invert the route's `runs` → HITL order.
+    await tx
+      .select({ id: runs.id })
+      .from(runs)
+      .where(eq(runs.id, args.runId))
+      .for("update");
+    const candidates = await tx
+      .select()
+      .from(hitlRequests)
+      .where(
+        and(
+          eq(hitlRequests.runId, args.runId),
+          eq(hitlRequests.kind, "permission"),
+          isNotNull(hitlRequests.response),
+          isNull(hitlRequests.respondedAt),
+          isNull(hitlRequests.supersededAt),
+          // Only an answer stored for an EARLIER session: on the live session
+          // a request answered but not yet acked is that request's own
+          // delivery in flight, never an answer for the next one.
+          sql`${hitlRequests.schema}->>'supervisorSessionId' IS DISTINCT FROM ${args.sessionId}`,
+        ),
+      )
+      .orderBy(desc(hitlRequests.createdAt))
+      .for("update");
+    const requested = permissionIdentity(event.toolCall, event.options);
+    const identityOf = (row: { schema: unknown }) => {
+      const schema = (row.schema ?? {}) as Record<string, unknown>;
+
+      return permissionIdentity(schema.toolCall, schema.options);
+    };
+    // The answer for THIS request when several are stored (parallel requests
+    // parked together) — else the newest, which a mismatch then retires.
+    const stored =
+      candidates.find(
+        (row: { schema: unknown }) =>
+          requested !== null && identityOf(row) === requested,
+      ) ?? candidates[0];
+    const optionId = (stored?.response as { optionId?: unknown } | null)
+      ?.optionId;
+
+    if (!stored || typeof optionId !== "string") return null;
+    const schemaBefore = (stored.schema ?? {}) as Record<string, unknown>;
+    const approved = identityOf(stored);
+
+    if (approved === null || approved !== requested) {
+      // A park that held several requests (parallel tool calls): this one may
+      // be another of them, re-raised first. Nothing is retired — the stored
+      // answers wait for their own re-raise or the turn's completion
+      // (`not_requested`) — and this request is asked afresh.
+      const [held] = await tx
+        .select({ count: sql<number>`count(*)::int` })
+        .from(hitlRequests)
+        .where(
+          and(
+            eq(hitlRequests.runId, args.runId),
+            eq(hitlRequests.kind, "permission"),
+            sql`${hitlRequests.schema}->>'supervisorSessionId' = ${String(schemaBefore.supervisorSessionId ?? "")}`,
+            or(isNull(hitlRequests.respondedAt), isNull(hitlRequests.response)),
+          ),
+        );
+
+      if ((held?.count ?? 0) > 1) {
+        log.info(
+          {
+            runId: args.runId,
+            requestId: event.requestId,
+            parkedRequests: held.count,
+          },
+          "scratch-permission-stored-answers-kept-for-their-own-request",
+        );
+
+        return null;
+      }
+      // The resumed agent asked for something else — another tool, other
+      // input, other choices. The operator never approved it, so the stored
+      // answer is closed undelivered and the operator is asked afresh. Closed,
+      // not superseded: a permission row supersedes only under an agent
+      // checkpoint pause (the 0155 trigger).
+      const at = new Date();
+
+      await tx
+        .update(hitlRequests)
+        .set({
+          respondedAt: at,
+          response: closedAnswerResponse("request_changed", at),
+        })
+        .where(eq(hitlRequests.id, stored.id));
+      log.warn(
+        {
+          runId: args.runId,
+          hitlRequestId: stored.id,
+          requestId: event.requestId,
+        },
+        "scratch-permission-stored-answer-does-not-fit",
+      );
+
+      return null;
+    }
+    await tx
+      .update(hitlRequests)
+      .set({
+        schema: {
+          ...schemaBefore,
+          requestId: event.requestId,
+          options: event.options,
+          toolCall: event.toolCall,
+          supervisorSessionId: args.sessionId,
+        },
+      })
+      .where(eq(hitlRequests.id, stored.id));
+    const prepared = await args.execution.client.prepareInput(
+      tx,
+      args.sessionId,
+      {
+        kind: "permission",
+        action: "select",
+        requestId: event.requestId,
+        optionId,
+      },
+    );
+
+    return {
+      prepared,
+      hitlRequestId: stored.id as string,
+      response: stored.response as Record<string, unknown>,
+      originalRequestId: schemaBefore.requestId ?? null,
+    };
+  });
+
+  if (!rebound) return false;
+  try {
+    await rebound.prepared.deliver({
+      // No status write: the idle resume set the dialog `Running` before it
+      // prompted, and this path never parks it. An ack can land after the turn
+      // completed or the run ended, and must not overwrite either.
+      onAck: async (tx: DbClientLike) => {
+        const now = new Date();
+
+        await tx
+          .update(hitlRequests)
+          .set({
+            respondedAt: now,
+            response: {
+              ...rebound.response,
+              _audit: {
+                ...((rebound.response._audit as object | undefined) ?? {}),
+                originalRequestId: rebound.originalRequestId,
+                reissuedRequestId: event.requestId,
+                deliveredViaResume: true,
+              },
+            },
+          })
+          .where(
+            and(
+              eq(hitlRequests.id, rebound.hitlRequestId),
+              isNull(hitlRequests.respondedAt),
+            ),
+          );
+      },
+    });
+    log.info(
+      {
+        runId: args.runId,
+        hitlRequestId: rebound.hitlRequestId,
+        requestId: event.requestId,
+      },
+      "scratch-permission-stored-answer-delivered",
+    );
+  } catch (err) {
+    // The answer stays stored on the rebound row; surfacing the request as a
+    // pending permission lets the operator's identical retry deliver it
+    // through the live respond path. Only while this delivery still owns the
+    // dialog: a failure can land after the session crashed, the turn ended or
+    // the run was stopped, and must not overwrite that.
+    const surface = () =>
+      args.db.transaction(async (tx: DbClientLike) => {
+        const [run] = await tx
+          .select({ status: runs.status })
+          .from(runs)
+          .where(eq(runs.id, args.runId))
+          .for("update");
+        const [scratch] = await tx
+          .select({ dialogStatus: scratchRuns.dialogStatus })
+          .from(scratchRuns)
+          .where(eq(scratchRuns.runId, args.runId));
+        const [row] = await tx
+          .select({
+            respondedAt: hitlRequests.respondedAt,
+            schema: hitlRequests.schema,
+          })
+          .from(hitlRequests)
+          .where(eq(hitlRequests.id, rebound.hitlRequestId))
+          .for("update");
+        const bound = (row?.schema ?? {}) as Record<string, unknown>;
+
+        if (
+          run?.status !== "Running" ||
+          scratch?.dialogStatus !== "Running" ||
+          !row ||
+          row.respondedAt !== null ||
+          bound.supervisorSessionId !== args.sessionId ||
+          bound.requestId !== event.requestId
+        )
+          return false;
+        await applyDialogStatus({
+          db: tx,
+          runId: args.runId,
+          dialogStatus: "NeedsInput",
+        });
+
+        return true;
+      });
+    // One retry (a deadlock victim, say). A second failure escapes to the
+    // caller's catch, which cancels the agent's request: better than leaving
+    // it waiting on an answer nobody can deliver.
+    const surfaced = await surface().catch((surfaceErr: unknown) => {
+      log.warn(
+        {
+          runId: args.runId,
+          hitlRequestId: rebound.hitlRequestId,
+          err:
+            surfaceErr instanceof Error
+              ? surfaceErr.message
+              : String(surfaceErr),
+        },
+        "scratch-permission-stored-answer-surface-retried",
+      );
+
+      return surface();
+    });
+
+    log.warn(
+      {
+        runId: args.runId,
+        hitlRequestId: rebound.hitlRequestId,
+        requestId: event.requestId,
+        surfaced,
+        err: err instanceof Error ? err.message : String(err),
+      },
+      "scratch-permission-stored-answer-delivery-failed",
+    );
+  }
+
+  return true;
+}
+
 async function persistPermissionRequest(args: {
   db: DbClientLike;
   runId: string;
   stepId: string;
   sessionId: string;
-  event: Extract<SupervisorEvent, { type: "session.permission_request" }>;
+  event: PermissionRequestEvent;
   execution: ScratchExecution;
 }): Promise<void> {
   const hitlRequestId = randomUUID();
   const prompt = permissionPrompt(args.event);
 
   try {
+    // Inside the guard: a failed lookup must release the host's deferred like
+    // a failed insert, or the agent hangs on a request nobody can answer.
+    if (await deliverStoredPermissionAnswer(args)) return;
     await args.db.transaction(async (tx: DbClientLike) => {
       await createHitlRequest(tx, {
         id: hitlRequestId,
@@ -329,11 +654,45 @@ async function persistPermissionRequest(args: {
 // Adding a dialog-status event that writes NO notice row breaks this.
 const NOTICE_MESSAGE_ROLES = ["user", "system"];
 
+// The monotonic id is PER SESSION: a session respawned by Recover or an idle
+// resume counts from 1 again. So only the notices written while THIS host
+// session ran address its stream — an older session's higher ids would make
+// the host drop the new session's opening events, the re-raised permission
+// among them. Those notices are the rows created since the session's first
+// incarnation.
+async function hostSessionStartedAt(
+  db: DbClientLike,
+  runId: string,
+  hostSessionId: string,
+): Promise<Date | null> {
+  const rows: Array<{ createdAt: Date }> = await db
+    .select({ createdAt: runSessionIncarnations.createdAt })
+    .from(runSessionIncarnations)
+    .innerJoin(
+      runSessions,
+      eq(runSessions.id, runSessionIncarnations.runSessionId),
+    )
+    .where(
+      and(
+        eq(runSessions.runId, runId),
+        eq(runSessionIncarnations.hostSessionId, hostSessionId),
+      ),
+    )
+    .orderBy(runSessionIncarnations.createdAt)
+    .limit(1);
+
+  return rows[0]?.createdAt ?? null;
+}
+
 export async function scratchNoticeResumeOffset(
   db: DbClientLike,
   runId: string,
+  hostSessionId?: string,
 ): Promise<number | undefined> {
   try {
+    const since = hostSessionId
+      ? await hostSessionStartedAt(db, runId, hostSessionId)
+      : null;
     const rows: Array<{ supervisorEventId: string | null }> = await db
       .select({
         supervisorEventId: scratchMessages.supervisorEventId,
@@ -344,6 +703,7 @@ export async function scratchNoticeResumeOffset(
           eq(scratchMessages.runId, runId),
           isNull(scratchMessages.nodeAttemptId),
           inArray(scratchMessages.role, NOTICE_MESSAGE_ROLES),
+          since ? gte(scratchMessages.createdAt, since) : undefined,
         ),
       );
     const maxId = rows.reduce<number | undefined>((current, row) => {
@@ -368,6 +728,40 @@ export async function scratchNoticeResumeOffset(
   }
 }
 
+async function parkPendingPermission(
+  db: DbClientLike,
+  runId: string,
+): Promise<boolean> {
+  const [scratch] = await db
+    .select({ dialogStatus: scratchRuns.dialogStatus })
+    .from(scratchRuns)
+    .where(eq(scratchRuns.runId, runId));
+
+  if (scratch?.dialogStatus !== "NeedsInput") return false;
+  const { markCheckpointedFromExit } = await import(
+    "@/lib/runs/state-transitions"
+  );
+  // The shared `NeedsInput → NeedsInputIdle` CAS: the keep-alive sweeper's
+  // checkpointed arm and the respond route's race-window arm park through it
+  // too, so whichever writer comes first wins and the others no-op. This one
+  // observed the checkpoint exit, and its audit line says so.
+  const parked = await markCheckpointedFromExit(runId, { db });
+
+  log.info({ runId, parked: parked.ok }, "scratch-permission-parked");
+  if (parked.ok) {
+    const { releaseSlotOnIdle } = await import("@/lib/scheduler");
+
+    await releaseSlotOnIdle({ runId, db }).catch((err: unknown) =>
+      log.warn(
+        { runId, err: err instanceof Error ? err.message : String(err) },
+        "scratch permission park could not promote queued work",
+      ),
+    );
+  }
+
+  return true;
+}
+
 function startScratchEventConsumer(args: {
   db: DbClientLike;
   runId: string;
@@ -384,7 +778,11 @@ function startScratchEventConsumer(args: {
     try {
       // Resume after the last event we already projected so a follow-up prompt
       // does not re-stream (and re-persist) the whole session history.
-      const lastEventId = await scratchNoticeResumeOffset(args.db, args.runId);
+      const lastEventId = await scratchNoticeResumeOffset(
+        args.db,
+        args.runId,
+        args.sessionId,
+      );
 
       for await (const event of args.execution.admin.streamSession(
         args.sessionId,
@@ -434,8 +832,18 @@ function startScratchEventConsumer(args: {
         }
 
         try {
-          // Reply content belongs to the autonomous canonical projector.
-          if (event.type !== "session.update") {
+          // A checkpoint exit while a permission is pending is the host's
+          // absolute cap parking that permission, not the end of a turn: the
+          // run parks `NeedsInputIdle` (the dialog stays `NeedsInput`) and the
+          // operator's answer resumes it. Mapped to `WaitingForUser` it would
+          // leave an open request on a dialog that can never deliver it.
+          if (
+            event.type === "session.exited" &&
+            event.reason === "checkpoint" &&
+            (await parkPendingPermission(args.db, args.runId))
+          ) {
+            // fall through to the terminal break below
+          } else if (event.type !== "session.update") {
             const projection = projectSupervisorEventToScratch(event);
 
             if (projection.dialogStatus) {
@@ -453,6 +861,8 @@ function startScratchEventConsumer(args: {
                 // promote/drop and are wired there; here only Crashed/Review.
                 // ADR-097: a project-less local-package run skips these
                 // project-scoped emits (no project to attribute them to).
+                if (dialogStatus === "Crashed")
+                  await closeOpenScratchPermissions(tx, args.runId, new Date());
                 if (applied?.projectId && dialogStatus === "Crashed") {
                   await emitWebhookEvent({
                     db: tx,
@@ -469,6 +879,11 @@ function startScratchEventConsumer(args: {
                     actor: { type: "system", id: null },
                     // scratch runs are never delegated children
                     parentRunId: null,
+                    cause: {
+                      code: "CRASH",
+                      reason: "session_crashed",
+                      source: "scratch",
+                    },
                     payload: {
                       runId: args.runId,
                       taskId: null,

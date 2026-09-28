@@ -19,6 +19,7 @@ import pino from "pino";
 
 import { calculateStreamLag } from "./lag";
 
+import { reportStrandedAgentTurns } from "@/lib/agents/stranded-turns";
 import { OPEN_COMMAND_STATES } from "@/lib/execution-host/types";
 import {
   HOST_SPAN_ANOMALY_WINDOW_DAYS,
@@ -595,6 +596,9 @@ function mapConsumer(row: ConsumerJsonRow, now: Date): ExecutionConsumerLag {
   };
 }
 
+// The admin page lists the oldest few; the count covers them all.
+const STRANDED_AGENT_TURN_LIMIT = 20;
+
 export async function collectExecutionEventLag(input: {
   db: Db;
   health: PlatformStatus;
@@ -701,6 +705,8 @@ export async function collectExecutionEventLag(input: {
             hostSpanSettled1h: row.host_span_settled_1h,
             postHocConflicts: row.post_hoc_conflicts,
           })),
+          strandedAgentTurns: null,
+          strandedAgentTurnRows: [],
         },
       } satisfies ExecutionEventLagReadModel;
     });
@@ -716,8 +722,29 @@ export async function collectExecutionEventLag(input: {
       },
       "execution-event-lag-collected",
     );
+    // Its own read, outside the snapshot above: a failure here leaves the lag
+    // model standing and reads as "unavailable", never as "none stranded".
+    // No logger — the page's reads must not repeat the sweep's WARNs.
+    const stranded = await reportStrandedAgentTurns({
+      db: input.db,
+      now: sampledAt,
+      limit: STRANDED_AGENT_TURN_LIMIT,
+    });
 
-    return model;
+    if (stranded.errors.length > 0)
+      logger.warn(
+        { errors: stranded.errors },
+        "stranded-agent-turns-read-failed",
+      );
+
+    return {
+      ...model,
+      commands: {
+        ...model.commands,
+        strandedAgentTurns: stranded.count,
+        strandedAgentTurnRows: stranded.rows,
+      },
+    };
   } catch (error) {
     logger.warn(
       {

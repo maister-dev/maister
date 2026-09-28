@@ -1,3 +1,5 @@
+import { isMaisterErrorCode, type MaisterErrorCode } from "@/lib/errors-core";
+
 // Domain-event kind taxonomy v1 (ADR-086). Extension rule: one entry here +
 // emit site(s) in the owning domain transaction + one doc row + a CHECK update
 // via migration. `task.triage_requeued` is registered with NO emitter — it
@@ -86,6 +88,172 @@ export function isRunSettledEventKind(
   value: string,
 ): value is RunSettledEventKind {
   return (RUN_SETTLED_EVENT_KINDS as readonly string[]).includes(value);
+}
+
+// ADR-177 amendment 2026-09-26 (B6, D-B1): WHY a run ended `Failed`,
+// `Crashed` or `Abandoned`, carried on its terminal event's `cause`. Tokens
+// only, never text: payloads reach agent prompts and `distill`, and the raw
+// message stays where it lives (`scratch_runs.error_message`, the attempt
+// rows). The run page composes the copy from `code` + `reason`.
+export const TERMINAL_FAILURE_EVENT_KINDS = [
+  "run.failed",
+  "run.crashed",
+  "run.abandoned",
+] as const satisfies readonly RunTerminalEventKind[];
+
+export type TerminalFailureEventKind =
+  (typeof TERMINAL_FAILURE_EVENT_KINDS)[number];
+
+/** The run status each failure kind records — the one map the cause's reader
+ * (kind-matched to the run's status) and the page share. */
+export const TERMINAL_CAUSE_KIND_FOR_STATUS = {
+  Failed: "run.failed",
+  Crashed: "run.crashed",
+  Abandoned: "run.abandoned",
+} as const satisfies Record<string, TerminalFailureEventKind>;
+
+export type TerminalCauseStatus = keyof typeof TERMINAL_CAUSE_KIND_FOR_STATUS;
+
+export function isTerminalCauseStatus(
+  status: string,
+): status is TerminalCauseStatus {
+  return Object.hasOwn(TERMINAL_CAUSE_KIND_FOR_STATUS, status);
+}
+
+export const TERMINAL_CAUSE_SOURCES = [
+  "graph",
+  "hitl",
+  "sweeper",
+  "scratch",
+  "agent",
+  "reconcile",
+  "resume",
+  "operator",
+  "orchestrator",
+  "workbench",
+  "legacy",
+] as const;
+
+export type TerminalCauseSource = (typeof TERMINAL_CAUSE_SOURCES)[number];
+
+export type TerminalCause = Readonly<{
+  code: MaisterErrorCode | null;
+  reason?: string;
+  source: TerminalCauseSource;
+}>;
+
+// A token, bounded: `cascade/<token>` is the one two-part form.
+const CAUSE_REASON = /^[a-z][a-z0-9_]{0,63}(\/[a-z][a-z0-9_]{0,63})?$/;
+
+/** A reason token as the emitter minted it, normalized to snake_case. */
+export function causeReason(token: string): string {
+  return token.replace(/-/g, "_").toLowerCase();
+}
+
+/** The token a cause may carry, or undefined. A reason written as
+ * `<token>:<message>` keeps its token; prose never passes — payloads reach
+ * agent prompts and `distill`, so `cause` carries no text (D-B1). */
+export function terminalCauseReason(
+  raw: string | null | undefined,
+): string | undefined {
+  if (!raw) return undefined;
+  const token = causeReason(raw.split(":")[0]!.trim());
+
+  return CAUSE_REASON.test(token) ? token : undefined;
+}
+
+/** Every reason token a MAIster emitter writes. Each needs EN and RU copy
+ * (`run.terminalCause.reasons`); a token outside this list still renders, as a
+ * muted line under the code's copy. */
+export const TERMINAL_CAUSE_REASONS = [
+  // crash reasons (`CrashReason`, snake_case)
+  "worktree_gone",
+  "agent_session_gone",
+  "cli_not_retry_safe",
+  "orphaned_child",
+  "orchestrator_stuck",
+  "turn_lost",
+  "session_crashed",
+  "stream_lost",
+  "owner_poisoned",
+  // agent finalization
+  "agent_turn_lost",
+  "agent_prompt_failed",
+  "agent_session_create_failed",
+  "agent_session_spawn_failed",
+  "consensus_draft_incomplete",
+  "consensus_draft_spawn_failed",
+  "effective_definition_unresolved",
+  "judge_attempt_timeout",
+  "repo_read_checkout_failed",
+  "operator",
+  "result_missing",
+  "result_invalid",
+  // abandons
+  "user",
+  "orphan",
+  "child_cancel",
+  "workbench",
+  "stop",
+  "discard",
+  "cascade/user_stopped",
+  "cascade/orchestrator_stuck",
+  "cascade/budget_exceeded",
+  // sweeper and HITL decisions
+  "ttl",
+  "max_duration",
+  "budget_breach",
+  "budget_abandoned",
+  "budget_restart",
+  "budget_parked",
+  "infra_recovery_abandoned",
+  "hook_trip_abandoned",
+  "permission_delivery_rejected",
+  "permission_persist_failed",
+  // graph
+  "stale_resume_pointer",
+  "consensus_no_draft_available",
+  // resume
+  "prompt_failed",
+  "consumer_failed",
+  "driver_uncaught",
+  "deliver_permission_failed",
+  "resume_prompt_no_permission",
+  "resume_timeout",
+  "missing_acp_session_id",
+  "runner_snapshot_missing",
+  "workspace_missing",
+  "project_missing",
+  "supervisor_refused",
+  "supervisor_empty_acp_session",
+  "unknown_error",
+  // events written before `cause` existed (0094 cut-over)
+  "legacy_steps_engine_3_cutover",
+] as const;
+
+/** The stored `cause`, or null when it is not a well-formed cause. */
+export function parseTerminalCause(value: unknown): TerminalCause | null {
+  if (typeof value !== "object" || value === null) return null;
+  const { code, reason, source } = value as Record<string, unknown>;
+
+  if (code !== null && !isMaisterErrorCode(code)) return null;
+  if (
+    typeof source !== "string" ||
+    !(TERMINAL_CAUSE_SOURCES as readonly string[]).includes(source)
+  )
+    return null;
+  // A malformed reason is dropped, never the whole cause: its code and source
+  // still say why the run ended.
+  const token =
+    typeof reason === "string" && CAUSE_REASON.test(reason)
+      ? reason
+      : undefined;
+
+  return {
+    code: code as MaisterErrorCode | null,
+    ...(token === undefined ? {} : { reason: token }),
+    source: source as TerminalCauseSource,
+  };
 }
 
 // ADR-163 (Codex review F1): WHY a delegated child entered `Review`, carried on

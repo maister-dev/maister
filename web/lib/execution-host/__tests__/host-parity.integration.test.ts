@@ -349,11 +349,48 @@ const SCENARIOS: Array<{
       ),
   },
   {
-    name: "input with an unknown requestId on a live session → 410 HITL_TIMEOUT",
-    expected: { ok: false, code: "HITL_TIMEOUT", httpStatus: 410 },
+    name: "input with an unknown requestId on a live session → 410 HITL_TIMEOUT permission_not_pending",
+    expected: {
+      ok: false,
+      code: "HITL_TIMEOUT",
+      httpStatus: 410,
+      reason: "permission_not_pending",
+    },
     run: async (lab) => {
       const fence = newRun();
       const created = await liveSession(lab, fence);
+
+      return normalize(() =>
+        lab.transport.deliverInput(
+          created.sessionId,
+          envelope(lab, "session.input", fence, {
+            kind: "permission",
+            action: "select",
+            requestId: randomUUID(),
+            optionId: "allow",
+          }),
+        ),
+      );
+    },
+  },
+  {
+    // ADR-180: a parked session's cancelled deferred is still a good answer —
+    // the web resumes on it rather than treating the session as ended.
+    name: "input after a checkpoint → 410 HITL_TIMEOUT session_checkpointed",
+    expected: {
+      ok: false,
+      code: "HITL_TIMEOUT",
+      httpStatus: 410,
+      reason: "session_checkpointed",
+    },
+    run: async (lab) => {
+      const fence = newRun();
+      const created = await liveSession(lab, fence);
+
+      await lab.transport.checkpointSession(
+        created.sessionId,
+        envelope(lab, "session.checkpoint", fence, {}),
+      );
 
       return normalize(() =>
         lab.transport.deliverInput(

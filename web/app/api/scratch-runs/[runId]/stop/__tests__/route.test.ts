@@ -20,6 +20,8 @@ type Tables = {
 type FakeDb = {
   select: () => ReturnType<typeof selectChain>;
   update: (table: unknown) => ReturnType<typeof updateChain>;
+  // The stop's row locks (`SELECT … FOR UPDATE`): nothing to lock here.
+  execute: () => Promise<{ rows: Row[] }>;
   transaction: <T>(fn: (tx: FakeDb) => Promise<T>) => Promise<T>;
 };
 
@@ -72,6 +74,7 @@ const updateChain = (table: unknown) => ({
 const fakeDb: FakeDb = {
   select: selectChain,
   update: updateChain,
+  execute: async () => ({ rows: [] }),
   transaction: async <T>(fn: (tx: FakeDb) => Promise<T>): Promise<T> =>
     fn(fakeDb),
 };

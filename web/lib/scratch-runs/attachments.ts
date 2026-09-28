@@ -142,6 +142,17 @@ export function metadataAttachmentRow(
 // execution-object references; their host paths are deliberately unavailable to
 // the manager. Repository file-path attachments remain a Stage C workspace
 // concern and retain their existing confined file URI contract.
+/** A re-sent prompt carries its metadata attachments ahead of its uploaded
+ * files, as a directly sent message does. */
+export function promptAttachmentOrder<T extends { kind: string }>(
+  rows: readonly T[],
+): T[] {
+  return [
+    ...rows.filter((row) => row.kind !== "uploaded_file"),
+    ...rows.filter((row) => row.kind === "uploaded_file"),
+  ];
+}
+
 export function scratchPromptContentBlocks(
   text: string,
   attachments: readonly StoredScratchAttachment[],

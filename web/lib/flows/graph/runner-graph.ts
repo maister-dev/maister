@@ -249,12 +249,20 @@ import * as schemaModule from "@/lib/db/schema";
 import { nodeAttempts } from "@/lib/db/schema";
 import { getDb } from "@/lib/db/client";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
+import { causeReason } from "@/lib/domain-events/taxonomy";
 import { clearFailedCoordinatorWake } from "@/lib/domain-events/coordinator-wake-intent";
 import { emitDelegatedReviewIfChild } from "@/lib/runs/delegated-review-emit";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { runs, hitlRequests } = schemaModule as unknown as Record<string, any>;
+
+// B6: a refusal's own reason token, for the terminal event's cause.
+function refusalReason(err: MaisterError): string | undefined {
+  const reason = err.details?.reason;
+
+  return typeof reason === "string" ? causeReason(reason) : undefined;
+}
 
 const log = pino({
   name: "flow-runner-graph",
@@ -2550,6 +2558,11 @@ export async function runGraph(
             taskId: rows[0].taskId,
             actor: { type: "system", id: null },
             parentRunId: rows[0].parentRunId,
+            cause: {
+              code: "CONFIG",
+              reason: "stale_resume_pointer",
+              source: "graph",
+            },
             payload: {
               runId,
               taskId: rows[0].taskId,
@@ -2606,6 +2619,9 @@ export async function runGraph(
   let checkpointed = false;
   let failed = false;
   let runErrorCode: MaisterErrorCode | null = null;
+  // B6: the refusal's own token beside its code — what carries e.g.
+  // `consensus_no_draft_available` onto the terminal event's cause.
+  let runErrorReason: string | undefined;
   // M37 (ADR-098): set once any orchestrator node in this run is issued its
   // run-bound facade token. The post-loop terminal section revokes it on a
   // non-park terminal (Review/Failed/Crashed); the NeedsInput/checkpoint park
@@ -3233,6 +3249,7 @@ export async function runGraph(
           await markNodeFailed(nodeAttemptId, { errorCode: e.code }, db);
           failed = true;
           runErrorCode = e.code;
+          runErrorReason = refusalReason(e);
           break;
         }
       }
@@ -3278,6 +3295,7 @@ export async function runGraph(
         await markNodeFailed(nodeAttemptId, { errorCode: e.code }, db);
         failed = true;
         runErrorCode = e.code;
+        runErrorReason = refusalReason(e);
         break;
       }
 
@@ -3446,6 +3464,7 @@ export async function runGraph(
           await markNodeFailed(nodeAttemptId, { errorCode: e.code }, db);
           failed = true;
           runErrorCode = e.code;
+          runErrorReason = refusalReason(e);
           break;
         }
       }
@@ -3622,6 +3641,7 @@ export async function runGraph(
           }
           failed = true;
           runErrorCode = e.code;
+          runErrorReason = refusalReason(e);
           break;
         }
       }
@@ -3968,6 +3988,7 @@ export async function runGraph(
                 );
                 failed = true;
                 runErrorCode = e.code;
+                runErrorReason = refusalReason(e);
                 break;
               }
             }
@@ -4219,6 +4240,7 @@ export async function runGraph(
           );
           failed = true;
           runErrorCode = error.code;
+          runErrorReason = refusalReason(error);
           break;
         }
       }
@@ -4962,6 +4984,7 @@ export async function runGraph(
               );
               failed = true;
               runErrorCode = e.code;
+              runErrorReason = refusalReason(e);
               break;
             }
           }
@@ -5275,6 +5298,7 @@ export async function runGraph(
     );
     failed = true;
     runErrorCode = e.code;
+    runErrorReason = refusalReason(e);
   }
 
   if (needsInput) {
@@ -5348,6 +5372,11 @@ export async function runGraph(
           taskId: rows[0].taskId,
           actor: { type: "system", id: null },
           parentRunId: rows[0].parentRunId,
+          cause: {
+            code: runErrorCode,
+            ...(runErrorReason ? { reason: runErrorReason } : {}),
+            source: "graph",
+          },
           payload: {
             runId,
             taskId: rows[0].taskId,
@@ -5395,6 +5424,11 @@ export async function runGraph(
           taskId: rows[0].taskId,
           actor: { type: "system", id: null },
           parentRunId: rows[0].parentRunId,
+          cause: {
+            code: runErrorCode,
+            ...(runErrorReason ? { reason: runErrorReason } : {}),
+            source: "graph",
+          },
           payload: {
             runId,
             taskId: rows[0].taskId,
@@ -5485,6 +5519,7 @@ export async function runGraph(
           taskId: rows[0].taskId,
           actor: { type: "system", id: null },
           parentRunId: rows[0].parentRunId,
+          cause: { code: "CONFIG", reason: "result_missing", source: "graph" },
           payload: {
             runId,
             taskId: rows[0].taskId,

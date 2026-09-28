@@ -1,7 +1,13 @@
+import type { EmitDomainEventInput } from "@/lib/domain-events/outbox";
+
 import { describe, expect, it } from "vitest";
 
 import {
   ATTENTION_EVENT_KINDS,
+  causeReason,
+  parseTerminalCause,
+  terminalCauseReason,
+  TERMINAL_CAUSE_REASONS,
   DECISION_OPENING_EVENT_KINDS,
   AUTO_PROMOTABLE_REVIEW_CAUSES,
   DOMAIN_EVENT_KINDS,
@@ -13,6 +19,94 @@ import {
   RUN_SETTLED_EVENT_KINDS,
   TASK_ACTIVITY_TWINNED_EVENT_KINDS,
 } from "@/lib/domain-events/taxonomy";
+
+// B6 (ADR-177 amendment 2026-09-26): a run that ends Failed, Crashed or
+// Abandoned says why. Presence is the compiler's job — these pins fail the
+// typecheck, not the run, when the discriminant loosens.
+describe("terminal cause", () => {
+  it("a failure kind cannot be emitted without a cause, and run.done cannot carry one", () => {
+    const base = {
+      db: null,
+      projectId: "p",
+      actor: { type: "system" as const, id: null },
+      parentRunId: null,
+      payload: {},
+    };
+    // @ts-expect-error — a run.failed | run.crashed | run.abandoned emit names its cause.
+    const missing: EmitDomainEventInput = { ...base, kind: "run.failed" };
+    const extra: EmitDomainEventInput = {
+      ...base,
+      kind: "run.done",
+      // @ts-expect-error — run.done carries no cause.
+      cause: { code: null, source: "graph" },
+    };
+    const named: EmitDomainEventInput = {
+      ...base,
+      kind: "run.crashed",
+      cause: { code: "CRASH", reason: "turn_lost", source: "graph" },
+    };
+
+    expect([missing, extra, named].map((input) => input.kind)).toEqual([
+      "run.failed",
+      "run.done",
+      "run.crashed",
+    ]);
+  });
+
+  it("reason tokens are snake_case, and a stored cause keeps its code when its reason is free text", () => {
+    expect(causeReason("agent-session-gone")).toBe("agent_session_gone");
+    expect(causeReason("supervisor-EXECUTOR_UNAVAILABLE")).toBe(
+      "supervisor_executor_unavailable",
+    );
+    expect(
+      parseTerminalCause({
+        code: "BUDGET_EXCEEDED",
+        reason: "budget_breach",
+        source: "sweeper",
+      }),
+    ).toEqual({
+      code: "BUDGET_EXCEEDED",
+      reason: "budget_breach",
+      source: "sweeper",
+    });
+    expect(
+      parseTerminalCause({
+        code: null,
+        reason: "cascade/user",
+        source: "orchestrator",
+      }),
+    ).toEqual({ code: null, reason: "cascade/user", source: "orchestrator" });
+    // The reason is dropped, never the whole cause: its code still says why.
+    expect(
+      parseTerminalCause({
+        code: "CRASH",
+        reason: "adapter exited with code 1",
+        source: "graph",
+      }),
+    ).toEqual({ code: "CRASH", source: "graph" });
+    expect(parseTerminalCause({ code: "NOPE", source: "graph" })).toBeNull();
+    expect(parseTerminalCause({ code: null, source: "elsewhere" })).toBeNull();
+  });
+
+  // D-B1: the write keeps a token and nothing else — `cause` reaches agent
+  // prompts and `distill`, so a message must never ride it.
+  it("the write-side normalizer keeps a token, strips a message suffix and refuses prose", () => {
+    expect(terminalCauseReason("prompt-failed:Session 3f1c not found")).toBe(
+      "prompt_failed",
+    );
+    expect(terminalCauseReason("cascade/user_stopped")).toBe(
+      "cascade/user_stopped",
+    );
+    expect(terminalCauseReason("project row vanished before spawn")).toBe(
+      undefined,
+    );
+    expect(terminalCauseReason("a".repeat(65))).toBe(undefined);
+    expect(terminalCauseReason(undefined)).toBe(undefined);
+    // Every registered token survives the normalizer unchanged.
+    for (const token of TERMINAL_CAUSE_REASONS)
+      expect(terminalCauseReason(token)).toBe(token);
+  });
+});
 
 // ADR-163 (Codex review F1): a `run.review` says WHY the child entered Review.
 // Only a completion may drive the as-plan auto-promote; an operator stop, a

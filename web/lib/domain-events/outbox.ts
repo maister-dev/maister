@@ -3,11 +3,14 @@ import "server-only";
 import type {
   DomainEventKind,
   RunSettledEventKind,
+  TerminalCause,
+  TerminalFailureEventKind,
 } from "@/lib/domain-events/taxonomy";
 
 import pino from "pino";
 
 import { domainEvents } from "@/lib/db/schema";
+import { terminalCauseReason } from "@/lib/domain-events/taxonomy";
 import { armFailedCoordinatorWake } from "@/lib/domain-events/coordinator-wake-intent";
 
 const log = pino({
@@ -42,15 +45,46 @@ interface BaseDomainEventInput {
 // run) — the compiler refuses a settled emit that omits it, so a new settled
 // path cannot silently drop the routing key the orchestrator auto-launcher +
 // resume consumer depend on. Other kinds forbid the field.
+//
+// ADR-177 amendment 2026-09-26 (B6): the three failure kinds MUST carry the
+// typed `cause` too — the same rule, so a new terminal writer cannot ship a
+// run that ends without saying why. It is folded into the payload.
 export type EmitDomainEventInput =
   | (BaseDomainEventInput & {
-      kind: RunSettledEventKind;
+      kind: TerminalFailureEventKind;
       parentRunId: string | null;
+      cause: TerminalCause;
+    })
+  | (BaseDomainEventInput & {
+      kind: Exclude<RunSettledEventKind, TerminalFailureEventKind>;
+      parentRunId: string | null;
+      cause?: never;
     })
   | (BaseDomainEventInput & {
       kind: Exclude<DomainEventKind, RunSettledEventKind>;
       parentRunId?: never;
+      cause?: never;
     });
+
+function tokenOnlyCause(
+  cause: TerminalCause,
+  kind: DomainEventKind,
+  runId: string | null | undefined,
+): TerminalCause {
+  const reason = terminalCauseReason(cause.reason);
+
+  if (cause.reason !== undefined && reason !== cause.reason)
+    log.warn(
+      { kind, runId, kept: reason ?? null },
+      "terminal-cause-reason-normalized",
+    );
+
+  return {
+    code: cause.code,
+    ...(reason === undefined ? {} : { reason }),
+    source: cause.source,
+  };
+}
 
 // A plain INSERT with no RETURNING — the id is identity-generated and nothing
 // on the write path needs it (dispatch reads by PK range later). Keeping the
@@ -78,11 +112,18 @@ export async function emitDomainEvent(
       );
   }
 
-  // Run-terminal kinds fold parent_run_id into the payload (null for top-level).
-  const payload =
-    input.parentRunId === undefined
-      ? input.payload
-      : { ...input.payload, parentRunId: input.parentRunId };
+  // Run-terminal kinds fold parent_run_id into the payload (null for top-level),
+  // and the failure kinds their typed cause — a reason only as a token (D-B1),
+  // enforced here, the one write every terminal emitter goes through.
+  const payload = {
+    ...input.payload,
+    ...(input.parentRunId === undefined
+      ? {}
+      : { parentRunId: input.parentRunId }),
+    ...(input.cause === undefined
+      ? {}
+      : { cause: tokenOnlyCause(input.cause, input.kind, input.runId) }),
+  };
 
   await input.db.insert(domainEvents).values({
     kind: input.kind,

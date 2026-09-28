@@ -700,6 +700,11 @@ export const agentPromptOwner = definePromptOwnerAdapter(
         db,
         finalOutput: finishSentinelOutput(sentinel, maxBytes),
         ...(terminal.reason ? { reason: terminal.reason } : {}),
+        // D-G3 (ADR-177 amendment): the boundary closes an answer the ended
+        // turn can never receive. Measured: a child killed under a live host
+        // fails the turn (`Failed`) with the permission row still open, a
+        // restart loses it (`Crashed`); an agent run has no Recover either way.
+        ...(terminal.outcome !== "Done" ? { closeOpenHitl: true } : {}),
       },
     );
     let application: AgentFinalizationApplication = { finalized: false };

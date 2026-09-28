@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   isMaisterErrorCode,
   isStaleViewErrorCode,
+  resolveHitlErrorMessage,
   resolveUiErrorMessageKey,
 } from "@/lib/ui-error-message";
 
@@ -67,5 +68,42 @@ describe("stale-view error codes", () => {
     409,
   ])("leaves the view alone for %s", (code) => {
     expect(isStaleViewErrorCode(code)).toBe(false);
+  });
+});
+
+// ADR-177 amendment 2026-09-26 (D-G2): the two host-named reasons.
+describe("the dead-session respond reasons", () => {
+  it("session_ended is a CONFLICT, with scratch copy on the scratch surface", () => {
+    const body = { code: "CONFLICT", details: { reason: "session_ended" } };
+
+    expect(resolveHitlErrorMessage(body)).toEqual({
+      key: "errorReasons.session_ended",
+    });
+    expect(resolveHitlErrorMessage({ ...body, surface: "scratch" })).toEqual({
+      key: "errorReasons.session_ended_scratch",
+    });
+  });
+
+  it("permission_not_pending is a HITL_TIMEOUT on every surface", () => {
+    const body = {
+      code: "HITL_TIMEOUT",
+      details: { reason: "permission_not_pending" },
+    };
+
+    expect(resolveHitlErrorMessage(body)).toEqual({
+      key: "errorReasons.permission_not_pending",
+    });
+    expect(resolveHitlErrorMessage({ ...body, surface: "scratch" })).toEqual({
+      key: "errorReasons.permission_not_pending",
+    });
+  });
+
+  it("a reason under the wrong code is never trusted", () => {
+    expect(
+      resolveHitlErrorMessage({
+        code: "HITL_TIMEOUT",
+        details: { reason: "session_ended" },
+      }),
+    ).toEqual({ key: "error.HITL_TIMEOUT" });
   });
 });

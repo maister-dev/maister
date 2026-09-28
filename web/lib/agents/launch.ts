@@ -2261,7 +2261,7 @@ async function startConsensusRunnerDraftSession(args: {
     );
     await finalizeAgentRun(runId, "Failed", {
       db: args.db,
-      reason: err instanceof Error ? err.message : String(err),
+      reason: "consensus_draft_spawn_failed",
     });
   }
 }
@@ -3257,9 +3257,13 @@ export async function startAgentSession(
       _db,
     );
   } catch (err) {
+    log.error(
+      { runId, err: err instanceof Error ? err.message : String(err) },
+      "agent effective definition unresolved",
+    );
     await finalizeAgentRun(runId, "Failed", {
       db: _db,
-      reason: err instanceof Error ? err.message : String(err),
+      reason: "effective_definition_unresolved",
     });
 
     return;
@@ -3307,9 +3311,13 @@ export async function startAgentSession(
         committish,
       });
     } catch (err) {
+      log.error(
+        { runId, err: err instanceof Error ? err.message : String(err) },
+        "agent read-only checkout failed",
+      );
       await finalizeAgentRun(runId, "Failed", {
         db: _db,
-        reason: err instanceof Error ? err.message : String(err),
+        reason: "repo_read_checkout_failed",
       });
 
       return;
@@ -3631,7 +3639,7 @@ export async function startAgentSession(
     }
     await finalizeAgentRun(runId, "Failed", {
       db: _db,
-      reason: err instanceof Error ? err.message : String(err),
+      reason: "agent_session_spawn_failed",
     });
   }
 }

@@ -11,6 +11,7 @@ import { isMaisterError, MaisterError } from "@/lib/errors";
 import { projectHitlAnswer } from "@/lib/hitl-answer-view";
 import { extractOptions } from "@/lib/queries/hitl";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
+import { loadScratchTerminalCause } from "@/lib/runs/terminal-cause";
 import { assertLocalPackageAssistantActor } from "@/lib/scratch-runs/service";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -395,6 +396,12 @@ export async function GET(
         )
         .map(publicMessage),
       attachments: attachmentRows.map(publicAttachment),
+      terminalCause: await loadScratchTerminalCause(
+        db,
+        runId,
+        run.status,
+        scratch.errorCode,
+      ),
       capabilityProfile: publicCapabilityProfile(profileRows[0]),
       pendingHitl: pendingHitl
         ? {

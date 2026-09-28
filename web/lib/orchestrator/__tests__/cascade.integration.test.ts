@@ -338,6 +338,11 @@ describe("cascadeAbandonRunTree (M37 T7.4)", () => {
       expect(payload.parentRunId).toBe(orchestratorRunId);
       expect(payload.reason).toBe("cascade/user_stopped");
       expect(payload.runKind).toBe("agent");
+      expect(payload.cause).toEqual({
+        code: null,
+        reason: "cascade/user_stopped",
+        source: "orchestrator",
+      });
     }
 
     // The freed agent slots let the standalone queued run promote. Post-cascade
@@ -439,6 +444,47 @@ describe("cascadeAbandonRunTree (M37 T7.4)", () => {
   // must be revoked as part of teardown — abandon/stop/drop/crash all route
   // through the cascade, but the normal-exit revoke (runner-graph) does not fire
   // on these paths. Without this, a stale token would stay usable for its TTL.
+  // C6 (review 2026-09-27): a message queued on a delegated persistent child
+  // is superseded in the cascade's own transaction, like finalization does —
+  // otherwise it stays `queued` under an `Abandoned` run with nothing left to
+  // dispatch it, and the stranded-turn alarm reports it on every sweep.
+  it("supersedes the queued message turns of every agent run it abandons", async () => {
+    const orchTaskId = await seedTask("manual");
+    const orchestratorRunId = await seedOrchestrator(orchTaskId);
+    const child = await seedChild({
+      parentRunId: orchestratorRunId,
+      rootRunId: orchestratorRunId,
+      status: "Running",
+    });
+    const turnId = randomUUID();
+
+    await pool.query(
+      `UPDATE "runs" SET "persistent" = true, "addressable_key" = 'worker' WHERE "id" = $1`,
+      [child],
+    );
+    // What `insertAgentMessageTurn` writes for a message behind a busy turn.
+    await pool.query(
+      `INSERT INTO "agent_turns" ("id", "run_id", "ordinal", "variant", "logical_key", "prompt", "state")
+       VALUES ($1, $2, 1, 'live_message', 'message:request:k-1', 'also check the tests', 'queued')`,
+      [turnId, child],
+    );
+    await fakeExecutionHosts(db, { runId: child });
+
+    await cascadeAbandonRunTree(orchestratorRunId, orchTaskId, "user_stopped", {
+      db,
+    });
+
+    const { rows } = await pool.query(
+      `SELECT r."status", t."state", t."completed_at"
+         FROM "agent_turns" t JOIN "runs" r ON r."id" = t."run_id"
+        WHERE t."id" = $1`,
+      [turnId],
+    );
+
+    expect(rows[0]).toMatchObject({ status: "Abandoned", state: "superseded" });
+    expect(rows[0].completed_at).toBeInstanceOf(Date);
+  });
+
   it("revokes the orchestrator's run-bound token as part of the teardown", async () => {
     const orchTaskId = await seedTask("manual");
     const orchestratorRunId = await seedOrchestrator(orchTaskId);

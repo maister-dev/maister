@@ -114,6 +114,15 @@ export type HostSpanSettlementCounts = Readonly<{
   postHocConflicts: number;
 }>;
 
+export type StrandedAgentTurnRow = Readonly<{
+  runId: string;
+  runStatus: string;
+  turnId: string;
+  ordinal: number;
+  ageMs: number;
+  resumeRequestedAt: string | null;
+}>;
+
 export type OpenExecutionCommands = Readonly<{
   total: number;
   queued: number;
@@ -123,6 +132,11 @@ export type OpenExecutionCommands = Readonly<{
   oldestAcceptedAt: string | null;
   oldestAcceptedAgeMs: number | null;
   hostSpan: readonly HostSpanSettlementCounts[];
+  // D-M3 (ADR-182): the queue invariant's alarm, read live — never through the
+  // persisted observation blob.
+  // null: the read failed (the rest of the model still stands).
+  strandedAgentTurns: number | null;
+  strandedAgentTurnRows: readonly StrandedAgentTurnRow[];
 }>;
 
 export type ExecutionEventLagReadModel = Readonly<{

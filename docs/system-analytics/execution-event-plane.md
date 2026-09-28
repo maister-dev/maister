@@ -443,6 +443,13 @@ from `projectionLimitsFromEnv().concurrency` for the prompt-owner and flow
 workers (2, env-capped at 2); the agent worker is a single loop. No environment
 variable gates any of the three — a half-activated owner is exactly the state the
 gate existed to prevent, so activation is all-or-nothing.
+The agent continuation worker also carries a scratch arm (Implemented): the
+same keyset scan selects a `Running` project scratch run whose dialog has been
+`WaitingForUser` for 5 s with a `queued` row and an admissible incarnation, and
+wakes the scratch queue dispatcher detached — fire-and-forget, outside the
+per-candidate abort and the worker's health: a failed wake logs WARN
+`scratch-redrive-failed` and the next pass retries
+([scratch reconciliation](scratch-runs.md#reconciliation-grace-and-recover-implemented)).
 
 Each worker occupies one `Symbol.for("maister.durable-workers.<name>.v1")`
 process slot. The interned-symbol key is load-bearing rather than stylistic:

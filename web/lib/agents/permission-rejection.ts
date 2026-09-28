@@ -12,6 +12,7 @@ import { prepareCheckpointedAgentFailure } from "./finalization";
 import { recordAgentPermissionAcknowledgement } from "./permission";
 
 import { agentTurns, hitlRequests, runs } from "@/lib/db/schema";
+import { closedAnswerMarker } from "@/lib/hitl-closed-answer";
 import { readCheckpointSource } from "@/lib/execution-host/agent-permission-handoff";
 import { PromptOwnerInvariantError } from "@/lib/execution-host/prompt-owners";
 
@@ -72,10 +73,12 @@ export async function failCheckpointedAgentPermission(
         source.source.command.terminalEvidenceSha256
     )
       throw new PromptOwnerInvariantError("agent_permission_rejection_source");
+    const rejectedAt = new Date();
+
     await tx
       .update(hitlRequests)
       .set({
-        respondedAt: new Date(),
+        respondedAt: rejectedAt,
         response: {
           ...ready.source.response,
           _audit: {
@@ -84,6 +87,7 @@ export async function failCheckpointedAgentPermission(
             assignmentId: ready.source.prior.id,
             errorCode: "HITL_TIMEOUT",
           },
+          ...closedAnswerMarker("delivery_rejected", rejectedAt),
         },
       })
       .where(eq(hitlRequests.id, hitl.id));
