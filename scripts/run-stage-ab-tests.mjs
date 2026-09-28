@@ -65,6 +65,30 @@ export const lanePackages = { supervisor: "supervisor", web: "web", isolation: "
 // Slices whose suites own the whole host run one at a time regardless of parallelism.
 const SERIAL_SLICES = new Set(["isolation"]);
 
+export function webShardFiles(files, shardIndex, shardCount) {
+  assert(Number.isSafeInteger(shardIndex) && Number.isSafeInteger(shardCount) &&
+    shardIndex > 0 && shardIndex <= shardCount && shardCount <= files.length,
+  "invalid web shard index/count");
+  assert.equal(new Set(files).size, files.length, "web manifest contains duplicate suites");
+
+  return files.filter((_, index) => index % shardCount === shardIndex - 1);
+}
+
+export function parseLaneInvocation(args) {
+  const [slice, flag, shard, ...extra] = args;
+
+  assert(Object.hasOwn(laneSuites, slice ?? ""), "usage: run-stage-ab-tests.mjs web|supervisor|isolation [--shard i/n]");
+  assert.equal(extra.length, 0, "usage: unexpected A/B lane arguments");
+  if (flag === undefined && shard === undefined) return { slice, files: laneSuites[slice] };
+  assert.equal(slice, "web", "only the web A/B slice accepts --shard");
+  assert.equal(flag, "--shard", "usage: --shard i/n");
+  const match = /^([1-9]\d*)\/([1-9]\d*)$/u.exec(shard ?? "");
+
+  assert(match, "usage: --shard i/n with positive integers");
+
+  return { slice, files: webShardFiles(laneSuites.web, Number(match[1]), Number(match[2])) };
+}
+
 // A lane suite owns a stack of host processes — its vitest worker, a PostgreSQL
 // container, a real supervisor and at least one forked driver child — so the
 // pool is sized from that budget. Vitest's default worker count admits one
@@ -151,9 +175,21 @@ export const requiredIsolationCases = {
 };
 
 export function validateLaneReport(report, files) {
+  assert.equal(new Set(files).size, files.length, "A/B selected owning suite is duplicated");
   assert.equal(report.testResults.length, files.length, "A/B discovery omitted an owning suite");
+  const resultsByFile = new Map(files.map((file) => [file, []]));
+
+  for (const result of report.testResults) {
+    const matched = files.filter((file) => result.name.replaceAll("\\", "/").endsWith(`/${file}`));
+
+    assert.equal(matched.length, 1, `A/B unexpected or ambiguous owning suite: ${result.name}`);
+    resultsByFile.get(matched[0]).push(result);
+  }
   for (const file of files) {
-    const result = report.testResults.find((item) => item.name.endsWith(file));
+    const matching = resultsByFile.get(file);
+
+    assert.equal(matching.length, 1, `A/B missing or duplicated owning suite: ${file}`);
+    const [result] = matching;
 
     assert(result?.assertionResults.length > 0, `A/B discovery is empty: ${file}`);
     assert(result.assertionResults.every((item) => item.status === "passed"), `A/B case failed or was skipped: ${file}`);
@@ -220,7 +256,7 @@ export async function runStageAbLane({ slice, files = laneSuites[slice], workspa
     await registerProcess(invocation, { role: "vitest", caseName: slice, rootRole: "invocation", root: null, bootId: invocation.id, logFile: null }, child.pid);
     status = await exited;
     logInvocation(invocation, "lane-suite-complete", { pid: process.pid, caseName: slice, durationMs: Date.now() - startedAt });
-    console.log(JSON.stringify({ slice, invocationId: invocation.id, ledger: invocation.directory, node: process.versions.node, bundledUndici: process.versions.undici, concurrency, reportPath, ...status }));
+    console.log(JSON.stringify({ slice, files, invocationId: invocation.id, ledger: invocation.directory, node: process.versions.node, bundledUndici: process.versions.undici, concurrency, reportPath, ...status }));
     assert.equal(caughtSignal, undefined, `A/B runner interrupted by ${caughtSignal}`);
     assert.equal(status.code, 0, "A/B integration runner failed");
     const report = JSON.parse(await readFile(reportPath, "utf8"));
@@ -261,4 +297,4 @@ export async function runStageAbLane({ slice, files = laneSuites[slice], workspa
   return { directory, reportPath, invocation, status };
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) await runStageAbLane({ slice: process.argv[2] });
+if (process.argv[1] === fileURLToPath(import.meta.url)) await runStageAbLane(parseLaneInvocation(process.argv.slice(2)));
