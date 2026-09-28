@@ -376,6 +376,11 @@ first check that the run was alone. A supervisor the fixture watchdog SIGKILLed
 was starved — by the host's load, or by itself: before 2026-09-28 nine paused
 producers pegged it at 100% CPU (the capacity cascade, EDGE-EVT-14), so a pegged
 supervisor with paused producers is a product regression, not load.
+After the rebase onto `master` `0afffb50` (the ownership-residuals merge):
+unit **869 files / 9105 tests, 0 failures**; supervisor **84 files / 785
+tests, 0 failures**; integration **558 files / 4968 tests**, no test failure
+(`delegate-flow-arm` failed at container start — Docker "No host port found for
+host IP" — and passed 19/19 re-run).
 
 **A first-hit Next-dev compile can exhaust a 10s e2e timeout.** Before calling
 such a failure a regression, re-run the spec in isolation and read the RETRY
