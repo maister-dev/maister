@@ -113,6 +113,9 @@ type Sample = {
   unacknowledgedCount: number | null;
   retainedCount: number | null;
   pressured: boolean | null;
+  // ADR-183 amendment 2026-09-28: the limit the host refuses new work at;
+  // `undefined` when the host did not report it.
+  newWorkRefusedBy: string | null | undefined;
   subscriberPauses: number | null;
   closes: Record<string, number> | null;
   streamState: string | null;
@@ -223,6 +226,9 @@ async function sample(t0: number, hostId: string): Promise<Sample> {
         : null,
     pressured:
       typeof telemetry?.pressured === "boolean" ? telemetry.pressured : null,
+    newWorkRefusedBy: telemetry
+      ? (telemetry.newWorkRefusedBy as string | null | undefined)
+      : undefined,
     subscriberPauses:
       typeof telemetry?.subscriberPauses === "number"
         ? telemetry.subscriberPauses
@@ -508,6 +514,16 @@ describe.skipIf(!enabled)("event-plane throughput under load (R20)", () => {
         pressure: {
           pressuredSamples: samples.filter((row) => row.pressured === true)
             .length,
+          // The signal reads admitting at every sample that has telemetry
+          // (the first one, before the stream opens, has none), and no such
+          // sample lacks it.
+          newWorkRefusedSamples: samples.filter(
+            (row) => typeof row.newWorkRefusedBy === "string",
+          ).length,
+          newWorkSignalMissing: samples.filter(
+            (row) =>
+              row.pressured !== null && row.newWorkRefusedBy === undefined,
+          ).length,
           retainedMax: maxOf(retainedSamples),
           retainedPrunes: logLines("outbox-retained-pressure-prune"),
           retainedPruneStalls: logLines(
@@ -591,6 +607,8 @@ describe.skipIf(!enabled)("event-plane throughput under load (R20)", () => {
       );
       // ADR-184 D7 (a)–(f); on ADR-183 alone the open-span limit reds these.
       expect(summary.pressure.pressuredSamples).toBe(0);
+      expect(summary.pressure.newWorkRefusedSamples).toBe(0);
+      expect(summary.pressure.newWorkSignalMissing).toBe(0);
       expect(summary.pressure.refusedCommands).toBe(0);
       expect(summary.pressure.managerRecords).toBe(0);
       expect(summary.pressure.producerPauses).toBe(0);

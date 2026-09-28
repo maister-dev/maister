@@ -381,6 +381,19 @@ unit **869 files / 9105 tests, 0 failures**; supervisor **84 files / 785
 tests, 0 failures**; integration **558 files / 4968 tests**, no test failure
 (`delegate-flow-arm` failed at container start — Docker "No host port found for
 host IP" — and passed 19/19 re-run).
+After the 2026-09-28 review-remediation cycle (same branch, this Mac): unit
+**870 files / 9135 tests, 0 failures**; supervisor **85 files / 798 tests, 0
+failures** (unit 50 / 494, integration 35 / 304); integration **559 files /
+4984 tests**, twice. On a snapshot of `56ec3da82` at load ~150, one red: the
+standing `durable-workers-concurrency` E, plus five unhandled `57P01`
+("terminating connection due to administrator command") from
+`permission-crash-boundary` — its Recover case detached the resumed
+`runFlow`, which then outlived `afterAll` and held connections while the
+container stopped (fixed the same day, `cf7931090`: the case settles its
+driver and `afterAll` fails on a straggler). On the
+final tree, one red: `bounded-output` (a new load-sensitive name — this branch
+never touched it) and the `ext … memory` route skipped on the Docker probe
+timeout. All four files passed together idle (50/50), with no unhandled error.
 
 **A first-hit Next-dev compile can exhaust a 10s e2e timeout.** Before calling
 such a failure a regression, re-run the spec in isolation and read the RETRY
