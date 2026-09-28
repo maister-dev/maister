@@ -11,6 +11,7 @@ export const LIBRARIAN_TURN_FAILURE_REASONS = [
   "host_lost",
   "deadline",
   "capability_trip",
+  "summary_invalid",
 ] as const;
 export type LibrarianTurnFailureReason =
   (typeof LIBRARIAN_TURN_FAILURE_REASONS)[number];

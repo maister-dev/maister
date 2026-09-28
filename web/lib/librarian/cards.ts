@@ -16,6 +16,7 @@ import {
   tasks,
 } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { librarianConfig } from "@/lib/librarian/config";
 import {
   assertMemorySuggestionNotForgotten,
   assertMemoryTurnFence,
@@ -74,17 +75,7 @@ const log = pino({
 });
 
 function cardTtlMinutes(): number {
-  const raw = process.env.MAISTER_LIBRARIAN_CONFIRMATION_TTL_MINUTES ?? "60";
-  const minutes = Number(raw);
-
-  if (!Number.isInteger(minutes) || minutes < 1 || minutes > 10_080) {
-    throw new MaisterError(
-      "CONFIG",
-      "MAISTER_LIBRARIAN_CONFIRMATION_TTL_MINUTES must be an integer from 1 to 10080",
-    );
-  }
-
-  return minutes;
+  return librarianConfig().confirmationTtlMinutes;
 }
 
 async function assertOwnerAction(

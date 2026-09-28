@@ -11,6 +11,7 @@ import pino from "pino";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { cancelClarificationsForRecipientWithoutProjectAccess } from "@/lib/tasks/clarification-requests";
 
 const log = pino({
   name: "project-members",
@@ -171,24 +172,34 @@ export async function changeProjectMemberRole(
   // caller observed in the roster. A concurrent role-change (or remove) shifts
   // the row off `expectedRole`, so this matches 0 rows and surfaces as CONFLICT
   // instead of silently clobbering the other admin's write.
-  const updated = await db()
-    .update(projectMembers)
-    .set({ role, updatedBy: actorId, updatedAt: new Date() })
-    .where(
-      and(
-        eq(projectMembers.id, memberId),
-        eq(projectMembers.projectId, projectId),
-        eq(projectMembers.role, expectedRole),
-      ),
-    )
-    .returning({ id: projectMembers.id });
+  await db().transaction(async (tx) => {
+    const updated = await tx
+      .update(projectMembers)
+      .set({ role, updatedBy: actorId, updatedAt: new Date() })
+      .where(
+        and(
+          eq(projectMembers.id, memberId),
+          eq(projectMembers.projectId, projectId),
+          eq(projectMembers.role, expectedRole),
+        ),
+      )
+      .returning({ userId: projectMembers.userId });
 
-  if (updated.length === 0) {
-    throw new MaisterError(
-      "CONFLICT",
-      "Member not found or changed concurrently",
-    );
-  }
+    if (updated.length === 0) {
+      throw new MaisterError(
+        "CONFLICT",
+        "Member not found or changed concurrently",
+      );
+    }
+
+    if (role === "viewer") {
+      await cancelClarificationsForRecipientWithoutProjectAccess(
+        tx as unknown as ReturnType<typeof getDb>,
+        updated[0].userId,
+        projectId,
+      );
+    }
+  });
 
   log.info(
     { projectId, memberId, actorId, action: "changeProjectMemberRole", role },
@@ -204,23 +215,31 @@ export async function removeProjectMember(
   // Optimistic CAS: only delete the row the caller observed. If another admin
   // re-roled or removed it first, the role predicate matches 0 rows and we
   // surface CONFLICT rather than silently dropping a row that changed underneath.
-  const removed = await db()
-    .delete(projectMembers)
-    .where(
-      and(
-        eq(projectMembers.id, memberId),
-        eq(projectMembers.projectId, projectId),
-        eq(projectMembers.role, expectedRole),
-      ),
-    )
-    .returning({ id: projectMembers.id });
+  await db().transaction(async (tx) => {
+    const removed = await tx
+      .delete(projectMembers)
+      .where(
+        and(
+          eq(projectMembers.id, memberId),
+          eq(projectMembers.projectId, projectId),
+          eq(projectMembers.role, expectedRole),
+        ),
+      )
+      .returning({ userId: projectMembers.userId });
 
-  if (removed.length === 0) {
-    throw new MaisterError(
-      "CONFLICT",
-      "Member not found or changed concurrently",
+    if (removed.length === 0) {
+      throw new MaisterError(
+        "CONFLICT",
+        "Member not found or changed concurrently",
+      );
+    }
+
+    await cancelClarificationsForRecipientWithoutProjectAccess(
+      tx as unknown as ReturnType<typeof getDb>,
+      removed[0].userId,
+      projectId,
     );
-  }
+  });
 
   log.info(
     { projectId, memberId, actorId, action: "removeProjectMember" },

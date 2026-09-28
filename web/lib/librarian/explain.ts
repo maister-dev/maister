@@ -25,6 +25,7 @@ import {
 import { getDb } from "@/lib/db/client";
 import {
   domainEvents,
+  librarianConversations,
   librarianMessages,
   librarianTurns,
   librarianUpdates,
@@ -32,6 +33,8 @@ import {
 } from "@/lib/db/schema";
 import { localHost } from "@/lib/execution-host/resolver";
 import { MaisterError } from "@/lib/errors";
+import { librarianConfig } from "@/lib/librarian/config";
+import { reconcileAdmittedLibrarianOperations } from "@/lib/librarian/operations";
 import { getVisibleProjectIds } from "@/lib/queries/visible-projects";
 
 const log = pino({
@@ -48,6 +51,19 @@ export async function explainLibrarianUpdate(
   const db = deps.db ?? (getDb() as unknown as Db);
   const now = new Date();
   const host = await localHost({ db });
+  const [conversation] = await db
+    .select({ id: librarianConversations.id })
+    .from(librarianConversations)
+    .where(eq(librarianConversations.userId, ownerId));
+
+  if (conversation)
+    await reconcileAdmittedLibrarianOperations(
+      new Date(
+        now.getTime() - librarianConfig().operationReconcileSeconds * 1000,
+      ),
+      db as ReturnType<typeof getDb>,
+      conversation.id,
+    );
   const admitted = await db.transaction(async (tx) => {
     const locked = await lockOwnerConversation(tx, ownerId);
     const [update] = await tx

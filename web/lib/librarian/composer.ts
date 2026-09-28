@@ -1,4 +1,7 @@
 import type { LibrarianSubject } from "./types";
+import type { RunnerSnapshot } from "@/lib/acp-runners/resolve";
+
+import { isDeepStrictEqual } from "node:util";
 
 // ADR-183 D3: the durable records are the source of truth and the ACP session
 // is a cache. Each turn composes a bounded context from the rows it is given;
@@ -148,12 +151,16 @@ export function decideSessionMode(input: {
   acpSessionId: string | null;
   sessionEpoch: number | null;
   sessionRunnerId: string | null;
+  sessionRunnerSnapshot: RunnerSnapshot | null;
   conversationEpoch: number;
   runnerId: string;
+  runnerSnapshot: RunnerSnapshot;
 }): "resume" | "new" {
   if (!input.acpSessionId || input.sessionEpoch === null) return "new";
   if (input.sessionEpoch !== input.conversationEpoch) return "new";
   if (input.sessionRunnerId !== input.runnerId) return "new";
+  if (!isDeepStrictEqual(input.sessionRunnerSnapshot, input.runnerSnapshot))
+    return "new";
 
   return "resume";
 }

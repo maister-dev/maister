@@ -8,7 +8,8 @@ import type {
 } from "@/lib/librarian/read-models";
 
 import Link from "next/link";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
+import { useState } from "react";
 
 type Props = {
   cards: LibrarianCardView[];
@@ -76,6 +77,7 @@ function Card({
   card: LibrarianCardView;
 }): ReactElement {
   const t = useTranslations("librarian");
+  const locale = useLocale();
   const pending = card.status === "pending";
   const actionLabel = t.has(`cardAction_${card.action}`)
     ? t(`cardAction_${card.action}`)
@@ -106,19 +108,61 @@ function Card({
             : t("linkedUnavailable")}
         </p>
       ) : (
-        <p className="m-0 mt-1 break-all font-mono text-[11px] text-mute">
-          {card.target.hitlRequestId ?? card.target.runId ?? card.target.taskId}
-        </p>
+        <div className="mt-2 space-y-1 text-[12px]">
+          {card.target.runId ? (
+            <Link className="underline" href={`/runs/${card.target.runId}`}>
+              {t("openRun")}
+            </Link>
+          ) : null}
+          {card.hitlPrompt ? (
+            <p className="m-0 whitespace-pre-wrap">{card.hitlPrompt}</p>
+          ) : null}
+          {card.action === "hitl_respond" ? (
+            <p className="m-0 whitespace-pre-wrap break-words rounded-md bg-canvas p-2">
+              {t("cardProposedResponse", {
+                response: JSON.stringify(card.payload.response),
+              })}
+            </p>
+          ) : null}
+          {card.action === "run_promote" ? (
+            <p className="m-0 break-words">
+              {t("cardPromoteDetails", {
+                mode: t.has(`promotionMode_${String(card.payload.mode)}`)
+                  ? t(`promotionMode_${String(card.payload.mode)}`)
+                  : t("linkedUnavailable"),
+                branch: card.runBranch ?? t("linkedUnavailable"),
+                commit: String(card.payload.reviewedTargetCommit ?? ""),
+              })}
+            </p>
+          ) : null}
+          {card.action === "run_discard" ? (
+            <p className="m-0 text-red-700">{t("cardDiscardWarning")}</p>
+          ) : null}
+        </div>
       )}
+      {pending ? (
+        <p className="m-0 mt-2 text-[11px] text-mute">
+          {t("cardExpiresAt", {
+            date: new Intl.DateTimeFormat(locale, {
+              dateStyle: "medium",
+              timeStyle: "short",
+            }).format(new Date(card.expiresAt)),
+          })}
+        </p>
+      ) : null}
       {pending && card.available ? (
         <div className="mt-2 flex gap-2">
           <button
-            className="rounded-md bg-ink px-2.5 py-1 text-[11px] font-semibold text-paper disabled:opacity-50"
+            className={`rounded-md px-2.5 py-1 text-[11px] font-semibold text-paper disabled:opacity-50 ${card.action === "run_discard" ? "bg-red-700" : "bg-ink"}`}
             disabled={busyCardId !== null}
             type="button"
             onClick={() => onDecide(card, "accept")}
           >
-            {t("cardAccept")}
+            {t(
+              card.action === "run_discard"
+                ? "cardConfirmDiscard"
+                : "cardAccept",
+            )}
           </button>
           <button
             className="rounded-md border border-line px-2.5 py-1 text-[11px] disabled:opacity-50"
@@ -140,6 +184,7 @@ function Receipt({
   operation: LibrarianOperationView;
 }): ReactElement {
   const t = useTranslations("librarian");
+  const runStatusT = useTranslations("run.runStatus");
   const runId = operation.result?.runId;
   const outcome = operation.result?.outcome ?? operation.result?.status;
   const queuePosition = operation.result?.queuePosition;
@@ -156,9 +201,15 @@ function Receipt({
             ? t("clarificationRequested")
             : operation.kind === "clarification_cancel"
               ? t("clarificationCancelled")
-              : operation.kind.replaceAll("_", " ")}
+              : t.has(`operationKind_${operation.kind}`)
+                ? t(`operationKind_${operation.kind}`)
+                : t("linkedUnavailable")}
         </span>
-        <span className="font-mono text-mute">{operation.status}</span>
+        <span className="font-mono text-mute">
+          {t.has(`operationStatus_${operation.status}`)
+            ? t(`operationStatus_${operation.status}`)
+            : t("linkedUnavailable")}
+        </span>
       </div>
       {!operation.available ? (
         <span className="text-mute">{t("linkedUnavailable")}</span>
@@ -177,10 +228,22 @@ function Receipt({
           ) : null}
           {operation.liveRunStatus ? (
             <span>
-              {t("liveRunStatus", { status: operation.liveRunStatus })}
+              {t("liveRunStatus", {
+                status: runStatusT.has(operation.liveRunStatus)
+                  ? runStatusT(operation.liveRunStatus)
+                  : t("linkedUnavailable"),
+              })}
             </span>
           ) : null}
-          {typeof outcome === "string" ? <span>{outcome}</span> : null}
+          {typeof outcome === "string" ? (
+            <span>
+              {t.has(`operationOutcome_${outcome}`)
+                ? t(`operationOutcome_${outcome}`)
+                : runStatusT.has(outcome)
+                  ? runStatusT(outcome)
+                  : t("linkedUnavailable")}
+            </span>
+          ) : null}
           {typeof queuePosition === "number" ? (
             <span>{t("queuePosition", { position: queuePosition })}</span>
           ) : null}
@@ -198,6 +261,10 @@ export function LibrarianWork({
   onDecide,
 }: Props): ReactElement | null {
   const t = useTranslations("librarian");
+  const taskStatusT = useTranslations("taskDetail.status");
+  const [showAllCards, setShowAllCards] = useState(false);
+  const [showAllOperations, setShowAllOperations] = useState(false);
+  const [showAllTasks, setShowAllTasks] = useState(false);
 
   if (cards.length === 0 && operations.length === 0 && tasks.length === 0)
     return null;
@@ -213,7 +280,7 @@ export function LibrarianWork({
             {t("needsAttention")}
           </h3>
           <ul className="m-0 list-none space-y-2 p-0">
-            {cards.slice(0, 10).map((card) => (
+            {(showAllCards ? cards : cards.slice(0, 10)).map((card) => (
               <Card
                 key={card.id}
                 busyCardId={busyCardId}
@@ -222,6 +289,15 @@ export function LibrarianWork({
               />
             ))}
           </ul>
+          {cards.length > 10 && !showAllCards ? (
+            <button
+              className="mt-2 text-xs underline"
+              type="button"
+              onClick={() => setShowAllCards(true)}
+            >
+              {t("showMore", { count: cards.length - 10 })}
+            </button>
+          ) : null}
         </section>
       ) : null}
       {operations.length > 0 ? (
@@ -230,10 +306,21 @@ export function LibrarianWork({
             {t("operationReceipts")}
           </h3>
           <ul className="m-0 list-none space-y-1.5 p-0">
-            {operations.slice(0, 10).map((operation) => (
-              <Receipt key={operation.id} operation={operation} />
-            ))}
+            {(showAllOperations ? operations : operations.slice(0, 10)).map(
+              (operation) => (
+                <Receipt key={operation.id} operation={operation} />
+              ),
+            )}
           </ul>
+          {operations.length > 10 && !showAllOperations ? (
+            <button
+              className="mt-2 text-xs underline"
+              type="button"
+              onClick={() => setShowAllOperations(true)}
+            >
+              {t("showMore", { count: operations.length - 10 })}
+            </button>
+          ) : null}
         </section>
       ) : null}
       {tasks.length > 0 ? (
@@ -242,7 +329,7 @@ export function LibrarianWork({
             {t("relatedWork")}
           </h3>
           <ul className="m-0 flex list-none flex-wrap gap-1.5 p-0">
-            {tasks.slice(0, 20).map((task, index) => (
+            {(showAllTasks ? tasks : tasks.slice(0, 20)).map((task, index) => (
               <li key={`${task.taskId}-${index}`}>
                 {task.available && task.projectSlug && task.number !== null ? (
                   <Link
@@ -253,7 +340,11 @@ export function LibrarianWork({
                     <span className="font-mono">
                       {task.projectSlug}-{task.number}
                     </span>
-                    <span className="truncate text-mute">{task.status}</span>
+                    <span className="truncate text-mute">
+                      {task.status && taskStatusT.has(task.status)
+                        ? taskStatusT(task.status)
+                        : t("linkedUnavailable")}
+                    </span>
                     {task.fromMessageId === null &&
                     task.toMessageId === null ? (
                       <span
@@ -272,6 +363,15 @@ export function LibrarianWork({
               </li>
             ))}
           </ul>
+          {tasks.length > 20 && !showAllTasks ? (
+            <button
+              className="mt-2 text-xs underline"
+              type="button"
+              onClick={() => setShowAllTasks(true)}
+            >
+              {t("showMore", { count: tasks.length - 20 })}
+            </button>
+          ) : null}
         </section>
       ) : null}
     </div>

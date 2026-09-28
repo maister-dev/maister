@@ -296,4 +296,59 @@ describe("librarian operation ledger", () => {
     expect(rows.rows[0]?.status).toBe("succeeded");
     expect(rows.rows[0]?.result).toMatchObject({ body: { runId } });
   });
+
+  it("reconciles a committed clarification by its causal operation id", async () => {
+    const seed = await seedTurn();
+    const projectId = await seedProject(db as unknown as NodePgDatabase);
+    const taskId = randomUUID();
+    const clarificationId = randomUUID();
+    const operation = await admitLibrarianOperation(
+      { ...operationInput(seed, randomUUID()), kind: "clarification_request" },
+      db,
+    );
+
+    await db.execute(sql`INSERT INTO tasks (id, project_id, number, title, prompt)
+      VALUES (${taskId}, ${projectId}, 1, 'Question task', 'Prompt')`);
+    await db.execute(sql`INSERT INTO task_clarifications
+      (id, task_id, seq, origin_kind, retrigger_mode, requester_user_id, recipient_user_id, reason, answer_format, question, status, requested_via_operation_id)
+      VALUES (${clarificationId}, ${taskId}, 1, 'user', 'none', ${seed.userId}, ${seed.userId}, 'Need target', 'text', 'Which branch?', 'open', ${operation.id})`);
+
+    await reconcileAdmittedLibrarianOperations(
+      new Date(Date.now() + 1_000),
+      db,
+    );
+    const rows = await db.execute(
+      sql`SELECT status, result FROM librarian_operations WHERE id = ${operation.id}`,
+    );
+
+    expect(rows.rows[0]).toMatchObject({
+      status: "succeeded",
+      result: { body: { id: clarificationId, taskId, seq: 1 } },
+    });
+  });
+
+  it("preserves an unknown external receipt across repeated reconciliation", async () => {
+    const seed = await seedTurn();
+    const operation = await admitLibrarianOperation(
+      { ...operationInput(seed, randomUUID()), kind: "run_sync" },
+      db,
+    );
+    const receipt = {
+      statusCode: 202,
+      body: { operationId: operation.id, status: "unknown" },
+    };
+
+    await db.execute(sql`UPDATE librarian_operations
+      SET status = 'unknown', result = ${JSON.stringify(receipt)}::jsonb
+      WHERE id = ${operation.id}`);
+    await reconcileAdmittedLibrarianOperations(
+      new Date(Date.now() + 1_000),
+      db,
+    );
+    const rows = await db.execute(
+      sql`SELECT status, result FROM librarian_operations WHERE id = ${operation.id}`,
+    );
+
+    expect(rows.rows[0]).toMatchObject({ status: "unknown", result: receipt });
+  });
 });

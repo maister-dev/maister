@@ -25,6 +25,7 @@ import {
 } from "@/lib/db/schema";
 import { localHost } from "@/lib/execution-host/resolver";
 import { promoteNextPending } from "@/lib/scheduler";
+import { admitNextLibrarianTurn } from "@/lib/librarian/admission";
 
 const log = pino({
   name: "librarian.turn",
@@ -39,6 +40,7 @@ export type LibrarianTurnEnd =
 export type LibrarianTurnFinish = Readonly<{
   turnId: string;
   runId: string | null;
+  conversationId: string;
   parked: boolean;
   next: AdmittedTurn | null;
 }>;
@@ -129,7 +131,7 @@ export async function finishLibrarianTurnInTransaction(
     } catch (error) {
       log.warn({ turnId: turn.id, error }, "librarian summary rejected");
     }
-    if (!saved) end = { status: "failed", reason: "start_failed" };
+    if (!saved) end = { status: "failed", reason: "summary_invalid" };
   }
   const [ended] = await tx
     .update(librarianTurns)
@@ -223,7 +225,13 @@ export async function finishLibrarianTurnInTransaction(
       "librarian turn ended without a reply",
     );
 
-  return { turnId: turn.id, runId, parked: park.parked, next };
+  return {
+    turnId: turn.id,
+    runId,
+    conversationId: locked.conversation.id,
+    parked: park.parked,
+    next,
+  };
 }
 
 /** After the turn-end commit: start the admitted successor, or hand the freed
@@ -240,5 +248,11 @@ export async function afterLibrarianTurnFinished(
 
     return;
   }
+  const admitted = await admitNextLibrarianTurn(finish.conversationId, {
+    db,
+    start,
+  });
+
+  if (admitted?.started) return;
   if (finish.parked) await promoteNextPending({ db, pool: "librarian" });
 }

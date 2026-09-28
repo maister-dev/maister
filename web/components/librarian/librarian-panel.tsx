@@ -15,9 +15,12 @@ import {
   ArrowDownIcon,
   ArrowsPointingInIcon,
   ArrowsPointingOutIcon,
+  ArrowPathIcon,
+  CircleStackIcon,
   PaperAirplaneIcon,
   PaperClipIcon,
   StopIcon,
+  TrashIcon,
   XMarkIcon,
 } from "@heroicons/react/24/outline";
 import clsx from "clsx";
@@ -26,6 +29,7 @@ import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useLibrarian } from "@/components/librarian/librarian-provider";
+import { ConfirmDialog } from "@/components/feedback/confirm-dialog";
 import { LibrarianMemoryDialog } from "@/components/librarian/librarian-memory-dialog";
 import { LibrarianWork } from "@/components/librarian/librarian-work";
 import { librarianPanelMode } from "@/components/librarian/panel-mode";
@@ -156,6 +160,7 @@ function LibrarianPanelBody(): ReactElement {
   const librarian = useLibrarian()!;
   const t = useTranslations("librarian");
   const stageT = useTranslations("workStage");
+  const runStatusT = useTranslations("run.runStatus");
   const pathname = usePathname() ?? "/";
   const {
     open,
@@ -187,6 +192,7 @@ function LibrarianPanelBody(): ReactElement {
   const [busyUpdateId, setBusyUpdateId] = useState<string | null>(null);
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [resetBusy, setResetBusy] = useState(false);
+  const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   const [clearPreview, setClearPreview] = useState<{
     previewDigest: string;
     messages: number;
@@ -261,7 +267,6 @@ function LibrarianPanelBody(): ReactElement {
       messages
         .filter(
           (message) =>
-            (message.authorKind !== "update" || message.masked) &&
             message.deliveryState !== "queued" &&
             message.deliveryState !== "withdrawn" &&
             message.deliveryState !== "withdrawn_by_reset",
@@ -282,6 +287,15 @@ function LibrarianPanelBody(): ReactElement {
           createdAt: message.createdAt,
         })),
     [messages, t],
+  );
+  const updatesById = useMemo(
+    () =>
+      new Map(
+        messages
+          .filter((message) => message.update && !message.masked)
+          .map((message) => [message.id, message]),
+      ),
+    [messages],
   );
   const lastMessageId = transcript[transcript.length - 1]?.id ?? null;
 
@@ -523,36 +537,28 @@ function LibrarianPanelBody(): ReactElement {
             {t("title")}
           </h2>
           <button
-            className="text-xs underline"
+            className="inline-flex items-center gap-1 text-xs underline"
             data-testid="librarian-memory-open"
             type="button"
             onClick={() => setMemoryOpen(true)}
           >
+            <CircleStackIcon aria-hidden className="h-4 w-4" />
             {t("memoryTitle")}
           </button>
           <button
-            className="text-xs underline disabled:opacity-50"
+            className="inline-flex items-center gap-1 text-xs underline disabled:opacity-50"
             data-testid="librarian-reset"
             disabled={resetBusy || view?.conversation.resetState !== "none"}
             type="button"
-            onClick={() => {
-              setResetBusy(true);
-              void fetch("/api/librarian/reset", { method: "POST" })
-                .then(async (response) => {
-                  if (!response.ok)
-                    throw new Error(`reset failed: ${response.status}`);
-                  await refresh();
-                })
-                .catch(() => setErrorKey("errorSend"))
-                .finally(() => setResetBusy(false));
-            }}
+            onClick={() => setResetConfirmOpen(true)}
           >
+            <ArrowPathIcon aria-hidden className="h-4 w-4" />
             {resetBusy || view?.conversation.resetState === "resetting"
               ? t("resetting")
               : t("resetContext")}
           </button>
           <button
-            className="text-xs underline disabled:opacity-50"
+            className="inline-flex items-center gap-1 text-xs text-red-700 underline disabled:opacity-50"
             data-testid="librarian-clear-open"
             disabled={clearBusy || view?.conversation.resetState !== "none"}
             type="button"
@@ -566,10 +572,11 @@ function LibrarianPanelBody(): ReactElement {
                     throw new Error(`preview failed: ${response.status}`);
                   setClearPreview(await response.json());
                 })
-                .catch(() => setErrorKey("errorSend"))
+                .catch(() => setErrorKey("errorClear"))
                 .finally(() => setClearBusy(false));
             }}
           >
+            <TrashIcon aria-hidden className="h-4 w-4" />
             {t("clearHistory")}
           </button>
           {mode === "fullscreen" ? null : (
@@ -638,59 +645,6 @@ function LibrarianPanelBody(): ReactElement {
           </div>
         </header>
 
-        {clearPreview ? (
-          <section
-            aria-label={t("clearHistory")}
-            className="border-b border-line bg-canvas px-4 py-3 text-xs"
-            data-testid="librarian-clear-preview"
-          >
-            <p className="m-0">
-              {t("clearPreview", {
-                messages: clearPreview.messages,
-                summaries: clearPreview.summaries,
-                snapshots: clearPreview.snapshots,
-                cards: clearPreview.cards,
-                links: clearPreview.linksUnavailable,
-              })}
-            </p>
-            <p className="mt-1 text-mute">
-              {t("clearKeeps", { operations: clearPreview.operationsKept })}
-            </p>
-            <div className="mt-2 flex gap-3">
-              <button
-                className="text-red-700 underline"
-                data-testid="librarian-clear-confirm"
-                disabled={clearBusy}
-                type="button"
-                onClick={() => {
-                  setClearBusy(true);
-                  void fetch("/api/librarian/history/clear", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      previewDigest: clearPreview.previewDigest,
-                    }),
-                  })
-                    .then(async (response) => {
-                      if (!response.ok)
-                        throw new Error(`clear failed: ${response.status}`);
-                      setClearPreview(null);
-                      setMessages([]);
-                      await refresh();
-                    })
-                    .catch(() => setErrorKey("errorSend"))
-                    .finally(() => setClearBusy(false));
-                }}
-              >
-                {clearBusy ? t("clearingHistory") : t("clearConfirm")}
-              </button>
-              <button type="button" onClick={() => setClearPreview(null)}>
-                {t("memoryCancelEdit")}
-              </button>
-            </div>
-          </section>
-        ) : null}
-
         {availability && availability !== "ready" ? (
           <p
             className="m-0 border-b border-line bg-amber-soft px-4 py-2 text-[12px] leading-[1.45] text-amber"
@@ -748,67 +702,65 @@ function LibrarianPanelBody(): ReactElement {
                     </button>
                   ) : null;
                 }}
+                renderCustomMessage={(messageId) => {
+                  const update = updatesById.get(messageId)?.update;
+
+                  return update ? (
+                    <article
+                      className="rounded-lg border border-line bg-canvas px-3 py-2 text-[12px]"
+                      data-testid="librarian-update-card"
+                    >
+                      <p className="m-0 font-semibold">{t("updateTitle")}</p>
+                      <p className="mt-1 text-mute">
+                        {t(
+                          `updateKind_${update.eventKind.replaceAll(".", "_")}`,
+                        )}
+                        {update.task?.title ? ` · ${update.task.title}` : ""}
+                      </p>
+                      {update.workStage ? (
+                        <p className="mt-1 text-mute">
+                          {stageT(update.workStage)}
+                        </p>
+                      ) : null}
+                      {update.promotedKind === "merge" ? (
+                        <p className="mt-1 text-mute">
+                          {t("updateMergedUnknown")}
+                        </p>
+                      ) : null}
+                      {update.runStatus ? (
+                        <p className="mt-1 text-mute">
+                          {t("updateRunStatus", {
+                            status: runStatusT.has(update.runStatus)
+                              ? runStatusT(update.runStatus)
+                              : t("linkedUnavailable"),
+                          })}
+                        </p>
+                      ) : null}
+                      <div className="mt-2 flex gap-3">
+                        {updateTaskPath(update) ? (
+                          <a
+                            className="underline"
+                            href={updateTaskPath(update)!}
+                          >
+                            {t("updateOpenTask")}
+                          </a>
+                        ) : null}
+                        <button
+                          className="underline disabled:opacity-50"
+                          disabled={busyUpdateId === update.updateId}
+                          type="button"
+                          onClick={() => void explainUpdate(update.updateId)}
+                        >
+                          {t("updateExplain")}
+                        </button>
+                      </div>
+                    </article>
+                  ) : null;
+                }}
                 running={responding}
                 userLabel={t("you")}
               />
             )}
-            {messages
-              .filter((message) => message.update && !message.masked)
-              .map((message) => (
-                <article
-                  key={message.id}
-                  className="mt-3 rounded-lg border border-line bg-canvas px-3 py-2 text-[12px]"
-                  data-testid="librarian-update-card"
-                >
-                  <p className="m-0 font-semibold">{t("updateTitle")}</p>
-                  <p className="mt-1 text-mute">
-                    {message.update
-                      ? t(
-                          `updateKind_${message.update.eventKind.replaceAll(".", "_")}`,
-                        )
-                      : null}
-                    {message.update?.task?.title
-                      ? ` · ${message.update.task.title}`
-                      : ""}
-                  </p>
-                  {message.update?.workStage ? (
-                    <p className="mt-1 text-mute">
-                      {stageT(message.update.workStage)}
-                    </p>
-                  ) : null}
-                  {message.update?.promotedKind === "merge" ? (
-                    <p className="mt-1 text-mute">{t("updateMergedUnknown")}</p>
-                  ) : null}
-                  {message.update?.runStatus ? (
-                    <p className="mt-1 text-mute">
-                      {t("updateRunStatus", {
-                        status: message.update.runStatus,
-                      })}
-                    </p>
-                  ) : null}
-                  <div className="mt-2 flex gap-3">
-                    {updateTaskPath(message.update) ? (
-                      <a
-                        className="underline"
-                        href={updateTaskPath(message.update)!}
-                      >
-                        {t("updateOpenTask")}
-                      </a>
-                    ) : null}
-                    <button
-                      className="underline disabled:opacity-50"
-                      disabled={busyUpdateId === message.update?.updateId}
-                      type="button"
-                      onClick={() =>
-                        message.update &&
-                        void explainUpdate(message.update.updateId)
-                      }
-                    >
-                      {t("updateExplain")}
-                    </button>
-                  </div>
-                </article>
-              ))}
             {responding ? (
               <p
                 className="m-0 mt-2 font-mono text-[11px] text-mute"
@@ -960,6 +912,103 @@ function LibrarianPanelBody(): ReactElement {
           ) : null}
         </form>
       </div>
+      {resetConfirmOpen ? (
+        <ConfirmDialog
+          body={t("resetConfirmBody")}
+          busy={resetBusy}
+          cancelLabel={t("cancel")}
+          testId="librarian-reset-confirm"
+          title={t("resetContext")}
+          titleId="librarian-reset-confirm-title"
+          onClose={() => setResetConfirmOpen(false)}
+        >
+          <div className="flex justify-end gap-2">
+            <button
+              className="rounded-md border border-line px-3 py-1.5 text-xs"
+              disabled={resetBusy}
+              type="button"
+              onClick={() => setResetConfirmOpen(false)}
+            >
+              {t("cancel")}
+            </button>
+            <button
+              className="rounded-md bg-amber px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+              data-testid="librarian-reset-confirm-accept"
+              disabled={resetBusy}
+              type="button"
+              onClick={() => {
+                setResetBusy(true);
+                void fetch("/api/librarian/reset", { method: "POST" })
+                  .then(async (response) => {
+                    if (!response.ok)
+                      throw new Error(`reset failed: ${response.status}`);
+                    setResetConfirmOpen(false);
+                    await refresh();
+                  })
+                  .catch(() => setErrorKey("errorReset"))
+                  .finally(() => setResetBusy(false));
+              }}
+            >
+              {resetBusy ? t("resetting") : t("resetContext")}
+            </button>
+          </div>
+        </ConfirmDialog>
+      ) : null}
+      {clearPreview ? (
+        <ConfirmDialog
+          body={`${t("clearPreview", {
+            messages: clearPreview.messages,
+            summaries: clearPreview.summaries,
+            snapshots: clearPreview.snapshots,
+            cards: clearPreview.cards,
+            links: clearPreview.linksUnavailable,
+          })} ${t("clearKeeps", { operations: clearPreview.operationsKept })}`}
+          busy={clearBusy}
+          cancelLabel={t("cancel")}
+          testId="librarian-clear-preview"
+          title={t("clearHistory")}
+          titleId="librarian-clear-confirm-title"
+          onClose={() => setClearPreview(null)}
+        >
+          <div className="flex justify-end gap-2">
+            <button
+              className="rounded-md border border-line px-3 py-1.5 text-xs"
+              disabled={clearBusy}
+              type="button"
+              onClick={() => setClearPreview(null)}
+            >
+              {t("cancel")}
+            </button>
+            <button
+              className="rounded-md bg-red-700 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+              data-testid="librarian-clear-confirm"
+              disabled={clearBusy}
+              type="button"
+              onClick={() => {
+                setClearBusy(true);
+                void fetch("/api/librarian/history/clear", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    previewDigest: clearPreview.previewDigest,
+                  }),
+                })
+                  .then(async (response) => {
+                    if (!response.ok)
+                      throw new Error(`clear failed: ${response.status}`);
+                    setClearPreview(null);
+                    setMessages([]);
+                    await refresh();
+                  })
+                  .catch(() => setErrorKey("errorClear"))
+                  .finally(() => setClearBusy(false));
+              }}
+            >
+              {clearBusy ? t("clearingHistory") : t("clearConfirm")}
+            </button>
+          </div>
+        </ConfirmDialog>
+      ) : null}
       <LibrarianMemoryDialog
         open={memoryOpen}
         onClose={() => setMemoryOpen(false)}

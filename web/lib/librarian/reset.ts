@@ -18,6 +18,7 @@ import {
   librarianTurns,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { librarianOperationBlocksBarrier } from "@/lib/librarian/operations";
 
 const log = pino({
   name: "librarian.reset",
@@ -106,7 +107,7 @@ export async function acknowledgeLibrarianReset(
       .where(
         and(
           eq(librarianOperations.segmentId, segment.id),
-          inArray(librarianOperations.status, ["admitted", "unknown"]),
+          librarianOperationBlocksBarrier(new Date()),
         ),
       )
       .limit(1);

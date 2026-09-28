@@ -95,6 +95,22 @@ describe("IT-LCV-06 (pure part): resume only under the same epoch and runner", (
     acpSessionId: "acp-1",
     sessionEpoch: 3,
     sessionRunnerId: "r1",
+    sessionRunnerSnapshot: {
+      id: "r1",
+      adapter: "claude",
+      capabilityAgent: "claude",
+      model: "test",
+      providerKind: "anthropic",
+      permissionPolicy: "ask",
+    },
+    runnerSnapshot: {
+      id: "r1",
+      adapter: "claude",
+      capabilityAgent: "claude",
+      model: "test",
+      providerKind: "anthropic",
+      permissionPolicy: "ask",
+    },
   };
 
   it("resumes when the epoch and runner both match", () => {
@@ -109,6 +125,14 @@ describe("IT-LCV-06 (pure part): resume only under the same epoch and runner", (
     ).toBe("new");
     expect(
       decideSessionMode({ ...stored, conversationEpoch: 3, runnerId: "r2" }),
+    ).toBe("new");
+    expect(
+      decideSessionMode({
+        ...stored,
+        conversationEpoch: 3,
+        runnerId: "r1",
+        runnerSnapshot: { ...stored.runnerSnapshot, model: "new-model" },
+      }),
     ).toBe("new");
     expect(
       decideSessionMode({

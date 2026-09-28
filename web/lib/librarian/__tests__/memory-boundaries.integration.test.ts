@@ -186,6 +186,43 @@ describe("IT-LMM-04 IT-LMM-05 IT-LMM-07 IT-LMM-08: personal history boundaries",
     expect(after.contextEpoch).toBe(1);
   });
 
+  it("lets reset and clear proceed after an unknown effect's safety window while keeping its receipt", async () => {
+    const db = database.db;
+    const ownerId = await seedActiveUser(db);
+    const { conversation, segment } = await db.transaction((tx) =>
+      lockOwnerConversation(tx as never, ownerId),
+    );
+    const operationId = randomUUID();
+    const receipt = JSON.stringify({
+      statusCode: 202,
+      body: { operationId, status: "unknown" },
+    });
+
+    await db.execute(sql`INSERT INTO librarian_operations
+      (id, conversation_id, segment_id, idempotency_key, kind, request_digest, target, status, result, error_code, settled_at)
+      VALUES (${operationId}, ${conversation.id}, ${segment.id}, ${randomUUID()}, 'run_sync', 'digest', '{}'::jsonb,
+        'unknown', ${receipt}::jsonb, 'outcome_unknown', now())`);
+    expect(await requestLibrarianReset(ownerId, db as never)).toBe("resetting");
+    await db.execute(sql`UPDATE librarian_operations
+      SET settled_at = now() - interval '5 minutes' WHERE id = ${operationId}`);
+    expect(await acknowledgeLibrarianReset(ownerId, db as never)).toBe("none");
+    const preview = await previewLibrarianClear(ownerId, db as never);
+
+    expect(
+      await clearLibrarianHistory(ownerId, preview.previewDigest, db as never),
+    ).toBe("none");
+    const [operation] = (
+      await db.execute(
+        sql`SELECT status, result FROM librarian_operations WHERE id = ${operationId}`,
+      )
+    ).rows;
+
+    expect(operation).toMatchObject({
+      status: "unknown",
+      result: JSON.parse(receipt),
+    });
+  });
+
   it("IT-LMM-03 IT-LMM-09: revoked project content is dropped and old replies are masked", async () => {
     const db = database.db;
     const ownerId = await seedActiveUser(db);

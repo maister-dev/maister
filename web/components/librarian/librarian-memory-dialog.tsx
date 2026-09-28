@@ -7,6 +7,7 @@ import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useModalA11y } from "@/components/use-modal-a11y";
+import { ConfirmDialog } from "@/components/feedback/confirm-dialog";
 
 type MemoryKind = MemoryItemView["kind"];
 type MemoryScope = MemoryItemView["scope"];
@@ -30,6 +31,7 @@ export function LibrarianMemoryDialog(input: {
   const [editing, setEditing] = useState<MemoryItemView | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(false);
+  const [pendingForgetId, setPendingForgetId] = useState<string | null>(null);
 
   useModalA11y(dialogRef, input.onClose, input.open);
 
@@ -101,6 +103,7 @@ export function LibrarianMemoryDialog(input: {
       );
 
       if (!response.ok) throw new Error("memory forget refused");
+      setPendingForgetId(null);
       await refresh();
     } catch {
       setError(true);
@@ -199,7 +202,7 @@ export function LibrarianMemoryDialog(input: {
                   type="button"
                   className="underline disabled:opacity-50"
                   disabled={busy}
-                  onClick={() => void forget(item.id)}
+                  onClick={() => setPendingForgetId(item.id)}
                 >
                   {t("memoryForget")}
                 </button>
@@ -289,6 +292,36 @@ export function LibrarianMemoryDialog(input: {
           </p>
         ) : null}
       </div>
+      {pendingForgetId ? (
+        <ConfirmDialog
+          body={t("memoryForgetConfirmBody")}
+          busy={busy}
+          cancelLabel={t("cancel")}
+          testId="librarian-memory-forget-confirm"
+          title={t("memoryForget")}
+          titleId="librarian-memory-forget-title"
+          onClose={() => setPendingForgetId(null)}
+        >
+          <div className="flex justify-end gap-2">
+            <button
+              className="rounded-md border border-line px-3 py-1.5 text-sm"
+              disabled={busy}
+              type="button"
+              onClick={() => setPendingForgetId(null)}
+            >
+              {t("cancel")}
+            </button>
+            <button
+              className="rounded-md bg-red-700 px-3 py-1.5 text-sm text-white disabled:opacity-50"
+              disabled={busy}
+              type="button"
+              onClick={() => void forget(pendingForgetId)}
+            >
+              {t("memoryForget")}
+            </button>
+          </div>
+        </ConfirmDialog>
+      ) : null}
     </>
   );
 }

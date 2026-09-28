@@ -8327,7 +8327,7 @@ export const librarianTurns = pgTable(
     variant: text("variant", { enum: LIBRARIAN_TURN_VARIANTS }).notNull(),
     status: text("status", { enum: LIBRARIAN_TURN_STATUSES }).notNull(),
     // Closed vocabulary (application-enforced): start_failed, host_lost,
-    // deadline, capability_trip.
+    // deadline, capability_trip, summary_invalid.
     failureReason: text("failure_reason"),
     // No FK: the snapshot references its turn.
     contextSnapshotId: text("context_snapshot_id"),

@@ -9,9 +9,11 @@ import {
   librarianConversations,
   librarianOperations,
   librarianTaskLinks,
+  hitlRequests,
   runs,
   tasks,
   users,
+  workspaces,
 } from "@/lib/db/schema";
 import { librarianCardProposalSchema } from "@/lib/librarian/cards";
 import { getVisibleProjects } from "@/lib/queries/visible-projects";
@@ -29,6 +31,8 @@ export type LibrarianCardView = {
   payload: Record<string, unknown>;
   currentPrompt: string | null;
   proposedPrompt: string | null;
+  hitlPrompt: string | null;
+  runBranch: string | null;
   available: boolean;
   expiresAt: string;
 };
@@ -149,7 +153,14 @@ export async function getLinkedWork(
       ].filter((id): id is string => typeof id === "string"),
     ),
   ];
-  const [taskRows, runRows] = await Promise.all([
+  const hitlIds = [
+    ...new Set(
+      cardRows
+        .map((card) => card.target.hitlRequestId)
+        .filter((id): id is string => typeof id === "string"),
+    ),
+  ];
+  const [taskRows, runRows, workspaceRows, hitlRows] = await Promise.all([
     taskIds.length > 0
       ? db
           .select({
@@ -173,9 +184,25 @@ export async function getLinkedWork(
           .from(runs)
           .where(inArray(runs.id, runIds))
       : Promise.resolve([]),
+    runIds.length > 0
+      ? db
+          .select({ runId: workspaces.runId, branch: workspaces.branch })
+          .from(workspaces)
+          .where(inArray(workspaces.runId, runIds))
+      : Promise.resolve([]),
+    hitlIds.length > 0
+      ? db
+          .select({ id: hitlRequests.id, prompt: hitlRequests.prompt })
+          .from(hitlRequests)
+          .where(inArray(hitlRequests.id, hitlIds))
+      : Promise.resolve([]),
   ]);
   const taskById = new Map(taskRows.map((task) => [task.id, task]));
   const runById = new Map(runRows.map((run) => [run.id, run]));
+  const workspaceByRunId = new Map(
+    workspaceRows.map((workspace) => [workspace.runId, workspace]),
+  );
+  const hitlById = new Map(hitlRows.map((question) => [question.id, question]));
   const cards = cardRows.map((card): LibrarianCardView => {
     const parsed = librarianCardProposalSchema.safeParse(card.payload);
     const task = card.target.taskId ? taskById.get(card.target.taskId) : null;
@@ -205,6 +232,14 @@ export async function getLinkedWork(
       proposedPrompt:
         available && parsed.success && parsed.data.action === "statement_accept"
           ? renderStatementPrompt(parsed.data.statement)
+          : null,
+      hitlPrompt:
+        available && card.target.hitlRequestId
+          ? (hitlById.get(card.target.hitlRequestId)?.prompt ?? null)
+          : null,
+      runBranch:
+        available && card.target.runId
+          ? (workspaceByRunId.get(card.target.runId)?.branch ?? null)
           : null,
       available,
       expiresAt: card.expiresAt.toISOString(),

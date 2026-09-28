@@ -30,11 +30,16 @@ const { pathnameRef } = vi.hoisted(() => ({ pathnameRef: { value: "/" } }));
 
 vi.mock("next/navigation", () => ({ usePathname: () => pathnameRef.value }));
 vi.mock("next-intl", () => ({
-  useTranslations: () => {
+  useLocale: () => "en",
+  useTranslations: (namespace: string) => {
     const t = (key: string, values?: Record<string, unknown>) =>
-      key === "liveRunStatus" ? `${key} ${values?.status}` : key;
+      key === "liveRunStatus"
+        ? `${key} ${values?.status}`
+        : key === "cardProposedResponse"
+          ? `${key} ${values?.response}`
+          : key;
 
-    t.has = () => false;
+    t.has = (key: string) => namespace === "run.runStatus" && key === "Running";
 
     return t;
   },
@@ -70,10 +75,11 @@ class FakeEventSource {
 type Msg = {
   id: string;
   seq: string;
-  authorKind: "owner" | "librarian" | "system";
+  authorKind: "owner" | "librarian" | "system" | "update";
   body: string;
   deliveryState: string;
   usedMemoryItemIds?: string[];
+  update?: Record<string, unknown>;
 };
 
 const message = (
@@ -148,7 +154,7 @@ const fetchMock = vi.fn(
           subject: null,
           turnId: null,
           card: null,
-          update: null,
+          update: row.update ?? null,
           taskChips: [],
           usedMemoryItemIds: row.usedMemoryItemIds ?? [],
           createdAt: new Date().toISOString(),
@@ -261,6 +267,8 @@ describe("IT-LUI-10: linked work and confirmation cards", () => {
         payload: {},
         currentPrompt: "Old goal",
         proposedPrompt: "New goal",
+        hitlPrompt: null,
+        runBranch: null,
         available: true,
         expiresAt: new Date(Date.now() + 60_000).toISOString(),
       },
@@ -316,6 +324,94 @@ describe("IT-LUI-10: linked work and confirmation cards", () => {
     });
     expect(q("librarian-card-accepted")).not.toBeNull();
     expect(q("librarian-card-accepted")?.querySelector("button")).toBeNull();
+  });
+
+  it("shows the question and proposed answer before a human-only confirmation", async () => {
+    serverCards = [
+      {
+        id: "card-hitl",
+        kind: "confirmation",
+        status: "pending",
+        action: "hitl_respond",
+        target: {
+          projectId: "project-1",
+          runId: "run-1",
+          hitlRequestId: "question-1",
+        },
+        targetRevision: "revision",
+        payload: { response: { answer: "Use main" } },
+        currentPrompt: null,
+        proposedPrompt: null,
+        hitlPrompt: "Which target branch?",
+        runBranch: "main",
+        available: true,
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      },
+    ];
+
+    await mount();
+    await openPanel();
+    const card = q("librarian-card-pending")!;
+
+    expect(card.textContent).toContain("Which target branch?");
+    expect(card.textContent).toContain("Use main");
+    expect(card.textContent).toContain("cardExpiresAt");
+  });
+
+  it("asks for reset confirmation before sending a destructive request", async () => {
+    await mount();
+    await openPanel();
+    await act(async () => q<HTMLButtonElement>("librarian-reset")!.click());
+
+    expect(
+      document.querySelector('[data-testid="librarian-reset-confirm"]'),
+    ).not.toBeNull();
+    expect(
+      fetchMock.mock.calls.some(
+        ([input]) => String(input) === "/api/librarian/reset",
+      ),
+    ).toBe(false);
+    await act(async () => {
+      document
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="librarian-reset-confirm-accept"]',
+        )!
+        .click();
+    });
+    await flush();
+    expect(
+      fetchMock.mock.calls.some(
+        ([input]) => String(input) === "/api/librarian/reset",
+      ),
+    ).toBe(true);
+  });
+
+  it("renders work updates between the messages that surround them", async () => {
+    serverMessages = [
+      message(1, "owner"),
+      {
+        ...message(2, "update"),
+        update: {
+          updateId: "update-1",
+          eventKind: "run.done",
+          task: null,
+          runId: null,
+          runStatus: null,
+          workStage: null,
+          promotedKind: null,
+          occurredAt: new Date().toISOString(),
+        },
+      },
+      message(3, "librarian"),
+    ];
+
+    await mount();
+    await openPanel();
+    const log = q("librarian-transcript")!;
+    const text = log.textContent ?? "";
+
+    expect(text.indexOf("message 1")).toBeLessThan(text.indexOf("updateTitle"));
+    expect(text.indexOf("updateTitle")).toBeLessThan(text.indexOf("message 3"));
   });
 
   it("IT-EDGE-TST-02: a surviving task link labels its cleared conversation source unavailable", async () => {

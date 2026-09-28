@@ -213,14 +213,13 @@ export class WorkspaceRegistry {
         },
       );
     if (librarianRoot && this.opts.isWorkspaceLive?.(id))
-      throw new SupervisorError("CONFLICT", "librarian workspace has a live session", {
-        details: { reason: "workspace_in_use" },
-      });
-    const released = this.opts.state.releaseWorkspace(
-      id,
-      this.now().toISOString(),
-    );
-
+      throw new SupervisorError(
+        "CONFLICT",
+        "librarian workspace has a live session",
+        {
+          details: { reason: "workspace_in_use" },
+        },
+      );
     if (librarianRoot) {
       const claudeDir =
         process.env.CLAUDE_CONFIG_DIR ??
@@ -232,7 +231,7 @@ export class WorkspaceRegistry {
           "HOME or CLAUDE_CONFIG_DIR is required to purge librarian transcripts",
         );
       await rm(handle.realPath, { recursive: true, force: true });
-      const encoded = handle.realPath.replace(/[/.]/g, "-");
+      const encoded = handle.realPath.replace(/[^a-zA-Z0-9]/g, "-");
 
       await rm(path.join(claudeDir, "projects", encoded), {
         recursive: true,
@@ -243,6 +242,11 @@ export class WorkspaceRegistry {
         "librarian workspace and transcripts purged",
       );
     }
+
+    const released = this.opts.state.releaseWorkspace(
+      id,
+      this.now().toISOString(),
+    );
 
     if (released) {
       this.log.info({ executionWorkspaceId: id }, "workspace-released");

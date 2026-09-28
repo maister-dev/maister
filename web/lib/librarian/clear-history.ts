@@ -26,6 +26,7 @@ import {
 import { createExecutionHosts } from "@/lib/execution-host";
 import { getLatestAssignment } from "@/lib/execution-host/assignments";
 import { MaisterError } from "@/lib/errors";
+import { librarianOperationBlocksBarrier } from "@/lib/librarian/operations";
 
 const log = pino({
   name: "librarian.clear-history",
@@ -122,7 +123,7 @@ async function assertQuiescent(
     .where(
       and(
         eq(librarianOperations.conversationId, conversation.id),
-        inArray(librarianOperations.status, ["admitted", "unknown"]),
+        librarianOperationBlocksBarrier(new Date()),
       ),
     )
     .limit(1);
@@ -276,7 +277,14 @@ export async function sweepLibrarianClearReleases(db: Db): Promise<number> {
 
   for (const row of rows) {
     try {
-      if ((await finishClearRelease(row.userId, db, createExecutionHosts({ db }))) === "none") released += 1;
+      if (
+        (await finishClearRelease(
+          row.userId,
+          db,
+          createExecutionHosts({ db }),
+        )) === "none"
+      )
+        released += 1;
     } catch (error) {
       log.warn(
         { userId: row.userId, error },

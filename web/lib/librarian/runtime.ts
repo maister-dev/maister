@@ -236,6 +236,7 @@ async function prepareStart(
         acpSessionId: runSessions.acpSessionId,
         epoch: runSessions.librarianContextEpoch,
         runnerId: runSessions.runnerId,
+        runnerSnapshot: runSessions.runnerSnapshot,
       })
       .from(runSessions)
       .where(
@@ -251,8 +252,11 @@ async function prepareStart(
             acpSessionId: session?.acpSessionId ?? null,
             sessionEpoch: session?.epoch ?? null,
             sessionRunnerId: session?.runnerId ?? null,
+            sessionRunnerSnapshot:
+              (session?.runnerSnapshot as RunnerSnapshot | null) ?? null,
             conversationEpoch: epoch,
             runnerId: runner.id,
+            runnerSnapshot: runner,
           });
 
     await writeContextSnapshot(tx, {

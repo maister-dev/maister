@@ -6,7 +6,13 @@ import { NextRequest } from "next/server";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { closeDb, getDb } from "@/lib/db/client";
-import { agents, projects, taskClarifications, tasks } from "@/lib/db/schema";
+import {
+  agents,
+  projectMembers,
+  projects,
+  taskClarifications,
+  tasks,
+} from "@/lib/db/schema";
 import { issueAgentRunToken } from "@/lib/agents/tokens";
 import { issueLibrarianTurnToken } from "@/lib/librarian/authority";
 import { getTaskClarificationProjection } from "@/lib/queries/task-clarifications";
@@ -27,6 +33,10 @@ import {
 } from "@/lib/tasks/clarification-requests";
 import { seedProject } from "@/test-support/execution-host-seed";
 import { updateAdminUser } from "@/lib/users";
+import {
+  changeProjectMemberRole,
+  removeProjectMember,
+} from "@/lib/project-members";
 import {
   addProjectMember,
   seedActiveUser,
@@ -120,6 +130,55 @@ function request(recipientUserId: string, blocking = true) {
 }
 
 describe("user-origin task clarification", () => {
+  it.each(["downgrade", "remove"] as const)(
+    "IT-EDGE-CLR-01: %s cancels an addressed clarification and releases the launch hold",
+    async (change) => {
+      const seeded = await setup();
+      const opened = await requestClarification(
+        {
+          taskId: seeded.taskId,
+          requesterUserId: seeded.requesterId,
+          request: request(seeded.recipientId),
+        },
+        db,
+      );
+      const [member] = await db
+        .select({ id: projectMembers.id })
+        .from(projectMembers)
+        .where(eq(projectMembers.userId, seeded.recipientId));
+
+      if (change === "downgrade") {
+        await changeProjectMemberRole({
+          projectId: seeded.projectId,
+          memberId: member.id,
+          role: "viewer",
+          expectedRole: "member",
+          actorId: seeded.requesterId,
+        });
+      } else {
+        await removeProjectMember({
+          projectId: seeded.projectId,
+          memberId: member.id,
+          expectedRole: "member",
+          actorId: seeded.requesterId,
+        });
+      }
+
+      const [stored] = await db
+        .select({
+          status: taskClarifications.status,
+          reason: taskClarifications.cancelReason,
+        })
+        .from(taskClarifications)
+        .where(eq(taskClarifications.id, opened.clarificationId));
+
+      expect(stored).toEqual({
+        status: "cancelled",
+        reason: "recipient_access_removed",
+      });
+      expect(await countOpenBlockingClarifications(seeded.taskId, db)).toBe(0);
+    },
+  );
   it("IT-EDGE-CLR-02: concurrent answers settle one open clarification once", async () => {
     const seeded = await setup();
     const opened = await requestClarification(

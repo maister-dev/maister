@@ -13,6 +13,8 @@ import { sweepLibrarianClearReleases } from "./clear-history";
 import { LIBRARIAN_MAX_START_ATTEMPTS, endLibrarianTurn } from "./runtime";
 
 import { getDb } from "@/lib/db/client";
+import { librarianConfig } from "@/lib/librarian/config";
+import { reconcileAdmittedLibrarianOperations } from "@/lib/librarian/operations";
 import {
   executionCommands,
   librarianConversations,
@@ -309,6 +311,12 @@ export async function runLibrarianTurnSweep(
       );
     }
   }
+  await reconcileAdmittedLibrarianOperations(
+    new Date(
+      now.getTime() - librarianConfig().operationReconcileSeconds * 1000,
+    ),
+    db as ReturnType<typeof getDb>,
+  );
   summary.resets = await sweepLibrarianResets(db);
   summary.clears = await sweepLibrarianClearReleases(db);
   const waiting = await db

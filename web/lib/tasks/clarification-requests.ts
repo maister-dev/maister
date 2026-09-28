@@ -556,7 +556,10 @@ export async function supersedeClarification(
 async function cancelMatchingOpenClarifications(
   db: Db,
   selector: SQL,
-  cause: "recipient_deactivated" | "task_abandoned",
+  cause:
+    | "recipient_deactivated"
+    | "recipient_access_removed"
+    | "task_abandoned",
 ): Promise<number> {
   const rows = await db
     .select({
@@ -632,6 +635,21 @@ export function cancelClarificationsForDeactivatedRecipient(
     db,
     eq(taskClarifications.recipientUserId, recipientUserId),
     "recipient_deactivated",
+  );
+}
+
+export function cancelClarificationsForRecipientWithoutProjectAccess(
+  db: Db,
+  recipientUserId: string,
+  projectId: string,
+): Promise<number> {
+  return cancelMatchingOpenClarifications(
+    db,
+    and(
+      eq(taskClarifications.recipientUserId, recipientUserId),
+      eq(tasks.projectId, projectId),
+    )!,
+    "recipient_access_removed",
   );
 }
 

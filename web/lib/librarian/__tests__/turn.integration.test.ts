@@ -26,6 +26,7 @@ import {
   previewLibrarianClear,
 } from "@/lib/librarian/clear-history";
 import { lockOwnerConversation } from "@/lib/librarian/conversation";
+import { admitLibrarianOperation } from "@/lib/librarian/operations";
 import { startLibrarianTurn } from "@/lib/librarian/runtime";
 import { queueLibrarianSummary } from "@/lib/librarian/summary";
 import {
@@ -606,6 +607,50 @@ describe("IT-EDGE-LCV-04: the deadline ends a turn mid tool call", () => {
     });
     expect(await tokenRevoked(sent.turn!.id)).toBe(true);
     gate.release();
+    await settle();
+  });
+});
+
+describe("IT-LOP-03: sweep reconciles interrupted operations before admission", () => {
+  it("admits the next owner message after a stale uncommitted operation", async () => {
+    const ownerId = await seedActiveUser(db);
+    const first = await send(ownerId, "first");
+
+    await settle();
+    const [conversation] = rows<{ id: string; current_segment_id: string }>(
+      await db.execute(
+        sql`SELECT id, current_segment_id FROM librarian_conversations WHERE user_id = ${ownerId}`,
+      ),
+    );
+    const operation = await admitLibrarianOperation(
+      {
+        conversationId: conversation.id,
+        segmentId: conversation.current_segment_id,
+        turnId: first.turn!.id,
+        idempotencyKey: randomUUID(),
+        kind: "task_create",
+        target: {},
+        body: { title: "never committed" },
+        allowDuplicate: false,
+      },
+      db as unknown as NonNullable<
+        Parameters<typeof admitLibrarianOperation>[1]
+      >,
+    );
+
+    await db.execute(sql`UPDATE librarian_operations
+      SET created_at = now() - interval '5 minutes' WHERE id = ${operation.id}`);
+    await runLibrarianTurnSweep(db as unknown as Db);
+    const [settledOperation] = rows<{ status: string }>(
+      await db.execute(
+        sql`SELECT status FROM librarian_operations WHERE id = ${operation.id}`,
+      ),
+    );
+
+    expect(settledOperation.status).toBe("failed");
+    const next = await send(ownerId, "second");
+
+    expect(next.turn?.status).not.toBe("queued");
     await settle();
   });
 });

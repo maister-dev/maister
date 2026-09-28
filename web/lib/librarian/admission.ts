@@ -45,6 +45,7 @@ import { executionDataPlaneModeForHost } from "@/lib/execution-host/data-plane-c
 import { mintPlacement } from "@/lib/execution-host/placement";
 import { localHost } from "@/lib/execution-host/resolver";
 import { MaisterError } from "@/lib/errors";
+import { reconcileAdmittedLibrarianOperations } from "@/lib/librarian/operations";
 import { upgradeMaintenanceEngaged } from "@/lib/maintenance/upgrade-fence";
 import { capForPool, countLiveRuns, takeSchedulerLock } from "@/lib/scheduler";
 
@@ -388,6 +389,19 @@ export async function submitOwnerMessage(
   const db = deps.db ?? (getDb() as unknown as Db);
   const now = (deps.now ?? (() => new Date()))();
   const host = await localHost({ db });
+  const [existingConversation] = await db
+    .select({ id: librarianConversations.id })
+    .from(librarianConversations)
+    .where(eq(librarianConversations.userId, ownerId));
+
+  if (existingConversation)
+    await reconcileAdmittedLibrarianOperations(
+      new Date(
+        now.getTime() - librarianConfig().operationReconcileSeconds * 1000,
+      ),
+      db as ReturnType<typeof getDb>,
+      existingConversation.id,
+    );
   const outcome = await db.transaction(async (tx) => {
     const locked = await lockOwnerConversation(tx, ownerId);
     const existing = await findMessageByClientId(
@@ -462,6 +476,14 @@ export async function admitNextLibrarianTurn(
   const db = deps.db ?? (getDb() as unknown as Db);
   const now = (deps.now ?? (() => new Date()))();
   const settings = await readLibrarianSettings(db);
+
+  await reconcileAdmittedLibrarianOperations(
+    new Date(
+      now.getTime() - librarianConfig().operationReconcileSeconds * 1000,
+    ),
+    db as ReturnType<typeof getDb>,
+    conversationId,
+  );
 
   if (settings.availability !== "ready" || !settings.runner) {
     log.debug(

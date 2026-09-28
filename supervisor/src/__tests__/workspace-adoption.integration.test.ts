@@ -108,24 +108,49 @@ async function adopt(l: Lab, payload: Record<string, unknown>) {
 
 describe("workspace adoption", () => {
   it("LMM-08: releasing a librarian handle purges its workspace and Claude transcript, including on retry", async () => {
-    const root = await realpath(await mkdtemp(join(tmpdir(), "librarian-purge-")));
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), "librarian-purge-")),
+    );
 
     roots.push(root);
     const workspace = join(root, ".maister", "_librarian", randomUUID());
     const claudeDir = join(root, "claude-config");
-    const encoded = workspace.replace(/[/.]/g, "-");
+    const encoded = workspace
+      .split("")
+      .map((character) => (/^[a-zA-Z0-9]$/.test(character) ? character : "-"))
+      .join("");
 
     await mkdir(workspace, { recursive: true });
     await mkdir(join(claudeDir, "projects", encoded), { recursive: true });
     await writeFile(join(workspace, "memory.txt"), "private");
-    await writeFile(join(claudeDir, "projects", encoded, "session.jsonl"), "private");
-    const host = await bootHost({ runtimeRoot: root, workspaceRoots: [root], fixtureArgs: ["--hang"] });
+    await writeFile(
+      join(claudeDir, "projects", encoded, "session.jsonl"),
+      "private",
+    );
+    const host = await bootHost({
+      runtimeRoot: root,
+      workspaceRoots: [root],
+      fixtureArgs: ["--hang"],
+    });
 
     booted.push(host);
     const runId = `run-${randomUUID().slice(0, 8)}`;
-    const adopted = await postJson(`${host.url}/workspaces/adopt`, envelope("workspace.adopt", {
-      hostKey: host.hostState.hostKey, runId,
-    }, { runId, projectSlug: "_librarian", kind: "directory", path: workspace }));
+    const adopted = await postJson(
+      `${host.url}/workspaces/adopt`,
+      envelope(
+        "workspace.adopt",
+        {
+          hostKey: host.hostState.hostKey,
+          runId,
+        },
+        {
+          runId,
+          projectSlug: "_librarian",
+          kind: "directory",
+          path: workspace,
+        },
+      ),
+    );
 
     expect(adopted.status).toBe(200);
     const id = adopted.body.executionWorkspaceId as string;
@@ -133,13 +158,27 @@ describe("workspace adoption", () => {
 
     process.env.CLAUDE_CONFIG_DIR = claudeDir;
     try {
-      const release = () => postJson(`${host.url}/workspaces/${id}`, envelope("workspace.release", {
-        hostKey: host.hostState.hostKey, runId,
-      }, {}), "DELETE");
+      const release = () =>
+        postJson(
+          `${host.url}/workspaces/${id}`,
+          envelope(
+            "workspace.release",
+            {
+              hostKey: host.hostState.hostKey,
+              runId,
+            },
+            {},
+          ),
+          "DELETE",
+        );
 
       expect((await release()).body).toEqual({ released: true });
-      await expect(readFile(join(workspace, "memory.txt"))).rejects.toMatchObject({ code: "ENOENT" });
-      await expect(readFile(join(claudeDir, "projects", encoded, "session.jsonl"))).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(
+        readFile(join(workspace, "memory.txt")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(
+        readFile(join(claudeDir, "projects", encoded, "session.jsonl")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
       expect((await release()).body).toEqual({ released: false });
     } finally {
       if (originalConfig === undefined) delete process.env.CLAUDE_CONFIG_DIR;
