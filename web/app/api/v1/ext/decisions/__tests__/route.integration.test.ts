@@ -288,6 +288,7 @@ describe("IT-ATN-08 GET /api/v1/ext/decisions", () => {
         taskKey: expect.any(String),
         runId: hitl.runId,
         hitlRequestId: hitl.hitlRequestId,
+        clarificationId: null,
         title: "Review deployment plan",
         criticality: null,
         nextAction: "respond",

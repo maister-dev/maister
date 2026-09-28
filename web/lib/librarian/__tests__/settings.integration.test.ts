@@ -166,6 +166,55 @@ describe("IT-LCV-11 part 2: the librarian runner round trip", () => {
       details: { reason: "runner_missing" },
     });
   });
+
+  it("refuses Codex while built-in host reads have no adapter denial", async () => {
+    const runnerId = `lib-codex-${randomUUID()}`;
+
+    await insertRunner(runnerId);
+    await db.execute(sql`
+      UPDATE platform_acp_runners
+      SET adapter = 'codex', capability_agent = 'codex'
+      WHERE id = ${runnerId}
+    `);
+    await expect(
+      updateLibrarianSettings(
+        { enabled: true, runnerId },
+        adminId,
+        db as unknown as Db,
+      ),
+    ).rejects.toMatchObject({
+      code: "CONFIG",
+      details: { reason: "builtin_denial_unverified" },
+    });
+    await db.execute(sql`
+      UPDATE platform_acp_runners
+      SET capability_agent = 'claude'
+      WHERE id = ${runnerId}
+    `);
+    await expect(
+      updateLibrarianSettings(
+        { enabled: true, runnerId },
+        adminId,
+        db as unknown as Db,
+      ),
+    ).rejects.toMatchObject({
+      code: "CONFIG",
+      details: { reason: "capability_not_supported" },
+    });
+    await db.execute(sql`
+      UPDATE platform_acp_runners
+      SET capability_agent = 'codex'
+      WHERE id = ${runnerId}
+    `);
+    await db.execute(sql`
+      UPDATE platform_runtime_settings
+      SET librarian_enabled = true, librarian_runner_id = ${runnerId}
+      WHERE id = 'singleton'
+    `);
+    expect((await readLibrarianSettings(db)).availability).toBe(
+      "runner_not_ready",
+    );
+  });
 });
 
 describe("IT-LCV-11 part 2: disabling during a queued backlog", () => {

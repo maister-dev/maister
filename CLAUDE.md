@@ -41,6 +41,9 @@ Backend split:
   (ADR-023) — a different host for the supervisor is not supported today;
   ADR-166 (Implemented) makes the supervisor a registered _execution host_
   behind `web/lib/execution-host/` so later stages can move it.
+- The personal librarian is a durable per-user conversation in `web/lib/librarian/`
+  and `web/components/librarian/`; its turns use owner-bound MCP tokens and
+  supervisor-hosted ACP sessions (ADR-183..189).
 
 ## How to run
 

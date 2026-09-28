@@ -128,15 +128,27 @@ export async function endLibrarianTurn(
 // names it. `enabled: false` or `ready: false` model the admin's refusals.
 export async function seedLibrarianPlatform(
   db: NodePgDatabase,
-  input: { enabled?: boolean; ready?: boolean; runnerId?: string } = {},
+  input: {
+    enabled?: boolean;
+    ready?: boolean;
+    runnerId?: string;
+    adapter?: "claude" | "codex";
+    model?: string;
+  } = {},
 ): Promise<{ runnerId: string }> {
   const runnerId = input.runnerId ?? `librarian-runner-${randomUUID()}`;
+  const adapter = input.adapter ?? "claude";
+  const model =
+    input.model ?? (adapter === "claude" ? "claude-sonnet-4-6" : "gpt-6-astra");
+  const provider = JSON.stringify({
+    kind: adapter === "claude" ? "anthropic" : "openai",
+  });
 
   await db.execute(sql`
     INSERT INTO "platform_acp_runners"
       ("id", "adapter", "capability_agent", "model", "provider", "permission_policy",
        "readiness_status", "readiness_reasons", "enabled")
-    VALUES (${runnerId}, 'claude', 'claude', 'claude-sonnet-4-6', '{"kind":"anthropic"}'::jsonb,
+    VALUES (${runnerId}, ${adapter}, ${adapter}, ${model}, ${provider}::jsonb,
             'default', ${input.ready === false ? "NotReady" : "Ready"}, '[]'::jsonb, true)
     ON CONFLICT ("id") DO UPDATE SET "readiness_status" = EXCLUDED."readiness_status"
   `);

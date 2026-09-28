@@ -759,7 +759,7 @@
   (see `.ai-factory/plans/claude-flow-runs-continuation-controls-527f4c.md`,
   `.ai-factory/specs/run-continuation-controls.spec.md`)
 
-- [ ] **M51. See everything** — a read-only visibility layer for teams: one
+- [x] **M51. See everything** — a read-only visibility layer for teams: one
   screen that answers *what is blocked on me, what moved, and what is in
   flight*, across every project a reader can see. **(A) Derived work stages**
   (ADR-170): a pure, total `deriveWorkStage` classifier and a cross-project
@@ -857,6 +857,7 @@
 | M48. Advanced Evaluation (remainder → Backlog)                               | 2026-07-21 |
 | M49. Multi-repo cross-project enablement (merged 2026-08-12)                 | 2026-08-05 |
 | M45. Core-package process qualification — closed as descoped by owner decision; qualification run set NOT performed | 2026-09-10 |
+| M51. See everything: team visibility and personal librarian                  | 2026-09-28 |
 
 ## Backlog (untriaged deferred work)
 

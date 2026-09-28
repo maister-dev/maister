@@ -19,6 +19,7 @@ const REFUSAL_KEYS: Record<string, string> = {
   runner_missing: "librarianErrorRunnerMissing",
   runner_disabled: "librarianErrorRunnerDisabled",
   capability_not_supported: "librarianIneligible_capability_not_supported",
+  builtin_denial_unverified: "librarianIneligible_builtin_denial_unverified",
   not_read_only_capable: "librarianIneligible_not_read_only_capable",
   skips_permissions: "librarianIneligible_skips_permissions",
   reserved_env: "librarianIneligible_reserved_env",

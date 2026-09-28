@@ -225,7 +225,7 @@ Librarian card of the ACP runners settings screen — which answers
 | Column | Meaning | Default |
 | --- | --- | --- |
 | `librarian_enabled` | Admission switch. Disabled refuses new turns with `CONFIG`. Disabling deletes nothing: queued messages stay queued and visible, a running turn finishes or reaches its deadline, admitted operations still reconcile. | `false` |
-| `librarian_runner_id` | The platform ACP runner every librarian turn runs on (FK `platform_acp_runners(id) ON DELETE SET NULL`; each turn snapshots it in `librarian_turns.runner_snapshot`). The route accepts only a runner that exists, is enabled and is read-only-capable; its `permission_policy` is never `dangerously_skip_permissions`. Only claude and codex runners qualify in this release. With no ready runner — unset, removed (the FK clears it) or not ready — admission refuses with `EXECUTOR_UNAVAILABLE`. | `NULL` |
+| `librarian_runner_id` | The platform ACP runner every librarian turn runs on (FK `platform_acp_runners(id) ON DELETE SET NULL`; each turn snapshots it in `librarian_turns.runner_snapshot`). The route accepts only a runner that exists, is enabled and is read-only-capable; its `permission_policy` is never `dangerously_skip_permissions`. Only Claude qualifies in this release; Codex lacks verified built-in host-read denial. With no ready eligible runner — unset, removed (the FK clears it), not ready or ineligible — admission refuses with `EXECUTOR_UNAVAILABLE`. | `NULL` |
 
 The eight `MAISTER_LIBRARIAN_*` / `MAISTER_MAX_CONCURRENT_LIBRARIAN_TURNS`
 budgets are environment variables, listed in

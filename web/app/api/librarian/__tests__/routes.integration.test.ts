@@ -145,7 +145,7 @@ describe("IT-LAU-01: the owner comes from the session, never the request", () =>
   });
 });
 
-describe("IT-LAU-09: a global admin reaches only their own conversation", () => {
+describe("IT-LAU-09 IT-EDGE-LAU-02: a global admin reaches only their own conversation", () => {
   it("returns the admin's own conversation and hides every other user's message", async () => {
     const bobMessage = await sendAs(bob, "private to bob");
 

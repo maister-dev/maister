@@ -1677,6 +1677,11 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
           "lib/atomic.ts#atomicWriteText",
           "wrapper",
         ],
+        [
+          "materializeLibrarianSummaryAdapterSettings",
+          "lib/atomic.ts#atomicWriteText",
+          "wrapper",
+        ],
       ],
     ),
     ...classified(

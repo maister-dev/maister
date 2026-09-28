@@ -288,6 +288,7 @@ async function runNextBuild(logFile: string): Promise<string> {
     ...(await fixtureProcessEnvironment(invocation)),
     NODE_ENV: "production",
     NEXT_TELEMETRY_DISABLED: "1",
+    MAISTER_TEST_WEB_BUILD: "1",
   };
 
   delete env.VITEST;
@@ -301,6 +302,7 @@ async function runNextBuild(logFile: string): Promise<string> {
       FIXTURE_WATCHDOG,
       createRequire(import.meta.url).resolve("next/dist/bin/next"),
       "build",
+      "--webpack",
     ],
     {
       cwd: WEB_DIR,

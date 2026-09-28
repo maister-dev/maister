@@ -11,12 +11,14 @@ export type LibrarianAvailabilityState =
 
 export type LibrarianRunnerIneligibility =
   | "capability_not_supported"
+  | "builtin_denial_unverified"
   | "not_read_only_capable"
   | "skips_permissions"
   | "reserved_env";
 
 type RunnerShape = {
   id: string;
+  adapter?: string;
   capabilityAgent: string;
   model?: string;
   permissionPolicy: string;
@@ -27,12 +29,9 @@ type RunnerShape = {
   readOnlyCapable?: boolean;
 };
 
-// The MCP-only enforcement is proven for claude and codex only, and the
-// librarian must own its adapter home.
-const LIBRARIAN_CAPABILITIES: ReadonlySet<string> = new Set([
-  "claude",
-  "codex",
-]);
+// Codex host reads need not emit an ACP permission request and it has no
+// equivalent to Claude's built-in deny settings (ADR-184 D10).
+const LIBRARIAN_CAPABILITIES: ReadonlySet<string> = new Set(["claude", "codex"]);
 const RESERVED_RUNNER_ENV = ["HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME"];
 
 export function librarianRunnerIneligibility(
@@ -44,6 +43,10 @@ export function librarianRunnerIneligibility(
 
   if (!LIBRARIAN_CAPABILITIES.has(runner.capabilityAgent))
     return "capability_not_supported";
+  if (runner.adapter && runner.adapter !== runner.capabilityAgent)
+    return "capability_not_supported";
+  if (runner.capabilityAgent === "codex")
+    return "builtin_denial_unverified";
   if (!readOnlyCapable) return "not_read_only_capable";
   if (runner.permissionPolicy === "dangerously_skip_permissions")
     return "skips_permissions";

@@ -101,7 +101,7 @@ function sendBlockOf(
 ): SendBlock | null {
   if (view?.availability.state === "disabled") return "disabled";
   if (view && view.availability.state !== "ready") return "no_runner";
-  if (view && view.conversation.resetState !== "idle") return "resetting";
+  if (view && view.conversation.resetState !== "none") return "resetting";
   if (sending) return "sending";
   if (!draft.trim()) return "empty";
 
@@ -533,7 +533,7 @@ function LibrarianPanelBody(): ReactElement {
           <button
             className="text-xs underline disabled:opacity-50"
             data-testid="librarian-reset"
-            disabled={resetBusy || view?.conversation.resetState !== "idle"}
+            disabled={resetBusy || view?.conversation.resetState !== "none"}
             type="button"
             onClick={() => {
               setResetBusy(true);
@@ -554,7 +554,7 @@ function LibrarianPanelBody(): ReactElement {
           <button
             className="text-xs underline disabled:opacity-50"
             data-testid="librarian-clear-open"
-            disabled={clearBusy || view?.conversation.resetState !== "idle"}
+            disabled={clearBusy || view?.conversation.resetState !== "none"}
             type="button"
             onClick={() => {
               setClearBusy(true);

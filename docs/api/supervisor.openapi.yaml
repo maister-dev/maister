@@ -3902,6 +3902,8 @@ components:
         - unknown_workspace
         - workspace_released
         - workspace_rejected
+        - workspace_in_use
+        - invalid_librarian_workspace
         - legacy_field
         - missing_envelope
         - stream_health_unavailable

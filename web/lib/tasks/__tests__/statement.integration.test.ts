@@ -17,12 +17,16 @@ import {
 let database: StartedPostgresTestDb;
 let db: ReturnType<typeof getDb>;
 
-async function seedConversation(userId: string): Promise<{ conversationId: string; messageId: string }> {
+async function seedConversation(
+  userId: string,
+): Promise<{ conversationId: string; messageId: string }> {
   const conversationId = randomUUID();
   const segmentId = randomUUID();
   const messageId = randomUUID();
 
-  await db.execute(sql`INSERT INTO librarian_conversations (id, user_id) VALUES (${conversationId}, ${userId})`);
+  await db.execute(
+    sql`INSERT INTO librarian_conversations (id, user_id) VALUES (${conversationId}, ${userId})`,
+  );
   await db.execute(sql`
     INSERT INTO librarian_segments (id, conversation_id, ordinal, started_at)
     VALUES (${segmentId}, ${conversationId}, 0, now())
@@ -45,7 +49,7 @@ afterAll(async () => {
 });
 
 describe("task statement acceptance", () => {
-  it("IT-TST-04/07: links accepted revisions and refuses an InFlight rewrite", async () => {
+  it("IT-TST-04 IT-TST-07 IT-EDGE-TST-01: links accepted revisions and refuses an InFlight rewrite", async () => {
     const projectId = await seedProject(db as unknown as NodePgDatabase);
     const firstUser = await seedActiveUser(db as unknown as NodePgDatabase);
     const secondUser = await seedActiveUser(db as unknown as NodePgDatabase);
@@ -67,26 +71,32 @@ describe("task statement acceptance", () => {
       VALUES (${taskId}, ${projectId}, 1, 'Initial', 'Initial prompt')
     `);
 
-    const first = await acceptStatement({
-      projectId,
-      taskId,
-      conversationId: firstConversation.conversationId,
-      statement,
-      expectedRevision: 0,
-      actor: { type: "user", id: firstUser },
-      fromMessageId: firstConversation.messageId,
-      toMessageId: firstConversation.messageId,
-    }, db);
-    const second = await acceptStatement({
-      projectId,
-      taskId,
-      conversationId: secondConversation.conversationId,
-      statement: { ...statement, goal: "Ship the revised result" },
-      expectedRevision: 1,
-      actor: { type: "user", id: secondUser },
-      fromMessageId: secondConversation.messageId,
-      toMessageId: secondConversation.messageId,
-    }, db);
+    const first = await acceptStatement(
+      {
+        projectId,
+        taskId,
+        conversationId: firstConversation.conversationId,
+        statement,
+        expectedRevision: 0,
+        actor: { type: "user", id: firstUser },
+        fromMessageId: firstConversation.messageId,
+        toMessageId: firstConversation.messageId,
+      },
+      db,
+    );
+    const second = await acceptStatement(
+      {
+        projectId,
+        taskId,
+        conversationId: secondConversation.conversationId,
+        statement: { ...statement, goal: "Ship the revised result" },
+        expectedRevision: 1,
+        actor: { type: "user", id: secondUser },
+        fromMessageId: secondConversation.messageId,
+        toMessageId: secondConversation.messageId,
+      },
+      db,
+    );
 
     expect(first).toMatchObject({ revision: 1, statementRevision: 1 });
     expect(second).toMatchObject({ revision: 2, statementRevision: 2 });
@@ -97,23 +107,47 @@ describe("task statement acceptance", () => {
     `);
 
     expect(links.rows).toMatchObject([
-      { conversation_id: firstConversation.conversationId, meaning: "refined_in", from_message_id: firstConversation.messageId, statement_revision: 1 },
-      { conversation_id: secondConversation.conversationId, meaning: "refined_in", from_message_id: secondConversation.messageId, statement_revision: 2 },
+      {
+        conversation_id: firstConversation.conversationId,
+        meaning: "refined_in",
+        from_message_id: firstConversation.messageId,
+        statement_revision: 1,
+      },
+      {
+        conversation_id: secondConversation.conversationId,
+        meaning: "refined_in",
+        from_message_id: secondConversation.messageId,
+        statement_revision: 2,
+      },
     ]);
 
-    await db.execute(sql`UPDATE tasks SET status = 'InFlight' WHERE id = ${taskId}`);
-    const before = await db.execute(sql`SELECT prompt FROM tasks WHERE id = ${taskId}`);
+    await db.execute(
+      sql`UPDATE tasks SET status = 'InFlight' WHERE id = ${taskId}`,
+    );
+    const before = await db.execute(
+      sql`SELECT prompt FROM tasks WHERE id = ${taskId}`,
+    );
 
-    await expect(acceptStatement({
-      projectId,
-      taskId,
-      conversationId: firstConversation.conversationId,
-      statement,
-      expectedRevision: 2,
-      actor: { type: "user", id: firstUser },
-    }, db)).rejects.toMatchObject({ code: "PRECONDITION", details: { reason: "task_not_backlog" } });
+    await expect(
+      acceptStatement(
+        {
+          projectId,
+          taskId,
+          conversationId: firstConversation.conversationId,
+          statement,
+          expectedRevision: 2,
+          actor: { type: "user", id: firstUser },
+        },
+        db,
+      ),
+    ).rejects.toMatchObject({
+      code: "PRECONDITION",
+      details: { reason: "task_not_backlog" },
+    });
 
-    const after = await db.execute(sql`SELECT prompt FROM tasks WHERE id = ${taskId}`);
+    const after = await db.execute(
+      sql`SELECT prompt FROM tasks WHERE id = ${taskId}`,
+    );
 
     expect(after.rows[0]?.prompt).toBe(before.rows[0]?.prompt);
   });

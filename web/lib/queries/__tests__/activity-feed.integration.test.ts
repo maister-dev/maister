@@ -506,7 +506,13 @@ describe("the union covers what no single table holds", () => {
     expect(rows[0].kind).toBe("task_created");
   });
 
-  it("keeps task.clarification_answered, which has no twin", async () => {
+  it("shows a clarification answer once from task activity", async () => {
+    await addActivity({
+      taskId: fx.task,
+      projectId: fx.project,
+      kind: "clarification_answered",
+      at: AT.mid,
+    });
     await addEvent({
       kind: "task.clarification_answered",
       projectId: fx.project,
@@ -518,8 +524,9 @@ describe("the union covers what no single table holds", () => {
 
     const [row] = (await getCrossProjectActivityFeed(reader)).rows;
 
-    expect(row.kind).toBe("task.clarification_answered");
-    expect(row.hitlRequestId).toBe("hitl-7");
+    expect(row.kind).toBe("clarification_answered");
+    expect(row.source).toBe("task");
+    expect(row.hitlRequestId).toBeNull();
   });
 
   it("ignores a delivery that has not settled yet", async () => {

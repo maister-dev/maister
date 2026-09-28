@@ -2,6 +2,7 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import { randomUUID } from "node:crypto";
 
+import { sql } from "drizzle-orm";
 import { NextRequest } from "next/server";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
@@ -147,6 +148,33 @@ const taskParams = (slug: string, taskId: string) => ({
 const runParams = (runId: string) => ({ params: Promise.resolve({ runId }) });
 
 describe("IT-LAU-03: every request re-checks the owner's live project role", () => {
+  it("IT-EDGE-LAU-03: an archived project is hidden from an already issued token", async () => {
+    const project = await seedProjectRow(db);
+    const taskId = await seedTask(project.id);
+
+    await addProjectMember(db, {
+      projectId: project.id,
+      userId: fx.ownerId,
+      role: "member",
+    });
+    const token = await turnToken(LIBRARIAN_READ_SCOPES);
+    const visible = await task.GET(
+      request("GET", token),
+      taskParams(project.slug, taskId),
+    );
+
+    expect(visible.status).toBe(200);
+    await db.execute(
+      sql`UPDATE projects SET archived_at = now() WHERE id = ${project.id}`,
+    );
+    const archived = await task.GET(
+      request("GET", token),
+      taskParams(project.slug, taskId),
+    );
+
+    expect(archived.status).toBe(404);
+  });
+
   it("a viewer owner reads a task but cannot create one there", async () => {
     const token = await turnToken(LIBRARIAN_TOKEN_SCOPES);
 

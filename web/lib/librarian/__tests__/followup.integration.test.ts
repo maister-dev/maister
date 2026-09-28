@@ -56,7 +56,7 @@ async function updatesFor(eventId: number): Promise<UpdateRow[]> {
   return result.rows as UpdateRow[];
 }
 
-describe("IT-LOP-11/12: domain event follow-up", () => {
+describe("IT-LOP-11 IT-LOP-12 IT-CLR-06: domain event follow-up", () => {
   it("deduplicates delivery, skips lost access, and advances past five failed attempts", async () => {
     const db = database.db;
     const projectId = await seedProject(db);

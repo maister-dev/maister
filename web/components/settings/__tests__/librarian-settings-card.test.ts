@@ -46,6 +46,7 @@ describe("librarian settings card", () => {
         { librarianEnabled: true, librarianRunnerId: null },
         [
           runner({ id: "gemini", capabilityAgent: "gemini" }),
+          runner({ id: "codex", capabilityAgent: "codex" }),
           runner({
             id: "skipper",
             permissionPolicy: "dangerously_skip_permissions",
@@ -57,6 +58,7 @@ describe("librarian settings card", () => {
     );
 
     expect(markup).toContain("librarianIneligible_capability_not_supported");
+    expect(markup).toContain("librarianIneligible_builtin_denial_unverified");
     expect(markup).toContain("librarianIneligible_skips_permissions");
     expect(markup).toContain("librarianIneligible_reserved_env");
     expect(markup).toContain("librarianIneligible_disabled");

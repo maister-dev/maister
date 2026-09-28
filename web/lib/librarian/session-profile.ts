@@ -67,8 +67,7 @@ const CLAUDE_SETTINGS_RELATIVE = path.join(".claude", "settings.local.json");
 /** D5 L2: adapter settings that deny the built-ins. The conversation's
  * directory is created by and private to the librarian, so the file is
  * written whole — there is no user-owned settings file to preserve. Codex has
- * no settings-level deny surface in this runtime; L1 and the auto-approve
- * policy carry it alone (ADR-183). */
+ * no settings-level deny surface and is refused by the runner guard (ADR-184). */
 export async function materializeLibrarianAdapterSettings(
   cwd: string,
   capabilityAgent: string,

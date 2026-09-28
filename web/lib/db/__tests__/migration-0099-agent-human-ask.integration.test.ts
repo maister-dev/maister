@@ -149,6 +149,7 @@ describe("migration 0099 — agent human ask (ADR-136)", () => {
         source_hitl_request_id,
         origin_run_id,
         origin_agent_id,
+        origin_kind,
         question,
         question_schema,
         retrigger_mode
@@ -160,6 +161,7 @@ describe("migration 0099 — agent human ask (ADR-136)", () => {
         ${sourceHitlRequestId},
         ${runId},
         'core:triager',
+        'agent_run',
         'Which target?',
         '{"schemaVersion":1,"fields":[]}'::jsonb,
         'agent'
@@ -170,10 +172,10 @@ describe("migration 0099 — agent human ask (ADR-136)", () => {
       db.execute(sql`
         INSERT INTO task_clarifications (
           id, task_id, seq, source_hitl_request_id, origin_run_id,
-          origin_agent_id, question, question_schema, retrigger_mode
+          origin_agent_id, origin_kind, question, question_schema, retrigger_mode
         )
         VALUES (
-          ${id()}, ${taskId}, 1, ${id()}, ${runId}, 'core:triager',
+          ${id()}, ${taskId}, 1, ${id()}, ${runId}, 'core:triager', 'agent_run',
           'Duplicate sequence', '{"schemaVersion":1,"fields":[]}'::jsonb, 'agent'
         )
       `),
@@ -183,10 +185,10 @@ describe("migration 0099 — agent human ask (ADR-136)", () => {
       db.execute(sql`
         INSERT INTO task_clarifications (
           id, task_id, seq, source_hitl_request_id, origin_run_id,
-          origin_agent_id, question, question_schema, retrigger_mode
+          origin_agent_id, origin_kind, question, question_schema, retrigger_mode
         )
         VALUES (
-          ${id()}, ${taskId}, 2, ${sourceHitlRequestId}, ${runId}, 'core:triager',
+          ${id()}, ${taskId}, 2, ${sourceHitlRequestId}, ${runId}, 'core:triager', 'agent_run',
           'Duplicate source', '{"schemaVersion":1,"fields":[]}'::jsonb, 'agent'
         )
       `),

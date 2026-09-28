@@ -254,6 +254,15 @@ export function LibrarianWork({
                       {task.projectSlug}-{task.number}
                     </span>
                     <span className="truncate text-mute">{task.status}</span>
+                    {task.fromMessageId === null &&
+                    task.toMessageId === null ? (
+                      <span
+                        className="text-mute"
+                        data-testid="librarian-source-unavailable"
+                      >
+                        {t("linkedSourceUnavailable")}
+                      </span>
+                    ) : null}
                   </Link>
                 ) : (
                   <span className="rounded-full border border-line px-2 py-1 text-[11px] text-mute">

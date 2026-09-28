@@ -214,8 +214,10 @@ beforeEach(async () => {
 });
 
 describe("POST /api/v1/ext/runs", () => {
-  it("IT-LOP-07: librarian launch records its operation and returns a Pending queue receipt", async () => {
-    const { projectId, flowId } = await seedProject(`librarian-launch-${randomUUID().slice(0, 8)}`);
+  it("IT-LOP-07 IT-EDGE-LOP-03: launch records a Pending receipt and refuses an unmet dependency", async () => {
+    const { projectId, flowId } = await seedProject(
+      `librarian-launch-${randomUUID().slice(0, 8)}`,
+    );
     const taskId = await seedTask(projectId, flowId);
     const userId = randomUUID();
     const conversationId = randomUUID();
@@ -229,9 +231,20 @@ describe("POST /api/v1/ext/runs", () => {
       accountStatus: "active",
       passwordHash: "x",
     });
-    await db.insert(schema.projectMembers).values({ projectId, userId, role: "owner" });
-    await db.insert(schema.librarianConversations).values({ id: conversationId, userId });
-    await db.insert(schema.librarianSegments).values({ id: segmentId, conversationId, ordinal: 0, startedAt: new Date() });
+    await db
+      .insert(schema.projectMembers)
+      .values({ projectId, userId, role: "owner" });
+    await db
+      .insert(schema.librarianConversations)
+      .values({ id: conversationId, userId });
+    await db
+      .insert(schema.librarianSegments)
+      .values({
+        id: segmentId,
+        conversationId,
+        ordinal: 0,
+        startedAt: new Date(),
+      });
     await db.insert(schema.librarianTurns).values({
       id: turnId,
       conversationId,
@@ -240,12 +253,15 @@ describe("POST /api/v1/ext/runs", () => {
       status: "running",
       contextSnapshotId: randomUUID(),
     });
-    const token = await issueLibrarianTurnToken({
-      ownerUserId: userId,
-      turnId,
-      scopes: ["runs:launch"],
-      expiresAt: new Date(Date.now() + 60_000),
-    }, db);
+    const token = await issueLibrarianTurnToken(
+      {
+        ownerUserId: userId,
+        turnId,
+        scopes: ["runs:launch"],
+        expiresAt: new Date(Date.now() + 60_000),
+      },
+      db,
+    );
     const request = () => {
       const req = makeRequest({ taskId });
 
@@ -262,10 +278,14 @@ describe("POST /api/v1/ext/runs", () => {
     expect(firstBody).toMatchObject({ status: "Pending", queuePosition: 1 });
     expect(replay.status).toBe(202);
     expect(await replay.json()).toEqual(firstBody);
-    const [run] = await db.select().from(schema.runs).where(eq(schema.runs.id, firstBody.runId));
-    const [operation] = await db.select().from(schema.librarianOperations).where(
-      eq(schema.librarianOperations.conversationId, conversationId),
-    );
+    const [run] = await db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.id, firstBody.runId));
+    const [operation] = await db
+      .select()
+      .from(schema.librarianOperations)
+      .where(eq(schema.librarianOperations.conversationId, conversationId));
 
     expect(run.librarianOperationId).toBe(operation.id);
     expect(operation.status).toBe("succeeded");
@@ -292,17 +312,30 @@ describe("POST /api/v1/ext/runs", () => {
     const blocked = await POST(secondRequest("launch-2"), {});
 
     expect(blocked.status).toBe(409);
-    const firstRunAfterBlocked = await db.select().from(schema.runs).where(eq(schema.runs.id, firstBody.runId));
+    expect(await blocked.json()).toMatchObject({ code: "PRECONDITION" });
+    const firstRunAfterBlocked = await db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.id, firstBody.runId));
 
     expect(firstRunAfterBlocked).toHaveLength(1);
-    await db.update(schema.runs).set({ status: "Done" }).where(eq(schema.runs.id, firstBody.runId));
-    await db.update(schema.tasks).set({ status: "Done" }).where(eq(schema.tasks.id, taskId));
+    await db
+      .update(schema.runs)
+      .set({ status: "Done" })
+      .where(eq(schema.runs.id, firstBody.runId));
+    await db
+      .update(schema.tasks)
+      .set({ status: "Done" })
+      .where(eq(schema.tasks.id, taskId));
 
     const second = await POST(secondRequest("launch-3"), {});
 
     expect(second.status).toBe(202);
     expect(await second.json()).toMatchObject({ status: "Pending" });
-    const secondRuns = await db.select().from(schema.runs).where(eq(schema.runs.taskId, secondTaskId));
+    const secondRuns = await db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.taskId, secondTaskId));
 
     expect(secondRuns).toHaveLength(1);
   });

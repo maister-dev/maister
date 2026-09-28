@@ -115,6 +115,19 @@ const fakeDb: FakeDb = {
   execute: async () => ({ rows: [] }),
   select: () => ({
     from: (table: unknown): FromResult | LatestRunChain | RelationJoinChain => {
+      if (getTableName(table as never) === "task_clarifications") {
+        const clarificationResult: LockedResult = {
+          for: async () => [{ count: 0 }],
+          then: (onFulfilled, onRejected) =>
+            Promise.resolve([{ count: 0 }]).then(onFulfilled, onRejected),
+        };
+
+        return {
+          then: (onFulfilled, onRejected) =>
+            Promise.resolve([{ count: 0 }]).then(onFulfilled, onRejected),
+          where: () => clarificationResult,
+        };
+      }
       if (getTableName(table as never) === "runs") {
         return {
           where: () => ({

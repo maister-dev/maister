@@ -28,8 +28,7 @@ writes these documents and the qualification phase proves them, so neither owns 
 row. The mapping is bidirectional — every requirement names at least one task, and
 every implementation task is named by at least one row.
 
-`Status` stays `Planned` until the owning phase turns the requirement green; every
-described piece is **Designed**.
+`Status` is `Implemented` only after its owning task and primary test passed.
 
 ## Requirement traceability
 
@@ -55,80 +54,80 @@ described piece is **Designed**.
 | LAU-01 | ADR-184 route identifier table; owner from auth-context only | T2.12 | IT-LAU-01 | Implemented |
 | LAU-02 | CHECK project_tokens_kind_check and project_tokens_librarian_check; issueLibrarianTurnToken and revokeLibrarianTurnToken | T1.1, T1.2, T2.10 | IT-LAU-02 | Implemented |
 | LAU-03 | handleExt librarian arm; requireProjectActionForUser per request; turn running check | T1.3, T2.10, T2.11 | IT-LAU-03 | Implemented |
-| LAU-04 | deny-by-default admitLibrarian opt-in; LIBRARIAN_TOKEN_SCOPES exclusions; agent-token refusal on /ext/librarian routes | T1.3, T3.9 | IT-LAU-04 | Partial (agent token on /ext/librarian: T3.9) |
-| LAU-05 | LIBRARIAN_READ_SCOPES for explain turns | T1.3, T5.3 | IT-LAU-05 | Partial (Explain turn wiring: T5.3) |
+| LAU-04 | deny-by-default admitLibrarian opt-in; LIBRARIAN_TOKEN_SCOPES exclusions; agent-token refusal on /ext/librarian routes | T1.3, T3.9 | IT-LAU-04 | Implemented |
+| LAU-05 | LIBRARIAN_READ_SCOPES for explain turns | T1.3, T5.3 | IT-LAU-05 | Implemented |
 | LAU-06 | getVisibleProjects before aggregation in ext projects, directory, task search, work, activity feed and decisions; librarian MCP toolset | T1.5, T1.6 | IT-LAU-06 | Implemented |
-| LAU-07 | token_audit_log on_behalf_of_user_id, librarian_turn_id, operation_id via recordRequiredTokenAudit | T1.4 | IT-LAU-07 | Partial (operation_id: T3.2) |
-| LAU-08 | socialActorForToken returns the owner; via_operation_id; session card decide for human-only actions | T3.6, T3.9 | IT-LAU-08 | Planned |
+| LAU-07 | token_audit_log on_behalf_of_user_id, librarian_turn_id, operation_id via recordRequiredTokenAudit | T1.4 | IT-LAU-07 | Implemented |
+| LAU-08 | socialActorForToken returns the owner; via_operation_id; session card decide for human-only actions | T3.6, T3.9 | IT-LAU-08 | Implemented |
 | LAU-09 | owner-only server-state in every /api/librarian route; no admin inspection route | T2.12 | IT-LAU-09 | Implemented |
 | LAU-10 | verifyToken owner-active checks; per-request RBAC; admission-time owner check | T1.2, T1.3, T2.5 | IT-LAU-10 | Implemented |
-| LAU-11 | SessionEnforcementProfileSchema librarian profile; permissions auto_approve; adapter-home L2 deny settings; readOnlyCapable runner guard | T2.8, T2.10 | IT-LAU-11 | Implemented |
+| LAU-11 | SessionEnforcementProfileSchema librarian profile; permissions auto_approve; Claude L2 deny settings; Codex ineligible pending host-read denial | T2.8, T2.10, T7.2 | IT-LAU-11 | Implemented for Claude; Codex ineligible |
 | EDGE-LAU-01 | verifyToken refuses revoked or expired turn tokens with 401 | T1.2 | IT-EDGE-LAU-01 | Implemented |
-| EDGE-LAU-02 | owner-resolved conversation; 404 on a foreign id | T2.12 | IT-EDGE-LAU-02 | Planned |
-| EDGE-LAU-03 | handleExt archived-project 404; operation not_applied reconcile | T1.3, T1.5, T3.2 | IT-EDGE-LAU-03 | Planned |
-| EDGE-LAU-04 | summary profile with mcps.allowServers empty; any tool call fails the turn capability_trip | T6.3 | IT-EDGE-LAU-04 | Planned |
-| LOP-01 | Idempotency-Key from operationKey; handleExt idempotency required; finalize inside recordRequiredTokenAudit | T1.6, T3.2 | IT-LOP-01 | Planned |
-| LOP-02 | UNIQUE librarian_operations_key_uq; canonical digest; CONFLICT idempotency_payload_mismatch and duplicate_of_operation | T3.1, T3.2 | IT-LOP-02 | Planned |
-| LOP-03 | UNIQUE tasks_created_via_operation_uq, task_comments_via_operation_uq, runs_librarian_operation_uq; MAISTER_LIBRARIAN_OPERATION_RECONCILE_SECONDS admission gate | T2.16, T3.1, T3.2, T3.7 | IT-LOP-03 | Planned |
-| LOP-04 | one librarian_operations row per batch item; per-item receipt | T3.7 | IT-LOP-04 | Planned |
-| LOP-05 | tasks.launch_intent none on librarian create; applyTriageVerdict and C2 eligibility | T3.4, T3.5 | IT-LOP-05 | Planned |
-| LOP-06 | ext send-to-triage with launchIntent in the sendTaskToTriage transaction | T3.5 | IT-LOP-06 | Planned |
-| LOP-07 | launchRun preconditions unchanged; runs.librarian_operation_id in the insert transaction | T3.7 | IT-LOP-07 | Planned |
-| LOP-08 | librarian_cards target_revision and payload_digest; decide refuses CONFLICT target_changed; MAISTER_LIBRARIAN_CONFIRMATION_TTL_MINUTES | T3.9, T6.9 | IT-LOP-08 | Planned |
-| LOP-09 | session card decide as HitlActor kind user through respondToHitl, promoteRun and discard | T3.9 | IT-LOP-09 | Planned |
-| LOP-10 | POST /api/v1/ext/runs/{runId}/operator-message outcome enum; agent_turns.requested_by_user_id | T3.8 | IT-LOP-10 | Planned |
-| LOP-11 | UNIQUE librarian_updates_event_uq; librarian_followup consumer access check | T5.1, T5.2 | IT-LOP-11 | Planned |
-| LOP-12 | librarian_updates.attempts at most 5; CHECK librarian_updates_failed_has_error_check | T5.2 | IT-LOP-12 | Planned |
-| EDGE-LOP-01 | same-key stored result; tasks_created_via_operation_uq on a racing retry | T3.2, T3.4 | IT-EDGE-LOP-01 | Planned |
-| EDGE-LOP-02 | per-item operations; retry re-issues non-terminal items only | T3.7 | IT-EDGE-LOP-02 | Planned |
-| EDGE-LOP-03 | launchRun Pending with queue position; dependency PRECONDITION recorded refused | T3.7 | IT-EDGE-LOP-03 | Planned |
-| EDGE-LOP-04 | applyTriageVerdict under launch_intent none; C2 skip | T3.5 | IT-EDGE-LOP-04 | Planned |
-| TST-01 | zod statement schema; trigger task_statement_revisions_immutable | T3.1, T3.4 | IT-TST-01 | Planned |
-| TST-02 | tasks.revision; updateTask FOR UPDATE with expectedRevision; CONFLICT stale_revision | T3.3 | IT-TST-02 | Planned |
-| TST-03 | renderStatementPrompt pure deterministic render | T3.4 | UT-TST-03 | Planned |
-| TST-04 | librarian_task_links meaning, message range and statement_revision | T3.1, T3.4 | IT-TST-04 | Planned |
-| TST-05 | task_publish_excerpt as a task comment plus mentioned link | T3.6 | IT-TST-05 | Planned |
-| TST-06 | ON DELETE SET NULL message refs; clear history keeps tasks, statements and excerpts | T3.1, T6.8 | IT-TST-06 | Planned |
-| TST-07 | BACKLOG_GATED_FIELDS gate in acceptStatement; PRECONDITION receipt naming the seams | T3.4 | IT-TST-07 | Planned |
-| TST-08 | getLinkedWork batched visibility-filtered read | T3.10 | IT-TST-08 | Planned |
-| EDGE-TST-01 | BACKLOG_GATED_FIELDS refusal on an InFlight task | T3.4 | IT-EDGE-TST-01 | Planned |
-| EDGE-TST-02 | nulled link message refs render the unavailable state | T3.10, T6.8 | IT-EDGE-TST-02 | Planned |
-| CLR-01 | CHECK task_clarifications_origin_shape_check | T4.1 | IT-CLR-01 | Planned |
-| CLR-02 | answerHitl minimum role member at creation and at answer | T4.2 | IT-CLR-02 | Planned |
-| CLR-03 | inbox_items clarification_requested; fifth computeDecisionsQueue source (ADR-169 amendment) | T4.2, T4.4, T4.7 | IT-CLR-03 | Planned |
-| CLR-04 | CHECK task_clarifications_status_shape_check; status CAS; superseding row | T4.1, T4.2 | IT-CLR-04 | Planned |
-| CLR-05 | TaskLaunchability clarification_pending; deriveWorkStage clarificationPending; decideFire explicit arm | T4.3 | IT-CLR-05 | Planned |
-| CLR-06 | librarian_followup access check; task detail clarifications section | T4.5, T4.7, T5.2 | IT-CLR-06 | Planned |
-| CLR-07 | answerClarification leaves statement, revision and launch state | T4.2 | IT-CLR-07 | Planned |
-| CLR-08 | cancelClarification cascades; task.clarification_cancelled | T4.5 | IT-CLR-08 | Planned |
-| CLR-09 | session answer route; ext twin requiring exact hitl:respond:human | T4.2 | IT-CLR-09 | Planned |
-| CLR-10 | composeEffectivePrompt folds user-origin answers | T4.6 | IT-CLR-10 | Planned |
-| EDGE-CLR-01 | live member check at answer; deactivation cascade | T4.2, T4.5 | IT-EDGE-CLR-01 | Planned |
-| EDGE-CLR-02 | row lock plus status CAS on answer | T4.2 | IT-EDGE-CLR-02 | Planned |
-| LMM-01 | POST /api/v1/ext/librarian/memory in owner-message turns only; memory_suggestion card | T6.2 | IT-LMM-01 | Planned |
-| LMM-02 | librarian_memory_item_revisions; trigger librarian_memory_items_content_immutable | T6.1, T6.2 | IT-LMM-02 | Planned |
-| LMM-03 | composer source_project_ids re-check; summary invalidated and rebuild queued | T6.4 | IT-LMM-03 | Planned |
-| LMM-04 | active-segment composer selection; librarian_history_search labelled results | T6.4, T6.7 | IT-LMM-04 | Planned |
-| LMM-05 | reset_state barrier; context_epoch bump; cards cleared_by_reset; system_sweep backstop | T6.5 | IT-LMM-05 | Planned |
-| LMM-06 | forgotten_at; librarian_memory_tombstones; epoch bump | T6.6 | IT-LMM-06 | Planned |
-| LMM-07 | CAS on segment ordinal, forget_generation and history_generation | T6.3, T6.6 | IT-LMM-07 | Planned |
-| LMM-08 | clear-preview digest; clear transaction; workspace.release and transcript purge | T6.8 | IT-LMM-08 | Planned |
-| LMM-09 | message render mask by source_project_ids | T6.4 | IT-LMM-09 | Planned |
-| LMM-10 | system_sweep retention pass; MAISTER_LIBRARIAN_HISTORY_RETENTION_DAYS and MAISTER_LIBRARIAN_SNAPSHOT_RETENTION_DAYS | T6.9 | IT-LMM-10 | Planned |
-| LMM-11 | ESLint no-restricted-imports fence on web/lib/librarian | T6.2 | IT-LMM-11 | Planned |
-| LMM-12 | snapshot memory_item_revisions rendered as used-in-this-reply chips | T6.2 | IT-LMM-12 | Planned |
-| EDGE-LMM-01 | fenced summary CAS after a reset acknowledgement | T6.3 | IT-EDGE-LMM-01 | Planned |
-| EDGE-LMM-02 | tombstone plus epoch bump during a running owner turn | T6.6 | IT-EDGE-LMM-02 | Planned |
-| LUI-01 | librarian-trigger.tsx in top-nav.tsx; indicator from read_through_seq and pending owner cards | T2.15, T5.3 | UT-LUI-01 plus E2E-LUI-01 | Partial (action_required from pending owner cards: T5.3) |
+| EDGE-LAU-02 | owner-resolved conversation; 404 on a foreign id | T2.12 | IT-EDGE-LAU-02 | Implemented |
+| EDGE-LAU-03 | handleExt archived-project 404; operation not_applied reconcile | T1.3, T1.5, T3.2 | IT-EDGE-LAU-03 | Implemented |
+| EDGE-LAU-04 | summary profile with mcps.allowServers empty; any tool call fails the turn capability_trip | T6.3 | IT-EDGE-LAU-04 | Implemented |
+| LOP-01 | Idempotency-Key from operationKey; handleExt idempotency required; finalize inside recordRequiredTokenAudit | T1.6, T3.2 | IT-LOP-01 | Implemented |
+| LOP-02 | UNIQUE librarian_operations_key_uq; canonical digest; CONFLICT idempotency_payload_mismatch and duplicate_of_operation | T3.1, T3.2 | IT-LOP-02 | Implemented |
+| LOP-03 | UNIQUE tasks_created_via_operation_uq, task_comments_via_operation_uq, runs_librarian_operation_uq; MAISTER_LIBRARIAN_OPERATION_RECONCILE_SECONDS admission gate | T2.16, T3.1, T3.2, T3.7 | IT-LOP-03 | Implemented |
+| LOP-04 | one librarian_operations row per batch item; per-item receipt | T3.7 | E2E-LOP-04 | Implemented |
+| LOP-05 | tasks.launch_intent none on librarian create; applyTriageVerdict and C2 eligibility | T3.4, T3.5 | IT-LOP-05 | Implemented |
+| LOP-06 | ext send-to-triage with launchIntent in the sendTaskToTriage transaction | T3.5 | IT-LOP-06 | Implemented |
+| LOP-07 | launchRun preconditions unchanged; runs.librarian_operation_id in the insert transaction | T3.7 | IT-LOP-07 | Implemented |
+| LOP-08 | librarian_cards target_revision and payload_digest; decide refuses CONFLICT target_changed; MAISTER_LIBRARIAN_CONFIRMATION_TTL_MINUTES | T3.9, T6.9 | IT-LOP-08 | Implemented |
+| LOP-09 | session card decide as HitlActor kind user through respondToHitl, promoteRun and discard | T3.9 | IT-LOP-09 | Implemented |
+| LOP-10 | POST /api/v1/ext/runs/{runId}/operator-message outcome enum; agent_turns.requested_by_user_id | T3.8 | IT-LOP-10 | Implemented |
+| LOP-11 | UNIQUE librarian_updates_event_uq; librarian_followup consumer access check | T5.1, T5.2 | IT-LOP-11 | Implemented |
+| LOP-12 | librarian_updates.attempts at most 5; CHECK librarian_updates_failed_has_error_check | T5.2 | IT-LOP-12 | Implemented |
+| EDGE-LOP-01 | same-key stored result; tasks_created_via_operation_uq on a racing retry | T3.2, T3.4 | IT-EDGE-LOP-01 | Implemented |
+| EDGE-LOP-02 | per-item operations; retry re-issues non-terminal items only | T3.7 | IT-EDGE-LOP-02 | Implemented |
+| EDGE-LOP-03 | launchRun Pending with queue position; dependency PRECONDITION recorded refused | T3.7 | IT-EDGE-LOP-03 | Implemented |
+| EDGE-LOP-04 | applyTriageVerdict under launch_intent none; C2 skip | T3.5 | IT-EDGE-LOP-04 | Implemented |
+| TST-01 | zod statement schema; trigger task_statement_revisions_immutable | T3.1, T3.4 | IT-TST-01 | Implemented |
+| TST-02 | tasks.revision; updateTask FOR UPDATE with expectedRevision; CONFLICT stale_revision | T3.3 | IT-TST-02 | Implemented |
+| TST-03 | renderStatementPrompt pure deterministic render | T3.4 | UT-TST-03 | Implemented |
+| TST-04 | librarian_task_links meaning, message range and statement_revision | T3.1, T3.4 | IT-TST-04 | Implemented |
+| TST-05 | task_publish_excerpt as a task comment plus mentioned link | T3.6 | IT-TST-05 | Implemented |
+| TST-06 | ON DELETE SET NULL message refs; clear history keeps tasks, statements and excerpts | T3.1, T6.8 | E2E-TST-06 | Implemented |
+| TST-07 | BACKLOG_GATED_FIELDS gate in acceptStatement; PRECONDITION receipt naming the seams | T3.4 | IT-TST-07 | Implemented |
+| TST-08 | getLinkedWork batched visibility-filtered read | T3.10 | IT-TST-08 | Implemented |
+| EDGE-TST-01 | BACKLOG_GATED_FIELDS refusal on an InFlight task | T3.4 | IT-EDGE-TST-01 | Implemented |
+| EDGE-TST-02 | nulled link message refs render the unavailable state | T3.10, T6.8 | IT-EDGE-TST-02 | Implemented |
+| CLR-01 | CHECK task_clarifications_origin_shape_check | T4.1 | IT-CLR-01 | Implemented |
+| CLR-02 | answerHitl minimum role member at creation and at answer | T4.2 | IT-CLR-02 | Implemented |
+| CLR-03 | inbox_items clarification_requested; fifth computeDecisionsQueue source (ADR-169 amendment) | T4.2, T4.4, T4.7 | IT-CLR-03 | Implemented |
+| CLR-04 | CHECK task_clarifications_status_shape_check; status CAS; superseding row | T4.1, T4.2 | IT-CLR-04 | Implemented |
+| CLR-05 | TaskLaunchability clarification_pending; deriveWorkStage clarificationPending; decideFire explicit arm | T4.3 | IT-CLR-05 | Implemented |
+| CLR-06 | librarian_followup access check; task detail clarifications section | T4.5, T4.7, T5.2 | IT-CLR-06 | Implemented |
+| CLR-07 | answerClarification leaves statement, revision and launch state | T4.2 | IT-CLR-07 | Implemented |
+| CLR-08 | cancelClarification cascades; task.clarification_cancelled | T4.5 | IT-CLR-08 | Implemented |
+| CLR-09 | session answer route; ext twin requiring exact hitl:respond:human | T4.2 | IT-CLR-09 | Implemented |
+| CLR-10 | composeEffectivePrompt folds user-origin answers | T4.6 | IT-CLR-10 | Implemented |
+| EDGE-CLR-01 | live member check at answer; deactivation cascade | T4.2, T4.5 | IT-EDGE-CLR-01 | Implemented |
+| EDGE-CLR-02 | row lock plus status CAS on answer | T4.2 | IT-EDGE-CLR-02 | Implemented |
+| LMM-01 | POST /api/v1/ext/librarian/memory in owner-message turns only; memory_suggestion card | T6.2 | IT-LMM-01 | Implemented |
+| LMM-02 | librarian_memory_item_revisions; trigger librarian_memory_items_content_immutable | T6.1, T6.2 | IT-LMM-02 | Implemented |
+| LMM-03 | composer source_project_ids re-check; summary invalidated and rebuild queued | T6.4 | IT-LMM-03 | Implemented |
+| LMM-04 | active-segment composer selection; librarian_history_search labelled results | T6.4, T6.7 | IT-LMM-04 | Implemented |
+| LMM-05 | reset_state barrier; context_epoch bump; cards cleared_by_reset; system_sweep backstop | T6.5 | IT-LMM-05 | Implemented |
+| LMM-06 | forgotten_at; librarian_memory_tombstones; epoch bump | T6.6 | IT-LMM-06 | Implemented |
+| LMM-07 | CAS on segment ordinal, forget_generation and history_generation | T6.3, T6.6 | IT-LMM-07 | Implemented |
+| LMM-08 | clear-preview digest; clear transaction; workspace.release and transcript purge | T6.8 | IT-LMM-08 | Implemented |
+| LMM-09 | message render mask by source_project_ids | T6.4 | IT-LMM-09 | Implemented |
+| LMM-10 | system_sweep retention pass; MAISTER_LIBRARIAN_HISTORY_RETENTION_DAYS and MAISTER_LIBRARIAN_SNAPSHOT_RETENTION_DAYS | T6.9 | IT-LMM-10 | Implemented |
+| LMM-11 | ESLint no-restricted-imports fence on web/lib/librarian | T6.2 | IT-LMM-11 | Implemented |
+| LMM-12 | snapshot memory_item_revisions rendered as used-in-this-reply chips | T6.2 | IT-LMM-12 | Implemented |
+| EDGE-LMM-01 | fenced summary CAS after a reset acknowledgement | T6.3 | IT-EDGE-LMM-01 | Implemented |
+| EDGE-LMM-02 | tombstone plus epoch bump during a running owner turn | T6.6 | IT-EDGE-LMM-02 | Implemented |
+| LUI-01 | librarian-trigger.tsx in top-nav.tsx; indicator from read_through_seq and pending owner cards | T2.15, T5.3 | UT-LUI-01 plus E2E-LUI-01 | Implemented |
 | LUI-02 | librarian-panel.tsx mounted in the authenticated app layout | T2.15 | E2E-LUI-02 | Implemented |
 | LUI-03 | panel breakpoints xl and md; 390 px viewport | T2.15 | E2E-LUI-03 | Implemented |
 | LUI-04 | librarian_messages.subject written at send | T2.4 | IT-LUI-04 | Implemented |
 | LUI-05 | useModalA11y in the modal presentations; focus restore to the invoker | T2.15 | E2E-LUI-05 | Implemented |
 | LUI-06 | message list scroll anchoring and jump-to-latest | T2.15 | UT-LUI-06 | Implemented |
-| LUI-07 | distinct Stop response and Stop run controls; disabled reasons | T2.15, T3.10 | UT-LUI-07 | Partial (Stop run on a run chip: T3.10) |
-| LUI-08 | librarian i18n namespace in web/messages en.json and ru.json | T2.15, T3.10, T4.7 | UT-LUI-08 | Partial (card and clarification keys: T3.10, T4.7) |
+| LUI-07 | distinct Stop response and Stop run controls; disabled reasons | T2.15, T3.10 | UT-LUI-07 | Implemented |
+| LUI-08 | librarian i18n namespace in web/messages en.json and ru.json | T2.15, T3.10, T4.7 | UT-LUI-08 | Implemented |
 | LUI-09 | no Cmd/Ctrl+K binding; scratch shortcut intact | T2.15 | E2E-LUI-09 | Implemented |
-| LUI-10 | getLinkedWork live region | T3.10 | IT-LUI-10 | Planned |
+| LUI-10 | getLinkedWork live region | T3.10 | IT-LUI-10 | Implemented |
 
 ## Brief traceability
 

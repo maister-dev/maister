@@ -120,7 +120,49 @@ function request(recipientUserId: string, blocking = true) {
 }
 
 describe("user-origin task clarification", () => {
-  it("IT-CLR-02/04/07/10: checks live recipient role, answers once, folds prompt, and corrects without changing task", async () => {
+  it("IT-EDGE-CLR-02: concurrent answers settle one open clarification once", async () => {
+    const seeded = await setup();
+    const opened = await requestClarification(
+      {
+        taskId: seeded.taskId,
+        requesterUserId: seeded.requesterId,
+        request: request(seeded.recipientId),
+      },
+      db,
+    );
+    const answer = (body: string) =>
+      answerClarification(
+        {
+          taskId: seeded.taskId,
+          clarificationId: opened.clarificationId,
+          recipientUserId: seeded.recipientId,
+          answer: body,
+        },
+        db,
+      );
+    const outcomes = await Promise.allSettled([
+      answer("First answer"),
+      answer("Second answer"),
+    ]);
+
+    expect(
+      outcomes.filter((outcome) => outcome.status === "fulfilled"),
+    ).toHaveLength(1);
+    const refused = outcomes.find((outcome) => outcome.status === "rejected");
+
+    expect(refused).toBeDefined();
+    if (refused?.status === "rejected")
+      expect(refused.reason).toMatchObject({ code: "CONFLICT" });
+    const [stored] = await db
+      .select()
+      .from(taskClarifications)
+      .where(eq(taskClarifications.id, opened.clarificationId));
+
+    expect(stored.status).toBe("answered");
+    expect(["First answer", "Second answer"]).toContain(stored.answer);
+  });
+
+  it("IT-CLR-02 IT-CLR-04 IT-CLR-07 IT-CLR-10 IT-EDGE-CLR-01: checks live recipient role, answers once, folds prompt, and corrects without changing task", async () => {
     const seeded = await setup();
 
     await expect(

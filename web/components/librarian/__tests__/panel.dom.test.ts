@@ -73,6 +73,7 @@ type Msg = {
   authorKind: "owner" | "librarian" | "system";
   body: string;
   deliveryState: string;
+  usedMemoryItemIds?: string[];
 };
 
 const message = (
@@ -100,7 +101,7 @@ function conversationView() {
     conversation: {
       id: "conv",
       runId: "11111111-1111-4111-8111-111111111111",
-      resetState: "idle",
+      resetState: "none",
       readThroughSeq: String(serverMessages.length),
       lastSeq: String(serverMessages.length),
       memoryEnabledNextSegment: true,
@@ -149,7 +150,7 @@ const fetchMock = vi.fn(
           card: null,
           update: null,
           taskChips: [],
-          usedMemoryItemIds: [],
+          usedMemoryItemIds: row.usedMemoryItemIds ?? [],
           createdAt: new Date().toISOString(),
         })),
         hasMore: false,
@@ -315,6 +316,42 @@ describe("IT-LUI-10: linked work and confirmation cards", () => {
     });
     expect(q("librarian-card-accepted")).not.toBeNull();
     expect(q("librarian-card-accepted")?.querySelector("button")).toBeNull();
+  });
+
+  it("IT-EDGE-TST-02: a surviving task link labels its cleared conversation source unavailable", async () => {
+    serverTasks = [
+      {
+        taskId: "task-after-clear",
+        meaning: "created_from",
+        fromMessageId: null,
+        toMessageId: null,
+        available: true,
+        projectSlug: "board",
+        number: 7,
+        title: "Retained task",
+        status: "Backlog",
+      },
+    ];
+
+    await mount();
+    await openPanel();
+    expect(q("librarian-linked-work")?.textContent).toContain("board-7");
+    expect(q("librarian-source-unavailable")?.textContent).toBe(
+      "linkedSourceUnavailable",
+    );
+  });
+
+  it("IT-LMM-12: a reply exposes the memory snapshot marker as a chip", async () => {
+    serverMessages = [
+      {
+        ...message(1),
+        usedMemoryItemIds: ["memory-item-1"],
+      },
+    ];
+
+    await mount();
+    await openPanel();
+    expect(q("librarian-used-memory")?.textContent).toBe("memoryUsedInReply");
   });
 
   it("links a clarification receipt to its task", async () => {

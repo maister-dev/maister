@@ -7,10 +7,16 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import * as schemaModule from "@/lib/db/schema";
 import { loadC2CandidateRows } from "@/lib/scheduler/c2-eligibility";
 import { runSchedulerTick } from "@/lib/scheduler/tick-service";
-import { applyTriageVerdict, sendTaskToTriageInTransaction } from "@/lib/services/triage";
+import {
+  applyTriageVerdict,
+  sendTaskToTriageInTransaction,
+} from "@/lib/services/triage";
 import { seedActiveUser } from "@/test-support/librarian-seed";
 import { seedProject } from "@/test-support/execution-host-seed";
-import { startMainPostgresTestDb, type StartedPostgresTestDb } from "@/test-support/pg-container";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 
 const schema = schemaModule as unknown as Record<string, any>;
 type Intent = null | "none" | "triage_only" | "triage_then_launch";
@@ -66,26 +72,31 @@ describe("D8 launch intent", () => {
     ["triage_only", true, null],
     ["triage_then_launch", false, null],
     ["triage_then_launch", true, "auto"],
-  ] as const)("IT-LOP-06: intent %s, enqueue %s => %s", async (intent, enqueue, expectedMode) => {
-    const taskId = await seedTask(intent);
-    await db.transaction(async (tx) => {
-      await applyTriageVerdict(tx, {
-        taskId,
-        projectId,
-        verdict: { flowId },
-        actor: { type: "user", id: userId },
-        enqueue,
+  ] as const)(
+    "IT-LOP-06: intent %s, enqueue %s => %s",
+    async (intent, enqueue, expectedMode) => {
+      const taskId = await seedTask(intent);
+      await db.transaction(async (tx) => {
+        await applyTriageVerdict(tx, {
+          taskId,
+          projectId,
+          verdict: { flowId },
+          actor: { type: "user", id: userId },
+          enqueue,
+        });
       });
-    });
 
-    const rows = await db.execute(sql`
+      const rows = await db.execute(sql`
       SELECT launch_mode, launch_armed_at FROM tasks WHERE id = ${taskId}
     `);
-    expect(rows.rows[0]?.launch_mode).toBe(expectedMode);
-    expect(rows.rows[0]?.launch_armed_at === null).toBe(expectedMode === null);
-  });
+      expect(rows.rows[0]?.launch_mode).toBe(expectedMode);
+      expect(rows.rows[0]?.launch_armed_at === null).toBe(
+        expectedMode === null,
+      );
+    },
+  );
 
-  it("IT-LOP-05: intent none survives triage and C2 refuses even a stale auto arm", async () => {
+  it("IT-LOP-05 IT-EDGE-LOP-04: intent none survives triage and C2 refuses even a stale auto arm", async () => {
     const taskId = await seedTask("none");
     await db.transaction(async (tx) => {
       await applyTriageVerdict(tx, {
@@ -96,21 +107,29 @@ describe("D8 launch intent", () => {
         enqueue: true,
       });
     });
-    await db.execute(sql`UPDATE tasks SET launch_mode = NULL WHERE id <> ${taskId}`);
-    await db.execute(sql`UPDATE tasks SET launch_mode = 'auto' WHERE id = ${taskId}`);
+    await db.execute(
+      sql`UPDATE tasks SET launch_mode = NULL WHERE id <> ${taskId}`,
+    );
+    await db.execute(
+      sql`UPDATE tasks SET launch_mode = 'auto' WHERE id = ${taskId}`,
+    );
 
     const candidates = await loadC2CandidateRows(db);
     expect(candidates).toHaveLength(0);
 
     const tick = await runSchedulerTick({ jobKind: "auto_launch_triaged" });
     expect(tick).toMatchObject({ failedCount: 0 });
-    const runs = await db.execute(sql`SELECT id FROM runs WHERE task_id = ${taskId}`);
+    const runs = await db.execute(
+      sql`SELECT id FROM runs WHERE task_id = ${taskId}`,
+    );
     expect(runs.rows).toHaveLength(0);
   });
 
   it("IT-LOP-06: send-to-triage writes intent, clears old arm, and emits requeue atomically", async () => {
     const taskId = await seedTask("none");
-    await db.execute(sql`UPDATE tasks SET triage_status = 'triaged', launch_mode = 'auto' WHERE id = ${taskId}`);
+    await db.execute(
+      sql`UPDATE tasks SET triage_status = 'triaged', launch_mode = 'auto' WHERE id = ${taskId}`,
+    );
 
     await db.transaction(async (tx) => {
       await sendTaskToTriageInTransaction(tx, {

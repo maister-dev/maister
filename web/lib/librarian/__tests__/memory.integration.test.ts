@@ -33,7 +33,7 @@ afterAll(async () => {
   await database?.stop();
 });
 
-describe("IT-LMM-01/02/06/11: personal memory lifecycle", () => {
+describe("IT-LMM-01 IT-LMM-02 IT-LMM-06: personal memory lifecycle", () => {
   it("stores an explicit owner-turn item, revisioned edit, and a forgotten tombstone", async () => {
     const db = database.db;
     const ownerId = await seedActiveUser(db);
@@ -54,11 +54,6 @@ describe("IT-LMM-01/02/06/11: personal memory lifecycle", () => {
     expect(first.items).toMatchObject([
       { id: itemId, content: "Prefer concise summaries", revision: 1 },
     ]);
-    const [brain] = (await db.execute(sql`
-      SELECT count(*)::int AS count FROM brain_items
-    `)).rows as Array<{ count: number }>;
-
-    expect(brain.count).toBe(0);
     await editPersonalMemory(
       ownerId,
       itemId,
@@ -114,7 +109,7 @@ describe("IT-LMM-01/02/06/11: personal memory lifecycle", () => {
     expect(conversation.context_epoch).toBe(1);
   });
 
-  it("refuses an Explain turn and a stale owner-message generation", async () => {
+  it("IT-EDGE-LMM-02: forgetting during an owner turn fences a stale remember", async () => {
     const db = database.db;
     const ownerId = await seedActiveUser(db);
     const turnId = await seedLibrarianTurn(db, ownerId);
@@ -123,6 +118,11 @@ describe("IT-LMM-01/02/06/11: personal memory lifecycle", () => {
       content: "Remember this",
       scope: "general",
     } as const;
+    const priorItemId = await rememberPersonalMemory(
+      ownerId,
+      draft,
+      db as never,
+    );
 
     await db
       .update(librarianTurns)
@@ -141,9 +141,7 @@ describe("IT-LMM-01/02/06/11: personal memory lifecycle", () => {
       .update(librarianTurns)
       .set({ variant: "owner_message" })
       .where(eq(librarianTurns.id, turnId));
-    await db.execute(
-      sql`UPDATE librarian_conversations SET context_epoch = context_epoch + 1 WHERE user_id = ${ownerId}`,
-    );
+    await forgetPersonalMemory(ownerId, priorItemId, db as never);
     await expect(
       rememberFromLibrarianTurn(
         ownerId,

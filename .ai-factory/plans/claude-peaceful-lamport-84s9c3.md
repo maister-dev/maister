@@ -1379,38 +1379,48 @@ kept; progress across batches). **Log**: `info` batch totals.
 
 ### Phase 7 — Qualification, documentation, reconciliation
 
-**T7.1 [ ] — Acceptance E2E `L-01..L-12`.** `web/e2e/librarian-*.spec.ts` on the mock
+**T7.1 [x] — Acceptance E2E `L-01..L-12`.** `web/e2e/librarian-*.spec.ts` on the mock
 librarian adapter (all added to `AUTHED_SPEC`), one spec per scenario or a small group;
 L-04 and L-07 include web and supervisor restarts; L-05 and L-06 run with seeded
 viewer/unrelated-member/admin users; mobile viewport 390 px for L-01.
 
-**T7.2 [ ] — Live-adapter qualification.** `scripts/qualify-librarian.mjs` + an
+**T7.2 [x] — Live-adapter qualification.** `scripts/qualify-librarian.mjs` + an
 evidence record under `docs/spikes/2026-…-librarian-qualification.md`: claude and codex
 runners, representative PO scenarios (L-01, L-02 with a real duplicate, L-03, L-04,
 L-08 with an injected instruction in a teammate answer, L-12), plus the D5 L1/L2
 built-in denial check. Records runner, model, package/engine provenance and outcome
 per scenario; no private bodies. Not in CI. **Parity**: the scenario table is the same
 one T7.1 runs against the mock adapter, so fake and real peers are compared on one
-table.
+table. Codex completed the behavioral probes but failed D5 qualification and is
+ineligible by the runner guard (ADR-184 amendment); it is not counted as a
+supported librarian adapter.
 
-**T7.3 [ ] — Operator and user documentation.** EN: how the librarian works, admin
+**T7.3 [x] — Operator and user documentation.** EN: how the librarian works, admin
 enablement, budgets, retention, what reset/forget/clear do. RU: the user manual
 section (ADR-158) under `docs/ru/`. Update `README.md` "What MAIster does" only if the
 owner wants the librarian listed.
 
-**T7.4 [ ] — Adversarial review.** One refute-the-design pass over authority (token
+**T7.4 [x] — Adversarial review.** One refute-the-design pass over authority (token
 scope, live RBAC, visibility), intent (teammate text, retrieved text, Explain turns),
 idempotency and the reset barrier; each finding fixed or recorded in the ADR with a
 reason. Repeat after each fix cycle.
 
-**T7.5 [ ] — As-built reconciliation.** Flip `(Designed)` → `(Implemented)` only for
+**T7.5 [x] — As-built reconciliation.** Flip `(Designed)` → `(Implemented)` only for
 pieces with executed tests; traceability `Status` → `Implemented`; ROADMAP via
 `/aif-roadmap`; `CLAUDE.md`/`web/CLAUDE.md` one-line mentions where the root file
 lists shipped domains.
 
-**T7.6 [ ] — Release gate.** Full unit/integration suites, supervisor and mcp suites,
+**T7.6 [x] — Release gate.** Full unit/integration suites, supervisor and mcp suites,
 `pnpm validate:docs`, `pnpm validate:contracts`, coverage gate, Playwright librarian
 specs, lint and typecheck green; qualification record complete.
+
+Release evidence (2026-09-28): web unit 875 files / 9,095 tests passed; web
+integration 568 files / 4,992 tests passed (2 files / 2 tests skipped);
+supervisor unit 466 and integration 284 tests passed; MCP unit 352 and
+integration 6 tests passed; librarian Playwright 13 tests passed. Docs,
+contracts, M51 and librarian coverage, typechecks, and lint passed. The
+live-adapter results and Codex runner exclusion are recorded in
+`docs/spikes/2026-09-27-librarian-qualification.md`.
 
 > **Checkpoint 8** — `test(librarian): L-01..L-12 acceptance, live-adapter qualification and docs`
 
@@ -1428,7 +1438,7 @@ ADR (named in brackets).
   before adopting it. `WorkspaceRegistry.release` deletes nothing today: releasing a
   `_librarian` directory handle becomes a supervisor-side purge of the cwd and of
   `~/.claude/projects/<encoded realpath>/` (codex's composed home already lives in the
-  cwd). The librarian runner is restricted to the `claude|codex` capabilities and may
+  cwd). The librarian runner may
   not set `HOME`/`CLAUDE_CONFIG_DIR` in `executor.env`.
 - `librarian_turns.status` gains `withdrawn`; `librarian_conversations` gains a
   monotonic `last_seq` counter (a deleted message never frees its `seq`);
@@ -1446,6 +1456,11 @@ ADR (named in brackets).
   project); T2.3 lists them.
 
 **Authority (ADR-184)**
+- Live D5 qualification found no Codex equivalent to Claude's built-in deny
+  settings: ordinary host reads need not reach the ACP permission seam. The
+  Codex runner is ineligible (`builtin_denial_unverified`) even when previously
+  selected; the shipped runner guard admits Claude only. The live Codex PO
+  scenarios remain evidence for behavior, not for the host-read boundary.
 - Admission is deny-by-default: `handleExt` refuses a librarian token unless the
   route opts in (`admitLibrarian`), with `details.reason:"librarian_not_admitted"`.
   LAU-04 holds by construction (discard shares `runs:recover`, the triage verdict

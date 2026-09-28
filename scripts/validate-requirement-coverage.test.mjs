@@ -87,12 +87,9 @@ test("only describe/it/test titles count as resolvable test ids", () => {
   assert.deepEqual([...ids].sort(), ["IT-EDGE-LCV-01", "IT-LCV-01"]);
 });
 
-// Regression pin: generalizing the M51 gate must not change M51's result. At the
-// base commit the M51 matrix has exactly one pre-existing defect — the
-// EDGE-ATN-08 row cites "ADR-171 D7" instead of a plan task. When that row is
-// repaired, update this expectation to [].
-test("M51 group keeps the exact result of the retired validate-m51-coverage gate", () => {
+// Regression pin: every M51 requirement must name an enforcing plan task.
+test("M51 group has complete task and test coverage", () => {
   const { failures, ids, rows } = checkGroupCoverage(COVERAGE_GROUPS.m51);
-  assert.deepEqual(failures, ["EDGE-ATN-08: matrix row names no enforcing task"]);
+  assert.deepEqual(failures, []);
   assert.equal(ids.length, rows.size);
 });

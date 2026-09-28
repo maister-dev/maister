@@ -16,40 +16,40 @@ does **not** own task status, the board or launch
 conversation ([`librarian-memory.md`](librarian-memory.md)). Tasks own work; a
 conversation is their source, never their dependency. The decision is
 [ADR-186](../decisions.md#adr-186-task-statements-task-revision-and-conversation-provenance).
-The whole domain is **Designed**.
+The whole domain is **Implemented**.
 
 ## Domain entities
 
-- **Statement** (Designed) — `context, goal, acceptance[], constraints[],
+- **Statement** (Implemented) — `context, goal, acceptance[], constraints[],
   outOfScope[], links[], openQuestions[]`, validated by one zod schema.
-- **`task_statement_revisions`** (persisted, Designed) — PK `(task_id, revision)`,
+- **`task_statement_revisions`** (persisted, Implemented) — PK `(task_id, revision)`,
   `statement`, `author_actor_type`, `author_actor_id`, `via_operation_id`; UPDATE and
   DELETE refused by trigger `task_statement_revisions_immutable` (task deletion
   cascades as today). See the [librarian ERD](../db/librarian-domain.md).
-- **`tasks.revision`** (persisted, Designed) — `integer NOT NULL DEFAULT 0`,
+- **`tasks.revision`** (persisted, Implemented) — `integer NOT NULL DEFAULT 0`,
   incremented on every content write; `TaskDTO.revision`; the optional
   `expectedRevision` on the UI and ext PATCH.
-- **`tasks.statement_revision`** (persisted, Designed) — the accepted revision the
+- **`tasks.statement_revision`** (persisted, Implemented) — the accepted revision the
   current `tasks.prompt` was rendered from.
-- **`renderStatementPrompt`** (Designed) — pure, deterministic markdown with a fixed
+- **`renderStatementPrompt`** (Implemented) — pure, deterministic markdown with a fixed
   section order.
-- **`librarian_task_links`** (persisted, Designed) — `meaning`
+- **`librarian_task_links`** (persisted, Implemented) — `meaning`
   (`created_from | refined_in | mentioned`), `from_message_id` / `to_message_id`
   (`ON DELETE SET NULL`), `statement_revision`.
-- **Published excerpt** (Designed) — a task comment quoting conversation text, written
+- **Published excerpt** (Implemented) — a task comment quoting conversation text, written
   by the `task_publish_excerpt` operation with a `mentioned` link; it lives under
   task visibility and grants no transcript access.
-- **Task chip / linked-work read model** (Designed) — `getLinkedWork(ownerId)` in
+- **Task chip / linked-work read model** (Implemented) — `getLinkedWork(ownerId)` in
   `web/lib/librarian/read-models.ts`: key and live status, one batched,
   visibility-filtered read.
-- **`task_activity` kind `statement_accepted`** (persisted, Designed).
+- **`task_activity` kind `statement_accepted`** (persisted, Implemented).
 
 ## State machine
 
 Statement acceptance against the task's status. The accepted revision is immutable;
 a newer accept creates revision N+1. Off-Backlog, the `BACKLOG_GATED_FIELDS` gate
 refuses the accept and the running work is steered through the existing continuation
-seams instead (Designed).
+seams instead (Implemented).
 
 ```mermaid
 stateDiagram-v2
@@ -70,7 +70,7 @@ stateDiagram-v2
 
 Accepting a statement is one transaction under the task row lock: the revision check,
 the Backlog gate, the immutable revision row, the rendered prompt, the counter bump,
-the provenance link and the activity row commit together (Designed).
+the provenance link and the activity row commit together (Implemented).
 
 ```mermaid
 flowchart TD
@@ -88,7 +88,7 @@ flowchart TD
 ```
 
 Two writers race one revision. The row lock serializes them; the loser re-reads the
-advanced counter and is refused rather than overwriting (Designed).
+advanced counter and is refused rather than overwriting (Implemented).
 
 ```mermaid
 sequenceDiagram
@@ -104,7 +104,7 @@ sequenceDiagram
 ```
 
 Publishing an excerpt copies text into task content under task visibility; the
-private transcript stays private (Designed).
+private transcript stays private (Implemented).
 
 ```mermaid
 flowchart LR
@@ -117,19 +117,19 @@ flowchart LR
 
 ## Expectations
 
-- **TST-01:** A statement revision MUST hold `context, goal, acceptance[], constraints[], outOfScope[], links[], openQuestions[]`, and accepted revisions MUST be immutable, enforced by the zod statement schema and trigger `task_statement_revisions_immutable` (Designed).
-- **TST-02:** `tasks.revision` MUST increment on every content write (UI PATCH, ext PATCH, statement accept) under `SELECT … FOR UPDATE`, and a stale `expectedRevision` MUST refuse `CONFLICT{reason:"stale_revision"}`, enforced by `updateTask` (Designed).
-- **TST-03:** Accepting a statement MUST render it deterministically into `tasks.prompt` so an executor never needs the conversation, enforced by the pure `renderStatementPrompt` (Designed).
-- **TST-04:** Conversation↔task links MUST be many-to-many with meaning `created_from | refined_in | mentioned`, message range and statement revision, enforced by `librarian_task_links` (Designed).
-- **TST-05:** Publishing an excerpt MUST be an explicit operation that copies text into a task comment under task visibility, and no link MAY grant access to the transcript, enforced by the `task_publish_excerpt` operation (Designed).
-- **TST-06:** Reset or history deletion MUST NEVER delete tasks, statements or published excerpts, and a link to a deleted message MUST render an explicit unavailable state, enforced by the `ON DELETE SET NULL` message references on `librarian_task_links` (Designed).
-- **TST-07:** Statement accept MUST obey the existing `BACKLOG_GATED_FIELDS` gate, refused `PRECONDITION` unless `tasks.status='Backlog'`, and the receipt MUST name the operator-message seam and the rework claim, because a flow run re-reads `tasks.prompt` at every re-entry, enforced by `acceptStatement` through `updateTask` (Designed).
-- **TST-08:** Task chips and operation receipts MUST render key and live status from one batched, visibility-filtered read, enforced by `getLinkedWork` (Designed).
+- **TST-01:** A statement revision MUST hold `context, goal, acceptance[], constraints[], outOfScope[], links[], openQuestions[]`, and accepted revisions MUST be immutable, enforced by the zod statement schema and trigger `task_statement_revisions_immutable` (Implemented).
+- **TST-02:** `tasks.revision` MUST increment on every content write (UI PATCH, ext PATCH, statement accept) under `SELECT … FOR UPDATE`, and a stale `expectedRevision` MUST refuse `CONFLICT{reason:"stale_revision"}`, enforced by `updateTask` (Implemented).
+- **TST-03:** Accepting a statement MUST render it deterministically into `tasks.prompt` so an executor never needs the conversation, enforced by the pure `renderStatementPrompt` (Implemented).
+- **TST-04:** Conversation↔task links MUST be many-to-many with meaning `created_from | refined_in | mentioned`, message range and statement revision, enforced by `librarian_task_links` (Implemented).
+- **TST-05:** Publishing an excerpt MUST be an explicit operation that copies text into a task comment under task visibility, and no link MAY grant access to the transcript, enforced by the `task_publish_excerpt` operation (Implemented).
+- **TST-06:** Reset or history deletion MUST NEVER delete tasks, statements or published excerpts, and a link to a deleted message MUST render an explicit unavailable state, enforced by the `ON DELETE SET NULL` message references on `librarian_task_links` (Implemented).
+- **TST-07:** Statement accept MUST obey the existing `BACKLOG_GATED_FIELDS` gate, refused `PRECONDITION` unless `tasks.status='Backlog'`, and the receipt MUST name the operator-message seam and the rework claim, because a flow run re-reads `tasks.prompt` at every re-entry, enforced by `acceptStatement` through `updateTask` (Implemented).
+- **TST-08:** Task chips and operation receipts MUST render key and live status from one batched, visibility-filtered read, enforced by `getLinkedWork` (Implemented).
 
 ## Edge cases
 
-- **EDGE-TST-01:** Statement accept on an `InFlight` task — refused [`MaisterError("PRECONDITION")`](../error-taxonomy.md#codes) by the `BACKLOG_GATED_FIELDS` gate with `tasks.prompt` unchanged; the receipt names the operator-message seam and the rework claim as next steps (Designed).
-- **EDGE-TST-02:** A link whose source message was deleted — `from_message_id` / `to_message_id` are NULL after `ON DELETE SET NULL`, the task and its accepted statement stay intact, and the chip renders the explicit unavailable state instead of failing the read with [`MaisterError("PRECONDITION")`](../error-taxonomy.md#codes) (Designed).
+- **EDGE-TST-01:** Statement accept on an `InFlight` task — refused [`MaisterError("PRECONDITION")`](../error-taxonomy.md#codes) by the `BACKLOG_GATED_FIELDS` gate with `tasks.prompt` unchanged; the receipt names the operator-message seam and the rework claim as next steps (Implemented).
+- **EDGE-TST-02:** A link whose source message was deleted — `from_message_id` / `to_message_id` are NULL after `ON DELETE SET NULL`, the task and its accepted statement stay intact, and the chip renders the explicit unavailable state instead of failing the read with [`MaisterError("PRECONDITION")`](../error-taxonomy.md#codes) (Implemented).
 
 ## Linked artifacts
 

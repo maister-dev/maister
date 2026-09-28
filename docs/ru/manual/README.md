@@ -23,6 +23,7 @@
 | [10-brain.md](10-brain.md) | Мозг проекта (память) |
 | [11-studio.md](11-studio.md) | Studio и Flow-пакеты |
 | [12-settings.md](12-settings.md) | Исполнители и настройки |
+| [13-librarian.md](13-librarian.md) | Личный библиотекарь: задачи, вопросы, память и история |
 
 ## Сборка PDF
 

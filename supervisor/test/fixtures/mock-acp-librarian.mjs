@@ -32,7 +32,7 @@ function promptText(prompt) {
 }
 
 function readPlan(text) {
-  const match = /```json\s*([\s\S]*?)```/.exec(text);
+  const match = [...text.matchAll(/```json\s*([\s\S]*?)```/g)].at(-1);
 
   if (!match) return { calls: [], reply: "ok" };
   try {
@@ -130,6 +130,10 @@ class LibrarianAgent {
     );
     try {
       for (const call of calls) {
+        if (Number.isSafeInteger(call.delayMs) && call.delayMs > 0)
+          await new Promise((resolve) =>
+            setTimeout(resolve, Math.min(call.delayMs, 10_000)),
+          );
         const toolCallId = `tc-${randomUUID()}`;
         const permission = await this.connection.requestPermission({
           sessionId,

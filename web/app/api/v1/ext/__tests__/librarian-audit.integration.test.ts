@@ -1,4 +1,7 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import type { TaskStatement } from "@/lib/tasks/statement";
+
+import { randomUUID } from "node:crypto";
 
 import { sql } from "drizzle-orm";
 import { NextRequest } from "next/server";
@@ -39,8 +42,24 @@ function request(token: string, body: unknown): NextRequest {
     headers: {
       "content-type": "application/json",
       authorization: `Bearer ${token}`,
+      "Idempotency-Key": randomUUID(),
     },
   });
+}
+
+function taskBody(title: string): { title: string; statement: TaskStatement } {
+  return {
+    title,
+    statement: {
+      context: "Audit attribution test",
+      goal: title,
+      acceptance: ["Task is recorded"],
+      constraints: [],
+      outOfScope: [],
+      links: [],
+      openQuestions: [],
+    },
+  };
 }
 
 async function turnToken(turnId: string): Promise<string> {
@@ -80,7 +99,7 @@ describe("IT-LAU-07: librarian requests are attributed and fail closed on audit"
   it("records the owner and the turn on the success audit of a task create", async () => {
     const turnId = await seedLibrarianTurn(db, ownerId);
     const res = await tasks.POST(
-      request(await turnToken(turnId), { title: "Attributed", prompt: "p" }),
+      request(await turnToken(turnId), taskBody("Attributed")),
       { params: Promise.resolve({ slug: project.slug }) },
     );
 
@@ -124,7 +143,7 @@ describe("IT-LAU-07: librarian requests are attributed and fail closed on audit"
 
     try {
       await expect(
-        tasks.POST(request(await turnToken(turnId), { title, prompt: "p" }), {
+        tasks.POST(request(await turnToken(turnId), taskBody(title)), {
           params: Promise.resolve({ slug: project.slug }),
         }),
       ).rejects.toThrow(/audit sink unavailable/);

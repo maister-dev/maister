@@ -195,7 +195,7 @@ beforeEach(async () => {
 });
 
 describe("POST /api/v1/ext/projects/[slug]/tasks", () => {
-  it("IT-LOP-02/05 and IT-TST-04: a librarian create is statement-backed, linked and idempotent", async () => {
+  it("IT-LOP-02/05 IT-TST-04 IT-TST-05 IT-LAU-08: librarian effects stay owner-attributed and idempotent", async () => {
     const slug = `librarian-create-${randomUUID().slice(0, 8)}`;
     const { projectId, flowId } = await seedProject(slug);
     const userId = await seedUser("librarian-create");
@@ -205,8 +205,17 @@ describe("POST /api/v1/ext/projects/[slug]/tasks", () => {
     const turnId = randomUUID();
 
     await seedProjectMember(projectId, userId, "owner");
-    await db.insert(schema.librarianConversations).values({ id: conversationId, userId });
-    await db.insert(schema.librarianSegments).values({ id: segmentId, conversationId, ordinal: 0, startedAt: new Date() });
+    await db
+      .insert(schema.librarianConversations)
+      .values({ id: conversationId, userId });
+    await db
+      .insert(schema.librarianSegments)
+      .values({
+        id: segmentId,
+        conversationId,
+        ordinal: 0,
+        startedAt: new Date(),
+      });
     await db.insert(schema.librarianMessages).values({
       id: messageId,
       conversationId,
@@ -224,12 +233,22 @@ describe("POST /api/v1/ext/projects/[slug]/tasks", () => {
       status: "running",
       contextSnapshotId: randomUUID(),
     });
-    const token = await issueLibrarianTurnToken({
-      ownerUserId: userId,
-      turnId,
-      scopes: ["tasks:create", "tasks:update", "tasks:triage", "comments:create", "relations:create", "relations:delete"],
-      expiresAt: new Date(Date.now() + 60_000),
-    }, db);
+    const token = await issueLibrarianTurnToken(
+      {
+        ownerUserId: userId,
+        turnId,
+        scopes: [
+          "tasks:create",
+          "tasks:update",
+          "tasks:triage",
+          "comments:create",
+          "relations:create",
+          "relations:delete",
+        ],
+        expiresAt: new Date(Date.now() + 60_000),
+      },
+      db,
+    );
     const body = {
       title: "Ship the feature",
       statement: {
@@ -256,27 +275,55 @@ describe("POST /api/v1/ext/projects/[slug]/tasks", () => {
     const replay = await POST(request(), { params: Promise.resolve({ slug }) });
 
     expect(first.status).toBe(201);
-    expect(firstBody).toMatchObject({ revision: 1, launchability: "unconfigured" });
+    expect(firstBody).toMatchObject({
+      revision: 1,
+      launchability: "unconfigured",
+    });
     expect(replay.status).toBe(201);
     expect(await replay.json()).toEqual(firstBody);
 
-    const tasks = await db.select().from(schema.tasks).where(eq(schema.tasks.id, firstBody.taskId));
-    const links = await db.select().from(schema.librarianTaskLinks).where(eq(schema.librarianTaskLinks.taskId, firstBody.taskId));
-    const operations = await db.select().from(schema.librarianOperations).where(eq(schema.librarianOperations.conversationId, conversationId));
+    const tasks = await db
+      .select()
+      .from(schema.tasks)
+      .where(eq(schema.tasks.id, firstBody.taskId));
+    const links = await db
+      .select()
+      .from(schema.librarianTaskLinks)
+      .where(eq(schema.librarianTaskLinks.taskId, firstBody.taskId));
+    const operations = await db
+      .select()
+      .from(schema.librarianOperations)
+      .where(eq(schema.librarianOperations.conversationId, conversationId));
 
-    expect(tasks).toMatchObject([{ launchIntent: "none", revision: 1, createdViaOperationId: operations[0].id }]);
+    expect(tasks).toMatchObject([
+      {
+        launchIntent: "none",
+        revision: 1,
+        createdViaOperationId: operations[0].id,
+      },
+    ]);
     expect(tasks[0].prompt).toContain("## Goal\nShip the feature");
-    expect(links).toMatchObject([{ meaning: "created_from", fromMessageId: messageId, statementRevision: 1 }]);
+    expect(links).toMatchObject([
+      {
+        meaning: "created_from",
+        fromMessageId: messageId,
+        statementRevision: 1,
+      },
+    ]);
     expect(operations).toHaveLength(1);
     expect(operations[0].status).toBe("succeeded");
 
     const duplicateRequest = request();
 
     duplicateRequest.headers.set("Idempotency-Key", "create-feature-2");
-    const duplicate = await POST(duplicateRequest, { params: Promise.resolve({ slug }) });
+    const duplicate = await POST(duplicateRequest, {
+      params: Promise.resolve({ slug }),
+    });
 
     expect(duplicate.status).toBe(409);
-    expect((await duplicate.json()).details.reason).toBe("duplicate_of_operation");
+    expect((await duplicate.json()).details.reason).toBe(
+      "duplicate_of_operation",
+    );
 
     const { POST: acceptStatementRoute } = await import(
       "@/app/api/v1/ext/projects/[slug]/tasks/[taskId]/statement/route"
@@ -298,14 +345,19 @@ describe("POST /api/v1/ext/projects/[slug]/tasks", () => {
     });
 
     expect(accepted.status).toBe(200);
-    expect(await accepted.json()).toMatchObject({ revision: 2, statementRevision: 2 });
+    expect(await accepted.json()).toMatchObject({
+      revision: 2,
+      statementRevision: 2,
+    });
 
     const revisionId = randomUUID();
     const manifest = {
       schemaVersion: 1,
       name: "Bugfix",
       compat: { engine_min: "1.1.0" },
-      nodes: [{ id: "run", type: "ai_coding", action: { prompt: "Implement" } }],
+      nodes: [
+        { id: "run", type: "ai_coding", action: { prompt: "Implement" } },
+      ],
     };
 
     await db.insert(schema.flowRevisions).values({
@@ -322,87 +374,123 @@ describe("POST /api/v1/ext/projects/[slug]/tasks", () => {
       setupStatus: "not_required",
       packageStatus: "Installed",
     });
-    await db.update(schema.flows).set({
-      enabledRevisionId: revisionId,
-      manifest,
-      enablementState: "Enabled",
-      trustStatus: "trusted",
-    }).where(eq(schema.flows.id, flowId));
-    const configuredRequest = makeRequest("POST", { ...body, title: "Second feature" });
+    await db
+      .update(schema.flows)
+      .set({
+        enabledRevisionId: revisionId,
+        manifest,
+        enablementState: "Enabled",
+        trustStatus: "trusted",
+      })
+      .where(eq(schema.flows.id, flowId));
+    const configuredRequest = makeRequest("POST", {
+      ...body,
+      title: "Second feature",
+    });
 
     configuredRequest.headers.set("authorization", `Bearer ${token.secret}`);
     configuredRequest.headers.set("Idempotency-Key", "create-feature-3");
-    const configured = await POST(configuredRequest, { params: Promise.resolve({ slug }) });
+    const configured = await POST(configuredRequest, {
+      params: Promise.resolve({ slug }),
+    });
     const configuredBody = await configured.json();
 
     expect(configured.status).toBe(201);
-    expect(configuredBody).toMatchObject({ launchability: "requires_admission_check" });
-    const configuredTask = await db.select().from(schema.tasks).where(eq(schema.tasks.id, configuredBody.taskId));
+    expect(configuredBody).toMatchObject({
+      launchability: "requires_admission_check",
+    });
+    const configuredTask = await db
+      .select()
+      .from(schema.tasks)
+      .where(eq(schema.tasks.id, configuredBody.taskId));
 
     expect(configuredTask[0].flowId).toBe(flowId);
 
     const { POST: sendToTriage } = await import(
       "@/app/api/v1/ext/projects/[slug]/tasks/[taskId]/send-to-triage/route"
     );
-    const triageRequest = () => new NextRequest("http://localhost/send-to-triage", {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${token.secret}`,
-        "content-type": "application/json",
-        "Idempotency-Key": "triage-feature-1",
-      },
-      body: JSON.stringify({ launchIntent: "triage_only" }),
-    });
-    const triageParams = { params: Promise.resolve({ slug, taskId: configuredBody.taskId }) };
+    const triageRequest = () =>
+      new NextRequest("http://localhost/send-to-triage", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token.secret}`,
+          "content-type": "application/json",
+          "Idempotency-Key": "triage-feature-1",
+        },
+        body: JSON.stringify({ launchIntent: "triage_only" }),
+      });
+    const triageParams = {
+      params: Promise.resolve({ slug, taskId: configuredBody.taskId }),
+    };
     const sent = await sendToTriage(triageRequest(), triageParams);
     const sentBody = await sent.json();
     const sentAgain = await sendToTriage(triageRequest(), triageParams);
 
     expect(sent.status).toBe(200);
-    expect(sentBody).toMatchObject({ taskId: configuredBody.taskId, launchIntent: "triage_only" });
+    expect(sentBody).toMatchObject({
+      taskId: configuredBody.taskId,
+      launchIntent: "triage_only",
+    });
     expect(sentAgain.status).toBe(200);
     expect(await sentAgain.json()).toEqual(sentBody);
-    const triagedTask = await db.select().from(schema.tasks).where(eq(schema.tasks.id, configuredBody.taskId));
+    const triagedTask = await db
+      .select()
+      .from(schema.tasks)
+      .where(eq(schema.tasks.id, configuredBody.taskId));
 
     expect(triagedTask[0].launchIntent).toBe("triage_only");
 
     const { POST: commentPost } = await import(
       "@/app/api/v1/ext/projects/[slug]/tasks/[taskId]/comments/route"
     );
-    const commentRequest = () => new NextRequest("http://localhost/comments", {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${token.secret}`,
-        "content-type": "application/json",
-        "Idempotency-Key": "comment-feature-1",
-      },
-      body: JSON.stringify({ body: "Progress note" }),
-    });
-    const firstTaskParams = { params: Promise.resolve({ slug, taskId: firstBody.taskId }) };
+    const commentRequest = () =>
+      new NextRequest("http://localhost/comments", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token.secret}`,
+          "content-type": "application/json",
+          "Idempotency-Key": "comment-feature-1",
+        },
+        body: JSON.stringify({ body: "Progress note" }),
+      });
+    const firstTaskParams = {
+      params: Promise.resolve({ slug, taskId: firstBody.taskId }),
+    };
     const comment = await commentPost(commentRequest(), firstTaskParams);
     const commentBody = await comment.json();
     const commentReplay = await commentPost(commentRequest(), firstTaskParams);
 
     expect(comment.status).toBe(201);
-    expect(commentBody.comment).toMatchObject({ body: "Progress note", via: "librarian" });
+    expect(commentBody.comment).toMatchObject({
+      body: "Progress note",
+      via: "librarian",
+    });
     expect(await commentReplay.json()).toEqual(commentBody);
 
     const { POST: relationAdd, DELETE: relationRemove } = await import(
       "@/app/api/v1/ext/projects/[slug]/tasks/[taskId]/relations/route"
     );
-    const relationRequest = (method: "POST" | "DELETE", key: string) => new NextRequest(
-      "http://localhost/relations", {
+    const relationRequest = (method: "POST" | "DELETE", key: string) =>
+      new NextRequest("http://localhost/relations", {
         method,
         headers: {
           authorization: `Bearer ${token.secret}`,
           "content-type": "application/json",
           "Idempotency-Key": key,
         },
-        body: JSON.stringify({ kind: "duplicate_of", toNumber: configuredTask[0].number }),
-      },
+        body: JSON.stringify({
+          kind: "duplicate_of",
+          toNumber: configuredTask[0].number,
+        }),
+      });
+    const linked = await relationAdd(
+      relationRequest("POST", "relation-add-1"),
+      firstTaskParams,
     );
-    const linked = await relationAdd(relationRequest("POST", "relation-add-1"), firstTaskParams);
-    const unlinked = await relationRemove(relationRequest("DELETE", "relation-remove-1"), firstTaskParams);
+    const unlinked = await relationRemove(
+      relationRequest("DELETE", "relation-remove-1"),
+      firstTaskParams,
+    );
 
     expect(linked.status).toBe(201);
     expect(await linked.json()).toMatchObject({ created: true });
@@ -412,16 +500,19 @@ describe("POST /api/v1/ext/projects/[slug]/tasks", () => {
     const { POST: publishExcerpt } = await import(
       "@/app/api/v1/ext/projects/[slug]/tasks/[taskId]/publish-excerpt/route"
     );
-    const excerptRequest = () => new NextRequest("http://localhost/publish-excerpt", {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${token.secret}`,
-        "content-type": "application/json",
-        "Idempotency-Key": "excerpt-feature-1",
-      },
-      body: JSON.stringify({ excerpt: "Decision: ship the smaller change." }),
-    });
-    const excerptParams = { params: Promise.resolve({ slug, taskId: configuredBody.taskId }) };
+    const excerptRequest = () =>
+      new NextRequest("http://localhost/publish-excerpt", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token.secret}`,
+          "content-type": "application/json",
+          "Idempotency-Key": "excerpt-feature-1",
+        },
+        body: JSON.stringify({ excerpt: "Decision: ship the smaller change." }),
+      });
+    const excerptParams = {
+      params: Promise.resolve({ slug, taskId: configuredBody.taskId }),
+    };
     const excerpt = await publishExcerpt(excerptRequest(), excerptParams);
     const excerptBody = await excerpt.json();
 
@@ -431,16 +522,28 @@ describe("POST /api/v1/ext/projects/[slug]/tasks", () => {
       actor: { type: "user" },
       via: "librarian",
     });
-    expect(JSON.stringify(excerptBody)).not.toContain("/api/librarian/");
-    const linksAfterExcerpt = await db.select().from(schema.librarianTaskLinks).where(
-      eq(schema.librarianTaskLinks.taskId, configuredBody.taskId),
-    );
+    const [storedExcerpt] = await db
+      .select()
+      .from(schema.taskComments)
+      .where(eq(schema.taskComments.id, excerptBody.comment.id));
 
-    expect(linksAfterExcerpt.some((link) => link.meaning === "mentioned")).toBe(true);
+    expect(storedExcerpt).toMatchObject({ actorType: "user", actorId: userId });
+    expect(storedExcerpt.viaOperationId).toEqual(expect.any(String));
+    expect(JSON.stringify(excerptBody)).not.toContain("/api/librarian/");
+    const linksAfterExcerpt = await db
+      .select()
+      .from(schema.librarianTaskLinks)
+      .where(eq(schema.librarianTaskLinks.taskId, configuredBody.taskId));
+
+    expect(linksAfterExcerpt.some((link) => link.meaning === "mentioned")).toBe(
+      true,
+    );
     const otherMember = await seedUser("excerpt-reader");
 
     await seedProjectMember(projectId, otherMember, "member");
-    const memberToken = await issueGlobalUserToken(otherMember, ["comments:read"]);
+    const memberToken = await issueGlobalUserToken(otherMember, [
+      "comments:read",
+    ]);
     const { GET: commentsGet } = await import(
       "@/app/api/v1/ext/projects/[slug]/tasks/[taskId]/comments/route"
     );
@@ -450,7 +553,9 @@ describe("POST /api/v1/ext/projects/[slug]/tasks", () => {
     const readResponse = await commentsGet(readRequest, excerptParams);
 
     expect(readResponse.status).toBe(200);
-    expect((await readResponse.json()).comments).toContainEqual(excerptBody.comment);
+    expect((await readResponse.json()).comments).toContainEqual(
+      excerptBody.comment,
+    );
   });
 
   it("missing/invalid token → 401, no audit row", async () => {

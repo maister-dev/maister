@@ -1,9 +1,8 @@
 # Personal librarian — product requirements
 
-> **Status: product scope agreed with the owner, 2026-09-26; implementation
-> not started.** This is the implementation-planning input for the complete
-> first release. UI placement and technical proposals are identified below;
-> they still need a screen contract and the relevant ADRs before code.
+> **Status: implemented, 2026-09-27.** This brief records the agreed first-release
+> scope. The as-built contracts and acceptance evidence are tracked in
+> [librarian traceability](../system-analytics/librarian-traceability.md).
 > Source baseline: local `master` at `3c02c739`.
 > This brief replaces the librarian direction (D1/D2/D5/D7, librarian-related
 > F1/F2 and the mandatory initiative dependency) in

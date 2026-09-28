@@ -49,6 +49,7 @@ const recordHostPressureSampleMock = vi.hoisted(() => vi.fn());
 const resumeHostPausedInterruptsMock = vi.hoisted(() => vi.fn());
 const promoteNextPendingMock = vi.hoisted(() => vi.fn());
 const runLibrarianTurnSweepMock = vi.hoisted(() => vi.fn());
+const runLibrarianRetentionMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/runs/keepalive-sweeper", () => ({
   runSweepTick: runSweepTickMock,
@@ -90,6 +91,9 @@ vi.mock("@/lib/runs/sync-recovery", () => ({
 // reason, so `errors: []` keeps guarding the composition.
 vi.mock("@/lib/librarian/turn-recovery", () => ({
   runLibrarianTurnSweep: runLibrarianTurnSweepMock,
+}));
+vi.mock("@/lib/librarian/retention", () => ({
+  runLibrarianRetention: runLibrarianRetentionMock,
 }));
 // ADR-166: the execution-host reconcile pass needs the DB + the local host;
 // mocked like every other arm so `errors: []` stays a real guard.
@@ -221,6 +225,7 @@ describe("scheduler system sweeps", () => {
     runLibrarianTurnSweepMock
       .mockReset()
       .mockResolvedValue({ deadlines: 0, restarts: 0, admissions: 0 });
+    runLibrarianRetentionMock.mockReset().mockResolvedValue({ deleted: 0 });
     runSyncRecoverySweepMock.mockReset().mockResolvedValue({
       candidates: 0,
       orphanOperationsAborted: 0,
