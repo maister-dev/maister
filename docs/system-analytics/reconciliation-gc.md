@@ -617,7 +617,9 @@ the worktree GC collects (`WORKTREE_TTL_RUN_STATUSES`). See
   crashed (reason `agent-session-gone`). A `Running` run with no live session
   whose current node is a read-only gate eval (`check`/`judge`) MUST be
   re-dispatched; a `cli` node MUST be crashed (reason `cli-not-retry-safe`) and
-  NEVER auto-re-dispatched.
+  NEVER auto-re-dispatched (enforced by `classifyRunReconcile` in
+  `web/lib/reconcile.ts`, pinned by `reconcile-classify.test.ts` and
+  `reconcile-sweep.integration.test.ts`).
 - A `Running` agent run with NO `acpSessionId` match but a LIVE supervisor
   session for its `(runId, currentStepId)` MUST be SKIPPED (reason
   `live-session-by-step`), never crashed: the node's prompt is in-flight and
@@ -776,7 +778,7 @@ was before ADR-177.
 | `Running` | worktree present, no live session, current node is **agent**, **recently started** (`resume_started_at` OR latest `node_attempts.started_at` within `MAISTER_RECONCILE_GRACE_SECONDS`) | `none` | **SKIP** (grace window) | a launch/recover is still spinning its ACP session up — do NOT crash an in-flight session |
 | `Running` | worktree present, no live session, current node is **agent**, **past grace** | `none` | **CRASH** (`crashRunningRun`, reason `agent-session-gone`) | recoverability computed at UI render from `acpSessionId` presence; auto-resume of a mid-turn agent is unsafe → an explicit Recover call (operator or token, never the reconciler itself) |
 | `Running`, `runKind='scratch'` | session gone, **within grace** (`resume_started_at` OR the newest user `run_messages.created_at`, else `started_at`) | — | **SKIP** (grace window) | a launch, send, queued dispatch, Recover or idle resume is still binding its session; project and project-less runs alike (Implemented) |
-| `Running`, `runKind='scratch'` | session gone, past grace | — | **CRASH** via `markScratchCrashed` (sets both `runs.status` and `scratchRuns.dialogStatus`, closes the run's open permission rows; counted and promoted only when its CAS applied) | scratch parity; Recover is then a CAS on `Crashed` ([`scratch-runs.md`](scratch-runs.md#reconciliation-grace-and-recover-implemented)) |
+| `Running`, `runKind='scratch'` | session gone, past grace | — | **CRASH** via `markScratchCrashed` (sets both `runs.status` and `scratchRuns.dialogStatus`, closes the run's open permission rows — a stored answer marked `_closed.reason = "session_ended"` — and a project run's `run.crashed` cause carries the crash reason's token, `agent_session_gone`; counted and promoted only when its CAS applied) | scratch parity; Recover is then a CAS on `Crashed` ([`scratch-runs.md`](scratch-runs.md#reconciliation-grace-and-recover-implemented)) |
 
 ### Evidence classes (ADR-177, Implemented)
 

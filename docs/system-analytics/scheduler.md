@@ -560,6 +560,20 @@ must not enter `bundleErrors` or disable the scheduler job.
 - Deleting a seeded row through a non-UI client removes the row under the
   current route contract; the tick re-seeds known default jobs. The designed UI
   avoids that sharp path by hiding destructive actions on seeded singletons.
+- C3 scratch resume (Implemented — 2026-09-27 review fix): the gate's scratch
+  arm claims through `claimScratchIdleResume` and dispatches
+  `driveScratchIdleResume` with the placement and pre-claim state that claim
+  returned, never a post-commit re-read of `runs.execution_assignment_id`,
+  which a newer generation may have replaced. A respawn that then fails — the
+  recovery-row load, a missing ACP handle, the create — rolls the claim back
+  with its original `resume_requested_at`, so the run keeps its C3 place
+  instead of staying `Running` with no session. A project-less assistant whose
+  launching user no longer holds the edit lock (claim outcome `not_locked`) is
+  skipped and stays queued, but yields its place (`resume_requested_at` moves
+  to `now()`): the gate has no actor to refuse, and only its owner can unblock
+  it, so it must not hold the `limit(cap)` window. It resumes on a later pass
+  once the lock is taken again. See
+  [scratch runs](scratch-runs.md#reconciliation-grace-and-recover-implemented).
 
 ## Linked artifacts
 

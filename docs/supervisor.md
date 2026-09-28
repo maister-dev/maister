@@ -773,8 +773,9 @@ held by the supervisor's `PendingPermissionRegistry` with
   (the child died, not a park) and `details.reason: "permission_not_pending"`
   when the entry is `live` (the request was answered, cancelled or never
   raised). The web never fails a run on either: `session_ended` keeps the
-  answer for the crash boundary, `permission_not_pending` closes only the HITL
-  row. Once the registry entry is removed after its 30 s terminal grace the
+  answer for the crash boundary, and `permission_not_pending` closes the HITL
+  row and its response assignment in one transaction and leaves the run as it
+  is. Once the registry entry is removed after its 30 s terminal grace the
   same answer gets the retryable 503 below.
 - `409 { code: "PRECONDITION" }` — Zod validation failure on the
   request body (e.g. `action="select"` with no `optionId`).

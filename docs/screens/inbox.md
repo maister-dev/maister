@@ -88,9 +88,13 @@ control. Structured saved values appear under “Saved response” in a bounded,
 formatted view. A recognized 202 pending-delivery state updates the card before inbox refresh,
 including the `onRespond` path. A 409 for a competing answer refreshes the
 authoritative stored choice, never assumes the losing tab's selection won.
-An unsuccessful refresh keeps choices locked and offers refresh. A terminal
-410 names the ended agent session and relaunch action in feedback that remains
-after the card disappears. Refusal copy uses localized `(code, details.reason)`
+An unsuccessful refresh keeps choices locked and offers refresh. A 410
+`HITL_TIMEOUT` — `permission_not_pending` (the request is no longer pending;
+the run has moved on) or `permission_delivery_rejected` (relaunch the run) —
+raises feedback that remains after the card disappears. A 409 `session_ended`
+(the agent session ended before the answer arrived) shows its copy with no
+retry control: the crash boundary closes the row, and Recover, if offered,
+asks again. Refusal copy uses localized `(code, details.reason)`
 with a per-code fallback; prompt-owner `causeCode` alone may appear as a
 monospaced diagnostic. No raw reason token, host handle or `_delivery` value
 is rendered. Saved/delivery feedback uses `aria-live`, keeps keyboard focus

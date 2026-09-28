@@ -215,12 +215,16 @@ The landing focus follows state:
 | `Crashed`                       | Flow or agent result plus crash/recover panel; the panel carries a cause line from the run's terminal cause               |
 | `Done` / `Failed` / `Abandoned` | Frozen result with Timeline and Evidence close at hand; `Failed` / `Abandoned` add a `TerminalCauseNotice` (icon + title + cause) |
 
-**Terminal cause (Implemented).** The page reads `run.terminalCause` (the
+**Terminal cause (Implemented).** The page reads `getRunDetail`'s
+`terminalCause` (the
 [domain-event read rule](../../system-analytics/domain-events.md#terminal-cause-implemented))
-and renders a title per status, the code's localized copy
-(`run.failure.codes.<code>`) and the reason's localized copy
-(`run.terminalCause.reasons.<token>`); an unknown reason renders the code copy
-plus a muted `reason: <token>` line, never a raw code as the primary text. The
+and renders a title per status and one primary line: the reason's localized
+copy (`run.terminalCause.reasons.<token>`) leads; the code's copy
+(`run.failure.codes.<code>`) stands in only when the reason has none. A reason
+without copy is never the primary text — the code's copy, or the localized
+"No further detail was recorded." line (`run.terminalCause.unknownReason`),
+leads and a muted `reason: <token>` line follows. A raw code is never
+rendered, and a cause with neither copy nor reason renders no notice. The
 `source` is not rendered.
 
 ## Data & APIs

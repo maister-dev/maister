@@ -188,8 +188,13 @@ stateDiagram-v2
   workspace, messages, attachments, pending HITL, capability profile, the
   latest live available-command snapshot extracted from the run event log, and
   `terminalCause` (`{code, reason?, source}` or null — the terminal domain
-  event's cause, falling back to `scratch_runs.error_code` when no event exists;
-  Implemented).
+  event's cause; only for a `Crashed` or `Failed` run with no such event, and
+  only when `scratch_runs.error_code` is a `MaisterErrorCode`, it falls back to
+  `{code: <error_code>, source: "scratch"}`; Implemented). The hint renders it
+  with the run page's `TerminalCauseNotice` rule
+  ([`flow-run.md`](flow-run.md)): the reason's copy leads, the code's copy
+  stands in only when the reason has none, and a reason without copy follows
+  muted under the code's copy or a "No further detail was recorded." line.
 - `GET /api/runs/{runId}/stream` triggers live transcript refreshes.
 - `POST /api/scratch-runs/{runId}/messages` sends follow-up messages and
   message attachments; while the agent is busy it answers at acceptance with
@@ -203,7 +208,12 @@ stateDiagram-v2
   oldest is sent first. Past the existing answers (a removed workspace or an
   ended dialog → `409 PRECONDITION`; a `Review` dialog or a live host session
   → `open`), a run that is not `Crashed` is refused `409 CONFLICT
-  {reason: "scratch_not_recoverable", status, next?}` (Implemented).
+  {reason: "scratch_not_recoverable", status, next?}` (Implemented). A
+  Recover prompt that yielded before admission goes back to the queue on a
+  project run (`202 delivery: "queued"`) and answers `503` on a project-less
+  assistant run, whose row stays sent; one issued but still awaiting its
+  owner's durable application answers `202` without `stopReason` — the
+  recovery is under way (2026-09-27 review fix).
 - `POST /api/scratch-runs/{runId}/interrupt` interrupts the agent's in-flight
   turn (composer Stop) without ending the session; the dialog returns to
   `WaitingForUser` on its own.

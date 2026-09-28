@@ -70,13 +70,19 @@ details. There is no API or mutation route for this screen.
 
    Below them, **Stranded agent messages** (ADR-182 queue invariant, D-M3):
    the count of runs holding a `queued` agent message older than 10 min with
-   no owned turn claimed or dispatched and no agent prompt application open,
-   read live through the lag read model (never the persisted observation), and
-   up to 20 rows — run link, run status, message ordinal and age. Read-only; an
-   empty state says there are none. The scheduler's `system_sweep` runs the
-   same query, logs WARN `agent-message-stranded` once per stranded run (at
-   most 50 per pass) and carries the count as `strandedAgentTurns` on its
-   summary.
+   no owned turn claimed or dispatched and no agent prompt application open —
+   excluding a `NeedsInputIdle` run with `resume_requested_at` set, which the
+   resume arm and the freed-slot gate own while it waits for capacity; a
+   terminal run stays counted — and up to 20 rows: run link, run status, the
+   turn ordinal ("turn #N") and age. It is read live through the sweep's own
+   report (`reportStrandedAgentTurns`, without a logger, so a page view logs
+   no WARN), outside the lag model's snapshot; the persisted observation never
+   carries it. A failed read shows "unavailable" in place of the count and no
+   rows, and the lag panel still renders. Read-only; an empty state says there
+   are none. The scheduler's `system_sweep` runs the same report, logs WARN
+   `agent-message-stranded` once per stranded run per call (at most 50) and
+   carries the count as `strandedAgentTurns` on its summary — `null` when the
+   read failed.
 7. Scheduler clock summary and link.
 
 ## States and data

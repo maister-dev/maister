@@ -3315,7 +3315,16 @@ paths:
             `crashed`, `exited`, `lost` or `deleted`; a host
             `session_checkpointed` resumes with 202 instead): the answer stays stored, nothing is
             written to the run, and the crash boundary settles the run and
-            closes the request.
+            closes the request. **(Implemented — 2026-09-27 review fix)** An
+            identical retry of a permission row a boundary closed without
+            delivering its answer (`response._closed.reason`) is refused with
+            the reason's refusal, never 200 "already delivered": `session_ended`
+            → this 409 `session_ended`; `request_changed` | `not_requested` (a
+            resumed scratch agent asked for something else, or finished without
+            asking) → 409 `not_awaiting_input`; `permission_not_pending` and
+            `delivery_rejected` → 410 below. An in-flight answer whose row a
+            boundary closed before the host's 410 arrived gets the same
+            refusal.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ExtHitlRespondErrorBody" }
@@ -3338,7 +3347,10 @@ paths:
             rejected original permission delivery after checkpoint carries
             `permission_delivery_rejected` and requires relaunch.
             Host `410 session_checkpointed` instead becomes web 202, and host
-            `410 session_ended` becomes 409 `session_ended`.
+            `410 session_ended` becomes 409 `session_ended`. An identical retry
+            of a row closed `permission_not_pending` answers that 410 again, and
+            one closed `delivery_rejected` answers `permission_delivery_rejected`
+            with `terminal: true` (2026-09-27 review fix).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ExtHitlRespondErrorBody" }
@@ -3570,7 +3582,10 @@ components:
             (ADR-168) Optional machine-readable detail. Present on the
             insufficient-scope 403, where it names the scope THIS ROUTE
             requires — a published, caller-independent fact. It NEVER carries
-            anything about the scopes the presented token holds.
+            anything about the scopes the presented token holds. Also present
+            with a `reason` token where a route documents one — the recover
+            route's `409` outcomes, and the HITL respond errors, which refine
+            this object to `HitlRespondDetails`.
           properties:
             requiredScope:
               type: string
@@ -3578,10 +3593,15 @@ components:
                 The route's required scope label, e.g. `flows:read`. Identical
                 for every caller; also printed in this spec and in the route
                 source.
+            reason:
+              type: string
+              description: |
+                A snake_case discriminator token the route documents (for
+                example `busy`, `session_ended`); never a message.
 
     HitlRespondReason:
       type: string
-      enum: [permission_resume_in_flight, assignment_fenced, prompt_owner_deferred, prompt_owner_invariant, already_delivered, option_mismatch, not_awaiting_input, agent_session_ended, delivery_unavailable, permission_delivery_rejected, session_ended, permission_not_pending]
+      enum: [permission_resume_in_flight, assignment_fenced, prompt_owner_deferred, prompt_owner_invariant, already_delivered, option_mismatch, not_awaiting_input, agent_session_ended, delivery_unavailable, permission_delivery_rejected, session_ended, permission_not_pending, edit_lock_not_held]
       description: |
         `agent_session_ended` is deprecated: no producer since 2026-09-26 (a
         dead session answers 409 `session_ended`); it stays for clients that
@@ -3603,6 +3623,11 @@ components:
             details: { $ref: "#/components/schemas/HitlRespondDetails" }
             terminal: { type: boolean }
     ExtHitlRespondTerminalError:
+      description: |
+        The 410 `HITL_TIMEOUT` body. Not every reason is terminal:
+        `permission_not_pending` closes only the request (the run goes on),
+        `permission_delivery_rejected` carries `terminal: true` (the run is
+        `Failed`; relaunch it), and `agent_session_ended` is deprecated.
       allOf:
         - { $ref: "#/components/schemas/ExtHitlRespondErrorBody" }
         - type: object
@@ -4547,6 +4572,7 @@ components:
         - flowId
         - executorId
         - startedAt
+        - terminalCause
       properties:
         id:
           type: string
@@ -4641,8 +4667,11 @@ components:
           description: |
             (Implemented) Why the run ended `Failed | Crashed | Abandoned` — the
             `cause` of its newest terminal domain event whose kind matches
-            `status`; null for any other status. Tokens only, never a message;
-            `source: legacy` marks an event written before `cause` existed.
+            `status`; null for any other status. Always present. Tokens only,
+            never a message — `emitDomainEvent` drops a reason that is not a
+            token at the write, and the read drops a malformed one while keeping
+            the cause; `source: legacy` marks an event written before `cause`
+            existed.
           properties:
             code:
               type: string
@@ -4650,6 +4679,7 @@ components:
               description: A `MaisterErrorCode`, or null when the cause has none (an abandon).
             reason:
               type: string
+              pattern: '^[a-z][a-z0-9_]{0,63}(/[a-z][a-z0-9_]{0,63})?$'
               description: The emitter's reason token (snake_case; the orchestrator cascade writes `cascade/<token>`).
             source:
               type: string
@@ -4661,7 +4691,6 @@ components:
                   scratch,
                   agent,
                   reconcile,
-                  consensus,
                   resume,
                   operator,
                   orchestrator,

@@ -314,8 +314,8 @@ alone, neither side having touched `spawn.ts`; the 10 steering, migration,
 scratch-placement, local-package-assistant, ext-message and turn-admission
 integration files **100/100**.
 
-**Measured 2026-09-26 (ownership-residuals branch on `master` 881619a5, this
-Mac).** unit **867 files / 9066 tests, 0 failures**; supervisor **78 files /
+**Measured 2026-09-26 (ownership-residuals branch on `master` 881619a5,
+before `efc7833b` and `3ee5df87`, this Mac).** unit **867 files / 9066 tests, 0 failures**; supervisor **78 files /
 747 tests, 0 failures** (unit 46 / 466, integration 32 / 281); mcp **6 files /
 266 tests, 0 failures**; integration **552 files / 4905 tests** (2 files
 skipped). The integration lane ran at load 90-99 and 39 files were red; all 39

@@ -5218,6 +5218,13 @@ paths:
         disconnect cancels the launch and GCs the worktree/session. Frames carry
         no `id:` line (not durable). The gate failures BELOW stay JSON errors
         with their HTTP status because they precede the stream.
+        **(Implemented — ADR-182 A4, 2026-09-27 review fix)** One post-open
+        failure is not an `error` frame: when the first prompt yielded before
+        admission (`PromptIncarnationPending`, nothing issued) and its launch
+        row went back to the queue for the continuation worker's re-drive,
+        the launch ends with the normal `scratch.launch_result` frame
+        (`runStatus: Running`, `dialogStatus: WaitingForUser`) — an error
+        would invite a second launch of the same work.
       operationId: postScratchRun
       requestBody:
         required: true
@@ -5596,7 +5603,15 @@ paths:
       tags: [scratch-runs]
       summary: Implemented — recover a scratch supervisor session
       description: |
-        Requires project membership at `member` or above. If the stored
+        Requires project membership at `member` or above
+        (`operateScratchRun`); a project-less local-package assistant run
+        instead requires its launching user holding the live edit lock
+        (ADR-097). **(Implemented — 2026-09-27 review fix)** Auth-first: the
+        session is checked before the body is parsed (an unauthenticated
+        malformed request is 401, not 400), and authorization runs on a
+        minimal run lookup before the full recovery-row load, whose
+        workspace, runner or package refusals (`PRECONDITION`) an
+        unauthorized caller therefore never sees. If the stored
         supervisor session is still live, the route returns `action = open`.
         If the supervisor session is missing but the run has an
         `acp_session_id`, the route resumes through the supervisor, stores the
@@ -5648,6 +5663,15 @@ paths:
             With messages still queued (ADR-182) the prompt was queued behind
             them (`delivery: "queued"`, no `stopReason`), the dialog is
             `WaitingForUser`, and the oldest queued message is dispatched next.
+            **(Implemented — 2026-09-27 review fix)** Two more 202 shapes: on a
+            project run, a Recover prompt whose admission yielded (no durable
+            incarnation yet, nothing issued) went back to the queue —
+            `delivery: "queued"`, dialog `WaitingForUser`; and a Recover prompt
+            that was issued but whose outcome its owner applies durably later
+            (`ScratchPromptContinuationPending`) answers `{runId, action,
+            dialogStatus}` with no `stopReason` — the recovery is under way. A
+            fenced or superseded yield (another generation owns the run) still
+            refuses 409.
           content:
             application/json:
               schema:
@@ -5660,8 +5684,10 @@ paths:
                     type: string
                     enum: [queued]
                     description: |
-                      (Implemented — ADR-182) Present only when the prompt
-                      was queued behind messages that waited out the crash.
+                      (Implemented — ADR-182) Present when the prompt was
+                      queued behind messages that waited out the crash, or —
+                      on a project run — when its admission yielded and its row
+                      went back to the queue.
                   dialogStatus:
                     type: string
                     enum:
@@ -5743,7 +5769,12 @@ paths:
             prompt, so it goes back to the queue for the continuation worker's
             re-drive and the route answers `202 {delivery: "queued"}` — the
             session is live, nothing was dispatched, and the run is not
-            crashed.
+            crashed. That holds for a project run only: a project-less
+            local-package assistant's row is never re-queued (its turn is bound
+            to the operator's edit-lock generation, which no background
+            dispatcher holds — ADR-097), so
+            its yielded Recover prompt keeps the row `prompted`, leaves the
+            dialog `WaitingForUser` with the error code, and answers this 503.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -7376,7 +7407,9 @@ paths:
           the row is unclaimed (or claimed with the same optionId).
           Phase 2 calls the supervisor; on success it marks
           `respondedAt`. Conflicting optionId on retry → 409. Same
-          optionId on retry → idempotent 200. Supervisor 404 racing a
+          optionId on retry → idempotent 200, unless the row was closed
+          without its answer reaching the agent (`response._closed`, see 409
+          and 410): that retry gets the close's refusal. Supervisor 404 racing a
           concurrent winner → 200 (no `runs.status = Failed`).
           Owned Flow node permissions derive their exact command, attempt,
           ordinal, assignment and incarnation from `schema.flowPrompt`.
@@ -7704,7 +7737,18 @@ paths:
           description: |
             Caller is not a `member` or above for the run's project
             (`UNAUTHORIZED`), or the authenticated account must change its
-            password first (`PASSWORD_CHANGE_REQUIRED`).
+            password first (`PASSWORD_CHANGE_REQUIRED`). **(Implemented —
+            2026-09-27 review fix)** Also `UNAUTHORIZED` for an answer to a
+            PARKED (`NeedsInputIdle`) project-less local-package assistant
+            permission from anyone but the run's launching user: answering it
+            respawns the session into the locked working dir, so it passes
+            Recover's ADR-097 gate (`assertParkedAssistantAnswerable`, checked
+            under the run lock before the answer is stored — nothing is
+            stored). An answer the live path stored just before the host
+            parked the session is refused the same way at the resume, while
+            the run is still parked, and withdrawn if that request stored it
+            (2026-09-28 review fix). A LIVE (`NeedsInput`) assistant
+            permission stays answerable by any member (ADR-096).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -7733,12 +7777,35 @@ paths:
             `details.reason: session_ended` when the host answered 410
             `session_ended` or a reason-less 410 (a host too old to name one),
             or `permission_not_pending` while the permission's incarnation (the
-            flow prompt's own, else the run session's newest) is `crashed`,
+            flow prompt's own, else the newest incarnation of the row's host
+            session, `schema.supervisorSessionId`) is `crashed`,
             `exited`, `lost` or `deleted`: the answer stays stored
             (`respondedAt` NULL), no run state or event is written, and the
             crash boundary that settles the run closes the row. A host 410
             `session_checkpointed` is never this arm (202 resume, ADR-180). A
-            same-payload retry asks the host again and lands in the same arm.
+            same-payload retry asks the host again and lands in the same arm
+            while the row is open. **(Implemented — 2026-09-27 review fix)** A
+            boundary that closes an ANSWERED permission row without delivering
+            it marks `response._closed = {reason, at}`
+            (`web/lib/hitl-closed-answer.ts`), and an identical retry of that
+            row is refused with the reason's refusal instead of 200 "already
+            delivered": `session_ended` (the session or run ended first) → this
+            409 `session_ended`; `request_changed` (the resumed scratch agent
+            asked for a different tool, input or choice) and `not_requested`
+            (the resumed scratch turn finished without asking again) → 409
+            `not_awaiting_input`; the other two reasons answer 410 below. An
+            in-flight answer whose row a boundary closed before the host's 410
+            arrived gets the same refusal (409 `session_ended` from a boundary
+            that ended the session or run), never 200. Also `CONFLICT` with
+            `details.reason: edit_lock_not_held` when the run is a PARKED
+            (`NeedsInputIdle`) project-less local-package assistant and its
+            launching user no longer holds the package's edit lock (ADR-097):
+            refused under the run lock before the answer is stored. The
+            resume re-runs the gate for every entry while the run is still
+            parked, including an answer the live path stored just before the
+            host parked the session; that refusal (409 here, or 403
+            `UNAUTHORIZED` for another user) withdraws an answer that request
+            stored.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/HitlRespondErrorBody" }
@@ -7754,6 +7821,12 @@ paths:
                     code: CONFLICT
                     message: The agent session ended before your answer arrived, so it was not delivered.
                     details: { reason: session_ended }
+                edit-lock-not-held:
+                  summary: A parked assistant permission whose launching user lost the package's edit lock
+                  value:
+                    code: CONFLICT
+                    message: edit-lock not held — reopen the package editor to continue
+                    details: { reason: edit_lock_not_held }
         "202":
           description: |
             Idle-branch: a capacity claim authorizes resume. Owned graph node
@@ -7811,7 +7884,11 @@ paths:
             response includes `terminal: true`.
             A rejected original delivery after checkpoint returns
             `HITL_TIMEOUT` with `details.reason: permission_delivery_rejected`;
-            the operator must relaunch the run.
+            the operator must relaunch the run. **(Implemented — 2026-09-27
+            review fix)** An identical retry of a row closed `_closed.reason =
+            permission_not_pending` answers the `permission_not_pending` 410
+            again, and one closed `delivery_rejected` answers
+            `permission_delivery_rejected` with `terminal: true` — never 200.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/HitlRespondErrorBody" }
@@ -19854,8 +19931,12 @@ components:
       description: |
         (Implemented) A run's terminal cause, read from its terminal domain
         event (`run.failed | run.crashed | run.abandoned` payload `cause`).
-        Tokens only — never a message. `source: legacy` marks an event written
-        before `cause` existed, synthesized from its `reason` / `errorCode`.
+        Tokens only — never a message: `emitDomainEvent` normalizes a reason
+        at the write (snake_case, a `:<message>` suffix dropped) and drops one
+        that is still not a token, keeping `code` and `source`; the read drops
+        a malformed reason, never the whole cause. `source: legacy` marks an
+        event written before `cause` existed, synthesized from its `reason` /
+        `errorCode`.
       properties:
         code:
           type: string
@@ -19863,7 +19944,8 @@ components:
           description: A `MaisterErrorCode`, or null when the cause has none (an abandon).
         reason:
           type: string
-          description: The emitter's reason token (snake_case where MAIster mints it; the orchestrator cascade writes `cascade/<token>`).
+          pattern: '^[a-z][a-z0-9_]{0,63}(/[a-z][a-z0-9_]{0,63})?$'
+          description: The emitter's reason token (snake_case; the orchestrator cascade writes `cascade/<token>`).
         source:
           type: string
           enum:
@@ -19874,7 +19956,6 @@ components:
               scratch,
               agent,
               reconcile,
-              consensus,
               resume,
               operator,
               orchestrator,
@@ -21971,10 +22052,14 @@ components:
         - permission_delivery_rejected
         - session_ended
         - permission_not_pending
+        - edit_lock_not_held
       description: |
         `agent_session_ended` is deprecated: it has no producer since
         2026-09-26 (a dead session answers 409 `session_ended`) and stays in the
-        enum for clients that still branch on it.
+        enum for clients that still branch on it. `edit_lock_not_held` (409)
+        refuses an answer to a PARKED local-package assistant permission whose
+        launching user no longer holds the package's edit lock: resuming would
+        write into a working dir nobody holds (ADR-097).
     HitlAnswerState:
       type: string
       enum: [open, answer_stored]
@@ -22007,6 +22092,11 @@ components:
             details: { $ref: "#/components/schemas/HitlRespondDetails" }
             terminal: { type: boolean }
     HitlRespondTerminalError:
+      description: |
+        The 410 `HITL_TIMEOUT` body. Not every reason is terminal:
+        `permission_not_pending` closes only the request (the run goes on),
+        `permission_delivery_rejected` carries `terminal: true` (the run is
+        `Failed`; relaunch it), and `agent_session_ended` is deprecated.
       allOf:
         - { $ref: "#/components/schemas/HitlRespondErrorBody" }
         - type: object

@@ -894,11 +894,21 @@ exhaustive `STARTS_A_GENERATION` map beside `OWNS_A_TURN` in
 `turn-variants.ts`), not a run with no turn at all, so
 it starts the session, which mints `initial`, and the message follows by
 `prior_turn`; the `initial` claim removes the run from A1, so nothing spins. A
-run that ends `Failed | Crashed | Abandoned` supersedes its queued message turns
-(`live_message | persistent_message`) in the finalization transaction
-(the three statuses `CLOSES_MESSAGE_TURNS` marks `true` — an agent run has no
-Recover),
-so a same-key retry answers `messageState: "superseded"`. The FIFO key
+run that ends `Done | Failed | Crashed | Abandoned` (the four statuses
+`CLOSES_MESSAGE_TURNS` marks `true` — an agent run has no Recover) supersedes
+its undispatched message turns — `queued` and `claimed`, of the variants the
+exhaustive `MESSAGE_TURN_VARIANTS` map lists (`turn-variants.ts`) — in the
+transaction that ends it, through one helper,
+`supersedeUndispatchedMessageTurns` (`agents/turns.ts`). Agent finalization
+calls it, and so does the orchestrator cascade (`cascadeAbandonRunTree`) for
+every agent run it abandons, since the cascade never passes through
+finalization. Superseding a `claimed` turn is safe: its admission
+(`admitAgentTurnPrompt`) locks the turn row and refuses one that is no longer
+`claimed | dispatched`. A same-key retry then answers `messageState:
+"superseded"`. The agent steer settlement reads the run row `FOR UPDATE`
+before it inserts a queued successor, so a concurrent finalization either
+commits first (the successor is superseded as it is inserted) or waits and
+supersedes it (2026-09-27 review fix). The FIFO key
 `resume_requested_at` is coalesced at every stamp site that marks a run waiting
 for a slot, so a run waiting at capacity keeps its place across passes; a
 persistent agent's park recomputes it from its oldest queued message instead. The recovery windows are normative
@@ -910,8 +920,8 @@ persistent agent's park recomputes it from its oldest queued message instead. Th
 | `queued`, run `Running`, no turn at all (launch window, web died before `startAgentSession`) | A1 with the generation-turn predicate → `initial` → the message by `prior_turn` |
 | `queued`, run `NeedsInputIdle`, at capacity | A3 retries each pass (a cap check only); the freed-slot gate (C3) admits waiting runs in `resume_requested_at` order |
 | `queued`, run `NeedsInput` (permission pending) | `run_state`; the grant's resume turn runs first, the message follows |
-| `queued`, run `Failed \| Crashed \| Abandoned` | superseded in the finalization transaction; a same-key retry answers `superseded` |
-| any `queued` row older than 10 min with nothing in flight | the `system_sweep` sub-pass `reportStrandedAgentTurns`: one WARN `agent-message-stranded` per stranded run (the oldest message; at most 50 per pass) and `strandedAgentTurns` on `/admin/execution-host` (the count, and up to 20 rows) — the invariant's alarm, not its owner |
+| `queued` or `claimed`, run `Done \| Failed \| Crashed \| Abandoned` | superseded in the transaction that ends the run — finalization, or the orchestrator cascade for an abandoned agent child; a same-key retry answers `superseded` |
+| any `queued` row older than 10 min with nothing in flight, on a run not parked `NeedsInputIdle` with `resume_requested_at` set (the resume arm and the freed-slot gate own that one while it waits for capacity) | the `system_sweep` sub-pass `reportStrandedAgentTurns`: one WARN `agent-message-stranded` per stranded run per call (the oldest message; at most 50 per pass) and `strandedAgentTurns` on `/admin/execution-host` (the count, and up to 20 rows labelled by turn ordinal) — the invariant's alarm, not its owner. A terminal run stays reported: a queued turn there is an invariant breach. A failed read reports `count: null` (sweep summary `strandedAgentTurns: number \| null`; the admin page shows "unavailable"); the admin read model runs the same report outside the lag model's snapshot and without a logger, so a page view repeats none of the sweep's per-run WARNs and a failure there leaves the lag panel standing. The persisted execution-observability blob never carries the count or rows (2026-09-27 review fix) |
 
 The immutable command binds the original turn ID, ordinal, assignment, logical
 session and incarnation. Restart reattaches that command before rebuilding a
@@ -1251,17 +1261,23 @@ has an admissible incarnation on its active assignment — the owner of a row le
 behind when the process died between the completion commit and the detached
 dispatch. A turn whose prompt yields before admission (`PromptIncarnationPending`
 — no command was issued), or a queued dispatch that cannot bind the run's host
-after claiming its row, returns its row to `queued` (`prompted → queued`; the
+after claiming its row (whatever the bind error's code — nothing was issued
+either), returns its row to `queued` (`prompted → queued`; the
 launch row `NULL → queued`) in the same transaction as
 `markScratchPromptRetryable`, keeping its `sequence`, so the re-drive sends it
 again oldest-first with a fresh command. A retryable failure after the command
 was issued leaves the row `prompted`: a re-send under the same logical
 operation key would only re-attach to that command, which its own recovery
 settles. A definitive failure leaves it `prompted` and crashes the dialog. A
-project-less assistant turn is never re-queued (its `package_*` owner carries
+scratch idle-resume re-prompt that fails returns only the launch row (`delivery`
+NULL, which never owned a message-key command) to the queue; a `prompted`
+message row stays `prompted`, because re-driving it would collide with its
+earlier command under `scratch_message:message:<id>:…` (2026-09-27 review fix).
+A project-less assistant turn is never re-queued (its `package_*` owner carries
 the edit-lock generation). The recovery turn's text is appended as a user row
-before it is prompted, so a yielded Recover keeps its message as a `queued`
-row. See [scratch reconciliation](scratch-runs.md#reconciliation-grace-and-recover-implemented).
+before it is prompted, so on a project run a yielded Recover keeps its message
+as a `queued` row; an assistant's row stays `prompted` and the Recover answers
+503. See [scratch reconciliation](scratch-runs.md#reconciliation-grace-and-recover-implemented).
 
 A recovery turn belongs to its own `scratch_recover` generation at ordinal zero
 and admits only under that placement reason, so a recover can never adopt the
@@ -1674,8 +1690,8 @@ Invariants and their enforcement:
 | A prompt is not written while a steer named before it is unanswered | the host `steerInFlight` barrier, bounded by the steer timeout (EDGE-STR-06 past it) |
 | The parent's evidence is untouched | the span verifier skips `session.command` rows; the steered output carries the parent's `sourceCommandId` |
 | Prompt text never leaves the transcript | `PAYLOAD_PROJECTION["session.steer"]` keeps `parentCommandId`, `promptBytes`, `contentBlockCount` only; logs carry byte counts |
-| A queued scratch row behind a `WaitingForUser` dialog is delivered or visibly unsendable | the continuation worker's scratch arm (live-session predicate mirrors `admitScratchPrompt`); `markScratchPromptRetryable` returns a row whose prompt yielded before admission to `queued`; `queuedMessageUnsendable(dialogStatus, runStatus)` reads "Not sent" on `Review \| Done \| Abandoned` and on a `Failed` run |
-| A queued agent message turn on a finished run never waits forever | the finalization transaction supersedes `queued` `live_message \| persistent_message` turns for `Failed \| Crashed \| Abandoned` (the statuses `CLOSES_MESSAGE_TURNS` marks, which the message claim reads) |
+| A queued scratch row behind a `WaitingForUser` dialog is delivered or visibly unsendable | the continuation worker's scratch arm (live-session predicate mirrors `admitScratchPrompt`); `markScratchPromptRetryable` returns a row whose turn issued nothing (an admission yield, or a queued dispatch's failed host bind) to `queued`; `queuedMessageUnsendable(dialogStatus, runStatus)` reads "Not sent" on `Review \| Done \| Abandoned` and on a `Failed` run |
+| A queued agent message turn on a finished run never waits forever | `supersedeUndispatchedMessageTurns` supersedes `queued` and `claimed` `MESSAGE_TURN_VARIANTS` turns in the transaction that ends the run — agent finalization for every status `CLOSES_MESSAGE_TURNS` marks (`Done \| Failed \| Crashed \| Abandoned`, which the message claim also reads) and `cascadeAbandonRunTree` for every agent run it abandons; the steer settlement's `FOR UPDATE` read of the run row orders its successor insert against both |
 | A launch-window message is delivered after a web death | the continuation worker's A1 arm selects a `Running` run with no generation turn (`GENERATION_TURN_VARIANTS`), not one with no turn |
 
 (This document is at the 12-bullet Expectations cap, so these invariants live

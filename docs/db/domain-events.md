@@ -16,7 +16,7 @@ erDiagram
 
     DOMAIN_EVENTS {
         bigint id PK "GENERATED ALWAYS AS IDENTITY — dispatch ordering key"
-        text kind "one of 13 taxonomy kinds; CHECK-enforced"
+        text kind "one of 15 taxonomy kinds; CHECK-enforced"
         text project_id FK "NOT NULL -> projects(id) ON DELETE CASCADE"
         text task_id FK "NULL -> tasks(id) ON DELETE CASCADE; task.* kinds"
         text run_id FK "NULL -> runs(id) ON DELETE CASCADE; run.* and gate.* kinds"

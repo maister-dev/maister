@@ -2065,7 +2065,13 @@ properties/lastAction` sets `nullable: true` beside an `allOf` with no sibling
   Recover just created is not deleted (the rollback covers only a
   `createSession` failure). The Recover CAS on `Crashed` does not change this
   window; the orphaned host session is reaped by the host's own lifecycle, not
-  by Recover (R9).
+  by Recover (R9). Narrowed 2026-09-27 (review fix round): the scratch idle
+  resume has the same shape (`driveScratchIdleResume` calls
+  `assertCurrentSessionBinding` after `respawnScratchSession` and deletes no
+  session on its refusal), and both claims stamp `runs.resume_started_at`,
+  which the reconcile grace anchor folds in — so the sweep stays off the run
+  inside `reconcileGraceSeconds`, and the window opens only when the session
+  create outlasts that grace.
 - **External `RunDTO` drifts from the route (found 2026-09-26, ownership
   residuals T0.5).** `operations.openapi.yaml` `RunDTO` requires `executorId`,
   but the route serializes `getRunDTO` verbatim, which carries `runnerId` and
@@ -2089,4 +2095,52 @@ properties/lastAction` sets `nullable: true` beside an `allOf` with no sibling
   graph fails it, which Recover then refuses. Classifying it needs its own
   control first (which event reaches Postgres first, the prompt's terminal or
   the session's `session.crashed`, decides where the evidence can be read), so
+  it is separate work (R9).
+- **A gate permission park whose adapter child dies under a live host is never
+  settled (found 2026-09-27, ownership residuals review fix round).** The
+  `session_crashed` boundary covers the node prompt only: `reattachNodePrompt`
+  (`web/lib/flows/runner-agent.ts`) calls `settleCrashedPermissionPark`, and
+  `reattachGatePrompt` has no counterpart for an `ai_judgment` / `skill_check`
+  gate prompt. The purge fails the gate's prompt, its owner decodes that failure
+  as verdict `unparseable` and applies `markGateFailed` while the run waits in
+  `NeedsInput`; `openGatePromptExists` keeps re-selecting the run for the
+  continuation worker, and each re-entry yields at `assertGatePermissionSettled`
+  (`gate_permission_pending`, because the run is not `Running`) until the
+  keep-alive idles it. Pre-existing on `master` — the branch added the node
+  settle only; a gate settle needs its own control, so it is separate work
+  (R9).
+- **A web restart between a scratch dispatch's commit and its prompt admission
+  strands the dialog (found 2026-09-28, ownership residuals Codex review).**
+  Every scratch dispatch first commits the dialog `Running`, then admits its
+  `session.prompt`. The four dispatches are the launch, `dispatchQueuedScratchMessages`
+  (`queued → prompted`), Recover, and, since D-A8, the idle resume's detached
+  re-prompt. A process death between the two leaves a `Running` dialog on a
+  live host session with no prompt command. Nothing re-drives it: the agent
+  continuation worker's scratch arm needs `WaitingForUser` plus a `queued` row
+  (and a project), and reconcile skips a live scratch session. The window is
+  milliseconds wide, and the operator can still Stop the dialog. Pre-existing
+  on `master` for the launch, dispatch and Recover; the idle resume is one more
+  entry, and rerouting it through the queue would not close the dispatcher's
+  own window. A fix is a sweep that proves from the command ledger that no
+  prompt is in flight before it re-drives, so it cannot double-send. That is
+  separate work (R9).
+- **A parked session's late exit event can overwrite its successor's dialog
+  (found 2026-09-28, ownership residuals review).** The scratch consumer
+  projects `session.exited` / `session.crashed` onto the dialog without checking
+  that the session is still the run's current host session. If the parked
+  session's consumer processes its `checkpoint` exit only after the respond
+  route's `session_checkpointed` arm has respawned the run, it writes
+  `WaitingForUser` over the resumed turn's `Running`. Until 2026-09-28 the stored
+  answer's acknowledgement healed that by re-writing `Running`; it no longer
+  writes status. Reachability needs the old consumer to outlive a whole
+  respawn and is unmeasured, so a current-session guard waits for a control
+  that reproduces it (R9).
+- **Scratch Stop and Discard never close the run's open permission rows
+  (found 2026-09-28, ownership residuals review).** A dialog stopped (`Review`)
+  or discarded (`Abandoned`) keeps its unanswered, or answered-but-parked,
+  permission rows open, bound to a deleted session. The inbox skips them
+  (it lists only `NeedsInput | NeedsInputIdle | Running` runs), so nothing asks
+  the operator, but the rows never settle. Pre-existing on `master`; since D-A8
+  such a row can carry a stored answer. Closing them with
+  `closeOpenScratchPermissions` belongs with the Stop and Discard semantics, so
   it is separate work (R9).

@@ -1212,9 +1212,11 @@ already-inserted run) — never an orphan worktree or live ACP session.
   (`POST /api/runs/[runId]/hitl/[hitlRequestId]/respond`) does NOT
   flip `runs.status` to `Running` itself; the runner is the sole
   owner of the `NeedsInput → Running` transition so its `isResume`
-  gate matches. Terminal `NeedsInput → Failed` (permission
-  `HITL_TIMEOUT`) and `Running → Crashed` (HITL row insert failure
-  in the runner) are current behavior — see [`hitl.md`](hitl.md#expectations).
+  gate matches; it writes no run status on any `HITL_TIMEOUT` arm. The
+  one `HITL_TIMEOUT` `Failed` is the idle-resume rejection `NeedsInputIdle →
+  Failed` (`failCheckpointedFlowPermission` / `failCheckpointedAgentPermission`,
+  `permission-rejection.ts`), and `Running → Crashed` (HITL row insert failure
+  in the runner) is current behavior — see [`hitl.md`](hitl.md#expectations).
 - **(Implemented)** Every run is bound to an immutable,
   content-addressed flow bundle. At launch the upstream git commit
   SHA is snapshotted into `runs.flow_revision`; the runner derives
@@ -1324,12 +1326,13 @@ only in the trigger they record in logs — sweeper-driven vs.
 runner-agent-observing-`session.exited.reason="checkpoint"`. The
 status-guard makes them idempotent w.r.t. each other.
 
-**Four writers, one CAS** (Implemented — ADR-180). `NeedsInput → NeedsInputIdle`
+**Five writers, one CAS** (Implemented — ADR-180). `NeedsInput → NeedsInputIdle`
 is written by the sweeper's keep-alive arm, the sweeper's checkpointed arm, the
-flow driver's `markCheckpointedFromExit`, and the race-window answer branch in
-the HITL response service. The invariant is not "one writer" but "every writer
-goes through `idleFromNeedsInput`'s CAS" — which is why a fourth writer needs no
-new guard and cannot double-park a run.
+flow driver's `markCheckpointedFromExit`, the scratch event consumer's
+`parkPendingPermission` (also `markCheckpointedFromExit`), and the race-window
+answer branch in the HITL response service. The invariant is not "one writer"
+but "every writer goes through `idleFromNeedsInput`'s CAS" — which is why a new
+writer needs no new guard and cannot double-park a run.
 
 ### Keep-alive sliding window
 

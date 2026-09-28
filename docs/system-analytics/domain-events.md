@@ -138,8 +138,10 @@ observe its failed child; success-gated dependents do not launch.
 
   **(Implemented)** `run.failed | run.crashed | run.abandoned` payloads carry a
   typed `cause` block (the run's terminal cause) — see
-  [Terminal cause](#terminal-cause-implemented); every consumer above ignores
-  it, and `run.review` keeps its own string `cause`.
+  [Terminal cause](#terminal-cause-implemented); no consumer above branches on
+  it, but `agent_triggers` forwards the whole payload, `cause` included, into a
+  triggered agent's prompt — which is why `cause` carries tokens only — and
+  `run.review` keeps its own string `cause`.
 
 - **`ralph_loop` consumer** (Implemented; **Designed change — ADR-165 D18**) —
   relaunches a task-backed **flow** run on `run.failed` when the execution policy
@@ -337,7 +339,7 @@ domain event. The payload of `run.failed | run.crashed | run.abandoned` gains
 ```ts
 type TerminalCauseSource =
   | "graph" | "hitl" | "sweeper" | "scratch" | "agent" | "reconcile"
-  | "consensus" | "resume" | "operator" | "orchestrator" | "workbench" | "legacy";
+  | "resume" | "operator" | "orchestrator" | "workbench" | "legacy";
 type TerminalCause = { code: MaisterErrorCode | null; reason?: string; source: TerminalCauseSource };
 ```
 
@@ -355,16 +357,39 @@ message: payloads reach agent prompts (`agent_triggers`) and `distill`
 raw message stays where it lives (`scratch_runs.error_message`,
 `node_attempts`). Scratch stop and scratch discard, which wrote `Abandoned`
 without an event, now emit `run.abandoned {cause: {code: null, reason: "stop" |
-"discard", source: "operator"}}` for a project run.
+"discard", source: "operator"}}` for a project run — exactly once, because each
+re-reads the dialog under the run's locks inside its terminal transaction and a
+loser emits nothing. A scratch crash names its reason too: the reconcile
+sweep's crash carries the crash reason's token (`agent_session_gone`, …) and
+the budget kill `budget_breach`.
+
+**Tokens only, enforced at the write** (2026-09-27 review fix).
+`emitDomainEvent` (`web/lib/domain-events/outbox.ts`) is the one write every
+terminal emitter goes through, and it passes the cause's reason through
+`terminalCauseReason()` (`taxonomy.ts`): snake_case, a `:<message>` suffix
+dropped, then `^[a-z][a-z0-9_]{0,63}(/[a-z][a-z0-9_]{0,63})?$` — anything else
+drops the reason (WARN `terminal-cause-reason-normalized`) and keeps `code` and
+`source`. Agent finalization applies the same normalizer, and it and
+`resumeFailureCause` drop a reason that only repeats a `MaisterErrorCode`: a resume
+failure `supervisor-<CODE>` records `{code: <CODE>, reason:
+"supervisor_refused"}`, a reason that is itself a code (`CHECKPOINT`) records
+`{code}` alone, and anything else `{code: "CRASH", reason: <token before
+':'>}`. `TERMINAL_CAUSE_REASONS` registers every token a MAIster emitter
+writes; each registered token and every `MaisterErrorCode` has EN and RU copy
+(pinned by `components/runs/__tests__/terminal-cause-notice.test.ts`), and a
+reason without copy is never the notice's primary text.
 
 **Read rule.** `loadRunTerminalCause(db, runId, status)`
 (`web/lib/runs/terminal-cause.ts`) returns null unless `status ∈ {Failed,
 Crashed, Abandoned}`; otherwise it reads the newest event of the kind that
-matches the status (`run.failed` for `Failed`, …) ordered `occurred_at DESC, id
+matches the status (`run.failed` for `Failed`, …, the one map
+`TERMINAL_CAUSE_KIND_FOR_STATUS` in `taxonomy.ts`) ordered `occurred_at DESC, id
 DESC`, served by the partial index `domain_events_run_terminal_idx` (migration
 `0181`). Matching the kind is what keeps a recovered run honest: a run that
 crashed, recovered and then finished `Done` reads null, and a `Failed` run whose
 only event is an older `run.crashed` reads null rather than the wrong cause.
+A stored `cause` with a malformed reason keeps its `code` and `source`:
+`parseTerminalCause` drops only the reason, never the whole cause.
 An event written before `cause` existed (and the 0094 cut-over rows) is read
 through a legacy synthesis from `payload.reason` / `payload.errorCode`: `code`
 is whichever of the two is a `MaisterErrorCode` (else null), and `reason` is the
@@ -432,9 +457,10 @@ detail, the external `RunDTO.terminalCause` and MCP `run_get`; the webhook
   and MUST be rejected by `createSchedulerJobSchema` (not user-creatable).
 - During webhooks coexistence, every run-terminal and gate-failed
   `emitWebhookEvent` MUST have a paired `emitDomainEvent` in the same
-  transaction (grep-gated), and the three webhook-less sites (`createTask`,
-  `addTaskComment`, `runPass2`) MUST emit the domain event in their existing or
-  newly-wrapped transaction.
+  transaction (grep-gated), and the webhook-less sites (`createTask`,
+  `addTaskComment`, scratch stop and scratch discard's `run.abandoned`) MUST
+  emit the domain event in their existing or newly-wrapped transaction;
+  `runPass2` now emits both.
 - `domain_events.payload` MUST carry ids, keys, titles, and statuses only —
   never secrets, env values, tokens, or raw agent output. **(Implemented —
   ADR-098)** the four run-terminal payloads MUST additionally carry
@@ -455,7 +481,8 @@ detail, the external `RunDTO.terminalCause` and MCP `run_get`; the webhook
   `run.failed | run.crashed | run.abandoned` payload MUST carry `cause:
   {code, reason?, source}`, required by the emit helper's type, and `cause`
   MUST carry tokens only (a `MaisterErrorCode`, a snake_case reason token, a
-  source) — never a message or other text.
+  source) — never a message or other text, enforced by `emitDomainEvent`'s
+  `terminalCauseReason()` normalizer.
 
 ## Edge cases
 

@@ -1606,8 +1606,9 @@ paths:
             `details.reason: "permission_not_pending"` when the entry is `live`
             (the request was answered, cancelled or never raised). The web tier
             never fails a run on either: `session_ended` keeps the answer for the
-            crash boundary (409 `session_ended` on `/respond`),
-            `permission_not_pending` closes only the HITL row.
+            crash boundary (409 `session_ended` on `/respond`), and
+            `permission_not_pending` closes the HITL row and its response
+            assignment in one transaction and leaves the run as it is.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
