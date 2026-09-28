@@ -114,6 +114,40 @@ substitute. Qualification records revision, image, architecture and Node version
 The implemented invocation lifecycle preserves roots across restart and disposes
 of them only after the last owned process using them is dead.
 
+### S5.2 hosted CI repair contract (Designed until hosted evidence lands)
+
+The mandatory push workflow keeps both Node 24.15.0 and 24.19.0 and a 60-minute
+limit per job. `execution-data-plane` selects two deterministic, disjoint web
+file lists for each Node version; the selections' union is exactly the explicit
+`laneSuites.web` inventory. A separate two-version `execution-runtime-supervisor`
+job owns `runtime:check`, `test:runtime`, `test:stage-ab-lane` and the complete
+supervisor A/B inventory once per Node. Each of the six legs has a unique artifact
+name and uploads its actual JSON reporter with `if-no-files-found: error`.
+The runner passes exactly its selected file list to Vitest and
+`validateLaneReport`; that validator rejects absent, duplicate, unexpected,
+empty, skipped and failed suites/cases. `--shard 1/2` and `--shard 2/2` are web
+only; the production isolation slice remains serial and rejects sharding.
+
+The one macOS Intel isolation job keeps Colima 0.10.3/Lima 2.2.0 and one
+`colima start` attempt. Provisioning traces the downloaded pins, resolved
+profile and status JSON; `DOCKER_HOST` uses Colima's reported host socket URI,
+while `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE` names the VM-side
+`/var/run/docker.sock`. A missing URI/socket or failed `docker version`/`info`
+fails with a recorded cause. Cleanup targets only the job-owned profile and
+finishes before the diagnostics artifact is uploaded. Timing records setup,
+preflight, suite, cleanup and upload outcomes; the suite TERM deadline is at
+most 2370 seconds and also leaves the existing final job reserve. A syntax
+check or local ARM run is not hosted proof.
+
+S5.2 acceptance requires four complete web shard reports, both runtime and
+supervisor legs, and a green macOS isolation leg on the same pushed commit.
+The separate preflight report and full isolation report must both exist; the
+six original isolation suites and all 40 original required cases must remain.
+Record the run URL, source SHA, runner image/architecture, artifact identities
+and measured total duration below 60 minutes before marking S5.2 complete.
+If new controls enlarge the suite, extend the explicit manifest and remeasure
+the Intel budget; do not infer a pass from the old 40-case total.
+
 ```mermaid
 stateDiagram-v2
   [*] --> Allocated
