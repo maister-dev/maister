@@ -1706,3 +1706,49 @@ describe("isJsonText (ADR-162)", () => {
     }
   });
 });
+
+// U6a (ADR-183): the node-interrupt card reads WHO parked the node from the
+// matrix; a dropped `cause` prop would call a host park the operator's own.
+describe("HitlDecisionControls — node interrupt cause", () => {
+  const matrix = {
+    interruptedNodeId: "implement",
+    defaultOptionId: "resume" as const,
+    options: [
+      { optionId: "resume" as const, enabled: true, disabledReason: null },
+      {
+        optionId: "restart_node" as const,
+        enabled: true,
+        disabledReason: null,
+      },
+      {
+        optionId: "restart_from" as const,
+        enabled: false,
+        disabledReason: null,
+      },
+      { optionId: "stop" as const, enabled: true, disabledReason: null },
+    ],
+    restartTargets: [],
+  };
+
+  it("forwards a host park's cause to the interrupt controls", () => {
+    const html = render({
+      kind: "node_interrupt",
+      nodeInterrupt: { ...matrix, cause: "host_pressure" },
+      onNodeInterrupt: vi.fn(),
+    });
+
+    expect(html).toContain("nodeInterrupt.hostPaused");
+    expect(html).not.toContain("nodeInterrupt.interrupted");
+  });
+
+  it("keeps an operator's interrupt the operator's", () => {
+    const html = render({
+      kind: "node_interrupt",
+      nodeInterrupt: { ...matrix, cause: "operator" },
+      onNodeInterrupt: vi.fn(),
+    });
+
+    expect(html).toContain("nodeInterrupt.interrupted");
+    expect(html).not.toContain("nodeInterrupt.hostPaused");
+  });
+});

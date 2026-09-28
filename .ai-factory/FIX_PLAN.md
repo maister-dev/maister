@@ -387,12 +387,12 @@ discards the ACP context the park preserved and spends an operator restart.
 
 ### Phase 4 — UI (TDD, jsdom). Commit: `fix(ui): a stored answer under host backpressure shows as stored; a host-paused node defaults to Resume; refusing-new-work in the admin panel`
 
-15. [ ] REDs: `run-hitl-response` jsdom — a 503 `event_outbox_backpressure` enters the stored view at
+15. [x] REDs: `run-hitl-response` jsdom — a 503 `event_outbox_backpressure` enters the stored view at
     once and never shows both lines after refresh; scratch dialog the same; `node-interrupt-controls` —
     `host_pressure` ⇒ `resume` is the default and the primary (amber) button, `operator` unchanged;
     `deriveNodeInterruptOptions` unit per cause; `HitlDecisionControls` forwards `cause` (U6a);
     `PressureCell` branches incl. `newWorkRefusedBy` (U6b).
-16. [ ] Implement: one shared predicate `isStoredAnswerDeliveryReason` in
+16. [x] Implement: one shared predicate `isStoredAnswerDeliveryReason` in
     `web/lib/hitl-response-contract.ts` used at both card sites and the scratch dialog (M3);
     `deriveNodeInterruptOptions({…, cause})` REQUIRED parameter, controls paint the default option
     primary (M4); EN/RU copy for `event_outbox_backpressure` (answer saved, delivery pending, retried
@@ -401,7 +401,16 @@ discards the ACP context the park preserved and spends an operator restart.
     (the last turn's result could not be stored; send a new message to continue) with the
     `causeCode` as a diagnostic — without it the quarantined turn is visible only as a stopped
     spinner (the UI renders no `errorCode`).
-17. [ ] Web unit lane green; `pnpm lint` scoped to changed files, `git status` checked.
+17. [x] Web unit lane green; `pnpm lint` scoped to changed files, `git status` checked.
+   *(Done: web unit 870 files / 9135 tests, 0 failures; web tsc clean; lint scoped to the 13
+   changed files. RED before each change, then falsified by reverting one site at a time: the
+   run card's stored-view entry, its one-line suppression (the refusal now carries its `reason`
+   instead of matching a message key), the scratch dialog's entry; `defaultOptionId` from the
+   cause, the default painted primary, and `HitlDecisionControls` forwarding `cause` (U6a). The
+   admin badge and the scratch quarantine notice and gutter were RED before implementation; the
+   U6b branches (no telemetry, pressured with no episode) were already right and are now pinned.
+   The run card's live region still announces "Answer saved" for a stored answer — only the
+   visible block keeps one line. `deriveNodeInterruptOptions` now returns `cause` itself.)*
 
 ### Phase 5 — close-out. Commit: `docs(outbox-review): lanes, falsification and truth pass on the remediated tip`
 

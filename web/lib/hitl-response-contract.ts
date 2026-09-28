@@ -48,6 +48,16 @@ export type HitlStoredResponse =
 
 export type HitlAnswerState = "open" | "answer_stored";
 
+/** A respond refusal that still stored the answer: the host could not take it
+ * now (`delivery_unavailable`) or refused it at its hard outbox bound
+ * (`event_outbox_backpressure`, ADR-183). Every card holds such an answer
+ * read-only with a retry. */
+export function isStoredAnswerDeliveryReason(reason: unknown): boolean {
+  return (
+    reason === "delivery_unavailable" || reason === "event_outbox_backpressure"
+  );
+}
+
 export function isPendingHitlDeliveryState(value: unknown): boolean {
   return value === "resume-in-progress" || value === "delivery-in-progress";
 }

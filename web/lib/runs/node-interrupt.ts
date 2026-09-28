@@ -100,7 +100,7 @@ export type NodeInterruptOptionMatrix = {
   }>;
   // Ledger-derived: nodes with >= 1 prior attempt in THIS run.
   restartTargets: NodeInterruptRestartTarget[];
-  // ADR-183: who parked the node — selects the card copy only.
+  // ADR-183: who parked the node — selects the card copy and the default.
   cause?: NodeInterruptCause;
 };
 
@@ -634,6 +634,7 @@ export function deriveNodeInterruptOptions(args: {
   // Attempts already closed with `decision='operator_interrupt'` for this run.
   operatorRestartCount: number;
   maxOperatorRestarts: number;
+  cause: NodeInterruptCause;
 }): NodeInterruptOptionMatrix {
   const declared = new Set(args.declaredReworkTargets ?? []);
   const seen = new Set<string>();
@@ -652,7 +653,9 @@ export function deriveNodeInterruptOptions(args: {
 
   return {
     interruptedNodeId: args.interruptedNodeId,
-    defaultOptionId: "restart_node",
+    // ADR-183 amendment 2026-09-28: the host's park kept the ACP session and
+    // resumes the node on its own; restarting would discard that context.
+    defaultOptionId: args.cause === "host_pressure" ? "resume" : "restart_node",
     options: [
       { optionId: "resume", enabled: true, disabledReason: null },
       {
@@ -672,6 +675,7 @@ export function deriveNodeInterruptOptions(args: {
       { optionId: "stop", enabled: true, disabledReason: null },
     ],
     restartTargets,
+    cause: args.cause,
   };
 }
 
@@ -844,16 +848,17 @@ export async function loadNodeInterruptMatrices(args: {
   );
 
   for (const pending of interrupts) {
-    matrices.set(pending.id, {
-      ...deriveNodeInterruptOptions({
+    matrices.set(
+      pending.id,
+      deriveNodeInterruptOptions({
         interruptedNodeId: pending.stepId,
         ledgerNodeIds,
         declaredReworkTargets: reworkTargetsByNode.get(pending.stepId),
         operatorRestartCount,
         maxOperatorRestarts: maxOperatorRestarts(),
+        cause: causeById.get(pending.id) ?? "operator",
       }),
-      cause: causeById.get(pending.id) ?? "operator",
-    });
+    );
   }
 
   return matrices;

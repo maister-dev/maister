@@ -1340,7 +1340,8 @@
       "Done": "Done",
       "Abandoned": "Abandoned"
     },
-    "hostPaused": "Paused by the execution host — send again when it recovers"
+    "hostPaused": "Paused by the execution host — send again when it recovers",
+    "turnQuarantined": "The last turn's result could not be stored, so it ended without one. Send a new message to continue."
   },
   "board": {
     "needYou": "need you",
@@ -2664,7 +2665,7 @@
       "delivery_unavailable": "Your answer is saved; delivery is pending. Retry delivery to send it.",
       "permission_delivery_rejected": "The checkpointed permission could not accept your answer. Relaunch the run.",
       "permission_delivery_rejected_scratch": "The checkpointed permission could not accept your answer. Recover the run or relaunch it.",
-      "event_outbox_backpressure": "The execution host is over its event budget. New launches wait; running work continues. Your answer was not delivered — retry when the host recovers."
+      "event_outbox_backpressure": "Your answer is saved. The execution host is over its event budget and has not taken it yet — retry delivery once the host catches up."
     },
     "errorDiagnostic": "Diagnostic",
     "answerSaved": "Answer saved — delivery pending",
@@ -3220,7 +3221,14 @@
       "since": "since {value}",
       "duration": "for {value}",
       "unackedAtStart": "{count} unACKed at start",
-      "episodes": "{count} earlier episodes"
+      "episodes": "{count} earlier episodes",
+      "refusingNewWork": "Refusing new work: {limit}",
+      "limit": {
+        "physical": "storage",
+        "unacknowledged": "unACKed backlog",
+        "retained": "retained backlog",
+        "control": "control reserve"
+      }
     },
     "closeReason": {
       "disconnect": "disconnect",

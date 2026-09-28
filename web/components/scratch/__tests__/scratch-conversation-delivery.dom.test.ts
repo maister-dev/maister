@@ -79,7 +79,7 @@ let dialogStatus: ScratchDialogStatus;
 let runStatus: string;
 let recoverRefusal: string | null;
 let terminalCause: TerminalCause | null;
-let errorMetadata: { cause: "host_pressure" } | null = null;
+let errorMetadata: ScratchDetail["scratch"]["errorMetadata"] = null;
 
 function detail(): ScratchDetail {
   return {
@@ -219,6 +219,39 @@ describe("scratch host pause (ADR-183)", () => {
     errorMetadata = null;
     await refresh("WaitingForUser");
     expect(paused()).toBeNull();
+  });
+
+  // U5: the notice sits in the column's gutter, like the error notice.
+  it("keeps the column's outer margin", async () => {
+    errorMetadata = { cause: "host_pressure" };
+    await refresh("WaitingForUser");
+    expect(
+      container.querySelector('[data-testid="scratch-host-paused"]')?.className,
+    ).toContain("mx-4");
+  });
+});
+
+// ADR-184 amendment 2026-09-28: a turn whose prompt was quarantined (its
+// terminal could not be stored) failed — the dialog says so and names the
+// cause, instead of a spinner that silently stopped.
+describe("scratch quarantined turn", () => {
+  it("says the last turn's result could not be stored while the dialog waits for the user", async () => {
+    const notice = () =>
+      container.querySelector('[data-testid="scratch-turn-quarantined"]');
+
+    errorMetadata = {
+      reason: "prompt_terminal_conflict",
+      causeCode: "terminal_unstorable",
+    };
+    await refresh("WaitingForUser");
+    expect(notice()?.textContent).toContain(en.scratch.turnQuarantined);
+    expect(notice()?.textContent).toContain("terminal_unstorable");
+    expect(
+      container.querySelector('[data-testid="scratch-host-paused"]'),
+    ).toBeNull();
+    // The operator's next message starts a new turn.
+    await refresh("Running");
+    expect(notice()).toBeNull();
   });
 });
 

@@ -211,35 +211,53 @@ function PressureCell({
   const { t, time, span, missing } = format;
 
   if (!telemetry) return <>{missing}</>;
-  if (!telemetry.pressured)
+  // ADR-183 amendment 2026-09-28: what the admission fence follows. A host
+  // refuses new work at the retained, physical or control limit without
+  // being pressured, so "not pressured" alone would read as admitting.
+  const refusing = telemetry.newWorkRefusedBy ?? null;
+
+  if (!telemetry.pressured && !refusing)
     return <Badge tone="good">{t("pressure.clear")}</Badge>;
   const episode = telemetry.pressure;
 
   return (
     <div data-testid="stream-pressure">
-      <Badge tone="warn">{t("pressure.active")}</Badge>
-      {episode ? (
-        <div className="mt-1 font-mono text-xs leading-5 text-mute">
-          {t("pressure.since", { value: time(episode.since) })}
-          <br />
-          {t("pressure.duration", {
-            value: span(
-              Math.max(
-                0,
-                Date.parse(telemetry.sampledAt) - Date.parse(episode.since),
-              ),
-            ),
-          })}
-          <br />
-          {t("pressure.unackedAtStart", {
-            count: episode.unacknowledgedCountAtStart,
-          })}
-          <br />
-          {t("pressure.episodes", { count: episode.episodes })}
+      {refusing ? (
+        <div className="mb-1">
+          <Badge tone="warn">
+            {t("pressure.refusingNewWork", {
+              limit: t(`pressure.limit.${refusing}`),
+            })}
+          </Badge>
         </div>
-      ) : (
-        <div className="mt-1 text-xs text-mute">{missing}</div>
-      )}
+      ) : null}
+      {telemetry.pressured ? (
+        <>
+          <Badge tone="warn">{t("pressure.active")}</Badge>
+          {episode ? (
+            <div className="mt-1 font-mono text-xs leading-5 text-mute">
+              {t("pressure.since", { value: time(episode.since) })}
+              <br />
+              {t("pressure.duration", {
+                value: span(
+                  Math.max(
+                    0,
+                    Date.parse(telemetry.sampledAt) - Date.parse(episode.since),
+                  ),
+                ),
+              })}
+              <br />
+              {t("pressure.unackedAtStart", {
+                count: episode.unacknowledgedCountAtStart,
+              })}
+              <br />
+              {t("pressure.episodes", { count: episode.episodes })}
+            </div>
+          ) : (
+            <div className="mt-1 text-xs text-mute">{missing}</div>
+          )}
+        </>
+      ) : null}
     </div>
   );
 }
@@ -352,7 +370,7 @@ function StreamsPanel({
                     {t(`telemetryStatus.${stream.hostTelemetryStatus}`)}
                   </div>
                 </td>
-                <td className="px-3 py-3">
+                <td className="px-3 py-3" data-testid="stream-pressure-cell">
                   <PressureCell
                     format={format}
                     telemetry={stream.hostTelemetry}

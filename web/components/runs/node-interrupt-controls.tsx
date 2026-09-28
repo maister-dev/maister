@@ -121,6 +121,12 @@ export function NodeInterruptControls({
   }
 
   const byId = Object.fromEntries(options.map((o) => [o.optionId, o]));
+  // The server's default is the primary button (ADR-183 amendment 2026-09-28:
+  // `resume` for a host-paused node).
+  const tone = (optionId: NodeInterruptOptionId, other: string): string =>
+    optionId === defaultOptionId
+      ? "border-amber bg-amber text-white hover:bg-amber-2"
+      : other;
   const buttonBase =
     "inline-flex w-max items-center gap-1.5 rounded-lg border px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em]";
 
@@ -200,17 +206,20 @@ export function NodeInterruptControls({
         {optionButton(
           "restart_node",
           t("restartNode"),
-          "border-amber bg-amber text-white hover:bg-amber-2",
+          tone(
+            "restart_node",
+            "border-line bg-paper text-ink-2 hover:text-ink",
+          ),
         )}
         {optionButton(
           "resume",
           t("resume"),
-          "border-line bg-paper text-ink-2 hover:text-ink",
+          tone("resume", "border-line bg-paper text-ink-2 hover:text-ink"),
         )}
         {optionButton(
           "stop",
           t("stop"),
-          "border-line bg-paper text-mute hover:text-ink-2",
+          tone("stop", "border-line bg-paper text-mute hover:text-ink-2"),
         )}
       </div>
 
