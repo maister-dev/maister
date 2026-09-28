@@ -107,6 +107,12 @@ const MANIFEST = {
       action: { command: "true" },
       transitions: { success: "done" },
     },
+    {
+      id: "review",
+      type: "judge",
+      action: { prompt: "judge it" },
+      transitions: { success: "done" },
+    },
   ],
 };
 
@@ -2349,6 +2355,116 @@ describe("runReconcileSweep — evidence-first crash classification (ADR-177)", 
     expect((await readRun(runId)).status).toBe("Crashed");
     expect((await readAttempt(nodeAttemptId)).decision).toBe("turn_lost");
     expect(deleted).toEqual([`sup-${runId}`]);
+    expect(runFlow).not.toHaveBeenCalled();
+    expect(summary.ownerPoisoned).toBeGreaterThanOrEqual(1);
+  }, 60_000);
+
+  // The same quarantine on a `judge` node whose session is gone. A judge has
+  // no evidence arm of its own, so the sweep used to gate-redispatch it every
+  // tick into the same unsettleable command.
+  it("a judge node without a session whose prompt was quarantined while accepted crashes owner-poisoned", async () => {
+    const runId = await seedRun({
+      currentStepId: "review",
+      acpSessionId: null,
+    });
+
+    await seedWorkspace(runId, "/worktrees/quarantined-judge");
+    const { opts, runFlow, hostId } = await makeOpts({
+      worktreePaths: ["/worktrees/quarantined-judge"],
+      liveSessions: [],
+    });
+    const nodeAttemptId = randomUUID();
+
+    await db.insert(nodeAttempts).values({
+      id: nodeAttemptId,
+      runId,
+      nodeId: "review",
+      nodeType: "judge",
+      attempt: 1,
+      status: "Running",
+      actionPromptOrdinal: 0,
+      startedAt: new Date(Date.now() - 600_000),
+    });
+    await seedOwnedPrompt(
+      runId,
+      hostId,
+      {
+        state: "accepted",
+        applicationState: "poisoned",
+        applicationError: {
+          reason: "prompt_terminal_conflict",
+          phase: "prepare",
+          causeCode: "terminal_unstorable",
+        },
+      },
+      { nodeAttemptId },
+    );
+
+    const summary = await runReconcileSweep(opts);
+
+    expect((await readRun(runId)).status).toBe("Crashed");
+    expect((await readAttempt(nodeAttemptId)).decision).toBe("turn_lost");
+    expect(runFlow).not.toHaveBeenCalled();
+    expect(summary.ownerPoisoned).toBeGreaterThanOrEqual(1);
+  }, 60_000);
+
+  // Any node's `pre_finish.gates` may run an AI gate; on a `check` node the
+  // sweep gate-redispatched the same way.
+  it("an AI gate on a check node whose prompt was quarantined while accepted crashes owner-poisoned", async () => {
+    const runId = await seedRun({
+      currentStepId: "verify",
+      acpSessionId: null,
+    });
+
+    await seedWorkspace(runId, "/worktrees/quarantined-gate");
+    const { opts, runFlow, hostId } = await makeOpts({
+      worktreePaths: ["/worktrees/quarantined-gate"],
+      liveSessions: [],
+    });
+    const nodeAttemptId = randomUUID();
+    const evaluationId = randomUUID();
+
+    await db.insert(nodeAttempts).values({
+      id: nodeAttemptId,
+      runId,
+      nodeId: "verify",
+      nodeType: "check",
+      attempt: 1,
+      status: "Running",
+      startedAt: new Date(Date.now() - 600_000),
+    });
+    await db.insert(schema.gateResults).values({
+      id: evaluationId,
+      runId,
+      nodeAttemptId,
+      gateId: "review",
+      kind: "ai_judgment",
+      mode: "blocking",
+      status: "running",
+    });
+    await seedOwnedPrompt(
+      runId,
+      hostId,
+      {
+        state: "accepted",
+        applicationState: "poisoned",
+        applicationError: {
+          reason: "prompt_terminal_conflict",
+          phase: "prepare",
+          causeCode: "terminal_unstorable",
+        },
+      },
+      {
+        nodeAttemptId,
+        ownerRef: { variant: "gate_ai", gateId: "review", evaluationId },
+        logicalOperationKey: `flow_node_attempt:gate_ai:${evaluationId}:0`,
+      },
+    );
+
+    const summary = await runReconcileSweep(opts);
+
+    expect((await readRun(runId)).status).toBe("Crashed");
+    expect((await readAttempt(nodeAttemptId)).decision).toBe("turn_lost");
     expect(runFlow).not.toHaveBeenCalled();
     expect(summary.ownerPoisoned).toBeGreaterThanOrEqual(1);
   }, 60_000);

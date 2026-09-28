@@ -813,6 +813,25 @@ describe("classifyRunReconcile — ADR-177 evidence arms", () => {
     },
   );
 
+  // Without a session, a node the host evidence read does not cover used to
+  // gate-redispatch into the same command every tick (a judge, an AI gate on
+  // a check node); a cli node crashes either way, now naming the poison.
+  it.each([
+    ["judge", "quarantined"],
+    ["check", "quarantined"],
+    ["check", "poisoned"],
+    ["cli", "quarantined"],
+  ] as const)(
+    "a %s node without a session whose prompt is %s crashes owner-poisoned",
+    (currentNodeKind, promptEvidence) => {
+      expect(
+        classifyRunReconcile(
+          input({ liveSession: false, currentNodeKind, promptEvidence }),
+        ),
+      ).toEqual({ action: "crash", reason: "owner-poisoned" });
+    },
+  );
+
   it("a LIVE agent node with no poisoned prompt still reattaches", () => {
     expect(
       classifyRunReconcile(

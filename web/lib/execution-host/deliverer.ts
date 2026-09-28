@@ -658,7 +658,7 @@ export async function startAsyncPrompt(
         },
       );
     if (current.applicationError?.reason === "prompt_terminal_conflict")
-      throw promptEvidenceConflict(commandId);
+      throw promptEvidenceConflict(commandId, current);
     if (
       current.state !== "queued" ||
       current.transportState === "acknowledged" ||

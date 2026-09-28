@@ -38,7 +38,7 @@ import { resolveCurrentNodeContext } from "@/lib/flows/graph/current-node-kind";
 import {
   NO_PROMPT_EVIDENCE,
   resolveConsensusPoisonEvidence,
-  resolveLivePoisonedPromptEvidence,
+  resolvePoisonedPromptEvidence,
   resolvePromptEvidence,
 } from "@/lib/reconcile-evidence-db";
 import { EVIDENCE_CRASH_REASONS } from "@/lib/reconcile-evidence";
@@ -437,14 +437,11 @@ function classifyInner(input: ReconcileInput): ReconcileDecision {
   }
 
   // A quarantined or poisoned prompt has no writer left, live session or not
-  // (ADR-184 amendment 2026-09-28): reattaching only re-runs a driver that
-  // yields again. Ahead of the live arm, like the consensus arm it widened.
+  // (ADR-184 amendment 2026-09-28): reattaching or re-dispatching only re-runs
+  // a driver that meets the same command and yields again. Ahead of the live
+  // arm, like the consensus arm it widened, and for every node kind.
   if (
     input.runKind === "flow" &&
-    (input.currentNodeKind === "consensus" ||
-      input.currentNodeKind === "ai_coding" ||
-      input.currentNodeKind === "orchestrator" ||
-      input.currentNodeKind === "judge") &&
     (input.promptEvidence === "poisoned" ||
       input.promptEvidence === "quarantined")
   )
@@ -1804,14 +1801,13 @@ export async function runReconcileSweep(
       !live &&
       !liveRunStep &&
       (currentNodeKind === "ai_coding" || currentNodeKind === "orchestrator");
-    // ADR-184 amendment 2026-09-28: a live session hides no writer for a
-    // quarantined prompt; this read is DB-only.
-    const wantsLivePoisonCheck =
-      cand.runKind === "flow" &&
-      Boolean(live || liveRunStep) &&
-      (currentNodeKind === "ai_coding" ||
-        currentNodeKind === "orchestrator" ||
-        currentNodeKind === "judge");
+    // ADR-184 amendment 2026-09-28: a quarantined or poisoned prompt has no
+    // writer left, and this read is DB-only. It covers every node the host
+    // read above does not: a live agent node, and any other node — a judge, or
+    // an AI gate on a check node — which would gate-redispatch into the same
+    // command every tick.
+    const wantsDbPoisonCheck =
+      cand.runKind === "flow" && currentNodeKind !== null && !wantsEvidence;
     const promptEvidence =
       cand.runKind === "flow" &&
       currentNodeKind === "consensus" &&
@@ -1820,8 +1816,8 @@ export async function runReconcileSweep(
             runId: cand.runId,
             nodeId: cand.currentStepId,
           })
-        : wantsLivePoisonCheck && cand.currentStepId
-          ? await resolveLivePoisonedPromptEvidence(db, {
+        : wantsDbPoisonCheck && cand.currentStepId
+          ? await resolvePoisonedPromptEvidence(db, {
               runId: cand.runId,
               nodeId: cand.currentStepId,
             })
