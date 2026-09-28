@@ -88,10 +88,6 @@ export function completeRecoveredRuntimeObjectReceipts(input: {
             assignmentEpoch: object.assignmentEpoch,
             metadata,
           }),
-          // A boot completion settles an accepted receipt; it admits nothing.
-          receipt.kind === "runtime_object.delete"
-            ? { kind: "teardown" }
-            : { kind: "new_work" },
         );
       } catch (error) {
         // Outbox pressure defers the settlement to the next boot; the receipt

@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { COMMAND_KINDS } from "../../runtime/command-kinds";
 
+import { NEW_WORK_REFUSALS, type OutboxLimit } from "./host-runtime-errors";
 import { RuntimeEventSequenceSchema } from "./runtime-events";
 
 const EXECUTOR_AGENTS = [
@@ -794,6 +795,9 @@ export type SupervisorErrorDetails = {
   // ADR-183: a prompt rejected `session_checkpointed` because the host's own
   // pause bound parked its session names that cause.
   cause?: "outbox_pressure";
+  // ADR-183 amendment 2026-09-28: which limit refused an
+  // `event_outbox_backpressure` admission.
+  outboxLimit?: OutboxLimit;
 };
 
 export const STEER_ADAPTER_OUTCOMES = [
@@ -1084,6 +1088,8 @@ export const SupervisorEventStreamHealthSchema = z
       })
       .strict()
       .nullable(),
+    // ADR-183 amendment 2026-09-28: what refuses new work now, or null.
+    newWorkRefusedBy: z.enum(NEW_WORK_REFUSALS).nullable(),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -1092,6 +1098,13 @@ export const SupervisorEventStreamHealthSchema = z
         code: z.ZodIssueCode.custom,
         path: ["pressure"],
         message: "pressure must be null exactly when pressured is false",
+      });
+    }
+    if (value.pressured && value.newWorkRefusedBy === null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["newWorkRefusedBy"],
+        message: "a pressured host refuses new work",
       });
     }
     if (value.unacknowledgedCount > value.retainedCount) {

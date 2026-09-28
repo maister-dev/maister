@@ -177,10 +177,11 @@ otherwise — the host's own episode record (SQLite v14). The web parser treats
 copies it into the manager's pressure record.
 `newWorkRefusedBy` (Implemented — ADR-183 amendment 2026-09-28) names the first
 host-wide outbox limit a `session.create` without output bindings or a
-`session.prompt` would meet right now — `unacknowledged` (the pressure bit),
-`retained` (retained rows at the hard budget), `physical` (SQLite headroom,
-recomputed on read) or `control` (the control partition cannot fund a new
-producer wallet) — and is `null` when it would meet none. It is what the
+`session.prompt` would meet right now, in the order an admission checks them —
+`physical` (SQLite headroom, recomputed on read), `unacknowledged` (the
+pressure bit), `retained` (retained rows at the hard budget) or `control` (the
+control partition cannot fund a new producer wallet) — and is `null` when it
+would meet none. It is what the
 manager's admission fence follows; `pressured` stays the episode bit. The web
 parser treats it as optional: an older host omits it and the manager falls back
 to `pressured`.

@@ -1,3 +1,10 @@
+import type {
+  AppendRuntimeEventInput,
+  CommandReceiptRow,
+  SettledReceiptRow,
+} from "../host-state";
+import type { ReceiptAdmission } from "../outbox-budget";
+
 import { once } from "node:events";
 import * as filesystem from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
@@ -1252,12 +1259,20 @@ describe("runtime object crash-gap recovery", () => {
     );
     const crash = vi
       .spyOn(host.hostState, "putReceiptWithRuntimeEvent")
-      .mockImplementation((row, event, admission) => {
-        if (row.commandId === commandId && row.phase === "completed")
-          throw new Error("simulated crash before the completed receipt");
+      .mockImplementation(
+        (
+          row: CommandReceiptRow,
+          event: AppendRuntimeEventInput,
+          admission?: ReceiptAdmission,
+        ) => {
+          if (row.commandId === commandId && row.phase === "completed")
+            throw new Error("simulated crash before the completed receipt");
 
-        return original(row, event, admission);
-      });
+          return admission
+            ? original(row, event, admission)
+            : original(row as SettledReceiptRow, event);
+        },
+      );
     const interrupted = await upload(host, objectId, headers);
 
     crash.mockRestore();

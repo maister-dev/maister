@@ -110,9 +110,9 @@ manager is behind — and nothing else, and the block also carries `pressure:
 pressured (`null` otherwise), read from the v14 `runtime_event_pressure` row.
 (Implemented — ADR-183 amendment 2026-09-28) `newWorkRefusedBy` names the first
 host-wide outbox limit a `session.create` without output bindings or a
-`session.prompt` would meet right now — `unacknowledged`, `retained`,
-`physical` (recomputed on read) or `control` — or `null`; the manager's
-admission fence follows it.
+`session.prompt` would meet right now, in admission order — `physical`
+(recomputed on read), `unacknowledged`, `retained` or `control` — or `null`;
+the manager's admission fence follows it.
 
 ### `POST /sessions`
 

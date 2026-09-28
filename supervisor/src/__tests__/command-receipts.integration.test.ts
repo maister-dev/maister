@@ -875,42 +875,36 @@ describe("command receipts", () => {
     const fresh = randomUUID();
     const now = Date.now();
 
-    state.putReceipt(
-      {
-        commandId: old,
-        runId: "r",
-        kind: "session.cancel",
-        assignmentId: null,
-        epoch: 1,
-        hostSessionId: null,
-        requestDigest: null,
-        eventId: null,
-        phase: "completed",
-        httpStatus: 200,
-        body: {},
-        receivedAt: new Date(now - 8 * 24 * 3600_000).toISOString(),
-        completedAt: null,
-      },
-      { kind: "teardown" },
-    );
-    state.putReceipt(
-      {
-        commandId: fresh,
-        runId: "r",
-        kind: "session.cancel",
-        assignmentId: null,
-        epoch: 1,
-        hostSessionId: null,
-        requestDigest: null,
-        eventId: null,
-        phase: "completed",
-        httpStatus: 200,
-        body: {},
-        receivedAt: new Date(now - 6 * 24 * 3600_000).toISOString(),
-        completedAt: null,
-      },
-      { kind: "teardown" },
-    );
+    state.putReceipt({
+      commandId: old,
+      runId: "r",
+      kind: "session.cancel",
+      assignmentId: null,
+      epoch: 1,
+      hostSessionId: null,
+      requestDigest: null,
+      eventId: null,
+      phase: "completed",
+      httpStatus: 200,
+      body: {},
+      receivedAt: new Date(now - 8 * 24 * 3600_000).toISOString(),
+      completedAt: null,
+    });
+    state.putReceipt({
+      commandId: fresh,
+      runId: "r",
+      kind: "session.cancel",
+      assignmentId: null,
+      epoch: 1,
+      hostSessionId: null,
+      requestDigest: null,
+      eventId: null,
+      phase: "completed",
+      httpStatus: 200,
+      body: {},
+      receivedAt: new Date(now - 6 * 24 * 3600_000).toISOString(),
+      completedAt: null,
+    });
     state.close();
 
     const reopened = openHostState({ stateDir, now: () => new Date(now) });

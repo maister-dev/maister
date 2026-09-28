@@ -117,7 +117,6 @@ describe("Stage B durable host event outbox", () => {
       const terminal = state.putReceiptWithRuntimeEvent(
         { ...receipt, phase: "completed", completedAt: clock.toISOString() },
         eventDraft("session.command"),
-        { kind: "new_work" },
       );
 
       // The terminal is not ACKed yet: never pruned.
@@ -146,14 +145,11 @@ describe("Stage B durable host event outbox", () => {
 
     try {
       state.reserveProducerReceipt(receipt, 0);
-      state.putReceipt(
-        {
-          ...receipt,
-          phase: "completed",
-          completedAt: receipt.receivedAt,
-        },
-        { kind: "producer", outputBindingCount: 0 },
-      );
+      state.putReceipt({
+        ...receipt,
+        phase: "completed",
+        completedAt: receipt.receivedAt,
+      });
       state.closeProducerWallet(receipt.commandId);
       expect(
         state.retireReceipt(receipt.commandId, {
@@ -272,14 +268,11 @@ describe("Stage B durable host event outbox", () => {
 
       state.reserveProducerReceipt(create, 0);
       state.bindProducerSession(create.commandId, sessionId);
-      state.putReceipt(
-        {
-          ...create,
-          phase: "completed",
-          completedAt: new Date(clock).toISOString(),
-        },
-        { kind: "producer", outputBindingCount: 0 },
-      );
+      state.putReceipt({
+        ...create,
+        phase: "completed",
+        completedAt: new Date(clock).toISOString(),
+      });
       const prompt = {
         ...createReceipt(),
         kind: "session.prompt",

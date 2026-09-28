@@ -528,11 +528,11 @@ paths:
 
         (Implemented — ADR-183 amendment 2026-09-28) `newWorkRefusedBy` names
         the first host-wide outbox limit a `session.create` without output
-        bindings or a `session.prompt` would meet right now — `unacknowledged`
-        (the `pressured` bit), `retained` (retained rows at the hard budget),
-        `physical` (SQLite headroom, recomputed on read) or `control` (the
-        control partition cannot fund a new producer wallet) — or `null` when
-        it would meet none. The manager's admission fence follows it; a web
+        bindings or a `session.prompt` would meet right now, in admission order
+        — `physical` (SQLite headroom, recomputed on read), `unacknowledged`
+        (the `pressured` bit), `retained` (retained rows at the hard budget) or
+        `control` (the control partition cannot fund a new producer wallet) —
+        or `null` when it would meet none. The manager's admission fence follows it; a web
         tier reading an older host falls back to `pressured`.
       operationId: getSupervisorHealth
       parameters:
@@ -2492,11 +2492,11 @@ components:
           description: |
             (Implemented — ADR-183 amendment 2026-09-28) The first host-wide
             outbox limit a `session.create` without output bindings or a
-            `session.prompt` would meet now, checked in this order —
+            `session.prompt` would meet now, in the order an admission checks
+            them — `physical` (SQLite headroom, recomputed on read),
             `unacknowledged` (`pressured`), `retained` (retained rows at the
-            hard budget), `physical` (SQLite headroom, recomputed on read),
-            `control` (the control partition cannot fund a new producer
-            wallet) — or `null` when it would meet none. Per-wallet limits and
+            hard budget), `control` (the control partition cannot fund a new
+            producer wallet) — or `null` when it would meet none. Per-wallet limits and
             runtime-file pressure (`503 runtime_storage_pressure`) are not
             reported. Required from the host; a web tier reading an older host
             falls back to `pressured`.

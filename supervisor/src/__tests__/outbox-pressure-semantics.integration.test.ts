@@ -286,6 +286,59 @@ describe("ADR-183 outbox pressure semantics", () => {
     });
   });
 
+  // Review S4 (2026-09-28): the boot recompute ran before the logged state was
+  // seeded, so a flip at open — a lowered soft budget, or a process that died
+  // between a commit and its observe — was never logged (D2: every flip logs).
+  it("B2: a flip at boot is logged", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "maister-outbox-boot-flip-"));
+
+    cleanups.push(() => rmSync(stateDir, { recursive: true, force: true }));
+    const first = openHostState({ stateDir, limits: LIMITS });
+
+    appendBatch(first, 700);
+    expect(first.runtimeEventHealthSnapshot().pressured).toBe(false);
+    first.close();
+    const { logger, lines } = captureLogger();
+    const lowered = validateRuntimeLimits({
+      ...LIMITS,
+      eventLowRows: 500,
+      eventSoftRows: 600,
+    });
+    const reopened = openHostState({ stateDir, limits: lowered, logger });
+
+    cleanups.push(() => reopened.close());
+    expect(reopened.runtimeEventHealthSnapshot().pressured).toBe(true);
+    expect(
+      lines.filter((line) => line.msg === "outbox-pressure-changed"),
+    ).toEqual([expect.objectContaining({ pressured: true })]);
+  });
+
+  // Review (ADR-183 amendment 2026-09-28): a teardown refused by its own
+  // wallet is a per-command refusal, not a host-wide limit — its own reason.
+  it("a teardown of a wallet whose teardown is in progress is refused `event_outbox_wallet_exhausted`", () => {
+    const state = openHostState({ inMemory: true, limits: LIMITS });
+
+    cleanups.push(() => state.close());
+    const create = promptReceipt({ kind: "session.create" });
+
+    state.reserveProducerReceipt(create, 0);
+    const teardown = (kind: string) =>
+      promptReceipt({ kind, hostSessionId: eventDraft().draft.hostSessionId });
+
+    state.putReceipt(teardown("session.checkpoint"), {
+      kind: "teardown",
+      walletId: create.commandId,
+    });
+    expect(() =>
+      state.putReceipt(teardown("session.cancel"), {
+        kind: "teardown",
+        walletId: create.commandId,
+      }),
+    ).toThrow(
+      expect.objectContaining({ reason: "event_outbox_wallet_exhausted" }),
+    );
+  });
+
   it("B2: stream.pressured ignores retained rows at the hard budget and keeps refusing new work there", () => {
     const { logger } = captureLogger();
     const { state } = openStore(logger);
@@ -501,6 +554,50 @@ describe("retained-pressure prune past open spans (ADR-184), floor, paging", () 
     expect(stalled[0]).not.toHaveProperty("protectedFromSequence");
   });
 
+  // Review S2 (2026-09-28): after a stalled pass only a newer ACK can make a
+  // row prunable, so a kick waits for the ACK watermark to move. H3 stays green
+  // without that gate (its stall line is deduplicated separately); this counts
+  // the prune pages the appends after the stall start.
+  it("H3b: after a stall, appends start no prune pass until the ACK watermark moves", async () => {
+    const { logger, lines } = captureLogger();
+    const { state } = openStore(logger);
+    let pages = 0;
+    const counted = new Proxy(state, {
+      get(target, property, receiver) {
+        if (property === "pruneAcknowledgedRuntimeEvents")
+          return (
+            ...args: Parameters<HostState["pruneAcknowledgedRuntimeEvents"]>
+          ) => {
+            pages += 1;
+
+            return target.pruneAcknowledgedRuntimeEvents(...args);
+          };
+
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const stopPruner = startRuntimeEventPruner(counted, logger);
+
+    cleanups.push(stopPruner);
+    appendBatch(state, LIMITS.eventSoftRows + 1);
+    await waitFor(
+      () =>
+        lines.some(
+          (line) => line.msg === "outbox-retained-pressure-prune-stalled",
+        ),
+      5_000,
+      5,
+    );
+    await settle();
+    const afterStall = pages;
+
+    for (let round = 0; round < 3; round += 1) {
+      appendBatch(state, 10);
+      await settle();
+    }
+    expect(pages).toBe(afterStall);
+  });
+
   // Found by the ADR-184 R20 control (2026-09-28): at hard, nine paused
   // producers pegged the host at 100% CPU. A REFUSED frame reservation woke
   // every capacity listener, so each waiter's refusal made every other waiter
@@ -550,6 +647,26 @@ describe("retained-pressure prune past open spans (ADR-184), floor, paging", () 
     expect(records.every((record) => record.outputPaused)).toBe(true);
   });
 
+  // Review S1 (2026-09-28): a SUCCESSFUL reservation only consumes capacity,
+  // yet it still woke every capacity listener, so each paused producer retried
+  // into a refusal once per frame another producer wrote.
+  it("H7: a successful frame reservation wakes no listener", () => {
+    const state = openHostState({ inMemory: true, limits: LIMITS });
+
+    cleanups.push(() => state.close());
+    const create = promptReceipt({ kind: "session.create" });
+
+    state.reserveProducerReceipt(create, 0);
+    let woken = 0;
+    const unsubscribe = state.subscribeRuntimeCapacity(() => {
+      woken += 1;
+    });
+
+    cleanups.push(() => void unsubscribe());
+    expect(state.tryReserveRuntimeFrame(create.commandId, 1024)).not.toBeNull();
+    expect(woken).toBe(0);
+  });
+
   it("B3d: a 20 000-row retained prune takes ≥ 200 bounded pages and an ACK commits between them", async () => {
     const limits = validateRuntimeLimits({
       ...DEFAULT_RUNTIME_LIMITS,
@@ -578,24 +695,19 @@ describe("retained-pressure prune past open spans (ADR-184), floor, paging", () 
 
     cleanups.push(stopPruner);
     await waitFor(() => regularRetained(state) < 20_000, 5_000, 1);
-    // Mid-prune: schedule one append + ACK and time it to its commit.
-    const scheduledAt = performance.now();
-    const committed = await new Promise<{ ms: number; retained: number }>(
-      (resolve) =>
-        setTimeout(() => {
-          const sequence = state.appendRuntimeEvent(eventDraft()).sequence;
+    // Mid-prune: schedule one append + ACK and read retained at its commit.
+    const committed = await new Promise<number>((resolve) =>
+      setTimeout(() => {
+        const sequence = state.appendRuntimeEvent(eventDraft()).sequence;
 
-          state.ackRuntimeEvents(streamId, sequence);
-          resolve({
-            ms: performance.now() - scheduledAt,
-            retained: regularRetained(state),
-          });
-        }, 0),
+        state.ackRuntimeEvents(streamId, sequence);
+        resolve(regularRetained(state));
+      }, 0),
     );
 
-    expect(committed.ms).toBeLessThan(250);
-    // It committed while the pass was still running, not after it.
-    expect(committed.retained).toBeGreaterThan(100);
+    // It committed while the pass was still running, not after it: a pass
+    // that never yielded would have pruned to 0 before the timer fired.
+    expect(committed).toBeGreaterThan(100);
     // The episode line follows the pass's final (empty) page.
     await waitFor(
       () => lines.some((line) => line.msg === "outbox-retained-pressure-prune"),

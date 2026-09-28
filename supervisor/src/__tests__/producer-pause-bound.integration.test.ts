@@ -272,7 +272,12 @@ describe("ADR-183 producer pause bound", () => {
     const runId = `run-pause-perm-${randomUUID()}`;
     const session = await start(booted, runId);
 
-    await prompt(booted, runId, session.sessionId, "needs a tool");
+    const commandId = await prompt(
+      booted,
+      runId,
+      session.sessionId,
+      "needs a tool",
+    );
     const permission = (await session.stream.waitFor(
       (e) => e.type === "session.permission_request",
       30_000,
@@ -296,6 +301,17 @@ describe("ADR-183 producer pause bound", () => {
     expect(answered.status).toBe(410);
     expect(answered.body.details).toMatchObject({
       reason: "session_checkpointed",
+    });
+    // Two owner signals for one parked turn, both by ADR-183 (D6, D7): the
+    // answer is told to resume (above) AND the prompt names the park.
+    await expect
+      .poll(async () => (await receipt(booted, commandId)).phase, {
+        timeout: 10_000,
+      })
+      .toBe("rejected");
+    expect((await receipt(booted, commandId)).body).toMatchObject({
+      code: "ACP_PROTOCOL",
+      details: { reason: "session_checkpointed", cause: "outbox_pressure" },
     });
     await session.stream.close();
   }, 120_000);

@@ -239,7 +239,9 @@ describe("AT-02 physical runtime storage", () => {
             },
           });
         } catch (error) {
-          expect(error).toMatchObject({ reason: "event_outbox_soft_limit" });
+          expect(error).toMatchObject({
+            reason: "event_outbox_physical_limit",
+          });
           refused = true;
           break;
         }

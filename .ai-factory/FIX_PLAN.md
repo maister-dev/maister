@@ -279,7 +279,7 @@ discards the ACP context the park preserved and spends an operator restart.
 
 ### Phase 1 — supervisor (TDD). Commit: `fix(supervisor): refusal cause on the wire and a new-work signal in /health; a successful reservation wakes nobody; boot flip logged`
 
-6. [ ] REDs: `outbox-admission-kinds` CASES — each refusal carries its `outboxLimit` (soft →
+6. [x] REDs: `outbox-admission-kinds` CASES — each refusal carries its `outboxLimit` (soft →
    `unacknowledged`, hard → `retained`, physical → `physical`, wallet-less create at control budget →
    `control`, teardown serialization → `wallet`); `/health` `newWorkRefusedBy` for each condition and
    `null` when healthy (health `pressured:false` under hard/physical stays pinned); `openapi-examples`
@@ -287,13 +287,22 @@ discards the ACP context the park preserved and spends an operator restart.
    producer attempt per success (H6 shape); S4 boot flip logs `outbox-pressure-changed`; S2 appends after
    a stalled pass start no prune pass (spy on the page function); S8 D3-perm asserts the prompt
    rejection token.
-7. [ ] Implement D-A host side (`host-runtime-errors.ts`, `host-state.ts:988`, `outbox-budget.ts`
+7. [x] Implement D-A host side (`host-runtime-errors.ts`, `host-state.ts:988`, `outbox-budget.ts`
    split sites, `http-api.ts` mapping + details, `types.ts` details + health zod, health SQL/read);
    S1 `observeCapacity()` on success; S3 `ReceiptAdmission` only on the accepted transition
    (discriminated `putReceipt*` input; drop fabricated values and their comments); S4 seed
    `observedPressure` before the boot refresh and route it through `observeCapacity`; S5 comment; S6
    drop the 250 ms bound; S7 make `nowMs` required and thread the injected clock.
-8. [ ] Supervisor lane green; falsify each new guard once (revert, RED, restore).
+8. [x] Supervisor lane green; falsify each new guard once (revert, RED, restore).
+   *(Done: supervisor 85 files / 798 tests green, tsc clean. REDs watched failing first: wire
+   mapping (unexported), health strict parse, admission table ×3 + healthy + control, boot flip,
+   wallet reason, H7. Falsified after GREEN: H3b fails (9 vs 3 pages) without the stall gate;
+   the control test fails without the control check; the physical case fails (`control`)
+   without physical-first. Health order follows admission order (physical, unacknowledged,
+   retained, control) — ADR/OpenAPI/analytics aligned. `NEW_WORK_REFUSALS` +
+   `outboxLimitOf` (exhaustive over every reason) live in `host-runtime-errors.ts`; the zod
+   schema requires `newWorkRefusedBy` non-null while `pressured`. S3 by interface overloads
+   (`SettledReceiptRow` needs no admission); S7 `nowMs` required and threaded.)*
 
 ### Phase 2 — manager fence, sweeps, recovery (TDD). Commit: `fix(execution-host): the fence follows the host's new-work signal; the queue drains on every admitting sample; host parks survive Pass 2; the auto-resume backs off`
 

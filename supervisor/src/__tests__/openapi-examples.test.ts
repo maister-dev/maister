@@ -60,6 +60,50 @@ describe("supervisor OpenAPI 0.8.0 examples ↔ Zod", () => {
     expect(examples.pressured?.value).toMatchObject({
       stream: { pressured: true, pressure: { episodes: 2 } },
     });
+    // ADR-183 amendment 2026-09-28: a host can refuse new work unpressured.
+    expect(examples.refusingPhysical?.value).toMatchObject({
+      stream: { pressured: false, newWorkRefusedBy: "physical" },
+    });
+  });
+
+  it("every documented outbox refusal carries a documented outboxLimit", () => {
+    const limits = new Set<string>(
+      openapi.components.schemas.OutboxLimit.enum as string[],
+    );
+    const found: string[] = [];
+
+    for (const methods of Object.values(openapi.paths) as Array<
+      Record<string, { responses?: Record<string, unknown> }>
+    >) {
+      for (const operation of Object.values(methods)) {
+        const examples = (
+          operation.responses?.["409"] as
+            | {
+                content?: {
+                  "application/json"?: {
+                    examples?: Record<
+                      string,
+                      { value: { details?: Record<string, unknown> } }
+                    >;
+                  };
+                };
+              }
+            | undefined
+        )?.content?.["application/json"]?.examples;
+
+        for (const { value } of Object.values(examples ?? {})) {
+          if (value.details?.reason !== "event_outbox_backpressure") continue;
+          found.push(value.details.outboxLimit as string);
+          expect(limits.has(value.details.outboxLimit as string)).toBe(true);
+        }
+      }
+    }
+    expect(found.sort()).toEqual([
+      "control",
+      "physical",
+      "unacknowledged",
+      "wallet",
+    ]);
   });
 
   // ADR-179: these four are only parity-checked because they carry an

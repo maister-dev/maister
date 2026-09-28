@@ -60,6 +60,7 @@ import {
 } from "./execution-fence";
 import { attachHeartbeat } from "./heartbeat";
 import { executionHostCapabilities } from "./data-plane-capabilities";
+import { outboxLimitOf } from "./host-runtime-errors";
 import {
   EXECUTION_HOST_PROTOCOL_VERSION,
   HostRuntimeEventError,
@@ -317,7 +318,7 @@ function receiptAdmission(
   }
 }
 
-function runtimeEventSupervisorError(error: unknown): SupervisorError {
+export function runtimeEventSupervisorError(error: unknown): SupervisorError {
   if (error instanceof HostRuntimeEventError) {
     if (
       error.reason === "runtime_storage_unavailable" ||
@@ -326,14 +327,16 @@ function runtimeEventSupervisorError(error: unknown): SupervisorError {
       return new SupervisorError("EXECUTOR_UNAVAILABLE", error.message, {
         details: { reason: error.reason },
       });
+    const outboxLimit = outboxLimitOf(error.reason);
+
+    if (outboxLimit)
+      return new SupervisorError("PRECONDITION", error.message, {
+        details: { reason: "event_outbox_backpressure", outboxLimit },
+      });
     const reason =
       error.reason === "replay_floor_exceeded"
         ? "replay_floor_lost"
-        : error.reason === "event_outbox_soft_limit" ||
-            error.reason === "event_outbox_hard_limit" ||
-            error.reason === "event_outbox_terminal_reserve_exhausted"
-          ? "event_outbox_backpressure"
-          : error.reason;
+        : error.reason;
 
     if (
       reason === "command_in_progress" ||
@@ -341,8 +344,7 @@ function runtimeEventSupervisorError(error: unknown): SupervisorError {
       reason === "stream_identity_conflict" ||
       reason === "replay_floor_lost" ||
       reason === "ack_not_contiguous" ||
-      reason === "ack_beyond_emitted" ||
-      reason === "event_outbox_backpressure"
+      reason === "ack_beyond_emitted"
     ) {
       return new SupervisorError("PRECONDITION", error.message, {
         details: { reason },

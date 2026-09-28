@@ -279,7 +279,6 @@ describe("GET /runtime-events/span", () => {
     const terminal = state.putReceiptWithRuntimeEvent(
       { ...receipt, phase: "completed", completedAt: clock.toISOString() },
       commandDraft,
-      { kind: "new_work" },
     );
 
     clock = new Date(clock.getTime() + 2 * DAY_MS);

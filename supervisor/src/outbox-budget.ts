@@ -1,7 +1,10 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { RuntimeLimits } from "./runtime-limits";
 
-import { HostRuntimeEventError } from "./host-runtime-errors";
+import {
+  HostRuntimeEventError,
+  type NewWorkRefusal,
+} from "./host-runtime-errors";
 import {
   CONTROL_EVENT_MAX_BYTES,
   EMERGENCY_EVENT_BYTES,
@@ -256,7 +259,7 @@ export function retainedAtThreshold(
 export function refreshOutboxPressure(
   db: DatabaseSync,
   limits: RuntimeLimits,
-  nowMs: number = Date.now(),
+  nowMs: number,
 ): boolean {
   const snapshot = outboxBudgetSnapshot(db);
   const regular = reservedRegularUsage(snapshot);
@@ -320,9 +323,13 @@ export function reserveFrameCapacity(
     reservationId: string;
     bootId: string;
     walletId: string;
+    nowMs: number;
   },
 ): boolean {
-  if (refreshOutboxPressure(db, limits) || !frameFitsUnderHard(db, limits))
+  if (
+    refreshOutboxPressure(db, limits, input.nowMs) ||
+    !frameFitsUnderHard(db, limits)
+  )
     return false;
   if (
     !db
@@ -332,7 +339,7 @@ export function reserveFrameCapacity(
       .get(input.walletId)
   ) {
     throw new HostRuntimeEventError(
-      "event_outbox_terminal_reserve_exhausted",
+      "event_outbox_wallet_exhausted",
       "an output frame requires its accepted producer wallet",
     );
   }
@@ -367,8 +374,9 @@ export function outboxRefusesFrames(
 export function assertOutboxAdmission(
   db: DatabaseSync,
   limits: RuntimeLimits,
+  nowMs: number,
 ): void {
-  if (refreshOutboxPressure(db, limits)) {
+  if (refreshOutboxPressure(db, limits, nowMs)) {
     throw new HostRuntimeEventError(
       "event_outbox_soft_limit",
       "runtime event outbox unacknowledged rows are above the command admission soft limit or awaiting its low watermark",
@@ -430,6 +438,7 @@ export function reserveProducerWallet(
   db: DatabaseSync,
   limits: RuntimeLimits,
   binding: ProducerWalletBinding,
+  nowMs: number,
 ): void {
   const rows = producerWalletRows(binding.outputBindingCount);
   const existing = db
@@ -457,17 +466,8 @@ export function reserveProducerWallet(
 
     return;
   }
-  assertOutboxAdmission(db, limits);
-  const snapshot = outboxBudgetSnapshot(db);
-
-  if (
-    snapshot.control.retainedCount + snapshot.reservedControlRows + rows >
-      limits.eventControlRows - EMERGENCY_EVENT_ROWS ||
-    snapshot.control.retainedBytes +
-      snapshot.reservedControlBytes +
-      rows * CONTROL_EVENT_MAX_BYTES >
-      limits.eventControlBytes - EMERGENCY_EVENT_BYTES
-  ) {
+  assertOutboxAdmission(db, limits, nowMs);
+  if (!controlFundsProducerWallet(outboxBudgetSnapshot(db), limits, rows)) {
     throw new HostRuntimeEventError(
       "event_outbox_terminal_reserve_exhausted",
       "runtime event control capacity cannot fund another producer wallet",
@@ -487,6 +487,46 @@ export function reserveProducerWallet(
   );
 }
 
+function controlFundsProducerWallet(
+  snapshot: OutboxBudgetSnapshot,
+  limits: RuntimeLimits,
+  rows: number,
+): boolean {
+  return (
+    snapshot.control.retainedCount + snapshot.reservedControlRows + rows <=
+      limits.eventControlRows - EMERGENCY_EVENT_ROWS &&
+    snapshot.control.retainedBytes +
+      snapshot.reservedControlBytes +
+      rows * CONTROL_EVENT_MAX_BYTES <=
+      limits.eventControlBytes - EMERGENCY_EVENT_BYTES
+  );
+}
+
+/** ADR-183 amendment 2026-09-28: the host-wide outbox limit a `session.create`
+ * with no output bindings or a `session.prompt` would meet now, in admission
+ * order after the physical check the caller owns — the signal the manager's
+ * admission fence follows. Read-only. */
+export function outboxRefusesNewWork(
+  db: DatabaseSync,
+  limits: RuntimeLimits,
+): Exclude<NewWorkRefusal, "physical"> | null {
+  const snapshot = outboxBudgetSnapshot(db);
+
+  if (snapshot.pressured) return "unacknowledged";
+  if (
+    retainedAtThreshold(
+      reservedRegularUsage(snapshot),
+      limits.eventHardBytes,
+      limits.eventHardRows,
+    )
+  )
+    return "retained";
+  if (!controlFundsProducerWallet(snapshot, limits, producerWalletRows(0)))
+    return "control";
+
+  return null;
+}
+
 export function closeProducerWallet(db: DatabaseSync, walletId: string): void {
   db.prepare(
     "UPDATE runtime_event_wallets SET remaining_rows = 0, closed = 1 WHERE wallet_id = ?",
@@ -499,6 +539,7 @@ export function admitReceipt(
   limits: RuntimeLimits,
   receipt: BudgetReceipt,
   admission: ReceiptAdmission,
+  nowMs: number,
 ): void {
   if (
     receipt.phase !== "accepted" ||
@@ -515,17 +556,22 @@ export function admitReceipt(
           "a producer wallet requires an accepted fenced create receipt",
         );
       }
-      reserveProducerWallet(db, limits, {
-        walletId: receipt.commandId,
-        runId: receipt.runId,
-        assignmentId: receipt.assignmentId,
-        assignmentEpoch: receipt.epoch,
-        outputBindingCount: admission.outputBindingCount,
-      });
+      reserveProducerWallet(
+        db,
+        limits,
+        {
+          walletId: receipt.commandId,
+          runId: receipt.runId,
+          assignmentId: receipt.assignmentId,
+          assignmentEpoch: receipt.epoch,
+          outputBindingCount: admission.outputBindingCount,
+        },
+        nowMs,
+      );
 
       return;
     case "new_work":
-      assertOutboxAdmission(db, limits);
+      assertOutboxAdmission(db, limits, nowMs);
       if (
         receipt.kind === "session.prompt" &&
         receipt.hostSessionId !== null &&
@@ -547,7 +593,7 @@ export function admitReceipt(
 
       return;
     case "teardown":
-      admitTeardown(db, limits, receipt, admission.walletId);
+      admitTeardown(db, limits, receipt, admission.walletId, nowMs);
 
       return;
   }
@@ -558,6 +604,7 @@ function admitTeardown(
   limits: RuntimeLimits,
   receipt: BudgetReceipt,
   walletId: string | undefined,
+  nowMs: number,
 ): void {
   if (
     !TEARDOWN_KINDS.includes(receipt.kind as (typeof TEARDOWN_KINDS)[number])
@@ -589,14 +636,14 @@ function admitTeardown(
 
   if (active) {
     throw new HostRuntimeEventError(
-      "event_outbox_terminal_reserve_exhausted",
+      "event_outbox_wallet_exhausted",
       "a producer teardown command is already in progress",
     );
   }
   // New IDs cannot manufacture an unlimited cancellation loop during pressure.
   // Normal turns may start another chain after capacity has recovered.
   if (
-    refreshOutboxPressure(db, limits) &&
+    refreshOutboxPressure(db, limits, nowMs) &&
     db
       .prepare(
         "SELECT 1 FROM runtime_event_teardowns WHERE wallet_id = ? AND kind = ?",
@@ -604,7 +651,7 @@ function admitTeardown(
       .get(walletId, receipt.kind)
   ) {
     throw new HostRuntimeEventError(
-      "event_outbox_terminal_reserve_exhausted",
+      "event_outbox_wallet_exhausted",
       "the pressured producer already admitted this teardown step; replay its command id",
     );
   }
@@ -629,7 +676,7 @@ function admitTeardown(
 
   if (reserved.changes !== 1) {
     throw new HostRuntimeEventError(
-      "event_outbox_terminal_reserve_exhausted",
+      "event_outbox_wallet_exhausted",
       "producer teardown cannot reserve its acceptance and completion credit",
     );
   }
@@ -707,7 +754,7 @@ function spendEmergency(
 
   if (encodedBytes > CONTROL_EVENT_MAX_BYTES) {
     throw new HostRuntimeEventError(
-      "event_outbox_terminal_reserve_exhausted",
+      "event_outbox_wallet_exhausted",
       "runtime event control record exceeds 16 KiB",
     );
   }
@@ -716,7 +763,7 @@ function spendEmergency(
     used.retainedCount + 1 > EMERGENCY_EVENT_ROWS
   ) {
     throw new HostRuntimeEventError(
-      "event_outbox_terminal_reserve_exhausted",
+      "event_outbox_wallet_exhausted",
       "runtime event emergency floor is exhausted",
     );
   }
@@ -759,7 +806,7 @@ export function spendEventCapacity(
 
       if (spent.changes !== 1)
         throw new HostRuntimeEventError(
-          "event_outbox_hard_limit",
+          "event_outbox_wallet_exhausted",
           "an output frame exceeded its event reservation",
         );
     }
@@ -783,7 +830,7 @@ export function spendEventCapacity(
   }
   if (encodedBytes > CONTROL_EVENT_MAX_BYTES) {
     throw new HostRuntimeEventError(
-      "event_outbox_terminal_reserve_exhausted",
+      "event_outbox_wallet_exhausted",
       "runtime event control record exceeds 16 KiB",
     );
   }
@@ -814,7 +861,7 @@ export function spendEventCapacity(
 
     if (spent.changes !== 1)
       throw new HostRuntimeEventError(
-        "event_outbox_terminal_reserve_exhausted",
+        "event_outbox_wallet_exhausted",
         "producer teardown credit is exhausted",
       );
 
@@ -835,7 +882,7 @@ export function spendEventCapacity(
 
   if (spent.changes !== 1) {
     throw new HostRuntimeEventError(
-      "event_outbox_terminal_reserve_exhausted",
+      "event_outbox_wallet_exhausted",
       "runtime event requires an available credit from its producer wallet",
     );
   }

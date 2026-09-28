@@ -33,6 +33,15 @@ import {
 // refuses everything but a teardown; nothing refuses a teardown.
 type PressureState = "soft" | "hard" | "physical";
 type Outcome = "refused" | "admitted";
+
+// ADR-183 amendment 2026-09-28: the refusal names its cause on the wire and
+// health names what refuses new work — the manager's fence follows these.
+const LIMIT_BY_STATE = {
+  soft: "unacknowledged",
+  hard: "retained",
+  physical: "physical",
+} as const satisfies Record<PressureState, string>;
+
 type Case = {
   label: string;
   kind: CommandKind;
@@ -389,7 +398,7 @@ async function induce(host: BootedHost, state: PressureState): Promise<void> {
         },
       });
     } catch (error) {
-      expect(error).toMatchObject({ reason: "event_outbox_soft_limit" });
+      expect(error).toMatchObject({ reason: "event_outbox_physical_limit" });
       break;
     }
   }
@@ -397,10 +406,24 @@ async function induce(host: BootedHost, state: PressureState): Promise<void> {
   expect(host.hostState.runtimeEventOutboxStats().budget.pressured).toBe(true);
 }
 
+async function newWorkRefusedBy(host: BootedHost): Promise<unknown> {
+  const response = await fetch(`${host.url}/health?includeStream=true`);
+
+  expect(response.status).toBe(200);
+
+  return ((await response.json()) as { stream?: Record<string, unknown> })
+    .stream?.newWorkRefusedBy;
+}
+
 async function issue(
   fixtures: Fixtures,
   testCase: Case,
-): Promise<{ status: number; reason: unknown; commandId: string }> {
+): Promise<{
+  status: number;
+  reason: unknown;
+  outboxLimit: unknown;
+  commandId: string;
+}> {
   const { host } = fixtures;
   const fence = (runId: string) => ({ hostKey: host.hostState.hostKey, runId });
   const post = async (
@@ -413,6 +436,7 @@ async function issue(
     return {
       status: response.status,
       reason: response.body?.details?.reason,
+      outboxLimit: response.body?.details?.outboxLimit,
       commandId: body.command.id,
     };
   };
@@ -459,10 +483,12 @@ async function issue(
         commandId,
       );
       const text = await response.text();
+      const details = text ? JSON.parse(text)?.details : undefined;
 
       return {
         status: response.status,
-        reason: text ? JSON.parse(text)?.details?.reason : undefined,
+        reason: details?.reason,
+        outboxLimit: details?.outboxLimit,
         commandId,
       };
     }
@@ -541,6 +567,8 @@ describe("ADR-183 admission table: soft refuses new work, never an answer or a t
       const fixtures = await setUp(state);
       const refused: string[] = [];
 
+      expect(await newWorkRefusedBy(fixtures.host)).toBe(LIMIT_BY_STATE[state]);
+
       for (const testCase of CASES) {
         const expected = testCase.expected[state];
 
@@ -554,10 +582,12 @@ describe("ADR-183 admission table: soft refuses new work, never an answer or a t
             label: testCase.label,
             status: result.status,
             reason: result.reason,
+            outboxLimit: result.outboxLimit,
           }).toEqual({
             label: testCase.label,
             status: 409,
             reason: "event_outbox_backpressure",
+            outboxLimit: LIMIT_BY_STATE[state],
           });
           expect(receipt, testCase.label).toBeNull();
         } else {
@@ -583,6 +613,7 @@ describe("ADR-183 admission table: soft refuses new work, never an answer or a t
         expect(line).toMatchObject({
           admission: expect.stringMatching(/^(new_work|producer|resolve)$/),
           reason: expect.stringMatching(/^event_outbox_/),
+          outboxLimit: LIMIT_BY_STATE[state],
           unacknowledgedCount: expect.any(Number),
           retainedCount: expect.any(Number),
         });
@@ -590,6 +621,60 @@ describe("ADR-183 admission table: soft refuses new work, never an answer or a t
     },
     120_000,
   );
+
+  it("a healthy host admits new work: newWorkRefusedBy is null", async () => {
+    const host = await bootHost({
+      limits: ROW_LIMITS,
+      runtimeRoot: await mkdtemp(join(tmpdir(), "eh-admission-")),
+    });
+
+    hosts.push(host);
+    expect(await newWorkRefusedBy(host)).toBeNull();
+  }, 60_000);
+
+  it("control: a create the control partition cannot fund is refused `control`, and health names it", async () => {
+    const lines: LogLine[] = [];
+    const logger: Logger = pino(
+      { level: "info" },
+      { write: (line: string) => lines.push(JSON.parse(line) as LogLine) },
+    );
+    // PHYSICAL_LIMITS' control budget funds exactly one producer wallet.
+    const host = await bootHost({
+      limits: PHYSICAL_LIMITS,
+      logger,
+      runtimeRoot: await mkdtemp(join(tmpdir(), "eh-admission-")),
+    });
+
+    hosts.push(host);
+    const fence = (runId: string) => ({
+      hostKey: host.hostState.hostKey,
+      runId,
+    });
+
+    expect(await newWorkRefusedBy(host)).toBeNull();
+    await createSession(host, fence(`live-${randomUUID()}`));
+    expect(await newWorkRefusedBy(host)).toBe("control");
+    const target = await createEnvelope(host, fence(`create-${randomUUID()}`));
+    const refused = await postJson(`${host.url}/sessions`, target);
+
+    expect({
+      status: refused.status,
+      details: refused.body?.details,
+    }).toEqual({
+      status: 409,
+      details: { reason: "event_outbox_backpressure", outboxLimit: "control" },
+    });
+    expect(host.hostState.getReceipt(target.command.id)).toBeNull();
+    expect(
+      lines.filter((line) => line.msg === "outbox-admission-refused"),
+    ).toEqual([
+      expect.objectContaining({
+        admission: "producer",
+        reason: "event_outbox_terminal_reserve_exhausted",
+        outboxLimit: "control",
+      }),
+    ]);
+  }, 60_000);
 
   it("answers do not spend the producer wallet under soft pressure", async () => {
     const fixtures = await setUp("soft");

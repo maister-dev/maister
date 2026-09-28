@@ -26,6 +26,7 @@ import {
   outboxBudgetSnapshot,
   outboxPressureEpisode,
   outboxRefusesFrames,
+  outboxRefusesNewWork,
   OUTBOX_BUDGET_SCHEMA,
   refreshOutboxPressure,
   retainedAtThreshold,
@@ -39,7 +40,11 @@ import {
   type OutboxBudgetSnapshot,
 } from "./outbox-budget";
 import { inventoryRuntimeFiles } from "./runtime-file-inventory";
-import { HostRuntimeEventError } from "./host-runtime-errors";
+import {
+  HostRuntimeEventError,
+  outboxLimitOf,
+  type NewWorkRefusal,
+} from "./host-runtime-errors";
 import {
   createSqliteStorage,
   type SqliteStorageSnapshot,
@@ -192,6 +197,10 @@ export type CommandReceiptRow = {
   completedAt: string | null;
 };
 
+export type SettledReceiptRow = CommandReceiptRow & {
+  phase: Exclude<ReceiptPhase, "accepted">;
+};
+
 export type WorkspaceRow = {
   id: string;
   runId: string;
@@ -313,6 +322,9 @@ export type RuntimeEventHealthSnapshot = Readonly<{
   pressured: boolean;
   oldestUnacknowledgedAgeMs: number | null;
   pressure: RuntimeEventPressureEpisode | null;
+  // ADR-183 amendment 2026-09-28: the host-wide limit a new create or prompt
+  // would meet now, or null — what the manager's admission fence follows.
+  newWorkRefusedBy: NewWorkRefusal | null;
 }>;
 
 type RuntimeEventHealthSnapshotDbRow = {
@@ -387,7 +399,10 @@ export type HostState = {
   getFence(runId: string): RunFence | null;
   setFence(runId: string, assignmentId: string, epoch: number): void;
   getReceipt(commandId: string): CommandReceiptRow | null;
+  // ADR-183 D5: an accepted receipt names its admission; a settlement
+  // (completed / rejected) admits nothing, so it names none.
   putReceipt(row: CommandReceiptRow, admission: ReceiptAdmission): void;
+  putReceipt(row: SettledReceiptRow): void;
   // ADR-183: whether a producer wallet can still fund terminal evidence; a
   // teardown of a session whose wallet closed writes regular rows instead.
   producerWalletOpen(walletId: string): boolean;
@@ -454,6 +469,10 @@ export type HostState = {
     receipt: CommandReceiptRow,
     event: AppendRuntimeEventInput,
     admission: ReceiptAdmission,
+  ): HostRuntimeEventRow;
+  putReceiptWithRuntimeEvent(
+    receipt: SettledReceiptRow,
+    event: AppendRuntimeEventInput,
   ): HostRuntimeEventRow;
   getRuntimeEventStreamId(): string;
   nextRuntimeEventPosition(): { streamId: string; sequence: string };
@@ -986,7 +1005,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
       );
     if (!canAdmitPhysical())
       throw new HostRuntimeEventError(
-        "event_outbox_soft_limit",
+        "event_outbox_physical_limit",
         "physical runtime state capacity is reserved for admitted producer work",
       );
   };
@@ -1012,7 +1031,6 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
   // Its accepted commands retain their independent durable terminal wallets.
   db.exec("DELETE FROM runtime_frame_file_credits");
   db.exec("DELETE FROM runtime_event_frames");
-  refreshOutboxPressure(db, limits, now().getTime());
   const capacityListeners = new Set<(snapshot: OutboxBudgetSnapshot) => void>();
   // A flip can commit inside any admission transaction (or roll back with a
   // refused one), so the change is logged from the durable row after each
@@ -1063,6 +1081,11 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
 
     return snapshot;
   };
+
+  // The boot recompute goes through the same observer as every commit, so a
+  // flip at open (lowered budgets, or a death between a commit and its
+  // observe) is logged too (ADR-183 D2).
+  observeCapacity();
   const notifyCapacity = (): void => {
     const snapshot = observeCapacity();
 
@@ -1107,10 +1130,15 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
 
   const admitRuntimeReceipt = (
     row: CommandReceiptRow,
-    admission: ReceiptAdmission,
+    admission: ReceiptAdmission | undefined,
   ): void => {
+    if (row.phase !== "accepted") return;
+    if (!admission)
+      throw new HostRuntimeEventError(
+        "command_invariant_conflict",
+        "an accepted receipt must name its admission",
+      );
     if (
-      row.phase === "accepted" &&
       row.kind.startsWith("session.") &&
       admission.kind !== "teardown" &&
       refreshRuntimeFilePressure(db, limits)
@@ -1119,8 +1147,8 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         "runtime_storage_pressure",
         "runtime file capacity is reserved until usage drops below the low watermark",
       );
-    admitReceipt(db, limits, row, admission);
-    if (row.phase === "accepted" && admission.kind === "producer")
+    admitReceipt(db, limits, row, admission, now().getTime());
+    if (admission.kind === "producer")
       reserveProducerFileWallet(
         db,
         limits,
@@ -1133,10 +1161,11 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
   // ADR-183: one line per refused admission, whichever gate refused it.
   const logAdmissionRefusal = (
     row: CommandReceiptRow,
-    admission: ReceiptAdmission,
+    admission: ReceiptAdmission | undefined,
     error: unknown,
   ): void => {
     if (
+      !admission ||
       row.phase !== "accepted" ||
       !(error instanceof HostRuntimeEventError) ||
       !error.reason.startsWith("event_outbox_")
@@ -1151,6 +1180,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         kind: row.kind,
         admission: admission.kind,
         reason: error.reason,
+        outboxLimit: outboxLimitOf(error.reason),
         unacknowledgedCount: partitions.reduce(
           (sum, item) => sum + item.unacknowledgedCount,
           0,
@@ -1283,10 +1313,10 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
           .all(afterCommandId, limit) as CommandReceiptDbRow[]
       ).map(toCommandReceiptRow);
     },
-    putReceipt(row, admission) {
+    putReceipt(row: CommandReceiptRow, admission?: ReceiptAdmission) {
       return storage.write(() => {
         try {
-          if (row.phase === "accepted" && admission.kind !== "teardown")
+          if (row.phase === "accepted" && admission?.kind !== "teardown")
             assertPhysicalAdmission();
           db.exec("BEGIN IMMEDIATE");
           admitRuntimeReceipt(row, admission);
@@ -1349,6 +1379,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
             reservationId,
             bootId,
             walletId,
+            nowMs: now().getTime(),
           });
 
           if (reserved)
@@ -1359,11 +1390,12 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
               freeBytes: storage.snapshot().filesystemFreeBytes,
             });
           db.exec("COMMIT");
-          // A refusal frees no capacity, so it wakes no waiter: when it did,
-          // each paused producer's refusal made every other one retry — a
-          // cascade factorial in the number of waiters that pegged the host.
-          if (reserved) notifyCapacity();
-          else observeCapacity();
+          // A reservation — granted or refused — frees no capacity, so it
+          // wakes no waiter: when a refusal did, each paused producer's
+          // refusal made every other one retry (a cascade factorial in the
+          // number of waiters that pegged the host), and a grant re-woke
+          // every paused producer into a refusal once per frame.
+          observeCapacity();
 
           return reserved ? reservationId : null;
         } catch (error) {
@@ -1459,7 +1491,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
             message: "the turn for this command id was lost in a host restart",
             details: { reason: "turn_lost", runId: row.run_id },
           };
-          const receipt: CommandReceiptRow = {
+          const receipt: SettledReceiptRow = {
             commandId: row.command_id,
             runId: row.run_id,
             kind: row.kind,
@@ -1480,41 +1512,36 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
             completedAt: now().toISOString(),
           };
 
-          state.putReceiptWithRuntimeEvent(
-            receipt,
-            {
-              terminal: true,
-              ...(wallet
-                ? {
-                    funding: {
-                      partition: "control" as const,
-                      walletId: wallet.wallet_id,
+          state.putReceiptWithRuntimeEvent(receipt, {
+            terminal: true,
+            ...(wallet
+              ? {
+                  funding: {
+                    partition: "control" as const,
+                    walletId: wallet.wallet_id,
+                    commandId: row.command_id,
+                  },
+                }
+              : {}),
+            draft: {
+              runId: row.run_id,
+              assignmentId: wallet?.assignment_id ?? row.assignment_id,
+              assignmentEpoch: wallet?.assignment_epoch ?? row.epoch,
+              hostSessionId: receipt.hostSessionId,
+              eventType: "session.command",
+              occurredAt: now().toISOString(),
+              payload:
+                row.request_version === 2
+                  ? commandReceiptPayloadV2(receipt, state)
+                  : {
                       commandId: row.command_id,
+                      kind: row.kind,
+                      phase: "completed",
+                      status: "failed",
+                      error: body,
                     },
-                  }
-                : {}),
-              draft: {
-                runId: row.run_id,
-                assignmentId: wallet?.assignment_id ?? row.assignment_id,
-                assignmentEpoch: wallet?.assignment_epoch ?? row.epoch,
-                hostSessionId: receipt.hostSessionId,
-                eventType: "session.command",
-                occurredAt: now().toISOString(),
-                payload:
-                  row.request_version === 2
-                    ? commandReceiptPayloadV2(receipt, state)
-                    : {
-                        commandId: row.command_id,
-                        kind: row.kind,
-                        phase: "completed",
-                        status: "failed",
-                        error: body,
-                      },
-              },
             },
-            // A rejection settles a lost prompt; it admits nothing.
-            { kind: "new_work" },
-          );
+          });
           recoveredCount += 1;
         }
       }
@@ -1924,10 +1951,14 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         }
       });
     },
-    putReceiptWithRuntimeEvent(receipt, eventInput, admission) {
+    putReceiptWithRuntimeEvent(
+      receipt: CommandReceiptRow,
+      eventInput: AppendRuntimeEventInput,
+      admission?: ReceiptAdmission,
+    ) {
       return storage.write(() => {
         try {
-          if (receipt.phase === "accepted" && admission.kind !== "teardown")
+          if (receipt.phase === "accepted" && admission?.kind !== "teardown")
             assertPhysicalAdmission();
         } catch (error) {
           logAdmissionRefusal(receipt, admission, error);
@@ -2173,7 +2204,15 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
     runtimeEventHealthSnapshot() {
       const streamId = ensureRuntimeEventStream(db, now).stream_id;
 
-      return runtimeEventHealthSnapshot(db, streamId, now(), log);
+      return {
+        ...runtimeEventHealthSnapshot(db, streamId, now(), log),
+        // Recomputed on read, physical first as in admission: a cached answer
+        // could keep a healed host fenced forever, since a fenced manager
+        // sends nothing that would re-evaluate it.
+        newWorkRefusedBy: canAdmitPhysical()
+          ? outboxRefusesNewWork(db, limits)
+          : "physical",
+      };
     },
     pruneAcknowledgedRuntimeEvents(olderThan, options) {
       const mode = options?.mode ?? "grace";
@@ -2423,7 +2462,7 @@ function runtimeEventHealthSnapshot(
   streamId: string,
   observedAt: Date,
   log: Logger | undefined,
-): RuntimeEventHealthSnapshot {
+): Omit<RuntimeEventHealthSnapshot, "newWorkRefusedBy"> {
   getRuntimeEventStream(db, streamId);
   const row = db.prepare(RUNTIME_EVENT_HEALTH_SNAPSHOT_SQL).get() as
     | RuntimeEventHealthSnapshotDbRow
