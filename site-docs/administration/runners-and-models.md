@@ -63,6 +63,47 @@ supports read-only sessions and, when required, has current read-only probe
 evidence. A runner can therefore be ready for a normal Flow and still refuse a
 read-only platform agent.
 
+## Configure the personal librarian
+
+In **Settings → ACP runners**, open the **Librarian** card, select its runner,
+enable it, and click **Save**. The librarian is disabled by default and has its own selection;
+changing the platform default does not configure it. Open the top-nav
+**Librarian** panel and send a read-only question to verify the setup.
+
+Currently, only an enabled, Ready Claude runner with read-only capability is
+eligible. Permission-skipping mode and runner overrides for `HOME`,
+`CLAUDE_CONFIG_DIR`, or `CODEX_HOME` are refused. Codex is refused specifically
+for this role because denial of its built-in tools has not been verified;
+read operations may bypass ACP permission requests. This does not affect its
+eligibility for ordinary Flow or scratch work. Other adapter families are not
+eligible for the librarian.
+
+The MAIster MCP facade must be runnable by the supervisor, and its API URL must
+reach Web. A missing facade is a setup failure. The librarian uses its restricted
+MAIster toolset instead of inheriting arbitrary project MCP servers.
+
+Disabling it stops admission of new responses. Personal history stays readable,
+and already admitted operations still reconcile. See the
+[personal librarian guide](/guides/personal-librarian) for task creation,
+confirmation cards, privacy, and memory controls.
+
+### Librarian limits
+
+Set these variables in the Web service environment. Values must be positive
+integers; invalid values are configuration errors. The response pool is separate
+from Flow/scratch and platform-agent capacity.
+
+| Variable | Default | Controls |
+| --- | --- | --- |
+| `MAISTER_MAX_CONCURRENT_LIBRARIAN_TURNS` | `3` | Concurrent librarian turns across users. |
+| `MAISTER_LIBRARIAN_TURN_MAX_MINUTES` | `10` | Maximum duration of one turn. |
+| `MAISTER_LIBRARIAN_CONTEXT_MAX_CHARS` | `60000` | Context character budget. |
+| `MAISTER_LIBRARIAN_DAILY_TURNS_PER_USER` | `200` | Daily turn limit per user. |
+| `MAISTER_LIBRARIAN_OPERATION_RECONCILE_SECONDS` | `120` | Age threshold for reconciling interrupted operations. |
+| `MAISTER_LIBRARIAN_HISTORY_RETENTION_DAYS` | `365` | Message retention. |
+| `MAISTER_LIBRARIAN_SNAPSHOT_RETENTION_DAYS` | `30` | Retention of per-turn context snapshots. |
+| `MAISTER_LIBRARIAN_CONFIRMATION_TTL_MINUTES` | `60` | Confirmation-card lifetime. |
+
 ## ACP is a two-way control channel
 
 The supervisor does more than start a terminal command. ACP carries prompts and

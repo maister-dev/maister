@@ -38,6 +38,36 @@ can lag independently. Stream diagnostics distinguish measurable backlog from
 unknown or stale data. A live connection alone does not prove that the displayed
 Run state is current. Check both services' logs when progress stops.
 
+## When the host pauses work
+
+When Web falls behind on acknowledging events, the supervisor can pause event
+producers and refuse new work. A prolonged pause can checkpoint an active
+session so it can resume later. Retained, already acknowledged history is
+different from undelivered backlog; a long conversation alone does not mean
+Web is behind.
+
+In **Settings → Execution host**, inspect the pressure state, duration, backlog,
+and **Refusing new work** reason. The reason distinguishes storage, unacknowledged
+backlog, retained backlog, and control reserve limits. Check Web ingestion,
+Postgres availability, supervisor logs, and available storage before changing
+capacity limits.
+
+- A Flow node paused for host pressure shows the reason and defaults to
+  **Resume as-is**. MAIster attempts automatic resume when the host admits work
+  again, subject to capacity. You can still choose the offered stop or restart
+  controls. Ordinary human decisions are not automatically answered this way.
+- Platform-agent work can park for later continuation. New Flow and agent work
+  waits while the host refuses admission.
+- A scratch dialog shows a host-paused notice. Follow its send or recovery
+  action after the host recovers; existing queued messages remain subject to
+  [delivery and recovery rules](/guides/message-a-running-agent).
+- A permission answer may remain saved with delivery pending. Retry that same
+  answer when the host catches up; it has not necessarily reached the agent.
+
+Do not delete runtime state to clear the condition. If the queue does not drain
+or a Flow remains paused after recovery, retain the Run id, refusal reason,
+host diagnostics, and Web/supervisor logs for investigation.
+
 ## Preserve state during upgrades
 
 Back up Postgres, the supervisor's persistent state and runtime content, and

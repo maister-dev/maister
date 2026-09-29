@@ -106,6 +106,7 @@
             "group": "Guides",
             "pages": [
               "guides/register-a-project",
+              "guides/personal-librarian",
               "guides/package-sources-and-versions",
               "guides/human-in-the-loop",
               "guides/message-a-running-agent",
@@ -191,6 +192,7 @@
             "group": "Руководства",
             "pages": [
               "ru/guides/register-a-project",
+              "ru/guides/personal-librarian",
               "ru/guides/package-sources-and-versions",
               "ru/guides/human-in-the-loop",
               "ru/guides/message-a-running-agent",

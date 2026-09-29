@@ -59,6 +59,26 @@ later project default changes.
 Relations can cross projects when the caller has access to both sides. The
 board displays blockers rather than bypassing them.
 
+## Clarify before launch
+
+The [personal librarian](/guides/personal-librarian) can create a structured
+task statement and ask an addressed teammate a question while the task is in
+**Backlog**. State the recipient, question, answer format, and whether it blocks
+launch. The recipient must be an active project member with permission to answer.
+
+The request appears on the task and in that person's Inbox and decisions queue.
+Open it and answer as the named recipient. Text, choice, and yes/no formats are
+supported. An open blocking request shows `clarification_pending` and prevents
+launch; the task keeps its existing status. Non-blocking questions do not hold
+launch.
+
+The answer remains on the task and becomes context for subsequent execution.
+Answering does not itself accept a revised statement or launch a Run. When a
+request is cancelled or replaced, inspect the recorded reason; a corrected
+question supersedes the previous record rather than overwriting its answer.
+Requests are also cancelled if the recipient loses the required access or the
+task is abandoned.
+
 ## Several Runs for one task
 
 A task keeps its full Run history. Launching again creates another immutable
@@ -107,7 +127,8 @@ or another admission prerequisite.
 ## Success and failure signals
 
 - **Running** means the Flow owns execution and may still ask for input.
-- **Needs input** means a person or external system must respond.
+- **Needs input** means a response is pending. A [host-pressure pause](/operations/execution-hosts#when-the-host-pauses-work)
+  is identified separately and can resume automatically after host recovery.
 - **Human working** means a named person has claimed the worktree.
 - **Review** means execution finished and the result awaits acceptance or
   promotion.

@@ -32,13 +32,26 @@ dialogs accept their next message only after their current turn finishes.
 ## Recover queued work
 
 If the scratch dialog crashes, **Recover** preserves earlier queued messages
-and places the recovery message after them. If a web restart leaves messages
-queued while the dialog is ready for input, the next send or an available
-Recover action starts dispatch again. Stopping or completing a dialog leaves
-undelivered queued rows visible as **Not sent**.
+and places the recovery message after them. If a web restart or a retryable
+admission failure leaves messages queued, the server automatically retries the
+oldest message once the dialog and host session are ready. A **Queued** receipt
+means the message is saved; do not resend it just to restart dispatch. Stopping,
+completing, or terminally failing a dialog leaves undelivered queued rows visible
+as **Not sent**.
+
+Recover admits a crashed dialog; it does not force a live or idle Run into a new
+attempt. If a session has disappeared but the Run is still live, allow automatic
+reconciliation to classify it first. For **NeedsInputIdle**, answer the pending
+request to resume the saved session; continuation may wait for capacity or for
+the execution host to recover.
 
 After a host or session failure, recovery can deliver an instruction again.
 Inspect the transcript before resending instructions with external side effects.
+
+The [personal librarian](/guides/personal-librarian) can send an operator message
+to an eligible scratch or persistent agent Run using your project permissions.
+Check its operation receipt for delivery. This is separate from the coordinator
+token interface below.
 
 ## Message a persistent child agent
 

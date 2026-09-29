@@ -125,6 +125,14 @@ Write access permits retention and proposals; it does not permit publication.
 - No ambient context: the Run did not opt in, the project is disabled, no item
   met the confidence threshold, or recall degraded safely.
 
+## Personal librarian memory
+
+The [personal librarian](/guides/personal-librarian) maintains a separate
+conversation and personal memory for each user. It can recall project knowledge
+where access permits, but its saved preferences, goals, commitments, and facts
+do not write to Project Brain or a project agent's memory. Manage those items
+through the librarian's **Memory** control.
+
 ## Related guides
 
 - [Scheduler and platform agents](/administration/scheduler-and-platform-agents)

@@ -186,6 +186,7 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | Public documentation | `site-docs/` | Published EN/RU product docs authored as Markdown; separate from internal `docs/` |
 | Run Git guide | `site-docs/guides/run-git.md` | Worktree changes, publication, PRs, restoration, staged-work rescue; EN/RU |
 | Agent messaging guide | `site-docs/guides/message-a-running-agent.md` | Steering, queued messages, recovery; EN/RU |
+| Personal librarian guide | `site-docs/guides/personal-librarian.md` | Tasks, clarifications, confirmations, personal memory and history; EN/RU |
 
 ## AI Context Files
 

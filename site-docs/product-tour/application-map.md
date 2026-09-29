@@ -22,8 +22,9 @@ depend on your global role and project permissions.
 | Area | Use it for |
 | --- | --- |
 | Desk / Work / Activity | Follow current work, find tasks across projects, and catch up on changes. |
+| Librarian (top navigation) | Open your personal conversation to find, create, clarify, launch, and follow work. |
 | Projects | Open the portfolio, register repositories, and enter a project workspace. |
-| Inbox | Handle only the permissions, forms, reviews, escalations, and assignments that need a person. Fully automated transitions stay outside the Inbox. |
+| Inbox | Handle permissions, forms, reviews, escalations, assignments, and task clarifications addressed to you. Fully automated transitions stay outside the Inbox. |
 | Runs | Inspect Flow, scratch, and platform-agent executions across the projects you can access. |
 | Studio | Browse package sources, inspect installed packages, fork them, and edit local packages. |
 | Agents | Inspect the platform-agent catalog and synchronize package-defined agents. |
@@ -53,6 +54,15 @@ notifications can be enabled from Account on supported browsers with permission.
 Administrators land on Desk after sign-in; members and viewers land on Work.
 Both surfaces retain project access boundaries. The Projects portfolio remains
 available at `/projects`.
+
+## Your personal librarian
+
+The top-nav **Librarian** opens beside your current page and keeps one personal
+conversation across navigation. Attach page context explicitly, inspect linked
+work and operation results, and manage your own memory. Its indicator shows a
+running response, unread reply, or decision to make; the normal attention
+counters remain separate. An administrator must enable it and select an eligible
+runner. Start with [the librarian guide](/guides/personal-librarian).
 
 ## The main working surfaces
 

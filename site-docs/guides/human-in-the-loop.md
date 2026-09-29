@@ -20,14 +20,25 @@ pending** keeps the recorded choice visible and locks new choices. Use
 a conflict to see the authoritative choice if another tab or person answered.
 
 A pending resume is not a failed decision. A delivery-unavailable error can be
-retried with the saved answer; an ended-session error instead directs you to
-Relaunch for a Flow, or Recover/relaunch for scratch. Keep the error code and
-diagnostic when requesting help.
+retried with the saved answer. Under host event backpressure the answer remains
+saved until delivery can proceed. If the session ended, the answer was not
+delivered; let the Run reconcile and use Recover when offered. Recovery may ask
+the permission again. If the request is no longer pending on a live session,
+the Run has moved on and the old choice cannot be redelivered. Keep the error
+code and diagnostic when requesting help.
 
 During a long pause MAIster may checkpoint the session and restore it for your
 answer. `MAISTER_PERMISSION_MAX_HOURS` is the host's absolute permission wait
 cap (default 24 hours); reaching it gracefully parks the session. It does not
 automatically approve or deny the requested action.
+
+## A question addressed to you before launch
+
+A teammate can ask a task-bound clarification through the
+[librarian](/guides/personal-librarian) before execution. Find it in your Inbox
+or decisions queue and answer on the task as the named recipient. A blocking
+question holds launch until resolved; answering supplies context but does not
+itself launch the task. See [clarify before launch](/product-tour/tasks-and-runs#clarify-before-launch).
 
 ## Form request
 
@@ -88,6 +99,14 @@ session is closed and the worktree stays available for review.
 For a correction that should reach a running scratch dialog without stopping
 it, see [Message a running agent](/guides/message-a-running-agent). Node
 interrupt remains the control for pausing or restarting a Flow node.
+
+## A node paused by the execution host
+
+A host-pressure notice means event delivery has exhausted a host budget. The
+default action is **Resume as-is**, and MAIster attempts automatic continuation
+when the host can accept work again. Stop and restart remain explicit choices.
+This automatic continuation applies to host-pressure pauses, not to ordinary
+permission or review requests. See [host pauses](/operations/execution-hosts#when-the-host-pauses-work).
 
 ## Safety
 

@@ -14,6 +14,8 @@ If MAIster is new to you, follow the visual tour before changing configuration:
 
 - [Application map](/product-tour/application-map) explains the portfolio,
   Inbox, global administration, and the path into a project.
+- [Personal librarian](/guides/personal-librarian) helps you find, create,
+  clarify, and launch tasks in one private conversation, then follow results.
 - [Project workspace](/product-tour/project-workspace) covers every project tab,
   from the board and activity to packages, integrations, Brain, and settings.
 - [Repository and project packages](/product-tour/project-repository-and-packages)

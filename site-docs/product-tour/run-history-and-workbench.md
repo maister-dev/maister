@@ -47,6 +47,20 @@ dispatched initial, resume, rework, and message prompts alongside responses.
 Steered messages appear in the same conversation. Open full artifacts when a
 node or consensus result only shows a bounded excerpt.
 
+## Understand why a Run ended
+
+Failed, crashed, or abandoned Runs show a recorded terminal reason when one is
+available. It distinguishes an operator stop, an agent-process crash, a lost
+turn or event stream, a budget or duration limit, and an unavailable workspace.
+Older records may have no further detail; the status alone does not establish
+the cause.
+
+Read the reason with the node attempt and retained work before choosing Recover,
+relaunch, or review. A result that could not be applied safely is a visible
+failure requiring investigation, not proof that the agent completed successfully.
+Host-pressure pauses have their own notice and
+[continuation rules](/operations/execution-hosts#when-the-host-pauses-work).
+
 ## Open code, evidence, and history
 
 The lower workbench provides these views:
