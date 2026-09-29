@@ -5638,6 +5638,13 @@ paths:
     post:
       tags: [scratch-runs]
       summary: Implemented — stop live scratch supervisor session
+      description: |
+        The route reads the run id from the path, requires an active session
+        and `operateScratchRun` project membership, then delegates to the
+        scratch lifecycle owner. An existing terminal dialog returns its
+        current state without another supervisor deletion. A successful stop
+        reports whether the session was terminated and whether its workspace
+        remains active; it does not return the generic `OkResult` envelope.
       operationId: stopScratchRun
       parameters:
         - name: runId
@@ -5646,13 +5653,29 @@ paths:
           schema: { type: string, format: uuid }
       responses:
         "200":
-          $ref: "#/components/responses/OkResult"
+          description: Current scratch dialog and run state after stop or idempotent replay.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [runId, dialogStatus, runStatus, supervisorStopped, workspaceActive]
+                properties:
+                  runId: { type: string, format: uuid }
+                  dialogStatus: { type: string }
+                  runStatus: { type: string }
+                  supervisorStopped: { type: boolean }
+                  workspaceActive: { type: boolean }
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
           $ref: "#/components/responses/Forbidden"
         "409":
-          description: Scratch run not found, not scratch, terminal, or not stoppable (`PRECONDITION` / `CONFLICT`).
+          description: Scratch run not found, not scratch, or transition lost to a conflicting owner (`PRECONDITION` / `CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "503":
+          description: Supervisor session deletion was unavailable (`EXECUTOR_UNAVAILABLE`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -5720,13 +5743,20 @@ paths:
           schema: { type: string, format: uuid }
       responses:
         "200":
-          description: Workspace removed after preservation, or an idempotent replay.
+          description: Workbench removal envelope or scratch state when no active workbench removal was needed.
           content:
             application/json:
               schema:
-                {
-                  $ref: "#/components/schemas/WorkspaceLifecycleRemovalResponse",
-                }
+                oneOf:
+                  - $ref: "#/components/schemas/WorkspaceLifecycleRemovalResponse"
+                  - type: object
+                    required: [runId, dialogStatus, runStatus, supervisorStopped, workspaceRemoved]
+                    properties:
+                      runId: { type: string, format: uuid }
+                      dialogStatus: { type: string }
+                      runStatus: { type: string }
+                      supervisorStopped: { type: boolean }
+                      workspaceRemoved: { type: boolean }
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
