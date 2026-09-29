@@ -5665,6 +5665,8 @@ paths:
                   runStatus: { type: string }
                   supervisorStopped: { type: boolean }
                   workspaceActive: { type: boolean }
+        "400":
+          $ref: "#/components/responses/Config"
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
@@ -5676,6 +5678,11 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "503":
           description: Supervisor session deletion was unavailable (`EXECUTOR_UNAVAILABLE`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "500":
+          description: Unexpected stop failure (`CRASH`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -5734,7 +5741,9 @@ paths:
         supervisor stop. It preserves recoverable Git state, removes only an
         owned worktree, records durable disposition, and transitions the run to
         `Abandoned`. The body is empty; run/project/path/session identity is
-        server-derived and authorization is `recoverRun` membership.
+        server-derived. A project run requires `operateScratchRun`; a
+        project-less local-package assistant run requires its launching user,
+        without an active edit lock for Discard.
       operationId: discardScratchRun
       parameters:
         - name: runId
@@ -5757,19 +5766,24 @@ paths:
                       runStatus: { type: string }
                       supervisorStopped: { type: boolean }
                       workspaceRemoved: { type: boolean }
+        "400":
+          $ref: "#/components/responses/Config"
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
           $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
         "409":
           description: Scratch run not found, not scratch, or cannot be discarded in its current state (`PRECONDITION` / `CONFLICT`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "503":
-          description: Transient supervisor, Git, filesystem, or post-removal finalization failure.
+          description: Supervisor unavailable (`EXECUTOR_UNAVAILABLE`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "500":
+          description: Unexpected Git, filesystem, or post-removal failure (`CRASH`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
