@@ -424,6 +424,14 @@ full classification table with its writers lives in
 | evidence moved between the sweep's classification and the boundary write (settled, `applying`, applied without a quarantine, `superseded`) | unchanged — the boundary re-reads the command under lock and yields (`lost-cas`, guard `command`); the next tick classifies the new state | open | unchanged |
 | `failed {turn_lost}`, settled-unapplied, found by Recover on a still-open attempt | Recover re-dispatches one fresh prompt | the crashed attempt is closed | `superseded`, `completion_applied_at` NULL |
 
+The supervisor MUST persist the session terminal before a failed prompt
+terminal when an unintentional ACP transport closes during the prompt. It
+terminates an otherwise live child, then waits for the heartbeat's durable
+terminal within the existing kill grace. This gives the Running-node and
+permission-park rows above a causal host sequence to verify. A normal ACP task
+failure remains a failed prompt without a crash event; an intentional
+checkpoint keeps its own cause. See ADR-177's 2026-09-30 host-order amendment.
+
 `turn_lost` is matched on the error **reason** — carried nested
 (`last_error.details.reason`, the ingested-terminal-event path) or flat
 (`last_error.reason`, the `foldReceipt` accepted-with-no-terminal fallback) —
