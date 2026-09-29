@@ -176,7 +176,7 @@ export const requiredIsolationCases = {
 
 export function validateLaneReport(report, files) {
   assert.equal(new Set(files).size, files.length, "A/B selected owning suite is duplicated");
-  assert.equal(report.testResults.length, files.length, "A/B discovery omitted an owning suite");
+  assert.equal(report.testResults.length, files.length, "A/B report suite count differs from selected owning suites");
   const resultsByFile = new Map(files.map((file) => [file, []]));
 
   for (const result of report.testResults) {
@@ -191,7 +191,7 @@ export function validateLaneReport(report, files) {
     assert.equal(matching.length, 1, `A/B missing or duplicated owning suite: ${file}`);
     const [result] = matching;
 
-    assert(result?.assertionResults.length > 0, `A/B discovery is empty: ${file}`);
+    assert(result.assertionResults.length > 0, `A/B discovery is empty: ${file}`);
     assert(result.assertionResults.every((item) => item.status === "passed"), `A/B case failed or was skipped: ${file}`);
     for (const title of requiredIsolationCases[file] ?? []) {
       assert.equal(result.assertionResults.filter((item) => item.title === title).length, 1,

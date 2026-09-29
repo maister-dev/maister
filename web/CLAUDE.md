@@ -187,6 +187,7 @@ pnpm build    # remove .next, then next build
 pnpm start    # next start (after build)
 pnpm lint     # eslint --fix
 pnpm test:integration:ab        # in-process A/B acceptance, real supervisor/Postgres
+pnpm test:integration:ab --shard 1/2 # first explicit web half; 2/2 runs the complement
 pnpm test:integration:isolation # serial production boot, real sandbox driver, invocation cleanup
 pnpm install-package          # ADR-088: install a multi-flow package (all flows + bundle)
 pnpm validate-authored-flow   # validate a portable authored Flow package dir
@@ -196,6 +197,8 @@ pnpm install-authored-flow-package # bridge export as untrusted installed packag
 ```
 
 `pnpm typecheck` runs `tsc --noEmit` (`noEmit: true` in tsconfig).
+The web A/B runner accepts `--shard i/n`; CI uses `1/2` and `2/2` as complete,
+disjoint file lists. The isolation runner does not accept this flag.
 
 ### Test database contract
 

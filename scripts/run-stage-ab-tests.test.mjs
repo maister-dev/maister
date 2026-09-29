@@ -9,8 +9,6 @@ test("web shards are deterministic, disjoint, complete and retain manifest order
 
   assert.deepEqual(first, laneSuites.web.filter((_, index) => index % 2 === 0));
   assert.deepEqual(second, laneSuites.web.filter((_, index) => index % 2 === 1));
-  assert.deepEqual(webShardFiles(laneSuites.web, 1, 2), first);
-  assert.equal(new Set([...first, ...second]).size, laneSuites.web.length);
   assert.deepEqual([...first, ...second].sort(), [...laneSuites.web].sort());
 });
 
@@ -20,7 +18,7 @@ test("CLI accepts only valid web shards and preserves unsharded slices", () => {
   assert.deepEqual(parseLaneInvocation(["supervisor"]), { slice: "supervisor", files: laneSuites.supervisor });
   for (const args of [[], ["web", "--shard"], ["web", "--shard", "0/2"],
     ["web", "--shard", "3/2"], ["web", "--shard", "1/0"],
-    ["web", "--shard", "1/38"], ["web", "--shard", "1/2", "--shard", "2/2"],
+    ["web", "--shard", `1/${laneSuites.web.length + 1}`], ["web", "--shard", "1/2", "--shard", "2/2"],
     ["web", "--unknown"], ["isolation", "--shard", "1/2"],
     ["supervisor", "--shard", "1/2"]]) {
     assert.throws(() => parseLaneInvocation(args), /usage|shard/u, args.join(" "));
@@ -117,5 +115,5 @@ test("the report rejects a duplicated selection and a name that only shares a su
 
   assert.throws(() => validateLaneReport(report, [file, file]), /duplicate/u);
   report.testResults = [result(`/repo/web/prefix${file}`)];
-  assert.throws(() => validateLaneReport(report, [file]), /unexpected|missing|omitted/u);
+  assert.throws(() => validateLaneReport(report, [file]), /A\/B unexpected or ambiguous owning suite/u);
 });

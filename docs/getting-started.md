@@ -164,6 +164,7 @@ test               # vitest unit + integration
 test:unit          # unit only (fast)
 test:integration   # spins up Postgres via testcontainers (slower)
 test:integration:ab # in-process web A/B acceptance with real supervisor/Postgres
+                      # optional --shard i/n; CI uses 1/2 and 2/2 as disjoint halves
 test:integration:isolation # serial production boot, real sandbox driver, owned roots/processes
 test:e2e           # Playwright (authed UI specs — see note below)
 db:generate        # generate a Drizzle migration from lib/db/schema.ts

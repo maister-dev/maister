@@ -116,7 +116,7 @@ jobs:
   execution-data-plane:
     name: A/B web (Node ${{ matrix.node }}, shard ${{ matrix.shard }}/2)
     runs-on: ubuntu-latest
-    # Each leg owns one explicit, disjoint half of the web suite inventory.
+    # The 2–4 vCPU runner uses one worker; each explicit half gets its own 60-minute budget.
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -225,8 +225,8 @@ jobs:
           set -o pipefail
           trap 'status=$?; printf "isolation_exit_code=%s\nisolation_end_seconds=%s\n" "$status" "$(( $(date +%s) - S52_JOB_STARTED_AT ))" >> "$MAISTER_TEST_EVIDENCE_DIR/timing.txt"' EXIT
           elapsed=$(( $(date +%s) - S52_JOB_STARTED_AT ))
-          remaining=$(( 3270 - elapsed ))
-          if test "$remaining" -gt 2370; then remaining=2370; fi
+          remaining=$(( 3240 - elapsed ))
+          if test "$remaining" -gt 2340; then remaining=2340; fi
           printf 'suite_start_seconds=%s\nremaining_suite_budget_seconds=%s\n' "$elapsed" "$remaining" >> "$MAISTER_TEST_EVIDENCE_DIR/timing.txt"
           if test "$remaining" -le 0; then
             echo "No isolation budget remains before the cleanup and upload reserve" >&2
@@ -248,9 +248,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          reports_upload_outcome='${{ steps.isolation_reports.outcome }}'
+          record_cleanup_result() {
+            local status=$?
+            local elapsed=$(( $(date +%s) - S52_JOB_STARTED_AT ))
+            if ! printf 'reports_upload_outcome=%s\nruntime_cleanup_exit_code=%s\nruntime_cleanup_end_seconds=%s\n' \
+              "$reports_upload_outcome" "$status" "$elapsed" >> "$MAISTER_TEST_EVIDENCE_DIR/timing.txt"; then
+              echo "Failed to record container runtime cleanup outcome" >&2
+              if test "$status" -eq 0; then status=1; fi
+            fi
+            exit "$status"
+          }
+          trap record_cleanup_result EXIT
           runtime_dir="$RUNNER_TEMP/maister-isolation-runtime"
-          printf 'reports_upload_outcome=%s\n' '${{ steps.isolation_reports.outcome }}' >> "$MAISTER_TEST_EVIDENCE_DIR/timing.txt"
-          trap 'status=$?; printf "runtime_cleanup_exit_code=%s\nruntime_cleanup_end_seconds=%s\nisolation_job_elapsed_seconds=%s\n" "$status" "$(( $(date +%s) - S52_JOB_STARTED_AT ))" "$(( $(date +%s) - S52_JOB_STARTED_AT ))" >> "$MAISTER_TEST_EVIDENCE_DIR/timing.txt"' EXIT
           if test -x "$runtime_dir/bin/colima" && test -f "$runtime_dir/maister-s52.start-attempted"; then
             COLIMA_HOME="$runtime_dir/colima" "$runtime_dir/bin/colima" --profile maister-s52 delete --force
           fi
