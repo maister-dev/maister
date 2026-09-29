@@ -219,6 +219,12 @@ timeout, its container was reaped as a leak, and the six-suite isolation slice
 did not run. The preflight JSON and diagnostics uploaded, but no complete
 isolation report exists. S5.2 remains open pending a new pushed SHA with the
 full hosted matrix and measured total duration.
+All four web shards passed on that SHA: 19/19 suites and 263/263 cases in
+shard 1, 18/18 and 227/227 in shard 2, on each Node version. Their measured
+job durations were 33m20s/27m09s on 24.15.0 and 34m10s/27m08s on 24.19.0;
+both 10-suite, 109-case supervisor legs also passed. The complete reports
+were downloaded and checked against their exact manifest selections. These
+passing legs do not qualify the failed isolation job.
 The adjusted preflight passed 1/1 locally on darwin/arm64, Node 24.15.0,
 with a real PostgreSQL container and `sandbox-exec` denial; the 2.6-second
 warm-image case and clean invocation teardown do not qualify the hosted Intel
