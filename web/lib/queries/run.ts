@@ -67,6 +67,7 @@ import {
   type ConsensusRecoverEvidence,
 } from "@/lib/runs/recover-classify";
 import { loadConsensusRecoveryEvidence } from "@/lib/flows/graph/consensus/recovery-evidence";
+import { loadGateCrashRecoveryWitness } from "@/lib/flows/graph/gate-crash-recovery";
 import {
   requireRunProjectId,
   withProjectRunKind,
@@ -440,13 +441,15 @@ export type RunContinuation = {
 // unless `classifyRecover` returns `discard-only` — an agent node with a session
 // (--resume) or a `retry_safe` session-less node (re-dispatch). A session-less
 // node that is NOT retry-safe, or an unresolvable target, is discard-only
-// (Codex M19c finding #1 + round-3 fix).
+// unless a closed gate attempt proves that only its gate needs re-asking
+// (Codex M19c finding #1 + ADR-177 gate-crash amendment).
 export function isRunRecoverable(input: {
   status: string;
   acpSessionId: string | null;
   currentNodeKind: NodeAttemptType | null;
   retrySafe: boolean;
   consensusEvidence: ConsensusRecoverEvidence | null;
+  gateCrashWitness?: boolean;
   workspaceRemoved?: boolean;
 }): boolean {
   return (
@@ -457,6 +460,7 @@ export function isRunRecoverable(input: {
       input.currentNodeKind,
       input.retrySafe,
       input.consensusEvidence,
+      input.gateCrashWitness ?? false,
     ) !== "discard-only"
   );
 }
@@ -584,6 +588,13 @@ export const getRunDetail = cache(async function getRunDetail(
           nodeId: recoverTargetStepId,
         })
       : null;
+  const gateCrashWitness =
+    row.status === "Crashed" && row.runKind === "flow"
+      ? await loadGateCrashRecoveryWitness(client, {
+          runId,
+          nodeId: recoverTargetStepId,
+        })
+      : null;
   const terminalCause = await loadRunTerminalCause(client, runId, row.status);
   const recoverable = isRunRecoverable({
     status: row.status,
@@ -591,6 +602,7 @@ export const getRunDetail = cache(async function getRunDetail(
     currentNodeKind: recoverNodeKind,
     retrySafe,
     consensusEvidence,
+    gateCrashWitness: gateCrashWitness !== null,
     workspaceRemoved: row.removedAt !== null,
   });
   const ttl = deriveTtlInfo({

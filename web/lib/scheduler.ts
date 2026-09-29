@@ -826,6 +826,7 @@ export async function promoteNextPending(
       parentRunId: string | null;
       priority: string | null;
       startedAt: Date | null;
+      resumeStartedAt: Date | null;
     }> = await tx
       .select({
         id: runs.id,
@@ -835,6 +836,7 @@ export async function promoteNextPending(
         parentRunId: runs.parentRunId,
         priority: tasks.priority,
         startedAt: runs.startedAt,
+        resumeStartedAt: runs.resumeStartedAt,
       })
       .from(runs)
       .leftJoin(tasks, eq(runs.taskId, tasks.id))
@@ -912,6 +914,7 @@ export async function promoteNextPending(
           workspaceMode: r.workspaceMode,
           rootRunId: r.rootRunId,
           parentRunId: r.parentRunId,
+          resumeStartedAt: r.resumeStartedAt,
         },
       })),
       ...c3rows.map((r) => ({
@@ -1024,7 +1027,13 @@ export async function promoteNextPending(
           const targetAcpSessionId = isAgent
             ? null
             : await resumeHandleForQueuedRun(tx, runId);
-          const isResume = !isAgent && targetAcpSessionId != null;
+          // A gate-only Recover has no parent ACP handle (a CLI/check action
+          // completed before its gate crashed), but its durable recover marker
+          // still requires driveResume, never a fresh runFlow dispatch.
+          const isResume =
+            !isAgent &&
+            (targetAcpSessionId != null ||
+              (runKind === "flow" && ref.resumeStartedAt != null));
 
           const flipped: Array<{ projectId: string }> = await tx
             .update(runs)

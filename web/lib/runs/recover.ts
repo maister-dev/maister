@@ -16,6 +16,10 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { resolveNodeRecoverInfo } from "@/lib/flows/graph/current-node-kind";
+import {
+  authorizeGateCrashRecovery,
+  loadGateCrashRecoveryWitness,
+} from "@/lib/flows/graph/gate-crash-recovery";
 import { classifyRecover } from "@/lib/runs/recover-classify";
 import { loadConsensusRecoveryEvidence } from "@/lib/flows/graph/consensus/recovery-evidence";
 import { workbenchClaimHoldsTree } from "@/lib/runs/lifecycle-claim";
@@ -252,11 +256,16 @@ export async function resumeCrashedRun(
             nodeId: resumeTarget,
           })
         : null;
+    const gateCrashWitness = await loadGateCrashRecoveryWitness(tx, {
+      runId,
+      nodeId: resumeTarget,
+    });
     const plan = classifyRecover(
       { acpSessionId },
       nodeKind,
       retrySafe,
       consensusEvidence,
+      gateCrashWitness !== null,
     );
 
     if (plan === "discard-only") {
@@ -451,11 +460,17 @@ export async function driveResume(
           nodeId: resumeTarget,
         })
       : null;
+  const gateCrashWitness = await loadGateCrashRecoveryWitness(db, {
+    runId,
+    nodeId: resumeTarget,
+    assignmentId: run.executionAssignmentId,
+  });
   const plan = classifyRecover(
     { acpSessionId },
     nodeKind,
     retrySafe,
     consensusEvidence,
+    gateCrashWitness !== null,
   );
 
   log.info(
@@ -473,6 +488,30 @@ export async function driveResume(
   // scheduler after a queued recover promoted — the pointer that claim left on
   // the run. NULL = a never-placed legacy run (placed lazily as `recover`).
   const assignmentId = opts.assignmentId ?? run.executionAssignmentId ?? null;
+
+  if (plan === "resume-gate") {
+    if (!resumeTarget || !assignmentId) return { state: "unresumable" };
+    try {
+      await db.transaction((tx: Db) =>
+        authorizeGateCrashRecovery(tx, {
+          runId,
+          nodeId: resumeTarget,
+          assignmentId,
+        }),
+      );
+      await runFlowFn(runId, { db, executionHosts: hosts });
+      await clearCrashRecoverMarker(db, runId).catch((error: unknown) => {
+        log.warn(
+          { runId, code: isMaisterError(error) ? error.code : "UNKNOWN" },
+          "driveResume: could not release the recover intent marker",
+        );
+      });
+
+      return { state: "resumed" };
+    } catch (err) {
+      return handleRecoverDispatchError(db, runId, err);
+    }
+  }
 
   if (plan === "redispatch") {
     // Explicit crash-recover signal: the runner resumes FROM this node (re-runs
@@ -626,38 +665,42 @@ export async function driveResume(
 
     return { state: "resumed" };
   } catch (err) {
-    // ADR-166 yield rule: a newer generation owns the run — write nothing.
-    if (isFencedError(err)) {
-      log.warn({ runId }, "driveResume: driver-yielded — assignment fenced");
-
-      return { state: "transient" };
-    }
-    // Transient (supervisor 5xx / network) → leave Running, NO rollback; an
-    // operator/sweeper can retry, and the reconcile sweep re-enters the
-    // committed intent through the same claim.
-    if (isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE") {
-      log.warn(
-        { runId, err: err.message },
-        "driveResume: transient supervisor failure — leaving Running",
-      );
-
-      return { state: "transient" };
-    }
-
-    // Anything else → the dispatch failed unrecoverably. Crash the Running run
-    // (clears resume_started_at) so the row is cleanly terminal. A supervisor
-    // that merely refuses the retained resume handle is NOT this case: the
-    // graph degrades to a fresh session with `session_fallback` (ADR-081).
-    const msg = err instanceof Error ? err.message : String(err);
-
-    log.warn(
-      { runId, err: msg },
-      "driveResume: unresumable crash recover — crashing",
-    );
-    await crashRunningRun(runId, "agent-session-gone", { db });
-
-    return { state: "unresumable" };
+    return handleRecoverDispatchError(db, runId, err);
   }
+}
+
+async function handleRecoverDispatchError(
+  db: Db,
+  runId: string,
+  err: unknown,
+): Promise<{ state: "transient" | "unresumable" }> {
+  // ADR-166 yield rule: a newer generation owns the run — write nothing.
+  if (isFencedError(err)) {
+    log.warn({ runId }, "driveResume: driver-yielded — assignment fenced");
+
+    return { state: "transient" };
+  }
+  // Transient supervisor failure leaves the committed intent for retry.
+  if (isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE") {
+    log.warn(
+      { runId, err: err.message },
+      "driveResume: transient supervisor failure — leaving Running",
+    );
+
+    return { state: "transient" };
+  }
+
+  // An unrecoverable dispatch closes the run; the retained resume-handle
+  // refusal is handled by the graph's session fallback before reaching here.
+  const msg = err instanceof Error ? err.message : String(err);
+
+  log.warn(
+    { runId, err: msg },
+    "driveResume: unresumable crash recover — crashing",
+  );
+  await crashRunningRun(runId, "agent-session-gone", { db });
+
+  return { state: "unresumable" };
 }
 
 // ADR-175 Scope 7 / T2.7. A run can crash FROM `WaitingOnChildren`, and the

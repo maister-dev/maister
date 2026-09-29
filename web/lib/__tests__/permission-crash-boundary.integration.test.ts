@@ -16,10 +16,11 @@ import type { ExecutionHosts } from "@/lib/execution-host/client";
 import type { RealSupervisor } from "@/test-support/real-supervisor";
 import type { ScratchLaunchInput } from "@/lib/scratch-runs/types";
 import type { SupervisorFaultProxy } from "@/test-support/supervisor-fault-proxy";
+import type { GatePromptOwner } from "@/lib/flows/graph/prompt-owner";
 
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -48,9 +49,13 @@ import {
   resetResolverForTests,
 } from "@/lib/execution-host/resolver";
 import { startFlowContinuationWorker } from "@/lib/flows/graph/continuation-worker";
+import { loadGateCrashRecoveryWitness } from "@/lib/flows/graph/gate-crash-recovery";
+import { reattachGatePrompt } from "@/lib/flows/runner-agent";
 import { runFlow } from "@/lib/flows/runner";
-import { isRunRecoverable } from "@/lib/queries/run";
+import { getRunDetail, isRunRecoverable } from "@/lib/queries/run";
 import { resumeCrashedRun } from "@/lib/runs/recover";
+import { driveResume } from "@/lib/runs/recover";
+import { promoteNextPending } from "@/lib/scheduler";
 import { respondToHitl, type HitlActor } from "@/lib/services/hitl";
 import { runReconcileSweep } from "@/lib/reconcile";
 import {
@@ -106,6 +111,70 @@ const AGENT_FLOW = {
       type: "ai_coding",
       action: { prompt: "do thing" },
       transitions: { success: "done" },
+    },
+  ],
+};
+
+const CLI_GATE_FLOW = {
+  schemaVersion: 1,
+  name: "crash-boundary-gate",
+  nodes: [
+    {
+      id: "implement",
+      type: "cli",
+      action: { command: "printf 'parent\\n' >> parent-action.txt" },
+      pre_finish: {
+        gates: [
+          {
+            id: "review",
+            kind: "ai_judgment",
+            mode: "blocking",
+            prompt: '{"verdict":"pass","reasons":["reviewed"]}',
+          },
+        ],
+      },
+      transitions: { success: "done" },
+    },
+  ],
+};
+
+const CLI_SKILL_GATE_FLOW = {
+  ...CLI_GATE_FLOW,
+  name: "crash-boundary-skill-gate",
+  nodes: [
+    {
+      ...CLI_GATE_FLOW.nodes[0],
+      pre_finish: {
+        gates: [
+          {
+            id: "review",
+            kind: "skill_check",
+            mode: "blocking",
+            command: "/review",
+          },
+        ],
+      },
+    },
+  ],
+};
+
+const CLI_TWO_GATES_FLOW = {
+  ...CLI_GATE_FLOW,
+  name: "crash-boundary-two-gates",
+  nodes: [
+    {
+      ...CLI_GATE_FLOW.nodes[0],
+      pre_finish: {
+        gates: [
+          {
+            id: "precheck",
+            kind: "command_check",
+            mode: "blocking",
+            command: "printf 'check\\n' >> pre-gate.txt",
+          },
+          CLI_GATE_FLOW.nodes[0].pre_finish.gates[0],
+        ],
+      },
     },
   ],
 };
@@ -295,6 +364,11 @@ async function sessionRow(runId: string) {
 // The adapter child of the run's host session, from the host's own registry.
 async function adapterPid(runId: string): Promise<number> {
   const { hostSessionId } = await sessionRow(runId);
+
+  return adapterPidForSession(hostSessionId);
+}
+
+async function adapterPidForSession(hostSessionId: string): Promise<number> {
   const rows = (await (await fetch(`${sup.url}/sessions`)).json()) as Array<{
     sessionId: string;
     pid: number;
@@ -304,6 +378,20 @@ async function adapterPid(runId: string): Promise<number> {
   if (!record) throw new Error(`no host session ${hostSessionId}`);
 
   return record.pid;
+}
+
+async function gateAdapterPid(hitl: Record<string, unknown>): Promise<number> {
+  const commandId = (hitl.schema as { flowPrompt: { commandId: string } })
+    .flowPrompt.commandId;
+  const [command] = await db
+    .select({ targetSessionId: schema.executionCommands.targetSessionId })
+    .from(schema.executionCommands)
+    .where(eq(schema.executionCommands.id, commandId));
+
+  if (!command?.targetSessionId)
+    throw new Error(`gate prompt ${commandId} has no target session`);
+
+  return adapterPidForSession(command.targetSessionId);
 }
 
 async function pendingPermission(runId: string, what: string) {
@@ -322,6 +410,23 @@ async function settled(runId: string, what: string) {
     `${what}: the run leaves NeedsInput`,
     90_000,
   );
+}
+
+async function settleGateRecoveryDriver(
+  runId: string,
+  what: string,
+  driver: Promise<void> | undefined,
+): Promise<void> {
+  if ((await runRow(runId)).status === "NeedsInput") {
+    const rows = await hitlRows(runId);
+    const open = rows.at(-1);
+
+    if (open && !open.respondedAt) {
+      process.kill(await gateAdapterPid(open), "SIGKILL");
+      await settled(runId, what);
+    }
+  }
+  await driver;
 }
 
 type BoundaryState = {
@@ -420,14 +525,14 @@ async function boundaryState(runId: string): Promise<BoundaryState> {
   };
 }
 
-async function seedFlowRun(name: string) {
+async function seedFlowRun(name: string, flowDefinition: unknown = AGENT_FLOW) {
   const repoPath = await initRepo(`${sup.runtimeRoot}/repo-${name}`);
   const worktreePath = await addWorktree(
     repoPath,
     `${sup.runtimeRoot}/wt-${name}`,
     `maister/${name}`,
   );
-  const seeded = await seedGraphRun(testDatabase.db, AGENT_FLOW, {
+  const seeded = await seedGraphRun(testDatabase.db, flowDefinition, {
     repoPath,
     workspace: { worktreePath, parentRepoPath: repoPath },
   });
@@ -444,12 +549,17 @@ async function seedFlowRun(name: string) {
   return seeded.runId;
 }
 
-async function flowOnPermission(name: string) {
-  const runId = await seedFlowRun(name);
+async function flowOnPermission(
+  name: string,
+  flowDefinition: unknown = AGENT_FLOW,
+  signal?: AbortSignal,
+) {
+  const runId = await seedFlowRun(name, flowDefinition);
   const flow = runFlow(runId, {
     db,
     runtimeRoot: sup.runtimeRoot,
     executionHosts: hosts,
+    signal,
   }).catch(() => undefined);
   const hitl = await pendingPermission(runId, name);
 
@@ -657,6 +767,522 @@ describe("the crash boundary with a permission pending (G0, no answer sent)", ()
     await driver;
     expect(await boundaryState(runId)).toEqual(AGENT_CHILD_KILLED);
   }, 180_000);
+});
+
+describe("a gate permission park whose adapter dies under a live host (G1)", () => {
+  it("defers the gate terminal behind a held crash-event sequence gap", async () => {
+    const abort = new AbortController();
+    const { runId, hitl, flow } = await flowOnPermission(
+      "gate-held-crash-event",
+      CLI_GATE_FLOW,
+      abort.signal,
+    );
+    const held = proxy.arm(
+      {
+        caseId: `gate-held-crash-${runId}`,
+        method: "GET",
+        path: /^\/runtime-events$/,
+        eventType: "session.crashed",
+      },
+      "hold-events",
+    );
+
+    try {
+      process.kill(await gateAdapterPid(hitl), "SIGKILL");
+      await held.awaitReached();
+      const commandId = (hitl.schema as { flowPrompt: { commandId: string } })
+        .flowPrompt.commandId;
+
+      await waitFor(async () => {
+        const [gap] = await db
+          .select()
+          .from(schema.executionEvents)
+          .where(
+            and(
+              eq(schema.executionEvents.runId, runId),
+              eq(schema.executionEvents.ingestDisposition, "pending_gap"),
+            ),
+          );
+
+        return gap;
+      }, "gate-held-crash-event: later event held behind gap");
+      const [command] = await db
+        .select()
+        .from(schema.executionCommands)
+        .where(eq(schema.executionCommands.id, commandId));
+      const [gate] = await db
+        .select()
+        .from(schema.gateResults)
+        .where(eq(schema.gateResults.runId, runId));
+
+      expect(command.state).not.toBe("failed");
+      expect(gate.status).toBe("running");
+      expect((await runRow(runId)).status).toBe("NeedsInput");
+    } finally {
+      held.release();
+      abort.abort();
+      await flow;
+    }
+    await waitFor(
+      async () => (await runRow(runId)).status === "Crashed",
+      "gate-held-crash-event: run crashed after event release",
+    );
+    expect(await crashReason(runId)).toBe("session-crashed");
+  }, 90_000);
+
+  it("settles the gate at reattachment when owner application is paused", async () => {
+    const abort = new AbortController();
+    const { runId, hitl, flow } = await flowOnPermission(
+      "gate-reattach-crash",
+      CLI_GATE_FLOW,
+      abort.signal,
+    );
+
+    abort.abort();
+    await flow;
+    expect((await runRow(runId)).status).toBe("NeedsInput");
+    await durable[1].stop();
+    await durable[0].stop();
+    try {
+      process.kill(await gateAdapterPid(hitl), "SIGKILL");
+      await waitFor(async () => {
+        const [command] = await db
+          .select()
+          .from(schema.executionCommands)
+          .where(
+            eq(
+              schema.executionCommands.id,
+              (hitl.schema as { flowPrompt: { commandId: string } }).flowPrompt
+                .commandId,
+            ),
+          );
+
+        return command?.state === "failed" ? command : null;
+      }, "gate-reattach-crash: failed prompt command");
+      const [command] = await db
+        .select()
+        .from(schema.executionCommands)
+        .where(
+          eq(
+            schema.executionCommands.id,
+            (hitl.schema as { flowPrompt: { commandId: string } }).flowPrompt
+              .commandId,
+          ),
+        );
+
+      expect(["pending", "superseded"]).toContain(command.applicationState);
+      await expect(
+        reattachGatePrompt(
+          { db, runId, stepId: "implement" },
+          command.ownerRef as GatePromptOwner,
+        ),
+      ).rejects.toMatchObject({ code: "PRECONDITION" });
+      expect((await runRow(runId)).status).toBe("Crashed");
+      const [gate] = await db
+        .select()
+        .from(schema.gateResults)
+        .where(eq(schema.gateResults.runId, runId));
+
+      expect(gate.status).toBe("stale");
+      expect(await crashReason(runId)).toBe("session-crashed");
+      expect(
+        await loadGateCrashRecoveryWitness(db, {
+          runId,
+          nodeId: "implement",
+        }),
+      ).not.toBeNull();
+    } finally {
+      durable[0] = startPromptOwnerWorker({
+        db,
+        owners: composePromptOwnerRegistry(PRODUCTION_PROMPT_OWNER_REGISTRIES),
+      });
+      durable[1] = startFlowContinuationWorker({ db });
+    }
+  }, 90_000);
+
+  it("crashes the gate park and Recover re-asks only the gate", async () => {
+    const abort = new AbortController();
+    const { runId, hitl, flow } = await flowOnPermission(
+      "gate-sigkill",
+      CLI_GATE_FLOW,
+      abort.signal,
+    );
+
+    try {
+      process.kill(await gateAdapterPid(hitl), "SIGKILL");
+      await waitFor(
+        async () => (await runRow(runId)).status === "Crashed",
+        "gate-sigkill: crashed run",
+        15_000,
+      );
+      const [evaluation] = await db
+        .select()
+        .from(schema.gateResults)
+        .where(eq(schema.gateResults.runId, runId));
+      const [attempt] = await db
+        .select()
+        .from(schema.nodeAttempts)
+        .where(eq(schema.nodeAttempts.runId, runId));
+      const [closedHitl] = await hitlRows(runId);
+
+      expect(evaluation.status).toBe("stale");
+      expect(attempt.actionCompletion?.result.ok).toBe(true);
+      expect(closedHitl.id).toBe(hitl.id);
+      expect(closedHitl.respondedAt).not.toBeNull();
+      expect(await crashReason(runId)).toBe("session-crashed");
+      expect((await getRunDetail(runId))?.recoverable).toBe(true);
+    } finally {
+      abort.abort();
+      await flow;
+    }
+
+    const [beforeRecovery] = await db
+      .select()
+      .from(schema.nodeAttempts)
+      .where(eq(schema.nodeAttempts.runId, runId));
+    const pinnedAction = beforeRecovery.actionCompletion;
+
+    let resumed: Promise<void> | undefined;
+    let dispatches = 0;
+    const recover = () =>
+      resumeCrashedRun(runId, {
+        db,
+        executionHosts: hosts,
+        runFlow: (id, runOpts) => {
+          dispatches += 1;
+          resumed = detach(
+            "gate-sigkill: the resumed driver",
+            runFlow(id, {
+              db,
+              runtimeRoot: sup.runtimeRoot,
+              executionHosts: hosts,
+              ...runOpts,
+            }),
+          );
+        },
+      });
+
+    try {
+      const recoveries = await Promise.all([recover(), recover()]);
+
+      expect(recoveries.map((result) => result.state).sort()).toEqual([
+        "conflict",
+        "resumed",
+      ]);
+      expect(dispatches).toBe(1);
+      const rows = await waitFor(async () => {
+        const current = await hitlRows(runId);
+
+        return current.length === 2 &&
+          (await runRow(runId)).status === "NeedsInput"
+          ? current
+          : null;
+      }, "gate-sigkill: Recover raises a fresh gate permission");
+
+      expect(
+        rows.find((row) => row.id === hitl.id)?.respondedAt,
+      ).not.toBeNull();
+      expect(rows.find((row) => row.id !== hitl.id)?.respondedAt).toBeNull();
+      const attempts = await db
+        .select()
+        .from(schema.nodeAttempts)
+        .where(eq(schema.nodeAttempts.runId, runId))
+        .orderBy(asc(schema.nodeAttempts.attempt));
+
+      expect(attempts).toHaveLength(2);
+      expect(attempts[0].actionCompletion).toEqual(pinnedAction);
+      expect(attempts[1].actionCompletion).toEqual(pinnedAction);
+      const gatePrompts = await db
+        .select({ id: schema.executionCommands.id })
+        .from(schema.executionCommands)
+        .where(
+          and(
+            eq(schema.executionCommands.runId, runId),
+            eq(schema.executionCommands.kind, "session.prompt"),
+            sql`${schema.executionCommands.ownerRef}->>'variant' = 'gate_ai'`,
+          ),
+        );
+
+      expect(gatePrompts).toHaveLength(2);
+      expect(
+        await readFile(
+          join(sup.runtimeRoot, "wt-gate-sigkill", "parent-action.txt"),
+          "utf8",
+        ),
+      ).toBe("parent\n");
+    } finally {
+      await settleGateRecoveryDriver(
+        runId,
+        "gate-sigkill: the resumed gate dies",
+        resumed,
+      );
+    }
+  }, 60_000);
+
+  it("refuses Recover when the crashed gate witness is missing", async () => {
+    const abort = new AbortController();
+    const { runId, hitl, flow } = await flowOnPermission(
+      "gate-witness-missing",
+      CLI_GATE_FLOW,
+      abort.signal,
+    );
+
+    try {
+      process.kill(await gateAdapterPid(hitl), "SIGKILL");
+      await waitFor(
+        async () => (await runRow(runId)).status === "Crashed",
+        "gate-witness-missing: crashed run",
+      );
+    } finally {
+      abort.abort();
+      await flow;
+    }
+
+    await db
+      .update(schema.gateResults)
+      .set({ status: "failed" })
+      .where(eq(schema.gateResults.runId, runId));
+    expect(
+      await resumeCrashedRun(runId, { db, executionHosts: hosts }),
+    ).toEqual({
+      state: "discard-only",
+    });
+    expect((await runRow(runId)).status).toBe("Crashed");
+    expect(
+      await readFile(
+        join(sup.runtimeRoot, "wt-gate-witness-missing", "parent-action.txt"),
+        "utf8",
+      ),
+    ).toBe("parent\n");
+  }, 60_000);
+
+  it("applies the same crash boundary to a skill_check gate", async () => {
+    const abort = new AbortController();
+    const { runId, hitl, flow } = await flowOnPermission(
+      "skill-gate-sigkill",
+      CLI_SKILL_GATE_FLOW,
+      abort.signal,
+    );
+
+    try {
+      process.kill(await gateAdapterPid(hitl), "SIGKILL");
+      await waitFor(
+        async () => (await runRow(runId)).status === "Crashed",
+        "skill-gate-sigkill: crashed run",
+      );
+      const [evaluation] = await db
+        .select()
+        .from(schema.gateResults)
+        .where(eq(schema.gateResults.runId, runId));
+
+      expect(evaluation.kind).toBe("skill_check");
+      expect(evaluation.status).toBe("stale");
+      expect(await crashReason(runId)).toBe("session-crashed");
+    } finally {
+      abort.abort();
+      await flow;
+    }
+  }, 60_000);
+
+  it("queues gate-only Recover under a full pool and re-asks after promotion", async () => {
+    const abort = new AbortController();
+    const { runId, hitl, flow } = await flowOnPermission(
+      "gate-queued-recover",
+      CLI_GATE_FLOW,
+      abort.signal,
+    );
+
+    try {
+      process.kill(await gateAdapterPid(hitl), "SIGKILL");
+      await waitFor(
+        async () => (await runRow(runId)).status === "Crashed",
+        "gate-queued-recover: crashed run",
+      );
+    } finally {
+      abort.abort();
+      await flow;
+    }
+
+    const blockerId = await seedFlowRun("gate-queued-blocker");
+
+    await db
+      .update(schema.runs)
+      .set({ status: "Running" })
+      .where(eq(schema.runs.id, blockerId));
+    const originalCap = process.env.MAISTER_MAX_CONCURRENT_RUNS;
+
+    process.env.MAISTER_MAX_CONCURRENT_RUNS = "1";
+    let resumed: Promise<void> | undefined;
+
+    try {
+      expect(
+        await resumeCrashedRun(runId, { db, executionHosts: hosts }),
+      ).toEqual({
+        state: "queued",
+      });
+      expect((await runRow(runId)).status).toBe("Pending");
+      expect(await hitlRows(runId)).toHaveLength(1);
+
+      await db
+        .update(schema.runs)
+        .set({ status: "Review" })
+        .where(eq(schema.runs.id, blockerId));
+      const promoted = await promoteNextPending({
+        db,
+        pool: "flow",
+        resumeRun: async (id) => {
+          await driveResume(id, {
+            db,
+            executionHosts: hosts,
+            runFlow: (resumeId, runOpts) => {
+              resumed = detach(
+                "gate-queued-recover: resumed driver",
+                runFlow(resumeId, {
+                  db,
+                  runtimeRoot: sup.runtimeRoot,
+                  executionHosts: hosts,
+                  ...runOpts,
+                }),
+              );
+            },
+          });
+        },
+      });
+
+      expect(promoted.promotedRunId).toBe(runId);
+      const rows = await waitFor(async () => {
+        const current = await hitlRows(runId);
+
+        return current.length === 2 &&
+          (await runRow(runId)).status === "NeedsInput"
+          ? current
+          : null;
+      }, "gate-queued-recover: new gate permission");
+
+      expect(rows[0].respondedAt).not.toBeNull();
+      expect(rows[1].respondedAt).toBeNull();
+      expect(
+        await readFile(
+          join(sup.runtimeRoot, "wt-gate-queued-recover", "parent-action.txt"),
+          "utf8",
+        ),
+      ).toBe("parent\n");
+    } finally {
+      try {
+        await settleGateRecoveryDriver(
+          runId,
+          "gate-queued-recover: resumed gate dies",
+          resumed,
+        );
+      } finally {
+        if (originalCap === undefined)
+          delete process.env.MAISTER_MAX_CONCURRENT_RUNS;
+        else process.env.MAISTER_MAX_CONCURRENT_RUNS = originalCap;
+      }
+    }
+  }, 90_000);
+
+  it("does not repeat an earlier passed gate when re-asking the crashed gate", async () => {
+    const abort = new AbortController();
+    const { runId, hitl, flow } = await flowOnPermission(
+      "gate-prefix-preserved",
+      CLI_TWO_GATES_FLOW,
+      abort.signal,
+    );
+
+    try {
+      process.kill(await gateAdapterPid(hitl), "SIGKILL");
+      await waitFor(
+        async () => (await runRow(runId)).status === "Crashed",
+        "gate-prefix-preserved: crashed run",
+      );
+    } finally {
+      abort.abort();
+      await flow;
+    }
+
+    let resumed: Promise<void> | undefined;
+    let resumedAgain: Promise<void> | undefined;
+
+    try {
+      expect(
+        await resumeCrashedRun(runId, {
+          db,
+          executionHosts: hosts,
+          runFlow: (id, runOpts) => {
+            resumed = detach(
+              "gate-prefix-preserved: resumed driver",
+              runFlow(id, {
+                db,
+                runtimeRoot: sup.runtimeRoot,
+                executionHosts: hosts,
+                ...runOpts,
+              }),
+            );
+          },
+        }),
+      ).toEqual({ state: "resumed" });
+      await waitFor(async () => {
+        const current = await hitlRows(runId);
+
+        return current.length === 2 &&
+          (await runRow(runId)).status === "NeedsInput"
+          ? current
+          : null;
+      }, "gate-prefix-preserved: new gate permission");
+
+      expect(
+        await readFile(
+          join(sup.runtimeRoot, "wt-gate-prefix-preserved", "pre-gate.txt"),
+          "utf8",
+        ),
+      ).toBe("check\n");
+      await settleGateRecoveryDriver(
+        runId,
+        "gate-prefix-preserved: resumed gate dies",
+        resumed,
+      );
+
+      expect(
+        await resumeCrashedRun(runId, {
+          db,
+          executionHosts: hosts,
+          runFlow: (id, runOpts) => {
+            resumedAgain = detach(
+              "gate-prefix-preserved: second resumed driver",
+              runFlow(id, {
+                db,
+                runtimeRoot: sup.runtimeRoot,
+                executionHosts: hosts,
+                ...runOpts,
+              }),
+            );
+          },
+        }),
+      ).toEqual({ state: "resumed" });
+      await waitFor(async () => {
+        const current = await hitlRows(runId);
+
+        return current.length === 3 &&
+          (await runRow(runId)).status === "NeedsInput"
+          ? current
+          : null;
+      }, "gate-prefix-preserved: gate re-asked after second crash");
+
+      expect(
+        await readFile(
+          join(sup.runtimeRoot, "wt-gate-prefix-preserved", "pre-gate.txt"),
+          "utf8",
+        ),
+      ).toBe("check\n");
+    } finally {
+      await settleGateRecoveryDriver(
+        runId,
+        "gate-prefix-preserved: second resumed gate dies",
+        resumedAgain ?? resumed,
+      );
+    }
+  }, 90_000);
 });
 
 describe("an answer to a dead session never fails the run (G1, D-G2)", () => {

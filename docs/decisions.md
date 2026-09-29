@@ -218,7 +218,7 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-174](#adr-174-the-desk-renders-one-object-per-work-item) | The Desk renders one object per work item | Accepted | 2026-09-17 |
 | [ADR-175](#adr-175-operator-recover-of-a-crashed-agent-node-re-enters-the-flow-graph) | Operator Recover of a crashed agent node re-enters the flow graph | Accepted; amended by ADR-176 and ADR-177; amended 2026-09-26 | 2026-09-18 |
 | [ADR-176](#adr-176-automated-crash-recover-re-entry--the-flow-continuation-worker-owns-the-committed-intent-under-a-bounded-per-run-budget) | Automated crash-recover re-entry — the flow continuation worker owns the committed intent under a bounded per-run budget | Implemented | 2026-09-21 |
-| [ADR-177](#adr-177-evidence-first-crash-classification) | Evidence-first crash classification | Implemented; amended 2026-09-23, 2026-09-26 | 2026-09-21 |
+| [ADR-177](#adr-177-evidence-first-crash-classification) | Evidence-first crash classification | Implemented; amended 2026-09-23, 2026-09-26, 2026-09-30 | 2026-09-21 |
 | [ADR-178](#adr-178-observatory-overview-table-day-aligned-period-url-views-and-auto-apply-filters) | Observatory overview table, day-aligned period, URL views, and auto-apply filters | Implemented (2026-09-21) | 2026-09-21 |
 | [ADR-179](#adr-179-mcp-configuration-values--literal-or-reference-envheader-maps-a-bearer-token-field-value-replacing-project-overlays-host-env-ref-readiness-and-an-adapter-transport-gate) | MCP configuration values — literal-or-reference env/header maps, a bearer token field, value-replacing project overlays, host env-ref readiness, and an adapter transport gate | Implemented | 2026-09-21 |
 | [ADR-180](#adr-180-permission-deadline-has-one-owner) | Permission deadline has one owner | Implemented; amended 2026-09-26 | 2026-09-22 |
@@ -1804,7 +1804,7 @@ Full record: [`decisions/adr-176.md`](decisions/adr-176.md)
 
 ### ADR-177: Evidence-first crash classification
 
-**Status:** Implemented; amended 2026-09-23 (host-evidence settlement; the current turn across `node`, `permission_resume` and gate variants; the boundary re-reads its command under lock); amended 2026-09-26 (the crash boundary owns a dead session's answer)
+**Status:** Implemented; amended 2026-09-23 (host-evidence settlement; the current turn across `node`, `permission_resume` and gate variants; the boundary re-reads its command under lock); amended 2026-09-26 (the crash boundary owns a dead session's answer); amended 2026-09-30 (AI/skill gate permission parks)
 **Date:** 2026-09-21
 
 The reconcile sweep classifies a sessionless `Running` flow run from the current
