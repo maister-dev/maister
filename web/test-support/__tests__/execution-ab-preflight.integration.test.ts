@@ -56,4 +56,4 @@ it("I-CI: the real driver denies the host root and the real PostgreSQL container
   } finally {
     await database.stop();
   }
-}, 180_000);
+}, 360_000);

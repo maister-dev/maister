@@ -357,7 +357,10 @@ finishes before the diagnostics artifact is uploaded. Timing records setup,
 preflight, suite, cleanup and the report-upload outcome; the hosted job result
 records the diagnostics upload. The suite TERM deadline is at most 2340 seconds,
 with 30 seconds each for forced termination and shell/trap completion inside
-the 40-minute step and final job reserve. A syntax
+the 40-minute step and final job reserve. The I-CI preflight case has a
+360-second deadline within its unchanged 10-minute step so cold PostgreSQL
+container startup and migrations can finish; a timeout or leaked container
+still fails the job. A syntax
 check or local ARM run is not hosted proof.
 
 S5.2 acceptance requires four complete web shard reports, both runtime and
