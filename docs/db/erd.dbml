@@ -2587,6 +2587,7 @@ table scratch_runs {
   error_code text
   error_message text
   error_metadata jsonb
+  active_prompt_intent jsonb
   last_user_message_at "timestamp with time zone"
   last_agent_message_at "timestamp with time zone"
   created_at "timestamp with time zone" [not null, default: `now()`]
@@ -2595,6 +2596,8 @@ table scratch_runs {
   indexes {
     (project_id, dialog_status) [name: 'scratch_runs_project_status_idx']
     (local_package_id, dialog_status) [name: 'scratch_runs_local_package_idx']
+    (updated_at, run_id) [name: 'scratch_runs_running_intent_sweep_idx']
+
 
   }
 }
