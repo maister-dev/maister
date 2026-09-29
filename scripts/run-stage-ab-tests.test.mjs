@@ -1,7 +1,29 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { laneConcurrency, lanePackages, laneSuites, vitestArgs, validateLaneReport, requiredIsolationCases } from "./run-stage-ab-tests.mjs";
+import { laneConcurrency, lanePackages, laneSuites, vitestArgs, validateLaneReport, requiredIsolationCases, webShardFiles, parseLaneInvocation } from "./run-stage-ab-tests.mjs";
+
+test("web shards are deterministic, disjoint, complete and retain manifest order", () => {
+  const first = webShardFiles(laneSuites.web, 1, 2);
+  const second = webShardFiles(laneSuites.web, 2, 2);
+
+  assert.deepEqual(first, laneSuites.web.filter((_, index) => index % 2 === 0));
+  assert.deepEqual(second, laneSuites.web.filter((_, index) => index % 2 === 1));
+  assert.deepEqual([...first, ...second].sort(), [...laneSuites.web].sort());
+});
+
+test("CLI accepts only valid web shards and preserves unsharded slices", () => {
+  assert.deepEqual(parseLaneInvocation(["web", "--shard", "2/2"]),
+    { slice: "web", files: webShardFiles(laneSuites.web, 2, 2) });
+  assert.deepEqual(parseLaneInvocation(["supervisor"]), { slice: "supervisor", files: laneSuites.supervisor });
+  for (const args of [[], ["web", "--shard"], ["web", "--shard", "0/2"],
+    ["web", "--shard", "3/2"], ["web", "--shard", "1/0"],
+    ["web", "--shard", `1/${laneSuites.web.length + 1}`], ["web", "--shard", "1/2", "--shard", "2/2"],
+    ["web", "--unknown"], ["isolation", "--shard", "1/2"],
+    ["supervisor", "--shard", "1/2"]]) {
+    assert.throws(() => parseLaneInvocation(args), /usage|shard/u, args.join(" "));
+  }
+});
 
 // Each lane suite owns a stack of host processes (vitest worker, PostgreSQL
 // container, real supervisor, one forked driver child), so the pool is derived
@@ -83,4 +105,15 @@ test("the complete isolation manifest passes and rejects duplicate or skipped re
   const skipped = structuredClone(report);
   skipped.testResults[0].assertionResults[0].status = "pending";
   assert.throws(() => validateLaneReport(skipped, files), /case failed or was skipped/);
+});
+
+test("the report rejects a duplicated selection and a name that only shares a suffix", () => {
+  const file = laneSuites.web[0];
+  const result = (name) => ({ name, assertionResults: [{ title: "control", status: "passed" }] });
+  const report = { testResults: [result(`/repo/web/${file}`), result(`/repo/web/${file}`)], numFailedTests: 0,
+    numPendingTests: 0, numTodoTests: 0, numRuntimeErrorTestSuites: 0, success: true };
+
+  assert.throws(() => validateLaneReport(report, [file, file]), /duplicate/u);
+  report.testResults = [result(`/repo/web/prefix${file}`)];
+  assert.throws(() => validateLaneReport(report, [file]), /A\/B unexpected or ambiguous owning suite/u);
 });

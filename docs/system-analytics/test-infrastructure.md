@@ -330,6 +330,49 @@ claim row, confirms its PostgreSQL lock waiter, and aborts before releasing the
 barrier. It requires a typed cancellation, no SSE open, and immediate successor
 claim acquisition; it does not extend shutdown or lease timeouts.
 
+### S5.2 hosted CI repair contract (Implemented; hosted qualification pending)
+
+The mandatory push workflow keeps both Node 24.15.0 and 24.19.0 and a 60-minute
+limit per job. `execution-data-plane` selects two deterministic, disjoint web
+file lists for each Node version; the selections' union is exactly the explicit
+`laneSuites.web` inventory; `scripts/run-stage-ab-tests.test.mjs` pins the
+complete, disjoint partition. All six Linux legs run `runtime:check`. The
+two-version `execution-runtime-supervisor` job also runs `test:runtime`,
+`test:stage-ab-lane` and the complete supervisor A/B inventory once per Node.
+Each of the six legs has a unique artifact
+name and uploads its actual JSON reporter with `if-no-files-found: error`.
+The runner passes exactly its selected file list to Vitest and
+`validateLaneReport`; that validator rejects absent, duplicate, unexpected,
+empty, skipped and failed suites/cases. `--shard 1/2` and `--shard 2/2` are web
+only; the production isolation slice remains serial and rejects sharding.
+
+The one macOS Intel isolation job keeps Colima 0.10.3/Lima 2.2.0 and one
+`colima start` attempt. It runs `runtime:check` before provisioning.
+Provisioning traces the downloaded pins, resolved
+profile and status JSON; `DOCKER_HOST` uses Colima's reported host socket URI,
+while `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE` names the VM-side
+`/var/run/docker.sock`. A missing URI/socket or failed `docker version`/`info`
+fails with a recorded cause. Cleanup targets only the job-owned profile and
+finishes before the diagnostics artifact is uploaded. Timing records setup,
+preflight, suite, cleanup and the report-upload outcome; the hosted job result
+records the diagnostics upload. The suite TERM deadline is at most 2340 seconds,
+with 30 seconds each for forced termination and shell/trap completion inside
+the 40-minute step and final job reserve. A syntax
+check or local ARM run is not hosted proof.
+
+S5.2 acceptance requires four complete web shard reports, both runtime and
+supervisor legs, and a green macOS isolation leg on the same pushed commit.
+The separate preflight report and full isolation report must both exist; the
+six original isolation suites and all 40 original required cases must remain.
+Record the run URL, source SHA, runner image/architecture, artifact identities,
+measured total duration (below 60 minutes) and remaining headroom before
+marking S5.2 complete.
+If a web shard exceeds its budget, retain the two-shard contract and leave
+S5.2 open for a measured repartition decision; local multi-worker timings do
+not qualify a one-worker hosted leg.
+If new controls enlarge the suite, extend the explicit manifest and remeasure
+the Intel budget; do not infer a pass from the old 40-case total.
+
 ## A/B stabilization test lanes
 
 S0 first writes complete requirements, route/message schemas, owner/refusal/recovery-window tables, state machines, schema constraints and primary acceptance mapping in the canonical docs. Mark missing behavior Designed, preserving accepted guarantees. No production implementation begins with unresolved required owner arms, a contradictory budget or an undefined destructive recovery window.
@@ -543,9 +586,12 @@ AT-17. Browser half stays open under S5.3.
 - [`run.ts`](../../web/e2e/run.ts)
 - [`pg-container.integration.test.ts`](../../web/test-support/__tests__/pg-container.integration.test.ts)
 - [`run.test.ts`](../../web/e2e/__tests__/run.test.ts)
+- [CI workflow](../../.github/workflows/ci.yml)
+- [A/B lane runner and partition tests](../../scripts/run-stage-ab-tests.test.mjs)
+- [Colima provisioning script](../../scripts/setup-isolation-ci-runtime.sh)
 - [feature specification](../../.ai-factory/specs/feature-unified-test-database-testcontainers.md)
 
-The mandatory S1 CI lane runs `test:integration:ab` in both application packages on Node 24.15.0 and 24.19.0. Its explicit suite inventory is `scripts/run-stage-ab-tests.mjs`; missing files, empty discovery, failed or skipped cases fail the lane. The same runner owns the serial `isolation` slice (AT-16 core, above) and the AT-12 browser lane is `pnpm --filter maister-web test:e2e:execution-ab` (`playwright.execution-ab.config.ts`: a REAL supervisor started by `e2e/execution-ab-global-setup.ts` behind a `next dev` web server; `e2e/execution-ab-content.spec.ts`). The real-supervisor fixture refuses to start without a process invocation, so the lane's wrapper `web/e2e/run.ts` mints one the way the A/B runner does and replaces any caller-supplied `MAISTER_TEST_WORKTREE_INVOCATION_ID`; the Playwright process, the web server, the supervisor and its adapters all carry the tag and are released through the same `releaseInvocation` as the A/B lanes when the lane ends. That lane must run on an otherwise idle host — concurrent CPU load or file writes under `web/` livelocked the dev server's edge-instrumentation recompile at boot (observed before the 2026-09-08 instrumentation split: ~135k warning lines and a 180 s readiness timeout versus ~3k lines and readiness in ~15 s when idle). `web/instrumentation.ts` now reaches its Node-only body (`web/instrumentation-node.ts`) solely through the `NEXT_RUNTIME === "nodejs"` branch, so the Edge instrumentation entry no longer bundles the server graph and a dev boot plus page compile prints none of those warnings; the idle-host requirement has not been re-measured since. The isolation slice is wired to the mandatory `execution-isolation` macOS Intel job; its actual hosted run and sub-60-minute budget remain unqualified. The browser lane stays with S5.3. A separate mandatory image job builds the pinned Dockerfile, exercises real binary HTTP and runs `web/scripts/smoke-production-image.ts` through the default image ENTRYPOINT/CMD with a migrated PostgreSQL container. It verifies HTTP readiness, SIGTERM completion and no remaining web PostgreSQL sessions. The browser runtime/image matrix remains part of S5.3.
+The mandatory push workflow runs the explicit web A/B inventory in two shards per Node version and the complete supervisor A/B inventory once per Node, as specified above. Missing files, empty discovery, failed or skipped cases fail each leg. The same runner owns the serial `isolation` slice (AT-16 core, above) and the AT-12 browser lane is `pnpm --filter maister-web test:e2e:execution-ab` (`playwright.execution-ab.config.ts`: a REAL supervisor started by `e2e/execution-ab-global-setup.ts` behind a `next dev` web server; `e2e/execution-ab-content.spec.ts`). The real-supervisor fixture refuses to start without a process invocation, so the lane's wrapper `web/e2e/run.ts` mints one the way the A/B runner does and replaces any caller-supplied `MAISTER_TEST_WORKTREE_INVOCATION_ID`; the Playwright process, the web server, the supervisor and its adapters all carry the tag and are released through the same `releaseInvocation` as the A/B lanes when the lane ends. That lane must run on an otherwise idle host — concurrent CPU load or file writes under `web/` livelocked the dev server's edge-instrumentation recompile at boot (observed before the 2026-09-08 instrumentation split: ~135k warning lines and a 180 s readiness timeout versus ~3k lines and readiness in ~15 s when idle). `web/instrumentation.ts` now reaches its Node-only body (`web/instrumentation-node.ts`) solely through the `NEXT_RUNTIME === "nodejs"` branch, so the Edge instrumentation entry no longer bundles the server graph and a dev boot plus page compile prints none of those warnings; the idle-host requirement has not been re-measured since. The isolation slice is wired to the mandatory `execution-isolation` macOS Intel job; its actual hosted run and sub-60-minute budget remain unqualified. The browser lane stays with S5.3. A separate mandatory image job builds the pinned Dockerfile, exercises real binary HTTP and runs `web/scripts/smoke-production-image.ts` through the default image ENTRYPOINT/CMD with a migrated PostgreSQL container. It verifies HTTP readiness, SIGTERM completion and no remaining web PostgreSQL sessions. The browser runtime/image matrix remains part of S5.3.
 
 Admin browser specs are opt-in alternatives in `AUTHED_SPEC`; discovery is a
 contract because any omitted filename falls into the unauthenticated Chromium

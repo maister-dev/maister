@@ -114,10 +114,38 @@ jobs:
       - run: pnpm --filter maister-web test:e2e:librarian
 
   execution-data-plane:
-    name: A/B real integration (Node ${{ matrix.node }})
+    name: A/B web (Node ${{ matrix.node }}, shard ${{ matrix.shard }}/2)
     runs-on: ubuntu-latest
-    # At one worker on 2–4-core runners, measured healthy web suites take
-    # over 40m; setup and supervisor qualification need additional time.
+    # The 2–4 vCPU runner uses one worker; each explicit half gets its own 60-minute budget.
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [24.15.0, 24.19.0]
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.3.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm runtime:check
+      - run: pnpm --filter maister-web test:integration:ab --shard ${{ matrix.shard }}/2
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: execution-data-plane-node-${{ matrix.node }}-shard-${{ matrix.shard }}-of-2
+          path: /tmp/maister-ab-*/vitest.json
+          if-no-files-found: error
+
+  execution-runtime-supervisor:
+    name: A/B runtime + supervisor (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -136,12 +164,12 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm runtime:check
       - run: pnpm test:runtime
+      - run: pnpm test:stage-ab-lane
       - run: pnpm --filter @maister/supervisor test:integration:ab
-      - run: pnpm --filter maister-web test:integration:ab
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: execution-data-plane-node-${{ matrix.node }}
+          name: execution-runtime-supervisor-node-${{ matrix.node }}
           path: /tmp/maister-ab-*/vitest.json
           if-no-files-found: error
 
@@ -179,6 +207,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
+          trap 'status=$?; printf "runtime_setup_exit_code=%s\nruntime_setup_end_seconds=%s\n" "$status" "$(( $(date +%s) - S52_JOB_STARTED_AT ))" >> "$MAISTER_TEST_EVIDENCE_DIR/timing.txt"' EXIT
           bash scripts/setup-isolation-ci-runtime.sh 2>&1 | tee "$MAISTER_TEST_EVIDENCE_DIR/runtime-setup.log"
           echo "runtime_ready_seconds=$(( $(date +%s) - S52_JOB_STARTED_AT ))" >> "$MAISTER_TEST_EVIDENCE_DIR/timing.txt"
       - name: Prove filesystem driver and Testcontainers before production build
@@ -186,6 +215,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
+          trap 'status=$?; printf "preflight_exit_code=%s\npreflight_end_seconds=%s\n" "$status" "$(( $(date +%s) - S52_JOB_STARTED_AT ))" >> "$MAISTER_TEST_EVIDENCE_DIR/timing.txt"' EXIT
           node --input-type=module -e 'import {runStageAbLane} from "./scripts/run-stage-ab-tests.mjs"; await runStageAbLane({slice:"isolation",files:["test-support/__tests__/execution-ab-preflight.integration.test.ts"]});' 2>&1 | tee "$MAISTER_TEST_EVIDENCE_DIR/preflight.log"
           echo "preflight_complete_seconds=$(( $(date +%s) - S52_JOB_STARTED_AT ))" >> "$MAISTER_TEST_EVIDENCE_DIR/timing.txt"
       - name: Run the complete production isolation slice
@@ -193,8 +223,10 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
+          trap 'status=$?; printf "isolation_exit_code=%s\nisolation_end_seconds=%s\n" "$status" "$(( $(date +%s) - S52_JOB_STARTED_AT ))" >> "$MAISTER_TEST_EVIDENCE_DIR/timing.txt"' EXIT
           elapsed=$(( $(date +%s) - S52_JOB_STARTED_AT ))
-          remaining=$(( 3300 - elapsed ))
+          remaining=$(( 3240 - elapsed ))
+          if test "$remaining" -gt 2340; then remaining=2340; fi
           printf 'suite_start_seconds=%s\nremaining_suite_budget_seconds=%s\n' "$elapsed" "$remaining" >> "$MAISTER_TEST_EVIDENCE_DIR/timing.txt"
           if test "$remaining" -le 0; then
             echo "No isolation budget remains before the cleanup and upload reserve" >&2
@@ -203,12 +235,35 @@ jobs:
           gtimeout --signal=TERM --kill-after=30s "${remaining}s" pnpm --filter maister-web test:integration:isolation 2>&1 | tee "$MAISTER_TEST_EVIDENCE_DIR/isolation.log"
           echo "isolation_complete_seconds=$(( $(date +%s) - S52_JOB_STARTED_AT ))" >> "$MAISTER_TEST_EVIDENCE_DIR/timing.txt"
       - name: Upload actual isolation reports
+        id: isolation_reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: execution-isolation-reports
           path: ${{ runner.temp }}/maister-isolation-evidence/**/vitest.json
           if-no-files-found: error
+      - name: Stop the job-owned container runtime
+        if: always()
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          reports_upload_outcome='${{ steps.isolation_reports.outcome }}'
+          record_cleanup_result() {
+            local status=$?
+            local elapsed=$(( $(date +%s) - S52_JOB_STARTED_AT ))
+            if ! printf 'reports_upload_outcome=%s\nruntime_cleanup_exit_code=%s\nruntime_cleanup_end_seconds=%s\n' \
+              "$reports_upload_outcome" "$status" "$elapsed" >> "$MAISTER_TEST_EVIDENCE_DIR/timing.txt"; then
+              echo "Failed to record container runtime cleanup outcome" >&2
+              if test "$status" -eq 0; then status=1; fi
+            fi
+            exit "$status"
+          }
+          trap record_cleanup_result EXIT
+          runtime_dir="$RUNNER_TEMP/maister-isolation-runtime"
+          if test -x "$runtime_dir/bin/colima" && test -f "$runtime_dir/maister-s52.start-attempted"; then
+            COLIMA_HOME="$runtime_dir/colima" "$runtime_dir/bin/colima" --profile maister-s52 delete --force
+          fi
       - name: Preserve isolation diagnostics
         if: always()
         uses: actions/upload-artifact@v4
@@ -216,16 +271,6 @@ jobs:
           name: execution-isolation-diagnostics
           path: ${{ runner.temp }}/maister-isolation-evidence/
           if-no-files-found: error
-      - name: Stop the job-owned container runtime
-        if: always()
-        timeout-minutes: 5
-        shell: bash
-        run: |
-          runtime_dir="$RUNNER_TEMP/maister-isolation-runtime"
-          if test -x "$runtime_dir/bin/colima" && test -d "$runtime_dir/colima/maister-s52"; then
-            COLIMA_HOME="$runtime_dir/colima" "$runtime_dir/bin/colima" --profile maister-s52 delete --force
-          fi
-          echo "isolation_job_elapsed_seconds=$(( $(date +%s) - S52_JOB_STARTED_AT ))"
 
   execution-image:
     name: Production image transport and shutdown

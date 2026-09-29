@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+set -x
 
 # The hosted runner recipe is Intel-only. Local ARM qualification uses its own
 # container runtime and never invokes this script.
@@ -43,11 +44,31 @@ colima version
 limactl --version
 docker --version
 gtimeout --version
+printf 'profile=maister-s52\n' > "$runtime_dir/maister-s52.start-attempted"
 colima --profile maister-s52 start \
   --runtime docker --vm-type vz --mount-type virtiofs \
   --cpu 3 --memory 6 --disk 20
-export DOCKER_HOST="unix://$COLIMA_HOME/maister-s52/docker.sock"
-test -S "$COLIMA_HOME/maister-s52/docker.sock"
+status_json="$(colima --profile maister-s52 status --json)"
+printf 'colima_status=%s\n' "$status_json"
+socket_path="$(node -e '
+  const { isAbsolute } = require("node:path");
+  try {
+    const status = JSON.parse(process.argv[1]);
+    const uri = new URL(status.docker_socket);
+    if (uri.protocol !== "unix:" || uri.hostname || !isAbsolute(uri.pathname))
+      throw new Error("docker_socket must be an absolute unix URI");
+    process.stdout.write(decodeURIComponent(uri.pathname));
+  } catch (error) {
+    process.stderr.write(`Colima status has no usable docker_socket URI: ${error.message}\n`);
+    process.exitCode = 1;
+  }
+' "$status_json")"
+printf 'colima_profile=maister-s52 resolved_host_socket=%s vm_socket=/var/run/docker.sock\n' "$socket_path"
+if ! test -S "$socket_path"; then
+  printf 'Colima profile maister-s52 is ready but its reported Docker socket is missing: %s\n' "$socket_path" >&2
+  exit 1
+fi
+export DOCKER_HOST="unix://$socket_path"
 printf 'DOCKER_HOST=%s\n' "$DOCKER_HOST" >> "$GITHUB_ENV"
 printf '%s\n' 'TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock' >> "$GITHUB_ENV"
 docker version
