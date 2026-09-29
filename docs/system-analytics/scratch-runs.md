@@ -454,6 +454,31 @@ The recovery windows below are normative; each cell names its owner.
 | runs `NeedsInputIdle` never answered, past the TTL | — | keep-alive Pass 2 abandons the run **and** the dialog (`Abandoned`); queued rows read "Not sent" |
 | dialog `Review`, `Done` or `Abandoned` | — | terminal; queued rows read "Not sent" |
 
+### Commit-to-admission recovery (Designed — ADR-192 / R9 S1)
+
+The table above describes the implemented queue backstop. A separate Running
+window remains when a web process dies after marking the dialog prompt-ready
+but before admitting `session.prompt`. [ADR-192](../decisions.md#adr-192-durable-scratch-prompt-intent-before-command-admission)
+defines the required active intent; the current code does not yet write it.
+
+| Durable state at a continuation visit | Required disposition |
+| --- | --- |
+| Running, current versioned intent, no command with its operation key | Under the run lock, use the frozen owner and payload in `issueOwnedPrompt`'s admission transaction; after commit, dispatch the original command once. Age only wakes the visit, never proves absence. |
+| Running, current intent, command present in any unresolved, terminal-unapplied or retired state | Leave delivery to that command's owner/recovery; never generate another key or host effect for the row. |
+| Running, intent bound to a prior assignment or incarnation | Refuse the stale intent and let the current status/owner transition win; never send it into a successor session. |
+| Running, no intent (pre-upgrade or mixed-version writer) | Delivery is unknown. Surface a durable diagnostic directing the operator to Stop, then start a new run; the Crashed-run Recover API does not apply after Stop. Do not guess an owner or requeue a `prompted` row. |
+| WaitingForUser with a queued row | The existing FIFO scratch arm remains the only dispatcher. Recover text queued behind earlier rows is a message operation when selected. |
+
+S1 acceptance requires production-web death at each launch, queued dispatch,
+direct send, Recover and D-A8 commit cut, followed by initialization on the
+same DB and host. For new intents, one eligible continuation visit MUST admit
+or find the original command; at most one ACP prompt effect may occur for its
+logical operation. A package turn MUST retain its action ID, edit-lock
+generation and prompt context. A null-intent legacy row MUST make the
+limitation visible and MUST NOT send a prompt. The serial isolation suite and
+its exact required case names will be added when the implementation exists;
+these are Designed expectations, not current passing behavior.
+
 **Recover** (`POST /api/scratch-runs/{runId}/recover`) is a CAS on
 `runs.status = 'Crashed'`; the dialog must read `Crashed` too. It authenticates
 before it parses the body and authorizes (project `operateScratchRun`, or the

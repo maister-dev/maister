@@ -233,6 +233,7 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-189](#adr-189-addressed-task-clarification-before-execution) | Addressed task clarification before execution | Accepted | 2026-09-26 |
 | [ADR-190](#adr-190-librarian-memory-summaries-reset-barrier-and-history-deletion) | Librarian memory, summaries, reset barrier and history deletion | Accepted | 2026-09-26 |
 | [ADR-191](#adr-191-librarian-surface-top-navigation-entry-and-right-side-panel) | Librarian surface: top-navigation entry and right-side panel | Accepted | 2026-09-26 |
+| [ADR-192](#adr-192-durable-scratch-prompt-intent-before-command-admission) | Durable scratch prompt intent before command admission | Proposed | 2026-09-30 |
 
 ---
 
@@ -1941,6 +1942,15 @@ Full record: [`decisions/adr-190.md`](decisions/adr-190.md)
 **Date:** 2026-09-26
 
 Full record: [`decisions/adr-191.md`](decisions/adr-191.md)
+
+---
+
+### ADR-192: Durable scratch prompt intent before command admission
+
+**Status:** Proposed
+**Date:** 2026-09-30
+
+Full record: [`decisions/adr-192.md`](decisions/adr-192.md)
 
 ---
 
