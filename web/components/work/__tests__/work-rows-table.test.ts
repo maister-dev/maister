@@ -189,23 +189,17 @@ describe("T-D11 a header drops exactly when its cells do", () => {
   // Asserted as the PAIRING rather than as a column count, so the failure names
   // the column instead of a number, and so adding an eleventh column cannot
   // satisfy it by accident.
-  const BREAKPOINT = { md: 768, lg: 1024, xl: 1280 } as const;
-
-  /** The `hidden <bp>:table-cell` pair reduced to its breakpoint, or null. */
-  function dropToken(className: string): keyof typeof BREAKPOINT | null {
+  /** The `hidden @min-[Npx]:table-cell` pair reduced to its container width. */
+  function dropToken(className: string): number | null {
     if (!className.includes("hidden")) return null;
-    for (const bp of Object.keys(BREAKPOINT) as Array<
-      keyof typeof BREAKPOINT
-    >) {
-      if (className.includes(`${bp}:table-cell`)) return bp;
-    }
+    const match = /@min-\[(\d+)px\]:table-cell/u.exec(className);
 
-    return null;
+    return match ? Number(match[1]) : null;
   }
 
   function columns(html: string): {
-    head: Array<keyof typeof BREAKPOINT | null>;
-    body: Array<keyof typeof BREAKPOINT | null>;
+    head: Array<number | null>;
+    body: Array<number | null>;
   } {
     const thead = html.slice(html.indexOf("<thead"), html.indexOf("</thead>"));
     const rowAt = html.indexOf('data-testid="work-row"');
@@ -225,25 +219,27 @@ describe("T-D11 a header drops exactly when its cells do", () => {
     it(`pairs every header with its cell under ${groupBy} grouping`, () => {
       const { head, body } = columns(render([row()], groupBy));
 
-      // Guards the guard: a selector that matched nothing would make the
-      // equality below vacuously true.
+      // Guards the guard: a selector that matched nothing, or a drop class the
+      // parser no longer recognises, would make the equality below vacuously
+      // true — every column reads `null` on both sides.
       expect(head.length, "headers found").toBeGreaterThan(0);
+      expect(
+        head.filter((min) => min !== null).length,
+        "drop columns recognised",
+      ).toBeGreaterThan(0);
       expect(head.length, "one header per cell").toBe(body.length);
       expect(head).toEqual(body);
     });
   }
 
   it("keeps the header and the body the same width at every breakpoint", () => {
-    // The consequence, stated the way a reader would see it. 390px and 800px
-    // are the two widths that were broken.
+    // The consequence, stated the way a reader would see it — one table width
+    // inside each tier, from a phone's 356px box to past the last threshold.
     const { head, body } = columns(render([row()], "none"));
-    const visible = (
-      cols: Array<keyof typeof BREAKPOINT | null>,
-      width: number,
-    ): number =>
-      cols.filter((bp) => bp === null || width >= BREAKPOINT[bp]).length;
+    const visible = (cols: Array<number | null>, width: number): number =>
+      cols.filter((min) => min === null || width >= min).length;
 
-    for (const width of [390, 800, 1100, 1300]) {
+    for (const width of [356, 800, 1200, 1400]) {
       expect(visible(head, width), `${width}px`).toBe(visible(body, width));
     }
   });

@@ -122,10 +122,12 @@ export function WorkTable({
   }
 
   return (
-    <div className="flex w-full flex-col gap-4">
+    // A container, not a viewport breakpoint: from `md` the rail takes 260px,
+    // so this box is 436px wide at a 768px viewport — narrower than at 767.
+    <div className="@container flex w-full flex-col gap-4">
       <form
         action="/work"
-        className="grid gap-3 rounded-[14px] border border-line bg-paper px-4 py-4 shadow-[var(--shadow-sm)] md:grid-cols-[minmax(160px,1.1fr)_minmax(150px,0.9fr)_minmax(150px,0.9fr)_auto]"
+        className="grid gap-3 rounded-[14px] border border-line bg-paper px-4 py-4 shadow-[var(--shadow-sm)] @min-[640px]:grid-cols-[minmax(160px,1.1fr)_minmax(150px,0.9fr)_minmax(150px,0.9fr)_auto]"
       >
         <FilterSelect
           label={labels.filters.project}

@@ -46,9 +46,9 @@ export async function TopNav({
           name. */}
       <nav
         aria-label={t("primaryLabel")}
-        className="flex w-full items-center justify-between gap-2 px-3 py-[14px] md:gap-8 md:px-6"
+        className="flex w-full items-center justify-between gap-2 px-3 py-[14px] lg:gap-8 lg:px-6"
       >
-        <div className="flex min-w-0 items-center gap-3 md:gap-9">
+        <div className="flex min-w-0 items-center gap-3 lg:gap-9">
           {sections.length > 0 ? (
             <MobileRailDrawer
               ariaLabel={t("sectionsLabel")}
@@ -77,12 +77,12 @@ export async function TopNav({
           {/* `min-w-0` + `truncate`: the crumb is the left group's only elastic
               member, so a long section label gives way here rather than pushing
               the account controls off the right edge. */}
-          <span className="ml-[18px] hidden min-w-0 items-center gap-1.5 truncate border-l border-line pl-[18px] font-mono text-[11.5px] tracking-[0.04em] text-mute md:inline-flex">
+          <span className="ml-[18px] hidden min-w-0 items-center gap-1.5 truncate border-l border-line pl-[18px] font-mono text-[11.5px] tracking-[0.04em] text-mute lg:inline-flex">
             <span className="shrink-0">{t("crumbProjects")}</span>
             {crumb}
           </span>
         </div>
-        <div className="flex min-w-0 items-center gap-2 md:gap-2.5">
+        <div className="flex min-w-0 items-center gap-2 lg:gap-2.5">
           {librarianEntry}
           <LangSwitch />
           <ThemeSwitch />

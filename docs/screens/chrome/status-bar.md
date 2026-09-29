@@ -30,6 +30,24 @@ attention-stream liveness pill with its reconnect action, then outbound Docs
 and GitHub links. Admins also receive the same request-cached coarse status in
 the left rail as a direct diagnostics link.
 
+**Narrow (Implemented — `NAV-07`).** Laid out narrow-first like the top nav:
+`px-3` and `gap-2` below `md`, widening to `px-6` and `gap-3.5` above it, and
+nothing wraps inside the 36px bar. The right group — the liveness pill, the
+reconnect action and both links, i.e. every control — never shrinks; the left
+group is the elastic one, and within it the supervisor label truncates by CSS
+while its full text stays in the DOM (and in the admin link's `aria-label`).
+Below `sm` the host is hidden along with the version. Below `md` the Docs and
+GitHub links are glyphs (a book, the GitHub mark) whose words stay as `sr-only`
+text, so each link's accessible name is the same at every width.
+
+The bar is `position: fixed`, so an overflow here never widens the document —
+it clips the links off the right edge, where nothing can reach them, and a
+document-width check cannot see it. At 390px it did exactly that (GitHub ended
+at 429px in EN, 490px in RU), which is why `E2E-NAV-07` measures each control's
+box against the viewport. The worst case it must absorb is RU with the
+supervisor lagging and the stream disconnected: a 21-character label beside a
+pill and a "Переподключить" button.
+
 ## States
 
 ```mermaid

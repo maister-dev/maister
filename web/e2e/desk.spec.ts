@@ -813,3 +813,114 @@ test("E2E-NAV-07 narrow keeps the rail toggle and every accessible name", async 
   // both widths even though only part of it is painted at 390px.
   expect(await accountName()).toBe(wide);
 });
+
+// The status bar is `position: fixed`, so an overflow there never widens the
+// document and `E2E-NAV-07` above cannot see it — the links just leave the
+// screen. At 390px they did: GitHub ended at 429px (EN) and 490px (RU).
+const DOCS_LINK = { en: /^Docs/u, ru: /^Документация/u } as const;
+
+test("E2E-NAV-07 the status bar keeps every control on screen at 390px", async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  if (!baseURL) throw new Error("Playwright baseURL is required");
+
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  for (const [locale, docsName] of Object.entries(DOCS_LINK)) {
+    await context.addCookies([
+      { name: "NEXT_LOCALE", value: locale, url: baseURL },
+    ]);
+
+    for (const route of ["/", "/work", "/inbox", "/projects"]) {
+      await page.goto(route);
+
+      const footer = page.locator("footer[aria-label]");
+
+      // The liveness pill is a client island; its width only counts once it
+      // has mounted.
+      await expect(
+        footer.getByTestId("run-stream-liveness"),
+        `${locale} ${route}`,
+      ).toBeVisible();
+      // Icon-only below `md`, but still found BY name: the words are there.
+      await expect(
+        footer.getByRole("link", { name: docsName }),
+        `${locale} ${route} docs`,
+      ).toBeVisible();
+      await expect(
+        footer.getByRole("link", { name: "GitHub", exact: true }),
+        `${locale} ${route} github`,
+      ).toBeVisible();
+
+      const controls = await footer.locator("a, button").all();
+
+      expect(controls.length, `${locale} ${route} controls`).toBeGreaterThan(1);
+      for (const control of controls) {
+        const box = await control.boundingBox();
+        const name = (await control.textContent())?.trim();
+
+        expect(box, `${locale} ${route} ${name} is laid out`).not.toBeNull();
+        expect(
+          box!.x,
+          `${locale} ${route} ${name} left`,
+        ).toBeGreaterThanOrEqual(0);
+        expect(
+          box!.x + box!.width,
+          `${locale} ${route} ${name} right`,
+        ).toBeLessThanOrEqual(390);
+      }
+    }
+  }
+});
+
+// From `md` the rail takes 260px, so a page's box at 768px is 436px — narrower
+// than at 767. The nav switched to its wide layout at `md` too, and the work
+// table and its filter form widened by VIEWPORT breakpoints there, so every
+// one of them overflowed: `/work` measured 878px (EN) and 932px (RU) at 768,
+// and the table was still 1342px at 1280. 1024 is where the nav now widens.
+test("E2E-NAV-07 no route scrolls sideways at 768, 1024 or 1280px", async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  if (!baseURL) throw new Error("Playwright baseURL is required");
+  test.setTimeout(120_000);
+
+  for (const locale of ["en", "ru"]) {
+    await context.addCookies([
+      { name: "NEXT_LOCALE", value: locale, url: baseURL },
+    ]);
+
+    for (const width of [768, 1024, 1280]) {
+      await page.setViewportSize({ width, height: 900 });
+
+      for (const route of ["/", "/work", "/inbox", "/projects"]) {
+        const where = `${locale} ${width} ${route}`;
+
+        await page.goto(route);
+        // Parked streamed pages add no width (see `E2E-NAV-07` above), and the
+        // theme switch reserves a placeholder until it mounts — measuring
+        // before either would pass on a page that is still growing.
+        await expect(
+          page.getByRole("main").getByRole("heading", { level: 1 }),
+          `${where} revealed`,
+        ).toBeVisible();
+        await expect(
+          page.getByRole("button", { name: /^Switch to (dark|light) mode$/u }),
+          `${where} theme switch mounted`,
+        ).toBeVisible();
+
+        const measured = await page.evaluate(() => ({
+          document: document.documentElement.scrollWidth,
+          client: document.documentElement.clientWidth,
+        }));
+
+        expect(measured.document, where).toBeLessThanOrEqual(
+          measured.client + 1,
+        );
+      }
+    }
+  }
+});

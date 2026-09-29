@@ -42,12 +42,25 @@ flowchart LR
 ## Layout & regions
 
 Full-width data-management layout: no centered max-width and responsive column
-behaviour. Narrow viewports drop columns by priority rather than scrolling the
-table sideways (`REQ-D11`, Implemented). Widest-first, the order is `blockers` +
-`last activity` below `xl`, then `readiness` + `waiting-on` + `tokens` below
-`lg`, then `project` below `md`. A header and its cells carry the same drop
-class: when they disagree the header row renders one more visible cell than
-every body row, and every label after that point sits over the wrong column.
+behaviour. A narrow table drops columns by priority rather than scrolling
+sideways (`REQ-D11`, Implemented). Widest-first, the order is `blockers` +
+`last activity` below a 1360px table, then `readiness` + `waiting-on` + `tokens`
+(and the stage chip's run-status refinement) below 1110px, then `project` below
+770px; below 670px the next-action words and the wider cell padding go too. A
+header and its cells carry the same drop class: when they disagree the header
+row renders one more visible cell than every body row, and every label after
+that point sits over the wrong column.
+
+The widths are the table's OWN box (a container query), never the viewport.
+From `md` the rail takes 260px, so the box is 436px at a 768px viewport —
+narrower than at 767 — and viewport breakpoints re-added columns exactly where
+the room went away: `/work` measured 878px (EN) / 932px (RU) at 768 and was
+still 1342px wide at 1280. Each threshold is what its tier needs with the
+longest RU catalog strings, measured in the browser. The filter bar follows the
+same rule: it becomes a four-column grid only when its box is at least 640px.
+The narrowest tier is not fully worst-case-safe — with a 10-character task key
+and a "Заблокирована" chip beside the longest stage label it needs 483px (RU) /
+382px (EN), more than a phone's 356px box; the seeded data fits.
 
 Rows are **view-only on `/work`** — this surface is for seeing, and every action
 lives on the surface that owns it. The rule is this screen's, not the row
@@ -63,8 +76,9 @@ next action.
 The **project** column leaves the DOM when and only when grouping is `project` —
 the group header already names it — at both surfaces, because the rule is
 grouping-derived rather than surface-derived (`REQ-D7`, Implemented). That is
-distinct from the responsive rule above, which only *hides* it below `md` with
-the cell still in the DOM; the two conditions are independent and compose.
+distinct from the responsive rule above, which only *hides* it below a 770px
+table with the cell still in the DOM; the two conditions are independent and
+compose.
 
 **The run-status column is removed** (`REQ-D8`, Implemented), and its distinction moves
 into the stage chip. This also closes a pre-existing drift: this document specified a

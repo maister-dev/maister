@@ -93,25 +93,30 @@ const READINESS_TONE: Record<string, string> = {
 
 // Tighter gutters on a phone. Four visible columns spend 96px on padding at
 // `px-3`, which is a quarter of a 390px viewport before any content renders.
-const CELL = "px-2 py-2 align-middle sm:px-3";
+const CELL = "px-2 py-2 align-middle @min-[670px]:px-3";
 const HEAD =
-  "px-2 py-2 text-left font-mono text-[10.5px] font-semibold uppercase tracking-[0.12em] text-mute sm:px-3";
+  "px-2 py-2 text-left font-mono text-[10.5px] font-semibold uppercase tracking-[0.12em] text-mute @min-[670px]:px-3";
 
 /**
- * `REQ-D11` — narrow viewports DROP columns by priority rather than scrolling
- * the table sideways. Each constant is named for the widths at which its
- * columns are GONE, so they drop in the order `MD` -> `SM` -> `XS` as the
- * viewport narrows:
+ * `REQ-D11` — a narrow table DROPS columns by priority rather than scrolling
+ * sideways. Each constant is named for the widths at which its columns are
+ * GONE, so they drop in the order `MD` -> `SM` -> `XS` as the table narrows:
  *
- * 1. `blockers`, `lastActivity` — below `xl`.
- * 2. `readiness`, `waitingOn`, `tokens` — below `lg`. `waitingOn` is an em dash
- *    on every row without a pending request, and the widest text column when it
- *    is not; the Desk's expanded panel and the run surface both still name the
- *    person.
- * 3. `project` — below `md`, last because it is the highest-value of the three
+ * 1. `blockers`, `lastActivity` — below 1360px.
+ * 2. `readiness`, `waitingOn`, `tokens` — below 1110px. `waitingOn` is an em
+ *    dash on every row without a pending request, and the widest text column
+ *    when it is not; the Desk's expanded panel and the run surface both still
+ *    name the person.
+ * 3. `project` — below 770px, last because it is the highest-value of the three
  *    groups but also the widest cheap win on a phone, and `/work` — which does
  *    NOT group by project and so always renders it — was the surface still
  *    pushing the page sideways at 390px.
+ *
+ * The widths are the TABLE's box (`@container`), never the viewport: from `md`
+ * the rail takes 260px, so at a 768px viewport the box is 436px — narrower than
+ * at 767. Each threshold is the width that tier needs with the longest RU
+ * catalog strings (a 10-char task key, "Результат опубликован 99/99" beside
+ * "Заблокирована", "Восстановить или отбросить"), measured, not estimated.
  *
  * A `<th>` and its `<td>` MUST carry the SAME constant. They are ~170 lines
  * apart, and a header that outlives its cells leaves every row one column short
@@ -121,9 +126,9 @@ const HEAD =
  * must therefore be the FULL column count, never the visible one — a span
  * computed from what is painted misaligns exactly where the columns drop.
  */
-const DROP_SM = "hidden lg:table-cell";
-const DROP_MD = "hidden xl:table-cell";
-const DROP_XS = "hidden md:table-cell";
+const DROP_SM = "hidden @min-[1110px]:table-cell";
+const DROP_MD = "hidden @min-[1360px]:table-cell";
+const DROP_XS = "hidden @min-[770px]:table-cell";
 
 /** Every column the table can render, hidden or not — the `colSpan` basis. */
 const TOTAL_COLUMNS = 10;
@@ -149,7 +154,7 @@ export function WorkRowsTable({
   const showProject = groupBy !== "project";
 
   return (
-    <div className="rounded-[14px] border border-line bg-paper">
+    <div className="@container rounded-[14px] border border-line bg-paper">
       <table className="w-full border-collapse text-[12.5px]">
         <thead className="border-b border-line bg-ivory">
           <tr>
@@ -317,6 +322,7 @@ function WorkTableRowView({
             labels={labels.stage}
             progress={row.progress}
             promotedKind={row.promotedKind}
+            refinementVisibility="hidden @min-[1110px]:inline"
             runStatus={row.runStatus}
             stage={row.stage}
           />
@@ -393,7 +399,7 @@ function WorkTableRowView({
             ) : (
               // The WORDS drop on a phone; the run affordance beside them does
               // not, so `REQ-D9` still holds at every width.
-              <span className="hidden sm:inline">
+              <span className="hidden @min-[670px]:inline">
                 {labels.nextAction[nextAction] ?? nextAction}
               </span>
             )}

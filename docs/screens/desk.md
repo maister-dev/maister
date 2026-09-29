@@ -165,8 +165,9 @@ Every viewport stacks strip, then Work, then Held, then Activity (`EDGE-NAV-02`,
 Implemented) — there is no second arrangement, so the rendered order **is** the source
 order at every width and the two cannot disagree.
 
-Narrow viewports drop table columns by priority (`tokens` and `readiness` first)
-rather than scrolling the table sideways (`REQ-D11`, Implemented). Hiding is CSS-driven,
+A narrow table drops columns by priority (`tokens` and `readiness` first) rather
+than scrolling sideways (`REQ-D11`, Implemented) — narrow by its own box, not the
+viewport, since the rail narrows it from `md` (see [`work.md`](work.md)). Hiding is CSS-driven,
 so the `<td>` elements stay in the DOM and any `colSpan` must be the **full** column
 count, never the visible count — an expanded row computed from the visible count
 misaligns exactly where the columns drop.

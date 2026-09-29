@@ -44,10 +44,17 @@ export function ThemeSwitch({ className }: ThemeSwitchProps): ReactElement {
   }, []);
 
   if (!isMounted) {
-    // Reserves exactly what the mounted button occupies at each breakpoint —
-    // icon-only below `md`, icon + word above it. A single width would shift
-    // the whole header on hydration.
-    return <div aria-hidden className="h-[29px] w-[35px] md:w-[68px]" />;
+    // Reserves what the mounted button occupies at each breakpoint by laying
+    // out the same box, invisibly — icon-only below `lg`, icon + word above.
+    // "Light" is the wider word, so hydration can only narrow the header, never
+    // push it past the viewport: a fixed 68px was Dark's width, and Light grew
+    // the header 8px at mount.
+    return (
+      <div aria-hidden className={clsx(navTool, "invisible")}>
+        <span className="h-[13px] w-[13px] shrink-0" />
+        <span className="hidden lg:inline">Light</span>
+      </div>
+    );
   }
 
   const handleToggle = () => {
@@ -69,7 +76,7 @@ export function ThemeSwitch({ className }: ThemeSwitchProps): ReactElement {
       <ThemeModeIcon theme={isLight ? "light" : "dark"} />
       {/* The icon already says which mode is on, and `aria-label` says what the
           button does — so the word is the part narrow viewports can spare. */}
-      <span className="hidden md:inline">{isLight ? "Light" : "Dark"}</span>
+      <span className="hidden lg:inline">{isLight ? "Light" : "Dark"}</span>
     </button>
   );
 }

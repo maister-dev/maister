@@ -57,14 +57,16 @@ export function PlatformStatusPill({
   className?: string;
   href?: string;
 }): ReactElement {
+  // `min-w-0` + `truncate`: where a narrow parent squeezes the pill (the footer
+  // at 390px), the label gives way by CSS and stays whole in the DOM.
   const content = (
     <span
-      className={clsx("inline-flex items-center gap-1.5", className)}
+      className={clsx("inline-flex min-w-0 items-center gap-1.5", className)}
       data-testid="rail-platform-status"
       title={status.kind === "unavailable" ? status.message : undefined}
     >
-      <PlatformStatusDot status={status} />
-      <b className="font-semibold text-ink">
+      <PlatformStatusDot className="shrink-0" status={status} />
+      <b className="truncate font-semibold text-ink">
         {platformStatusLabel(status, labels)}
       </b>
     </span>
@@ -73,6 +75,7 @@ export function PlatformStatusPill({
   return href ? (
     <Link
       aria-label={platformStatusLabel(status, labels)}
+      className="inline-flex min-w-0"
       data-testid="rail-platform-status-link"
       href={href}
     >

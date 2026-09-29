@@ -60,6 +60,9 @@ export interface WorkStageChipProps {
   // Icon-only mode still needs an accessible name, so the label is rendered as
   // `aria-label` rather than dropped.
   iconOnly?: boolean;
+  // When the refinement is painted. Viewport-driven by default; the work table
+  // passes a container query, because its box is not the viewport (`REQ-D11`).
+  refinementVisibility?: string;
 }
 
 const CHIP =
@@ -127,6 +130,7 @@ export function WorkStageChip({
   labels,
   runStatus,
   iconOnly = false,
+  refinementVisibility = "hidden lg:inline",
 }: WorkStageChipProps): ReactElement {
   const Icon = STAGE_ICON[stage];
   const label = workStageLabel(labels, stage, promotedKind);
@@ -156,9 +160,12 @@ export function WorkStageChip({
         {refinement === null || iconOnly ? null : (
           <span
             // Supplementary by definition — the stage is the primary fact. It
-            // is CSS-hidden rather than dropped below `lg`, so it stays in the
+            // is CSS-hidden rather than dropped when narrow, so it stays in the
             // DOM (and in these tests) while the row fits a phone (`REQ-D11`).
-            className="hidden font-normal text-[10px] opacity-80 lg:inline"
+            className={clsx(
+              "font-normal text-[10px] opacity-80",
+              refinementVisibility,
+            )}
             data-work-run-status={refinement}
           >
             {labels[`run${refinement}`]}

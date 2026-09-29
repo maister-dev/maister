@@ -42,9 +42,9 @@ export function LangSwitch({ className }: LangSwitchProps): ReactElement {
       onClick={handleToggle}
     >
       <b className="font-semibold text-ink">{current.toUpperCase()}</b>
-      {/* The target locale is decoration below `md` — `aria-label` above names
+      {/* The target locale is decoration below `lg` — `aria-label` above names
           the whole action, so narrow viewports lose 30px and no meaning. */}
-      <span className="hidden text-mute md:inline">
+      <span className="hidden text-mute lg:inline">
         · {other.toUpperCase()}
       </span>
     </button>

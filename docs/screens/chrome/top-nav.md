@@ -37,9 +37,10 @@ Left: logo + a **Desk | Projects** switch + a breadcrumb (`~/projects` and the
 active crumb). The switch (Implemented — `web/components/chrome/home-switch.tsx`)
 is the explicit control for the two meanings `/` used to carry: **Desk** targets
 `/`, **Projects** targets `/projects` (ADR-172 D3). The logo itself means "home"
-and keeps targeting `/`. Both the switch and the breadcrumb are hidden below
-`md`, where the mobile rail drawer already reaches every destination and the
-header has no room for them.
+and keeps targeting `/`. The switch is hidden below `md`, where the mobile rail
+drawer already reaches every destination; the breadcrumb is hidden below `lg`,
+where the rail (present from `md`) already marks the active section and the
+header has no room for it.
 
 The switch marks its active option from `railSectionForPathname`, the same
 classifier the rail highlights from — a second "am I on the portfolio" check is
@@ -63,19 +64,28 @@ renders; the panel states the reason. The panel itself is
 [`librarian-panel.md`](librarian-panel.md).
 
 **Narrow (Implemented — `NAV-07`).** The header is laid out narrow-first: `gap-2
-px-3` below `md`, widening to `gap-8 px-6` above it, with `min-w-0` on both
-groups and `shrink-0` on everything that must keep its size. Below `md` the
-language switch shows only the CURRENT locale (`EN`, not `EN · RU`) and the
-theme switch only its icon; both carry an explicit `aria-label`, so what
-shrinks is the affordance and never the accessible name. The user's name
-truncates by CSS and stays whole in the DOM — removing it would take the
-person's name out of the control's accessible name — and the crumb truncates in
-the same way at the widths where it is shown. The mobile rail trigger, the only
-route to navigation below `md`, is never dropped. This replaced a header that
-overflowed a 390px viewport on every route (`/work` 471px, `/inbox` 479px) and
-made the whole page scroll sideways. Below `md` the logo's wordmark is
-`sr-only` (ADR-191 amendment): the mark stays visible and the wordmark stays the
-home link's accessible name, which is the room the Librarian entry needs.
+px-3` below `lg`, widening to `gap-8 px-6` above it, with `min-w-0` on both
+groups and `shrink-0` on everything that must keep its size. Below `lg` the
+language switch shows only the CURRENT locale (`EN`, not `EN · RU`), the theme
+switch only its icon, and the user's name is capped at 48px; the language and
+theme switches carry an explicit `aria-label`, so what shrinks is the
+affordance and never the accessible name. The user's name truncates by CSS and
+stays whole in the DOM — removing it would take the person's name out of the
+control's accessible name — and the crumb truncates in the same way at the
+widths where it is shown. The mobile rail trigger, the only route to navigation
+below `md`, is never dropped. This replaced a header that overflowed a 390px
+viewport on every route (`/work` 471px, `/inbox` 479px) and made the whole page
+scroll sideways. Below `md` the logo's wordmark is `sr-only` (ADR-191
+amendment): the mark stays visible and the wordmark stays the home link's
+accessible name, which is the room the Librarian entry needs.
+
+The wide layout starts at `lg`, not `md`: at 768px it needed more than the
+viewport — RU overflowed to 773-776px on every route, EN to 777px — because the
+right group shrank below its content and the user menu spilled past the edge.
+The theme switch's pre-mount placeholder lays out the same box invisibly, with
+the wider word ("Light"), so hydration can only narrow the header; a fixed
+68px placeholder had been Dark's width, and Light grew the header 8px at
+mount.
 
 ## States
 
