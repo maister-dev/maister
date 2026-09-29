@@ -14,6 +14,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
   executionCommands,
+  executionEvents,
   domainEvents,
   executionAssignments,
   gateResults,
@@ -69,6 +70,7 @@ import {
   startRealSupervisor,
   useRealSupervisorUrl,
 } from "@/test-support/real-supervisor";
+import { startSupervisorFaultProxy } from "@/test-support/supervisor-fault-proxy";
 
 let database: StartedPostgresTestDb;
 let supervisor: RealSupervisor;
@@ -3851,4 +3853,343 @@ describe("Flow prompt owners through the production graph driver", () => {
       decision: null,
     });
   }, 180_000);
+
+  it("N1: child death during an unparked node prompt crashes the run", async () => {
+    const seeded = await seedOwnerFlow([
+      {
+        id: "work",
+        type: "ai_coding",
+        action: {
+          prompt: `fixture-output:${JSON.stringify({
+            bytes: 0,
+            text: "original action",
+            terminalDelayMs: 5_000,
+          })}`,
+        },
+        transitions: { success: "done" },
+      },
+    ]);
+    const hosts = createExecutionHosts({ db: database.db as unknown as Db });
+    const driver = runFlow(seeded.runId, {
+      db: database.db,
+      runtimeRoot: supervisor.runtimeRoot,
+      executionHosts: hosts,
+    }).catch(() => undefined);
+
+    try {
+      await expect
+        .poll(
+          async () => {
+            const rows = await database.pool.query(
+              "SELECT count(*)::int AS count FROM execution_commands WHERE run_id = $1 AND kind = 'session.prompt' AND state = 'accepted' AND transport_state = 'acknowledged'",
+              [seeded.runId],
+            );
+
+            return rows.rows[0].count as number;
+          },
+          { timeout: 30_000, interval: 25 },
+        )
+        .toBe(1);
+      const permissions = await database.db
+        .select({ id: hitlRequests.id })
+        .from(hitlRequests)
+        .where(eq(hitlRequests.runId, seeded.runId));
+
+      expect(permissions).toHaveLength(0);
+      await killAdapterProcesses();
+      await expect
+        .poll(
+          async () => {
+            const [run] = await database.db
+              .select({ status: runs.status })
+              .from(runs)
+              .where(eq(runs.id, seeded.runId));
+
+            return run?.status === "Failed" || run?.status === "Crashed"
+              ? run.status
+              : null;
+          },
+          { timeout: 30_000, interval: 25 },
+        )
+        .toMatch(/^(Failed|Crashed)$/);
+      const [terminal] = await database.db
+        .select({ status: runs.status })
+        .from(runs)
+        .where(eq(runs.id, seeded.runId));
+
+      expect(terminal.status).toBe("Crashed");
+      const [crash] = await database.db
+        .select({ payload: domainEvents.payload })
+        .from(domainEvents)
+        .where(
+          and(
+            eq(domainEvents.runId, seeded.runId),
+            eq(domainEvents.kind, "run.crashed"),
+          ),
+        );
+      const [closed] = await database.db
+        .select({
+          status: nodeAttempts.status,
+          errorCode: nodeAttempts.errorCode,
+          actionCompletion: nodeAttempts.actionCompletion,
+        })
+        .from(nodeAttempts)
+        .where(eq(nodeAttempts.runId, seeded.runId));
+
+      expect(crash?.payload.reason).toBe("session-crashed");
+      expect(closed).toMatchObject({
+        status: "Reworked",
+        errorCode: "CRASH",
+        actionCompletion: null,
+      });
+      const [failedPrompt] = await database.db
+        .select({
+          id: executionCommands.id,
+          state: executionCommands.state,
+          applicationState: executionCommands.applicationState,
+          terminalEventId: executionCommands.terminalEventId,
+          hostSessionId: executionCommands.targetSessionId,
+        })
+        .from(executionCommands)
+        .where(
+          and(
+            eq(executionCommands.runId, seeded.runId),
+            eq(executionCommands.kind, "session.prompt"),
+          ),
+        );
+      const [promptTerminal] = await database.db
+        .select({
+          streamId: executionEvents.eventStreamId,
+          sequence: executionEvents.hostSequence,
+        })
+        .from(executionEvents)
+        .where(eq(executionEvents.id, failedPrompt.terminalEventId!));
+      const [childCrash] = await database.db
+        .select({
+          streamId: executionEvents.eventStreamId,
+          sequence: executionEvents.hostSequence,
+        })
+        .from(executionEvents)
+        .where(
+          and(
+            eq(executionEvents.runId, seeded.runId),
+            eq(executionEvents.hostSessionId, failedPrompt.hostSessionId!),
+            eq(executionEvents.eventType, "session.crashed"),
+            eq(executionEvents.ingestDisposition, "accepted"),
+          ),
+        );
+
+      expect(childCrash?.streamId).toBe(promptTerminal.streamId);
+      expect(childCrash?.sequence).toBeLessThan(promptTerminal.sequence!);
+      expect(failedPrompt).toMatchObject({
+        state: "failed",
+        applicationState: "applied",
+      });
+      const recovery = await resumeCrashedRun(seeded.runId, {
+        db: database.db,
+        executionHosts: hosts,
+      });
+
+      expect(recovery).toEqual({ state: "resumed" });
+      await expect
+        .poll(
+          async () => {
+            const [run] = await database.db
+              .select({ status: runs.status })
+              .from(runs)
+              .where(eq(runs.id, seeded.runId));
+
+            return run.status;
+          },
+          { timeout: 30_000, interval: 50 },
+        )
+        .toBe("Review");
+      const prompts = await database.db
+        .select({ id: executionCommands.id })
+        .from(executionCommands)
+        .where(
+          and(
+            eq(executionCommands.runId, seeded.runId),
+            eq(executionCommands.kind, "session.prompt"),
+          ),
+        );
+
+      expect(prompts).toHaveLength(2);
+      const attempts = await database.db
+        .select({ status: nodeAttempts.status })
+        .from(nodeAttempts)
+        .where(eq(nodeAttempts.runId, seeded.runId));
+
+      expect(attempts.map((attempt) => attempt.status).sort()).toEqual([
+        "Reworked",
+        "Succeeded",
+      ]);
+    } finally {
+      await killAdapterProcesses();
+      await driver;
+    }
+  }, 90_000);
+
+  it("N1: a task-level prompt failure remains Failed without crash evidence", async () => {
+    const seeded = await seedOwnerFlow([
+      {
+        id: "work",
+        type: "ai_coding",
+        action: {
+          prompt: 'fixture-output:{"failMessage":"fixture task failure"}',
+        },
+        transitions: { success: "done" },
+      },
+    ]);
+
+    await runFlow(seeded.runId, {
+      db: database.db,
+      runtimeRoot: supervisor.runtimeRoot,
+      executionHosts: createExecutionHosts({
+        db: database.db as unknown as Db,
+      }),
+    }).catch(() => undefined);
+    const [run] = await database.db
+      .select({ status: runs.status })
+      .from(runs)
+      .where(eq(runs.id, seeded.runId));
+    const prompts = await database.db
+      .select({ id: executionCommands.id })
+      .from(executionCommands)
+      .where(
+        and(
+          eq(executionCommands.runId, seeded.runId),
+          eq(executionCommands.kind, "session.prompt"),
+        ),
+      );
+    const [crash] = await database.db
+      .select({ id: executionEvents.id })
+      .from(executionEvents)
+      .where(
+        and(
+          eq(executionEvents.runId, seeded.runId),
+          eq(executionEvents.eventType, "session.crashed"),
+          eq(executionEvents.ingestDisposition, "accepted"),
+        ),
+      );
+
+    expect(run.status).toBe("Failed");
+    expect(prompts).toHaveLength(1);
+    expect(crash).toBeUndefined();
+  }, 90_000);
+
+  it("N1: a held crash frame keeps the later failed terminal behind the stream gap", async () => {
+    await stopRuntimeEventConsumers();
+    const proxy = await startSupervisorFaultProxy(supervisor.url);
+    const restoreProxy = useRealSupervisorUrl(proxy.url);
+    const held = proxy.arm(
+      {
+        caseId: `n1-held-crash-${randomUUID()}`,
+        method: "GET",
+        path: /^\/runtime-events$/,
+        eventType: "session.crashed",
+      },
+      "hold-events",
+    );
+    resetRegistrarStateForTests();
+    resetResolverForTests();
+    const seeded = await seedOwnerFlow([
+      {
+        id: "work",
+        type: "ai_coding",
+        action: {
+          prompt:
+            'fixture-output:{"bytes":0,"text":"late","terminalDelayMs":5000}',
+        },
+        transitions: { success: "done" },
+      },
+    ]);
+    const driver = runFlow(seeded.runId, {
+      db: database.db,
+      runtimeRoot: supervisor.runtimeRoot,
+      executionHosts: createExecutionHosts({
+        db: database.db as unknown as Db,
+      }),
+    }).catch(() => undefined);
+    let released = false;
+
+    try {
+      await expect
+        .poll(
+          async () => {
+            const [command] = await database.db
+              .select({
+                state: executionCommands.state,
+                transportState: executionCommands.transportState,
+              })
+              .from(executionCommands)
+              .where(
+                and(
+                  eq(executionCommands.runId, seeded.runId),
+                  eq(executionCommands.kind, "session.prompt"),
+                ),
+              );
+
+            return (
+              command?.state === "accepted" &&
+              command.transportState === "acknowledged"
+            );
+          },
+          { timeout: 30_000, interval: 25 },
+        )
+        .toBe(true);
+      await killAdapterProcesses();
+      const crashFrame = await held.awaitReached(15_000);
+
+      await expect
+        .poll(
+          async () => {
+            const [gap] = await database.db
+              .select({ id: executionEvents.id })
+              .from(executionEvents)
+              .where(
+                and(
+                  eq(executionEvents.runId, seeded.runId),
+                  eq(executionEvents.eventType, "session.command"),
+                  eq(executionEvents.ingestDisposition, "pending_gap"),
+                ),
+              );
+
+            return Boolean(gap);
+          },
+          { timeout: 15_000, interval: 25 },
+        )
+        .toBe(true);
+      const [before] = await database.db
+        .select({ status: runs.status })
+        .from(runs)
+        .where(eq(runs.id, seeded.runId));
+
+      expect(before.status).toBe("Running");
+      expect(crashFrame.sequence).not.toBeNull();
+      held.release();
+      released = true;
+      await expect
+        .poll(
+          async () => {
+            const [run] = await database.db
+              .select({ status: runs.status })
+              .from(runs)
+              .where(eq(runs.id, seeded.runId));
+
+            return run.status;
+          },
+          { timeout: 30_000, interval: 25 },
+        )
+        .toBe("Crashed");
+    } finally {
+      if (held.observations.length > 0 && !released) held.release();
+      await killAdapterProcesses();
+      await driver;
+      restoreProxy();
+      resetRegistrarStateForTests();
+      resetResolverForTests();
+      await proxy.close();
+    }
+  }, 90_000);
 });

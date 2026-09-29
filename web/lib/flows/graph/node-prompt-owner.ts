@@ -15,6 +15,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import pino from "pino";
 
 import { lockFlowPromptOwner } from "./prompt-owner-authority";
+import { childCrashPrecededTerminal } from "./permission-park-crash";
 import {
   appendSentinelOutput,
   emptySentinelOutput,
@@ -170,7 +171,11 @@ export async function prepareNodePrompt(input: {
 }): Promise<PreparedPromptOwner> {
   const { db, ref, command, outcome } = input;
   const [originalRun] = await db
-    .select({ flowRevisionId: runs.flowRevisionId, runKind: runs.runKind })
+    .select({
+      flowRevisionId: runs.flowRevisionId,
+      runKind: runs.runKind,
+      status: runs.status,
+    })
     .from(runs)
     .where(eq(runs.id, ref.runId));
 
@@ -198,14 +203,24 @@ export async function prepareNodePrompt(input: {
     !hostPressured &&
     outcome.state === "failed" &&
     isTurnLostError(outcome.error);
-  const completion = turnLost
-    ? null
-    : await decodeNodePromptCompletion({
-        commandId: command.id,
-        promptOrdinal: ref.promptOrdinal,
-        acpSessionId: incarnation.acpSessionId,
-        outcome,
-      });
+  const crashProof =
+    !hostPressured &&
+    !turnLost &&
+    originalRun.status === "Running" &&
+    ref.variant === "node" &&
+    command.state === "failed"
+      ? await childCrashPrecededTerminal(db, command)
+      : null;
+  const childCrashed = crashProof !== null;
+  const completion =
+    turnLost || childCrashed
+      ? null
+      : await decodeNodePromptCompletion({
+          commandId: command.id,
+          promptOrdinal: ref.promptOrdinal,
+          acpSessionId: incarnation.acpSessionId,
+          outcome,
+        });
 
   return {
     apply: async (tx) => {
@@ -232,7 +247,14 @@ export async function prepareNodePrompt(input: {
         attempt.actionCompletion !== null
       )
         return "superseded";
-      if (turnLost) {
+      if (turnLost || childCrashed) {
+        if (childCrashed && run.status !== "Running") return "superseded";
+        const currentCrashProof = childCrashed
+          ? await childCrashPrecededTerminal(tx, command)
+          : null;
+
+        if (childCrashed && !currentCrashProof)
+          throw new PromptOwnerInvariantError("node_crash_evidence_missing");
         // The SAME row set the reconcile sweep produces, written by whichever
         // of the two got here first. Only the attempt close and the run crash:
         // the owner-application layer writes the command's disposition from the
@@ -241,7 +263,7 @@ export async function prepareNodePrompt(input: {
         await closeTurnLostAttempt(tx, {
           runId: ref.runId,
           nodeAttemptId: attempt.id,
-          reason: "turn-lost",
+          reason: childCrashed ? "session-crashed" : "turn-lost",
           causeSource: "graph",
           fromStatuses: [run.status],
           fromAttemptStatuses: [attempt.status],
@@ -252,8 +274,20 @@ export async function prepareNodePrompt(input: {
             nodeAttemptId: ref.nodeAttemptId,
             commandId: command.id,
             promptOrdinal: ref.promptOrdinal,
+            ...(currentCrashProof
+              ? {
+                  proofKind: "accepted_session_crashed_before_terminal",
+                  crashEventId: currentCrashProof.eventId,
+                  crashHostSequence: currentCrashProof.crashSequence,
+                  terminalEventId: currentCrashProof.terminalEventId,
+                  terminalHostSequence: currentCrashProof.terminalSequence,
+                  eventStreamId: currentCrashProof.streamId,
+                }
+              : {}),
           },
-          "node-action-turn-lost",
+          childCrashed
+            ? "node-action-session-crashed"
+            : "node-action-turn-lost",
         );
 
         return "applied";

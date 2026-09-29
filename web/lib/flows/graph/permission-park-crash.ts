@@ -40,13 +40,21 @@ type ParkOwner =
       promptOrdinal: number;
     }>;
 
+export type ChildCrashProof = Readonly<{
+  eventId: string;
+  streamId: string;
+  crashSequence: string;
+  terminalEventId: string;
+  terminalSequence: string;
+}>;
+
 /** A failed prompt is not itself a crash. The accepted host event must name
  * the exact owned session and precede that command's terminal in one stream. */
-async function childCrashPrecededTerminal(
+export async function childCrashPrecededTerminal(
   tx: Db,
   command: ExecutionCommand,
-): Promise<boolean> {
-  if (!command.terminalEventId || !command.targetSessionId) return false;
+): Promise<ChildCrashProof | null> {
+  if (!command.terminalEventId || !command.targetSessionId) return null;
   const [terminal] = await tx
     .select({
       streamId: executionEvents.eventStreamId,
@@ -55,9 +63,12 @@ async function childCrashPrecededTerminal(
     .from(executionEvents)
     .where(eq(executionEvents.id, command.terminalEventId));
 
-  if (!terminal?.streamId || terminal.hostSequence === null) return false;
+  if (!terminal?.streamId || terminal.hostSequence === null) return null;
   const [crash] = await tx
-    .select({ id: executionEvents.id })
+    .select({
+      id: executionEvents.id,
+      sequence: executionEvents.hostSequence,
+    })
     .from(executionEvents)
     .where(
       and(
@@ -77,7 +88,15 @@ async function childCrashPrecededTerminal(
     )
     .limit(1);
 
-  return Boolean(crash);
+  if (!crash || crash.sequence === null) return null;
+
+  return {
+    eventId: crash.id,
+    streamId: terminal.streamId,
+    crashSequence: crash.sequence.toString(),
+    terminalEventId: command.terminalEventId,
+    terminalSequence: terminal.hostSequence.toString(),
+  };
 }
 
 /** Caller owns the transaction. Prompt-owner application commits this with its
