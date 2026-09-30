@@ -25,7 +25,10 @@ import {
   seedGraphRun as seedGraphRunShared,
   type SeededGraphRun,
 } from "@/test-support/graph-run-seed";
-import { fakeGraphHosts } from "@/test-support/fake-execution-host";
+import {
+  fakeGraphHosts,
+  fakeExecutionHosts,
+} from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -107,6 +110,8 @@ describe("runGraph — P7 run-context (ADR-103)", () => {
     };
     const seeded = await seedGraphRun(manifest);
 
+    await fakeExecutionHosts(db, { runId: seeded.runId });
+
     await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
 
     const raw = await readFile(
@@ -140,6 +145,8 @@ describe("runGraph — P7 run-context (ADR-103)", () => {
       ],
     };
     const seeded = await seedGraphRun(manifest);
+
+    await fakeExecutionHosts(db, { runId: seeded.runId });
 
     // Make the worktree a real git repo so ensureWorktreeGitExclude resolves
     // info/exclude and run.json can be excluded.
@@ -197,6 +204,8 @@ describe("runGraph — P7 run-context (ADR-103)", () => {
       ],
     };
     const seeded = await seedGraphRun(manifest);
+
+    await fakeExecutionHosts(db, { runId: seeded.runId });
 
     // Force the git-leak-unsafe path: a git worktree where `.maister/run.json`
     // is TRACKED. ensureWorktreeGitExclude still appends `.maister/` to

@@ -1,6 +1,9 @@
 import "server-only";
 
-import type { CrashReason } from "@/lib/runs/state-transitions";
+import type {
+  CrashReason,
+  StateTransitionResult,
+} from "@/lib/runs/state-transitions";
 import type { RunKind } from "@/lib/db/schema";
 import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 import type {
@@ -147,6 +150,7 @@ export type ReconcileReason =
   | "agent-observer-live"
   | "agent-observer-gone"
   | "gate-redispatch"
+  | "live-cli-driver"
   | "cli-not-retry-safe"
   | "grace-window"
   | "agent-session-gone"
@@ -219,6 +223,8 @@ export interface ReconcileInput {
   // in-flight (it is persisted only AFTER the prompt returns). The node is
   // genuinely running; reconcile must NOT crash it. Default false/omitted.
   liveRunStepSession?: boolean;
+  // Database-clock lease bound to the active current assignment.
+  cliDriverActive?: boolean;
   // ADR-175: this run carries a committed crash-recover intent that no driver
   // has taken yet (`resume_started_at` set with `current_step_id` parked).
   // Resolved by the caller from the run row; the classifier stays pure.
@@ -539,7 +545,20 @@ function classifyInner(input: ReconcileInput): ReconcileDecision {
       : input.currentNodeKind;
 
   if (kind === "cli") {
-    // A half-run cli node may have partial side effects — never re-run.
+    if (input.cliDriverActive)
+      return { action: "skip", reason: "live-cli-driver" };
+    const anchorMs = mostRecentMs(
+      input.resumeStartedAt,
+      input.latestAttemptStartedAt,
+    );
+
+    if (
+      anchorMs !== null &&
+      (input.nowMs - anchorMs) / 1000 < input.graceSeconds
+    )
+      return { action: "skip", reason: "grace-window" };
+
+    // A dead driver may have partial side effects — never silently re-run.
     return { action: "crash", reason: "cli-not-retry-safe" };
   }
 
@@ -1161,6 +1180,101 @@ async function isTakeoverReturnCandidate(
     .limit(1);
 
   return rows.length > 0;
+}
+
+type CliDriverObservation = {
+  status: string;
+  currentStepId: string | null;
+  assignmentId: string | null;
+  token: string | null;
+  active: boolean;
+  resumeStartedAt: Date | null;
+  startedAt: Date | null;
+};
+
+async function observeCliDriver(
+  db: ExecutionDb,
+  runId: string,
+): Promise<CliDriverObservation | null> {
+  const [driver]: CliDriverObservation[] = await db
+    .select({
+      status: runs.status,
+      currentStepId: runs.currentStepId,
+      assignmentId: runs.executionAssignmentId,
+      token: runs.flowDriverToken,
+      active: sql<boolean>`coalesce(${runs.flowDriverToken} IS NOT NULL
+      AND ${runs.flowDriverLeaseExpiresAt} > clock_timestamp()
+      AND ${executionAssignments.state} = 'active', false)`,
+      resumeStartedAt: runs.resumeStartedAt,
+      startedAt: runs.startedAt,
+    })
+    .from(runs)
+    .leftJoin(
+      executionAssignments,
+      and(
+        eq(executionAssignments.id, runs.executionAssignmentId),
+        eq(executionAssignments.runId, runs.id),
+      ),
+    )
+    .where(eq(runs.id, runId))
+    .limit(1);
+
+  return driver ?? null;
+}
+
+/** Lock before the final lease read: an admission/renewal or successor waiting
+ * behind this observer must not be overwritten by a cached no-session decision.
+ */
+async function crashUnownedCli(
+  db: ExecutionDb,
+  cand: CandidateRow,
+  observed: CliDriverObservation | null,
+  graceSeconds: number,
+  now: () => Date,
+): Promise<StateTransitionResult> {
+  return db.transaction(async (tx) => {
+    await tx
+      .select({ id: runs.id })
+      .from(runs)
+      .where(eq(runs.id, cand.runId))
+      .for("update");
+    const current = await observeCliDriver(tx, cand.runId);
+    const lost = { ok: false, reason: "status-guard-mismatch" } as const;
+
+    if (
+      !current ||
+      !observed ||
+      current.status !== cand.status ||
+      current.currentStepId !== cand.currentStepId ||
+      current.assignmentId !== observed.assignmentId ||
+      current.active
+    ) {
+      log.info(
+        {
+          runId: cand.runId,
+          assignmentId: current?.assignmentId,
+          token: current?.token,
+          active: current?.active,
+        },
+        "reconcile-cli-driver-preserved",
+      );
+
+      return lost;
+    }
+    const anchor = await resolveGraceAnchor(tx, {
+      ...cand,
+      runStartedAt: current.startedAt,
+    });
+    const anchorMs = mostRecentMs(current.resumeStartedAt, anchor.at);
+
+    if (anchorMs !== null && (now().getTime() - anchorMs) / 1000 < graceSeconds)
+      return lost;
+
+    return crashRunningRun(cand.runId, "cli-not-retry-safe", {
+      db: tx,
+      fromStatuses: [cand.status],
+    });
+  });
 }
 
 async function loadCandidates(db: Db): Promise<CandidateRow[]> {
@@ -1909,6 +2023,9 @@ export async function runReconcileSweep(
         ? await hasPendingChildren(db, cand.runId)
         : false;
 
+    const cliDriver =
+      currentNodeKind === "cli" ? await observeCliDriver(db, cand.runId) : null;
+
     const { action, reason } = classifyRunReconcile(
       {
         runStatus: cand.status,
@@ -1919,6 +2036,7 @@ export async function runReconcileSweep(
         worktreeExists,
         liveSession: Boolean(live),
         liveRunStepSession: Boolean(liveRunStep),
+        cliDriverActive: cliDriver?.active ?? false,
         // ADR-175 recovery predicate, named exactly: a flow run left `Running`
         // with the recover claim's marker still set and its target node parked.
         // A non-null marker means no driver has taken the re-entry — enforced by
@@ -2232,11 +2350,19 @@ export async function runReconcileSweep(
           }
           const crashResult = isEvidenceCrashReason(reason)
             ? await evidenceCrash(cand, reason, promptEvidence)
-            : await crashRunningRun(
-                cand.runId,
-                mapReasonToCrashReason(reason),
-                { db, fromStatuses: [cand.status] },
-              );
+            : reason === "cli-not-retry-safe"
+              ? await crashUnownedCli(
+                  db,
+                  cand,
+                  cliDriver,
+                  graceSeconds,
+                  opts.now ?? (() => new Date()),
+                )
+              : await crashRunningRun(
+                  cand.runId,
+                  mapReasonToCrashReason(reason),
+                  { db, fromStatuses: [cand.status] },
+                );
 
           if (!crashResult.ok) {
             // A concurrent transition moved the run after it was loaded — the

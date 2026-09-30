@@ -647,8 +647,10 @@ Full-output extraction does not depend on the truncated stdout preview. Local
 CLI/check actions before gates also snapshot their result and file output.
 
 Owned-prompt graphs (any `ai_coding`, `judge`, `orchestrator` or `consensus`
-node, or an `ai_judgment`/`skill_check` gate) acquire `runs.flow_driver_token`
-with a renewable 30-second lease. Every traversal transaction checks its active
+node, or an `ai_judgment`/`skill_check` gate), and CLI-only graphs (R9 C1),
+acquire `runs.flow_driver_token` with a renewable 30-second lease. CLI-only
+traversal uses its placement assignment without creating an ACP session; a
+successor placement clears the predecessor token. Every traversal transaction checks its active
 assignment and lease, including a final check before commit; global host
 consumers and other runs retain their independent database handles — including
 a consensus node's draft children, which the fan-out dispatches on the root

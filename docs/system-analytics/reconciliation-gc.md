@@ -179,7 +179,8 @@ stateDiagram-v2
         Running --> Skipped: agent node within<br/>MAISTER_RECONCILE_GRACE_SECONDS
         Running --> Crashed: worktree gone
         Running --> Crashed: agent session gone past grace
-        Running --> Crashed: cli node, no live session<br/>(cli-not-retry-safe)
+        Running --> Skipped: cli node with renewed driver lease<br/>or within grace
+        Running --> Crashed: cli node, no live driver past grace<br/>(cli-not-retry-safe)
         Reattached --> [*]
         Redispatched --> [*]
         Skipped --> [*]: re-evaluated next tick
@@ -258,7 +259,9 @@ flowchart TD
     Worktree -- no --> CrashW[CRASH worktree-gone]
     Candidates --> Node{current node kind?}
     Node -- check/judge --> Redis[RE-DISPATCH]
-    Node -- cli, no live session --> CrashC[CRASH cli-not-retry-safe]
+    Node -- cli, no live session --> CliLease{Current driver lease<br/>or within grace?}
+    CliLease -- yes --> SkipC[SKIP live-cli-driver or grace-window]
+    CliLease -- no --> CrashC[CRASH cli-not-retry-safe]
     Candidates --> Sess{live session?}
     Sess -- yes, flow --> Reatt[RE-ATTACH]
     Sess -- yes, agent, no observer here --> Reobs[RE-OBSERVE]
@@ -619,8 +622,9 @@ the worktree GC collects (`WORKTREE_TTL_RUN_STATUSES`). See
   `MAISTER_RECONCILE_GRACE_SECONDS` (default 90); only past grace MUST it be
   crashed (reason `agent-session-gone`). A `Running` run with no live session
   whose current node is a read-only gate eval (`check`/`judge`) MUST be
-  re-dispatched; a `cli` node MUST be crashed (reason `cli-not-retry-safe`) and
-  NEVER auto-re-dispatched (enforced by `classifyRunReconcile` in
+  re-dispatched; a `cli` node MUST be SKIPPED while its current assignment's
+  driver lease is live or its attempt/resume anchor is within grace. Past both,
+  it MUST be crashed (`cli-not-retry-safe`) and NEVER auto-re-dispatched (enforced by `classifyRunReconcile` in
   `web/lib/reconcile.ts`, pinned by `reconcile-classify.test.ts` and
   `reconcile-sweep.integration.test.ts`).
 - A `Running` agent run with NO `acpSessionId` match but a LIVE supervisor
@@ -771,7 +775,10 @@ was before ADR-177.
 | `Running`, `runKind='agent'` | worktree present, `liveSession` present, NO in-process observer | — | **RE-OBSERVE** (`reobserveAgentSession`, counted as `reobserved`) | an agent run has no continuation driver — its live path is ONE in-process observer (`consumeAgentSession`). A web restart, or an observer whose supervisor exhausted its retries, leaves a live session nobody reads; this arm used to classify RE-ATTACH and was then refused ("refusing reattach for non-flow run"), so the run held an unread session until it died and the sweep crashed it as `agent-session-gone`. The re-observe binds the run's ACTIVE assignment, writes NO run state, and yields on a fenced assignment |
 | `Running` | worktree present, no `acpSessionId` match but a LIVE session exists for this `(runId, currentStepId)` | — | **SKIP** (reason `live-session-by-step`) | an agent node's prompt is in-flight — `acp_session_id` persists only AFTER it returns, so the active `run_sessions` row's is still null; the node is genuinely running and must NOT be crashed (the bug this guards) or re-attached (double-drive) |
 | `Running` | worktree present, no live session, current node is a **retry-safe gate eval** (`check`/`judge`/`guard`/`human`/`form`/null — read-only) | — (arm 9 reads no evidence) | **RE-DISPATCH** `runFlow` (CAS-guarded) | safe re-run of a read-only evaluation; avoids the forbidden false-positive crash on a gate executing between sessions |
-| `Running` | worktree present, no live session, current node is **`cli`** (arbitrary side effects, NOT retry-safe) | — (arm 9 reads no evidence) | **CRASH** (`crashRunningRun`, reason `cli-not-retry-safe`) | CAS prevents concurrent runners, NOT re-run idempotency (Codex F4); a half-run `cli` may have partial file/network side effects — never silently re-run. Recoverable via an explicit Recover call **only** when the node config declares `retry_safe: true` (accepted-risk re-dispatch); otherwise discard-only. |
+| `Running` | worktree present, current node is **`cli`**, token and unexpired lease on the active current assignment | — | **SKIP** (`live-cli-driver`) | Renewable database lease is visible across web processes; no ACP session is required. |
+| `Running` | worktree present, current node is **`cli`**, no live driver lease but a fresh attempt/resume anchor | — | **SKIP** (`grace-window`) | Launch/resume is still entering the graph; dead-driver crash is checked again under the run lock after grace. |
+| `Running` | worktree present, no live session, current node is **`cli`**, no matching live driver and past grace | — (no prompt evidence) | **CRASH** (`crashRunningRun`, reason `cli-not-retry-safe`) | CAS prevents concurrent runners, NOT re-run idempotency (Codex F4); a half-run `cli` may have partial file/network side effects — never silently re-run. Recoverable via an explicit Recover call **only** when the node config declares `retry_safe: true` (accepted-risk re-dispatch); otherwise discard-only. |
+
 | `Running`, `runKind='flow'` | worktree present, no live session, current node is **agent**, the owner worker already applied the turn | `applied` | **SKIP** (reason `evidence-applied`) | ADR-177: the result is in the ledger; the flow continuation worker (~1 s) drives the next node. Fires **regardless of grace** |
 | `Running`, `runKind='flow'` | worktree present, no live session, current node is **agent**, a worker holds the application claim | `applying` | **SKIP** (reason `evidence-pending`) | ADR-177: the claim holder owns the follow-up. Fires **regardless of grace** |
 | `Running`, `runKind='flow'` | worktree present, no live session, current node is **agent**, the command is settled but unapplied | `pending_application` | **SKIP** (reason `evidence-pending`) | ADR-177: the prompt-owner worker (~1 s) owns the follow-up. Fires **regardless of grace** |
@@ -785,6 +792,23 @@ was before ADR-177.
 | `Running` | worktree present, no live session, current node is **agent**, **past grace** | `none` | **CRASH** (`crashRunningRun`, reason `agent-session-gone`) | recoverability computed at UI render from `acpSessionId` presence; auto-resume of a mid-turn agent is unsafe → an explicit Recover call (operator or token, never the reconciler itself) |
 | `Running`, `runKind='scratch'` | session gone, **within grace** (`resume_started_at` OR the newest user `run_messages.created_at`, else `started_at`) | — | **SKIP** (grace window) | a launch, send, queued dispatch, Recover or idle resume is still binding its session; project and project-less runs alike (Implemented) |
 | `Running`, `runKind='scratch'` | session gone, past grace | — | **CRASH** via `markScratchCrashed` (sets both `runs.status` and `scratchRuns.dialogStatus`, closes the run's open permission rows — a stored answer marked `_closed.reason = "session_ended"` — and a project run's `run.crashed` cause carries the crash reason's token, `agent_session_gone`; counted and promoted only when its CAS applied) | scratch parity; Recover is then a CAS on `Crashed` ([`scratch-runs.md`](scratch-runs.md#reconciliation-grace-and-recover-implemented)) |
+
+**CLI driver ownership (Implemented — R9 C1).** A CLI-only graph acquires the same
+30-second renewable Flow driver lease as an owned-prompt graph. Launch,
+Recover, idle resume and child-wake placement claims provide its current
+assignment before traversal; minting a successor assignment clears the prior
+driver token. CLI traversal binds its existing assignment without creating an
+ACP session. The existing ADR-166 legacy backfill is the only legal path for a
+never-placed historical run; a released assignment is not silently reused.
+Reconcile treats a matching token, unexpired database-clock lease and active
+current assignment as live across web processes. After lease expiry it retains
+the normal attempt/resume grace, then crashes `cli-not-retry-safe` without
+redispatching the action. Immediately before crashing, it locks the run and
+rechecks status, node, assignment, token/lease and grace: a concurrently claimed
+or replaced driver is preserved. Traversal keeps the existing fenced database,
+renewal, cancellation of CLI process groups and token-only finally release.
+This adds no public API, status, error code or database column; unsafe CLI
+Recover still requires the existing explicit `retry_safe` declaration.
 
 ### Evidence classes (ADR-177, Implemented)
 

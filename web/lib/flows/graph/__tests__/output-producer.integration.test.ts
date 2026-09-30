@@ -23,7 +23,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { getCurrentArtifact } from "@/lib/flows/graph/artifact-store";
 import { runFlow } from "@/lib/flows/runner";
-import { schema, seedGraphRun } from "@/test-support/graph-run-seed";
+import {
+  schema,
+  seedPlacedGraphRun as seedGraphRun,
+} from "@/test-support/graph-run-seed";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,

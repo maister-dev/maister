@@ -8,7 +8,10 @@ import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { runFlow } from "@/lib/flows/runner";
-import { schema, seedGraphRun } from "@/test-support/graph-run-seed";
+import {
+  schema,
+  seedPlacedGraphRun as seedGraphRun,
+} from "@/test-support/graph-run-seed";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,

@@ -10,7 +10,7 @@ import { closeDb } from "@/lib/db/client";
 import { runFlow } from "@/lib/flows/runner";
 import {
   schema,
-  seedGraphRun as seedGraphRunShared,
+  seedPlacedGraphRun as seedGraphRunShared,
   type SeededGraphRun,
 } from "@/test-support/graph-run-seed";
 import {

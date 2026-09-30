@@ -45,7 +45,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { runFlow } from "@/lib/flows/runner";
 import {
   schema,
-  seedGraphRun,
+  seedPlacedGraphRun as seedGraphRun,
   type SeededGraphRun,
 } from "@/test-support/graph-run-seed";
 import {
