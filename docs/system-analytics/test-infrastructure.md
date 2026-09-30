@@ -373,10 +373,13 @@ marking S5.2 complete.
 If a web shard exceeds its budget, retain the two-shard contract and leave
 S5.2 open for a measured repartition decision; local multi-worker timings do
 not qualify a one-worker hosted leg.
-R9 S1 adds `lib/scratch-runs/__tests__/dispatch-window.integration.test.ts` to
-this serial manifest with nine required case names: seven restart cuts, a
-legacy unknown-delivery refusal, and a live-dispatcher race. The six original
-suites and 40 cases are retained; the main slice now requires 49 cases.
+R9 adds `lib/scratch-runs/__tests__/dispatch-window.integration.test.ts` to
+this serial manifest with ten required case names: seven S1 restart cuts, a
+legacy unknown-delivery refusal, a live-dispatcher race and the S3 held-exit
+transport control. The six original suites and 40 cases are retained; the main
+slice now requires 50 cases. Canonical ingestion fences the late old frame as
+`stale_epoch`. The already-read stale terminal is covered separately by the
+transactional consumer suite in the web lane.
 If new controls enlarge the suite, extend the explicit manifest and remeasure
 the Intel budget; do not infer a pass from the old 40-case total.
 

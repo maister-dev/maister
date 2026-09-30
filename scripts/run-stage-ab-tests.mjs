@@ -32,6 +32,7 @@ export const laneSuites = {
     // budget and the two new racers.
     "lib/flows/graph/__tests__/crash-recover-continuation.integration.test.ts",
     "lib/scratch-runs/__tests__/prompt-owners.integration.test.ts",
+    "lib/scratch-runs/__tests__/incarnation-terminal.integration.test.ts",
     "lib/scratch-runs/__tests__/transcript.integration.test.ts",
     "lib/scratch-runs/__tests__/local-package-assistant.integration.test.ts",
     "lib/services/__tests__/gate-chat.integration.test.ts",
@@ -129,6 +130,7 @@ export const requiredIsolationCases = {
     "S1 race: a live dispatcher paused at admission and the worker share one immutable command",
     "S1 package launch: restart retains request context, edit-lock generation and exactly one postprocess action",
     "S1 package message: restart retains request-only follow-up context and its original action ID",
+    "S3 transport: a held parked exit is fenced before the canonical scratch consumer",
   ],
   "test-support/__tests__/durable-workers-boot.integration.test.ts": [
     "applies the flow_node_attempt owner after the production web restarts",

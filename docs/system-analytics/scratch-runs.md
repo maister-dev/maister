@@ -431,6 +431,24 @@ permissions. A late stored-answer retry receives the existing closed-session
 conflict and sends no input. Package Stop uses the creator gate without an edit
 lock, matching package Discard; project runs retain `operateScratchRun`.
 
+### Scratch terminal consumer incarnation fence (Implemented — R9 S3)
+
+A scratch terminal observer must recheck the observed incarnation against the
+run's current default-session incarnation under the run → scratch row locks,
+before parking a permission or projecting exit/crash status. Host-session IDs
+locate those incarnation rows; the incarnation IDs decide ownership, never the
+resumable ACP handle. A stale terminal changes no status, permission or event
+and logs `scratch-stale-incarnation-terminal-ignored`. Current terminals still
+apply when lifecycle projection already marked their incarnation ended; Stop
+and Discard's terminal state remains fenced against a late observer.
+
+The actual runtime-events proxy can delay an old exit beyond successor create
+ACK, but canonical ingestion labels that arrival `stale_epoch`; it does not
+reach this observer. The owning transactional control explicitly supplies a
+previously read old event after the successor is bound, alongside current-ended
+incarnation and permission-park controls. It does not claim a reproduced live
+network race.
+
 ## Reconciliation, grace and Recover (Implemented)
 
 A scratch run has no compiled node, so the reconcile sweep treats it like an

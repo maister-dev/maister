@@ -1,3 +1,5 @@
+import type { FaultBarrier } from "@/test-support/supervisor-fault-proxy";
+
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { readFile, writeFile } from "node:fs/promises";
@@ -716,4 +718,153 @@ it("S1 package message: restart retains request-only follow-up context and its o
     recovered.intent,
     "rules/message-recovered.md",
   );
+}, 240_000);
+
+it("S3 transport: a held parked exit is fenced before the canonical scratch consumer", async () => {
+  fixture = await startProductionFaultFixture({
+    fixtureEnv: { MAISTER_PERMISSION_MAX_HOURS: "0.00222" },
+  });
+  const oldExit = fixture.proxy.arm(
+    {
+      caseId: "s3-parked-exit",
+      method: "GET",
+      path: /^\/runtime-events$/,
+      eventType: "session.exited",
+      assignmentEpoch: 1,
+    },
+    "hold-events",
+  );
+  const nextPrompt = fixture.proxy.arm(
+    {
+      caseId: "s3-successor-prompt",
+      method: "POST",
+      path: /^\/sessions\/[^/]+\/prompts$/,
+      assignmentEpoch: 2,
+    },
+    "hold-request",
+  );
+  let oldReleased = false;
+  let terminalReleased = false;
+  let oldTerminal: FaultBarrier | undefined;
+  let nextReleased = false;
+  const launching = fixture
+    .launchScratch(
+      'fixture-output:{"bytes":0,"text":"successor result","permission":true}',
+    )
+    .catch((error: unknown) => error);
+
+  try {
+    const request = await poll(
+      async () => {
+        const result = await fixture!.database.pool.query<{
+          run_id: string;
+          id: string;
+        }>(
+          "SELECT h.run_id,h.id FROM hitl_requests h WHERE h.kind='permission' AND h.responded_at IS NULL AND h.superseded_at IS NULL",
+        );
+
+        return result.rows[0] ?? null;
+      },
+      10_000,
+      "parked permission before its held exit",
+    );
+    const initialCommand = await fixture.database.pool.query<{ id: string }>(
+      "SELECT id FROM execution_commands WHERE run_id=$1 AND kind='session.prompt'",
+      [request.run_id],
+    );
+
+    // The accepted frame precedes the persisted permission. Hold only the
+    // upcoming terminal of this known command so its observer stays alive.
+    oldTerminal = fixture.proxy.arm(
+      {
+        caseId: "s3-parked-prompt-terminal",
+        method: "GET",
+        path: /^\/runtime-events$/,
+        eventType: "session.command",
+        commandId: initialCommand.rows[0]!.id,
+      },
+      "hold-events",
+    );
+    const [exitWitness] = await Promise.all([
+      oldExit.awaitReached(60_000),
+      oldTerminal.awaitReached(60_000),
+    ]);
+    const responding = fixture.api(
+      `/api/runs/${request.run_id}/hitl/${request.id}/respond`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ optionId: "allow" }),
+      },
+    );
+
+    expect((await responding).status).toBe(202);
+    await nextPrompt.awaitReached(20_000);
+    const before = await fixture.database.pool.query(
+      `SELECT r.status,s.dialog_status,i.id AS incarnation FROM runs r
+       JOIN scratch_runs s ON s.run_id=r.id
+       JOIN run_sessions rs ON rs.run_id=r.id AND rs.execution_assignment_id=r.execution_assignment_id
+       JOIN run_session_incarnations i ON i.run_session_id=rs.id AND i.host_session_id=rs.host_session_id
+       WHERE r.id=$1`,
+      [request.run_id],
+    );
+
+    expect(before.rows[0]).toMatchObject({
+      status: "Running",
+      dialog_status: "Running",
+    });
+    oldExit.release();
+    oldReleased = true;
+    oldTerminal.release();
+    terminalReleased = true;
+    await poll(
+      async () => {
+        const event = await fixture!.database.pool.query<{
+          ingest_disposition: string;
+        }>(
+          "SELECT e.ingest_disposition FROM execution_events e JOIN execution_event_streams es ON es.id=e.event_stream_id WHERE es.stream_id=$1 AND e.host_sequence=$2",
+          [exitWitness.streamId, exitWitness.sequence],
+        );
+
+        return event.rows[0]?.ingest_disposition === "stale_epoch"
+          ? true
+          : null;
+      },
+      10_000,
+      "late exit is fenced at canonical ingestion",
+    );
+    const observed = await fixture.database.pool.query(
+      "SELECT r.status,s.dialog_status FROM runs r JOIN scratch_runs s ON s.run_id=r.id WHERE r.id=$1",
+      [request.run_id],
+    );
+
+    expect(observed.rows[0]).toEqual({
+      status: "Running",
+      dialog_status: "Running",
+    });
+
+    nextPrompt.release();
+    nextReleased = true;
+    await poll(
+      async () => {
+        const state = await fixture!.database.pool.query(
+          "SELECT dialog_status FROM scratch_runs WHERE run_id=$1",
+          [request.run_id],
+        );
+
+        return state.rows[0]?.dialog_status === "WaitingForUser" ? true : null;
+      },
+      60_000,
+      "successor owns its completed turn",
+    );
+  } finally {
+    await fixture.web.kill("SIGKILL");
+    if (!oldReleased && oldExit.observations.length)
+      oldExit.ownedProcessKilled();
+    if (!terminalReleased && oldTerminal?.observations.length)
+      oldTerminal.ownedProcessKilled();
+    if (!nextReleased && nextPrompt.observations.length)
+      nextPrompt.ownedProcessKilled();
+    await launching;
+  }
 }, 240_000);
