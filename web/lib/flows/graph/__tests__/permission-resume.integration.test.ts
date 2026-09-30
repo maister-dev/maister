@@ -1,6 +1,7 @@
 import type { Db } from "@/lib/execution-host/db";
 import type { RealSupervisor } from "@/test-support/real-supervisor";
 import type { ProjectionWorker } from "@/lib/execution-host/events/projection-worker";
+import type { RecoverResult } from "@/lib/runs/recover";
 
 import { fork, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -43,6 +44,7 @@ import { startFlowContinuationWorker } from "@/lib/flows/graph/continuation-work
 import { prepareFlowPermissionResult } from "@/lib/flows/graph/permission-resume";
 import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
 import { resumeRun } from "@/lib/runs/resume";
+import { resumeCrashedRun } from "@/lib/runs/recover";
 import { respondToHitl } from "@/lib/services/hitl";
 import {
   seedGraphRun,
@@ -471,6 +473,278 @@ async function interruptPermissionInputAcknowledgement(
 }
 
 describe("Owned Flow checkpointed permission resume", () => {
+  it("N1: child death after a resumed permission is answered crashes the Running node", async () => {
+    const seeded = await seedPermissionFlow();
+    const hosts = createExecutionHosts({ db });
+    const firstDriver = startProcess(
+      "flow-prompt-owner-process.ts",
+      seeded.runId,
+    );
+    let resumedDriver: ReturnType<typeof startProcess> | undefined;
+    let recovery: Promise<RecoverResult> | undefined;
+    const recoveryAbort = new AbortController();
+
+    try {
+      await expect
+        .poll(
+          async () => {
+            const [run] = await db
+              .select()
+              .from(runs)
+              .where(eq(runs.id, seeded.runId));
+
+            return run.status;
+          },
+          { timeout: 30_000 },
+        )
+        .toBe("NeedsInput");
+      const [hitl] = await db
+        .select()
+        .from(hitlRequests)
+        .where(eq(hitlRequests.runId, seeded.runId));
+
+      await db
+        .update(runs)
+        .set({ keepaliveUntil: new Date(Date.now() - 1_000) })
+        .where(eq(runs.id, seeded.runId));
+      await runSweepTick({ db, executionHosts: hosts });
+      await expect
+        .poll(() => firstDriver.child.exitCode, { timeout: 30_000 })
+        .toBe(0);
+      const [source] = await db
+        .select()
+        .from(nodeAttempts)
+        .where(eq(nodeAttempts.runId, seeded.runId));
+      const [sourcePrompt] = await db
+        .select()
+        .from(executionCommands)
+        .where(
+          and(
+            eq(executionCommands.runId, seeded.runId),
+            eq(executionCommands.kind, "session.prompt"),
+          ),
+        );
+      const sourceSession = await database.pool.query<{
+        acp_session_id: string;
+      }>("SELECT acp_session_id FROM run_session_incarnations WHERE id = $1", [
+        sourcePrompt.ownerRef!.incarnationId,
+      ]);
+      const journalFile = path.join(
+        journalPath,
+        `${sourceSession.rows[0].acp_session_id}.json`,
+      );
+      const journal = JSON.parse(await readFile(journalFile, "utf8")) as {
+        pendingPermission: Record<string, unknown>;
+      };
+
+      await writeFile(
+        journalFile,
+        JSON.stringify({
+          ...journal,
+          pendingPermission: {
+            ...journal.pendingPermission,
+            holdAfterSelected: true,
+          },
+        }),
+      );
+      await db
+        .update(hitlRequests)
+        .set({ response: { optionId: "allow" } })
+        .where(eq(hitlRequests.id, hitl.id));
+      expect(
+        await resumeRun(seeded.runId, { db, executionHosts: hosts }),
+      ).toMatchObject({ ok: true });
+      resumedDriver = startProcess(
+        "flow-prompt-owner-process.ts",
+        seeded.runId,
+      );
+      await expect
+        .poll(
+          async () => {
+            const [run] = await db
+              .select()
+              .from(runs)
+              .where(eq(runs.id, seeded.runId));
+            const [answer] = await db
+              .select()
+              .from(hitlRequests)
+              .where(eq(hitlRequests.id, hitl.id));
+
+            return {
+              status: run.status,
+              answered: answer.respondedAt !== null,
+            };
+          },
+          { timeout: 45_000 },
+        )
+        .toEqual({ status: "Running", answered: true });
+      const prompts = await db
+        .select()
+        .from(executionCommands)
+        .where(
+          and(
+            eq(executionCommands.runId, seeded.runId),
+            eq(executionCommands.kind, "session.prompt"),
+          ),
+        )
+        .orderBy(asc(executionCommands.createdAt));
+      const resumed = prompts.at(-1)!;
+
+      expect(prompts).toHaveLength(2);
+      expect(resumed.ownerRef).toMatchObject({
+        variant: "permission_resume",
+        nodeAttemptId: source.id,
+        promptOrdinal: 1,
+      });
+      const open = await database.pool.query<{ count: number }>(
+        "SELECT count(*)::int AS count FROM hitl_requests WHERE run_id = $1 AND responded_at IS NULL AND superseded_at IS NULL",
+        [seeded.runId],
+      );
+
+      expect(open.rows[0].count).toBe(0);
+      await expect
+        .poll(
+          async () => {
+            const [command] = await db
+              .select()
+              .from(executionCommands)
+              .where(eq(executionCommands.id, resumed.id));
+
+            return {
+              state: command.state,
+              transportState: command.transportState,
+            };
+          },
+          { timeout: 15_000 },
+        )
+        .toEqual({ state: "accepted", transportState: "acknowledged" });
+      const sessions = await fetch(`${supervisor.url}/sessions`);
+
+      expect(sessions.ok).toBe(true);
+      const children = (await sessions.json()) as Array<{
+        sessionId: string;
+        pid: number;
+      }>;
+      const child = children.find(
+        (session) => session.sessionId === resumed.targetSessionId,
+      );
+
+      if (!child) throw new Error("resumed prompt has no live adapter child");
+      process.kill(child.pid, "SIGKILL");
+      expect((await fetch(`${supervisor.url}/health`)).ok).toBe(true);
+      await expect
+        .poll(
+          async () => {
+            const [run] = await db
+              .select()
+              .from(runs)
+              .where(eq(runs.id, seeded.runId));
+
+            return ["Crashed", "Failed"].includes(run.status)
+              ? run.status
+              : null;
+          },
+          { timeout: 30_000 },
+        )
+        .toBe("Crashed");
+      const [closed] = await db
+        .select()
+        .from(nodeAttempts)
+        .where(eq(nodeAttempts.id, source.id));
+
+      expect(closed).toMatchObject({
+        status: "Reworked",
+        errorCode: "CRASH",
+        actionCompletion: null,
+      });
+      await resumedDriver.exited;
+      recovery = resumeCrashedRun(seeded.runId, {
+        db,
+        executionHosts: hosts,
+        runFlow: (runId, options) =>
+          runFlow(runId, {
+            ...options,
+            runtimeRoot: supervisor.runtimeRoot,
+            executionHosts: hosts,
+            signal: recoveryAbort.signal,
+          }),
+      });
+      // The control answers the recovered permission before joining its driver.
+      void recovery.catch(() => undefined);
+      await expect
+        .poll(
+          async () => {
+            const permissions = await db
+              .select()
+              .from(hitlRequests)
+              .where(eq(hitlRequests.runId, seeded.runId));
+
+            return permissions.find(
+              (row) => row.id !== hitl.id && row.respondedAt === null,
+            );
+          },
+          { timeout: 30_000 },
+        )
+        .toBeDefined();
+      const permissions = await db
+        .select()
+        .from(hitlRequests)
+        .where(eq(hitlRequests.runId, seeded.runId));
+      const fresh = permissions.find(
+        (row) => row.id !== hitl.id && row.respondedAt === null,
+      )!;
+      const response = await respondToHitl(
+        {
+          runId: seeded.runId,
+          hitlRequestId: fresh.id,
+          body: { optionId: "allow" },
+        },
+        {
+          kind: "user",
+          userId: "flow-permission-user",
+          label: "Permission test operator",
+          preauthorizedProjectId: seeded.projectId,
+        },
+        { db, executionHosts: hosts },
+      );
+
+      expect(response.status).toBe(200);
+      await expect
+        .poll(
+          async () => {
+            const [run] = await db
+              .select()
+              .from(runs)
+              .where(eq(runs.id, seeded.runId));
+
+            return run.status;
+          },
+          { timeout: 45_000 },
+        )
+        .toBe("Review");
+      const finalPrompts = await db
+        .select()
+        .from(executionCommands)
+        .where(
+          and(
+            eq(executionCommands.runId, seeded.runId),
+            eq(executionCommands.kind, "session.prompt"),
+          ),
+        );
+
+      expect(finalPrompts).toHaveLength(3);
+      expect(await recovery).toMatchObject({ state: "resumed" });
+    } finally {
+      recoveryAbort.abort();
+      resumedDriver?.child.kill("SIGKILL");
+      firstDriver.child.kill("SIGKILL");
+      await Promise.allSettled([
+        firstDriver.exited,
+        resumedDriver?.exited,
+        recovery,
+      ]);
+    }
+  }, 180_000);
   it.each([
     "capacity claim",
     "claim SIGKILL",

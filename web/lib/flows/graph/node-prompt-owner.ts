@@ -207,7 +207,6 @@ export async function prepareNodePrompt(input: {
     !hostPressured &&
     !turnLost &&
     originalRun.status === "Running" &&
-    ref.variant === "node" &&
     command.state === "failed"
       ? await childCrashPrecededTerminal(db, command)
       : null;
