@@ -416,10 +416,10 @@ erDiagram
         text base_commit
         text target_branch
         text dialog_status "Starting|WaitingForUser|Running|NeedsInput|Review|Crashed|Done|Abandoned"
-        text supervisor_session_id
         text error_code
         text error_message
         jsonb error_metadata
+        jsonb active_prompt_intent "0192: private, NULL or bounded version-1 object; dispatch runtime Designed ADR-192"
         text created_by_user_id FK
         timestamp last_user_message_at
         timestamp last_agent_message_at
@@ -681,6 +681,14 @@ BY started_at DESC LIMIT 1`; designed run-attempt schema switches to
 - `scratch_runs_local_package_idx` on `(local_package_id, dialog_status)`
   partial (`WHERE local_package_id IS NOT NULL`) — **(migration 0059)** active
   local-package assistant lists.
+- `scratch_runs_running_intent_sweep_idx` on `(updated_at, run_id)` partial
+  (`WHERE dialog_status = 'Running'`) — **(migration 0192)** dispatch-intent
+  candidate order, including pre-upgrade NULL-intent rows.
+- `scratch_runs_prompt_intent_shape_check` — **(migration 0192)** NULL or a
+  JSON object with numeric `version: 1` whose JSON representation is at most
+  4 MiB. Exact typed content and runtime enforcement are
+  [Designed ADR-192](../decisions.md#adr-192-durable-scratch-prompt-intent-before-command-admission);
+  no legacy backfill invents a prompt.
 - `scratch_runs_owner_xor_check` CHECK
   `(project_id IS NOT NULL) <> (local_package_id IS NOT NULL)` — **(migration
   0059, ADR-097)** a scratch run is owned by exactly one of a project / a local
