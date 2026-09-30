@@ -6,7 +6,11 @@
 [Website](https://imaister.dev) ·
 [Public documentation](https://docs.imaister.dev) ·
 [Getting started](docs/getting-started.md) ·
-[Architecture](docs/architecture.md)
+[Architecture](docs/architecture.md) ·
+[Releasing](RELEASING.md)
+
+> **Status: beta until v1.0** — the beta ends with full multi-host support.
+> Versioning and release mechanics are described in [RELEASING.md](RELEASING.md).
 
 Coding agents can write code. MAIster makes the process around them repeatable:
 versioned delivery flows, isolated workspaces, scoped capabilities, human

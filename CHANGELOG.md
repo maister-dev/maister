@@ -12,6 +12,10 @@ First public release candidate.
 
 ### Added
 
+- Release policy and mechanics (`RELEASING.md`): SemVer with `-beta.N`
+  pre-release tags on the 0.x line, milestone-based cadence, and the manual
+  release checklist. The beta ends at v1.0.0, gated on full multi-host
+  support.
 - Public product website (`site/`, [imaister.dev](https://imaister.dev)) and
   public documentation (`site-docs/`, [docs.imaister.dev](https://docs.imaister.dev))
   in English and Russian.

@@ -238,7 +238,7 @@ const CONTENT = {
       language: "Language",
     },
     hero: {
-      eyebrow: "Open source · self-hosted · MIT licensed",
+      eyebrow: "Open source · self-hosted · MIT licensed · beta until v1.0",
       title: "Turn AI coding from a terminal habit into",
       accent: "a delivery system.",
       body: "MAIster runs versioned software-delivery Flows across your repositories. Agents work in isolated worktrees, humans enter at declared gates, and evidence decides what can ship.",
@@ -264,6 +264,7 @@ const CONTENT = {
         },
         { label: "interfaces", value: "Web · REST · MCP · ACP" },
         { label: "runs on", value: "your host · Postgres · git worktrees" },
+        { label: "status", value: "public beta · v1.0 = full multi-host" },
       ],
     },
     problem: {
@@ -694,7 +695,7 @@ const CONTENT = {
       language: "Язык",
     },
     hero: {
-      eyebrow: "Открытый код · на своих серверах · лицензия MIT",
+      eyebrow: "Открытый код · на своих серверах · лицензия MIT · бета до v1.0",
       title: "Превратите разработку с ИИ",
       accent: "в управляемую систему доставки.",
       body: "MAIster запускает версионированные процессы разработки над вашими репозиториями. Агенты работают в изолированных Git worktree, человек подключается на заданных контрольных точках, а готовность подтверждается доказательствами.",
@@ -717,6 +718,10 @@ const CONTENT = {
         },
         { label: "интерфейсы", value: "Web · REST · MCP · ACP" },
         { label: "работает на", value: "вашем узле · Postgres · Git worktree" },
+        {
+          label: "статус",
+          value: "публичная бета · v1.0 = полная многохостовость",
+        },
       ],
     },
     problem: {
