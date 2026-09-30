@@ -3,6 +3,7 @@ import "server-only";
 import type { DelegationBounds } from "@/lib/run-results/types";
 import type { ClaimedScratchIdleResume } from "@/lib/scratch-runs/idle-resume";
 import type { RunKind } from "@/lib/db/schema";
+import type { SQL } from "drizzle-orm";
 
 import {
   and,
@@ -299,6 +300,39 @@ async function orchestratorActiveChildrenAtCap(
   const active = Number(rows[0]?.count ?? 0);
 
   return { atCap: active >= cap, active, cap };
+}
+
+/** Filter stable slot exclusions before the bounded C1/C3 window. The locked
+ * claim loop rechecks them because parent snapshots can change independently
+ * of the scheduler lock. A blocked prefix must not hide eligible work.
+ */
+function queuedRunHasAvailableSlots(): SQL<boolean> {
+  const holdingStatuses = sql.join(
+    SLOT_HOLDING_RUN_STATUSES.map((status) => sql`${status}`),
+    sql`, `,
+  );
+
+  return sql<boolean>`(
+    ${runs.workspaceMode} IS DISTINCT FROM 'shared'
+    OR ${runs.rootRunId} IS NULL
+    OR NOT EXISTS (
+      SELECT 1 FROM runs sibling
+      WHERE sibling.root_run_id = ${runs.rootRunId}
+        AND sibling.workspace_mode = 'shared'
+        AND sibling.id <> ${runs.id}
+        AND sibling.status IN (${holdingStatuses})
+    )
+  ) AND NOT EXISTS (
+    SELECT 1 FROM runs parent
+    WHERE parent.id = ${runs.parentRunId}
+      AND parent.delegation_bounds->>'maxActiveChildren' IS NOT NULL
+      AND (
+        SELECT count(*) FROM runs child
+        WHERE child.parent_run_id = parent.id
+          AND child.id <> ${runs.id}
+          AND child.status IN (${holdingStatuses})
+      ) >= (parent.delegation_bounds->>'maxActiveChildren')::integer
+  )`;
 }
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -844,6 +878,7 @@ export async function promoteNextPending(
         and(
           eq(runs.status, "Pending"),
           inArray(runs.runKind, POOL_RUN_KINDS[pool]),
+          queuedRunHasAvailableSlots(),
         ),
       )
       .orderBy(
@@ -881,6 +916,7 @@ export async function promoteNextPending(
           isNotNull(runs.resumeRequestedAt),
           inArray(runs.runKind, POOL_RUN_KINDS[pool]),
           sql`(${tasks.id} IS NULL OR ${tasks.queuePaused} = false)`,
+          queuedRunHasAvailableSlots(),
         ),
       )
       .orderBy(

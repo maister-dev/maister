@@ -535,6 +535,22 @@ export async function runSystemSweep(
     }
   }
 
+  // A sample that admitted work already resumed host-paused nodes and drained
+  // these gates. Telemetry absence must not remove C1/C3's periodic backstop;
+  // persisted pressure and capacity are still checked inside each gate.
+  const admissionStartedAt = Date.now();
+  const sampleDrained =
+    pressure?.transition === "clear" || pressure?.transition === "cleared";
+  const promoted =
+    pressure && sampleDrained
+      ? pressure.promoted
+      : await drainQueuedWork({}, errors);
+
+  log.info(
+    { promoted, sampleDrained, durationMs: Date.now() - admissionStartedAt },
+    "system-sweep-admission-complete",
+  );
+
   let brain: SystemSweepSummary["brain"] = null;
 
   try {
@@ -737,7 +753,11 @@ async function drainQueuedWork(
 ): Promise<number> {
   let promoted = 0;
 
-  for (const pool of ["flow", "agent"] as const satisfies SchedulerPool[]) {
+  for (const pool of [
+    "flow",
+    "agent",
+    "librarian",
+  ] as const satisfies SchedulerPool[]) {
     try {
       const { cap } = await effectivePoolCap(getDb(), pool);
 

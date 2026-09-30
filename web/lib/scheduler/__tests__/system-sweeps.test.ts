@@ -370,7 +370,7 @@ describe("scheduler system sweeps", () => {
 
       expect(
         promoteNextPendingMock.mock.calls.map(([opts]) => opts.pool),
-      ).toEqual(["flow", "agent"]);
+      ).toEqual(["flow", "agent", "librarian"]);
       expect(summary?.errors).toEqual([
         expect.stringContaining("flow drain exploded"),
       ]);
@@ -387,7 +387,7 @@ describe("scheduler system sweeps", () => {
 
       expect(
         promoteNextPendingMock.mock.calls.map(([opts]) => opts.pool),
-      ).toEqual(["flow", "agent"]);
+      ).toEqual(["flow", "agent", "librarian"]);
       expect(summary?.errors).toEqual([
         expect.stringContaining("resume select failed"),
       ]);
@@ -403,7 +403,7 @@ describe("scheduler system sweeps", () => {
 
       expect(
         promoteNextPendingMock.mock.calls.map(([opts]) => opts.pool),
-      ).toEqual(["flow", "agent"]);
+      ).toEqual(["flow", "agent", "librarian"]);
     });
 
     it("drains nothing while the host still refuses new work", async () => {
