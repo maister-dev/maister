@@ -853,6 +853,17 @@ export function ScratchConversation({
         </div>
       ) : null}
 
+      {status === "Running" &&
+      detail?.scratch.errorMetadata?.reason === "scratch_dispatch_unknown" ? (
+        <p
+          className="mx-4 mt-3 rounded-[8px] border border-amber-line bg-amber-soft px-3 py-2 text-[12.5px] text-amber"
+          data-testid="scratch-dispatch-unknown"
+          role="alert"
+        >
+          {t("dispatchUnknown")}
+        </p>
+      ) : null}
+
       <ScratchComposer
         agent={composerAgent}
         attachmentsEnabled={attachmentsEnabled}

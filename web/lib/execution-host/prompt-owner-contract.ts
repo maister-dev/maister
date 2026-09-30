@@ -130,6 +130,13 @@ const syncRef = z
   })
   .strict();
 
+export const ScratchPromptOwnerSchema = z
+  .object({
+    kind: z.literal("scratch_message"),
+    ref: z.discriminatedUnion("variant", scratchRefs),
+  })
+  .strict();
+
 export const PromptOwnerSchema = z.discriminatedUnion("kind", [
   z
     .object({
@@ -143,12 +150,7 @@ export const PromptOwnerSchema = z.discriminatedUnion("kind", [
       ref: z.discriminatedUnion("variant", agentRefs),
     })
     .strict(),
-  z
-    .object({
-      kind: z.literal("scratch_message"),
-      ref: z.discriminatedUnion("variant", scratchRefs),
-    })
-    .strict(),
+  ScratchPromptOwnerSchema,
   z.object({ kind: z.literal("gate_chat"), ref: gateRef }).strict(),
   z.object({ kind: z.literal("sync_resolution"), ref: syncRef }).strict(),
   z

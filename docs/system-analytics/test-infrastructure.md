@@ -373,6 +373,10 @@ marking S5.2 complete.
 If a web shard exceeds its budget, retain the two-shard contract and leave
 S5.2 open for a measured repartition decision; local multi-worker timings do
 not qualify a one-worker hosted leg.
+R9 S1 adds `lib/scratch-runs/__tests__/dispatch-window.integration.test.ts` to
+this serial manifest with nine required case names: seven restart cuts, a
+legacy unknown-delivery refusal, and a live-dispatcher race. The six original
+suites and 40 cases are retained; the main slice now requires 49 cases.
 If new controls enlarge the suite, extend the explicit manifest and remeasure
 the Intel budget; do not infer a pass from the old 40-case total.
 

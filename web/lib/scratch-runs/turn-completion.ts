@@ -57,7 +57,11 @@ export async function applyScratchPromptCompletion(
   }
   await tx
     .update(scratchRuns)
-    .set({ dialogStatus: nextStatus, updatedAt: new Date() })
+    .set({
+      dialogStatus: nextStatus,
+      activePromptIntent: null,
+      updatedAt: new Date(),
+    })
     .where(eq(scratchRuns.runId, runId));
   // The turn's host effect is settled, so it no longer anchors the reconcile
   // grace window; the next send or dispatch stamps a fresh one.

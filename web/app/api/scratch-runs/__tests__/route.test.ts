@@ -208,6 +208,21 @@ vi.mock("@/lib/authz", () => ({
   requireActiveSession: mocks.requireActiveSession,
   requireProjectAction: mocks.requireProjectAction,
 }));
+vi.mock("@/lib/scratch-runs/prompt-intent", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/scratch-runs/prompt-intent")>();
+  const { scratchPromptIntentFixture } = await import(
+    "@/test-support/scratch-prompt-intent-fixture"
+  );
+
+  return {
+    ...actual,
+    freezeScratchPromptIntent: (async (_tx, input) =>
+      actual.readScratchPromptIntent(
+        scratchPromptIntentFixture(input),
+      )) satisfies typeof actual.freezeScratchPromptIntent,
+  };
+});
 vi.mock("@/lib/db/client", () => ({ getDb: () => fakeDb }));
 
 // M42 (ADR-114): the scratch launch writes the resume handle on the run's

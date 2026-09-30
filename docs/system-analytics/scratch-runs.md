@@ -454,12 +454,14 @@ The recovery windows below are normative; each cell names its owner.
 | runs `NeedsInputIdle` never answered, past the TTL | — | keep-alive Pass 2 abandons the run **and** the dialog (`Abandoned`); queued rows read "Not sent" |
 | dialog `Review`, `Done` or `Abandoned` | — | terminal; queued rows read "Not sent" |
 
-### Commit-to-admission recovery (Designed — ADR-192 / R9 S1)
+### Commit-to-admission recovery (Implemented — ADR-192 / R9 S1)
 
-The table above describes the implemented queue backstop. A separate Running
-window remains when a web process dies after marking the dialog prompt-ready
-but before admitting `session.prompt`. [ADR-192](../decisions.md#adr-192-durable-scratch-prompt-intent-before-command-admission)
-defines the required active intent; the current code does not yet write it.
+The continuation worker also owns a Running dialog left between its prompt-ready
+commit and `session.prompt` admission. [ADR-192](../decisions.md#adr-192-durable-scratch-prompt-intent-before-command-admission)
+requires each winning writer to freeze the exact owner and payload in that
+status transaction. The sender and re-drive verify the snapshot under the
+ledger admission transaction; an older completed operation on the same
+incarnation does not block a later turn. An unsettled operation does.
 
 | Durable state at a continuation visit | Required disposition |
 | --- | --- |
@@ -475,9 +477,14 @@ same DB and host. For new intents, one eligible continuation visit MUST admit
 or find the original command; at most one ACP prompt effect may occur for its
 logical operation. A package turn MUST retain its action ID, edit-lock
 generation and prompt context. A null-intent legacy row MUST make the
-limitation visible and MUST NOT send a prompt. The serial isolation suite and
-its exact required case names will be added when the implementation exists;
-these are Designed expectations, not current passing behavior.
+limitation visible and MUST NOT send a prompt. The production restart controls live in
+`dispatch-window.integration.test.ts` and run serially in the isolation lane.
+Permission notices are idempotent by run, host session and request ID under the
+run lock. Concurrent live/restarted observers must neither create a second HITL
+row nor turn a successfully resumed stored answer back into NeedsInput.
+The same-incarnation owner, terminal-unapplied command and tombstone controls
+live in `prompt-owners.integration.test.ts`. Local evidence does not close the
+hosted S5.2 gate.
 
 **Recover** (`POST /api/scratch-runs/{runId}/recover`) is a CAS on
 `runs.status = 'Crashed'`; the dialog must read `Crashed` too. It authenticates
@@ -514,11 +521,12 @@ prompt command was issued), `markScratchPromptRetryable` CASes the turn's row
 the transaction that sets the dialog `WaitingForUser` with
 `error_code`/`error_message`, so the row keeps its `sequence` and FIFO place,
 and the send or Recover answers `202 {delivery: "queued"}` rather than an error
-that would invite a second copy. A queued dispatch binds the run's host after
-claiming its row, inside the same failure path: a bind that fails there issued
-nothing either, whatever its error code (`failScratchMessageTurn`'s
-`nothingIssued`), so its row goes back to `queued` the same way instead of
-staying `prompted` under a `Running` dialog that no owner would pick up again.
+that would invite a second copy. A queued dispatch binds its host before its
+winning claim and records a
+bind refusal under the run lock while the dialog still waits. Its row remains
+`queued` without a prompt-ready commit. A failure after admission never
+turns an unresolved command back into a queued row. A bind refusal therefore cannot strand a `prompted` row under a Running
+dialog.
 Any other retryable failure came after a prompt command was issued: a re-send
 under the same logical key would only re-attach to that command, whose own
 recovery settles it, so the row stays `prompted` and the dialog `WaitingForUser`

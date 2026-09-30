@@ -7,6 +7,10 @@ import type {
   ScratchReasoningEffort,
   ScratchWorkMode,
 } from "@/lib/db/schema";
+import type { SendPromptInput } from "@/lib/execution-host";
+import type { ScratchPromptOwner } from "./prompt-owner";
+import type { ScratchPromptIntent } from "./prompt-intent";
+import type { ScratchExecution } from "./events";
 import type { CapabilityAgent } from "@/lib/config.schema";
 import type {
   ScratchLaunchInput,
@@ -113,6 +117,10 @@ import {
   isYieldedScratchTurn,
   ScratchPromptQuarantined,
 } from "@/lib/scratch-runs/prompt-owner";
+import {
+  freezeScratchPromptIntent,
+  scratchOwnerFromIntent,
+} from "@/lib/scratch-runs/prompt-intent";
 import {
   assertScratchCanAcceptUserMessage,
   dialogStatusAfterSupervisorStop,
@@ -1261,6 +1269,18 @@ export async function* launchScratchRunStaged(
       mcpServers: gated.mcpServers,
     });
 
+    const launchPrompt = normalizeScratchPrompt(prompt, executor.agent, {
+      runId,
+    });
+    const launchPayload = {
+      stepId: scratchStepId(),
+      prompt: launchPrompt,
+      contentBlocks: scratchPromptContentBlocks(launchPrompt, [
+        ...validatedAttachments.map(metadataAttachmentRow),
+        ...uploadedAttachments,
+      ]),
+    };
+
     await db.transaction(async (tx: Db) => {
       const dialogStatus: ScratchDialogStatus = hasInitialPrompt
         ? "Running"
@@ -1280,6 +1300,14 @@ export async function* launchScratchRunStaged(
           updatedAt: new Date(),
         })
         .where(eq(scratchRuns.runId, runId));
+      if (hasInitialPrompt)
+        await freezeScratchPromptIntent(tx, {
+          client,
+          hostSessionId: session.sessionId,
+          owner: { variant: "initial" },
+          sourceMessageId: messageId,
+          payload: launchPayload,
+        });
     });
     yield launchProgress("session_ready", undefined, {
       runId,
@@ -1322,20 +1350,11 @@ export async function* launchScratchRunStaged(
       });
     }
 
-    const launchPrompt = normalizeScratchPrompt(prompt, executor.agent, {
-      runId,
-    });
-
     initialPromptStarted = true;
     const promptResult = await sendScratchPromptAndProjectEvents({
       runId,
       sessionId: session.sessionId,
-      stepId: scratchStepId(),
-      prompt: launchPrompt,
-      contentBlocks: scratchPromptContentBlocks(launchPrompt, [
-        ...validatedAttachments.map(metadataAttachmentRow),
-        ...uploadedAttachments,
-      ]),
+      ...launchPayload,
       execution: { client, admin },
       owner: { variant: "initial" },
     });
@@ -1656,6 +1675,27 @@ async function loadActiveLocalPackage(db: Db, localPackageId: string) {
   return pkg;
 }
 
+export async function postProcessRecoveredPackageTurn(
+  db: Db,
+  runId: string,
+  owner: Readonly<{
+    localPackageId: string;
+    postprocessActionId: string;
+    lockGeneration: string;
+  }>,
+): Promise<void> {
+  const pkg = await loadActiveLocalPackage(db, owner.localPackageId);
+
+  await postProcessFlowAssistantTurn({
+    db,
+    runId,
+    localPackage: pkg,
+    actionId: owner.postprocessActionId,
+    lockGeneration: owner.lockGeneration,
+    assertCanApply: () => assertHoldsLock(pkg.id, owner.lockGeneration, db),
+  });
+}
+
 // Launch a docked AI authoring assistant session against a local-package
 // working dir. Project-less; runs IN the existing git-backed working dir (no
 // worktree add, no workspace row); base branch/commit are read from it.
@@ -1914,6 +1954,23 @@ export async function* launchLocalPackageAssistantStaged(
 
     createdSessionId = session.sessionId;
 
+    const launchPrompt = normalizeScratchPrompt(
+      groundedFlowAssistantPrompt({
+        context: flowContext?.prompt ?? "",
+        prompt,
+      }),
+      executor.agent,
+      { runId },
+    );
+    const postprocessActionId = randomUUID();
+    const launchOwner = {
+      variant: "package_initial" as const,
+      localPackageId: pkg.id,
+      postprocessActionId,
+      lockGeneration: args.body.sessionId,
+    };
+    const launchPayload = { stepId: scratchStepId(), prompt: launchPrompt };
+
     await db.transaction(async (tx: Db) => {
       const dialogStatus: ScratchDialogStatus = hasInitialPrompt
         ? "Running"
@@ -1933,6 +1990,14 @@ export async function* launchLocalPackageAssistantStaged(
           updatedAt: new Date(),
         })
         .where(eq(scratchRuns.runId, runId));
+      if (hasInitialPrompt)
+        await freezeScratchPromptIntent(tx, {
+          client,
+          hostSessionId: session.sessionId,
+          owner: launchOwner,
+          sourceMessageId: messageId,
+          payload: launchPayload,
+        });
     });
 
     // Run row is persisted with the resume handle; surface `runId` so the
@@ -1954,32 +2019,12 @@ export async function* launchLocalPackageAssistantStaged(
       });
     }
 
-    const launchPrompt = normalizeScratchPrompt(
-      groundedFlowAssistantPrompt({
-        context: flowContext?.prompt ?? "",
-        prompt,
-      }),
-      executor.agent,
-      { runId },
-    );
-
-    // S2.9: one server-minted action id identifies the turn's postprocess in
-    // the durable action journal, and the launch turn carries it into its own
-    // prompt owner so a crash recovers the dialog turn and the pending package
-    // action independently.
-    const postprocessActionId = randomUUID();
     const promptResult = await sendScratchPromptAndProjectEvents({
       runId,
       sessionId: session.sessionId,
-      stepId: scratchStepId(),
-      prompt: launchPrompt,
+      ...launchPayload,
       execution: { client, admin },
-      owner: {
-        variant: "package_initial",
-        localPackageId: pkg.id,
-        postprocessActionId,
-        lockGeneration: args.body.sessionId,
-      },
+      owner: launchOwner,
     });
     const dialogStatus = await readScratchDialogStatus(db, runId);
     const actionResult = await postProcessFlowAssistantTurn({
@@ -2402,6 +2447,52 @@ export async function dispatchQueuedScratchMessages(
   dispatched: boolean;
   skipped?: "not_waiting" | "nothing_queued" | "cas_lost";
 }> {
+  const [candidate] = await db
+    .select({ dialogStatus: scratchRuns.dialogStatus })
+    .from(scratchRuns)
+    .where(eq(scratchRuns.runId, runId));
+
+  if (candidate?.dialogStatus !== "WaitingForUser")
+    return { dispatched: false, skipped: "not_waiting" };
+  const [queued] = await db
+    .select({ id: runMessages.id })
+    .from(runMessages)
+    .where(
+      and(eq(runMessages.runId, runId), eq(runMessages.delivery, "queued")),
+    )
+    .limit(1);
+
+  if (!queued) return { dispatched: false, skipped: "nothing_queued" };
+  let execution: ScratchExecution;
+
+  try {
+    execution = await scratchExecution(db, runId, executionHosts);
+  } catch (err) {
+    // Binding precedes the claim: a refusal cannot strand a prompted row.
+    // Preserve the visible retry diagnostic only while this queue still waits.
+    await db.transaction(async (tx: Db) => {
+      await lockRunRows(tx, runId);
+      const [waiting] = await tx
+        .select({ dialogStatus: scratchRuns.dialogStatus })
+        .from(scratchRuns)
+        .where(eq(scratchRuns.runId, runId));
+
+      if (waiting?.dialogStatus !== "WaitingForUser") return;
+      await tx
+        .update(scratchRuns)
+        .set({
+          errorCode: isMaisterError(err) ? err.code : "CRASH",
+          errorMessage: err instanceof Error ? err.message : String(err),
+          updatedAt: new Date(),
+        })
+        .where(eq(scratchRuns.runId, runId));
+      log.warn(
+        { runId, code: isMaisterError(err) ? err.code : "CRASH" },
+        "scratch-queued-bind-refused",
+      );
+    });
+    throw err;
+  }
   const claim = await db.transaction(async (tx: Db) => {
     await lockRunRows(tx, runId);
     const [scratch] = await tx
@@ -2472,7 +2563,32 @@ export async function dispatchQueuedScratchMessages(
       .from(scratchAttachments)
       .where(eq(scratchAttachments.messageId, oldest.id));
 
+    const prompt = normalizeScratchPrompt(
+      oldest.content,
+      activeSession.capabilityAgent,
+      { runId },
+    );
+    const intent = await freezeScratchPromptIntent(tx, {
+      client: execution.client,
+      hostSessionId: activeSession.hostSessionId,
+      owner: {
+        variant: "message",
+        messageId: oldest.id,
+        sequence: oldest.sequence,
+      },
+      sourceMessageId: oldest.id,
+      payload: {
+        stepId: scratchStepId(),
+        prompt,
+        contentBlocks: scratchPromptContentBlocks(
+          prompt,
+          promptAttachmentOrder(attachments),
+        ),
+      },
+    });
+
     return {
+      intent,
       message: oldest as {
         id: string;
         sequence: number;
@@ -2511,30 +2627,13 @@ export async function dispatchQueuedScratchMessages(
       ? "scratch-queued-message-redriven"
       : "scratch-queued-message-dispatched",
   );
-  const prompt = normalizeScratchPrompt(
-    message.content,
-    claim.capabilityAgent,
-    { runId },
-  );
-  let execution: Awaited<ReturnType<typeof scratchExecution>> | undefined;
-
   try {
-    // Bound after the claim, inside the failure path: a host that cannot be
-    // resolved now issued nothing, and the row must not be left `prompted`
-    // under a `Running` dialog that no owner ever picks up again.
-    execution = await scratchExecution(db, runId, executionHosts);
     await sendScratchPromptAndProjectEvents({
       runId,
       sessionId: claim.hostSessionId,
-      stepId: scratchStepId(),
-      prompt,
-      contentBlocks: scratchPromptContentBlocks(prompt, claim.attachments),
+      ...claim.intent.payload,
       execution,
-      owner: {
-        variant: "message",
-        messageId: message.id,
-        sequence: message.sequence,
-      },
+      owner: scratchOwnerFromIntent(claim.intent),
     });
   } catch (err) {
     await failScratchMessageTurn({
@@ -2544,7 +2643,6 @@ export async function dispatchQueuedScratchMessages(
       hostSessionId: claim.hostSessionId,
       isLocalPackageAssistant: claim.isLocalPackageAssistant,
       err,
-      nothingIssued: execution === undefined,
     });
     throw err;
   }
@@ -2644,6 +2742,14 @@ async function appendScratchUserMessage(args: {
   body: ScratchMessageInput;
   uploadedFiles: readonly ScratchUploadedFileInput[];
   executionHosts?: ExecutionHosts;
+  preparePrompt: (
+    input: Readonly<{
+      messageId: string;
+      sequence: number;
+      capabilityAgent: string | null;
+      attachments: Parameters<typeof scratchPromptContentBlocks>[1];
+    }>,
+  ) => Readonly<{ owner: ScratchPromptOwner; payload: SendPromptInput }>;
   // ADR-182 D-D5: local-package assistant runs keep the `WaitingForUser`-only
   // gate (their actor/lock model and one-action-per-reply postprocessing).
   acceptWhileBusy?: boolean;
@@ -2810,6 +2916,8 @@ async function appendScratchUserMessage(args: {
         );
         await tx.insert(scratchAttachments).values(storedAttachments);
       }
+      let promptIntent: ScratchPromptIntent | null = null;
+
       if (delivery === "prompted") {
         await tx
           .update(scratchRuns)
@@ -2830,6 +2938,19 @@ async function appendScratchUserMessage(args: {
             resumeStartedAt: now,
           })
           .where(eq(runs.id, args.runId));
+        const prepared = args.preparePrompt({
+          messageId,
+          sequence,
+          capabilityAgent,
+          attachments: [...metadataAttachments, ...uploadedAttachments],
+        });
+
+        promptIntent = await freezeScratchPromptIntent(tx, {
+          client: execution.client,
+          hostSessionId,
+          ...prepared,
+          sourceMessageId: messageId,
+        });
       } else {
         // D-D2: the dialog status is not touched — the running turn (or the
         // dispatcher) owns it.
@@ -2861,6 +2982,7 @@ async function appendScratchUserMessage(args: {
         sequence,
         delivery,
         steer,
+        promptIntent,
         queuedBehind: arm === "prompt" && delivery === "queued",
         hostSessionId,
         capabilityAgent,
@@ -2911,6 +3033,22 @@ export async function sendScratchUserMessage(args: {
 }): Promise<ScratchMessageResponse> {
   const db = getDb() as Db;
   const appended = await appendScratchUserMessage({
+    preparePrompt: ({ messageId, sequence, capabilityAgent, attachments }) => {
+      const prompt = normalizeScratchPrompt(
+        args.body.content,
+        capabilityAgent,
+        { runId: args.runId },
+      );
+
+      return {
+        owner: { variant: "message", messageId, sequence },
+        payload: {
+          stepId: scratchStepId(),
+          prompt,
+          contentBlocks: scratchPromptContentBlocks(prompt, attachments),
+        },
+      };
+    },
     db,
     runId: args.runId,
     body: args.body,
@@ -2948,26 +3086,17 @@ export async function sendScratchUserMessage(args: {
   }
 
   try {
-    const messagePrompt = normalizeScratchPrompt(
-      args.body.content,
-      appended.capabilityAgent,
-      { runId: args.runId },
-    );
+    if (!appended.promptIntent)
+      throw new MaisterError(
+        "CONFLICT",
+        "prompted scratch message has no frozen intent",
+      );
     const promptResult = await sendScratchPromptAndProjectEvents({
       runId: args.runId,
       sessionId: appended.hostSessionId,
-      stepId: scratchStepId(),
-      prompt: messagePrompt,
-      contentBlocks: scratchPromptContentBlocks(messagePrompt, [
-        ...appended.metadataAttachments,
-        ...appended.uploadedAttachments,
-      ]),
+      ...appended.promptIntent.payload,
       execution: appended.execution,
-      owner: {
-        variant: "message",
-        messageId: appended.messageId,
-        sequence: appended.sequence,
-      },
+      owner: scratchOwnerFromIntent(appended.promptIntent),
     });
     const dialogStatus = await readScratchDialogStatus(db, args.runId);
 
@@ -3023,7 +3152,35 @@ export async function sendLocalPackageAssistantMessage(args: {
   await assertHoldsLock(pkg.id, args.body.sessionId, db);
 
   const intent = normalizeFlowAssistantIntent(args.body.intent);
+  const flowContext = await buildFlowAssistantFollowUpContext({
+    localPackage: pkg,
+    intent,
+    focus: args.body.focus,
+  });
+  const postprocessActionId = randomUUID();
   const appended = await appendScratchUserMessage({
+    executionHosts: args.executionHosts,
+    preparePrompt: ({ messageId, sequence, capabilityAgent }) => ({
+      owner: {
+        variant: "package_message",
+        messageId,
+        sequence,
+        localPackageId: pkg.id,
+        postprocessActionId,
+        lockGeneration: args.body.sessionId,
+      },
+      payload: {
+        stepId: scratchStepId(),
+        prompt: normalizeScratchPrompt(
+          followUpFlowAssistantPrompt({
+            context: flowContext.prompt,
+            prompt: args.body.content,
+          }),
+          capabilityAgent,
+          { runId: args.runId },
+        ),
+      },
+    }),
     db,
     runId: args.runId,
     body: { content: args.body.content, attachments: [] },
@@ -3031,34 +3188,17 @@ export async function sendLocalPackageAssistantMessage(args: {
   });
 
   try {
-    const flowContext = await buildFlowAssistantFollowUpContext({
-      localPackage: pkg,
-      intent,
-      focus: args.body.focus,
-    });
-    const messagePrompt = normalizeScratchPrompt(
-      followUpFlowAssistantPrompt({
-        context: flowContext.prompt,
-        prompt: args.body.content,
-      }),
-      appended.capabilityAgent,
-      { runId: args.runId },
-    );
-    const postprocessActionId = randomUUID();
+    if (!appended.promptIntent)
+      throw new MaisterError(
+        "CONFLICT",
+        "package message has no frozen intent",
+      );
     const promptResult = await sendScratchPromptAndProjectEvents({
       runId: args.runId,
       sessionId: appended.hostSessionId,
-      stepId: scratchStepId(),
-      prompt: messagePrompt,
-      execution: await scratchExecution(db, args.runId, args.executionHosts),
-      owner: {
-        variant: "package_message",
-        messageId: appended.messageId,
-        sequence: appended.sequence,
-        localPackageId: pkg.id,
-        postprocessActionId,
-        lockGeneration: args.body.sessionId,
-      },
+      ...appended.promptIntent.payload,
+      execution: appended.execution,
+      owner: scratchOwnerFromIntent(appended.promptIntent),
     });
     const dialogStatus = await readScratchDialogStatus(db, args.runId);
     const actionResult = await postProcessFlowAssistantTurn({

@@ -419,7 +419,7 @@ erDiagram
         text error_code
         text error_message
         jsonb error_metadata
-        jsonb active_prompt_intent "0192: private, NULL or bounded version-1 object; dispatch runtime Designed ADR-192"
+        jsonb active_prompt_intent "0192: private, NULL or bounded version-1 object; dispatch runtime Implemented ADR-192"
         text created_by_user_id FK
         timestamp last_user_message_at
         timestamp last_agent_message_at

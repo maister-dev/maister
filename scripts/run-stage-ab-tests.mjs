@@ -58,6 +58,8 @@ export const laneSuites = {
     // AT-16 — `next build` plus two process trees — so the same serial slice.
     "test-support/__tests__/durable-workers-boot.integration.test.ts",
     "test-support/__tests__/durable-workers-concurrency.integration.test.ts",
+    // R9 S1 owns production restarts and therefore runs in the serial slice.
+    "lib/scratch-runs/__tests__/dispatch-window.integration.test.ts",
   ],
 };
 // The package directory each slice runs in.
@@ -117,6 +119,17 @@ export function vitestArgs({ files, reportPath, concurrency }) {
 
 // Frozen acceptance case names make partial collection fail, even when the suite survives.
 export const requiredIsolationCases = {
+  "lib/scratch-runs/__tests__/dispatch-window.integration.test.ts": [
+    "S1 launch: a web death after Running commits and before prompt admission re-drives the original turn once",
+    "S1 direct message: a later turn on the same incarnation is recovered after an earlier completed prompt",
+    "S1 queue: death after FIFO queued-to-prompted commit re-drives that message",
+    "S1 Recover: death after the recovery generation's Running commit preserves its recovery key",
+    "S1 D-A8: death after a parked permission respawns preserves the generation turn and stored answer",
+    "S1 legacy: a Running dialog without frozen intent exposes unknown delivery and sends nothing",
+    "S1 race: a live dispatcher paused at admission and the worker share one immutable command",
+    "S1 package launch: restart retains request context, edit-lock generation and exactly one postprocess action",
+    "S1 package message: restart retains request-only follow-up context and its original action ID",
+  ],
   "test-support/__tests__/durable-workers-boot.integration.test.ts": [
     "applies the flow_node_attempt owner after the production web restarts",
     "applies the agent_turn owner after the production web restarts",

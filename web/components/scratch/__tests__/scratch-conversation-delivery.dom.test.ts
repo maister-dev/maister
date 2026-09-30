@@ -255,6 +255,19 @@ describe("scratch quarantined turn", () => {
   });
 });
 
+it("directs an unknown-delivery legacy turn to Stop and start a new run", async () => {
+  errorMetadata = { reason: "scratch_dispatch_unknown" };
+  await refresh("Running");
+  expect(
+    container.querySelector('[data-testid="scratch-dispatch-unknown"]')
+      ?.textContent,
+  ).toBe(en.scratch.dispatchUnknown);
+  await refresh("Review");
+  expect(
+    container.querySelector('[data-testid="scratch-dispatch-unknown"]'),
+  ).toBeNull();
+});
+
 describe("scratch delivery feedback (ADR-182)", () => {
   it("a queued row reads Queued while it can still be sent and Not sent once the dialog ended", async () => {
     await render();

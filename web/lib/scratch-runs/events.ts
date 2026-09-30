@@ -20,11 +20,11 @@ import pino from "pino";
 import { canonicalCommandJson } from "../../../runtime/command-json";
 
 import {
-  admitScratchPrompt,
   ScratchPromptQuarantined,
   waitForScratchPrompt,
   type ScratchPromptOwner,
 } from "./prompt-owner";
+import { admitFrozenScratchPrompt } from "./prompt-intent";
 
 import { createHitlRequest } from "@/lib/runs/hitl-create";
 import { getDb } from "@/lib/db/client";
@@ -307,6 +307,8 @@ async function deliverStoredPermissionAnswer(args: {
       .from(runs)
       .where(eq(runs.id, args.runId))
       .for("update");
+    if (await hasScratchPermissionRequest(tx, args))
+      return "already_observed" as const;
     const candidates = await tx
       .select()
       .from(hitlRequests)
@@ -431,6 +433,7 @@ async function deliverStoredPermissionAnswer(args: {
   });
 
   if (!rebound) return false;
+  if (rebound === "already_observed") return true;
   try {
     await rebound.prepared.deliver({
       // No status write: the idle resume set the dialog `Running` before it
@@ -547,6 +550,26 @@ async function deliverStoredPermissionAnswer(args: {
   return true;
 }
 
+async function hasScratchPermissionRequest(
+  tx: DbClientLike,
+  input: { runId: string; sessionId: string; event: PermissionRequestEvent },
+): Promise<boolean> {
+  const [existing] = await tx
+    .select({ id: hitlRequests.id })
+    .from(hitlRequests)
+    .where(
+      and(
+        eq(hitlRequests.runId, input.runId),
+        eq(hitlRequests.kind, "permission"),
+        sql`${hitlRequests.schema}->>'supervisorSessionId' = ${input.sessionId}`,
+        sql`${hitlRequests.schema}->>'requestId' = ${input.event.requestId}`,
+      ),
+    )
+    .limit(1);
+
+  return existing !== undefined;
+}
+
 async function persistPermissionRequest(args: {
   db: DbClientLike;
   runId: string;
@@ -563,6 +586,14 @@ async function persistPermissionRequest(args: {
     // a failed insert, or the agent hangs on a request nobody can answer.
     if (await deliverStoredPermissionAnswer(args)) return;
     await args.db.transaction(async (tx: DbClientLike) => {
+      // Multiple re-drivers may observe the same host event. The run lock
+      // serializes notice creation with stored-answer rebinding and Stop.
+      await tx
+        .select({ id: runs.id })
+        .from(runs)
+        .where(eq(runs.id, args.runId))
+        .for("update");
+      if (await hasScratchPermissionRequest(tx, args)) return;
       await createHitlRequest(tx, {
         id: hitlRequestId,
         runId: args.runId,
@@ -1025,7 +1056,17 @@ async function sendAndProjectScratchPrompt(
       {
         signal: args.signal,
         admitOwner: (tx: DbClientLike) =>
-          admitScratchPrompt(tx, execution.client, args.sessionId, owner),
+          admitFrozenScratchPrompt(
+            tx,
+            execution.client,
+            args.sessionId,
+            owner,
+            {
+              stepId: args.stepId,
+              prompt: args.prompt,
+              contentBlocks: args.contentBlocks,
+            },
+          ),
       },
     );
 

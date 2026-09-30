@@ -143,7 +143,14 @@ export async function admitScratchPrompt(
     const [message] = await tx
       .select({ id: runMessages.id, sequence: runMessages.sequence })
       .from(runMessages)
-      .where(eq(runMessages.id, owner.messageId));
+      .where(
+        and(
+          eq(runMessages.id, owner.messageId),
+          eq(runMessages.runId, runId),
+          eq(runMessages.role, "user"),
+        ),
+      )
+      .for("update");
 
     if (!message || message.sequence !== owner.sequence)
       throw new PromptOwnerInvariantError("scratch_admission_message");

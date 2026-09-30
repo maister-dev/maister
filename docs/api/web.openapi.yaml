@@ -20731,10 +20731,16 @@ components:
                 causeCode}` when the last turn's prompt was quarantined while
                 still accepted — e.g. `causeCode: "terminal_unstorable"`, its
                 terminal event could not be stored (ADR-184 amendment
-                2026-09-28); `null` otherwise.
+                2026-09-28); (Implemented — ADR-192) `{reason:
+                "scratch_dispatch_unknown"}` when a legacy Running dialog
+                has no frozen prompt intent or unresolved command. Delivery
+                is unknown; the operator must Stop and start a new run.
+                Private intent/owner/payload fields are never returned; `null` otherwise.
               properties:
                 cause: { type: string, enum: [host_pressure] }
-                reason: { type: string, enum: [prompt_terminal_conflict] }
+                reason:
+                  type: string
+                  enum: [prompt_terminal_conflict, scratch_dispatch_unknown]
                 causeCode: { type: string }
         workspace:
           type: object
