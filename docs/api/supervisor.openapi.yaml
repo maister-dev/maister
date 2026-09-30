@@ -1350,6 +1350,17 @@ paths:
         the URL and returns CommandReceiptV2 from the receipt read. A command
         cannot change wire version on replay. Production startup activates durable
         prompt owners; legacy callers retain the original wire shape.
+
+        (Implemented — ADR-177 amendment 2026-09-30) If an unintentional ACP
+        transport closure rejects the in-flight response, the host terminates
+        the unusable child and waits for durable session-terminal publication
+        before completing the failed prompt receipt. Existing fenced, pressure
+        and captured-output failure classifications keep their precedence.
+        A bounded publication failure completes with EXECUTOR_UNAVAILABLE and
+        details.reason: required_output_incomplete; a failed receipt alone is
+        never proof that a child crashed. The manager uses accepted evidence
+        for that exact command incarnation. Reverse network delivery remains
+        a sequence gap until the earlier canonical event arrives.
       operationId: acceptSessionPrompt
       parameters:
         - $ref: "#/components/parameters/SessionId"

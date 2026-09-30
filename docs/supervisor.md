@@ -629,6 +629,21 @@ Prompt admission and completion emit durable `session.command` events
 to the host outbox. The manager assigns canonical run order during ingestion;
 no lifecycle consumer reads a per-run event file.
 
+**Failed-prompt cause order (Implemented — ADR-177, 2026-09-30).** If the ACP
+transport closes unintentionally while its prompt response is pending, the
+host terminates the unusable child and waits for heartbeat's durable session
+terminal before writing the failed prompt receipt. Existing fence, intentional
+pressure park and captured-output failure classifications retain precedence.
+If terminal publication cannot finish within the existing kill grace, the
+receipt reports `EXECUTOR_UNAVAILABLE` with
+`details.reason='required_output_incomplete'`; it does not invent a child-crash
+cause. The manager classifies only accepted crash evidence for the exact
+command incarnation before result application. Reverse delivery is held by
+canonical ingestion as a sequence gap. The real host-order and publication-stall
+controls are in `command-receipts.integration.test.ts`; the owner settlement
+contract is [ADR-177](decisions/adr-177.md). No event payload, status or cause
+enum is added.
+
 **Outbox admission by kind (Implemented — ADR-183).** Every receipt names one
 admission class — `new_work` (`session.prompt`, `workspace.adopt`,
 runtime-object reserve/upload), `producer` (`session.create`, which also
