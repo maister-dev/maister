@@ -59,6 +59,18 @@ test("every lane still declares its owning suites and package", () => {
     assert.ok(Object.hasOwn(lanePackages, slice), `${slice} names its package`);
     for (const file of files) assert.match(file, /\.integration\.test\.ts$/u);
   }
+  for (const file of [
+    "lib/__tests__/permission-crash-boundary.integration.test.ts",
+    "lib/__tests__/reconcile-sweep.integration.test.ts",
+    "lib/db/__tests__/migration-0192-scratch-prompt-intent.integration.test.ts",
+    "lib/flows/graph/__tests__/cli-driver-reconcile.integration.test.ts",
+    "lib/scratch-runs/__tests__/incarnation-terminal.integration.test.ts",
+    "lib/scratch-runs/__tests__/permission-terminal.integration.test.ts",
+    "lib/scheduler/__tests__/system-sweep-admission.integration.test.ts",
+  ]) assert.ok(laneSuites.web.includes(file), `R9 owning suite is mandatory: ${file}`);
+  const restartControl = "lib/scratch-runs/__tests__/dispatch-window.integration.test.ts";
+  assert.ok(laneSuites.isolation.includes(restartControl));
+  assert.ok(!laneSuites.web.includes(restartControl), "production restarts own the serial host");
 });
 
 test("the web lane runs the batched-ingest controls and never the opt-in load harness", () => {
@@ -114,6 +126,8 @@ test("the report rejects a duplicated selection and a name that only shares a su
     numPendingTests: 0, numTodoTests: 0, numRuntimeErrorTestSuites: 0, success: true };
 
   assert.throws(() => validateLaneReport(report, [file, file]), /duplicate/u);
+  assert.throws(() => validateLaneReport({ ...report, testResults: [] }, [file]), /suite count/u);
+  assert.throws(() => validateLaneReport(report, [file, laneSuites.web[1]]), /missing or duplicated/u);
   report.testResults = [result(`/repo/web/prefix${file}`)];
   assert.throws(() => validateLaneReport(report, [file]), /A\/B unexpected or ambiguous owning suite/u);
 });

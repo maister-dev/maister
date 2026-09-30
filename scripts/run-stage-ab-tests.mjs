@@ -18,6 +18,11 @@ export const laneSuites = {
   ].map((name) => `src/__tests__/${name}.integration.test.ts`),
   web: [
     "lib/__tests__/supervisor-client-binary.integration.test.ts",
+    // R9: crash settlement, CLI liveness and the durable dispatch schema are
+    // mandatory owning controls alongside the existing prompt-owner seams.
+    "lib/__tests__/permission-crash-boundary.integration.test.ts",
+    "lib/__tests__/reconcile-sweep.integration.test.ts",
+    "lib/db/__tests__/migration-0192-scratch-prompt-intent.integration.test.ts",
     "lib/agents/__tests__/prompt-owners.integration.test.ts",
     "lib/agents/__tests__/finalization-transaction.integration.test.ts",
     "lib/agents/__tests__/turn-admission.integration.test.ts",
@@ -28,11 +33,14 @@ export const laneSuites = {
     "lib/flows/graph/__tests__/gate-permission-result.integration.test.ts",
     "lib/flows/graph/__tests__/permission-result-failure.integration.test.ts",
     "lib/flows/graph/__tests__/driver-claim.integration.test.ts",
+    "lib/flows/graph/__tests__/cli-driver-reconcile.integration.test.ts",
     // ADR-176: the flow worker's crash-recover arm — the routed dispatch, the
     // budget and the two new racers.
     "lib/flows/graph/__tests__/crash-recover-continuation.integration.test.ts",
     "lib/scratch-runs/__tests__/prompt-owners.integration.test.ts",
     "lib/scratch-runs/__tests__/incarnation-terminal.integration.test.ts",
+    "lib/scratch-runs/__tests__/permission-terminal.integration.test.ts",
+    "lib/scheduler/__tests__/system-sweep-admission.integration.test.ts",
     "lib/scratch-runs/__tests__/transcript.integration.test.ts",
     "lib/scratch-runs/__tests__/local-package-assistant.integration.test.ts",
     "lib/services/__tests__/gate-chat.integration.test.ts",
