@@ -30,6 +30,7 @@ import { compileManifest } from "@/lib/flows/graph/compile";
 import { buildContext } from "@/lib/flows/context";
 import { runNodeGates } from "@/lib/flows/graph/gates-exec";
 import { flowPromptOwners } from "@/lib/flows/graph/prompt-owner";
+import { childCrashPrecededTerminal } from "@/lib/flows/graph/permission-park-crash";
 import { assertFlowPermissionDelivery } from "@/lib/flows/graph/prompt-permission";
 import { startFlowContinuationWorker } from "@/lib/flows/graph/continuation-worker";
 import { startPromptOwnerWorker } from "@/lib/execution-host/prompt-owner-recovery";
@@ -3966,6 +3967,7 @@ describe("Flow prompt owners through the production graph driver", () => {
         .where(eq(executionEvents.id, failedPrompt.terminalEventId!));
       const [childCrash] = await database.db
         .select({
+          id: executionEvents.id,
           streamId: executionEvents.eventStreamId,
           sequence: executionEvents.hostSequence,
         })
@@ -4024,6 +4026,62 @@ describe("Flow prompt owners through the production graph driver", () => {
         "Reworked",
         "Succeeded",
       ]);
+      const [originalPrompt] = await database.db
+        .select()
+        .from(executionCommands)
+        .where(eq(executionCommands.id, failedPrompt.id));
+      const incarnations = await database.db
+        .select({ id: runSessionIncarnations.id })
+        .from(runSessionIncarnations)
+        .where(eq(runSessionIncarnations.runId, seeded.runId));
+      const originalIncarnationId = originalPrompt.ownerRef?.incarnationId;
+      const successor = incarnations.find(
+        (incarnation) => incarnation.id !== originalIncarnationId,
+      );
+
+      if (!originalIncarnationId || !successor || !originalPrompt.ownerRef)
+        throw new Error("N1 recovery did not bind distinct incarnations");
+      expect(
+        await childCrashPrecededTerminal(
+          database.db as unknown as Db,
+          originalPrompt,
+        ),
+      ).not.toBeNull();
+      expect(
+        await childCrashPrecededTerminal(database.db as unknown as Db, {
+          ...originalPrompt,
+          ownerRef: {
+            ...originalPrompt.ownerRef,
+            incarnationId: successor.id,
+          },
+        }),
+      ).toBeNull();
+      await database.db.transaction(async (tx) => {
+        // Lifecycle projection may lag prompt settlement; immutable host/session
+        // identity still proves this crash without a projected event binding.
+        await tx
+          .update(executionEvents)
+          .set({ runSessionIncarnationId: null })
+          .where(eq(executionEvents.id, childCrash.id));
+        expect(
+          await childCrashPrecededTerminal(tx as unknown as Db, originalPrompt),
+        ).not.toBeNull();
+        // Inject a contradictory canonical binding, then restore it in this
+        // transaction. This is an evidence-reader control, not a wire race.
+        await tx
+          .update(executionEvents)
+          .set({ runSessionIncarnationId: successor.id })
+          .where(eq(executionEvents.id, childCrash.id));
+        expect(
+          await childCrashPrecededTerminal(tx as unknown as Db, originalPrompt),
+        ).toBeNull();
+        await tx
+          .update(executionEvents)
+          .set({
+            runSessionIncarnationId: originalIncarnationId,
+          })
+          .where(eq(executionEvents.id, childCrash.id));
+      });
     } finally {
       await killAdapterProcesses();
       await driver;
@@ -4091,6 +4149,7 @@ describe("Flow prompt owners through the production graph driver", () => {
       },
       "hold-events",
     );
+
     resetRegistrarStateForTests();
     resetResolverForTests();
     const seeded = await seedOwnerFlow([

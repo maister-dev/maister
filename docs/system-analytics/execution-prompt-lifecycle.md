@@ -413,6 +413,7 @@ full classification table with its writers lives in
 | `succeeded`, applied | the graph advances | the owner's completion | `applied` |
 | `failed` (ordinary), applied | the node fails; `runs.status='Failed'` per the graph's own rules | `Failed`, `decision` NULL | `applied` |
 | `failed` for a Running node, with an accepted `session.crashed` on the exact command host stream and current incarnation before the prompt terminal (Implemented — ADR-177 amendment 2026-09-30) | `Crashed` (`session-crashed`); Recover re-asks the node exactly once under a new assignment | `Reworked`, `decision='turn_lost'`, `error_code='CRASH'`; the failed prompt is never an action result | `applied` by the owner |
+| failed Running-node prompt with `required_output_incomplete` and no exact crashed-incarnation proof (Implemented — ADR-177 amendment 2026-09-30) | the owner refuses result application; existing reconcile stops a live session and closes `Crashed` (`owner-poisoned`), never guessed `session-crashed` or generic `Failed` | no action completion is decoded or applied; reconcile closes the attempt | `poisoned`, cause `session_terminal_evidence_unavailable` |
 | `failed {turn_lost}` | `Crashed` (`turn-lost`) — **recoverable**, `resume_target_step_id` stamped | `Reworked`, `decision='turn_lost'`, `error_code='CRASH'` | `applied` |
 | quarantined (`prompt_terminal_conflict`) or `poisoned` | `Crashed` (`owner-poisoned`) | `Reworked`, `decision='turn_lost'`, `error_code='CRASH'` | `applied` |
 | quarantined while still `accepted` (no terminal evidence — a skipped terminal `terminal_unstorable`, or a `receipt_*` / `*_protocol` quarantine), any run kind, session live or not (Implemented — ADR-184 amendment 2026-09-28) | flow: `Crashed` (`owner-poisoned`) through the same boundary, taken by the reconcile sweep on any node kind (an agent node, a judge, an AI gate on a check node) whether a session is live or not — a live session is stopped first, and an unconfirmed or fenced stop leaves the run for the next tick; agent: the driver that meets it (issuing or re-driving) stops the session, finalizes `Crashed`, reason `owner_poisoned`, and closes the turn `superseded`; scratch: the turn fails, the dialog returns to `WaitingForUser` with `error_code: "CONFLICT"` and `error_metadata {reason: "prompt_terminal_conflict", causeCode}` | flow: `Reworked`, `decision='turn_lost'`, `error_code='CRASH'` | stays quarantined (`application_error.causeCode` names why) |
@@ -431,6 +432,12 @@ terminal within the existing kill grace. This gives the Running-node and
 permission-park rows above a causal host sequence to verify. A normal ACP task
 failure remains a failed prompt without a crash event; an intentional
 checkpoint keeps its own cause. See ADR-177's 2026-09-30 host-order amendment.
+The crash reader joins the immutable host/session identity to the owner's exact
+incarnation. It accepts a pending lifecycle binding but refuses a contradictory
+one. Failed receipts do not qualify for host-span settlement; pending canonical
+evidence and unknown receipts retain their original command. A skipped terminal
+is quarantined by the skip-ledger reducer, and known stream loss uses the
+existing bounded stream-loss disposition.
 
 `turn_lost` is matched on the error **reason** — carried nested
 (`last_error.details.reason`, the ingested-terminal-event path) or flat

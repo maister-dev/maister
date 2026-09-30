@@ -3,7 +3,7 @@ import "server-only";
 import type { Db } from "@/lib/execution-host/db";
 import type { ExecutionCommand } from "@/lib/db/schema";
 
-import { and, eq, lte } from "drizzle-orm";
+import { and, eq, isNull, lte, or } from "drizzle-orm";
 import pino from "pino";
 
 import { markGateStale } from "./gate-store";
@@ -16,6 +16,7 @@ import {
   runs,
 } from "@/lib/db/schema";
 import { isTurnLostError } from "@/lib/reconcile-evidence";
+import { PromptOwnerInvariantError } from "@/lib/execution-host/prompt-owner-errors";
 import {
   closeTurnLostAttempt,
   TurnLostCasLost,
@@ -54,7 +55,10 @@ export async function childCrashPrecededTerminal(
   tx: Db,
   command: ExecutionCommand,
 ): Promise<ChildCrashProof | null> {
-  if (!command.terminalEventId || !command.targetSessionId) return null;
+  const incarnationId = command.ownerRef?.incarnationId;
+
+  if (!command.terminalEventId || !command.targetSessionId || !incarnationId)
+    return null;
   const [terminal] = await tx
     .select({
       streamId: executionEvents.eventStreamId,
@@ -70,6 +74,26 @@ export async function childCrashPrecededTerminal(
       sequence: executionEvents.hostSequence,
     })
     .from(executionEvents)
+    .innerJoin(
+      runSessionIncarnations,
+      and(
+        eq(runSessionIncarnations.id, incarnationId),
+        eq(runSessionIncarnations.runId, executionEvents.runId),
+        eq(
+          runSessionIncarnations.executionHostId,
+          executionEvents.executionHostId,
+        ),
+        eq(runSessionIncarnations.hostSessionId, executionEvents.hostSessionId),
+        eq(
+          runSessionIncarnations.executionAssignmentId,
+          executionEvents.executionAssignmentId,
+        ),
+        eq(
+          runSessionIncarnations.assignmentEpoch,
+          executionEvents.assignmentEpoch,
+        ),
+      ),
+    )
     .where(
       and(
         eq(executionEvents.source, "host"),
@@ -82,13 +106,34 @@ export async function childCrashPrecededTerminal(
         ),
         eq(executionEvents.assignmentEpoch, command.assignmentEpoch),
         eq(executionEvents.hostSessionId, command.targetSessionId),
+        // The immutable host/session uniqueness proves the owner even while
+        // lifecycle projection is pending. A contradictory projected binding
+        // must never serve as evidence for this prompt's incarnation.
+        or(
+          isNull(executionEvents.runSessionIncarnationId),
+          eq(executionEvents.runSessionIncarnationId, incarnationId),
+        ),
         eq(executionEvents.eventType, "session.crashed"),
         eq(executionEvents.ingestDisposition, "accepted"),
       ),
     )
     .limit(1);
 
-  if (!crash || crash.sequence === null) return null;
+  if (!crash || crash.sequence === null) {
+    const details = command.lastError?.details;
+
+    if (
+      details !== null &&
+      typeof details === "object" &&
+      "reason" in details &&
+      details.reason === "required_output_incomplete"
+    )
+      throw new PromptOwnerInvariantError(
+        "session_terminal_evidence_unavailable",
+      );
+
+    return null;
+  }
 
   return {
     eventId: crash.id,

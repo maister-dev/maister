@@ -7,8 +7,17 @@ import type { ExecutionCommand, ExecutionEvent } from "@/lib/db/schema";
 import { commandStreamLost } from "./events/stream-health";
 import { PromptOwnerSchema } from "./prompt-owner-contract";
 import { readPromptOutput } from "./prompt-output";
+import {
+  PromptOwnerDeferred,
+  PromptOwnerInvariantError,
+} from "./prompt-owner-errors";
 
 import { isMaisterError, MaisterError } from "@/lib/errors";
+
+export {
+  PromptOwnerDeferred,
+  PromptOwnerInvariantError,
+} from "./prompt-owner-errors";
 
 export type PromptOwnerDisposition = "applied" | "superseded";
 export type PromptOwnerOutcome =
@@ -50,16 +59,6 @@ export type PromptOwnerRegistry = ReadonlyMap<
   PromptOwnerAdapter
 >;
 
-/** A valid owner is awaiting another durable domain transition, not failing. */
-export class PromptOwnerDeferred extends MaisterError {
-  constructor(causeCode: string) {
-    super("PRECONDITION", "prompt owner awaits a durable domain transition", {
-      details: { reason: "prompt_owner_deferred", causeCode },
-    });
-    Object.setPrototypeOf(this, new.target.prototype);
-  }
-}
-
 /** ADR-167 D5 amendment (D-B9): absence is never proof. A turn settled from
  * the host's span has no canonical terminal row until the canonical event
  * confirms it; a check that reads that row waits instead of reading "none". */
@@ -93,20 +92,6 @@ async function frontierDeferral(
     return new PromptOwnerDeferred("event_frontier_pending");
 
   return error;
-}
-
-export class PromptOwnerInvariantError extends MaisterError {
-  constructor(causeCode: string) {
-    if (!/^[a-z][a-z0-9_]{0,63}$/.test(causeCode))
-      throw new MaisterError(
-        "CONFIG",
-        "prompt owner invariant requires a bounded diagnostic code",
-      );
-    super("CONFLICT", "prompt owner application failed its invariant", {
-      details: { reason: "prompt_owner_invariant", causeCode },
-    });
-    Object.setPrototypeOf(this, PromptOwnerInvariantError.prototype);
-  }
 }
 
 /** Application modules register typed adapters here; the command layer never
