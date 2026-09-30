@@ -112,7 +112,10 @@ import {
   userScratchMessageDraft,
 } from "@/lib/scratch-runs/messages";
 import { cleanupLocalPackageAssistantMaterialization } from "@/lib/scratch-runs/local-package-materialization";
-import { closeOpenScratchPermissions } from "@/lib/scratch-runs/open-permissions";
+import {
+  closeOpenScratchPermissions,
+  closeTerminalScratchPermissions,
+} from "@/lib/scratch-runs/open-permissions";
 import {
   isYieldedScratchTurn,
   ScratchPromptQuarantined,
@@ -3436,15 +3439,17 @@ export async function stopScratchWorkbench(
   const workspace = workspaceRows[0] ?? null;
 
   if (isTerminalScratchDialogStatus(scratch.dialogStatus)) {
+    const terminal = await closeTerminalScratchPermissions(db, runId);
+
     log.info(
-      { runId, dialogStatus: scratch.dialogStatus },
-      "scratch stop skipped terminal run",
+      { runId, dialogStatus: terminal.dialogStatus },
+      "scratch stop replay preserved current run",
     );
 
     return {
       runId,
-      dialogStatus: scratch.dialogStatus,
-      runStatus: run.status,
+      dialogStatus: terminal.dialogStatus,
+      runStatus: terminal.runStatus,
       supervisorStopped: false,
       workspaceActive: Boolean(workspace && !workspace.removedAt),
     };
@@ -3478,8 +3483,12 @@ export async function stopScratchWorkbench(
       .from(scratchRuns)
       .where(eq(scratchRuns.runId, runId));
 
-    if (!locked || isTerminalScratchDialogStatus(locked.dialogStatus))
+    if (!locked) return false;
+    if (isTerminalScratchDialogStatus(locked.dialogStatus)) {
+      await closeOpenScratchPermissions(tx, runId, now);
+
       return false;
+    }
     await tx
       .update(scratchRuns)
       .set({
@@ -3495,6 +3504,7 @@ export async function stopScratchWorkbench(
         endedAt: now,
       })
       .where(eq(runs.id, runId));
+    await closeOpenScratchPermissions(tx, runId, now);
     await releaseAssignmentForRun(tx, runId, "stopped");
     // B6: a stop that ends the run says so on the bus, like every other
     // terminal writer (C17 c). A project-less assistant run has no project.

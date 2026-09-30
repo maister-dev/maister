@@ -415,11 +415,21 @@ Discard removes the worktree but does not delete uploaded run artifacts in V1.
 Uploaded artifact retention is part of future typed artifact/blob-store policy.
 
 Stop and discard re-read the dialog under the run's locks (`runs`, then
-`scratch_runs`) inside their terminal transaction. Stop writes nothing once the
-dialog is `Review | Crashed | Done | Abandoned`, discard once it is `Done |
-Abandoned`, so of two racing terminal writers the loser writes and emits
-nothing and `run.abandoned` is emitted exactly once. Discard still records a
-worktree removal it already performed (2026-09-27 review fix).
+`scratch_runs`) inside their terminal transaction. A terminal loser changes no
+status and emits no duplicate event. Discard still records a worktree removal
+it already performed.
+
+**R9 S2 contract (Implemented):** The winning Stop
+(`Review` or `Abandoned`), non-workbench Discard, and shared workbench
+`recordDrop` transaction closes every open permission row with `responded_at`
+and the existing `_closed.reason = session_ended` marker. The operator's stored
+choice remains evidence; `superseded_at` stays unchanged. Status and closure
+commit together or neither commits. A repeated terminal call repairs legacy
+open rows under the same run lock without another host deletion or event.
+If Recover won that lock first, terminal replay must not close the successor's
+permissions. A late stored-answer retry receives the existing closed-session
+conflict and sends no input. Package Stop uses the creator gate without an edit
+lock, matching package Discard; project runs retain `operateScratchRun`.
 
 ## Reconciliation, grace and Recover (Implemented)
 

@@ -5640,11 +5640,15 @@ paths:
       summary: Implemented — stop live scratch supervisor session
       description: |
         The route reads the run id from the path, requires an active session
-        and `operateScratchRun` project membership, then delegates to the
-        scratch lifecycle owner. An existing terminal dialog returns its
+        and `operateScratchRun` project membership (or the launching creator
+        for a project-less local-package assistant, without requiring its edit
+        lock), then delegates to the scratch lifecycle owner. An existing terminal dialog returns its
         current state without another supervisor deletion. A successful stop
         reports whether the session was terminated and whether its workspace
         remains active; it does not return the generic `OkResult` envelope.
+        Status and open-permission closure commit together.
+        A terminal replay repairs legacy open rows without another status event;
+        stored-answer retries are refused as session-ended, never delivered.
       operationId: stopScratchRun
       parameters:
         - name: runId
@@ -5743,7 +5747,11 @@ paths:
         `Abandoned`. The body is empty; run/project/path/session identity is
         server-derived. A project run requires `operateScratchRun`; a
         project-less local-package assistant run requires its launching user,
-        without an active edit lock for Discard.
+        without an active edit lock for Discard. Each terminal status write
+        closes open permission rows in the same transaction, preserving stored
+        choices as closed evidence. Terminal replay repairs legacy open rows
+        without duplicate events or host deletion; it never closes a successor
+        turn that won the run lock first.
       operationId: discardScratchRun
       parameters:
         - name: runId

@@ -1,3 +1,5 @@
+import type { Db as ExecutionDb } from "@/lib/execution-host/db";
+
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -1318,7 +1320,7 @@ describe("respondToHitl — an answer closed without delivery is never 'already 
     // The scratch crash projection lands between the claim and the host's
     // answer: it closes the row, and the host no longer holds the session.
     fake.onCall("deliverInput", async () => {
-      await (db as any).transaction((tx: unknown) =>
+      await (db as unknown as ExecutionDb).transaction((tx) =>
         closeOpenScratchPermissions(tx, runId, new Date()),
       );
       fake.sessions.get("sup-1")!.status = "exited";
@@ -1346,7 +1348,7 @@ describe("respondToHitl — an answer closed without delivery is never 'already 
     );
 
     fake.onCall("deliverInput", async () => {
-      await (db as any).transaction((tx: unknown) =>
+      await (db as unknown as ExecutionDb).transaction((tx) =>
         closeOpenScratchPermissions(tx, runId, new Date()),
       );
       fake.sessions.get("sup-1")!.status = "exited";

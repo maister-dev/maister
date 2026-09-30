@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   localPackages as localPackagesTable,
+  hitlRequests as hitlRequestsTable,
   runs as runsTable,
   scratchRuns as scratchRunsTable,
   workspaces as workspacesTable,
@@ -17,12 +18,14 @@ import { stopThenDrop } from "@/lib/workbench-lifecycle/service";
 
 type Row = Record<string, unknown>;
 type Tables = {
+  hitl_requests: Row[];
   local_packages: Row[];
   runs: Row[];
   scratch_runs: Row[];
   workspaces: Row[];
 };
 type FakeDb = {
+  execute: () => Promise<{ rows: Row[] }>;
   select: () => ReturnType<typeof selectChain>;
   update: (table: unknown) => ReturnType<typeof updateChain>;
   insert: (table: unknown) => { values: (row: Row) => Promise<void> };
@@ -30,13 +33,20 @@ type FakeDb = {
 };
 
 const dbState: { tables: Tables; inserted: Row[] } = {
-  tables: { local_packages: [], runs: [], scratch_runs: [], workspaces: [] },
+  tables: {
+    hitl_requests: [],
+    local_packages: [],
+    runs: [],
+    scratch_runs: [],
+    workspaces: [],
+  },
   // Only the domain-event outbox inserts on this route.
   inserted: [],
 };
 
 function tableOf(t: unknown): keyof Tables {
   if (t === localPackagesTable) return "local_packages";
+  if (t === hitlRequestsTable) return "hitl_requests";
   if (t === runsTable) return "runs";
   if (t === scratchRunsTable) return "scratch_runs";
   if (t === workspacesTable) return "workspaces";
@@ -58,15 +68,20 @@ const selectChain = () => ({
 
 const updateChain = (table: unknown) => ({
   set: (vals: Row) => ({
-    where: async () => {
-      for (const row of dbState.tables[tableOf(table)]) {
-        Object.assign(row, vals);
-      }
+    where: () => {
+      const rows = dbState.tables[tableOf(table)];
+
+      for (const row of rows) Object.assign(row, vals);
+
+      return Object.assign(Promise.resolve(), {
+        returning: async () => rows.map((row) => ({ id: row.id })),
+      });
     },
   }),
 });
 
 const fakeDb: FakeDb = {
+  execute: async () => ({ rows: [] }),
   select: selectChain,
   update: updateChain,
   insert: () => ({
@@ -239,6 +254,7 @@ async function invokePost(runId: string) {
 
 beforeEach(() => {
   dbState.tables = {
+    hitl_requests: [],
     local_packages: [],
     runs: [],
     scratch_runs: [],
