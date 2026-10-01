@@ -3235,7 +3235,7 @@ agent path drives `Review→Running→…→Review`. Behavior:
                                  //   2026-09-28) — no migration, unconstrained
   activePromptIntent?,           // nullable private jsonb (migration 0192);
                                  //   version-1 object, at most 4 MiB;
-                                 //   runtime dispatch/re-drive Designed ADR-192
+                                 //   transactional dispatch/re-drive (ADR-192)
   createdByUserId,               // FK -> users.id
   lastUserMessageAt?,
   lastAgentMessageAt?,
@@ -3281,8 +3281,8 @@ larger than 4 MiB. Application validation owns the exact owner, payload and
 current-incarnation shape. This is private dispatch data, excluded from browser
 DTOs and logs. `scratch_runs_running_intent_sweep_idx` on `(updated_at, run_id)`
 is partial on `dialog_status = 'Running'` and includes legacy NULL-intent rows.
-The schema is implemented; transactional writers, replay and legacy ambiguity
-handling remain Designed in
+Transactional writers, replay and legacy ambiguity handling are implemented;
+their ownership and rollout contracts are defined in
 [ADR-192](decisions.md#adr-192-durable-scratch-prompt-intent-before-command-admission).
 
 ## `agent_turns` (Implemented)

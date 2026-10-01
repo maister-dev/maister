@@ -686,8 +686,8 @@ BY started_at DESC LIMIT 1`; designed run-attempt schema switches to
   candidate order, including pre-upgrade NULL-intent rows.
 - `scratch_runs_prompt_intent_shape_check` — **(migration 0192)** NULL or a
   JSON object with numeric `version: 1` whose JSON representation is at most
-  4 MiB. Exact typed content and runtime enforcement are
-  [Designed ADR-192](../decisions.md#adr-192-durable-scratch-prompt-intent-before-command-admission);
+  4 MiB. Exact typed content and runtime enforcement implement
+  [ADR-192](../decisions.md#adr-192-durable-scratch-prompt-intent-before-command-admission);
   no legacy backfill invents a prompt.
 - `scratch_runs_owner_xor_check` CHECK
   `(project_id IS NOT NULL) <> (local_package_id IS NOT NULL)` — **(migration
