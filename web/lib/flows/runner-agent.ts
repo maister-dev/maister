@@ -884,6 +884,9 @@ function startEventConsumer(
         { err: (err as Error).message, sessionId },
         "event-consumer error",
       );
+      // Accepted owned prompts must yield to durable continuation when their
+      // event reader fails; leaving the waiter alive strands permission HITL.
+      failure.abort(err);
     } finally {
       await Promise.allSettled(pendingWork);
       streamEnded = true;

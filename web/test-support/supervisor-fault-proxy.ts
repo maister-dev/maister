@@ -32,6 +32,7 @@ export type FaultSelector = {
 };
 export type FaultAction =
   | "hold-request"
+  | "hold-requests"
   | "hold-response"
   | "hold-responses"
   | "drop-responses"
@@ -347,7 +348,7 @@ export async function startSupervisorFaultProxy(
     const objectId = pathname.match(/^\/runtime-objects\/([^/?]+)/)?.[1];
     const requestRule = matching(
       witness,
-      ["hold-request", "block-receipts"],
+      ["hold-request", "hold-requests", "block-receipts"],
       objectId,
     );
 

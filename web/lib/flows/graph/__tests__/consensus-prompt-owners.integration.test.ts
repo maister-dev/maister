@@ -1275,20 +1275,52 @@ describe("Consensus prompt owners through the production graph driver", () => {
 
     await drive(seeded.runId);
     await settleDraftsAndResume(seeded.runId);
-    const [attempt] = await database.db
-      .select({ id: nodeAttempts.id })
-      .from(nodeAttempts)
-      .where(eq(nodeAttempts.runId, seeded.runId));
-    const cells = await database.db
-      .select()
-      .from(consensusRoundVerdicts)
-      .where(eq(consensusRoundVerdicts.nodeAttemptId, attempt.id));
+    // A driver invocation may yield while an immutable output read is busy.
+    // Run the production continuations until this case owns its final result.
+    const owners = startPromptOwnerWorker({
+      db: database.db as unknown as Db,
+      owners: flowPromptOwners,
+    });
+    const continuation = startFlowContinuationWorker({
+      db: database.db as unknown as Db,
+      runtimeRoot: supervisor.runtimeRoot,
+      executionHosts: createExecutionHosts({
+        db: database.db as unknown as Db,
+      }),
+    });
 
-    expect(cells).toHaveLength(2);
-    expect(
-      cells.every((cell) => cell.errorCode === "output_cap_exceeded"),
-    ).toBe(true);
-    expect(cells.every((cell) => cell.verdict === "disagree")).toBe(true);
+    try {
+      await expect
+        .poll(
+          async () => {
+            const [run] = await database.db
+              .select({ status: runs.status })
+              .from(runs)
+              .where(eq(runs.id, seeded.runId));
+
+            return run.status;
+          },
+          { timeout: 60_000, interval: 100 },
+        )
+        .toBe("NeedsInput");
+      const [attempt] = await database.db
+        .select({ id: nodeAttempts.id })
+        .from(nodeAttempts)
+        .where(eq(nodeAttempts.runId, seeded.runId));
+      const cells = await database.db
+        .select()
+        .from(consensusRoundVerdicts)
+        .where(eq(consensusRoundVerdicts.nodeAttemptId, attempt.id));
+
+      expect(cells).toHaveLength(2);
+      expect(
+        cells.every((cell) => cell.errorCode === "output_cap_exceeded"),
+      ).toBe(true);
+      expect(cells.every((cell) => cell.verdict === "disagree")).toBe(true);
+    } finally {
+      await continuation.stop();
+      await owners.stop();
+    }
   }, 180_000);
   it("P0-5: max_tokens drafts remain partial evidence and cost no verifier turn", async () => {
     const body = "An unfinished but useful draft";

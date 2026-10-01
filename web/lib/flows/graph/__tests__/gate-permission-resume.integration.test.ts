@@ -3,8 +3,9 @@ import type { RealSupervisor } from "@/test-support/real-supervisor";
 import type { ProjectionWorker } from "@/lib/execution-host/events/projection-worker";
 
 import { fork, type ChildProcess } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { get, type IncomingMessage } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -43,6 +44,7 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import { startSupervisorFaultProxy } from "@/test-support/supervisor-fault-proxy";
 import {
   startRealSupervisor,
   useRealSupervisorUrl,
@@ -88,6 +90,7 @@ afterAll(async () => {
 function startProcess(
   script: string,
   runId: string,
+  supervisorUrl: string = supervisor.url,
 ): Readonly<{
   child: ChildProcess;
   exited: Promise<number | null>;
@@ -103,7 +106,11 @@ function startProcess(
         "--import",
         path.resolve("scripts/_register-shim.mjs"),
       ],
-      env: { ...process.env, DB_URL: database.databaseUrl },
+      env: {
+        ...process.env,
+        DB_URL: database.databaseUrl,
+        MAISTER_SUPERVISOR_URL: supervisorUrl,
+      },
       stdio: ["ignore", "pipe", "pipe", "ipc"],
     },
   );
@@ -185,19 +192,131 @@ describe("Owned Flow checkpointed gate permission resume", () => {
     { gateKind: "skill_check", parentKind: "cli", window: "live" },
     { gateKind: "ai_judgment", parentKind: "ai_coding", window: "live" },
     { gateKind: "skill_check", parentKind: "cli", window: "claim SIGKILL" },
+    { gateKind: "skill_check", parentKind: "cli", window: "busy content" },
+    {
+      gateKind: "skill_check",
+      parentKind: "cli",
+      window: "sustained busy content",
+    },
     { gateKind: "ai_judgment", parentKind: "cli", window: "resume refused" },
   ] as const)(
     "owner-flow-gate-resume: $gateKind after $parentKind ($window)",
     async ({ gateKind, parentKind, window }) => {
       const seeded = await seedGateFlow(gateKind, parentKind);
       const hosts = createExecutionHosts({ db });
-      const driver = startProcess("flow-prompt-owner-process.ts", seeded.runId);
+      const proxy =
+        window === "busy content" || window === "sustained busy content"
+          ? await startSupervisorFaultProxy(supervisor.url)
+          : undefined;
+      const heldRead = proxy?.arm(
+        {
+          caseId: "gate-permission-busy-content",
+          method: "GET",
+          path: /^\/runtime-objects\/[^/]+\/content$/,
+        },
+        "hold-requests",
+      );
+      const driver = startProcess(
+        "flow-prompt-owner-process.ts",
+        seeded.runId,
+        proxy?.url,
+      );
+      const occupiedReads: IncomingMessage[] = [];
       let claimProcess: ReturnType<typeof startProcess> | undefined;
       let continuation:
         | ReturnType<typeof startFlowContinuationWorker>
         | undefined;
 
       try {
+        if (heldRead && proxy) {
+          await heldRead.awaitReached();
+          const client = await hosts.forRun(seeded.runId);
+          const bytes = new Uint8Array(8 * 1024 * 1024).fill(120);
+          const objectId = randomUUID();
+          const sha256 = createHash("sha256").update(bytes).digest("hex");
+
+          await client.reserveRuntimeObject({
+            objectId,
+            kind: "generated_artifact",
+            logicalName: "read-cap-control.bin",
+            mimeType: "application/octet-stream",
+            sizeBytes: bytes.length,
+            sha256,
+            generation: 1,
+            retentionClass: "run",
+          });
+          await client.uploadRuntimeObject({
+            objectId,
+            generation: 1,
+            bytes,
+            sha256,
+          });
+          // Unread responses hold the real host's two verified response spools.
+          for (let index = 0; index < 2; index += 1) {
+            const response = await new Promise<IncomingMessage>(
+              (resolve, reject) => {
+                get(
+                  `${supervisor.url}/runtime-objects/${objectId}/content`,
+                  resolve,
+                ).once("error", reject);
+              },
+            );
+
+            occupiedReads.push(response);
+            expect(response.statusCode).toBe(200);
+          }
+          const busyResponse = proxy.arm(
+            {
+              caseId: "gate-permission-real-busy-response",
+              method: "GET",
+              path: /^\/runtime-objects\/[^/]+\/content$/,
+            },
+            "hold-responses",
+          );
+
+          heldRead.release();
+          expect((await busyResponse.awaitReached()).status).toBe(409);
+          await expect
+            .poll(() => busyResponse.observations.length)
+            .toBeGreaterThanOrEqual(heldRead.observations.length);
+          expect(
+            busyResponse.observations.every(
+              (response) => response.status === 409,
+            ),
+          ).toBe(true);
+          busyResponse.release();
+          if (window === "sustained busy content") {
+            await expect
+              .poll(() => driver.child.exitCode, { timeout: 10_000 })
+              .toBe(0);
+            const [yielded] = await db
+              .select()
+              .from(runs)
+              .where(eq(runs.id, seeded.runId));
+            const prompts = await db
+              .select()
+              .from(executionCommands)
+              .where(
+                and(
+                  eq(executionCommands.runId, seeded.runId),
+                  eq(executionCommands.kind, "session.prompt"),
+                ),
+              );
+
+            expect(yielded.status).toBe("Running");
+            expect(prompts).toHaveLength(1);
+            expect(prompts[0].state).toBe("accepted");
+            expect(driver.output()).toContain("command_in_progress");
+          }
+          for (const response of occupiedReads) response.destroy();
+          occupiedReads.length = 0;
+          if (window === "sustained busy content")
+            continuation = startFlowContinuationWorker({
+              db,
+              runtimeRoot: supervisor.runtimeRoot,
+              executionHosts: hosts,
+            });
+        }
         if (parentKind === "ai_coding") {
           await expect
             .poll(
@@ -236,7 +355,7 @@ describe("Owned Flow checkpointed gate permission resume", () => {
         await expect
           .poll(
             async () => {
-              if (driver.child.exitCode !== null)
+              if (driver.child.exitCode !== null && !continuation)
                 throw new Error(driver.output());
               const permissions = await db
                 .select()
@@ -252,6 +371,10 @@ describe("Owned Flow checkpointed gate permission resume", () => {
             { timeout: 45_000 },
           )
           .toMatchObject({ respondedAt: null });
+        if (window === "sustained busy content") {
+          await continuation?.stop();
+          continuation = undefined;
+        }
         const permissions = await db
           .select()
           .from(hitlRequests)
@@ -580,12 +703,40 @@ describe("Owned Flow checkpointed gate permission resume", () => {
               "utf8",
             ),
           ).toBe("work\n");
+      } catch (error) {
+        const [run] = await db
+          .select()
+          .from(runs)
+          .where(eq(runs.id, seeded.runId));
+        const commands = await db
+          .select({
+            id: executionCommands.id,
+            kind: executionCommands.kind,
+            state: executionCommands.state,
+            applicationState: executionCommands.applicationState,
+            targetSessionId: executionCommands.targetSessionId,
+          })
+          .from(executionCommands)
+          .where(eq(executionCommands.runId, seeded.runId));
+
+        throw new Error(
+          JSON.stringify({
+            runId: seeded.runId,
+            runStatus: run?.status,
+            commands,
+            driverOutput: driver.output(),
+            claimOutput: claimProcess?.output(),
+          }),
+          { cause: error },
+        );
       } finally {
         await continuation?.stop();
         claimProcess?.child.kill("SIGKILL");
         await claimProcess?.exited;
         driver.child.kill("SIGKILL");
         await driver.exited;
+        for (const response of occupiedReads) response.destroy();
+        await proxy?.close();
       }
     },
     160_000,

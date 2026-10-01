@@ -321,6 +321,17 @@ cannot advance the cursor. Full raw payloads never enter the canonical event
 table or a general metadata DTO. A browser read of reconstructed output uses
 the same repository-content permission as the corresponding object download.
 
+Referenced-content reads retry only the host's `command_in_progress` refusal,
+at most five attempts with 100/200/300/400 ms abortable backoff inside the
+existing read deadline. Each refusal logs the event/object identity and whether
+the budget is exhausted. Other errors and cancellation propagate unchanged;
+neither a failed read nor a retry advances the canonical session cursor. A Flow
+event-reader failure ends its local waiter through the existing durable
+continuation boundary, preserving the accepted prompt and session for
+reattachment instead of leaving permission HITL stranded. The real gate-resume
+controls fill the host's two-read cap, then prove both transient read recovery
+and exhausted-reader continuation without another prompt admission.
+
 ## Outbox partitions and producer pressure (Implemented — ADR-183)
 
 Logical admission and append accounting use the same transactional row/byte

@@ -318,12 +318,13 @@ export async function* streamCanonicalSessionEvents(input: {
 
     for (const row of rows) {
       if (row.runSequence === null) continue;
-      after = row.runSequence;
       const prepared = await prepareSessionContent(
         input.db,
         row,
         AbortSignal.timeout(8_000),
       );
+
+      after = row.runSequence;
       const event = supervisorEventFromCanonicalRow(prepared);
 
       if (!event) continue;

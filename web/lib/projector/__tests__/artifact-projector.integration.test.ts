@@ -6,7 +6,11 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
 import { getCurrentArtifact } from "@/lib/flows/graph/artifact-store";
-import { setDefaultTransportForTests } from "@/lib/execution-host/default-transport";
+import {
+  defaultTransport,
+  setDefaultTransportForTests,
+} from "@/lib/execution-host/default-transport";
+import { MaisterError } from "@/lib/errors";
 import { prepareSessionContent } from "@/lib/execution-host/events/session-content";
 import { projectRunEvents } from "@/lib/projector/artifact-projector";
 import {
@@ -434,5 +438,68 @@ describe("projectRunEvents", () => {
         AbortSignal.timeout(10_000),
       ),
     ).rejects.toThrow(/identity or byte integrity/);
+  });
+
+  it.each(["UNAUTHORIZED", "ACP_PROTOCOL"] as const)(
+    "session content does not retry a non-busy %s refusal",
+    async (code) => {
+      const seeded = await seedRun();
+      const { eventId } = await recordOffloadedPreviewEvent(seeded, {
+        sequence: 0n,
+        url: "https://preview.example.test/read-refused",
+      });
+      const event = await loadEvent(eventId);
+      const failure = new MaisterError(code, "content read refused", {
+        details: { reason: "runtime_object_integrity_mismatch" },
+      });
+      let reads = 0;
+
+      setDefaultTransportForTests({
+        ...defaultTransport(),
+        async openRuntimeObjectContent() {
+          reads += 1;
+          throw failure;
+        },
+      });
+      await expect(
+        prepareSessionContent(
+          db as never,
+          event as never,
+          AbortSignal.timeout(10_000),
+        ),
+      ).rejects.toBe(failure);
+      expect(reads).toBe(1);
+    },
+  );
+
+  it("session content cancellation interrupts busy-read backoff", async () => {
+    const seeded = await seedRun();
+    const { eventId } = await recordOffloadedPreviewEvent(seeded, {
+      sequence: 0n,
+      url: "https://preview.example.test/read-cancelled",
+    });
+    const event = await loadEvent(eventId);
+    const controller = new AbortController();
+    let reads = 0;
+    let cancellation: ReturnType<typeof setTimeout> | undefined;
+
+    setDefaultTransportForTests({
+      ...defaultTransport(),
+      async openRuntimeObjectContent() {
+        reads += 1;
+        cancellation = setTimeout(() => controller.abort(), 5);
+        throw new MaisterError("PRECONDITION", "object read cap reached", {
+          details: { reason: "command_in_progress" },
+        });
+      },
+    });
+    try {
+      await expect(
+        prepareSessionContent(db as never, event as never, controller.signal),
+      ).rejects.toMatchObject({ name: "AbortError" });
+      expect(reads).toBe(1);
+    } finally {
+      clearTimeout(cancellation);
+    }
   });
 });

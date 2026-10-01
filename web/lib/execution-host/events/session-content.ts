@@ -1,11 +1,14 @@
 import "server-only";
 
 import type { Db } from "../db";
+import type { RuntimeObjectContentStream } from "../contracts";
 import type { ExecutionEvent } from "@/lib/db/schema";
 
 import { createHash } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { eq } from "drizzle-orm";
+import pino from "pino";
 
 import {
   parseCommandEventPayloadV2,
@@ -23,7 +26,48 @@ import { projectionTransaction } from "./projection-transaction";
 import { projectRuntimeObject } from "./runtime-object-projector";
 
 import { executionEventStreams } from "@/lib/db/schema";
-import { MaisterError } from "@/lib/errors";
+import { isMaisterError, MaisterError } from "@/lib/errors";
+
+const log = pino({
+  name: "session-content",
+  level: process.env.LOG_LEVEL ?? "info",
+});
+const BUSY_READ_ATTEMPTS = 5;
+const BUSY_READ_BACKOFF_MS = 100;
+
+/** The host's two-read cap is temporary refusal, never missing session evidence. */
+async function openSessionContent(
+  objectId: string,
+  eventId: string,
+  signal: AbortSignal,
+): Promise<RuntimeObjectContentStream> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await defaultTransport().openRuntimeObjectContent(objectId, {
+        signal,
+      });
+    } catch (error) {
+      if (
+        signal.aborted ||
+        !isMaisterError(error) ||
+        error.details?.reason !== "command_in_progress"
+      )
+        throw error;
+      log.warn(
+        {
+          objectId,
+          eventId,
+          attempt,
+          reason: "command_in_progress",
+          exhausted: attempt >= BUSY_READ_ATTEMPTS,
+        },
+        "session-content-read-busy",
+      );
+      if (attempt >= BUSY_READ_ATTEMPTS) throw error;
+      await delay(BUSY_READ_BACKOFF_MS * attempt, undefined, { signal });
+    }
+  }
+}
 
 function corrupt(): ExecutionEventProjectionError {
   return new ExecutionEventProjectionError(
@@ -119,9 +163,10 @@ export async function prepareSessionContent(
       "session content transport is unavailable",
     );
   }
-  const response = await defaultTransport().openRuntimeObjectContent(
+  const response = await openSessionContent(
     reference.objectId,
-    { signal },
+    event.id,
+    signal,
   );
   const reader = response.body.getReader();
   let completed = false;
