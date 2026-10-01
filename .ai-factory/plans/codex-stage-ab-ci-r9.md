@@ -2,7 +2,7 @@
 
 Branch: `codex/stage-ab-ci-r9`
 Created: 2026-09-28
-Status: **All seven R9 fixes and local T13 qualification are complete. CI sharding/provisioning is implemented; latest hosted master run 36759766717 still fails Intel isolation after build heap exhaustion. T5/S5.2 and T13 hosted acceptance remain open.**
+Status: **All seven R9 fixes and local T13 qualification are complete. CI sharding/provisioning is implemented; latest hosted master run 36858618377 fails Intel isolation after build heap exhaustion and one gate-resume control on Node 24.15.0. T5/S5.2 and T13 hosted acceptance remain open.**
 Refined: 2026-09-28 — SDD/API/persistence contracts and RED → GREEN → REFACTOR acceptance audit.
 Planning base: `6fb6e72cceda82055d4c8fc0a6f3f629eae526bf` (local master, Librarian merged).
 Request baseline: `b85ac775` (2026-09-28); line references below use the planning base unless explicitly identified as supplied history.
@@ -449,4 +449,78 @@ The local qualification covers the seven named R9 defects, their existing negati
 
 **Context gates.** Architecture: the Web reaches ACP through execution-host/supervisor boundaries, while the host owns the child and causal publication. Rules: strict typed helpers, current-owner rechecks inside the mutation transaction, scheduler → run → scratch → message lock order, one shared park boundary and existing admission CAS remain enforced. Roadmap: R9 implementation and local qualification are complete; S5.2 retains its hosted gate, while S5.3/S5.4/C11, Linux hosting, pacing and Stage C remain separate. Missing optional top-level RULES.md is advisory; the configured project rule fragments were read. Existing lint warnings and opt-in load suites are explicitly identified rather than silently edited or quarantined.
 
-**Hosted blocker.** The latest inspected master run is [36759766717](https://github.com/maister-dev/maister/actions/runs/36759766717) at `58d373feffea43c9f274258984049984fab26e84`. All four web shards and both runtime/supervisor legs passed on the two supported Node patches; the other enabled image/unit/browser jobs also passed. Intel isolation ran 54m40s and failed with exit 124: runtime ready at 734 seconds, preflight 1/1 complete at 1,032 seconds, remaining slice budget 2,208 seconds, failure at 3,248 seconds and cleanup at 3,261 seconds. Report artifact `11120811822` contains only the preflight JSON, not a complete isolation report; diagnostics `11120836290` prove repeated Next production-build heap exhaustion. These are downloaded evidence, not inferred outcomes. The remote master delta from the local base is one release-documentation/site-copy commit, with no CI, R9, API or migration change. S5.2 remains 42/45; successful S5.2 closure would make 43/45 because S5.3/S5.4 remain unfinished. Final owner push and a complete green final-SHA matrix with all 50 required isolation cases, preflight, artifacts and measured timings are required. S5.3a owns the observed Intel hosting/resource decision; no unasked push, workflow dispatch, resource/timeout increase or Linux move is substituted for acceptance.
+**Hosted blocker.** The latest inspected owner-pushed master run is [36858618377](https://github.com/maister-dev/maister/actions/runs/36858618377) at `1ef389077b4fa008ba49a979ce80d94fca1f5277`, including the R9 review fixes. Both runtime/supervisor jobs pass (111 cases each; 2m12s and 2m13s). Web Node 24.19.0 passes both shards (325/307 cases; 28m12s/36m35s); Node 24.15.0 shard 2 passes (307 cases; 36m27s), while shard 1 fails one of 325 cases in 27m40s: `owner-flow-gate-resume: 'skill_check' after 'cli' ('claim SIGKILL')` cannot observe the initial permission within 45 seconds, before the intended claim kill. The exact hosted cause is not established by the reporter alone. Every downloaded Linux report was checked with the unchanged `validateLaneReport` from this SHA; five pass, the failed shard is correctly rejected.
+
+Intel isolation lasts 53m24s. `timing.txt` records runtime ready at 582 seconds, preflight complete at 841 seconds, slice allowance 2,340 seconds, exit 124 at 3,187 seconds and successful runtime cleanup at 3,194 seconds. Report artifact `11161989043` contains only the successful preflight JSON (1/1); validation as the complete isolation slice correctly rejects its one suite instead of seven. Diagnostics `11162049039` retain repeated Next production-build heap exhaustion and failures to inspect still-live fixture processes. No complete 50-case isolation report exists. Downloaded evidence and validation are retained under `/private/tmp/s52-36858618377-artifacts` and `/private/tmp/s52-36858618377-validation.json`. The one-run monitor is paused after the final inspection. S5.2 remains 42/45; closing it would make 43/45 because S5.3/S5.4 remain unfinished.
+
+### Hosted acceptance follow-up (2026-10-01)
+
+Owner instruction: continue resolving these failures locally and commit by phase. Keep the two Node versions, two web shards, serial Intel/macOS isolation, Colima pins and existing runner/time budgets. No push or CI rerun is authorized. S5.3a is needed only if measured software corrections still cannot satisfy the existing isolation envelope; a software fix that reduces resource use does not require moving the lane.
+
+- [x] Reproduce and fix the reachable gate permission strand; preserve the original gate-resume cases, expose child diagnostics on assertion failure, and distinguish the controlled defect from the unproved hosted cause. Verify RED → GREEN, the full owning suite and relevant shared consumers before committing.
+- [x] Diagnose and correct production-build memory use under the observed 2 GiB heap; measure cold builds and the real production isolation slice without increasing CI resources. Preserve strict process ownership and add actionable native diagnostics for the independently observed inspection failures. Do not claim those failures resolved without a control.
+- [x] Run the fix qualification gates and commit completed phases. Record exact reports, failures and remaining hosted limits; leave T5/T13b and S5.2 unchecked until a new owner-pushed SHA passes the full hosted contract.
+
+
+**Local follow-up completed (2026-10-01).** Gate/content fix commit
+`5660152cd`; production-build/inspection-diagnostics commit `c33680e3b`.
+The following reports exercised the final source diff over `8da1d2b438` before
+committing. The source diff was saved before isolation and compared byte-for-byte
+after the last consumer run; it was unchanged. HEAD remained fixed during every
+lane. These commits change no API schema, database migration, runner, Colima pin,
+CI heap/resource setting, retry policy for provisioning or job timeout.
+
+- **Gate/content RED → GREEN:** a real supervisor's two-read cap reproduces
+  the stranded permission; removing only failure notification independently
+  reproduces the exhausted-reader strand. Final transient/sustained controls
+  pass (`/private/tmp/s52-gate-busy-typed-green.json`). Full gate resume (8),
+  gate result (3), node permission resume (11), crash boundary (15) and artifact
+  content (7) pass in `/private/tmp/s52-gate-content-full-green.json`.
+  Its initial consensus result was 22/23: a case read verdicts before a
+  retryable owner application completed. A temporary real-DB insert refusal
+  proved that fixture RED; waiting through the production workers passed the
+  same control. The refusal was removed. Full corrected consensus passes
+  23/23 in `/private/tmp/s52-consensus-full-green.json` (238.89 seconds).
+  This replaces the failed consensus result; overlapping controls are not
+  added to the distinct total. The original hosted gate timeout still has
+  no proved causal trace; the fixture now preserves child diagnostics.
+- **Shared consumers:** bounded-output, commands, run-transcript-projector and
+  steer-transcript-boundary pass 49/49 in four full suites, 42.74 seconds
+  (`/private/tmp/s52-content-consumers-green.json`). The gate/content total is
+  **116 distinct integration cases in ten full suites**, no skips.
+- **Build RED → GREEN:** cold forced Webpack fails with V8 OOM under an
+  explicit 2048 MiB heap cap; the default production bundler succeeds with the
+  same cap. The standalone measurement is 14.38 seconds and peak RSS
+  4,701,356,032 bytes (about 4.38 GiB); native memory is outside the V8 cap.
+  The real lane's fresh owned build takes 59.292 seconds. No CI resource
+  increase is part of the fix. Build and native-inspection evidence are
+  detailed in `.ai-factory/patches/2026-10-01-14.00.md`.
+- **Complete isolation:** local Darwin ARM64 / Node 24.15.0, explicit 2048 MiB
+  V8 cap: **50/50, seven full suites**, all required case names and exact
+  suite membership accepted by unchanged `validateLaneReport`. Report:
+  `/private/tmp/s52-fix-isolation-evidence/maister-ab-isolation-ithU4W/vitest.json`.
+  Vitest takes 905.87 seconds; total lane 907.263 seconds, including 0.703
+  seconds cleanup, zero leaks, exit 0. Separate real preflight passes 1/1 in
+  7.478 seconds including cleanup, report
+  `/private/tmp/s52-fix-isolation-evidence/maister-ab-isolation-IVZZlV/vitest.json`.
+  This qualifies production boot and restarts despite the build's NFT warnings.
+- **Native diagnostics:** the real sandbox-denial control is RED without
+  native stage/errno diagnostics and GREEN with them, preserving ownership
+  refusal and child survival (`/private/tmp/s52-inspection-{red,green}.json`).
+  The full O-identity control also passes in the isolation report. This does
+  not establish or fix the cause of the hosted transient inspection failure;
+  future failure evidence will include the syscall stage and errno.
+- **Final checks:** docs/ERD, API contracts, web/supervisor/MCP types, MCP build,
+  scoped ESLint and C compiler warnings/syntax checks pass. No new unit-only
+  coverage was added; the real controls and existing full consumer suites
+  own the behavior. The combined distinct local qualification is **166 cases
+  in 17 full integration suites**, plus the separate preflight. A final
+  adversarial review found no actionable regression.
+
+**Still required:** merge these follow-up commits into the branch the owner
+pushes, then inspect that new hosted SHA. Both Node versions' web shards and
+runtime/supervisor jobs, separate preflight, complete 50-case Intel isolation
+report, timing and the under-60-minute job must all pass. Local ARM evidence
+cannot close this gate. T5/T13b remain unchecked; S5.2 stays **42/45**, with
+closure becoming **43/45**, and S5.3/S5.4 remain open. No push or hosted rerun
+was performed. The completed-run monitor remains paused.
