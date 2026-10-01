@@ -2,7 +2,7 @@
 
 Branch: `codex/stage-ab-ci-r9`
 Created: 2026-09-28
-Status: **All seven R9 fixes and local T13 qualification are complete. CI sharding/provisioning is implemented; latest hosted master run 36858618377 fails Intel isolation after build heap exhaustion and one gate-resume control on Node 24.15.0. T5/S5.2 and T13 hosted acceptance remain open.**
+Status: **All seven R9 fixes and local T13 qualification are complete. Latest hosted master run 36877828238 passes every Linux job and all four web shards; Intel production build succeeds, but the serial isolation slice exceeds its remaining budget and has no complete report. T5/S5.2 and T13 hosted acceptance remain open; S5.3a must resolve the measured Intel budget shortfall before a platform change.**
 Refined: 2026-09-28 — SDD/API/persistence contracts and RED → GREEN → REFACTOR acceptance audit.
 Planning base: `6fb6e72cceda82055d4c8fc0a6f3f629eae526bf` (local master, Librarian merged).
 Request baseline: `b85ac775` (2026-09-28); line references below use the planning base unless explicitly identified as supplied history.
@@ -449,7 +449,7 @@ The local qualification covers the seven named R9 defects, their existing negati
 
 **Context gates.** Architecture: the Web reaches ACP through execution-host/supervisor boundaries, while the host owns the child and causal publication. Rules: strict typed helpers, current-owner rechecks inside the mutation transaction, scheduler → run → scratch → message lock order, one shared park boundary and existing admission CAS remain enforced. Roadmap: R9 implementation and local qualification are complete; S5.2 retains its hosted gate, while S5.3/S5.4/C11, Linux hosting, pacing and Stage C remain separate. Missing optional top-level RULES.md is advisory; the configured project rule fragments were read. Existing lint warnings and opt-in load suites are explicitly identified rather than silently edited or quarantined.
 
-**Hosted blocker.** The latest inspected owner-pushed master run is [36858618377](https://github.com/maister-dev/maister/actions/runs/36858618377) at `1ef389077b4fa008ba49a979ce80d94fca1f5277`, including the R9 review fixes. Both runtime/supervisor jobs pass (111 cases each; 2m12s and 2m13s). Web Node 24.19.0 passes both shards (325/307 cases; 28m12s/36m35s); Node 24.15.0 shard 2 passes (307 cases; 36m27s), while shard 1 fails one of 325 cases in 27m40s: `owner-flow-gate-resume: 'skill_check' after 'cli' ('claim SIGKILL')` cannot observe the initial permission within 45 seconds, before the intended claim kill. The exact hosted cause is not established by the reporter alone. Every downloaded Linux report was checked with the unchanged `validateLaneReport` from this SHA; five pass, the failed shard is correctly rejected.
+**Earlier hosted failure.** The preceding owner-pushed master run is [36858618377](https://github.com/maister-dev/maister/actions/runs/36858618377) at `1ef389077b4fa008ba49a979ce80d94fca1f5277`, including the R9 review fixes. Both runtime/supervisor jobs pass (111 cases each; 2m12s and 2m13s). Web Node 24.19.0 passes both shards (325/307 cases; 28m12s/36m35s); Node 24.15.0 shard 2 passes (307 cases; 36m27s), while shard 1 fails one of 325 cases in 27m40s: `owner-flow-gate-resume: 'skill_check' after 'cli' ('claim SIGKILL')` cannot observe the initial permission within 45 seconds, before the intended claim kill. The exact hosted cause is not established by the reporter alone. Every downloaded Linux report was checked with the unchanged `validateLaneReport` from this SHA; five pass, the failed shard is correctly rejected.
 
 Intel isolation lasts 53m24s. `timing.txt` records runtime ready at 582 seconds, preflight complete at 841 seconds, slice allowance 2,340 seconds, exit 124 at 3,187 seconds and successful runtime cleanup at 3,194 seconds. Report artifact `11161989043` contains only the successful preflight JSON (1/1); validation as the complete isolation slice correctly rejects its one suite instead of seven. Diagnostics `11162049039` retain repeated Next production-build heap exhaustion and failures to inspect still-live fixture processes. No complete 50-case isolation report exists. Downloaded evidence and validation are retained under `/private/tmp/s52-36858618377-artifacts` and `/private/tmp/s52-36858618377-validation.json`. The one-run monitor is paused after the final inspection. S5.2 remains 42/45; closing it would make 43/45 because S5.3/S5.4 remain unfinished.
 
@@ -524,3 +524,51 @@ report, timing and the under-60-minute job must all pass. Local ARM evidence
 cannot close this gate. T5/T13b remain unchecked; S5.2 stays **42/45**, with
 closure becoming **43/45**, and S5.3/S5.4 remain open. No push or hosted rerun
 was performed. The completed-run monitor remains paused.
+
+
+### Hosted follow-up result (2026-10-01, run 36877828238)
+
+[Run 36877828238](https://github.com/maister-dev/maister/actions/runs/36877828238)
+completed with failure at SHA `370f8dbd5f66df0df7504a58b0e39ba2276454c7`.
+Nine mandatory jobs passed; Intel isolation failed; the optional web integration
+job was skipped by its workflow condition. Lint/types/unit/contracts, production
+image transport/shutdown and librarian browser acceptance all passed.
+
+| Hosted A/B job | Report | Job duration |
+| --- | --- | --- |
+| Node 24.15.0 web shard 1 | 327/327, 22 suites | 28m21s |
+| Node 24.15.0 web shard 2 | 307/307, 22 suites | 36m24s |
+| Node 24.19.0 web shard 1 | 327/327, 22 suites | 28m38s |
+| Node 24.19.0 web shard 2 | 307/307, 22 suites | 35m54s |
+| Node 24.15.0 runtime/supervisor | 111/111, 10 supervisor suites | 2m06s |
+| Node 24.19.0 runtime/supervisor | 111/111, 10 supervisor suites | 2m23s |
+| macOS Intel isolation | Preflight 1/1 only; no full slice report | 54m26s, failed |
+
+All six Linux reports pass the unchanged `validateLaneReport` from the tested
+SHA, including exact shard file membership. Preflight independently passes its
+required-case validation. Treating its report as full isolation correctly fails
+with one suite instead of seven; the required full inventory remains 50 cases.
+Validation output: `/private/tmp/s52-36877828238-validation.json`. Downloaded
+reports and diagnostics: `/private/tmp/s52-36877828238-artifacts`.
+
+The Intel build now completes in **228.795 seconds**, with no reproduced V8 OOM
+in this run. Runtime provisioning succeeds at elapsed 700 seconds. Preflight
+completes at 944 seconds; the slice starts at 945 with **2,295 seconds (38m15s)**
+remaining. The slice hits the timeout (exit **124**) at elapsed 3,246 seconds;
+runtime cleanup succeeds at 3,254 seconds. The slice cleanup reports one owned
+leak reaped after interruption; this is not a clean successful lane verdict.
+
+The console confirms complete green partitions (6 cases, 1,044.909 seconds)
+and scratch dispatch-window (10 cases, 957.120 seconds) suites. It then enters
+process-death controls and is interrupted during D4 web restart work. These
+partial console results cannot replace the full JSON reporter. Artifact
+`11173752389` contains only the preflight JSON; diagnostics artifact
+`11173512495` contains `timing.txt`, runtime/build logs and the interrupted lane.
+
+**Disposition:** the gate shard and build fixes pass their hosted checks, but
+the measured serial Intel lane does not fit the existing envelope. Follow the
+plan's budget-shortfall boundary: S5.3a must decide any Linux hosting change;
+this check changes no runner, platform, timeout or provisioning retry. S5.2
+stays **42/45**, and T5/T13b stay unchecked. No CI rerun or push was performed.
+The one-run monitor was paused after report validation to avoid duplicate
+notifications.
