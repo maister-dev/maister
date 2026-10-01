@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { GateDef } from "@/lib/config.schema";
-import type { ArtifactKind, GateVerdict } from "@/lib/db/schema";
+import type { ArtifactKind, GateResult, GateVerdict } from "@/lib/db/schema";
 import type { FlowContext } from "../types";
 import type { AgentExecution } from "../runner-agent";
 import type { CompiledNode } from "./compile";
@@ -22,6 +22,7 @@ import {
 import { runCliStep } from "../runner-cli";
 
 import { isFlowDriverClaimLost } from "./driver-claim";
+import { loadGateCrashRecoveryWitness } from "./gate-crash-recovery";
 import { closeAppliedFlowPromptSession } from "./prompt-session-cleanup";
 import { hasPendingFlowPermission } from "./prompt-permission";
 import {
@@ -133,22 +134,62 @@ export async function runNodeGates(
   // The judge→rework loop (ai_judgment/human_review) is never relaxed here.
   // Fail-closed to strict on a null/malformed snapshot.
   const checks = checksFromSnapshot(loaded.run.executionPolicy ?? null);
+  const crashRecovery = await loadGateCrashRecoveryWitness(ctx.db, {
+    runId: loaded.run.id,
+    nodeId: node.id,
+    assignmentId: loaded.run.executionAssignmentId,
+  });
+  const inheritedGateRows: GateResult[] =
+    crashRecovery?.continuationAttempt?.id === nodeAttemptId
+      ? await ctx.db
+          .select()
+          .from(gateResults)
+          .where(eq(gateResults.nodeAttemptId, crashRecovery.sourceAttempt.id))
+      : [];
+  let beforeCrashedGate = inheritedGateRows.length > 0;
 
   for (const gate of node.gates) {
     const verdictSink: { verdict?: GateVerdict } = {};
     let status: Awaited<ReturnType<typeof runOneGate>>;
 
+    if (gate.id === crashRecovery?.evaluation.gateId) beforeCrashedGate = false;
+
     try {
-      status = await runOneGate(
-        gate,
-        node,
-        nodeAttemptId,
-        loaded,
-        context,
-        ctx,
-        checks,
-        verdictSink,
-      );
+      if (beforeCrashedGate) {
+        const matching = inheritedGateRows.filter(
+          (row) => row.gateId === gate.id,
+        );
+
+        if (matching.length !== 1)
+          throw new PromptOwnerInvariantError(
+            "gate_crash_recovery_prefix_missing",
+          );
+        const prior = matching[0];
+
+        if (
+          prior.status !== "passed" &&
+          prior.status !== "failed" &&
+          prior.status !== "skipped" &&
+          prior.status !== "overridden"
+        )
+          throw new PromptOwnerInvariantError(
+            "gate_crash_recovery_prefix_open",
+          );
+        status = prior.status === "overridden" ? "passed" : prior.status;
+        if (prior.verdict && prior.verdict.verdict !== "unparseable")
+          verdictSink.verdict = prior.verdict;
+      } else {
+        status = await runOneGate(
+          gate,
+          node,
+          nodeAttemptId,
+          loaded,
+          context,
+          ctx,
+          checks,
+          verdictSink,
+        );
+      }
     } catch (error) {
       if (isFencedError(error)) return { ok: false, fenced: true };
       throw error;
@@ -171,6 +212,7 @@ export async function runNodeGates(
         kind: gate.kind,
         mode: gate.mode,
         status,
+        inherited: beforeCrashedGate,
       },
       "gate executed",
     );

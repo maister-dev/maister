@@ -415,11 +415,46 @@ Discard removes the worktree but does not delete uploaded run artifacts in V1.
 Uploaded artifact retention is part of future typed artifact/blob-store policy.
 
 Stop and discard re-read the dialog under the run's locks (`runs`, then
-`scratch_runs`) inside their terminal transaction. Stop writes nothing once the
-dialog is `Review | Crashed | Done | Abandoned`, discard once it is `Done |
-Abandoned`, so of two racing terminal writers the loser writes and emits
-nothing and `run.abandoned` is emitted exactly once. Discard still records a
-worktree removal it already performed (2026-09-27 review fix).
+`scratch_runs`) inside their terminal transaction. A terminal loser changes no
+status and emits no duplicate event. Discard still records a worktree removal
+it already performed.
+
+**R9 S2 contract (Implemented):** The winning Stop
+(`Review` or `Abandoned`), non-workbench Discard, and shared workbench
+`recordDrop` transaction closes every open permission row with `responded_at`
+and the existing `_closed.reason = session_ended` marker. The operator's stored
+choice remains evidence; `superseded_at` stays unchanged. Status and closure
+commit together or neither commits. A repeated terminal call repairs legacy
+open rows under the same run lock without another host deletion or event.
+If Recover won that lock first, terminal replay must not close the successor's
+permissions. A late stored-answer retry receives the existing closed-session
+conflict and sends no input. Package Stop uses the creator gate without an edit
+lock, matching package Discard; project runs retain `operateScratchRun`.
+
+Permission notifications recheck the current incarnation and eligible dialog
+state under the same run → scratch locks before inserting a request, rebinding
+a stored answer or projecting `NeedsInput`. A notification already read when
+Stop/Discard commits cannot reopen the terminal dialog or create another open
+permission. A predecessor's notification cannot change its successor's
+permission or deliver a stored answer to the old session.
+
+### Scratch terminal consumer incarnation fence (Implemented — R9 S3)
+
+A scratch terminal observer must recheck the observed incarnation against the
+run's current default-session incarnation under the run → scratch row locks,
+before parking a permission or projecting exit/crash status. Host-session IDs
+locate those incarnation rows; the incarnation IDs decide ownership, never the
+resumable ACP handle. A stale terminal changes no status, permission or event
+and logs `scratch-stale-incarnation-terminal-ignored`. Current terminals still
+apply when lifecycle projection already marked their incarnation ended; Stop
+and Discard's terminal state remains fenced against a late observer.
+
+The actual runtime-events proxy can delay an old exit beyond successor create
+ACK, but canonical ingestion labels that arrival `stale_epoch`; it does not
+reach this observer. The owning transactional control explicitly supplies a
+previously read old event after the successor is bound, alongside current-ended
+incarnation and permission-park controls. It does not claim a reproduced live
+network race.
 
 ## Reconciliation, grace and Recover (Implemented)
 
@@ -453,6 +488,38 @@ The recovery windows below are normative; each cell names its owner.
 | runs `NeedsInputIdle`, dialog `NeedsInput` (host cap park) | — | the stored answer → `runScratchIdleResume` → respawn + `session/resume` → the re-raised permission is answered from the stored row; Recover refused with `next: "respond"` |
 | runs `NeedsInputIdle` never answered, past the TTL | — | keep-alive Pass 2 abandons the run **and** the dialog (`Abandoned`); queued rows read "Not sent" |
 | dialog `Review`, `Done` or `Abandoned` | — | terminal; queued rows read "Not sent" |
+
+### Commit-to-admission recovery (Implemented — ADR-192 / R9 S1)
+
+The continuation worker also owns a Running dialog left between its prompt-ready
+commit and `session.prompt` admission. [ADR-192](../decisions.md#adr-192-durable-scratch-prompt-intent-before-command-admission)
+requires each winning writer to freeze the exact owner and payload in that
+status transaction. The sender and re-drive verify the snapshot under the
+ledger admission transaction; an older completed operation on the same
+incarnation does not block a later turn. An unsettled operation does.
+
+| Durable state at a continuation visit | Required disposition |
+| --- | --- |
+| Running, current versioned intent, no command with its operation key | Under the run lock, use the frozen owner and payload in `issueOwnedPrompt`'s admission transaction; after commit, dispatch the original command once. Age only wakes the visit, never proves absence. |
+| Running, current intent, command present in any unresolved, terminal-unapplied or retired state | Leave delivery to that command's owner/recovery; never generate another key or host effect for the row. |
+| Running, intent bound to a prior assignment or incarnation | Refuse the stale intent and let the current status/owner transition win; never send it into a successor session. |
+| Running, no intent (pre-upgrade or mixed-version writer) | Delivery is unknown. Surface a durable diagnostic directing the operator to Stop, then start a new run; the Crashed-run Recover API does not apply after Stop. Do not guess an owner or requeue a `prompted` row. |
+| WaitingForUser with a queued row | The existing FIFO scratch arm remains the only dispatcher. Recover text queued behind earlier rows is a message operation when selected. |
+
+S1 acceptance requires production-web death at each launch, queued dispatch,
+direct send, Recover and D-A8 commit cut, followed by initialization on the
+same DB and host. For new intents, one eligible continuation visit MUST admit
+or find the original command; at most one ACP prompt effect may occur for its
+logical operation. A package turn MUST retain its action ID, edit-lock
+generation and prompt context. A null-intent legacy row MUST make the
+limitation visible and MUST NOT send a prompt. The production restart controls live in
+`dispatch-window.integration.test.ts` and run serially in the isolation lane.
+Permission notices are idempotent by run, host session and request ID under the
+run lock. Concurrent live/restarted observers must neither create a second HITL
+row nor turn a successfully resumed stored answer back into NeedsInput.
+The same-incarnation owner, terminal-unapplied command and tombstone controls
+live in `prompt-owners.integration.test.ts`. Local evidence does not close the
+hosted S5.2 gate.
 
 **Recover** (`POST /api/scratch-runs/{runId}/recover`) is a CAS on
 `runs.status = 'Crashed'`; the dialog must read `Crashed` too. It authenticates
@@ -489,11 +556,12 @@ prompt command was issued), `markScratchPromptRetryable` CASes the turn's row
 the transaction that sets the dialog `WaitingForUser` with
 `error_code`/`error_message`, so the row keeps its `sequence` and FIFO place,
 and the send or Recover answers `202 {delivery: "queued"}` rather than an error
-that would invite a second copy. A queued dispatch binds the run's host after
-claiming its row, inside the same failure path: a bind that fails there issued
-nothing either, whatever its error code (`failScratchMessageTurn`'s
-`nothingIssued`), so its row goes back to `queued` the same way instead of
-staying `prompted` under a `Running` dialog that no owner would pick up again.
+that would invite a second copy. A queued dispatch binds its host before its
+winning claim and records a
+bind refusal under the run lock while the dialog still waits. Its row remains
+`queued` without a prompt-ready commit. A failure after admission never
+turns an unresolved command back into a queued row. A bind refusal therefore cannot strand a `prompted` row under a Running
+dialog.
 Any other retryable failure came after a prompt command was issued: a re-send
 under the same logical key would only re-attach to that command, whose own
 recovery settles it, so the row stays `prompted` and the dialog `WaitingForUser`

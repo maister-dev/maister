@@ -1342,6 +1342,7 @@
       "Abandoned": "Abandoned"
     },
     "hostPaused": "Paused by the execution host — send again when it recovers",
+    "dispatchUnknown": "Delivery of this turn is unknown after a restart. Stop this run and start a new run.",
     "turnQuarantined": "The last turn's result could not be stored, so it ended without one. Send a new message to continue."
   },
   "board": {

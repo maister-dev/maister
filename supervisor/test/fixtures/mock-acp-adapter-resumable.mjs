@@ -273,6 +273,8 @@ class MockAgent {
       },
     });
 
+    // A journal-controlled replay can keep the answered continuation in flight.
+    const holdSelectedReplay = pendingReplay?.holdAfterSelected === true;
     if (pendingReplay) {
       const toolCall = pendingReplay.toolCall;
       const options = pendingReplay.options;
@@ -425,7 +427,10 @@ class MockAgent {
       }
     }
 
-    if (permissionSelected && HOLD_AFTER_PERMISSION && !session?.resumed) {
+    if (
+      permissionSelected &&
+      ((HOLD_AFTER_PERMISSION && !session?.resumed) || holdSelectedReplay)
+    ) {
       await new Promise((resolve) => {
         finishHeldPrompt = resolve;
       });

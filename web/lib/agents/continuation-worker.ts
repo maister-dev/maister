@@ -26,6 +26,7 @@ import { AgentPromptContinuationPending } from "./prompt-owner";
 import {
   agentTurns,
   executionAssignments,
+  executionCommands,
   hitlRequests,
   runMessages,
   runs,
@@ -56,31 +57,48 @@ export const SCRATCH_REDRIVE_SETTLE_MS = 5_000;
  * `afterCommit` wake racing this one makes it a no-op; FIFO by its
  * `ORDER BY sequence`. No attempt counter: a retryable failure returns the row
  * to the queue and stamps the dialog, which re-arms the settle window. */
-function redriveScratchQueue(
+function redriveScratchContinuation(
   db: Db,
   runId: string,
   hosts: ExecutionHosts,
 ): void {
-  void import("@/lib/scratch-runs/service")
-    .then(({ dispatchQueuedScratchMessages }) =>
-      dispatchQueuedScratchMessages(db as never, runId, hosts, {
-        source: "redrive",
-      }),
-    )
-    .then(({ dispatched, skipped }) => {
-      if (!dispatched)
-        log.debug({ runId, reason: skipped }, "scratch-redrive-skipped");
-    })
-    .catch((error: unknown) =>
-      log.warn(
-        {
-          runId,
-          code: isMaisterError(error) ? error.code : "UNKNOWN",
-          err: error instanceof Error ? error.message : String(error),
-        },
-        "scratch-redrive-failed",
-      ),
+  void (async () => {
+    const [scratch] = await db
+      .select({ status: scratchRuns.dialogStatus })
+      .from(scratchRuns)
+      .where(eq(scratchRuns.runId, runId));
+
+    if (scratch?.status === "Running") {
+      const { redriveRunningScratchPrompt } = await import(
+        "@/lib/scratch-runs/dispatch-recovery"
+      );
+
+      await redriveRunningScratchPrompt(db, runId, hosts);
+
+      return;
+    }
+    const { dispatchQueuedScratchMessages } = await import(
+      "@/lib/scratch-runs/service"
     );
+    const { dispatched, skipped } = await dispatchQueuedScratchMessages(
+      db as never,
+      runId,
+      hosts,
+      { source: "redrive" },
+    );
+
+    if (!dispatched)
+      log.debug({ runId, reason: skipped }, "scratch-redrive-skipped");
+  })().catch((error: unknown) =>
+    log.warn(
+      {
+        runId,
+        code: isMaisterError(error) ? error.code : "UNKNOWN",
+        err: error instanceof Error ? error.message : String(error),
+      },
+      "scratch-redrive-failed",
+    ),
+  );
 }
 
 /** Accepted turns and pending choices are the queue. Each bounded pass enters
@@ -105,6 +123,7 @@ export function startAgentContinuationWorker(input: {
   let stopped = false;
   const serve = async (): Promise<void> => {
     let cursor: string | null = null;
+    let tick = 0;
 
     while (!controller.signal.aborted) {
       const signal = AbortSignal.any([
@@ -113,6 +132,7 @@ export function startAgentContinuationWorker(input: {
       ]);
 
       try {
+        tick += 1;
         const [candidate] = await projectionTransaction(input.db, (tx) =>
           tx
             .select({ id: runs.id, status: runs.status, runKind: runs.runKind })
@@ -122,13 +142,10 @@ export function startAgentContinuationWorker(input: {
                 inArray(runs.runKind, ["agent", "scratch"]),
                 cursor ? gt(runs.id, cursor) : undefined,
                 or(
-                  // Scratch re-drive (ADR-182 A4): a project dialog idle past
-                  // the settle window with a message still queued and a
-                  // session a prompt can be admitted against. A dead session
-                  // is never dispatched into — the reconcile sweep owns it.
+                  // Age only selects a wake; admission proves ledger absence
+                  // and current ownership under the run lock (ADR-192).
                   and(
                     eq(runs.runKind, "scratch"),
-                    isNotNull(runs.projectId),
                     eq(runs.status, "Running"),
                     exists(
                       tx
@@ -137,19 +154,55 @@ export function startAgentContinuationWorker(input: {
                         .where(
                           and(
                             eq(scratchRuns.runId, runs.id),
-                            eq(scratchRuns.dialogStatus, "WaitingForUser"),
-                            sql`${scratchRuns.updatedAt} < now() - make_interval(secs => ${SCRATCH_REDRIVE_SETTLE_MS / 1_000})`,
-                          ),
-                        ),
-                    ),
-                    exists(
-                      tx
-                        .select({ id: runMessages.id })
-                        .from(runMessages)
-                        .where(
-                          and(
-                            eq(runMessages.runId, runs.id),
-                            eq(runMessages.delivery, "queued"),
+                            or(
+                              and(
+                                isNotNull(runs.projectId),
+                                eq(scratchRuns.dialogStatus, "WaitingForUser"),
+                                sql`${scratchRuns.updatedAt} < now() - make_interval(secs => ${SCRATCH_REDRIVE_SETTLE_MS / 1_000})`,
+                                exists(
+                                  tx
+                                    .select({ id: runMessages.id })
+                                    .from(runMessages)
+                                    .where(
+                                      and(
+                                        eq(runMessages.runId, runs.id),
+                                        eq(runMessages.delivery, "queued"),
+                                      ),
+                                    ),
+                                ),
+                              ),
+                              and(
+                                eq(scratchRuns.dialogStatus, "Running"),
+                                sql`${scratchRuns.updatedAt} < now() - interval '1 second'`,
+                                or(
+                                  and(
+                                    sql`${scratchRuns.activePromptIntent} IS NULL`,
+                                    sql`${scratchRuns.errorMetadata}->>'reason' IS DISTINCT FROM 'scratch_dispatch_unknown'`,
+                                  ),
+                                  and(
+                                    isNotNull(scratchRuns.activePromptIntent),
+                                    notExists(
+                                      tx
+                                        .select({ id: executionCommands.id })
+                                        .from(executionCommands)
+                                        .where(
+                                          and(
+                                            eq(
+                                              executionCommands.runId,
+                                              runs.id,
+                                            ),
+                                            eq(
+                                              executionCommands.kind,
+                                              "session.prompt",
+                                            ),
+                                            sql`${executionCommands.logicalOperationKey} = ${scratchRuns.activePromptIntent}->>'logicalOperationKey'`,
+                                          ),
+                                        ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
                           ),
                         ),
                     ),
@@ -298,7 +351,11 @@ export function startAgentContinuationWorker(input: {
         }
         cursor = candidate.id;
         if (candidate.runKind === "scratch") {
-          redriveScratchQueue(input.db, candidate.id, hosts);
+          log.info(
+            { workerId, tick, runId: candidate.id },
+            "scratch-continuation-visit",
+          );
+          redriveScratchContinuation(input.db, candidate.id, hosts);
           reason = null;
           continue;
         }

@@ -412,15 +412,32 @@ full classification table with its writers lives in
 | --- | --- | --- | --- |
 | `succeeded`, applied | the graph advances | the owner's completion | `applied` |
 | `failed` (ordinary), applied | the node fails; `runs.status='Failed'` per the graph's own rules | `Failed`, `decision` NULL | `applied` |
+| `failed` for a node (`node` or an answered `permission_resume` owner), with an accepted `session.crashed` on the exact command host stream and current incarnation before the prompt terminal (Implemented — ADR-177 amendment 2026-09-30) | `Crashed` (`session-crashed`); Recover re-asks the node exactly once under a new assignment. A permission park before or after preparation is settled from the locked `Running` or `NeedsInput` state, including permission closure. | `Reworked`, `decision='turn_lost'`, `error_code='CRASH'`; the failed prompt is never an action result | `applied` by the owner |
+| failed Running-node prompt with `required_output_incomplete` and no exact crashed-incarnation proof (Implemented — ADR-177 amendment 2026-09-30) | the owner refuses result application; existing reconcile stops a live session and closes `Crashed` (`owner-poisoned`), never guessed `session-crashed` or generic `Failed` | no action completion is decoded or applied; reconcile closes the attempt | `poisoned`, cause `session_terminal_evidence_unavailable` |
 | `failed {turn_lost}` | `Crashed` (`turn-lost`) — **recoverable**, `resume_target_step_id` stamped | `Reworked`, `decision='turn_lost'`, `error_code='CRASH'` | `applied` |
 | quarantined (`prompt_terminal_conflict`) or `poisoned` | `Crashed` (`owner-poisoned`) | `Reworked`, `decision='turn_lost'`, `error_code='CRASH'` | `applied` |
 | quarantined while still `accepted` (no terminal evidence — a skipped terminal `terminal_unstorable`, or a `receipt_*` / `*_protocol` quarantine), any run kind, session live or not (Implemented — ADR-184 amendment 2026-09-28) | flow: `Crashed` (`owner-poisoned`) through the same boundary, taken by the reconcile sweep on any node kind (an agent node, a judge, an AI gate on a check node) whether a session is live or not — a live session is stopped first, and an unconfirmed or fenced stop leaves the run for the next tick; agent: the driver that meets it (issuing or re-driving) stops the session, finalizes `Crashed`, reason `owner_poisoned`, and closes the turn `superseded`; scratch: the turn fails, the dialog returns to `WaitingForUser` with `error_code: "CONFLICT"` and `error_metadata {reason: "prompt_terminal_conflict", causeCode}` | flow: `Reworked`, `decision='turn_lost'`, `error_code='CRASH'` | stays quarantined (`application_error.causeCode` names why) |
-| `failed` (the purge of a pending permission after the adapter child crashed under a live host), applied while the run waits in `NeedsInput`, the prompt incarnation `crashed` (Implemented — ADR-177 amendment 2026-09-26, `session_crashed`) | `Crashed` (`session-crashed`) — **recoverable**, closed at the node's re-entry (`reattachNodePrompt`), not by the sweep, which does not load a `NeedsInput` run (only an orphaned child of a gone coordinator); Recover raises a fresh permission | `Reworked`, `decision='turn_lost'`, `error_code='CRASH'` | `applied` (unchanged) |
+| `failed` (the purge of a pending permission after the adapter child crashed under a live host), while the run waits in `NeedsInput`, with exact crash proof (Implemented — ADR-177, `session_crashed`) | `Crashed` (`session-crashed`) — **recoverable**, closed by the owner; node re-entry (`reattachNodePrompt`) also settles a previously applied failed completion. The sweep does not load a `NeedsInput` run (only an orphaned child of a gone coordinator). Recover raises a fresh permission. | `Reworked`, `decision='turn_lost'`, `error_code='CRASH'` | `applied` |
+| `failed` AI/skill gate prompt after a permission park, with an accepted `session.crashed` for the command's exact incarnation before its terminal (Implemented — ADR-177 amendment 2026-09-30) | `Crashed` (`session-crashed`), never a failed gate verdict on a `NeedsInput` run; the owner or gate reattachment settles the park. Recover copies the completed parent action and preceding gate results into a new attempt, then re-asks only the interrupted gate. Missing or contradictory retained proof refuses Recover. | source `Reworked`, interrupted evaluation `stale`; continuation attempt under a new assignment | `applied` by owner, or `pending` then `superseded` after reattachment |
 | pending (ingest / application / claim) or `inflight` | **unchanged** — the named writer owes the next move | open | unchanged |
 | `pending_ingest` with a `completed` v2 receipt and a readable, verified, signal-free span (Implemented, 2026-09-23) | settles from host evidence (`settled_from='host_span'`) through the waiting driver or continuation worker, then follows the `pending_application` / applied rows | open until application | settled; later confirmed by the canonical event |
 | `pending_ingest` or `inflight` on a host whose stream is `lost` | `Crashed` (`stream-lost`) — since 2026-09-23 only after a `completed` probe failed to settle from host evidence (Implemented); a host-evidence read the resolver was denied defers the crash to a later tick | `Reworked`, `decision='turn_lost'` | `applied` |
 | evidence moved between the sweep's classification and the boundary write (settled, `applying`, applied without a quarantine, `superseded`) | unchanged — the boundary re-reads the command under lock and yields (`lost-cas`, guard `command`); the next tick classifies the new state | open | unchanged |
 | `failed {turn_lost}`, settled-unapplied, found by Recover on a still-open attempt | Recover re-dispatches one fresh prompt | the crashed attempt is closed | `superseded`, `completion_applied_at` NULL |
+
+The supervisor MUST persist the session terminal before a failed prompt
+terminal when an unintentional ACP transport closes during the prompt. It
+terminates an otherwise live child, then waits for the heartbeat's durable
+terminal within the existing kill grace. This gives the Running-node and
+permission-park rows above a causal host sequence to verify. A normal ACP task
+failure remains a failed prompt without a crash event; an intentional
+checkpoint keeps its own cause. See ADR-177's 2026-09-30 host-order amendment.
+The crash reader joins the immutable host/session identity to the owner's exact
+incarnation. It accepts a pending lifecycle binding but refuses a contradictory
+one. Failed receipts do not qualify for host-span settlement; pending canonical
+evidence and unknown receipts retain their original command. A skipped terminal
+is quarantined by the skip-ledger reducer, and known stream loss uses the
+existing bounded stream-loss disposition.
 
 `turn_lost` is matched on the error **reason** — carried nested
 (`last_error.details.reason`, the ingested-terminal-event path) or flat
@@ -630,8 +647,10 @@ Full-output extraction does not depend on the truncated stdout preview. Local
 CLI/check actions before gates also snapshot their result and file output.
 
 Owned-prompt graphs (any `ai_coding`, `judge`, `orchestrator` or `consensus`
-node, or an `ai_judgment`/`skill_check` gate) acquire `runs.flow_driver_token`
-with a renewable 30-second lease. Every traversal transaction checks its active
+node, or an `ai_judgment`/`skill_check` gate), and CLI-only graphs (R9 C1),
+acquire `runs.flow_driver_token` with a renewable 30-second lease. CLI-only
+traversal uses its placement assignment without creating an ACP session; a
+successor placement clears the predecessor token. Every traversal transaction checks its active
 assignment and lease, including a final check before commit; global host
 consumers and other runs retain their independent database handles — including
 a consensus node's draft children, which the fan-out dispatches on the root

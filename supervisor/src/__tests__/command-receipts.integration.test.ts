@@ -1006,6 +1006,128 @@ describe("command receipts", () => {
 });
 
 describe("session.command events", () => {
+  it("N1: a closed transport with withheld lifecycle publication reports unavailable evidence", async () => {
+    const host = await bootHost({
+      runtimeRoot: await tempRoot(),
+      fixtureArgs: ["--hang", "--lines", "0", "--controlled-prompt"],
+    });
+
+    booted.push(host);
+    const runId = `run-${randomUUID().slice(0, 8)}`;
+    const created = await postJson(
+      `${host.url}/sessions`,
+      await createEnvelope(host, { runId }),
+    );
+    const sessionId = created.body.sessionId as string;
+    const commandId = randomUUID();
+    const prompt = completePrompt(
+      host,
+      sessionId,
+      envelope(
+        "session.prompt",
+        fenceFor(host, runId),
+        { stepId: "step-1", prompt: "hold this turn" },
+        commandId,
+      ),
+      15_000,
+    );
+    const entry = host.registry.get(sessionId)!;
+    let releaseTerminal: () => void = () => {};
+
+    try {
+      await waitFor(
+        () => host.hostState.getReceipt(commandId)?.phase === "accepted",
+        5_000,
+      );
+      // Fault injection at the lifecycle publication boundary: the real child
+      // exits, but its durable terminal cannot complete within the kill grace.
+      entry.record.outputTerminal = new Promise<void>((resolve) => {
+        releaseTerminal = resolve;
+      });
+      entry.child.stdout!.destroy();
+      const result = await prompt;
+
+      expect(result.status).toBe(503);
+      expect(result.body).toMatchObject({
+        code: "EXECUTOR_UNAVAILABLE",
+        details: { reason: "required_output_incomplete" },
+      });
+      expect(
+        canonicalRuntimeEvents(host, runId).some(
+          (event) => event.type === "session.crashed",
+        ),
+      ).toBe(false);
+      expect(host.hostState.getReceipt(commandId)?.phase).toBe("rejected");
+    } finally {
+      releaseTerminal();
+      if (entry.child.exitCode === null && entry.child.signalCode === null)
+        entry.child.kill("SIGKILL");
+      await prompt;
+      await waitFor(
+        () => entry.child.exitCode !== null || entry.child.signalCode !== null,
+        5_000,
+      );
+    }
+  }, 30_000);
+
+  it("N1: a closed ACP transport publishes the crashed session before the failed prompt terminal", async () => {
+    const host = await bootHost({
+      runtimeRoot: await tempRoot(),
+      fixtureArgs: ["--hang", "--lines", "0", "--controlled-prompt"],
+    });
+
+    booted.push(host);
+    const runId = `run-${randomUUID().slice(0, 8)}`;
+    const created = await postJson(
+      `${host.url}/sessions`,
+      await createEnvelope(host, { runId }),
+    );
+    const sessionId = created.body.sessionId as string;
+    const commandId = randomUUID();
+    const prompt = completePrompt(
+      host,
+      sessionId,
+      envelope(
+        "session.prompt",
+        fenceFor(host, runId),
+        { stepId: "step-1", prompt: "hold this turn" },
+        commandId,
+      ),
+      15_000,
+    );
+    const entry = host.registry.get(sessionId)!;
+
+    try {
+      await waitFor(
+        () => host.hostState.getReceipt(commandId)?.phase === "accepted",
+        5_000,
+      );
+      // The real ACP stream closes while the child is still alive. Its
+      // rejected prompt can race ahead of the child's exit notification.
+      entry.child.stdout!.destroy();
+      const result = await prompt;
+
+      expect(result.status).toBeGreaterThanOrEqual(400);
+    } finally {
+      if (entry.child.exitCode === null && entry.child.signalCode === null)
+        entry.child.kill("SIGKILL");
+      await waitFor(() => entry.record.terminalPublished === true, 5_000);
+    }
+    const events = canonicalRuntimeEvents(host, runId);
+    const crashIndex = events.findIndex(
+      (event) => event.type === "session.crashed",
+    );
+    const promptTerminalIndex = events.findIndex(
+      (event) =>
+        event.type === "session.command" &&
+        event.commandId === commandId &&
+        event.phase === "completed",
+    );
+
+    expect(crashIndex).toBeGreaterThanOrEqual(0);
+    expect(promptTerminalIndex).toBeGreaterThan(crashIndex);
+  }, 30_000);
+
   it("S1: a prompt turn emits accepted then completed with increasing monotonicIds, both durable", async () => {
     const host = await bootHost({
       runtimeRoot: await tempRoot(),

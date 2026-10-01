@@ -18,6 +18,7 @@ import {
   markGateStale,
 } from "./gate-store";
 import { lockFlowPromptOwner } from "./prompt-owner-authority";
+import { settleCrashedPermissionPark } from "./permission-park-crash";
 import { prepareNodePrompt } from "./node-prompt-owner";
 import { prepareConsensusPrompt } from "./consensus/prompt-owner";
 
@@ -425,6 +426,17 @@ export const flowPromptOwnerAdapter = definePromptOwnerAdapter(
           .limit(1);
 
         if (!currentAttempt || !evaluation) return "superseded";
+        if (
+          outcome.state === "failed" &&
+          !gateTurnLost &&
+          (await settleCrashedPermissionPark(tx, {
+            runId: ref.runId,
+            owner: ref,
+            command,
+          }))
+        ) {
+          return "applied";
+        }
         if (gateTurnLost) {
           // The SAME preconditions as the verdict path below, minus only the
           // ones that identify a VERDICT (flow revision, gate kind, prompt

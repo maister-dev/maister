@@ -1576,6 +1576,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
 
     let response: Awaited<ReturnType<typeof sendPromptOnConnection>>;
     let responseReference: ImmutableObjectReference | undefined;
+    let awaitingAcpResponse = true;
 
     await awaitSteerBarrier(entry);
     try {
@@ -1592,6 +1593,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         },
         logger,
       );
+      awaitingAcpResponse = false;
       if (parsed.envelope.requestVersion === 2) {
         const accepted = hostState.getReceipt(parsed.envelope.command.id);
 
@@ -1628,6 +1630,36 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
           entry.record.outputFailure.code,
           entry.record.outputFailure.message,
           { details: entry.record.outputFailure.details },
+        );
+      }
+      // A closed ACP transport cannot carry another turn. Its method rejection
+      // may arrive before Node publishes the child's exit; let the heartbeat
+      // durably publish the crashed incarnation before this command's failed
+      // receipt is written. Otherwise the web owner can apply an ordinary node
+      // failure before the causal session.crashed event exists in the stream.
+      if (
+        awaitingAcpResponse &&
+        entry.connection?.signal.aborted &&
+        !entry.intentionalShutdown
+      ) {
+        if (entry.child.exitCode === null && entry.child.signalCode === null)
+          entry.child.kill("SIGKILL");
+        if (!(await waitForChildExit(entry, killGraceMs))) {
+          throw new SupervisorError(
+            "EXECUTOR_UNAVAILABLE",
+            "closed ACP transport has no durable session terminal",
+            {
+              details: { reason: "required_output_incomplete" },
+            },
+          );
+        }
+        logger.warn(
+          {
+            sessionId,
+            commandId: parsed.envelope.command.id,
+            terminalStatus: entry.record.status,
+          },
+          "closed-acp-prompt-terminal-settled",
         );
       }
       throw error;

@@ -10,6 +10,7 @@ import {
 } from "@/lib/scratch-runs/events";
 import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import { seedWorkspace } from "@/test-support/execution-host-seed";
+import { freezeScratchPromptIntent } from "@/lib/scratch-runs/prompt-intent";
 // FIXME(any): drizzle-orm dual peer-dep variants — runtime works, cast silences
 // the type-only clash (matches emit-run-status.integration.test.ts).
 import * as fullSchema from "@/lib/db/schema";
@@ -159,6 +160,16 @@ async function terminalExecution(
     stepId: "scratch",
     executor: { agent: "claude", model: "mock" },
   });
+
+  await db.transaction((tx) =>
+    freezeScratchPromptIntent(tx as never, {
+      client: execution.client,
+      hostSessionId: session.hostSessionId,
+      owner: { variant: "initial" },
+      sourceMessageId: null,
+      payload: { stepId: "scratch", prompt: "go" },
+    }),
+  );
 
   fake.setPromptBehavior(async ({ sessionId }) => {
     fake.pushEvent(

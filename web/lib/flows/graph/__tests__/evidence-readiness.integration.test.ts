@@ -12,7 +12,10 @@ import {
   markGatePassed,
 } from "@/lib/flows/graph/gate-store";
 import { runFlow } from "@/lib/flows/runner";
-import { schema, seedGraphRun } from "@/test-support/graph-run-seed";
+import {
+  schema,
+  seedPlacedGraphRun as seedGraphRun,
+} from "@/test-support/graph-run-seed";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,

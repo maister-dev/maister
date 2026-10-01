@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
 
+import { freezeScratchPromptIntent } from "@/lib/scratch-runs/prompt-intent";
 import { assertCurrentSessionBinding } from "@/lib/execution-host/session-binding";
 import { PromptIncarnationPending } from "@/lib/execution-host/prompt-incarnation";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
@@ -372,6 +373,10 @@ export async function POST(
     });
     const now = new Date();
     const prompt = body.prompt;
+    const recoveryPayload = {
+      stepId: scratchStepId(),
+      prompt: normalizeScratchPrompt(prompt, rows.executor.agent, { runId }),
+    };
     const persisted = await db.transaction(async (tx: Db) => {
       await assertCurrentSessionBinding(tx, {
         runId,
@@ -396,6 +401,7 @@ export async function POST(
         .update(scratchRuns)
         .set({
           dialogStatus: queued ? "WaitingForUser" : "Running",
+          activePromptIntent: null,
           errorCode: null,
           errorMessage: null,
           errorMetadata: null,
@@ -403,6 +409,15 @@ export async function POST(
           updatedAt: now,
         })
         .where(eq(scratchRuns.runId, runId));
+
+      if (!queued)
+        await freezeScratchPromptIntent(tx as unknown as ExecutionDb, {
+          client: execution.client,
+          hostSessionId: session.sessionId,
+          owner: { variant: "recovery" },
+          sourceMessageId: message?.id ?? null,
+          payload: recoveryPayload,
+        });
 
       return { queued, messageId: message?.id ?? null };
     });
@@ -425,8 +440,7 @@ export async function POST(
       const promptResult = await sendScratchPromptAndProjectEvents({
         runId,
         sessionId: session.sessionId,
-        stepId: scratchStepId(),
-        prompt: normalizeScratchPrompt(prompt, rows.executor.agent, { runId }),
+        ...recoveryPayload,
         execution,
         owner: { variant: "recovery" },
       });

@@ -346,6 +346,14 @@ The runner passes exactly its selected file list to Vitest and
 empty, skipped and failed suites/cases. `--shard 1/2` and `--shard 2/2` are web
 only; the production isolation slice remains serial and rejects sharding.
 
+The R9 inventory contains 44 web files, partitioned into 22/22. Its mandatory
+owning suites include permission-crash-boundary and reconcile-sweep, migration
+0192, CLI-driver-reconcile, scratch permission-terminal and incarnation-terminal,
+and system-sweep-admission. The existing prompt-owner and gate suites remain
+mandatory; the production dispatch-window controls belong to the serial slice.
+This inventory fixes discovery, while the final hosted reports must still prove
+both Node versions fit the unchanged budget.
+
 The one macOS Intel isolation job keeps Colima 0.10.3/Lima 2.2.0 and one
 `colima start` attempt. It runs `runtime:check` before provisioning.
 Provisioning traces the downloaded pins, resolved
@@ -373,6 +381,13 @@ marking S5.2 complete.
 If a web shard exceeds its budget, retain the two-shard contract and leave
 S5.2 open for a measured repartition decision; local multi-worker timings do
 not qualify a one-worker hosted leg.
+R9 adds `lib/scratch-runs/__tests__/dispatch-window.integration.test.ts` to
+this serial manifest with ten required case names: seven S1 restart cuts, a
+legacy unknown-delivery refusal, a live-dispatcher race and the S3 held-exit
+transport control. The six original suites and 40 cases are retained; the main
+slice now requires 50 cases. Canonical ingestion fences the late old frame as
+`stale_epoch`. The already-read stale terminal is covered separately by the
+transactional consumer suite in the web lane.
 If new controls enlarge the suite, extend the explicit manifest and remeasure
 the Intel budget; do not infer a pass from the old 40-case total.
 

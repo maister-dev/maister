@@ -5282,6 +5282,9 @@ export const scratchRuns = pgTable(
     errorCode: text("error_code"),
     errorMessage: text("error_message"),
     errorMetadata: jsonb("error_metadata").$type<Record<string, unknown>>(),
+    activePromptIntent: jsonb("active_prompt_intent").$type<
+      Record<string, unknown>
+    >(),
     lastUserMessageAt: timestamp("last_user_message_at", {
       withTimezone: true,
       mode: "date",
@@ -5306,6 +5309,17 @@ export const scratchRuns = pgTable(
     idxLocalPackage: index("scratch_runs_local_package_idx")
       .on(t.localPackageId, t.dialogStatus)
       .where(sql`${t.localPackageId} IS NOT NULL`),
+    idxRunningIntentSweep: index("scratch_runs_running_intent_sweep_idx")
+      .on(t.updatedAt, t.runId)
+      .where(sql`${t.dialogStatus} = 'Running'`),
+    promptIntentShapeCheck: check(
+      "scratch_runs_prompt_intent_shape_check",
+      sql`${t.activePromptIntent} IS NULL OR coalesce((
+        jsonb_typeof(${t.activePromptIntent}) = 'object'
+        AND ${t.activePromptIntent}->'version' = '1'::jsonb
+        AND octet_length(${t.activePromptIntent}::text) <= 4194304
+      ), false)`,
+    ),
     // ADR-097: exactly one of project_id / local_package_id (never both, never
     // neither). Mirrors local_packages' own (project_id XOR named) intent.
     ownerXorCheck: check(

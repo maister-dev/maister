@@ -296,6 +296,8 @@ function publicErrorMetadata(
   } | null;
 
   if (metadata?.cause === "host_pressure") return { cause: "host_pressure" };
+  if (metadata?.reason === "scratch_dispatch_unknown")
+    return { reason: "scratch_dispatch_unknown" };
   if (metadata?.reason === "prompt_terminal_conflict")
     return {
       reason: "prompt_terminal_conflict",

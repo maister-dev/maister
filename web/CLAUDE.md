@@ -401,6 +401,26 @@ final tree, one red: `bounded-output` (a new load-sensitive name — this branch
 never touched it) and the `ext … memory` route skipped on the Docker probe
 timeout. All four files passed together idle (50/50), with no unhandled error.
 
+**Current local qualification, 2026-09-30 (`codex/stage-ab-ci-r9`, tested
+`175e7c57c`, Darwin ARM64 / Node 24.15.0).** Web units: **878 files /
+9,204 tests, zero failures**. Ordinary integration: **589 files / 5,206 tests**
+qualified file by file from the actual two web shards, complete serial
+remainder and owning reruns; every accepted result passes with no skips.
+The diagnostic remainder's four failures were a proved 1,843-second macOS
+sleep during D2a and obsolete placement/frozen-intent seed data in
+`crash-resume` / `emit-hitl`; both corrected files pass, and the entire
+mandatory isolation CLI passes **7 files / 50 cases** in
+801.079 seconds with zero leaks. The two existing opt-in load suites are
+excluded explicitly. Supervisor units/integration: **86 files / 805 tests**
+(50/495 unit, 36/310 integration), all passed; mandatory A/B subset 10/111.
+The exact original reporters, tested SHAs and production-source equivalence
+are recorded in [the CI/R9 plan](../.ai-factory/plans/codex-stage-ab-ci-r9.md).
+Full source types, contracts/docs/ERD and migration checks pass; full lint has
+zero errors (web 769 existing warnings, supervisor four). Hosted acceptance
+remains open: both Node patches pass the earlier master Linux jobs, but latest
+master run `36759766717` uploads only preflight 1/1 and times out after Intel
+production-build heap exhaustion. This local baseline is not a hosted pass.
+
 **A first-hit Next-dev compile can exhaust a 10s e2e timeout.** Before calling
 such a failure a regression, re-run the spec in isolation and read the RETRY
 time: `scratch-detail.spec.ts:50` ("suggests project skills"; `:57` since

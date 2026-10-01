@@ -1,3 +1,5 @@
+import type { Db } from "@/lib/execution-host/db";
+
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +14,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import * as fullSchema from "@/lib/db/schema";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import { seedWorkspace } from "@/test-support/execution-host-seed";
+import { freezeScratchPromptIntent } from "@/lib/scratch-runs/prompt-intent";
 import {
   createFakeExecutionHost,
   fakeExecutionHosts,
@@ -378,6 +381,16 @@ describe("scratch permission flow → run.needs_input + hitl.requested co-emit",
       stepId: "scratch",
       executor: { agent: "claude", model: "mock" },
     });
+
+    await db.transaction((tx) =>
+      freezeScratchPromptIntent(tx as unknown as Db, {
+        client: execution.client,
+        hostSessionId: session.hostSessionId,
+        owner: { variant: "initial" },
+        sourceMessageId: null,
+        payload: { stepId: "scratch", prompt: "go" },
+      }),
+    );
 
     fake.setPromptBehavior(async ({ sessionId }) => {
       fake.pushEvent(sessionId, {

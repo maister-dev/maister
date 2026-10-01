@@ -3233,6 +3233,9 @@ agent path drives `Review→Running→…→Review`. Behavior:
                                  //   the turn's prompt was quarantined while
                                  //   still accepted (ADR-184 amendment
                                  //   2026-09-28) — no migration, unconstrained
+  activePromptIntent?,           // nullable private jsonb (migration 0192);
+                                 //   version-1 object, at most 4 MiB;
+                                 //   transactional dispatch/re-drive (ADR-192)
   createdByUserId,               // FK -> users.id
   lastUserMessageAt?,
   lastAgentMessageAt?,
@@ -3270,6 +3273,17 @@ plan-first behavior and is derived from `workMode`: `plan_first` maps to
 Index: `scratch_runs_project_status_idx` on `(projectId, dialogStatus)` for
 active workspace lists. The primary key on `runId` covers detail joins from
 `runs`.
+
+Migration `0192_scratch_prompt_intent` adds `active_prompt_intent` without
+backfilling existing rows. `scratch_runs_prompt_intent_shape_check` accepts NULL
+or a JSON object with numeric `version: 1` and a UTF-8 JSON representation no
+larger than 4 MiB. Application validation owns the exact owner, payload and
+current-incarnation shape. This is private dispatch data, excluded from browser
+DTOs and logs. `scratch_runs_running_intent_sweep_idx` on `(updated_at, run_id)`
+is partial on `dialog_status = 'Running'` and includes legacy NULL-intent rows.
+Transactional writers, replay and legacy ambiguity handling are implemented;
+their ownership and rollout contracts are defined in
+[ADR-192](decisions.md#adr-192-durable-scratch-prompt-intent-before-command-admission).
 
 ## `agent_turns` (Implemented)
 

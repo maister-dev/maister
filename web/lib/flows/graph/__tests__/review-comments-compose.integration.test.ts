@@ -15,6 +15,7 @@ import {
   testPlatformRunnerRow,
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import { runFlow } from "@/lib/flows/runner";
 import {
   startMainPostgresTestDb,
@@ -118,6 +119,8 @@ async function seedGraphRun(
     worktreePath,
     parentRepoPath: `/tmp/${slug}`,
   });
+
+  await fakeExecutionHosts(db, { runId });
 
   return { runId, slug, runtimeRoot };
 }

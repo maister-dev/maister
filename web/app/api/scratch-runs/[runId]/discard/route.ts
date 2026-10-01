@@ -23,6 +23,10 @@ import {
 } from "@/lib/execution-host";
 import { removeOwnedWorktree } from "@/lib/worktree";
 import { stopThenDrop } from "@/lib/workbench-lifecycle/service";
+import {
+  closeOpenScratchPermissions,
+  closeTerminalScratchPermissions,
+} from "@/lib/scratch-runs/open-permissions";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { localPackages, runs, scratchRuns, workspaces } =
@@ -170,31 +174,19 @@ export async function POST(
       });
     }
 
-    if (scratch.dialogStatus === "Done" || run.status === "Done") {
-      log.info(
-        { runId, dialogStatus: scratch.dialogStatus, runStatus: run.status },
-        "scratch discard skipped completed run",
+    if (
+      ["Done", "Abandoned"].includes(scratch.dialogStatus) ||
+      ["Done", "Abandoned"].includes(run.status)
+    ) {
+      const terminal = await closeTerminalScratchPermissions(
+        db as unknown as ExecutionDb,
+        runId,
       );
 
       return NextResponse.json({
         runId,
-        dialogStatus: scratch.dialogStatus,
-        runStatus: run.status,
-        supervisorStopped: false,
-        workspaceRemoved: false,
-      });
-    }
-
-    if (scratch.dialogStatus === "Abandoned" || run.status === "Abandoned") {
-      log.info(
-        { runId, dialogStatus: scratch.dialogStatus, runStatus: run.status },
-        "scratch discard idempotent abandoned run",
-      );
-
-      return NextResponse.json({
-        runId,
-        dialogStatus: scratch.dialogStatus,
-        runStatus: run.status,
+        dialogStatus: terminal.dialogStatus,
+        runStatus: terminal.runStatus,
         supervisorStopped: false,
         workspaceRemoved: false,
       });
@@ -298,12 +290,19 @@ export async function POST(
           })
           .where(eq(workspaces.id, workspace.id));
       }
+      if (!locked) return false;
       if (
-        !locked ||
         locked.dialogStatus === "Abandoned" ||
         locked.dialogStatus === "Done"
-      )
+      ) {
+        await closeOpenScratchPermissions(
+          tx as unknown as ExecutionDb,
+          runId,
+          now,
+        );
+
         return false;
+      }
       await tx
         .update(scratchRuns)
         .set({
@@ -319,6 +318,11 @@ export async function POST(
           endedAt: now,
         })
         .where(eq(runs.id, runId));
+      await closeOpenScratchPermissions(
+        tx as unknown as ExecutionDb,
+        runId,
+        now,
+      );
       await releaseAssignmentForRun(
         tx as unknown as ExecutionDb,
         runId,

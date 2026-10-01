@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 import type { ScratchDialogStatus } from "@/lib/db/schema";
 
 import { randomUUID } from "node:crypto";
@@ -20,11 +21,12 @@ import pino from "pino";
 import { canonicalCommandJson } from "../../../runtime/command-json";
 
 import {
-  admitScratchPrompt,
   ScratchPromptQuarantined,
   waitForScratchPrompt,
   type ScratchPromptOwner,
 } from "./prompt-owner";
+import { admitFrozenScratchPrompt } from "./prompt-intent";
+import { lockScratchRunRows } from "./turn-completion";
 
 import { createHitlRequest } from "@/lib/runs/hitl-create";
 import { getDb } from "@/lib/db/client";
@@ -33,7 +35,10 @@ import * as schemaModule from "@/lib/db/schema";
 import { appendScratchMessage } from "@/lib/scratch-runs/messages";
 import { closeOpenScratchPermissions } from "@/lib/scratch-runs/open-permissions";
 import { closedAnswerResponse } from "@/lib/hitl-closed-answer";
-import { runStatusForDialogStatus } from "@/lib/scratch-runs/state";
+import {
+  isTerminalScratchDialogStatus,
+  runStatusForDialogStatus,
+} from "@/lib/scratch-runs/state";
 import {
   encodeHookTripPayload,
   encodePermissionPayload,
@@ -302,11 +307,11 @@ async function deliverStoredPermissionAnswer(args: {
     // The run row first, the respond route's order: the input command this
     // transaction issues takes a key-share lock on `runs`, so taking the HITL
     // row first would invert the route's `runs` → HITL order.
-    await tx
-      .select({ id: runs.id })
-      .from(runs)
-      .where(eq(runs.id, args.runId))
-      .for("update");
+    await lockScratchRunRows(tx, args.runId);
+    if (!(await canApplyScratchPermission(tx, args)))
+      return "already_observed" as const;
+    if (await hasScratchPermissionRequest(tx, args))
+      return "already_observed" as const;
     const candidates = await tx
       .select()
       .from(hitlRequests)
@@ -431,6 +436,7 @@ async function deliverStoredPermissionAnswer(args: {
   });
 
   if (!rebound) return false;
+  if (rebound === "already_observed") return true;
   try {
     await rebound.prepared.deliver({
       // No status write: the idle resume set the dialog `Running` before it
@@ -477,11 +483,12 @@ async function deliverStoredPermissionAnswer(args: {
     // the run was stopped, and must not overwrite that.
     const surface = () =>
       args.db.transaction(async (tx: DbClientLike) => {
+        await lockScratchRunRows(tx, args.runId);
+        if (!(await canApplyScratchPermission(tx, args))) return false;
         const [run] = await tx
           .select({ status: runs.status })
           .from(runs)
-          .where(eq(runs.id, args.runId))
-          .for("update");
+          .where(eq(runs.id, args.runId));
         const [scratch] = await tx
           .select({ dialogStatus: scratchRuns.dialogStatus })
           .from(scratchRuns)
@@ -547,6 +554,26 @@ async function deliverStoredPermissionAnswer(args: {
   return true;
 }
 
+async function hasScratchPermissionRequest(
+  tx: DbClientLike,
+  input: { runId: string; sessionId: string; event: PermissionRequestEvent },
+): Promise<boolean> {
+  const [existing] = await tx
+    .select({ id: hitlRequests.id })
+    .from(hitlRequests)
+    .where(
+      and(
+        eq(hitlRequests.runId, input.runId),
+        eq(hitlRequests.kind, "permission"),
+        sql`${hitlRequests.schema}->>'supervisorSessionId' = ${input.sessionId}`,
+        sql`${hitlRequests.schema}->>'requestId' = ${input.event.requestId}`,
+      ),
+    )
+    .limit(1);
+
+  return existing !== undefined;
+}
+
 async function persistPermissionRequest(args: {
   db: DbClientLike;
   runId: string;
@@ -563,6 +590,11 @@ async function persistPermissionRequest(args: {
     // a failed insert, or the agent hangs on a request nobody can answer.
     if (await deliverStoredPermissionAnswer(args)) return;
     await args.db.transaction(async (tx: DbClientLike) => {
+      // Multiple re-drivers may observe the same host event. The run lock
+      // serializes notice creation with stored-answer rebinding and Stop.
+      await lockScratchRunRows(tx, args.runId);
+      if (!(await canApplyScratchPermission(tx, args))) return;
+      if (await hasScratchPermissionRequest(tx, args)) return;
       await createHitlRequest(tx, {
         id: hitlRequestId,
         runId: args.runId,
@@ -729,38 +761,255 @@ export async function scratchNoticeResumeOffset(
   }
 }
 
-async function parkPendingPermission(
-  db: DbClientLike,
-  runId: string,
-): Promise<boolean> {
-  const [scratch] = await db
-    .select({ dialogStatus: scratchRuns.dialogStatus })
-    .from(scratchRuns)
-    .where(eq(scratchRuns.runId, runId));
-
-  if (scratch?.dialogStatus !== "NeedsInput") return false;
-  const { markCheckpointedFromExit } = await import(
-    "@/lib/runs/state-transitions"
-  );
-  // The shared `NeedsInput → NeedsInputIdle` CAS: the keep-alive sweeper's
-  // checkpointed arm and the respond route's race-window arm park through it
-  // too, so whichever writer comes first wins and the others no-op. This one
-  // observed the checkpoint exit, and its audit line says so.
-  const parked = await markCheckpointedFromExit(runId, { db });
-
-  log.info({ runId, parked: parked.ok }, "scratch-permission-parked");
-  if (parked.ok) {
-    const { releaseSlotOnIdle } = await import("@/lib/scheduler");
-
-    await releaseSlotOnIdle({ runId, db }).catch((err: unknown) =>
-      log.warn(
-        { runId, err: err instanceof Error ? err.message : String(err) },
-        "scratch permission park could not promote queued work",
+async function scratchEventIncarnation(
+  tx: ExecutionDb,
+  input: { runId: string; hostSessionId: string; executionHostId: string },
+): Promise<{
+  assignmentId: string | null;
+  observedIncarnationId: string | null;
+  currentIncarnationId: string | null;
+}> {
+  const [run] = await tx
+    .select({ assignmentId: schemaModule.runs.executionAssignmentId })
+    .from(schemaModule.runs)
+    .where(eq(schemaModule.runs.id, input.runId));
+  const [observed] = await tx
+    .select({ id: schemaModule.runSessionIncarnations.id })
+    .from(schemaModule.runSessionIncarnations)
+    .where(
+      and(
+        eq(schemaModule.runSessionIncarnations.runId, input.runId),
+        eq(
+          schemaModule.runSessionIncarnations.executionHostId,
+          input.executionHostId,
+        ),
+        eq(
+          schemaModule.runSessionIncarnations.hostSessionId,
+          input.hostSessionId,
+        ),
       ),
     );
-  }
+  const [current] = run?.assignmentId
+    ? await tx
+        .select({ id: schemaModule.runSessionIncarnations.id })
+        .from(schemaModule.runSessions)
+        .innerJoin(
+          schemaModule.runSessionIncarnations,
+          and(
+            eq(
+              schemaModule.runSessionIncarnations.runSessionId,
+              schemaModule.runSessions.id,
+            ),
+            eq(
+              schemaModule.runSessionIncarnations.hostSessionId,
+              schemaModule.runSessions.hostSessionId,
+            ),
+            eq(
+              schemaModule.runSessionIncarnations.executionAssignmentId,
+              schemaModule.runSessions.executionAssignmentId,
+            ),
+          ),
+        )
+        .where(
+          and(
+            eq(schemaModule.runSessions.runId, input.runId),
+            eq(schemaModule.runSessions.sessionName, "default"),
+            eq(
+              schemaModule.runSessions.executionAssignmentId,
+              run.assignmentId,
+            ),
+          ),
+        )
+    : [];
 
-  return true;
+  return {
+    assignmentId: run?.assignmentId ?? null,
+    observedIncarnationId: observed?.id ?? null,
+    currentIncarnationId: current?.id ?? null,
+  };
+}
+
+/** Call under run → scratch locks before any permission or answer mutation. */
+async function canApplyScratchPermission(
+  tx: ExecutionDb,
+  args: {
+    runId: string;
+    sessionId: string;
+    event: PermissionRequestEvent;
+    execution: ScratchExecution;
+  },
+): Promise<boolean> {
+  const [state] = await tx
+    .select({
+      status: schemaModule.runs.status,
+      dialogStatus: schemaModule.scratchRuns.dialogStatus,
+    })
+    .from(schemaModule.runs)
+    .innerJoin(
+      schemaModule.scratchRuns,
+      eq(schemaModule.scratchRuns.runId, schemaModule.runs.id),
+    )
+    .where(eq(schemaModule.runs.id, args.runId));
+  const incarnation = await scratchEventIncarnation(tx, {
+    runId: args.runId,
+    hostSessionId: args.sessionId,
+    executionHostId: args.execution.client.host.id,
+  });
+
+  if (
+    state &&
+    ["Running", "NeedsInput"].includes(state.status) &&
+    ["Starting", "Running", "NeedsInput"].includes(state.dialogStatus) &&
+    incarnation.observedIncarnationId !== null &&
+    incarnation.observedIncarnationId === incarnation.currentIncarnationId
+  )
+    return true;
+  log.info(
+    {
+      runId: args.runId,
+      hostSessionId: args.sessionId,
+      requestId: args.event.requestId,
+      status: state?.status ?? null,
+      dialogStatus: state?.dialogStatus ?? null,
+      ...incarnation,
+    },
+    "scratch-stale-permission-ignored",
+  );
+
+  return false;
+}
+
+/** Transactional terminal projection shared with the already-read event control. */
+export async function applyScratchSessionTerminal(input: {
+  db: ExecutionDb;
+  runId: string;
+  hostSessionId: string;
+  executionHostId: string;
+  event: Extract<
+    SupervisorEvent,
+    { type: "session.exited" | "session.crashed" }
+  >;
+}): Promise<void> {
+  const projection = projectSupervisorEventToScratch(input.event);
+
+  if (!projection.dialogStatus) return;
+  const dialogStatus = projection.dialogStatus;
+
+  const parked = await input.db.transaction(async (tx): Promise<boolean> => {
+    await lockScratchRunRows(tx, input.runId);
+    const incarnation = await scratchEventIncarnation(tx, input);
+
+    // Incarnation identity survives canonical terminal projection. Neither an
+    // ACP resume handle nor a non-terminal state proves current ownership.
+    if (
+      !incarnation.observedIncarnationId ||
+      incarnation.observedIncarnationId !== incarnation.currentIncarnationId
+    ) {
+      log.info(
+        {
+          runId: input.runId,
+          hostSessionId: input.hostSessionId,
+          executionHostId: input.executionHostId,
+          ...incarnation,
+          eventType: input.event.type,
+          monotonicId: input.event.monotonicId,
+        },
+        "scratch-stale-incarnation-terminal-ignored",
+      );
+
+      return false;
+    }
+    const [scratch] = await tx
+      .select({ dialogStatus: schemaModule.scratchRuns.dialogStatus })
+      .from(schemaModule.scratchRuns)
+      .where(eq(schemaModule.scratchRuns.runId, input.runId));
+
+    if (!scratch || isTerminalScratchDialogStatus(scratch.dialogStatus))
+      return false;
+    if (
+      input.event.type === "session.exited" &&
+      input.event.reason === "checkpoint" &&
+      scratch.dialogStatus === "NeedsInput"
+    ) {
+      const { markCheckpointedFromExit } = await import(
+        "@/lib/runs/state-transitions"
+      );
+      const result = await markCheckpointedFromExit(input.runId, { db: tx });
+
+      log.info(
+        { runId: input.runId, parked: result.ok },
+        "scratch-permission-parked",
+      );
+
+      return result.ok;
+    }
+    const applied = await applyDialogStatus({
+      db: tx,
+      runId: input.runId,
+      dialogStatus,
+    });
+
+    // Live scratch terminal path (not reconcile/markScratchCrashed):
+    // emit on the CAS winner only. Done/Abandoned arrive via
+    // promote/drop and are wired there; here only Crashed/Review.
+    // ADR-097: a project-less local-package run skips these
+    // project-scoped emits (no project to attribute them to).
+    if (dialogStatus === "Crashed")
+      await closeOpenScratchPermissions(tx, input.runId, new Date());
+    if (applied?.projectId && dialogStatus === "Crashed") {
+      await emitWebhookEvent({
+        db: tx,
+        type: "run.crashed",
+        projectId: applied.projectId,
+        runId: input.runId,
+        data: { errorCode: "CRASH" },
+      });
+      await emitDomainEvent({
+        db: tx,
+        kind: "run.crashed",
+        projectId: applied.projectId,
+        runId: input.runId,
+        actor: { type: "system", id: null },
+        // scratch runs are never delegated children
+        parentRunId: null,
+        cause: {
+          code: "CRASH",
+          reason: "session_crashed",
+          source: "scratch",
+        },
+        payload: {
+          runId: input.runId,
+          taskId: null,
+          flowId: null,
+          runKind: "scratch",
+          reason: "CRASH",
+        },
+      });
+    } else if (applied?.projectId && dialogStatus === "Review") {
+      await emitWebhookEvent({
+        db: tx,
+        type: "run.review",
+        projectId: applied.projectId,
+        runId: input.runId,
+        data: { source: "runner" },
+      });
+    }
+
+    return false;
+  });
+
+  // Admission owns the scheduler lock; enter it only after releasing run locks.
+  if (parked) {
+    const { releaseSlotOnIdle } = await import("@/lib/scheduler");
+
+    await releaseSlotOnIdle({ runId: input.runId, db: input.db }).catch(
+      (err: unknown) =>
+        log.warn(
+          { runId: input.runId, err },
+          "scratch permission park could not promote queued work",
+        ),
+    );
+  }
 }
 
 function startScratchEventConsumer(args: {
@@ -833,78 +1082,17 @@ function startScratchEventConsumer(args: {
         }
 
         try {
-          // A checkpoint exit while a permission is pending is the host's
-          // absolute cap parking that permission, not the end of a turn: the
-          // run parks `NeedsInputIdle` (the dialog stays `NeedsInput`) and the
-          // operator's answer resumes it. Mapped to `WaitingForUser` it would
-          // leave an open request on a dialog that can never deliver it.
           if (
-            event.type === "session.exited" &&
-            event.reason === "checkpoint" &&
-            (await parkPendingPermission(args.db, args.runId))
-          ) {
-            // fall through to the terminal break below
-          } else if (event.type !== "session.update") {
-            const projection = projectSupervisorEventToScratch(event);
-
-            if (projection.dialogStatus) {
-              const dialogStatus = projection.dialogStatus;
-
-              await args.db.transaction(async (tx: DbClientLike) => {
-                const applied = await applyDialogStatus({
-                  db: tx,
-                  runId: args.runId,
-                  dialogStatus,
-                });
-
-                // Live scratch terminal path (not reconcile/markScratchCrashed):
-                // emit on the CAS winner only. Done/Abandoned arrive via
-                // promote/drop and are wired there; here only Crashed/Review.
-                // ADR-097: a project-less local-package run skips these
-                // project-scoped emits (no project to attribute them to).
-                if (dialogStatus === "Crashed")
-                  await closeOpenScratchPermissions(tx, args.runId, new Date());
-                if (applied?.projectId && dialogStatus === "Crashed") {
-                  await emitWebhookEvent({
-                    db: tx,
-                    type: "run.crashed",
-                    projectId: applied.projectId,
-                    runId: args.runId,
-                    data: { errorCode: "CRASH" },
-                  });
-                  await emitDomainEvent({
-                    db: tx,
-                    kind: "run.crashed",
-                    projectId: applied.projectId,
-                    runId: args.runId,
-                    actor: { type: "system", id: null },
-                    // scratch runs are never delegated children
-                    parentRunId: null,
-                    cause: {
-                      code: "CRASH",
-                      reason: "session_crashed",
-                      source: "scratch",
-                    },
-                    payload: {
-                      runId: args.runId,
-                      taskId: null,
-                      flowId: null,
-                      runKind: "scratch",
-                      reason: "CRASH",
-                    },
-                  });
-                } else if (applied?.projectId && dialogStatus === "Review") {
-                  await emitWebhookEvent({
-                    db: tx,
-                    type: "run.review",
-                    projectId: applied.projectId,
-                    runId: args.runId,
-                    data: { source: "runner" },
-                  });
-                }
-              });
-            }
-          }
+            event.type === "session.exited" ||
+            event.type === "session.crashed"
+          )
+            await applyScratchSessionTerminal({
+              db: args.db,
+              runId: args.runId,
+              hostSessionId: args.sessionId,
+              executionHostId: args.execution.client.host.id,
+              event,
+            });
         } catch (err) {
           log.warn(
             {
@@ -1025,7 +1213,17 @@ async function sendAndProjectScratchPrompt(
       {
         signal: args.signal,
         admitOwner: (tx: DbClientLike) =>
-          admitScratchPrompt(tx, execution.client, args.sessionId, owner),
+          admitFrozenScratchPrompt(
+            tx,
+            execution.client,
+            args.sessionId,
+            owner,
+            {
+              stepId: args.stepId,
+              prompt: args.prompt,
+              contentBlocks: args.contentBlocks,
+            },
+          ),
       },
     );
 

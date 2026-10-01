@@ -1358,6 +1358,16 @@ its terminal domain event's `cause` (see
 [domain events](domain-events.md#terminal-cause-implemented)), not from the
 respond route.
 
+An AI/skill gate permission whose adapter child dies under a live host follows
+the same `session_crashed` cause when the accepted crash event matches the
+gate command's assignment and incarnation. The owner or gate reattachment
+closes the parked run as `Crashed`, stales only the interrupted evaluation and
+closes its HITL row. Recover requires the retained completed parent action,
+failed gate command and crashed-incarnation proof; it preserves prior gate
+results and asks the interrupted gate again under a new assignment. Without
+that proof, the run remains discard-only. A still-live gate park continues to
+yield `gate_permission_pending`; the crash rule does not change that contract.
+
 - Retry with same payload while `respondedAt IS NULL` AND
   `runs.status='NeedsInput'` (resume already in progress; runner-agent
   hasn't auto-delivered yet): 202 `{state:"resume-in-progress"}`.

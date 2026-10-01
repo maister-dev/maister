@@ -1,7 +1,7 @@
 # Implementation Plan: Stage A/B stabilization
 
 Branch at planning: `feature/stage-b-durable-execution-host-data-plane`.
-Created: 2026-09-05. Status: **Implementation in progress; S0–S4 qualified (C07–C10 closed); S5.1 complete; S5.2 local close-out qualified; hosted isolation CI pending; S5.3/S5.4 pending**.
+Created: 2026-09-05. Status: **Implementation in progress; S0–S4 qualified (C07–C10 closed); S5.1 complete; S5.2 local close-out qualified but hosted Intel isolation exceeded its fixed slice budget; S5.3/S5.4 pending**.
 Implementation base: the audited Stage B tip, followed by revalidation against the then-current local `main`.
 
 ## Settings
@@ -204,11 +204,31 @@ S2.6 orchestrator permission-source contract: a child wake may continue a comple
 
 S2.6 orchestrator permission-source increment: migration `0149_flow_orchestrator_handoff_sources` retains the full verified `permissionResult` lineage in the next orchestrator authorization. Cleanup and child wake share the source-evidence validator; source and receiving assignments retain their separate checkpoint/wait authority. Both real Postgres/supervisor paths first failed at the child-wake authorization (`s2-6-permission-orchestrator-red.json`, 0/2 selected), then passed (`s2-6-permission-orchestrator-first.json`, 2/2 selected). Final scoped regression passes all seven permission-resume/handoff scenarios and three existing orchestrator wake windows, including SIGKILL and capacity deferral (`s2-6-permission-orchestrator-regression.json`, 10/10 selected; 49 unrelated cases filtered). The new paths include pre-prompt rollback/reclaim, fresh permission delivery, duplicate child events, and refusal of changed handoff provenance both before claim and after rollback. Strict web types, scoped lint, links/Mermaid and the generated 117-table ERD pass. Existing resume-driver and migration-journal unit suites pass 26/26 (`s2-6-permission-orchestrator-unit.json`); Drizzle reports no remaining schema drift. This is an increment, not S2.6 completion or a full A/B qualification. Repeated/gate checkpoints and the remaining admitted-input classifications are next.
 
-Current task: **S5.2 — hosted isolation CI qualification pending**. Completed:
-**42/45**. Local close-out implementation and verification are complete:
-40/40 production-isolation controls, full web integration inventory and all
-owning regression gates pass. The real hosted run, uploaded reporter and total
-job duration remain required before checking S5.2 or advancing to S5.3.
+Current task: **S5.2 — hosted isolation CI qualification blocked by the fixed Intel slice budget**. Completed:
+**42/45**. Local close-out and the seven R9 fixes are implemented and qualified:
+the expanded production-isolation CLI passes 50/50 across seven files, and the
+complete ordinary web integration inventory is qualified file by file. The
+original 40-case ARM64 reports remain historical evidence below. A complete
+green hosted isolation report and measured job duration remain required before
+checking S5.2; the observed Intel shortfall belongs to the S5.3a hosting decision.
+
+Third hosted matrix disposition (2026-09-30): [run 36759766717](https://github.com/maister-dev/maister/actions/runs/36759766717) on owner-pushed remote master `58d373feffea43c9f274258984049984fab26e84` completed `failure`. All four web shards and both runtime/supervisor legs passed on both Node versions, as did the other enabled image/unit/browser jobs. Intel isolation lasted 54m40s: runtime ready at 734 seconds, preflight 1/1 complete at 1,032 seconds, remaining slice allowance 2,208 seconds, exit 124 at 3,248 seconds and runtime cleanup at 3,261 seconds. Downloaded report artifact `11120811822` contains only the preflight reporter. Diagnostics `11120836290` retain `timing.txt` and multiple Next build logs proving JavaScript heap exhaustion; no full-slice JSON was uploaded. Read-only comparison shows this remote master advanced from local master `05a7f5b8b` by one release-documentation/site-copy commit only; CI, ownership code, contracts and migration namespaces are unchanged. This is another measured Intel shortfall, not final R9 hosted qualification; T5 and S5.2 remain open.
+
+The second owner-pushed master run on `05a7f5b8b4050393d7e78cfd03945c1953a90d02` is
+[36559759804](https://github.com/maister-dev/maister/actions/runs/36559759804).
+All four web shards and both runtime/supervisor legs passed on Node 24.15.0
+and 24.19.0. The macOS Intel isolation job provisioned Colima by second 359;
+its real Docker/sandbox preflight passed 1/1 by second 519. The six-suite slice
+then used its fixed 2340-second allowance and exited 124 at second 2867. The
+whole job lasted 48m08s, including cleanup at second 2877. Uploaded report
+artifact `11030968044` contains only the preflight case, not the required
+six-suite `vitest.json` or 40/40 proof. Diagnostics artifact `11031052848`
+shows `execution-ab-process-cleanup.integration.test.ts` failing 11/13 cases
+before the deadline as repeated Next production builds exited without a status;
+a retained build log records V8 heap exhaustion near 2 GiB. The suite's timeout
+then reaped a still-running build and container. S5.2 remains unchecked. The
+fixed Intel budget/resource shortfall invokes the S5.3a hosting decision in the
+CI/R9 plan; no timeout increase, larger runner or Linux move is claimed here.
 
 The first pushed CI run on merged commit `bfb2b604d` is
 [36548893442](https://github.com/maister-dev/maister/actions/runs/36548893442).
@@ -988,6 +1008,21 @@ working tree, identified by `qualified-source-sha256.json`. Exact RED assertions
 restoration hashes and earlier core evidence remain in `s5-2-closeout.md`.
 These local results do not supply the still-required hosted CI run, uploaded
 report or measured total job time. S5.2 remains unchecked until those gates pass.
+
+R9 local ownership qualification (2026-09-30) is complete on
+`175e7c57cd0474d10515a6a37df67ea5af938d8e`: all seven named residuals are implemented,
+independently falsified and restored. The current mandatory serial inventory
+retains every original isolation case and adds nine S1 restart controls plus
+S3's negative held-frame control: **seven files / 50 cases pass locally**,
+801.079 seconds, invocation `bdda53ab-49c4-4c6d-b2d9-b0fe919fee8e`,
+reporter `/var/folders/p3/lj5f1_ys6650hwvry91_qr2c0000gn/T/maister-ab-isolation-nufKfG/vitest.json`. The complete ordinary web inventory is
+qualified file by file (589 files / 5,206 cases); full web units pass
+9,204/9,204 and supervisor units/integration pass 805/805. The failed diagnostic
+attempt, macOS sleep and corrected obsolete fixtures are explicitly recorded
+in `codex-stage-ab-ci-r9.md`, with original SHA/report identities preserved.
+These current local results extend the historical ARM64 evidence above;
+they do not check S5.2 or supply final R9 hosted acceptance. Completed remains
+**42/45**; S5.2 acceptance would make **43/45**, while S5.3/S5.4 remain open.
 
 ## Risk register and completion conditions
 

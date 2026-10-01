@@ -23,6 +23,7 @@ import { recordArtifact } from "@/lib/flows/graph/artifact-store";
 import { GIT_UNAVAILABLE_REASON } from "@/lib/flows/graph/mutation-check";
 import { runFlow } from "@/lib/flows/runner";
 import { fakeGraphHosts } from "@/test-support/fake-execution-host";
+import { seedPlacedGraphRun } from "@/test-support/graph-run-seed";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -156,7 +157,8 @@ function oneNode(gates: unknown[]) {
 
 describe("gate execution", () => {
   it("blocking command_check passes (exit 0) → node finishes, gate passed, run Review", async () => {
-    const seeded = await seedGraphRun(
+    const seeded = await seedPlacedGraphRun(
+      db,
       oneNode([
         { id: "fmt", kind: "command_check", mode: "blocking", command: "true" },
       ]),
@@ -174,7 +176,8 @@ describe("gate execution", () => {
   });
 
   it("blocking command_check fails (exit 1) → node Failed, run Failed", async () => {
-    const seeded = await seedGraphRun(
+    const seeded = await seedPlacedGraphRun(
+      db,
       oneNode([
         {
           id: "test",
@@ -194,7 +197,8 @@ describe("gate execution", () => {
   });
 
   it("advisory command_check fails but the node still finishes (run Review)", async () => {
-    const seeded = await seedGraphRun(
+    const seeded = await seedPlacedGraphRun(
+      db,
       oneNode([
         {
           id: "lint",
@@ -214,7 +218,8 @@ describe("gate execution", () => {
   });
 
   it("artifact_required (no inputArtifacts) passes vacuously; external_check stays pending; node finishes", async () => {
-    const seeded = await seedGraphRun(
+    const seeded = await seedPlacedGraphRun(
+      db,
       oneNode([
         { id: "art", kind: "artifact_required", mode: "blocking" },
         { id: "ext", kind: "external_check", mode: "blocking" },
@@ -239,7 +244,8 @@ describe("gate execution", () => {
   });
 
   it("persists gate-declared inputArtifacts to gate_results.input_artifact_refs", async () => {
-    const seeded = await seedGraphRun(
+    const seeded = await seedPlacedGraphRun(
+      db,
       oneNode([
         {
           id: "fmt",

@@ -176,14 +176,12 @@ describe("classifyRunReconcile — step 4a: cli node, no live session → crash"
     });
   });
 
-  it("cli crash is independent of grace anchors (cli is never retry-safe)", () => {
-    // Even a freshly-started cli node (within grace) is crashed — the grace
-    // window only protects agent nodes.
+  it("a freshly entered CLI without a renewed lease retains launch/resume grace", () => {
     expect(
       classifyRunReconcile(
         input({ currentNodeKind: "cli", resumeStartedAt: ago(1) }),
       ),
-    ).toEqual({ action: "crash", reason: "cli-not-retry-safe" });
+    ).toEqual({ action: "skip", reason: "grace-window" });
   });
 });
 

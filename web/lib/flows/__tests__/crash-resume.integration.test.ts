@@ -30,6 +30,7 @@ import {
   markNodeSucceeded,
 } from "@/lib/flows/graph/ledger";
 import { runFlow } from "@/lib/flows/runner";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -136,6 +137,8 @@ async function seedCrashResumeRun(
     worktreePath,
     parentRepoPath: `/tmp/${slug}`,
   });
+
+  await fakeExecutionHosts(db, { runId });
 
   return { runId, runtimeRoot };
 }

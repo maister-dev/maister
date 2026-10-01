@@ -8,7 +8,6 @@ import type { AgentMcpServer } from "@/lib/capabilities/agent-map";
 import type { SessionEnforcementProfile } from "./enforcement-profile";
 import type { HooksConfig } from "./hooks-config";
 import type { FlowContext, StepResult } from "./types";
-import type { FlowActionCompletion } from "./graph/action-completion";
 import type { CreateSessionPayload } from "@/lib/execution-host/contracts";
 
 import { randomUUID } from "node:crypto";
@@ -56,6 +55,7 @@ import {
   type FlowDriverClaim,
 } from "./graph/driver-claim";
 import { closeAppliedFlowPromptSession } from "./graph/prompt-session-cleanup";
+import { settleCrashedPermissionPark } from "./graph/permission-park-crash";
 import {
   handleFlowPermission,
   hasPendingFlowPermission,
@@ -78,11 +78,8 @@ import {
   hitlRequests,
   nodeAttempts,
   runs,
-  runSessionIncarnations,
 } from "@/lib/db/schema";
-import { isTurnLostError } from "@/lib/reconcile-evidence";
 import { nextKeepaliveAt } from "@/lib/runs/keepalive-config";
-import { closeTurnLostAttempt } from "@/lib/runs/turn-lost-boundary";
 import { markCheckpointedFromExit } from "@/lib/runs/state-transitions";
 import {
   createExecutionHosts,
@@ -1025,84 +1022,8 @@ async function replayPermissionInputsForContinuation(
   }
 }
 
-// ADR-177 amendment 2026-09-26 (T3.2b, the `session_crashed` evidence class).
-// A permission park whose adapter child crashed under a live host leaves
-// nothing to apply: the purge failed the prompt, its owner applied that
-// failure while the run waited in `NeedsInput`, and this driver consumes a
-// completion only from `Running` — so the run would wait forever on an answer
-// no session can receive. The crashed incarnation is the evidence; the
-// boundary closes the attempt like a lost turn (recoverable, the open
-// permission rows closed) instead.
-async function settleCrashedPermissionPark(
-  db: Db,
-  runId: string,
-  owner: NodePromptOwner,
-  command: ExecutionCommand,
-): Promise<boolean> {
-  const incarnationId = (command.ownerRef as { incarnationId?: unknown } | null)
-    ?.incarnationId;
-
-  if (
-    command.state !== "failed" ||
-    command.applicationState !== "applied" ||
-    isTurnLostError(command.lastError) ||
-    typeof incarnationId !== "string"
-  )
-    return false;
-
-  return db.transaction(async (tx: Db) => {
-    const [run] = await tx
-      .select({ status: runs.status, currentStepId: runs.currentStepId })
-      .from(runs)
-      .where(eq(runs.id, runId))
-      .for("update");
-    const [attempt] = await tx
-      .select()
-      .from(nodeAttempts)
-      .where(eq(nodeAttempts.id, owner.nodeAttemptId))
-      .for("update");
-    const [incarnation] = await tx
-      .select({ state: runSessionIncarnations.state })
-      .from(runSessionIncarnations)
-      .where(eq(runSessionIncarnations.id, incarnationId));
-    const completion = (attempt?.actionCompletion ??
-      null) as FlowActionCompletion | null;
-
-    if (
-      run?.status !== "NeedsInput" ||
-      !attempt ||
-      attempt.endedAt !== null ||
-      run.currentStepId !== attempt.nodeId ||
-      completion?.commandId !== command.id ||
-      completion.result.ok !== false ||
-      incarnation?.state !== "crashed"
-    )
-      return false;
-    // The stored completion is the purge's failure, not the node's result:
-    // admitted so the close can reach the attempt it sits on.
-    await closeTurnLostAttempt(tx, {
-      runId,
-      nodeAttemptId: attempt.id,
-      reason: "session-crashed",
-      causeSource: "graph",
-      fromStatuses: ["NeedsInput"],
-      fromAttemptStatuses: [attempt.status],
-      admitCompletedAction: true,
-    });
-    log.warn(
-      {
-        runId,
-        nodeAttemptId: attempt.id,
-        commandId: command.id,
-        incarnationId,
-      },
-      "node-permission-session-crashed",
-    );
-
-    return true;
-  });
-}
-
+// ADR-177: reattachment checks the shared child-crash boundary before it
+// waits on an answer whose adapter session no longer exists.
 async function reattachNodePrompt(
   ctx: RunAgentStepCtx,
   owner: NodePromptOwner,
@@ -1118,7 +1039,15 @@ async function reattachNodePrompt(
   if (!existing) return null;
   // The boundary settled the run `Crashed`: this driver yields — the cause
   // names what happened, not an invariant break.
-  if (await settleCrashedPermissionPark(db, ctx.runId, owner, existing))
+  if (
+    await db.transaction((tx: Db) =>
+      settleCrashedPermissionPark(tx, {
+        runId: ctx.runId,
+        owner,
+        command: existing,
+      }),
+    )
+  )
     throw new FlowPromptContinuationPending(
       existing.id,
       new MaisterError(
@@ -1209,6 +1138,23 @@ export async function reattachGatePrompt(
   );
 
   if (!existing) return null;
+  if (
+    await db.transaction((tx: Db) =>
+      settleCrashedPermissionPark(tx, {
+        runId: ctx.runId,
+        owner,
+        command: existing,
+      }),
+    )
+  )
+    throw new FlowPromptContinuationPending(
+      existing.id,
+      new MaisterError(
+        "CRASH",
+        "the gate's agent session crashed; the run was settled Crashed",
+        { details: { reason: "session_crashed" } },
+      ),
+    );
   const bound =
     execution ??
     (ctx.bindExecution

@@ -9,6 +9,7 @@ import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import { runFlow } from "@/lib/flows/runner";
 import { runReviewHuman } from "@/lib/flows/graph/runner-graph";
 import { loadRun } from "@/lib/flows/graph/runner-core";
@@ -38,16 +39,20 @@ afterAll(async () => {
   await testDatabase?.stop();
 });
 
-function seedGraphRun(
+async function seedGraphRun(
   manifest: unknown,
   opts: { executionPolicy?: ExecutionPolicy } = {},
 ): Promise<SeededGraphRun> {
-  return seedGraphRunShared(db, manifest, {
+  const seeded = await seedGraphRunShared(db, manifest, {
     run:
       opts.executionPolicy !== undefined
         ? { executionPolicy: opts.executionPolicy }
         : {},
   });
+
+  await fakeExecutionHosts(db, { runId: seeded.runId });
+
+  return seeded;
 }
 
 async function getRun(runId: string): Promise<Run> {

@@ -7,6 +7,7 @@ import type { Db } from "@/lib/execution-host/db";
 import type { ProjectionWorker } from "@/lib/execution-host/events/projection-worker";
 import type { RealSupervisor } from "@/test-support/real-supervisor";
 import type { ScratchLaunchInput } from "@/lib/scratch-runs/types";
+import type { SendPromptInput } from "@/lib/execution-host";
 
 import { randomUUID } from "node:crypto";
 import { execFile, fork, type ChildProcess } from "node:child_process";
@@ -14,7 +15,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import path, { join } from "node:path";
 import { promisify } from "node:util";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
@@ -27,6 +28,15 @@ import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
 import { startPromptOwnerWorker } from "@/lib/execution-host/prompt-owner-recovery";
 import { scratchPromptOwners } from "@/lib/scratch-runs/prompt-owner";
+import { isYieldedScratchTurn } from "@/lib/scratch-runs/prompt-owner";
+import { createExecutionHosts } from "@/lib/execution-host/client";
+import {
+  freezeScratchPromptIntent,
+  admitFrozenScratchPrompt,
+} from "@/lib/scratch-runs/prompt-intent";
+import { appendScratchMessage } from "@/lib/scratch-runs/messages";
+import { redriveRunningScratchPrompt } from "@/lib/scratch-runs/dispatch-recovery";
+import { retireEligibleCommands } from "@/lib/execution-host/retirement";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -282,6 +292,164 @@ async function killAtDialogTransition(
 }
 
 describe("Scratch prompt owners through the production service", () => {
+  it("S1 retired command: a tombstone blocks an old frozen turn without another host prompt", async () => {
+    const runId = await launch('fixture-output:{"bytes":0,"text":"retained"}');
+    const hosts = createExecutionHosts({ db: db as unknown as Db });
+    const execution = await hosts.executionFor(runId);
+    const [command] = await promptCommands(runId);
+    const [binding] = await db
+      .select()
+      .from(schema.runSessions)
+      .where(eq(schema.runSessions.runId, runId));
+
+    if (!binding.hostSessionId || !command.requestCanonicalJson)
+      throw new Error(
+        "settled scratch command lacks its original binding/request",
+      );
+    const request = JSON.parse(command.requestCanonicalJson) as {
+      payload: SendPromptInput;
+    };
+
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT id FROM runs WHERE id = ${runId} FOR UPDATE`);
+      await tx
+        .update(schema.scratchRuns)
+        .set({ dialogStatus: "Running" })
+        .where(eq(schema.scratchRuns.runId, runId));
+      await freezeScratchPromptIntent(tx as unknown as Db, {
+        client: execution.client,
+        hostSessionId: binding.hostSessionId!,
+        owner: { variant: "initial" },
+        sourceMessageId: null,
+        payload: request.payload,
+      });
+      await tx
+        .update(schema.runs)
+        .set({ status: "Done" })
+        .where(eq(schema.runs.id, runId));
+      await tx
+        .update(schema.scratchRuns)
+        .set({ dialogStatus: "Done" })
+        .where(eq(schema.scratchRuns.runId, runId));
+    });
+    await retireEligibleCommands({
+      db: db as unknown as Db,
+      hosts,
+      now: new Date(Date.now() + 8 * 86_400_000),
+    });
+    expect((await promptCommands(runId))[0].retiredAt).toBeInstanceOf(Date);
+    // Inject a stale revival after real retirement. Even this obsolete intent
+    // cannot recover absence from the compacted request body.
+    await db
+      .update(schema.runs)
+      .set({ status: "Running" })
+      .where(eq(schema.runs.id, runId));
+    await db
+      .update(schema.scratchRuns)
+      .set({ dialogStatus: "Running" })
+      .where(eq(schema.scratchRuns.runId, runId));
+    await redriveRunningScratchPrompt(db as unknown as Db, runId, hosts);
+    expect(await promptCommands(runId)).toHaveLength(1);
+    const { stopScratchWorkbench } = await import("@/lib/scratch-runs/service");
+
+    await stopScratchWorkbench(runId, {
+      db: db as unknown as Db,
+      executionHosts: hosts,
+    });
+  }, 240_000);
+
+  it("S1 stale driver: a superseded turn yields without admitting into its successor's Running dialog", async () => {
+    const runId = await launch('fixture-output:{"bytes":0,"text":"first"}');
+    const hosts = createExecutionHosts({ db: db as unknown as Db });
+    const execution = await hosts.executionFor(runId);
+    const [binding] = await db
+      .select()
+      .from(schema.runSessions)
+      .where(eq(schema.runSessions.runId, runId));
+
+    if (!binding?.hostSessionId)
+      throw new Error("scratch launch has no bound host session");
+    const hostSessionId = binding.hostSessionId;
+    const payload = {
+      stepId: "scratch",
+      prompt: 'fixture-output:{"bytes":0,"text":"successor"}',
+    };
+    const intent = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT id FROM runs WHERE id = ${runId} FOR UPDATE`);
+      const message = await appendScratchMessage(tx as unknown as Db, {
+        runId,
+        role: "user",
+        content: payload.prompt,
+        delivery: "prompted",
+      });
+
+      await tx
+        .update(schema.scratchRuns)
+        .set({ dialogStatus: "Running" })
+        .where(eq(schema.scratchRuns.runId, runId));
+
+      return freezeScratchPromptIntent(tx as unknown as Db, {
+        client: execution.client,
+        hostSessionId,
+        owner: {
+          variant: "message",
+          messageId: message.id,
+          sequence: message.sequence,
+        },
+        sourceMessageId: message.id,
+        payload,
+      });
+    });
+    let refusal: unknown;
+
+    try {
+      await execution.client.prompt(
+        hostSessionId,
+        { stepId: "scratch", prompt: "old turn" },
+        {
+          admitOwner: (tx) =>
+            admitFrozenScratchPrompt(
+              tx,
+              execution.client,
+              hostSessionId,
+              { variant: "initial" },
+              { stepId: "scratch", prompt: "old turn" },
+            ),
+        },
+      );
+    } catch (error) {
+      refusal = error;
+    }
+    expect(isYieldedScratchTurn(refusal)).toBe(true);
+    expect(await promptCommands(runId)).toHaveLength(1);
+    const [scratch] = await db
+      .select()
+      .from(schema.scratchRuns)
+      .where(eq(schema.scratchRuns.runId, runId));
+
+    expect(scratch.dialogStatus).toBe("Running");
+    expect(scratch.activePromptIntent).toEqual(intent);
+    const currentOwner = {
+      variant: "message" as const,
+      messageId: intent.sourceMessageId!,
+      sequence: intent.owner.ref.promptOrdinal,
+    };
+    const current = await execution.client.prompt(hostSessionId, payload, {
+      admitOwner: (tx) =>
+        admitFrozenScratchPrompt(
+          tx,
+          execution.client,
+          hostSessionId,
+          currentOwner,
+          payload,
+        ),
+    });
+
+    await execution.client.waitForPrompt(current, {
+      owners: scratchPromptOwners,
+    });
+    expect(await promptCommands(runId)).toHaveLength(2);
+  }, 240_000);
   it("owner-scratch-initial: the launch turn owns its WaitingForUser transition", async () => {
     const runId = await launch('fixture-output:{"bytes":0,"text":"hello"}');
     const [command] = await promptCommands(runId);
@@ -360,10 +528,29 @@ describe("Scratch prompt owners through the production service", () => {
       role: "user",
       content: prompt,
     });
-    await db
-      .update(schema.scratchRuns)
-      .set({ dialogStatus: "Running" })
-      .where(eq(schema.scratchRuns.runId, runId));
+    const execution = await createExecutionHosts({
+      db: db as unknown as Db,
+    }).executionFor(runId);
+    const [binding] = await db
+      .select()
+      .from(schema.runSessions)
+      .where(eq(schema.runSessions.runId, runId));
+
+    if (!binding?.hostSessionId) throw new Error("missing scratch binding");
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT id FROM runs WHERE id = ${runId} FOR UPDATE`);
+      await tx
+        .update(schema.scratchRuns)
+        .set({ dialogStatus: "Running" })
+        .where(eq(schema.scratchRuns.runId, runId));
+      await freezeScratchPromptIntent(tx as unknown as Db, {
+        client: execution.client,
+        hostSessionId: binding.hostSessionId!,
+        sourceMessageId: messageId,
+        owner: { variant: "message", messageId, sequence: 100 },
+        payload: { stepId: "scratch", prompt },
+      });
+    });
     await killAtDialogTransition(runId, [runId, messageId, "100", prompt]);
     const key = `scratch_message:message:${messageId}:100`;
     const [stranded] = await db
@@ -378,6 +565,15 @@ describe("Scratch prompt owners through the production service", () => {
     expect(stranded?.state).toBe("succeeded");
     expect(stranded.applicationState).not.toBe("applied");
     expect(beforeRecovery.dialogStatus).toBe("Running");
+    await redriveRunningScratchPrompt(
+      db as unknown as Db,
+      runId,
+      createExecutionHosts({ db: db as unknown as Db }),
+    );
+    expect((await promptCommands(runId)).map((row) => row.id)).toEqual([
+      expect.any(String),
+      stranded.id,
+    ]);
     const worker = startPromptOwnerWorker({
       db: db as unknown as Db,
       owners: scratchPromptOwners,

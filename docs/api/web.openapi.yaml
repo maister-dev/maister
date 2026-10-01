@@ -5638,6 +5638,17 @@ paths:
     post:
       tags: [scratch-runs]
       summary: Implemented — stop live scratch supervisor session
+      description: |
+        The route reads the run id from the path, requires an active session
+        and `operateScratchRun` project membership (or the launching creator
+        for a project-less local-package assistant, without requiring its edit
+        lock), then delegates to the scratch lifecycle owner. An existing terminal dialog returns its
+        current state without another supervisor deletion. A successful stop
+        reports whether the session was terminated and whether its workspace
+        remains active; it does not return the generic `OkResult` envelope.
+        Status and open-permission closure commit together.
+        A terminal replay repairs legacy open rows without another status event;
+        stored-answer retries are refused as session-ended, never delivered.
       operationId: stopScratchRun
       parameters:
         - name: runId
@@ -5646,13 +5657,36 @@ paths:
           schema: { type: string, format: uuid }
       responses:
         "200":
-          $ref: "#/components/responses/OkResult"
+          description: Current scratch dialog and run state after stop or idempotent replay.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [runId, dialogStatus, runStatus, supervisorStopped, workspaceActive]
+                properties:
+                  runId: { type: string, format: uuid }
+                  dialogStatus: { type: string }
+                  runStatus: { type: string }
+                  supervisorStopped: { type: boolean }
+                  workspaceActive: { type: boolean }
+        "400":
+          $ref: "#/components/responses/Config"
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
           $ref: "#/components/responses/Forbidden"
         "409":
-          description: Scratch run not found, not scratch, terminal, or not stoppable (`PRECONDITION` / `CONFLICT`).
+          description: Scratch run not found, not scratch, or transition lost to a conflicting owner (`PRECONDITION` / `CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "503":
+          description: Supervisor session deletion was unavailable (`EXECUTOR_UNAVAILABLE`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "500":
+          description: Unexpected stop failure (`CRASH`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -5711,7 +5745,13 @@ paths:
         supervisor stop. It preserves recoverable Git state, removes only an
         owned worktree, records durable disposition, and transitions the run to
         `Abandoned`. The body is empty; run/project/path/session identity is
-        server-derived and authorization is `recoverRun` membership.
+        server-derived. A project run requires `operateScratchRun`; a
+        project-less local-package assistant run requires its launching user,
+        without an active edit lock for Discard. Each terminal status write
+        closes open permission rows in the same transaction, preserving stored
+        choices as closed evidence. Terminal replay repairs legacy open rows
+        without duplicate events or host deletion; it never closes a successor
+        turn that won the run lock first.
       operationId: discardScratchRun
       parameters:
         - name: runId
@@ -5720,26 +5760,38 @@ paths:
           schema: { type: string, format: uuid }
       responses:
         "200":
-          description: Workspace removed after preservation, or an idempotent replay.
+          description: Workbench removal envelope or scratch state when no active workbench removal was needed.
           content:
             application/json:
               schema:
-                {
-                  $ref: "#/components/schemas/WorkspaceLifecycleRemovalResponse",
-                }
+                oneOf:
+                  - $ref: "#/components/schemas/WorkspaceLifecycleRemovalResponse"
+                  - type: object
+                    required: [runId, dialogStatus, runStatus, supervisorStopped, workspaceRemoved]
+                    properties:
+                      runId: { type: string, format: uuid }
+                      dialogStatus: { type: string }
+                      runStatus: { type: string }
+                      supervisorStopped: { type: boolean }
+                      workspaceRemoved: { type: boolean }
+        "400":
+          $ref: "#/components/responses/Config"
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
           $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
         "409":
           description: Scratch run not found, not scratch, or cannot be discarded in its current state (`PRECONDITION` / `CONFLICT`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "503":
-          description: Transient supervisor, Git, filesystem, or post-removal finalization failure.
+          description: Supervisor unavailable (`EXECUTOR_UNAVAILABLE`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "500":
+          description: Unexpected Git, filesystem, or post-removal failure (`CRASH`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -9293,6 +9345,17 @@ paths:
         `retry_safe: true` (re-running a session-less node repeats its side
         effects — accepted-risk). Otherwise the run is discard-only.
 
+        (ADR-177, 2026-09-30) A crashed AI/skill gate is a narrower exception:
+        when its source attempt preserves a successful parent action, one
+        stale gate, a settled failed gate command, and the matching crashed
+        incarnation, Recover creates a continuation attempt under the new
+        assignment and re-asks only that gate. This also applies after a
+        non-retry-safe CLI/check action: the completed action and preceding
+        gate results are reused, never dispatched again. Missing or
+        contradictory retained proof is discard-only. The response remains
+        `200 resumed` or, at capacity, `202 queued`; the internal gate plan is
+        not a wire field.
+
         (ADR-175) Before any dispatch the crashed attempt's last
         `session.prompt` is reconciled: agreeing terminal evidence the owner
         never applied is applied first and the graph continues with **no second
@@ -9328,10 +9391,11 @@ paths:
         cap (a `Crashed` run already released its slot — Recover is a re-launch,
         NOT a cap bypass). On a free slot the run flips `Crashed→Running` with
         `runs.resume_started_at = now()` and proceeds to Phase 2 (evidence
-        reconcile → close the crashed attempt `Reworked`/`crash_recover` →
-        graph re-entry, claimed single-winner by a CAS-clear of
+        reconcile → close an open crashed attempt `Reworked`/`crash_recover`
+        (or reuse the already closed gate source and append its continuation)
+        → graph re-entry, claimed single-winner by a CAS-clear of
         `resume_started_at`). On a full cap the run flips
-        `Crashed→Pending` (retaining `acpSessionId`, stamping
+        `Crashed→Pending` (retaining any recover-target `acpSessionId`, stamping
         `resume_started_at`) and returns `202 {state:"queued"}` with NO
         supervisor call — the scheduler resumes it when a slot frees. The
         reconcile engine (ADR-033) is the single recovery mechanism for every
@@ -9346,7 +9410,7 @@ paths:
 
         | Identifier | Source | Trust |
         | ---------- | ------ | ----- |
-        | `runId` | path parameter, route-shape validated | `url-param` |
+        | `runId` | path parameter (UUID declared by this contract) | `url-param` |
         | `userId` | Auth.js session | `auth-context` |
         | `projectId` | DB join from the run row | `server-state` |
         | `acpSessionId` (resolved from the recover-target NODE's own attempt / logical session, never the newest `run_sessions` row), recover target node (`resume_target_step_id`) | DB row / pinned manifest | `server-state` |
@@ -9386,9 +9450,10 @@ paths:
                       existing wait gate.
         "202":
           description: |
-            Cap full at admission. The run flipped `Crashed→Pending` (retaining
-            `acpSessionId`); the scheduler resumes it via the same
-            `session/resume` path when a slot frees. No supervisor session was created.
+            Cap full at admission. The run flipped `Crashed→Pending` and kept
+            its recovery intent. The scheduler re-enters the same recovery
+            plan when a slot frees (gate-only recovery has no parent ACP
+            handle). No supervisor session was created.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RecoverQueuedResponse" }
@@ -9410,7 +9475,8 @@ paths:
             first (run is now `Running`/`Pending`) — a duplicate dispatch is
             impossible — or `classifyRecover` resolved to `discard-only` (an
             agent target node with no `acpSessionId`, a session-less target node
-            that is not `retry_safe`, or an unresolvable target node), so only
+            that is not `retry_safe` without a proven crashed gate, or an
+            unresolvable target node), so only
             Discard is offered; or the run's workspace was already removed
             (`PRECONDITION`, not `CONFLICT`); or (ADR-181) a live workbench
             claim owns the worktree — a git panel operation inside its lease,
@@ -20673,10 +20739,16 @@ components:
                 causeCode}` when the last turn's prompt was quarantined while
                 still accepted — e.g. `causeCode: "terminal_unstorable"`, its
                 terminal event could not be stored (ADR-184 amendment
-                2026-09-28); `null` otherwise.
+                2026-09-28); (Implemented — ADR-192) `{reason:
+                "scratch_dispatch_unknown"}` when a legacy Running dialog
+                has no frozen prompt intent or unresolved command. Delivery
+                is unknown; the operator must Stop and start a new run.
+                Private intent/owner/payload fields are never returned; `null` otherwise.
               properties:
                 cause: { type: string, enum: [host_pressure] }
-                reason: { type: string, enum: [prompt_terminal_conflict] }
+                reason:
+                  type: string
+                  enum: [prompt_terminal_conflict, scratch_dispatch_unknown]
                 causeCode: { type: string }
         workspace:
           type: object

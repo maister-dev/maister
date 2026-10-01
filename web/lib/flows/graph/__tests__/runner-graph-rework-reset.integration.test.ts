@@ -13,7 +13,7 @@ import { recordArtifact } from "@/lib/flows/graph/artifact-store";
 import { runFlow } from "@/lib/flows/runner";
 import {
   schema,
-  seedGraphRun as seedGraphRunShared,
+  seedPlacedGraphRun as seedGraphRunShared,
   type SeededGraphRun,
 } from "@/test-support/graph-run-seed";
 import {

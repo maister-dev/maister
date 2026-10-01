@@ -23,6 +23,16 @@ info:
     `supervisor.openapi.yaml`) — including the `details: {reason:
     session_checkpointed, cause: outbox_pressure}` of a host park under
     outbox pressure.
+
+    (Implemented — ADR-177 amendment 2026-09-30) For an unintentional ACP
+    transport rejection while awaiting a prompt response, the host publishes
+    the session terminal before the failed prompt command terminal/receipt,
+    unless an existing fenced, pressure or captured-output failure already
+    determines its outcome. A bounded publication failure carries
+    details.reason: required_output_incomplete and does not invent a crash
+    cause. The manager classifies child death from accepted exact-incarnation
+    evidence; reverse delivery of these durable positions is held as a
+    canonical sequence gap, never accepted in the opposite order.
   contact:
     name: MAIster maintainers
   license:

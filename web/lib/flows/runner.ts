@@ -18,7 +18,11 @@ import { withFlowDriver } from "./graph/driver-lifetime";
 import { wakeParkedCoordinator } from "./graph/coordinator-wake";
 
 import { getDb } from "@/lib/db/client";
-import { createExecutionHosts, isFencedError } from "@/lib/execution-host";
+import {
+  createExecutionHosts,
+  ensureAssignment,
+  isFencedError,
+} from "@/lib/execution-host";
 
 const log = pino({
   name: "flow-runner",
@@ -57,8 +61,12 @@ export async function runFlow(
       ),
   );
 
+  const hasCliActions = [...graph.nodes.values()].some(
+    (node) => node.nodeType === "cli",
+  );
+
   if (
-    !hasOwnedPrompts ||
+    (!hasOwnedPrompts && !hasCliActions) ||
     !["Running", "NeedsInput"].includes(loaded.run.status)
   ) {
     await runGraph(loaded, { ...opts, db, runtimeRoot });
@@ -74,15 +82,23 @@ export async function runFlow(
   // Keep host registration, canonical consumers and owner application on the
   // root database. Only this graph's traversal receives the fenced handle.
   const hosts = opts.executionHosts ?? createExecutionHosts({ db });
-  const execution =
-    opts.execution ??
-    (await bindExecution(hosts, runId, {
-      assignmentId: loaded.run.executionAssignmentId,
-    }));
-  const claim = await claimFlowDriver(db, {
-    runId,
-    assignmentId: execution.client.assignment.id,
-  });
+  const execution = hasOwnedPrompts
+    ? (opts.execution ??
+      (await bindExecution(hosts, runId, {
+        assignmentId: loaded.run.executionAssignmentId,
+      })))
+    : opts.execution;
+  // CLI-only traversal owns a database lease without creating an ACP session.
+  // ADR-166's existing backfill handles only never-placed historical rows.
+  const assignmentId =
+    execution?.client.assignment.id ??
+    loaded.run.executionAssignmentId ??
+    (
+      await ensureAssignment(db, runId, "legacy_backfill", {
+        transport: hosts.transport,
+      })
+    ).id;
+  const claim = await claimFlowDriver(db, { runId, assignmentId });
 
   if (!claim) {
     logger.info({}, "flow-driver-already-owned");

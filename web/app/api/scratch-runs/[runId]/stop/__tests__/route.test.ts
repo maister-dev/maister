@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { requireProjectAction } from "@/lib/authz";
 import {
   runSessions as runSessionsTable,
+  hitlRequests as hitlRequestsTable,
   runs as runsTable,
   scratchRuns as scratchRunsTable,
   workspaces as workspacesTable,
@@ -12,6 +13,7 @@ import { MaisterError } from "@/lib/errors";
 
 type Row = Record<string, unknown>;
 type Tables = {
+  hitl_requests: Row[];
   run_sessions: Row[];
   runs: Row[];
   scratch_runs: Row[];
@@ -26,11 +28,18 @@ type FakeDb = {
 };
 
 const dbState: { tables: Tables } = {
-  tables: { run_sessions: [], runs: [], scratch_runs: [], workspaces: [] },
+  tables: {
+    hitl_requests: [],
+    run_sessions: [],
+    runs: [],
+    scratch_runs: [],
+    workspaces: [],
+  },
 };
 
 function tableOf(t: unknown): keyof Tables {
   if (t === runSessionsTable) return "run_sessions";
+  if (t === hitlRequestsTable) return "hitl_requests";
   if (t === runsTable) return "runs";
   if (t === scratchRunsTable) return "scratch_runs";
   if (t === workspacesTable) return "workspaces";
@@ -63,10 +72,14 @@ const selectChain = () => ({
 
 const updateChain = (table: unknown) => ({
   set: (vals: Row) => ({
-    where: async () => {
-      for (const row of dbState.tables[tableOf(table)]) {
-        Object.assign(row, vals);
-      }
+    where: () => {
+      const rows = dbState.tables[tableOf(table)];
+
+      for (const row of rows) Object.assign(row, vals);
+
+      return Object.assign(Promise.resolve(), {
+        returning: async () => rows.map((row) => ({ id: row.id })),
+      });
     },
   }),
 });
@@ -205,6 +218,7 @@ async function invokePost(runId: string) {
 
 beforeEach(() => {
   dbState.tables = {
+    hitl_requests: [],
     run_sessions: [],
     runs: [],
     scratch_runs: [],

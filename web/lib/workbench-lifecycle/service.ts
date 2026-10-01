@@ -49,6 +49,7 @@ import {
 } from "@/lib/execution-host";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
+import { closeOpenScratchPermissions } from "@/lib/scratch-runs/open-permissions";
 import {
   branchNameSchema,
   branchUpstream,
@@ -2475,6 +2476,11 @@ export async function recordDrop(args: RecordDropInput): Promise<void> {
             `scratch run row not found while dropping workbench: ${args.runId}`,
           );
         }
+        await closeOpenScratchPermissions(
+          tx as unknown as ExecutionDb,
+          args.runId,
+          args.removedAt,
+        );
       }
 
       // Workbench targets always carry a project (ADR-097); narrow for emit.

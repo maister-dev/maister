@@ -16,7 +16,11 @@ export type NodeKind =
   | "consensus"
   | null;
 
-export type RecoverPlan = "resume-agent" | "redispatch" | "discard-only";
+export type RecoverPlan =
+  | "resume-agent"
+  | "resume-gate"
+  | "redispatch"
+  | "discard-only";
 
 // The node kinds that run an ACP session and therefore recover by RESUMING it
 // rather than by re-running. Identical to the set `admitNodePrompt` admits as
@@ -63,7 +67,9 @@ export function classifyRecover(
   currentNodeKind: NodeKind,
   retrySafe: boolean,
   consensusEvidence: ConsensusRecoverEvidence | null,
+  gateCrashWitness = false,
 ): RecoverPlan {
+  if (gateCrashWitness) return "resume-gate";
   if (currentNodeKind === "consensus") {
     if (consensusEvidence?.quarantined) return "discard-only";
     if (consensusEvidence?.incompleteSynthesis) return "redispatch";

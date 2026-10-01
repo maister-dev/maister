@@ -218,7 +218,7 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-174](#adr-174-the-desk-renders-one-object-per-work-item) | The Desk renders one object per work item | Accepted | 2026-09-17 |
 | [ADR-175](#adr-175-operator-recover-of-a-crashed-agent-node-re-enters-the-flow-graph) | Operator Recover of a crashed agent node re-enters the flow graph | Accepted; amended by ADR-176 and ADR-177; amended 2026-09-26 | 2026-09-18 |
 | [ADR-176](#adr-176-automated-crash-recover-re-entry--the-flow-continuation-worker-owns-the-committed-intent-under-a-bounded-per-run-budget) | Automated crash-recover re-entry — the flow continuation worker owns the committed intent under a bounded per-run budget | Implemented | 2026-09-21 |
-| [ADR-177](#adr-177-evidence-first-crash-classification) | Evidence-first crash classification | Implemented; amended 2026-09-23, 2026-09-26 | 2026-09-21 |
+| [ADR-177](#adr-177-evidence-first-crash-classification) | Evidence-first crash classification | Implemented; amended 2026-09-23, 2026-09-26, 2026-09-30 | 2026-09-21 |
 | [ADR-178](#adr-178-observatory-overview-table-day-aligned-period-url-views-and-auto-apply-filters) | Observatory overview table, day-aligned period, URL views, and auto-apply filters | Implemented (2026-09-21) | 2026-09-21 |
 | [ADR-179](#adr-179-mcp-configuration-values--literal-or-reference-envheader-maps-a-bearer-token-field-value-replacing-project-overlays-host-env-ref-readiness-and-an-adapter-transport-gate) | MCP configuration values — literal-or-reference env/header maps, a bearer token field, value-replacing project overlays, host env-ref readiness, and an adapter transport gate | Implemented | 2026-09-21 |
 | [ADR-180](#adr-180-permission-deadline-has-one-owner) | Permission deadline has one owner | Implemented; amended 2026-09-26 | 2026-09-22 |
@@ -233,6 +233,7 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-189](#adr-189-addressed-task-clarification-before-execution) | Addressed task clarification before execution | Accepted | 2026-09-26 |
 | [ADR-190](#adr-190-librarian-memory-summaries-reset-barrier-and-history-deletion) | Librarian memory, summaries, reset barrier and history deletion | Accepted | 2026-09-26 |
 | [ADR-191](#adr-191-librarian-surface-top-navigation-entry-and-right-side-panel) | Librarian surface: top-navigation entry and right-side panel | Accepted | 2026-09-26 |
+| [ADR-192](#adr-192-durable-scratch-prompt-intent-before-command-admission) | Durable scratch prompt intent before command admission | Accepted | 2026-09-30 |
 
 ---
 
@@ -1804,7 +1805,7 @@ Full record: [`decisions/adr-176.md`](decisions/adr-176.md)
 
 ### ADR-177: Evidence-first crash classification
 
-**Status:** Implemented; amended 2026-09-23 (host-evidence settlement; the current turn across `node`, `permission_resume` and gate variants; the boundary re-reads its command under lock); amended 2026-09-26 (the crash boundary owns a dead session's answer)
+**Status:** Implemented; amended 2026-09-23 (host-evidence settlement; the current turn across `node`, `permission_resume` and gate variants; the boundary re-reads its command under lock); amended 2026-09-26 (the crash boundary owns a dead session's answer); amended 2026-09-30 (AI/skill gate permission parks)
 **Date:** 2026-09-21
 
 The reconcile sweep classifies a sessionless `Running` flow run from the current
@@ -1944,6 +1945,15 @@ Full record: [`decisions/adr-191.md`](decisions/adr-191.md)
 
 ---
 
+### ADR-192: Durable scratch prompt intent before command admission
+
+**Status:** Accepted
+**Date:** 2026-09-30
+
+Full record: [`decisions/adr-192.md`](decisions/adr-192.md)
+
+---
+
 ## Template for New Decisions
 
 ```markdown
@@ -2038,14 +2048,14 @@ properties/lastAction` sets `nullable: true` beside an `allOf` with no sibling
   beside an `allOf` ref, which OpenAPI 3.0 ignores without a sibling `type`.
   Pre-dates the forked-package-loop branch (ADR-132, baseline-verified); fix
   when the experiment schemas are next reworked.
-- **Periodic reconcile crashes a `Running` run at a `cli` node with no live
-  session (`cli-not-retry-safe`, pre-existing, `web/lib/reconcile.ts`; filed
-  2026-09-03 during the ADR-166 review).** A `cli` node has no ACP session by
-  design, so "no live session" is not evidence of a dead driver there. Verify
-  the reconcile candidate query excludes runs with a live in-process driver;
-  if it cannot, add a graph-driver registry like `sync-driver-registry` and
-  gate the classification on it. Not fixed here — it is a code fix on an
-  unrelated path (R9).
+- **CLI reconcile liveness — resolved 2026-09-30, `20bffa558`** (filed
+  2026-09-03). CLI-only graphs acquire the existing renewable driver lease on
+  their current assignment without an ACP session. Reconcile skips that live
+  lease and rechecks assignment, lease and grace under the run lock before a
+  dead-driver `cli-not-retry-safe` crash. Real same-process, separate-process,
+  death and successor-race controls own this contract in
+  `cli-driver-reconcile.integration.test.ts`; see
+  [reconciliation](system-analytics/reconciliation-gc.md).
 - **`social-board.md` Expectations exceeds the R5a cap (filed 2026-09-11, M51
   T8.5).** Its **Expectations** section carries 24 bullets against R5a's
   "≤ 12 bullets. If a domain needs more, the boundary is wrong". The boundary is
@@ -2167,70 +2177,60 @@ properties/lastAction` sets `nullable: true` beside an `allOf` with no sibling
   but the route serializes `getRunDTO` verbatim, which carries `runnerId` and
   no `executorId`; its `status` enum also lacks `WaitingOnChildren`. The branch added only `terminalCause`; re-syncing the
   schema is separate work (R9).
-- **The admission gate has no periodic C1/C3 pass (found 2026-09-26,
-  ownership residuals T1.5).** `promoteNextPending` reads C1 and C3 candidates
-  `FOR UPDATE ... SKIP LOCKED` and runs only on a slot-free edge; only C2 has
-  the 60 s backstop. A queued answered-idle resume (flow, or scratch since
-  D-A8) whose run row another transaction holds at that instant — measured: a
-  stale launch driver's prompt-owner application — is skipped and waits for
-  the next freed slot or the operator's retry, whose own claim admits under
-  cap. Agent resumes have the continuation worker's re-selection. A backstop
-  changes the gate for every pool and is separate work (R9).
-- **A flow node whose adapter child crashes mid-prompt (no permission
-  pending) still ends `Failed` (found 2026-09-26, ownership residuals T3.2b).**
-  The `session_crashed` evidence class shipped for the class G0 measured — a
-  permission park, closed at the node's re-entry. The plan's second arm, a
-  `Running` node whose prompt fails because its child crashed, was not
-  characterized: the owner applies the failure as the node's result and the
-  graph fails it, which Recover then refuses. Classifying it needs its own
-  control first (which event reaches Postgres first, the prompt's terminal or
-  the session's `session.crashed`, decides where the evidence can be read), so
-  it is separate work (R9).
-- **A gate permission park whose adapter child dies under a live host is never
-  settled (found 2026-09-27, ownership residuals review fix round).** The
-  `session_crashed` boundary covers the node prompt only: `reattachNodePrompt`
-  (`web/lib/flows/runner-agent.ts`) calls `settleCrashedPermissionPark`, and
-  `reattachGatePrompt` has no counterpart for an `ai_judgment` / `skill_check`
-  gate prompt. The purge fails the gate's prompt, its owner decodes that failure
-  as verdict `unparseable` and applies `markGateFailed` while the run waits in
-  `NeedsInput`; `openGatePromptExists` keeps re-selecting the run for the
-  continuation worker, and each re-entry yields at `assertGatePermissionSettled`
-  (`gate_permission_pending`, because the run is not `Running`) until the
-  keep-alive idles it. Pre-existing on `master` — the branch added the node
-  settle only; a gate settle needs its own control, so it is separate work
-  (R9).
-- **A web restart between a scratch dispatch's commit and its prompt admission
-  strands the dialog (found 2026-09-28, ownership residuals Codex review).**
-  Every scratch dispatch first commits the dialog `Running`, then admits its
-  `session.prompt`. The four dispatches are the launch, `dispatchQueuedScratchMessages`
-  (`queued → prompted`), Recover, and, since D-A8, the idle resume's detached
-  re-prompt. A process death between the two leaves a `Running` dialog on a
-  live host session with no prompt command. Nothing re-drives it: the agent
-  continuation worker's scratch arm needs `WaitingForUser` plus a `queued` row
-  (and a project), and reconcile skips a live scratch session. The window is
-  milliseconds wide, and the operator can still Stop the dialog. Pre-existing
-  on `master` for the launch, dispatch and Recover; the idle resume is one more
-  entry, and rerouting it through the queue would not close the dispatcher's
-  own window. A fix is a sweep that proves from the command ledger that no
-  prompt is in flight before it re-drives, so it cannot double-send. That is
-  separate work (R9).
-- **A parked session's late exit event can overwrite its successor's dialog
-  (found 2026-09-28, ownership residuals review).** The scratch consumer
-  projects `session.exited` / `session.crashed` onto the dialog without checking
-  that the session is still the run's current host session. If the parked
-  session's consumer processes its `checkpoint` exit only after the respond
-  route's `session_checkpointed` arm has respawned the run, it writes
-  `WaitingForUser` over the resumed turn's `Running`. Until 2026-09-28 the stored
-  answer's acknowledgement healed that by re-writing `Running`; it no longer
-  writes status. Reachability needs the old consumer to outlive a whole
-  respawn and is unmeasured, so a current-session guard waits for a control
-  that reproduces it (R9).
-- **Scratch Stop and Discard never close the run's open permission rows
-  (found 2026-09-28, ownership residuals review).** A dialog stopped (`Review`)
-  or discarded (`Abandoned`) keeps its unanswered, or answered-but-parked,
-  permission rows open, bound to a deleted session. The inbox skips them
-  (it lists only `NeedsInput | NeedsInputIdle | Running` runs), so nothing asks
-  the operator, but the rows never settle. Pre-existing on `master`; since D-A8
-  such a row can carry a stored answer. Closing them with
-  `closeOpenScratchPermissions` belongs with the Stop and Discard semantics, so
-  it is separate work (R9).
+- **C1/C3 periodic admission — resolved 2026-09-30, `0f57c4509`** (found
+  2026-09-26, residuals T1.5). Every due system sweep re-enters the existing
+  admission gates for flow, agent and Librarian pools. A released SKIP LOCKED
+  miss is retried without another slot-free edge; the existing claim CAS and
+  capacity/pressure fences prevent a second launch. Stable parent-cap and
+  shared-writer exclusions are filtered before LIMIT so a blocked prefix does
+  not hide eligible work. The real stale prompt-owner transaction and routed
+  tick controls are in `system-sweep-admission.integration.test.ts`; see
+  [scheduler](system-analytics/scheduler.md).
+- **Running-node child crash — resolved 2026-09-30, `b693b894a`,
+  `687f0ff5a`, `c56dc29f6`, `4cf66ba6d`** (found 2026-09-26, residuals T3.2b). The host
+  publishes the unintentional closed-transport session terminal before its
+  failed prompt receipt. The node and answered `permission_resume` owners read accepted crash evidence
+  for the exact incarnation before decoding a result, then close the attempt through
+  `session_crashed`: run Crashed, Recover dispatches one replacement prompt.
+  Reverse delivery remains a canonical sequence gap; genuine task failures and
+  intentional checkpoints retain their existing outcomes. Missing authoritative
+  terminal evidence refuses owner application. Real host-order, SIGKILL and
+  refusal controls qualify [ADR-177](decisions/adr-177.md).
+- **Gate permission-park child crash — resolved 2026-09-30, `724315ba0`
+  and `c56dc29f6`** (found 2026-09-27). Node and gate reattachment share the
+  crash-settlement helper. A proven crashed AI/skill gate closes the attempt
+  and permission obligations through `session_crashed`; it cannot apply an
+  unparseable verdict or yield forever. A durable closed-source witness lets
+  Recover re-ask only the gate, preserving the successful parent action and
+  earlier gate results, including an unsafe CLI parent. Real owner/reattach,
+  capacity, concurrent Recover and missing-proof controls are in
+  `permission-crash-boundary.integration.test.ts`; see
+  [ADR-177](decisions/adr-177.md).
+- **Scratch commit-to-admission restart window — resolved 2026-09-30,
+  `bfd1dbec0`; migration `0adfbcc1b`** (found 2026-09-28). All five dispatch
+  paths, including package launch/message variants, freeze one versioned prompt
+  intent in the winning Running transaction. The continuation worker re-admits
+  that exact owner/key/payload only through locked command-ledger proof; existing
+  commands and retained tombstones never authorize a new prompt. Legacy null
+  intent remains unknown delivery with a visible Stop/new-run instruction.
+  Real production restarts and the live-dispatcher race are mandatory serial
+  controls in `dispatch-window.integration.test.ts`; see
+  [ADR-192](decisions/adr-192.md).
+- **Scratch late predecessor terminal — resolved 2026-09-30,
+  `7748048db`** (found 2026-09-28). Before any terminal or permission projection,
+  the scratch consumer compares the event's resolved incarnation with the
+  current logical-session binding under the run lock. Stale events log
+  `scratch-stale-incarnation-terminal-ignored` and mutate nothing; the current
+  session's own already-ended exit/crash still applies. The real held-frame
+  attempt was fenced by canonical `stale_epoch` before this consumer, so the
+  authorized injected-stale-incarnation transactional control proves its guard;
+  transport reachability is not claimed. See
+  [scratch runs](system-analytics/scratch-runs.md).
+- **Scratch terminal permission closure — resolved 2026-09-30,
+  `414b6970f`** (found 2026-09-28). Winning Stop and both Discard transaction
+  owners close open permission rows in the same transaction as status, preserving
+  stored choices as closed evidence that can never be delivered. Terminal replay
+  repairs legacy rows under the same run fence and cannot close a winning
+  successor's permissions. Real route/transaction, rollback, replay and late
+  answer controls are in `permission-terminal.integration.test.ts`; see
+  [scratch runs](system-analytics/scratch-runs.md).

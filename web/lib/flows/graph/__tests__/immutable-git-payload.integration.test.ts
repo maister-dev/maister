@@ -29,6 +29,7 @@ import {
 } from "@/lib/__tests__/runner-fixtures";
 import { recordArtifact } from "@/lib/flows/graph/artifact-store";
 import { recordDefaultArtifacts } from "@/lib/flows/graph/default-artifacts";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import { runFlow } from "@/lib/flows/runner";
 import {
   startMainPostgresTestDb,
@@ -432,6 +433,7 @@ describe("F3: runner records commit_set baseRef as the merge-base", () => {
       ],
     });
 
+    await fakeExecutionHosts(db, { runId });
     await runFlow(runId, { db, runtimeRoot });
 
     const recorded = (await db

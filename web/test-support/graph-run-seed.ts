@@ -6,6 +6,8 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { fakeExecutionHosts } from "./fake-execution-host";
+
 import * as fullSchema from "@/lib/db/schema";
 import {
   testPlatformRunnerRow,
@@ -197,4 +199,19 @@ export async function seedGraphRun(
     runtimeRoot,
     repoPath,
   };
+}
+
+/** Seed the launch placement for a session-less graph fixture. The caller uses
+ * no ACP transport; traversal still requires the same assignment as production.
+ */
+export async function seedPlacedGraphRun(
+  db: NodePgDatabase,
+  manifest: unknown,
+  options: SeedGraphRunOptions = {},
+): Promise<SeededGraphRun> {
+  const seeded = await seedGraphRun(db, manifest, options);
+
+  await fakeExecutionHosts(db, { runId: seeded.runId });
+
+  return seeded;
 }

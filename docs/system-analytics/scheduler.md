@@ -533,11 +533,20 @@ must not enter `bundleErrors` or disable the scheduler job.
   resume is cap-safe (the D2 bypass is removed) — see [`task-queue.md`](task-queue.md).
   Both apply the `MAISTER_TASK_QUEUE_AUTO_RESERVE` / per-project `maxInFlightAuto`
   capacity guards to C2. C1 and C3 candidates are read `FOR UPDATE ... SKIP
-  LOCKED`, and only C2 has a periodic backstop: a C1/C3 run whose row another
-  transaction holds at the instant of the pass (a stale driver's owner
-  application, a respond claim) is not admitted by it and waits for the next
-  slot-free edge. An answered idle run also has the operator's retry, whose own
-  claim admits it when the pool is under cap.
+  LOCKED`; a locked row is left for the next eligible sweep or slot-free edge.
+  An answered idle run also has the operator's retry, whose own claim admits it
+  when the pool is under cap.
+- (Implemented — R9 A1) Every due `system_sweep` re-enters this same gate for
+  flow/scratch, agent and Librarian pools, even when no usable host-pressure
+  sample is returned. Persisted pressure and pool capacity remain gate checks;
+  a clear sample resumes host-paused nodes before draining queues. A skipped
+  locked row is reconsidered on the first eligible tick after its transaction
+  releases, without another slot-free edge. Existing claim CAS prevents a
+  sweep, edge or operator retry from launching twice. Permanently ineligible
+  shared-tree/parent-cap candidates must be excluded before the bounded
+  candidate LIMIT, so they cannot hide a later eligible row indefinitely.
+  Dispatch occurs after the gate transaction; a scheduler attempt never awaits
+  a whole driver. This changes no API, job kind, run status or migration.
 - (Implemented — ADR-165) **Per-orchestrator active-children skip.** Beside the
   existing shared-writer sibling gate, `tryStartRun` and `promoteNextPending`
   MUST skip (and `continue` past) a `Pending` run whose `parent_run_id` names an

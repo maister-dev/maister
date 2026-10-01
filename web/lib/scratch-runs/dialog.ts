@@ -89,7 +89,7 @@ export type ScratchDetail = {
     // turn's prompt was quarantined with no terminal evidence.
     errorMetadata?: {
       cause?: "host_pressure";
-      reason?: "prompt_terminal_conflict";
+      reason?: "prompt_terminal_conflict" | "scratch_dispatch_unknown";
       causeCode?: string;
     } | null;
   };

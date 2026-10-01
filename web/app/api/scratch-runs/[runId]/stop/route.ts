@@ -8,7 +8,10 @@ import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
-import { stopScratchWorkbench } from "@/lib/scratch-runs/service";
+import {
+  assertLocalPackageAssistantActor,
+  stopScratchWorkbench,
+} from "@/lib/scratch-runs/service";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { runs } = schemaModule as unknown as Record<string, any>;
@@ -66,7 +69,7 @@ export async function POST(
   const { runId } = await params;
 
   try {
-    await requireActiveSession();
+    const user = await requireActiveSession();
 
     const db = getDb() as unknown as Db;
     const runRows = await db.select().from(runs).where(eq(runs.id, runId));
@@ -76,7 +79,13 @@ export async function POST(
       throw new MaisterError("PRECONDITION", `run not found: ${runId}`);
     }
 
-    await requireProjectAction(run.projectId, "operateScratchRun");
+    if (run.projectId) {
+      await requireProjectAction(run.projectId, "operateScratchRun");
+    } else {
+      await assertLocalPackageAssistantActor(run, user.id, {
+        requireLock: false,
+      });
+    }
 
     return NextResponse.json(await stopScratchWorkbench(runId));
   } catch (err) {

@@ -3,6 +3,7 @@ import "server-only";
 import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 import type { ExecutionHost } from "@/lib/db/schema";
 import type { ExecutionHosts } from "@/lib/execution-host/client";
+import type { StoredScratchAttachment } from "@/lib/scratch-runs/types";
 
 import { and, asc, desc, eq, isNotNull, isNull, or, sql } from "drizzle-orm";
 import pino from "pino";
@@ -27,6 +28,7 @@ import {
   sendScratchPromptAndProjectEvents,
 } from "@/lib/scratch-runs/events";
 import { scratchStepId } from "@/lib/scratch-runs/launch";
+import { freezeScratchPromptIntent } from "@/lib/scratch-runs/prompt-intent";
 import {
   loadScratchRecoveryRows,
   respawnScratchSession,
@@ -322,7 +324,7 @@ export async function driveScratchIdleResume(args: {
       )
       .orderBy(desc(runMessages.sequence))
       .limit(1);
-    const attachments = message
+    const attachments: StoredScratchAttachment[] = message
       ? await tx
           .select()
           .from(scratchAttachments)
@@ -330,7 +332,28 @@ export async function driveScratchIdleResume(args: {
           .orderBy(asc(scratchAttachments.createdAt))
       : [];
 
+    const orderedAttachments = promptAttachmentOrder(attachments);
+    const prompt = normalizeScratchPrompt(
+      message?.content ?? rows.scratch.initialPrompt ?? "",
+      rows.executor.agent,
+      { runId },
+    );
+    const payload = {
+      stepId: scratchStepId(),
+      prompt,
+      contentBlocks: scratchPromptContentBlocks(prompt, orderedAttachments),
+    };
+
+    await freezeScratchPromptIntent(tx, {
+      client: execution.client,
+      hostSessionId: session.sessionId,
+      owner: { variant: "recovery" },
+      sourceMessageId: message?.id ?? null,
+      payload,
+    });
+
     return {
+      payload,
       message: (message ?? null) as {
         id: string;
         content: string;
@@ -339,11 +362,6 @@ export async function driveScratchIdleResume(args: {
       attachments: promptAttachmentOrder(attachments),
     };
   });
-  const prompt = normalizeScratchPrompt(
-    turn.message?.content ?? rows.scratch.initialPrompt ?? "",
-    rows.executor.agent,
-    { runId },
-  );
 
   log.info(
     {
@@ -360,9 +378,7 @@ export async function driveScratchIdleResume(args: {
         db,
         runId,
         sessionId: session.sessionId,
-        stepId: scratchStepId(),
-        prompt,
-        contentBlocks: scratchPromptContentBlocks(prompt, turn.attachments),
+        ...turn.payload,
         execution,
         owner: { variant: "recovery" },
       });

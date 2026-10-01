@@ -32,6 +32,13 @@ vi.mock("@/lib/flows/graph/permission-resume", () => ({
   hasFlowPermissionResume: async () => false,
 }));
 
+// These legacy resume cases have no owned command or crashed park. The real
+// boundary is exercised by permission-crash-boundary.integration.test.ts.
+vi.mock("@/lib/flows/graph/permission-park-crash", () => ({
+  settleCrashedPermissionPark: async () => false,
+  childCrashPrecededTerminal: async () => null,
+}));
+
 // ADR-166: the resumed-session driver talks to the host through the client
 // bound to the run's assignment (prompt / input / delete) and the host-scoped
 // admin stream. The fake client routes each call to the existing spies with

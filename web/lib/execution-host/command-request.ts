@@ -23,7 +23,8 @@ const contentMetadata = {
   mimeType: z.string().min(1).max(255).optional(),
   description: z.string().max(4_000).optional(),
 };
-const PromptPayloadSchema = z
+
+export const PromptPayloadSchema = z
   .object({
     stepId: safeSegment,
     nodeAttemptId: safeSegment.optional(),

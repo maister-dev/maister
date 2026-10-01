@@ -39,6 +39,7 @@ import { projectCanonicalPromptCommands } from "@/lib/execution-host/events/prom
 import { reanchorDispatchedPrompts } from "@/lib/execution-host/events/run-message-store";
 import { permissionCheckpointOrder } from "@/lib/execution-host/permission-handoff-evidence";
 import { reduceHostSpanEvidence } from "@/lib/execution-host/prompt-evidence";
+import { applyPromptOwner } from "@/lib/execution-host/prompt-owner-application";
 import { verifyHostPromptSpan } from "@/lib/execution-host/prompt-output";
 import {
   createPromptOwnerRegistry,
@@ -63,6 +64,7 @@ import {
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 import { seedNodePromptOwner } from "@/test-support/prompt-owner-fixture";
+import { flowPromptOwners } from "@/lib/flows/graph/prompt-owner";
 
 let database: StartedPostgresTestDb;
 let db: Db;
@@ -94,6 +96,51 @@ beforeEach(async () => {
   fake.setPrunedFloor(null);
   fake.clearFaults();
   fake.setPromptBehavior(async () => ({ stopReason: "end_turn", meta: null }));
+});
+
+it("N1: unavailable terminal evidence poisons its owner without applying a failed node result", async () => {
+  const { runId, client, hostSessionId } = await liveSession();
+
+  await db.update(runs).set({ currentStepId: "s1" }).where(eq(runs.id, runId));
+  fake.setPromptBehavior(async () => {
+    throw new MaisterError(
+      "EXECUTOR_UNAVAILABLE",
+      "closed ACP transport has no durable session terminal",
+      { details: { reason: "required_output_incomplete" } },
+    );
+  });
+  const handle = await prompt(client, hostSessionId);
+
+  await fake.waitForCanonicalEvents();
+  await untilReceipt(handle.commandId);
+  await expect
+    .poll(async () => (await reconcile(handle.commandId)).disposition)
+    .toBe("settled");
+  expect((await command(handle.commandId)).state).toBe("failed");
+  expect(
+    await applyPromptOwner({
+      db,
+      commandId: handle.commandId,
+      owners: flowPromptOwners,
+      signal: AbortSignal.timeout(10_000),
+    }),
+  ).toBe("poisoned");
+  const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+  const [attempt] = await db
+    .select()
+    .from(nodeAttempts)
+    .where(eq(nodeAttempts.runId, runId));
+
+  expect(run.status).toBe("Running");
+  expect(attempt.actionCompletion).toBeNull();
+  expect(attempt.endedAt).toBeNull();
+  expect(await command(handle.commandId)).toMatchObject({
+    applicationState: "poisoned",
+    applicationError: {
+      reason: "prompt_owner_poisoned",
+      causeCode: "session_terminal_evidence_unavailable",
+    },
+  });
 });
 
 afterAll(async () => {
