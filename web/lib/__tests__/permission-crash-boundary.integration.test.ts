@@ -688,10 +688,9 @@ const AGENT_CHILD_KILLED = {
 
 describe("the crash boundary with a permission pending (G0, no answer sent)", () => {
   // T3.2b: the kill fails the prompt (the purge rejects the pending
-  // permission) and its owner applies that failure while the run waits in
-  // NeedsInput. Before the `session_crashed` class nothing ever moved the run
-  // again; now the node's re-entry reads the crashed incarnation and closes
-  // it like a lost turn — and Recover asks again.
+  // permission). Its owner uses exact crash proof to close the current
+  // NeedsInput attempt like a lost turn, without applying a failed action
+  // result; Recover asks again.
   it("(i) flow: the adapter child dies under a live host → Crashed (session-crashed), recoverable, row closed; Recover asks again", async () => {
     const { runId, hitl, flow } = await flowOnPermission("flow-sigkill");
 

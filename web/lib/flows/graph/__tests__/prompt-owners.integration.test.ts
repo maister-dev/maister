@@ -10,7 +10,7 @@ import { execFile, fork, type ChildProcess } from "node:child_process";
 import path from "node:path";
 
 import { and, eq, isNotNull } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
   executionCommands,
@@ -30,6 +30,8 @@ import { compileManifest } from "@/lib/flows/graph/compile";
 import { buildContext } from "@/lib/flows/context";
 import { runNodeGates } from "@/lib/flows/graph/gates-exec";
 import { flowPromptOwners } from "@/lib/flows/graph/prompt-owner";
+import * as nodePromptOwner from "@/lib/flows/graph/node-prompt-owner";
+import { handleFlowPermission } from "@/lib/flows/graph/prompt-permission";
 import { childCrashPrecededTerminal } from "@/lib/flows/graph/permission-park-crash";
 import { assertFlowPermissionDelivery } from "@/lib/flows/graph/prompt-permission";
 import { startFlowContinuationWorker } from "@/lib/flows/graph/continuation-worker";
@@ -3855,7 +3857,9 @@ describe("Flow prompt owners through the production graph driver", () => {
     });
   }, 180_000);
 
-  it("N1: child death during an unparked node prompt crashes the run", async () => {
+  async function assertNodeCrashSettlement(
+    interleaving: "unparked" | "park-before-prepare" | "park-after-prepare",
+  ): Promise<void> {
     const seeded = await seedOwnerFlow([
       {
         id: "work",
@@ -3871,6 +3875,65 @@ describe("Flow prompt owners through the production graph driver", () => {
       },
     ]);
     const hosts = createExecutionHosts({ db: database.db as unknown as Db });
+    const originalPrepare = nodePromptOwner.prepareNodePrompt;
+    let projectedPermissionId: string | undefined;
+    const prepare = vi
+      .spyOn(nodePromptOwner, "prepareNodePrompt")
+      .mockImplementation(async (input) => {
+        if (
+          input.ref.runId !== seeded.runId ||
+          input.command.state !== "failed" ||
+          interleaving === "unparked"
+        )
+          return originalPrepare(input);
+        // Inject only the delivery schedule. The event uses the production
+        // permission projector and the crash is a real supervisor child death.
+        const projectPermission = async (): Promise<void> => {
+          const { client } = await hosts.executionFor(seeded.runId, {
+            assignmentId: input.ref.assignmentId,
+          });
+
+          await handleFlowPermission({
+            db: input.db,
+            client,
+            owner: {
+              variant: "node",
+              nodeAttemptId: input.ref.nodeAttemptId,
+              promptOrdinal: input.ref.promptOrdinal,
+            },
+            hostSessionId: input.command.targetSessionId!,
+            stepId: "work",
+            prompt: "Approve read?",
+            event: {
+              type: "session.permission_request",
+              sessionId: input.command.targetSessionId!,
+              monotonicId: 1,
+              requestId: "delayed-before-crash",
+              options: [
+                { optionId: "allow", name: "Allow", kind: "allow_once" },
+              ],
+              toolCall: {
+                toolCallId: "delayed-tool",
+                title: "Read",
+                kind: "read",
+              },
+            },
+          });
+          const [permission] = await database.db
+            .select()
+            .from(hitlRequests)
+            .where(eq(hitlRequests.runId, seeded.runId));
+
+          projectedPermissionId = permission.id;
+        };
+
+        if (interleaving === "park-before-prepare") await projectPermission();
+        const prepared = await originalPrepare(input);
+
+        if (interleaving === "park-after-prepare") await projectPermission();
+
+        return prepared;
+      });
     const driver = runFlow(seeded.runId, {
       db: database.db,
       runtimeRoot: supervisor.runtimeRoot,
@@ -3919,6 +3982,16 @@ describe("Flow prompt owners through the production graph driver", () => {
         .where(eq(runs.id, seeded.runId));
 
       expect(terminal.status).toBe("Crashed");
+      if (interleaving !== "unparked") {
+        expect(projectedPermissionId).toBeDefined();
+        const [permission] = await database.db
+          .select()
+          .from(hitlRequests)
+          .where(eq(hitlRequests.id, projectedPermissionId!));
+
+        expect(permission.respondedAt).not.toBeNull();
+        expect(permission.response).toBeNull();
+      }
       const [crash] = await database.db
         .select({ payload: domainEvents.payload })
         .from(domainEvents)
@@ -4085,8 +4158,15 @@ describe("Flow prompt owners through the production graph driver", () => {
     } finally {
       await killAdapterProcesses();
       await driver;
+      prepare.mockRestore();
     }
-  }, 90_000);
+  }
+
+  it.each(["unparked", "park-before-prepare", "park-after-prepare"] as const)(
+    "N1: child death during a node prompt settles %s without losing the crash",
+    assertNodeCrashSettlement,
+    90_000,
+  );
 
   it("N1: a task-level prompt failure remains Failed without crash evidence", async () => {
     const seeded = await seedOwnerFlow([

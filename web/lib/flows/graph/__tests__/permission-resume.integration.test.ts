@@ -41,6 +41,8 @@ import { startProjectionWorker } from "@/lib/execution-host/events/projection-wo
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
 import { startFlowContinuationWorker } from "@/lib/flows/graph/continuation-worker";
+import * as nodePromptOwner from "@/lib/flows/graph/node-prompt-owner";
+import { handleFlowPermission } from "@/lib/flows/graph/prompt-permission";
 import { prepareFlowPermissionResult } from "@/lib/flows/graph/permission-resume";
 import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
 import { resumeRun } from "@/lib/runs/resume";
@@ -473,14 +475,67 @@ async function interruptPermissionInputAcknowledgement(
 }
 
 describe("Owned Flow checkpointed permission resume", () => {
-  it("N1: child death after a resumed permission is answered crashes the Running node", async () => {
+  async function assertResumedCrashSettlement(
+    interleaving: "unparked" | "park-after-prepare",
+  ): Promise<void> {
     const seeded = await seedPermissionFlow();
     const hosts = createExecutionHosts({ db });
     const firstDriver = startProcess(
       "flow-prompt-owner-process.ts",
       seeded.runId,
     );
-    let resumedDriver: ReturnType<typeof startProcess> | undefined;
+    let resumedDriver: Promise<void> | undefined;
+    const resumedAbort = new AbortController();
+    let delayedPermissionId: string | undefined;
+    const originalPrepare = nodePromptOwner.prepareNodePrompt;
+    const prepare = vi
+      .spyOn(nodePromptOwner, "prepareNodePrompt")
+      .mockImplementation(async (input) => {
+        const prepared = await originalPrepare(input);
+
+        if (
+          input.ref.runId !== seeded.runId ||
+          input.ref.variant !== "permission_resume" ||
+          input.command.state !== "failed" ||
+          interleaving === "unparked"
+        )
+          return prepared;
+        // Deliver a second permission after preparation using the real projector.
+        const { client } = await hosts.executionFor(seeded.runId, {
+          assignmentId: input.ref.assignmentId,
+        });
+
+        await handleFlowPermission({
+          db,
+          client,
+          owner: input.ref,
+          hostSessionId: input.command.targetSessionId!,
+          stepId: "work",
+          prompt: "Approve second read?",
+          event: {
+            type: "session.permission_request",
+            sessionId: input.command.targetSessionId!,
+            monotonicId: 100,
+            requestId: "delayed-resumed-permission",
+            options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+            toolCall: {
+              toolCallId: "second-read",
+              title: "Read",
+              kind: "read",
+            },
+          },
+        });
+        const permissions = await db
+          .select()
+          .from(hitlRequests)
+          .where(eq(hitlRequests.runId, seeded.runId));
+
+        delayedPermissionId = permissions.find(
+          (row) => row.respondedAt === null,
+        )?.id;
+
+        return prepared;
+      });
     let recovery: Promise<RecoverResult> | undefined;
     const recoveryAbort = new AbortController();
 
@@ -554,10 +609,12 @@ describe("Owned Flow checkpointed permission resume", () => {
       expect(
         await resumeRun(seeded.runId, { db, executionHosts: hosts }),
       ).toMatchObject({ ok: true });
-      resumedDriver = startProcess(
-        "flow-prompt-owner-process.ts",
-        seeded.runId,
-      );
+      resumedDriver = runFlow(seeded.runId, {
+        db,
+        runtimeRoot: supervisor.runtimeRoot,
+        executionHosts: hosts,
+        signal: resumedAbort.signal,
+      }).catch(() => undefined);
       await expect
         .poll(
           async () => {
@@ -657,7 +714,26 @@ describe("Owned Flow checkpointed permission resume", () => {
         errorCode: "CRASH",
         actionCompletion: null,
       });
-      await resumedDriver.exited;
+      await resumedDriver;
+      const [settledPrompt] = await db
+        .select()
+        .from(executionCommands)
+        .where(eq(executionCommands.id, resumed.id));
+
+      expect(settledPrompt).toMatchObject({
+        state: "failed",
+        applicationState: "applied",
+      });
+      if (interleaving !== "unparked") {
+        expect(delayedPermissionId).toBeDefined();
+        const [permission] = await db
+          .select()
+          .from(hitlRequests)
+          .where(eq(hitlRequests.id, delayedPermissionId!));
+
+        expect(permission.respondedAt).not.toBeNull();
+        expect(permission.response).toBeNull();
+      }
       recovery = resumeCrashedRun(seeded.runId, {
         db,
         executionHosts: hosts,
@@ -736,15 +812,18 @@ describe("Owned Flow checkpointed permission resume", () => {
       expect(await recovery).toMatchObject({ state: "resumed" });
     } finally {
       recoveryAbort.abort();
-      resumedDriver?.child.kill("SIGKILL");
+      resumedAbort.abort();
       firstDriver.child.kill("SIGKILL");
-      await Promise.allSettled([
-        firstDriver.exited,
-        resumedDriver?.exited,
-        recovery,
-      ]);
+      await Promise.allSettled([firstDriver.exited, resumedDriver, recovery]);
+      prepare.mockRestore();
     }
-  }, 180_000);
+  }
+
+  it.each(["unparked", "park-after-prepare"] as const)(
+    "N1: child death after an answered permission settles %s",
+    assertResumedCrashSettlement,
+    180_000,
+  );
   it.each([
     "capacity claim",
     "claim SIGKILL",

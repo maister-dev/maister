@@ -174,7 +174,6 @@ export async function prepareNodePrompt(input: {
     .select({
       flowRevisionId: runs.flowRevisionId,
       runKind: runs.runKind,
-      status: runs.status,
     })
     .from(runs)
     .where(eq(runs.id, ref.runId));
@@ -204,10 +203,7 @@ export async function prepareNodePrompt(input: {
     outcome.state === "failed" &&
     isTurnLostError(outcome.error);
   const crashProof =
-    !hostPressured &&
-    !turnLost &&
-    originalRun.status === "Running" &&
-    command.state === "failed"
+    !hostPressured && !turnLost && command.state === "failed"
       ? await childCrashPrecededTerminal(db, command)
       : null;
   const childCrashed = crashProof !== null;
@@ -247,7 +243,9 @@ export async function prepareNodePrompt(input: {
       )
         return "superseded";
       if (turnLost || childCrashed) {
-        if (childCrashed && run.status !== "Running") return "superseded";
+        // Permission delivery can park this same owned turn before or after
+        // preparation. Classify the immutable crash evidence independently of
+        // that status; close the current park and attempt under this run lock.
         const currentCrashProof = childCrashed
           ? await childCrashPrecededTerminal(tx, command)
           : null;
@@ -273,6 +271,7 @@ export async function prepareNodePrompt(input: {
             nodeAttemptId: ref.nodeAttemptId,
             commandId: command.id,
             promptOrdinal: ref.promptOrdinal,
+            fromStatus: run.status,
             ...(currentCrashProof
               ? {
                   proofKind: "accepted_session_crashed_before_terminal",
