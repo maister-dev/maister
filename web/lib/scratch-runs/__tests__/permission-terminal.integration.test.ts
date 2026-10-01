@@ -1,3 +1,5 @@
+import type { SupervisorEvent } from "@/lib/execution-host";
+import type { ScratchExecution } from "@/lib/scratch-runs/events";
 import type { Db } from "@/lib/execution-host/db";
 import type { StartedPostgresTestDb } from "@/test-support/pg-container";
 
@@ -11,6 +13,7 @@ import { NextRequest } from "next/server";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import * as schema from "@/lib/db/schema";
+import { sendScratchPromptAndProjectEvents } from "@/lib/scratch-runs/events";
 import { applyScratchPromptCompletion } from "@/lib/scratch-runs/turn-completion";
 import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import { startMainPostgresTestDb } from "@/test-support/pg-container";
@@ -24,6 +27,16 @@ let stop: typeof import("@/app/api/scratch-runs/[runId]/stop/route").POST;
 let discard: typeof import("@/app/api/scratch-runs/[runId]/discard/route").POST;
 let respond: typeof import("@/app/api/runs/[runId]/hitl/[hitlRequestId]/respond/route").POST;
 let recordDrop: typeof import("@/lib/workbench-lifecycle/service").recordDrop;
+
+// The consumer and DB effects are real; prompt admission/completion only bound this
+// already-read event control without admitting another turn.
+vi.mock("@/lib/execution-host/prompt-incarnation", () => ({
+  waitForPromptIncarnation: async () => undefined,
+}));
+vi.mock("@/lib/scratch-runs/prompt-owner", async (original) => ({
+  ...(await original<typeof import("@/lib/scratch-runs/prompt-owner")>()),
+  waitForScratchPrompt: async () => undefined,
+}));
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 vi.mock("@/lib/authz", () => ({
@@ -192,7 +205,242 @@ async function retryAnswer(runId: string, answeredId: string): Promise<void> {
   );
 }
 
+async function permissionConsumer(runId: string) {
+  const { hosts, assignment, hostId } = await fakeExecutionHosts(db, { runId });
+
+  if (!assignment) throw new Error("permission consumer requires assignment");
+  const execution = await hosts.executionFor(runId);
+  const sessionId = randomUUID();
+  const logicalSessionId = randomUUID();
+
+  await db.insert(schema.runSessions).values({
+    id: logicalSessionId,
+    runId,
+    sessionName: "default",
+    executionAssignmentId: assignment.id,
+    hostSessionId: sessionId,
+    acpSessionId: "shared-resume-handle",
+  });
+  await db.insert(schema.runSessionIncarnations).values({
+    id: randomUUID(),
+    runSessionId: logicalSessionId,
+    runId,
+    executionAssignmentId: assignment.id,
+    assignmentEpoch: assignment.epoch,
+    executionHostId: hostId,
+    hostSessionId: sessionId,
+    acpSessionId: "shared-resume-handle",
+    state: "active",
+    origin: "native",
+  });
+  const event: Extract<
+    SupervisorEvent,
+    { type: "session.permission_request" }
+  > = {
+    type: "session.permission_request",
+    sessionId,
+    monotonicId: 7,
+    requestId: `late-${runId}`,
+    options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+    toolCall: { toolCallId: "new-tool", title: "Read", kind: "read" },
+  };
+  const consume = async (databaseForConsumer = db): Promise<void> => {
+    const processed = Promise.withResolvers<void>();
+    const controlled: ScratchExecution = {
+      client: {
+        ...execution.client,
+        prompt: async () => {
+          await processed.promise;
+
+          return { commandId: randomUUID() };
+        },
+      },
+      admin: {
+        ...execution.admin,
+        streamSession: async function* () {
+          try {
+            yield event;
+          } finally {
+            processed.resolve();
+          }
+        },
+      },
+    };
+
+    await sendScratchPromptAndProjectEvents({
+      db: databaseForConsumer,
+      runId,
+      sessionId,
+      stepId: "scratch",
+      prompt: "already running",
+      owner: { variant: "initial" },
+      execution: controlled,
+    });
+  };
+
+  return { consume, sessionId, logicalSessionId, assignment, hostId, event };
+}
+
 describe("S2 terminal scratch permission ownership", () => {
+  it.each(["Stop", "Discard"] as const)(
+    "a late permission after %s cannot reopen its committed terminal state",
+    async (action) => {
+      const { runId } = await seedTurn();
+      const consumer = await permissionConsumer(runId);
+
+      expect(
+        (await invoke(action === "Stop" ? stop : discard, runId)).status,
+      ).toBe(200);
+      await consumer.consume();
+      const state = await database.pool.query(
+        "SELECT r.status,s.dialog_status,(SELECT count(*)::int FROM hitl_requests WHERE run_id=r.id AND responded_at IS NULL) AS open FROM runs r JOIN scratch_runs s ON s.run_id=r.id WHERE r.id=$1",
+        [runId],
+      );
+
+      expect(state.rows[0]).toEqual({
+        status: "Abandoned",
+        dialog_status: "Abandoned",
+        open: 0,
+      });
+    },
+  );
+
+  it("rechecks ownership when Stop commits between answer lookup and new permission persistence", async () => {
+    const { runId } = await seedTurn({ workspace: true });
+    const consumer = await permissionConsumer(runId);
+
+    await db
+      .delete(schema.hitlRequests)
+      .where(eq(schema.hitlRequests.runId, runId));
+    await db
+      .update(schema.runs)
+      .set({ status: "Running" })
+      .where(eq(schema.runs.id, runId));
+    await db
+      .update(schema.scratchRuns)
+      .set({ dialogStatus: "Running" })
+      .where(eq(schema.scratchRuns.runId, runId));
+    let transactions = 0;
+    const interleaved = new Proxy(db, {
+      get(target, property, receiver) {
+        if (property !== "transaction")
+          return Reflect.get(target, property, receiver);
+
+        return async (...args: Parameters<typeof db.transaction>) => {
+          const result = await target.transaction(...args);
+
+          transactions += 1;
+          if (transactions === 1)
+            expect((await invoke(stop, runId)).status).toBe(200);
+
+          return result;
+        };
+      },
+    });
+
+    await consumer.consume(interleaved);
+    const state = await database.pool.query(
+      "SELECT r.status,s.dialog_status,(SELECT count(*)::int FROM hitl_requests WHERE run_id=r.id AND responded_at IS NULL) AS open FROM runs r JOIN scratch_runs s ON s.run_id=r.id WHERE r.id=$1",
+      [runId],
+    );
+
+    expect(transactions).toBe(2);
+    expect(state.rows[0]).toEqual({
+      status: "Review",
+      dialog_status: "Review",
+      open: 0,
+    });
+  });
+
+  it("ignores an old incarnation's permission without consuming the successor's stored answer", async () => {
+    const { runId } = await seedTurn();
+    const consumer = await permissionConsumer(runId);
+    const successorId = randomUUID();
+
+    await db
+      .update(schema.runSessionIncarnations)
+      .set({ state: "exited" })
+      .where(
+        eq(schema.runSessionIncarnations.hostSessionId, consumer.sessionId),
+      );
+    await db.insert(schema.runSessionIncarnations).values({
+      id: randomUUID(),
+      runSessionId: consumer.logicalSessionId,
+      runId,
+      executionAssignmentId: consumer.assignment.id,
+      assignmentEpoch: consumer.assignment.epoch,
+      executionHostId: consumer.hostId,
+      hostSessionId: successorId,
+      acpSessionId: "shared-resume-handle",
+      state: "active",
+      origin: "native",
+    });
+    await db
+      .update(schema.runSessions)
+      .set({ hostSessionId: successorId })
+      .where(eq(schema.runSessions.id, consumer.logicalSessionId));
+    await db
+      .update(schema.runs)
+      .set({ status: "Running" })
+      .where(eq(schema.runs.id, runId));
+    await db
+      .update(schema.scratchRuns)
+      .set({ dialogStatus: "Running" })
+      .where(eq(schema.scratchRuns.runId, runId));
+    const before = await db
+      .select()
+      .from(schema.hitlRequests)
+      .where(eq(schema.hitlRequests.runId, runId));
+
+    await consumer.consume();
+    expect(
+      await db
+        .select()
+        .from(schema.hitlRequests)
+        .where(eq(schema.hitlRequests.runId, runId)),
+    ).toEqual(before);
+    const [scratch] = await db
+      .select()
+      .from(schema.scratchRuns)
+      .where(eq(schema.scratchRuns.runId, runId));
+
+    expect(scratch.dialogStatus).toBe("Running");
+  });
+
+  it("accepts and deduplicates the current incarnation's live permission", async () => {
+    const { runId } = await seedTurn();
+    const consumer = await permissionConsumer(runId);
+
+    await db
+      .delete(schema.hitlRequests)
+      .where(eq(schema.hitlRequests.runId, runId));
+    await db
+      .update(schema.runs)
+      .set({ status: "Running" })
+      .where(eq(schema.runs.id, runId));
+    await db
+      .update(schema.scratchRuns)
+      .set({ dialogStatus: "Running" })
+      .where(eq(schema.scratchRuns.runId, runId));
+    await consumer.consume();
+    await consumer.consume();
+    const rows = await db
+      .select()
+      .from(schema.hitlRequests)
+      .where(eq(schema.hitlRequests.runId, runId));
+    const [scratch] = await db
+      .select()
+      .from(schema.scratchRuns)
+      .where(eq(schema.scratchRuns.runId, runId));
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].schema).toMatchObject({
+      requestId: consumer.event.requestId,
+      supervisorSessionId: consumer.sessionId,
+    });
+    expect(scratch.dialogStatus).toBe("NeedsInput");
+  });
+
   it("terminal Stop replay does not close successor permissions when a competing status transaction wins its run lock", async () => {
     const { runId } = await seedTurn({ status: "Crashed" });
     const blocker = await database.pool.connect();

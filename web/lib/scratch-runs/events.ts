@@ -307,11 +307,9 @@ async function deliverStoredPermissionAnswer(args: {
     // The run row first, the respond route's order: the input command this
     // transaction issues takes a key-share lock on `runs`, so taking the HITL
     // row first would invert the route's `runs` → HITL order.
-    await tx
-      .select({ id: runs.id })
-      .from(runs)
-      .where(eq(runs.id, args.runId))
-      .for("update");
+    await lockScratchRunRows(tx, args.runId);
+    if (!(await canApplyScratchPermission(tx, args)))
+      return "already_observed" as const;
     if (await hasScratchPermissionRequest(tx, args))
       return "already_observed" as const;
     const candidates = await tx
@@ -485,11 +483,12 @@ async function deliverStoredPermissionAnswer(args: {
     // the run was stopped, and must not overwrite that.
     const surface = () =>
       args.db.transaction(async (tx: DbClientLike) => {
+        await lockScratchRunRows(tx, args.runId);
+        if (!(await canApplyScratchPermission(tx, args))) return false;
         const [run] = await tx
           .select({ status: runs.status })
           .from(runs)
-          .where(eq(runs.id, args.runId))
-          .for("update");
+          .where(eq(runs.id, args.runId));
         const [scratch] = await tx
           .select({ dialogStatus: scratchRuns.dialogStatus })
           .from(scratchRuns)
@@ -593,11 +592,8 @@ async function persistPermissionRequest(args: {
     await args.db.transaction(async (tx: DbClientLike) => {
       // Multiple re-drivers may observe the same host event. The run lock
       // serializes notice creation with stored-answer rebinding and Stop.
-      await tx
-        .select({ id: runs.id })
-        .from(runs)
-        .where(eq(runs.id, args.runId))
-        .for("update");
+      await lockScratchRunRows(tx, args.runId);
+      if (!(await canApplyScratchPermission(tx, args))) return;
       if (await hasScratchPermissionRequest(tx, args)) return;
       await createHitlRequest(tx, {
         id: hitlRequestId,
@@ -765,6 +761,124 @@ export async function scratchNoticeResumeOffset(
   }
 }
 
+async function scratchEventIncarnation(
+  tx: ExecutionDb,
+  input: { runId: string; hostSessionId: string; executionHostId: string },
+): Promise<{
+  assignmentId: string | null;
+  observedIncarnationId: string | null;
+  currentIncarnationId: string | null;
+}> {
+  const [run] = await tx
+    .select({ assignmentId: schemaModule.runs.executionAssignmentId })
+    .from(schemaModule.runs)
+    .where(eq(schemaModule.runs.id, input.runId));
+  const [observed] = await tx
+    .select({ id: schemaModule.runSessionIncarnations.id })
+    .from(schemaModule.runSessionIncarnations)
+    .where(
+      and(
+        eq(schemaModule.runSessionIncarnations.runId, input.runId),
+        eq(
+          schemaModule.runSessionIncarnations.executionHostId,
+          input.executionHostId,
+        ),
+        eq(
+          schemaModule.runSessionIncarnations.hostSessionId,
+          input.hostSessionId,
+        ),
+      ),
+    );
+  const [current] = run?.assignmentId
+    ? await tx
+        .select({ id: schemaModule.runSessionIncarnations.id })
+        .from(schemaModule.runSessions)
+        .innerJoin(
+          schemaModule.runSessionIncarnations,
+          and(
+            eq(
+              schemaModule.runSessionIncarnations.runSessionId,
+              schemaModule.runSessions.id,
+            ),
+            eq(
+              schemaModule.runSessionIncarnations.hostSessionId,
+              schemaModule.runSessions.hostSessionId,
+            ),
+            eq(
+              schemaModule.runSessionIncarnations.executionAssignmentId,
+              schemaModule.runSessions.executionAssignmentId,
+            ),
+          ),
+        )
+        .where(
+          and(
+            eq(schemaModule.runSessions.runId, input.runId),
+            eq(schemaModule.runSessions.sessionName, "default"),
+            eq(
+              schemaModule.runSessions.executionAssignmentId,
+              run.assignmentId,
+            ),
+          ),
+        )
+    : [];
+
+  return {
+    assignmentId: run?.assignmentId ?? null,
+    observedIncarnationId: observed?.id ?? null,
+    currentIncarnationId: current?.id ?? null,
+  };
+}
+
+/** Call under run → scratch locks before any permission or answer mutation. */
+async function canApplyScratchPermission(
+  tx: ExecutionDb,
+  args: {
+    runId: string;
+    sessionId: string;
+    event: PermissionRequestEvent;
+    execution: ScratchExecution;
+  },
+): Promise<boolean> {
+  const [state] = await tx
+    .select({
+      status: schemaModule.runs.status,
+      dialogStatus: schemaModule.scratchRuns.dialogStatus,
+    })
+    .from(schemaModule.runs)
+    .innerJoin(
+      schemaModule.scratchRuns,
+      eq(schemaModule.scratchRuns.runId, schemaModule.runs.id),
+    )
+    .where(eq(schemaModule.runs.id, args.runId));
+  const incarnation = await scratchEventIncarnation(tx, {
+    runId: args.runId,
+    hostSessionId: args.sessionId,
+    executionHostId: args.execution.client.host.id,
+  });
+
+  if (
+    state &&
+    ["Running", "NeedsInput"].includes(state.status) &&
+    ["Starting", "Running", "NeedsInput"].includes(state.dialogStatus) &&
+    incarnation.observedIncarnationId !== null &&
+    incarnation.observedIncarnationId === incarnation.currentIncarnationId
+  )
+    return true;
+  log.info(
+    {
+      runId: args.runId,
+      hostSessionId: args.sessionId,
+      requestId: args.event.requestId,
+      status: state?.status ?? null,
+      dialogStatus: state?.dialogStatus ?? null,
+      ...incarnation,
+    },
+    "scratch-stale-permission-ignored",
+  );
+
+  return false;
+}
+
 /** Transactional terminal projection shared with the already-read event control. */
 export async function applyScratchSessionTerminal(input: {
   db: ExecutionDb;
@@ -783,70 +897,20 @@ export async function applyScratchSessionTerminal(input: {
 
   const parked = await input.db.transaction(async (tx): Promise<boolean> => {
     await lockScratchRunRows(tx, input.runId);
-    const [run] = await tx
-      .select({ assignmentId: schemaModule.runs.executionAssignmentId })
-      .from(schemaModule.runs)
-      .where(eq(schemaModule.runs.id, input.runId));
-    const [observed] = await tx
-      .select({ id: schemaModule.runSessionIncarnations.id })
-      .from(schemaModule.runSessionIncarnations)
-      .where(
-        and(
-          eq(schemaModule.runSessionIncarnations.runId, input.runId),
-          eq(
-            schemaModule.runSessionIncarnations.executionHostId,
-            input.executionHostId,
-          ),
-          eq(
-            schemaModule.runSessionIncarnations.hostSessionId,
-            input.hostSessionId,
-          ),
-        ),
-      );
-    const [current] = run?.assignmentId
-      ? await tx
-          .select({ id: schemaModule.runSessionIncarnations.id })
-          .from(schemaModule.runSessions)
-          .innerJoin(
-            schemaModule.runSessionIncarnations,
-            and(
-              eq(
-                schemaModule.runSessionIncarnations.runSessionId,
-                schemaModule.runSessions.id,
-              ),
-              eq(
-                schemaModule.runSessionIncarnations.hostSessionId,
-                schemaModule.runSessions.hostSessionId,
-              ),
-              eq(
-                schemaModule.runSessionIncarnations.executionAssignmentId,
-                schemaModule.runSessions.executionAssignmentId,
-              ),
-            ),
-          )
-          .where(
-            and(
-              eq(schemaModule.runSessions.runId, input.runId),
-              eq(schemaModule.runSessions.sessionName, "default"),
-              eq(
-                schemaModule.runSessions.executionAssignmentId,
-                run.assignmentId,
-              ),
-            ),
-          )
-      : [];
+    const incarnation = await scratchEventIncarnation(tx, input);
 
     // Incarnation identity survives canonical terminal projection. Neither an
     // ACP resume handle nor a non-terminal state proves current ownership.
-    if (!observed || observed.id !== current?.id) {
+    if (
+      !incarnation.observedIncarnationId ||
+      incarnation.observedIncarnationId !== incarnation.currentIncarnationId
+    ) {
       log.info(
         {
           runId: input.runId,
           hostSessionId: input.hostSessionId,
           executionHostId: input.executionHostId,
-          assignmentId: run?.assignmentId ?? null,
-          observedIncarnationId: observed?.id ?? null,
-          currentIncarnationId: current?.id ?? null,
+          ...incarnation,
           eventType: input.event.type,
           monotonicId: input.event.monotonicId,
         },

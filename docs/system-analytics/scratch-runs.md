@@ -431,6 +431,13 @@ permissions. A late stored-answer retry receives the existing closed-session
 conflict and sends no input. Package Stop uses the creator gate without an edit
 lock, matching package Discard; project runs retain `operateScratchRun`.
 
+Permission notifications recheck the current incarnation and eligible dialog
+state under the same run → scratch locks before inserting a request, rebinding
+a stored answer or projecting `NeedsInput`. A notification already read when
+Stop/Discard commits cannot reopen the terminal dialog or create another open
+permission. A predecessor's notification cannot change its successor's
+permission or deliver a stored answer to the old session.
+
 ### Scratch terminal consumer incarnation fence (Implemented — R9 S3)
 
 A scratch terminal observer must recheck the observed incarnation against the
