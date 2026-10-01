@@ -736,23 +736,28 @@ describe("S5.2 invocation process ownership", () => {
         .href;
       const probe = `const reader = await import(${JSON.stringify(readerUrl)}); await reader.processIdentity(${JSON.stringify(invocation)}, ${owned.pid});`;
 
-      await expect(
-        execFileAsync(
-          "/usr/bin/sandbox-exec",
-          [
-            "-p",
-            "(version 1)(allow default)(deny process-info*)",
-            process.execPath,
-            "--input-type=module",
-            "-e",
-            probe,
-          ],
-          {
-            env: { ...process.env, ...invocationEnvironment(invocation) },
-            timeout: 10_000,
-          },
+      const deniedInspection = execFileAsync(
+        "/usr/bin/sandbox-exec",
+        [
+          "-p",
+          "(version 1)(allow default)(deny process-info*)",
+          process.execPath,
+          "--input-type=module",
+          "-e",
+          probe,
+        ],
+        {
+          env: { ...process.env, ...invocationEnvironment(invocation) },
+          timeout: 10_000,
+        },
+      );
+
+      await expect(deniedInspection).rejects.toThrow("could not be inspected");
+      await expect(deniedInspection).rejects.toMatchObject({
+        stderr: expect.stringMatching(
+          /process-inspection-failed.*stage\\?":\\?"[a-z_]+.*errno\\?":\d+/u,
         ),
-      ).rejects.toThrow("could not be inspected");
+      });
       expect(owned.exitCode).toBeNull();
     } finally {
       await Promise.all(children.map(stopIdleChild));

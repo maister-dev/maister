@@ -214,6 +214,10 @@ keys its `.next` build stamp by invocation ID and returns a verified
 `ProductionWebBuild` handle (revision, build ID, artifact path, invocation ID)
 for nested controls. `startRealWeb` validates the handle before reuse, so a
 nested O-control neither rebuilds nor mutates a running web's `.next`.
+The fixture invokes the same default Next production bundler as the package
+build and Docker image, including the configured Turbopack aliases. It must not
+force an alternate webpack graph. The separate source typecheck gate remains
+required when the fixture sets `MAISTER_TEST_WEB_BUILD=1`.
 All nested cleanup invocations reuse the outer lane's one build,
 but retain separate cleanup IDs and ports. No unverified skip-build flag and no
 production server change. Register build subprocesses too. Build-lock ownership
@@ -235,8 +239,13 @@ Failure to inspect an owned candidate is an error, not an empty process list.
 Do not print collected environments. No `pgrep -f` or binary-name kill.
 
 The macOS implementation uses the bundled `process-environment.c` reader;
-its compilation is itself owned by a parent-death wrapper. The fixture watchdog
-checks parent and runner identities immediately and every 500 ms; owned-group
+its compilation is itself owned by a parent-death wrapper. The process reader
+retains bounded native inspection diagnostics (PID, syscall stage, result,
+expected size and errno), including successful-reader omissions; neither argv
+nor environment bytes enter those diagnostics. Inspection failure still refuses
+ownership and cleanup. The real sandbox-denial control verifies actionable
+diagnostics and that the inspected child survives the refusal.
+The fixture watchdog checks parent and runner identities immediately and every 500 ms; owned-group
 termination, including a TERM-resistant adapter, is verified within five seconds.
 `execution-ab-process-cleanup.integration.test.ts` runs 13 controls in the serial
 isolation slice. Local ARM64 qualification passed the full 40-case/six-suite

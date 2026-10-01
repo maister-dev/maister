@@ -206,7 +206,7 @@ async function readDarwinProcesses(
     ...invocationEnvironment(invocation),
     MAISTER_TEST_PROCESS_INSPECTOR: invocation.id,
   };
-  const { stdout } = await execFileAsync(
+  const { stdout, stderr } = await execFileAsync(
     executable,
     [invocation.id, ...(pid === undefined ? [] : [String(pid)])],
     {
@@ -215,11 +215,24 @@ async function readDarwinProcesses(
       maxBuffer: 4 * 1024 * 1024,
     },
   ).catch((cause: unknown): never => {
+    const diagnostics =
+      cause instanceof Error &&
+      "stderr" in cause &&
+      typeof cause.stderr === "string"
+        ? cause.stderr.slice(-4096).trim()
+        : "";
+
     throw new InvocationOwnershipError(
-      `native process ownership could not be inspected for ${pid ?? "snapshot"}`,
+      `native process ownership could not be inspected for ${pid ?? "snapshot"}${diagnostics ? `: ${diagnostics}` : ""}`,
       { cause },
     );
   });
+
+  if (stderr.trim())
+    logInvocation(invocation, "process-inspection-diagnostic", {
+      pid: pid ?? null,
+      nativeDiagnostics: stderr.slice(-4096).trim(),
+    });
 
   return stdout
     .trim()

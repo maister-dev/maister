@@ -301,8 +301,9 @@ async function runNextBuild(logFile: string): Promise<string> {
       "--import",
       FIXTURE_WATCHDOG,
       createRequire(import.meta.url).resolve("next/dist/bin/next"),
+      // Match the package/Docker production build's default bundler and its
+      // configured aliases; forcing webpack retains a different build graph.
       "build",
-      "--webpack",
     ],
     {
       cwd: WEB_DIR,
