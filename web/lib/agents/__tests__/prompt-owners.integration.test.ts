@@ -153,6 +153,7 @@ afterEach(async () => {
 
 async function seedAgent(input: {
   bytes: number;
+  workspace?: "none" | "worktree";
   terminalDelayMs?: number;
   stopReason?: string;
   failMessage?: string;
@@ -163,12 +164,15 @@ async function seedAgent(input: {
   parallelPermission?: boolean;
   permissionOnResume?: boolean;
 }): Promise<string> {
-  const prompt = `fixture-output:${JSON.stringify({ ...input, chunkSize: 400_000, text: '\n```json maister:output\n{"summary":"original answer"}\n```' })}`;
+  const { workspace: requestedWorkspace, ...fixtureOutput } = input;
+  const workspace =
+    requestedWorkspace ?? (input.permission ? "worktree" : "none");
+  const prompt = `fixture-output:${JSON.stringify({ ...fixtureOutput, chunkSize: 400_000, text: '\n```json maister:output\n{"summary":"original answer"}\n```' })}`;
 
   return seedAgentRun(db, {
     runtimeRoot: supervisor.runtimeRoot,
-    definition: `---\nname: Researcher\ndescription: d\nworkspace: ${input.permission ? "worktree" : "none"}\nmode: session\nplatform_mcp: false\ntriggers:\n  - manual\nrisk_tier: read_only\n${input.hookTrip ? `hooks:\n  repetition:\n    max: ${input.parallelPermission ? 2 : 1}\n` : ""}---\n${prompt}\n`,
-    workspace: input.permission ? "worktree" : "none",
+    definition: `---\nname: Researcher\ndescription: d\nworkspace: ${workspace}\nmode: session\nplatform_mcp: false\ntriggers:\n  - manual\nrisk_tier: read_only\n${input.hookTrip ? `hooks:\n  repetition:\n    max: ${input.parallelPermission ? 2 : 1}\n` : ""}---\n${prompt}\n`,
+    workspace,
     resultContract: contract,
     persistent: input.persistent,
   });
@@ -1541,16 +1545,32 @@ describe("Agent owned prompts through the production launcher", () => {
   it.each(["live", "before_terminal", "before_apply"] as const)(
     "owner-agent-rework retains its requested result after %s",
     async (window) => {
-      const runId = await seedAgent({ bytes: 0 });
+      const runId = await seedAgent({ bytes: 0, workspace: "worktree" });
+      const initial = startDriver(runId);
 
-      await expectCompleted(runId, startDriver(runId));
-      await db.update(runs).set({ status: "Review" }).where(eq(runs.id, runId));
+      // Real rework starts from Review, whose workspace is retained. Turning a
+      // plain agent's Done into Review races its post-commit directory removal.
+      await expect
+        .poll(
+          async () => {
+            if (initial.child.exitCode !== null)
+              throw new Error(initial.output());
+            const [run] = await db
+              .select({ status: runs.status })
+              .from(runs)
+              .where(eq(runs.id, runId));
+
+            return run.status;
+          },
+          { timeout: 50_000, interval: 50 },
+        )
+        .toBe("Review");
       const prompt = `fixture-output:${JSON.stringify({ bytes: 0, terminalDelayMs: window === "before_terminal" ? 5_000 : 0, text: '\n```json maister:output\n{"summary":"reworked answer"}\n```' })}`;
 
       if (window === "live")
         expect(await reworkChildRun(runId, prompt, { db })).toMatchObject({
           childRunId: runId,
-          status: "Done",
+          status: "Review",
         });
       else if (window === "before_apply") {
         await interruptAgentStatusWrite(
@@ -1644,6 +1664,12 @@ describe("Agent owned prompts through the production launcher", () => {
           { timeout: 50_000, interval: 50 },
         )
         .toBe("applied");
+      const [reworked] = await db
+        .select({ status: runs.status })
+        .from(runs)
+        .where(eq(runs.id, runId));
+
+      expect(reworked.status).toBe("Review");
       const results = await db
         .select()
         .from(runResults)
@@ -1652,6 +1678,10 @@ describe("Agent owned prompts through the production launcher", () => {
 
       expect(results).toHaveLength(2);
       expect(results[0].validity).not.toBe("valid");
+      expect(results[0]).toMatchObject({
+        value: { summary: "original answer" },
+        schemaSha256: contract.sha256,
+      });
       expect(results[1]).toMatchObject({
         validity: "valid",
         value: { summary: "reworked answer" },
