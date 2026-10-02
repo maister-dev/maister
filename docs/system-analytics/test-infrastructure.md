@@ -502,6 +502,241 @@ The permission query is scoped to the witnessed command's run. Worktree and
 session creation consume the setup deadline, not the permission observation
 deadline; the host permission cap and stale-exit assertions remain unchanged.
 
+### Linux production fixture isolation (Designed)
+
+The filesystem and lifecycle contract below covers isolated production web
+fixtures and their access probes. The rationale is owned by
+[ADR-193](../decisions.md#adr-193-rootless-linux-namespace-isolation-for-production-test-fixtures).
+The existing macOS hosted acceptance contract remains in force; no Linux
+qualification or hosting decision has passed yet.
+
+Entities added to this test-only domain are an immutable launch policy, trusted
+outer launcher, Bubblewrap monitor/reaper, namespace child bridge, application
+identity, bounded status record and invocation cleanup reference. None is a
+product database entity or public API.
+
+The launch and teardown states distinguish application outcome from containment.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Validating
+    Validating --> Refused: capability or policy failure
+    Validating --> Launching: frozen identity and mounts
+    Launching --> Ready: verified namespace and app identities
+    Launching --> Containing: error or parent death
+    Ready --> Draining: verified TERM or INT
+    Ready --> Containing: KILL or parent death
+    Draining --> Exited: observed application outcome
+    Draining --> Containing: existing grace expires
+    Containing --> Exited: namespace closure observed
+    Exited --> Released: all reclaimers attempted
+    Released --> [*]
+    Refused --> [*]
+```
+
+One launch path serves probes, initial web startup and restart.
+
+```mermaid
+sequenceDiagram
+    participant H as Owning harness
+    participant L as Trusted outer launcher
+    participant B as Bubblewrap monitor and reaper
+    participant C as Namespace child bridge
+    participant A as Application
+    H->>H: Freeze and revalidate policy, exact invocation identity
+    H->>L: Spawn detached direct child with host watchdog
+    H->>H: Register captured host child
+    L->>B: Required namespaces and explicit binds
+    B->>C: Private proc, no caps, userns disabled
+    C->>A: Explicit environment, intended stdio only
+    C-->>L: Bounded ready and actual code/signal records
+    L->>L: Verify host ancestry, tags and NSpid mapping
+    L-->>H: Readiness then application outcome
+    H->>L: Verified graceful signal
+    L->>A: Forward to verified application subtree
+    A-->>C: Exit after drain
+    L->>L: Await namespace closure, prove no descendants
+    H->>H: Reclaim processes then containers then roots and fail on leaks
+```
+
+| Requirement | Normative boundary | Primary enforcer/control (Designed) |
+|---|---|---|
+| LNX-01 | Existing private sentinel and live supervisor SQLite main/WAL/SHM are absent to web/probes; actual supervisor reads the sentinel and commits/looks up its ordinary receipt | Immutable policy; I1/I4 supervisor preload identity/digest witness and receipt lookup |
+| LNX-02 | Exact app/runtime/dependency closure is read-only; designated web runtime/repository/worktrees are writable; HTTP, Postgres and opaque-object access work | RO/RW binds; LI-boundary; I2 |
+| LNX-03 | Fork/exec and setsid descendants inherit the boundary; host proc magic links, namespace re-entry, remount, private FDs and ambient loader/credential variables cannot restore private access | Private proc/PID/user namespaces, caps dropped, NoNewPrivs, disabled userns, explicit inner env/stdio; LI-boundary |
+| LNX-04 | Unsupported capabilities, overlapping/aliased/replaced sources, unapproved nested mounts and exported protected inodes refuse before app launch | Policy identity/overlap/mount/protected-inode checks; LI-refusal |
+| LNX-05 | UID, PID, start time, exact environment tag, inspected ancestry and group identity remain signal authority; foreign or unreadable processes refuse | Existing process-invocation helpers; O-identity; LI-kill sibling witness |
+| LNX-06 | TERM/INT reach the verified app and preserve the existing drain grace; observed code 137 differs from SIGKILL; forced containment without a child record remains unobserved | Outer forwarding and child-status bridge; LI-term |
+| LNX-07 | Parent death during startup, readiness or an active probe closes the namespace, including detached/TERM-resistant descendants, before exit-sweep containment | Outer watchdog and kernel parent/PID-reaper chain; LI-parent/LI-kill |
+| LNX-08 | Restart cannot clear or widen its frozen isolation policy; probes use that policy, explicit invocation, registered child, bounded typed output and successful app exit | RealWeb restart and owned probe seam; I3; LI-refusal/LI-parent |
+| LNX-09 | Every exit/cancellation attempts all owned reclaimers; any survivor discovered before containment fails; finalization refuses live/reused/unreadable runners or replaced authority | releaseInvocation; O1; O2-runner and Linux finalizer crash-window controls |
+| LNX-10 | Discovery, mandatory files and exact titles agree: Darwin 7/50, Linux 8/55, independent preflight 1; no pending/skipped/duplicate/extra cases | Platform manifest and validateLaneReport; existing report-rejection controls |
+| LNX-11 | Removing enforcement produces a reached private read and a failed negative assertion; restored full source passes with zero leaks | I1 falsification; complete Linux/Darwin lane reports |
+| LNX-12 | Ubuntu 24.04 amd64 at both exact Nodes qualifies locally before any prospective hosting amendment; hosted evidence is exact owner-pushed SHA and independently validated artifacts within fixed budgets | Local qualification gate, owner-push checkpoint and hosted report/timing audit |
+
+Allowed material uses exact canonical source/destination paths at the same
+absolute locations. Required inputs include web/server/build material, pnpm
+dependency targets, Node/tsx, needed libraries/Git and enumerated CA/DNS/NSS
+files; absent required inputs fail. The entire host root, fixture base, home,
+`/etc`, `/opt`, `/var`, host tmp/proc and control sockets are never convenience
+binds. Web caches are writable only at a demonstrated required subdirectory.
+Private tmp/HOME and minimal devices are namespace-owned. Host networking is
+intentional; an accessible unauthenticated Docker TCP endpoint refuses preflight.
+
+Policy checks cover canonical overlap in both ancestor directions, symlink and
+traversal aliases, conflicting destinations and cwd membership. Freeze device
+and inode identities and revalidate before each spawn/restart and mount-ready
+acknowledgement. Refuse replaced sources and unapproved nested host mounts.
+Snapshot only the known sentinel and SQLite files, rejecting multiple links or
+an allowed bind-file sharing a protected inode; optional absent WAL/SHM is
+distinct from required absent sentinel/main state. Other private material relies
+on trusted fixture setup never exporting private inodes/descriptors. These
+checks do not claim to resist a concurrent privileged host remounter.
+
+| Operation/failure | Required result and cancellation |
+|---|---|
+| Resolve or capability probe | Unsupported selector/platform/binary/options/namespaces throws `IsolationUnavailableError`; no ordinary-exec fallback or production app launched |
+| Policy preparation or restart override | `IsolationPolicyError` before exec; no catch-all startup retry; only a proved bind-conflict may consume the existing bounded retry budget |
+| Namespace ready | Required `--unshare-user`, `--unshare-pid`, `--proc /proc`, `--die-with-parent`, `--disable-userns`, `--assert-userns-disabled`, `--cap-drop ALL`; application NoNewPrivs=1 and effective/permitted/ambient caps=0; retain reaper, no `--as-pid-1` |
+| Process inspection or signal | Exact tagged inspected identity required; mismatch/unreadable/mixed group throws existing `InvocationOwnershipError`; captured direct-child containment uses existing narrow authority |
+| Application ready/drain/exit | Typed bounded ready/output/exit protocol; app bytes cannot impersonate status; verify host child ancestry and NSpid before forwarding; await real exit, never `subprocess.killed` |
+| Access probe | Exactly one typed `AccessProbe`, bounded output, successful app exit within 20s; malformed/empty output, spawn refusal, signal or timeout is an explicit probe error, never a denial result; await closure on every path |
+| Parent death/forced KILL | Kernel namespace-init death contains descendants; loss of app status is recorded separately from observed code/signal; no synthetic signal from 128+code |
+| Restart | Same policy/roots/DB/port, fresh boot identity and verified build; capability/policy/ownership failure propagates immediately |
+| Release | All process/container/root reclaimers execute even after a preceding failure; original and cleanup failures remain observable; foreign resources survive |
+| Finalizer | Atomic versioned reference published before any child/resource; verify job-owned canonical reference/ledger markers/device/inode and original runner identity; only proved dead runner permits reused releaseInvocation; repeated verified release is idempotent |
+
+Finalizer crash windows are: before reference publication (launch forbidden),
+after publication before spawn (inert ledger reclaimable), after spawn (proved
+runner death permits exact owned release), and after release (verified repeat
+is a no-op). Worker death while the runner lives is handled by normal runner
+release; it never grants finalizer authority. Missing report remains failure.
+Logs use structured role/identity/capability fields with bounded buffers; they
+never contain secrets, environment dumps, sentinel/SQLite/object bytes.
+
+### Platform case inventory and RED ownership (Designed additions)
+
+The frozen baseline is the exact owning runner title set below: seven full
+suites/50 cases plus one separately invoked preflight. Linux adds only the
+five distinct controls below; Darwin discovery excludes that new file. The
+runner uses Vitest project `integration`; no placeholder/todo cases are active.
+
+| Owning file | Exact case title | Disposition |
+|---|---|---|
+| `test-support/__tests__/execution-ab-process-cleanup.integration.test.ts` | O-build-lock: a proved dead owner is reclaimed and the verified artifact is reused | Existing; both platforms |
+| `test-support/__tests__/execution-ab-process-cleanup.integration.test.ts` | O-exit: 'success' retains the exact outcome and finishes cleanup | Existing; both platforms |
+| `test-support/__tests__/execution-ab-process-cleanup.integration.test.ts` | O-exit: 'assertion failure' retains the exact outcome and finishes cleanup | Existing; both platforms |
+| `test-support/__tests__/execution-ab-process-cleanup.integration.test.ts` | O-exit: 'missing reporter' retains the exact outcome and finishes cleanup | Existing; both platforms |
+| `test-support/__tests__/execution-ab-process-cleanup.integration.test.ts` | O-exit: 'invalid reporter' retains the exact outcome and finishes cleanup | Existing; both platforms |
+| `test-support/__tests__/execution-ab-process-cleanup.integration.test.ts` | O-roots: live users, foreign markers and replaced roots refuse deletion; terminal cleanup preserves the sibling | Existing; both platforms |
+| `test-support/__tests__/execution-ab-process-cleanup.integration.test.ts` | O2-runner: runner SIGKILL makes the live Vitest worker and real fixture groups terminate themselves | Existing; both platforms |
+| `test-support/__tests__/execution-ab-process-cleanup.integration.test.ts` | O-signal: runner SIGINT preserves failure and completes real-stack cleanup | Existing; both platforms |
+| `test-support/__tests__/execution-ab-process-cleanup.integration.test.ts` | O-signal: runner SIGTERM preserves failure and completes real-stack cleanup | Existing; both platforms |
+| `test-support/__tests__/execution-ab-process-cleanup.integration.test.ts` | O1: worker SIGKILL makes the real lane reap un-watched supervisor/web groups, remove roots and fail | Existing; both platforms |
+| `test-support/__tests__/execution-ab-process-cleanup.integration.test.ts` | O1-default: worker SIGKILL remains a failed lane with both cleanup guards enabled | Existing; both platforms |
+| `test-support/__tests__/execution-ab-process-cleanup.integration.test.ts` | O2: parent death kills the real supervisor and its TERM-resistant adapter without an exit sweep | Existing; both platforms |
+| `test-support/__tests__/execution-ab-process-cleanup.integration.test.ts` | O-identity: exact environment tags exclude argv decoys and sibling invocations, and PID reuse refuses ownership | Existing; both platforms |
+| `test-support/__tests__/execution-ab-partitions.integration.test.ts` | B4: sealed host object remains pending until the scoped catalogue barrier releases | Existing; both platforms |
+| `test-support/__tests__/execution-ab-partitions.integration.test.ts` | P1: ACK dropped after host commit → web SIGKILL + restart → exactly one result, no duplicate session.prompt | Existing; both platforms |
+| `test-support/__tests__/execution-ab-partitions.integration.test.ts` | P2: receipt partition exhausts real budgets as recoverable unknown; evidence release applies once | Existing; both platforms |
+| `test-support/__tests__/execution-ab-partitions.integration.test.ts` | P3-live: cut a partial live frame; reconnect from the exclusive cursor without a gap or duplicated effect | Existing; both platforms |
+| `test-support/__tests__/execution-ab-partitions.integration.test.ts` | P3-replay: cut replay of a durably completed command; replay resumes without a gap or duplicated effect | Existing; both platforms |
+| `test-support/__tests__/execution-ab-partitions.integration.test.ts` | P4: delayed checkpoint ACK reaches its original handler after successor epoch without a current-owner write | Existing; both platforms |
+| `test-support/__tests__/execution-ab-process-death.integration.test.ts` | D2a: supervisor restart before create effect reissues the original durable intent once | Existing; both platforms |
+| `test-support/__tests__/execution-ab-process-death.integration.test.ts` | D2b: supervisor restart after create commit folds its receipt without another create | Existing; both platforms |
+| `test-support/__tests__/execution-ab-process-death.integration.test.ts` | D4: web dies after durable create ACK and before first host prompt; restart sends one prompt | Existing; both platforms |
+| `test-support/__tests__/execution-ab-process-death.integration.test.ts` | L1: active scratch cancellation settles once and the same session accepts a later turn | Existing; both platforms |
+| `test-support/__tests__/execution-ab-process-death.integration.test.ts` | D3: connection loss after projection claim rolls back effect and cursor; a successor projects once without a new event | Existing; both platforms |
+| `test-support/__tests__/execution-ab-process-death.integration.test.ts` | D1: supervisor death during NeedsInput preserves the 503 response intent and resumes through checkpoint idle | Existing; both platforms |
+| `test-support/__tests__/execution-ab-isolation.integration.test.ts` | I1: the web identity is denied the host's private root while the harness and the host keep it | Existing; both platforms |
+| `test-support/__tests__/execution-ab-isolation.integration.test.ts` | I2: a launch with an upload completes through HTTP and Postgres, and the object and history read back | Existing; both platforms |
+| `test-support/__tests__/execution-ab-isolation.integration.test.ts` | I3: a SIGKILLed web restarts through production initialization under the same isolation and continues the run | Existing; both platforms |
+| `test-support/__tests__/execution-ab-isolation.integration.test.ts` | I4: the supervisor and its private root are untouched by the web's death and restart | Existing; both platforms |
+| `test-support/__tests__/durable-workers-boot.integration.test.ts` | applies the flow_node_attempt owner after the production web restarts | Existing; both platforms |
+| `test-support/__tests__/durable-workers-boot.integration.test.ts` | applies the agent_turn owner after the production web restarts | Existing; both platforms |
+| `test-support/__tests__/durable-workers-boot.integration.test.ts` | applies the scratch_message owner after the production web restarts | Existing; both platforms |
+| `test-support/__tests__/durable-workers-boot.integration.test.ts` | R1: a registry missing a schema kind refuses to compose with CONFIG and starts nothing | Existing; both platforms |
+| `test-support/__tests__/durable-workers-boot.integration.test.ts` | R2: composing the agent registry beside the consensus-draft one is a CONFIG failure by design | Existing; both platforms |
+| `test-support/__tests__/durable-workers-boot.integration.test.ts` | R4: stopping with nothing started resolves | Existing; both platforms |
+| `test-support/__tests__/durable-workers-boot.integration.test.ts` | R5: a double start returns the same three handles | Existing; both platforms |
+| `test-support/__tests__/durable-workers-boot.integration.test.ts` | R3: start refuses while the application is stopping | Existing; both platforms |
+| `test-support/__tests__/durable-workers-concurrency.integration.test.ts` | D1: a live waiter and the durable worker on one command apply it exactly once | Existing; both platforms |
+| `test-support/__tests__/durable-workers-concurrency.integration.test.ts` | D2: two production web instances on one database apply a dead instance's command exactly once | Existing; both platforms |
+| `test-support/__tests__/durable-workers-concurrency.integration.test.ts` | E: SIGTERM while a claim is held either releases it in the drain or fails shutdown loudly | Existing; both platforms |
+| `lib/scratch-runs/__tests__/dispatch-window.integration.test.ts` | S1 launch: a web death after Running commits and before prompt admission re-drives the original turn once | Existing; both platforms |
+| `lib/scratch-runs/__tests__/dispatch-window.integration.test.ts` | S1 direct message: a later turn on the same incarnation is recovered after an earlier completed prompt | Existing; both platforms |
+| `lib/scratch-runs/__tests__/dispatch-window.integration.test.ts` | S1 queue: death after FIFO queued-to-prompted commit re-drives that message | Existing; both platforms |
+| `lib/scratch-runs/__tests__/dispatch-window.integration.test.ts` | S1 Recover: death after the recovery generation's Running commit preserves its recovery key | Existing; both platforms |
+| `lib/scratch-runs/__tests__/dispatch-window.integration.test.ts` | S1 D-A8: death after a parked permission respawns preserves the generation turn and stored answer | Existing; both platforms |
+| `lib/scratch-runs/__tests__/dispatch-window.integration.test.ts` | S1 legacy: a Running dialog without frozen intent exposes unknown delivery and sends nothing | Existing; both platforms |
+| `lib/scratch-runs/__tests__/dispatch-window.integration.test.ts` | S1 race: a live dispatcher paused at admission and the worker share one immutable command | Existing; both platforms |
+| `lib/scratch-runs/__tests__/dispatch-window.integration.test.ts` | S1 package launch: restart retains request context, edit-lock generation and exactly one postprocess action | Existing; both platforms |
+| `lib/scratch-runs/__tests__/dispatch-window.integration.test.ts` | S1 package message: restart retains request-only follow-up context and its original action ID | Existing; both platforms |
+| `lib/scratch-runs/__tests__/dispatch-window.integration.test.ts` | S3 transport: a held parked exit is fenced before the canonical scratch consumer | Existing; both platforms |
+| `test-support/__tests__/execution-ab-preflight.integration.test.ts` | I-CI: the real driver denies the host root and the real PostgreSQL container is reachable | Separate I-CI; both platforms |
+
+All five additions belong to
+`test-support/__tests__/linux-isolation-driver.integration.test.ts`.
+
+| Exact Linux title | Primary RED trigger and falsification |
+|---|---|
+| LI-boundary: exact mounts deny private reads and escape paths while descendants retain authorized access | LNX-01–03; ordinary unwrapped read violates denial; remove mount enforcement and observe private bytes |
+| LI-refusal: unavailable capabilities and invalid policies refuse launch and probes release on every failure | LNX-04/08; real namespace syscall denial, overlap/alias/replacement/nested mount/hardlink; app witness absent; malformed/timeout probe fails explicitly |
+| LI-term: verified graceful forwarding preserves production drain and exact application code or signal | LNX-05/06; group broadcast prematurely kills reaper; code137 versus SIGKILL through actual child status |
+| LI-kill: namespace and outer death terminate detached resistant descendants without touching siblings | LNX-05/07/09; detached resistant descendant survives without kernel chain; sibling stays live |
+| LI-parent: startup ready and active-probe parent death close the namespace before exit-sweep containment | LNX-07/08; host watchdog inside private proc fails startup; disabled parent chain leaves a reached child |
+
+I1/I4 own the missing actual-supervisor sentinel and live SQLite positive
+witness; I2 owns HTTP/Postgres/object access; I3 owns production restart and
+continued operation. LI-boundary covers inherited environment/FD and RO/RW
+escapes; LI-refusal owns source replacement, capability refusal, immutable
+restart overrides and probe failure cleanup; LI-term owns app exit ambiguity;
+LI-parent owns the single probe-parent-death cut. O-identity retains its frozen
+title while porting the Darwin-only inspection-denial control to a real Linux
+non-dumpable child. O1 remains worker-death release; O2-runner owns finalizer
+authority after actual runner death and its crash/refusal/idempotence table.
+No additional per-edge coverage cases duplicate these owners.
+
+Each behavior records a reached RED assertion, minimal GREEN, scoped REFACTOR,
+source identity and restoration hash. A missing-driver or boot failure cannot
+substitute for a private-read falsification. Full qualification reconciles exact
+files/titles, validates the reporter, and retains separate preflight, timing and
+pre-containment leak observations.
+
+### Linux environments and qualification (Designed)
+
+| Environment | Required runtime/provisioning | Evidence meaning |
+|---|---|---|
+| Local qualification | Ubuntu 24.04 amd64 native/VM, ordinary nonroot harness; separate Node 24.15.0 and 24.19.0, frozen pnpm, real Docker Postgres 16, host proc inspection, authenticated pinned distro bwrap/source, GNU coreutils/Git/C compiler, permitted required namespaces/AppArmor | Full Linux 55 plus independent I-CI, source/build/runtime identities, exact report validation, timings and zero leaks; prerequisite for hosting amendment |
+| ARM64 container development | Record image digest/host kernel/architecture/UID mapping/seccomp/capabilities/nested namespace policy; nonroot apps, no blanket privileged mode/host PID/host root bind | Development only; cannot close amd64 or hosted gates |
+| Proposed hosted qualification | Standard ubuntu-24.04 amd64, Node 24.19.0, authenticated packages and narrowly scoped bwrap AppArmor allowance if needed; tests/apps ordinary nonroot | Exact owner-pushed candidate, Linux 55 plus independent I-CI and all other mandatory jobs green; capability and speed measured |
+| Darwin regression | Existing sandbox-exec and separate preflight/original 50, labeled architecture/Node/source | Preserves Darwin behavior; cannot qualify Linux |
+
+The Linux setup script is a test prerequisite, not production deployment.
+Package revision, checksum, source and profile are recorded when provisioned;
+no floating clone, global npm install or host-wide namespace/AppArmor disable.
+The current production Dockerfile does not provision this test driver.
+Docker client, daemon, container startup, migration and query failures are
+distinct diagnostic stages; retries require an identified transient operation.
+
+Hosting remains gated by the existing plan. Isolation is serial/unsharded,
+with the 60-minute job limit, 15-minute setup and 10-minute separate preflight
+steps. The full-slice budget remains `min(2340, 3240 - elapsed_job_seconds)`;
+nonpositive budget refuses launch. Preserve the 30-second TERM/KILL reserve,
+3300-second final trap boundary and last five minutes for artifacts/cleanup.
+Record numeric setup/build/suite/slice/upload/cleanup/job durations and headroom.
+Upload reports before always-run owned finalization, then cleanup diagnostics.
+Never stop/prune a shared Docker daemon. Timeout, missing/full-invalid report or
+reaped survivor is failed qualification, even when containment succeeds.
+
+Public HTTP/SSE/ACP/auth/error contracts, main and Brain Drizzle schemas,
+both migration journals/snapshots, supervisor SQLite schema, production
+Docker/Compose/systemd/`.env.example` and config DSL remain unchanged. Real
+ephemeral main-then-Brain migration and ordinary receipt/object operations
+exercise the existing contracts. Any demonstrated persistent/API delta first
+returns to specification and fresh/upgrade gates; no migration number is
+reserved for this driver.
+
 ## Expectations
 
 1. Unit/build tests MUST NOT require a reachable Docker runtime.
@@ -541,6 +776,17 @@ deadline; the host permission cap and stale-exit assertions remain unchanged.
    before cleanup — enforced by `assertDrained()` in
    `web/test-support/supervisor-fault-proxy.ts`, which `close()` calls, and
    exercised by `web/test-support/__tests__/execution-ab-partitions.integration.test.ts`.
+10. Isolated Linux web/probes MUST use the immutable explicit-bind policy and
+    refuse absent capabilities, private aliases and exported known private
+    inodes, enforced by the Linux driver and LI-boundary/LI-refusal (Designed).
+11. Isolated Linux descendants MUST terminate on verified parent/namespace
+    death while graceful drain retains actual app outcome and refuses foreign
+    signal authority, enforced by the outer/child launchers and LI-term,
+    LI-kill, LI-parent and O-identity (Designed).
+12. Linux hosting MUST remain unqualified until complete local amd64/both-Node
+    and exact owner-pushed hosted report, fixed-budget and zero-leak gates pass,
+    enforced by platform manifests, validateLaneReport and the owner-push
+    checkpoint (Designed).
 
 ### S5.2 partition and process-death acceptance (implemented controls; final gate open)
 
@@ -619,6 +865,17 @@ AT-17. Browser half stays open under S5.3.
 
 ## Edge cases
 
+- Linux capability, policy and probe-output failures use test-only typed
+  isolation errors rather than product `MaisterError` codes; no ordinary-exec
+  fallback is permitted (Designed).
+- Private paths absent in the Linux view return `ENOENT`, while read-only
+  writes return `EROFS`; Darwin denial remains `EPERM` (Designed).
+- Intentional secret export via a hardlink or inherited private descriptor is
+  a fixture-policy violation; a naming rule alone cannot revoke that authority
+  (Designed).
+- A live, reused or unreadable runner and replaced cleanup reference/ledger
+  refuse finalization; survivor discovery fails even if containment reaps it
+  (Designed).
 - A Docker probe timeout produces `TestDatabaseDockerUnavailableError` without
   exposing a connection-string password.
 - A container startup failure after a successful Docker probe still produces
@@ -639,6 +896,8 @@ AT-17. Browser half stays open under S5.3.
 
 ## Linked artifacts
 
+- [ADR-193](../decisions.md#adr-193-rootless-linux-namespace-isolation-for-production-test-fixtures)
+- [Linux isolation implementation plan](../../.ai-factory/plans/s53a-linux-isolation.md)
 - [ADR-135](../decisions.md#adr-135-testcontainers-only-ephemeral-postgres-for-database-backed-tests)
 - [`pg-container.ts`](../../web/test-support/pg-container.ts)
 - [`run.ts`](../../web/e2e/run.ts)

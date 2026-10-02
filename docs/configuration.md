@@ -1124,6 +1124,28 @@ Field types are limited to `string | number | boolean | enum | array`.
 Add new types by extending `formFieldSchema` in
 `web/lib/config.schema.ts`.
 
+## Test-only isolation selector
+
+`MAISTER_TEST_ISOLATION` is read only by
+`web/test-support/process-isolation.ts`; `real-web.ts` and the owning
+isolation/preflight suites consume the resolved driver. It is not a production
+configuration or `maister.yaml` field.
+
+| Value | Contract |
+|---|---|
+| unset | Select the supported platform's driver: Darwin `sandbox-exec`; Linux `bubblewrap` is Designed and unavailable until implemented |
+| `sandbox-exec` | Darwin kernel sandbox; unsupported platform or missing executable fails explicitly |
+| `bubblewrap` | Designed Linux rootless namespace driver; required namespace/options/policy refusal fails explicitly, with no ordinary-exec fallback |
+| any other value | Explicit unsupported-driver failure |
+
+Linux prerequisites and their qualification scope live in
+[getting started](getting-started.md#production-isolation-test-prerequisites)
+and [test infrastructure](system-analytics/test-infrastructure.md#linux-environments-and-qualification-designed).
+The current production Dockerfile does not provision this test-only dependency;
+neither setting this variable nor choosing a Linux image creates a production
+filesystem boundary. Production Docker/Compose/systemd and server env contracts
+remain unchanged.
+
 ## Environment variables (server tier)
 
 Read by Next.js (`web/`) and `supervisor/` at startup:
