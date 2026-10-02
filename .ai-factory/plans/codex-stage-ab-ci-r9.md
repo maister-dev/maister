@@ -624,3 +624,87 @@ relaxed. Logs are retained under `/private/tmp/s52-template-*`.
 
 Static checks pass: web and supervisor types, MCP types/build, scoped lint,
 all docs including ERD, API/adapter contracts and diff whitespace checks.
+
+### Hosted fixture race follow-up (2026-10-02, locally qualified)
+
+[Run 36979318143](https://github.com/maister-dev/maister/actions/runs/36979318143)
+qualified owner-pushed `5cf0076f96c1723adbf0a3d67affb2c9b6fa905f` only
+partially. Runtime/supervisor passed 111/111 on each Node version (2m29s and
+3m20s). Node 24.15 web shard 1 failed 1 of 327 cases in 28m16s; its sibling
+passed 307/307 in 36m09s. Node 24.19 shards passed 327/327 in 28m36s and
+307/307 in 36m58s. All enabled non-A/B jobs passed; the workflow's optional
+integration job was intentionally skipped. Exact-SHA `validateLaneReport`
+accepts the five successful Linux reports and rejects the failed shard.
+
+Intel isolation lasted 49m17s. Runtime readiness was second 444, independent
+preflight 1/1 completed at 593, and the slice began at 593 with 2,340 seconds.
+It exited 124 at second 2,939; runtime cleanup completed at 2,947. The build
+succeeded in 141.798 seconds. The 22 database clones consumed 9.422 seconds
+combined, confirming the earlier optimization while not proving the whole
+budget. Report artifact `11216463884` contains only preflight; diagnostics
+`11216304575` have no full seven-suite reporter. The timeout sweep reaped one
+remaining process, so this is neither a complete 50-case pass nor leak-free
+acceptance. Evidence is under `/private/tmp/s52-36979318143-final-artifacts`.
+
+The failed controls are agent rework `before_apply`, P4 stale checkpoint ACK,
+S1 D-A8 permission resume, plus cleanup-only S1 launch/D2b failures. Source and
+real schedules identify three fixture races: an overbroad run-update trigger,
+a successor's legitimate `created` → `active` projection inside P4's snapshot
+window, and a repeated short permission cap expiring during restarted web boot.
+P4's secondary cleanup failure is its undisposed successor-prompt barrier after
+the equality failure. S1 launch/D2b processes survived their cleanup call, but
+the hosted aggregate omitted the underlying exception. Their exact cause is
+unproved; stage/aggregate and safe ownership-refusal diagnostics are required.
+
+- [x] Restrict the shared agent interruption trigger to actual status changes;
+  retain real metadata/same-status negative controls in the existing rework
+  case and prove its dispatched turn and terminal host receipt before recovery.
+- [x] Hold and drain the exact successor creation projection before the P4
+  snapshot/audit. Preserve full equality, zero writes, 409 and one completion.
+- [x] Hold D-A8's resumed prompt through restarted web readiness; prove its
+  durable command identity and release/dispose the barrier exactly once.
+- [x] Expose cleanup stage and nested cause without changing failure or
+  ownership semantics. The real P4 RED confirms nested proxy diagnostics.
+- [x] Complete full agent-owner and isolation qualification, independent
+  preflight, static gates, adversarial review and local phase commits.
+- [ ] Owner integration/push and exact-SHA hosted qualification, including the
+  unresolved cleanup-only failures and the unchanged Intel budget. S5.2 remains
+  **42/45**; no rerun, push, platform or timeout change is authorized here.
+
+Deterministic RED: reverting only the status-trigger predicates yields SQLSTATE
+57014 before rework admission; moving P4 activation after its snapshot yields
+its original equality failure. Both ran together in
+`/private/tmp/s52-fixture-races-red.log` (report
+`/private/tmp/s52-focused-xK0VOr/vitest.json`). A bounded real-process experiment
+made 500 native snapshots with transient tagged children without reproducing
+an ownership refusal (`/private/tmp/s52-process-exit-race.log`); this is
+inconclusive, not a claimed cleanup fix. No production API/schema, status,
+error code, mandatory case name, runner or deadline changes are needed.
+
+
+Final local qualification on the working tree over `5cf0076f9`, Darwin ARM64 /
+Node 24.15.0, unchanged 2048 MiB V8 cap: all **100/100 cases in eight files**
+pass (50 agent owners plus the exact seven-suite / 50-case isolation inventory),
+zero skips, runtime errors or leaks. `runStageAbLane` validates every selected
+file and all required isolation titles. Combined duration is **1,551.167
+seconds**, including 0.436 seconds cleanup; this includes the 763.668-second
+agent-owner suite and is not an isolation-only or hosted duration. Reporter:
+`/var/folders/p3/lj5f1_ys6650hwvry91_qr2c0000gn/T/maister-ab-isolation-ahMxlx/vitest.json`;
+invocation `fb4198ec-b52b-43c1-bb9a-ee162400907a`; log
+`/private/tmp/s52-fixture-fixes-full.log`.
+
+Adversarial review requested bounded ownership diagnostics; the final adjustment
+logs counts and at most eight structured unverified identities without changing
+the refusal predicate. The existing O-identity case now attempts SIGTERM against
+a real foreign child, requires refusal, allows signal delivery and verifies the child's real live identity.
+It passes separately after that logging-only adjustment, with zero leaks:
+`/private/tmp/s52-focused-ix6XyL/vitest.json`. Independent final preflight passes
+1/1 in **3.932 seconds**, cleanup 0.181 seconds, zero leaks: reporter
+`/var/folders/p3/lj5f1_ys6650hwvry91_qr2c0000gn/T/maister-ab-isolation-CWFZRN/vitest.json`.
+All docs/ERD and contracts, web/supervisor/MCP types, MCP build, scoped lint and
+whitespace checks pass. S1 launch/D2b cleanup-only hosted causes remain unproved;
+no local pass is described as their fix or as hosted S5.2 acceptance.
+
+Local implementation phases are committed as `7be4f350d` (fault controls) and
+`7fd4b1425` (cleanup diagnostics and refusal control). Documentation is committed
+separately. No push or CI rerun was performed.

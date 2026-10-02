@@ -417,21 +417,22 @@ The exact original reporters, tested SHAs and production-source equivalence
 are recorded in [the CI/R9 plan](../.ai-factory/plans/codex-stage-ab-ci-r9.md).
 Full source types, contracts/docs/ERD and migration checks pass; full lint has
 zero errors (web 769 existing warnings, supervisor four). Hosted acceptance
-remains open: master run `36877828238` at `370f8dbd5` passes both supervisor
-legs and all four web shards. Intel's production build succeeds, but the
-serial slice exceeds its remaining 2,295-second budget and uploads only the
-preflight reporter. The linked CI/R9 plan records the exact hosted evidence.
+remains open: master run `36979318143` at `5cf0076f9` fails the Node 24.15
+rework control and the Intel isolation deadline. Only the independent preflight
+report is complete. The linked CI/R9 plan records exact jobs and artifacts.
 
 **Hosted-failure follow-up (2026-10-02, local ARM64 / Node 24.15.0):**
-the fixture uses the production default bundler and suite-owned migrated
-Postgres templates with a fresh database clone for every fault case. With a
-2048 MiB V8 heap cap, the complete isolation lane passes **50/50 in seven
-suites in 813.192 seconds** including cleanup, with zero skips/leaks. Helper
-integration controls pass 8/8 and existing unit controls 2/2. The 22 clones
-cost 572 ms combined; this is local evidence, not an Intel speed prediction.
-Busy session-content and Flow reader continuation controls retain their
-previous RED-first qualification. Exact reports are in the CI/R9 plan.
-Hosted Intel acceptance remains open.
+status-transition, successor-activation and permission-cap fault controls are
+synchronized to their intended boundaries. The complete agent-owner suite and
+all seven isolation suites pass **100/100 in eight files**, no skips or leaks,
+in **1,551.167 seconds** including cleanup. Independent preflight passes 1/1 in
+3.932 seconds. The existing suite-owned migrated templates and fresh case
+clones remain unchanged; their helper controls retain the earlier 8/8 integration
+and 2/2 unit qualification. Cleanup logs preserve failed stages and nested
+causes; bounded process-identity diagnostics retain strict signaling refusal.
+The final real foreign-process refusal control passes. These ARM results do
+not explain the two hosted cleanup-only failures or establish Intel budget
+acceptance. Exact RED/GREEN reporters and remaining gates are in the CI/R9 plan.
 
 **A first-hit Next-dev compile can exhaust a 10s e2e timeout.** Before calling
 such a failure a regression, re-run the spec in isolation and read the RETRY

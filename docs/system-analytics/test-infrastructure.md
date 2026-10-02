@@ -113,6 +113,10 @@ substitute. Qualification records revision, image, architecture and Node version
 
 The implemented invocation lifecycle preserves roots across restart and disposes
 of them only after the last owned process using them is dead.
+Fixture cleanup logs each failed stage with its nested error before aggregating
+the failure. A refused process-group signal records the inspected identities
+(PID, start identity, group and ownership flags), never argv or environment
+contents; it remains a failure and grants no authority to signal that group.
 
 ```mermaid
 stateDiagram-v2
@@ -471,14 +475,24 @@ requirement to its RED/GREEN/falsification and phase gate.
 P4 holds the first operator `POST /sessions/{id}/checkpoint` response after
 host commit. A second ordinary node interrupt parks the observed attempt;
 answering that interrupt with `restart_node` / `workspacePolicy=keep` mints
-N+1. Hold N+1's first prompt before forwarding, snapshot current authority and
-install a scoped domain-write audit, then release the original checkpoint ACK
+N+1. Hold N+1's first prompt before forwarding and hold its `session.created`
+projection. Prove the exact command-target incarnation is `created`, release
+that event and wait for its committed `active` state before snapshotting current
+authority and installing a scoped domain-write audit. Then release the original checkpoint ACK
 while its 30-second request is still alive. Require the original web handler's
 409 CONFLICT and zero current run/session/attempt writes. Old attempt closure
 and historical command receipt settlement are permitted. Release successor
 prompt and complete it through the controlled ACP fixture. A response arriving
 after its HTTP deadline is not a passing stale-response control. This uses the
 existing checkpoint contract, not an unqualified delayed session-create ACK.
+
+The scratch dispatch-window permission control similarly holds the successor
+prompt until the restarted web is ready and its command is durably admitted.
+This keeps the fixture's short cap responsible for the initial park without
+letting a second cap expire during web startup. The two-tick admission and
+stored-answer assertions remain unchanged. Agent owner interruption triggers
+match actual status transitions only; metadata and unchanged-status writes
+must pass before the intended terminal application is interrupted.
 
 ## Expectations
 
