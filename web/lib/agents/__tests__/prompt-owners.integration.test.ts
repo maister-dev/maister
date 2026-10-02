@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import {
@@ -314,16 +314,20 @@ async function expectCompleted(
 // event until it expires — the waits below budget for that instead of being
 // re-guessed whenever lane timing shifts.
 const KILLED_CLAIM_WAIT_MS = RUNTIME_EVENT_CLAIM_LEASE_MS;
+const AGENT_FINAL_STATUSES = [
+  "Done",
+  "Failed",
+  "Crashed",
+  "Review",
+  "NeedsInputIdle",
+] as const;
 
 async function killAtTerminalWrite(
   runId: string,
   message?: string,
-  operation?: "rework",
 ): Promise<void> {
-  await interruptAgentStatusWrite(
-    runId,
-    ["Done", "Failed", "Crashed", "Review", "NeedsInputIdle"],
-    () => startDriver(runId, message, undefined, operation),
+  await interruptAgentStatusWrite(runId, AGENT_FINAL_STATUSES, () =>
+    startDriver(runId, message),
   );
 }
 
@@ -374,8 +378,10 @@ async function interruptAcceptedPrompt(
 
 async function interruptAgentStatusWrite(
   runId: string,
-  statuses: string[],
-  start: () => ReturnType<typeof startFixture>,
+  statuses: readonly string[],
+  start: () =>
+    | ReturnType<typeof startFixture>
+    | Promise<ReturnType<typeof startFixture>>,
 ): Promise<void> {
   const trigger = `agent_pause_${randomUUID().replaceAll("-", "")}`;
   const lockKey = Math.floor(Math.random() * 2_000_000_000) + 1;
@@ -385,12 +391,12 @@ async function interruptAgentStatusWrite(
   try {
     await lock.query("SELECT pg_advisory_lock(260909, $1)", [lockKey]);
     await database.pool.query(
-      `CREATE FUNCTION ${trigger}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id = '${runId}' AND NEW.status IN (${statuses.map((status) => `'${status.replaceAll("'", "''")}'`).join(",")}) AND (NEW.status <> 'NeedsInputIdle' OR OLD.status = 'Running') THEN PERFORM pg_advisory_xact_lock(260909, ${lockKey}); END IF; RETURN NEW; END $$`,
+      `CREATE FUNCTION ${trigger}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id = '${runId}' AND OLD.status IS DISTINCT FROM NEW.status AND NEW.status IN (${statuses.map((status) => `'${status.replaceAll("'", "''")}'`).join(",")}) AND (NEW.status <> 'NeedsInputIdle' OR OLD.status = 'Running') THEN PERFORM pg_advisory_xact_lock(260909, ${lockKey}); END IF; RETURN NEW; END $$`,
     );
     await database.pool.query(
-      `CREATE TRIGGER ${trigger} BEFORE UPDATE ON runs FOR EACH ROW EXECUTE FUNCTION ${trigger}()`,
+      `CREATE TRIGGER ${trigger} BEFORE UPDATE OF status ON runs FOR EACH ROW EXECUTE FUNCTION ${trigger}()`,
     );
-    driver = start();
+    driver = await start();
     await expect
       .poll(
         async () => {
@@ -1546,9 +1552,47 @@ describe("Agent owned prompts through the production launcher", () => {
           childRunId: runId,
           status: "Done",
         });
-      else if (window === "before_apply")
-        await killAtTerminalWrite(runId, prompt, "rework");
-      else {
+      else if (window === "before_apply") {
+        await interruptAgentStatusWrite(
+          runId,
+          AGENT_FINAL_STATUSES,
+          async () => {
+            // Tail-event allocation can update a Review row before rework
+            // admission. Neither metadata nor an unchanged status is the
+            // terminal application boundary this fault must interrupt.
+            await db.transaction(async (tx) => {
+              await tx.execute(sql`SET LOCAL statement_timeout = '2s'`);
+              await tx
+                .update(runs)
+                .set({
+                  nextExecutionEventSequence: sql`${runs.nextExecutionEventSequence}`,
+                })
+                .where(eq(runs.id, runId));
+              await tx
+                .update(runs)
+                .set({ status: "Review" })
+                .where(eq(runs.id, runId));
+            });
+
+            return startDriver(runId, prompt, undefined, "rework");
+          },
+        );
+        const [interrupted] = await db
+          .select()
+          .from(agentTurns)
+          .where(
+            and(eq(agentTurns.runId, runId), eq(agentTurns.variant, "rework")),
+          );
+
+        expect(interrupted).toMatchObject({
+          state: "dispatched",
+          commandId: expect.any(String),
+        });
+        expect(await getCommandReceipt(interrupted.commandId!)).toMatchObject({
+          receiptVersion: 2,
+          phase: "completed",
+        });
+      } else {
         const driver = startDriver(runId, prompt, undefined, "rework");
 
         if (window === "before_terminal") {

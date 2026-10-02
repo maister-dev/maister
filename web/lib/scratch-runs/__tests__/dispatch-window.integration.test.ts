@@ -396,6 +396,8 @@ it("S1 D-A8: death after a parked permission respawns preserves the generation t
       (runId) => runId,
       (error: unknown) => error,
     );
+  let resumedPrompt: FaultBarrier | undefined;
+  let resumedPromptReleased = false;
 
   try {
     const parked = await poll(
@@ -414,12 +416,36 @@ it("S1 D-A8: death after a parked permission respawns preserves the generation t
     );
 
     await launching;
-    const recovered = await restartUnadmittedTurn(() =>
-      fixture!.api(`/api/runs/${parked.run_id}/hitl/${parked.id}/respond`, {
+    // The short cap creates the initial park. Do not start its second timer
+    // while the restarted web is still booting on the hosted Intel runner.
+    resumedPrompt = fixture.proxy.arm(
+      {
+        caseId: "s1-idle-resume-after-web-ready",
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ optionId: "allow" }),
-      }),
+        path: /^\/sessions\/[^/]+\/prompts$/,
+        assignmentEpoch: 2,
+      },
+      "hold-request",
+    );
+    const recovered = await restartUnadmittedTurn(
+      () =>
+        fixture!.api(`/api/runs/${parked.run_id}/hitl/${parked.id}/respond`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ optionId: "allow" }),
+        }),
+      async () => {
+        const witness = await resumedPrompt!.awaitReached();
+        const admitted = await fixture!.database.pool.query<{ id: string }>(
+          "SELECT id FROM execution_commands WHERE run_id=$1 AND kind='session.prompt' ORDER BY created_at DESC LIMIT 1",
+          [parked.run_id],
+        );
+
+        expect(witness.assignmentEpoch).toBe(2);
+        expect(witness.commandId).toBe(admitted.rows[0]!.id);
+        resumedPrompt!.release();
+        resumedPromptReleased = true;
+      },
     );
 
     expect(recovered.intent.owner.ref.variant).toBe("recovery");
@@ -436,6 +462,8 @@ it("S1 D-A8: death after a parked permission respawns preserves the generation t
     expect(permissions.rows).toHaveLength(1);
   } finally {
     await fixture.web.kill("SIGKILL");
+    if (resumedPrompt?.observations.length && !resumedPromptReleased)
+      resumedPrompt.ownedProcessKilled();
     await launching;
   }
 }, 240_000);

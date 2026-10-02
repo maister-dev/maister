@@ -855,6 +855,16 @@ it("P4: delayed checkpoint ACK reaches its original handler after successor epoc
       },
       "hold-request",
     );
+    const successorCreated = stack.proxy.arm(
+      {
+        caseId: "P4-successor-created",
+        method: "GET",
+        path: /^\/runtime-events$/,
+        eventType: "session.created",
+        assignmentEpoch: 2,
+      },
+      "hold-events",
+    );
     const restart = await stack.api(
       `/api/runs/${runId}/hitl/${hitlRequestId}/respond`,
       {
@@ -877,6 +887,32 @@ it("P4: delayed checkpoint ACK reaches its original handler after successor epoc
       oldResponseSettled,
       "successor commits before old handler settles",
     ).toBe(false);
+    await successorCreated.awaitReached();
+    const successorIncarnationStates = async (): Promise<{ state: string }[]> =>
+      (
+        await stack.database.pool.query<{ state: string }>(
+          `SELECT state FROM run_session_incarnations
+           WHERE run_id=$1 AND assignment_epoch=$2
+             AND host_session_id=(SELECT target_session_id FROM execution_commands WHERE id=$3)`,
+          [runId, successor.assignmentEpoch, successor.commandId],
+        )
+      ).rows;
+
+    expect(await successorIncarnationStates()).toEqual([{ state: "created" }]);
+    // Prompt admission may precede canonical session.created projection. Finish
+    // that legitimate successor write before auditing the stale handler alone.
+    successorCreated.release();
+    await poll(
+      async () => {
+        const states = await successorIncarnationStates();
+
+        return states.length === 1 && states[0]!.state === "active"
+          ? states
+          : null;
+      },
+      60_000,
+      "successor incarnation activated before stale ACK audit",
+    );
     const snapshot = async (): Promise<unknown> =>
       (
         await stack.database.pool.query(
