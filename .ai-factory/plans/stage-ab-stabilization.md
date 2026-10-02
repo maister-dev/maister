@@ -893,6 +893,44 @@ S4 rollback: before 0134, keep sources and all import checkpoints; stop maintena
 
 - [ ] **S5.3 — Browser lifecycle and runtime/transport matrix.** Includes the Linux uid/mount-namespace isolation driver and separate-user Linux deployment layout deferred by S5.2 option B. Owner Q; Depends: S5.2 and S3 browser policy. Files: new dedicated Playwright real-supervisor config, lifecycle/content specs, CI/scripts, minimum Node/image qualification. Exercise launch→stream→HITL→checkpoint→resume→cancel/completion/history, each owner-visible reply and active MIME download after restarts. Run AT-17 on minimum 24.15, 24.19 and selected image with exact binary/dependency versions. Logging: scenario/revision/runtime/image/transport phase and result. Acceptance: browser outcomes come from real web/supervisor; default fake-peer E2E remains supporting regression only; no full-Node-24 claim from one passing patch.
 
+  **Owner sequencing override (2026-10-02):** finish one further corrective
+  iteration in `codex-stage-ab-ci-r9.md`, then enter S5.3. S5.2 stays open at
+  42/45 until its hosted acceptance is actually satisfied; starting S5.3 must
+  not relabel local ARM evidence or discard the unqualified Intel results.
+
+  **S5.3a entry gate — Linux driver and hosting decision:** first specify the
+  kernel-enforced boundary (distinct UID or mount namespace), required host
+  privileges, readable application/workspace paths, denied host-private roots,
+  descendant inheritance, and process-inspection/cleanup authority. Qualify on
+  a real Linux environment: negative reads of sentinel and live SQLite state,
+  positive supervisor reads, working HTTP/Postgres/object access, web restart,
+  and owned-process cleanup with no ability to signal foreign processes.
+  Missing isolation capability is an explicit failure, never an unisolated
+  fallback. Only then amend the CI hosting contract and run the unchanged
+  seven-suite/50-case isolation inventory plus separate preflight, both Node
+  versions' data-plane gates, complete reports, timings and zero-leak proof
+  within the existing job envelope. If a runtime fix adds a case, update the
+  explicit inventory and required-case manifest together. Preserve macOS
+  evidence as platform-specific evidence. Driver/hosting acceptance and the
+  separate-user deployment/browser matrix are distinct S5.3 deliverables.
+
+  First implementation slice: extend the existing `IsolationDriver` in
+  `web/test-support/process-isolation.ts` and preserve the command-wrapping
+  seam used by `real-web.ts`. Today its name union contains only
+  `sandbox-exec`; Linux deliberately throws `IsolationUnavailableError`.
+  Start with a real Linux negative access control before implementing the
+  new driver, then reuse preflight and I1–I4 to prove production startup,
+  authorized object access and restart. Add only missing descendant/escape
+  and cleanup-identity controls; the existing Linux process reader is not
+  itself a filesystem isolation driver. A local Linux container can provide
+  development evidence, but its capabilities, architecture and Node version
+  must be recorded separately from the eventual hosted environment.
+
+  The final corrective iteration also carries the unresolved Librarian
+  Testcontainers initialization timeout into this gate: collect phase evidence
+  before changing the probe contract. A generic 3-second client-init timeout
+  does not prove the Docker daemon itself was unavailable.
+
   **Named scenario added by ADR-180 (one owner for the permission deadline).**
   *A permission older than the old host window while the operator is active →
   answered and delivered; an idle permission → checkpoint, resume, delivered.*

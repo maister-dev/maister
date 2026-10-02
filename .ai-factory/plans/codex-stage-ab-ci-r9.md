@@ -2,7 +2,7 @@
 
 Branch: `codex/stage-ab-ci-r9`
 Created: 2026-09-28
-Status: **All seven R9 fixes and local T13 qualification are complete. Latest hosted master run 36877828238 passes every Linux job and all four web shards; Intel production build succeeds, but the serial isolation slice exceeds its remaining budget and has no complete report. T5/S5.2 and T13 hosted acceptance remain open; S5.3a must resolve the measured Intel budget shortfall before a platform change.**
+Status: **All seven R9 fixes and the final corrective iteration are locally qualified: scratch lock-cycle controls, genuine rework lifecycle, 273 consumer cases, full 50-case isolation and separate preflight pass. Hosted run 37010985789 remains failed; Docker initialization and Intel budget are unresolved. T5/S5.2 and T13b stay open at 42/45; the next implementation slice is S5.3a under the owner's sequencing override. No platform or budget change was made in this iteration.**
 Refined: 2026-09-28 — SDD/API/persistence contracts and RED → GREEN → REFACTOR acceptance audit.
 Planning base: `6fb6e72cceda82055d4c8fc0a6f3f629eae526bf` (local master, Librarian merged).
 Request baseline: `b85ac775` (2026-09-28); line references below use the planning base unless explicitly identified as supplied history.
@@ -782,3 +782,143 @@ whitespace validation pass. Read-only adversarial review found no remaining
 code issue; the duplicate P4 amendment in the original closeout plan now links
 to the canonical current contract. Test/contract corrections are committed as `3ecdf0cec`; qualification evidence
 is a separate local documentation phase. No push or hosted rerun.
+
+### Final corrective iteration before S5.3 (2026-10-02)
+
+Owner instruction: investigate and fix one more iteration, then proceed to
+S5.3. Preserve the existing hosted gates; this sequencing does not certify
+S5.2 or authorize an unasked push, CI rerun, timeout increase or runner change.
+
+[Run 37010985789](https://github.com/maister-dev/maister/actions/runs/37010985789)
+on `99f9f128b59de8a70ea28d43deb3c1cab1de3290` completed failure. Exact-SHA
+report validation is retained in `/private/tmp/s52-37010985789-validation.json`.
+Three web shards validate; Node 24.15 shard 1 has 326 passed / 1 failed
+(`owner-agent-rework retains its requested result after live`, child status
+Failed instead of Done, 28m22s). Both supervisor reports validate 111 cases.
+Librarian browser acceptance fails before browser startup at its 3001 ms
+Testcontainers client-initialization deadline; its failing subphase is absent
+from the hosted log. Other required jobs pass; optional integration is skipped
+by its workflow condition.
+
+Intel isolation lasts 50m02s: runtime ready at second 434, preflight complete
+at 626, slice allowance 2340 seconds, exit 124 at 2975, runtime cleanup at
+2986. Only the separate 1/1 preflight report exists. P4 passes; S3 times out
+waiting for its permission row after web logs `deadlock detected` and cancels
+the supervisor permission. Main invocation
+`1fe76293-fa60-4158-ad2d-9f612b465255` reaps one remaining resource at timeout.
+This is neither complete 50-case evidence nor leak-free acceptance.
+
+- [x] Reproduce the scratch permission/transcript lock cycle against real
+  PostgreSQL, fix the narrow lock incompatibility, and prove permission
+  persistence plus canonical transcript progress without weakening authority
+  serialization. Re-run the shared helper's consumer suites and full S3.
+- [x] Replace the rework test's manufactured Done-to-Review transition with
+  a real worktree-backed Review run; qualify every rework ingest variant and
+  the complete agent prompt-owner suite with original result assertions.
+- [x] Diagnose Docker initialization and Intel costs; apply only measured,
+  invariant-preserving corrections. Record unresolved hosted causes rather
+  than treating an ARM pass as their fix.
+- [x] Run final local qualification, review the fixes, commit by phase, and
+  prepare the S5.3 entry criteria with T5/T13b and S5.2 explicitly open.
+
+Investigation findings:
+
+- S3 web log `web-cb8834bf.log` records permission persistence `deadlock
+  detected`, followed by supervisor deferred cancellation and the fixture's
+  `permission was not allowed` failure. A real-PG concurrency control reproduces
+  the permission/run lock versus canonical transcript allocator/FK cycle.
+  This supersedes timing-only explanations of the current run's S3 failure.
+- The rework fixture uses `workspace: none`, waits for Done, then manually
+  writes Review. Plain-agent Done schedules directory removal; genuine Review
+  retains its worktree. Hosted session.create fails with SPAWN in 16 ms while
+  old cleanup is active. Its omitted errno prevents claiming a proven ENOENT;
+  the invalid fixture lifecycle is independently proven from source.
+- Docker's installed `getContainerRuntimeClient` includes Docker info,
+  host resolution, Compose CLI discovery and DNS. A fresh local probe takes
+  about 632 ms, including about 607 ms in Compose discovery; it passes the
+  unchanged deadline. The hosted failing subphase remains unknown. No timeout
+  or initialization workaround is justified by this local measurement. The
+  Librarian CI step enables only Testcontainers' core diagnostic namespace
+  so its next log identifies initialization phases; container/exec output
+  namespaces remain disabled. This is diagnostic instrumentation, not a claim
+  that the hosted failure is fixed.
+- Intel completed partitions 6/6 in 735.295 seconds, dispatch 9/10 in 555.367,
+  and process death 6/6 in 465.015; roughly 585.6 seconds remained for cleanup
+  before timeout, and three later suites were not reached. Overlapping costs
+  include the production build (208.366 seconds), 31 web boots (420.397), and
+  six nested cleanup containers plus migrations (343.895). Those nested
+  containers prove resource ownership and cannot simply share a DB.
+- A native inspection candidate was measured, then discarded: alternating
+  selected-PID probes improved median 1.894 to 1.790 ms on ARM64, while full
+  snapshots improved 18.210 to 13.530 ms. The frequent watchdog path's small
+  saving does not justify extra C complexity or prove an Intel budget fix.
+  Evidence: `/private/tmp/s52-native-budget-_78y24y2/comparison.json`.
+
+No API payload, domain status, error-code or database-schema change is required
+by these corrections; no migration is planned. The unresolved Docker startup
+and Intel hosting/budget questions remain explicit inputs to S5.3a.
+
+Consumer qualification (Darwin ARM64 / Node 24.15.0): the complete agent-owner
+suite passes 50/50 in 754.466 seconds, including all three rework windows.
+The final scratch consumer invocations use the existing local
+`MAISTER_TEST_DOCKER_PROBE_TIMEOUT_MS=30000` override for client startup; this
+does not qualify CI's unchanged 3-second probe. Full isolation and its separate
+preflight below use the default probe deadline.
+Its reporter `/private/tmp/s52-focused-fydK1q/vitest.json` also records the
+intentional recovery-queue RED before service helper unification; the whole
+batch is not green. The final scratch consumer batch records 221 passed / 2
+failed across 18 suites (`/private/tmp/s52-focused-ZS9k6c/vitest.json`,
+544.09 seconds). Both failures were obsolete SQL observations: steering and
+re-drive still searched for `FOR UPDATE`; production now uses `FOR NO KEY
+UPDATE`. Physical test blockers and exactly-once assertions were preserved.
+The complete steering, re-drive and terminal-cause suites then pass 24/24 in
+53.41 seconds (`/private/tmp/s52-focused-HFXNpa/vitest.json`). Both invocation
+finalizers report zero leaks and no cleanup errors. The final 18-case
+permission-terminal suite includes both deterministic deadlock controls.
+
+The per-suite name-set audit in
+`/private/tmp/s52-final-consumer-qualification.json` maps each final suite to
+its actual reporter: 273 passing unique cases in 19 suites (223 scratch and
+related consumer cases, plus 50 agent cases). This is a union of qualified
+suite results, not a fabricated single green aggregate invocation. Scoped
+lint exits successfully with zero errors and 28 existing formatting/spacing
+warnings in untouched operator-message code; changed hunks are clean.
+Read-only adversarial review passes after the observation updates.
+
+The first complete isolation pass through all seven suites records 49/50:
+`/var/folders/p3/lj5f1_ys6650hwvry91_qr2c0000gn/T/maister-ab-isolation-vHYOQQ/vitest.json`,
+800.095 seconds including cleanup, invocation
+`045e1a13-820c-43ab-a2a5-b484dd1702e6`, zero leaks. S3 passes in 13.279 seconds;
+the only failure is production S1 race's fourth obsolete SQL observation
+(`%runs%for update%`). Its pattern now matches `FOR NO KEY UPDATE`, retaining
+the real lock-wait witness and single immutable-command assertion. The broader
+case-insensitive observation sweep and review are recorded in the patch;
+the final full-lane rerun below qualifies this correction.
+
+Final complete qualification (Darwin ARM64 / Node 24.15.0, unchanged default
+Docker probe): **50/50 in exactly seven suites**, no failures or skips,
+**801.033 seconds including 0.348 seconds cleanup**. `validateLaneReport`
+accepts the exact suite membership and all 50 required case names. Reporter:
+`/var/folders/p3/lj5f1_ys6650hwvry91_qr2c0000gn/T/maister-ab-isolation-YflvNj/vitest.json`;
+log `/private/tmp/s52-final-isolation-confirmed.log`; invocation
+`dc67430c-2c10-444b-9f4d-a6ce5205e7c9` reports zero leaks. S1 race passes in
+5.605 seconds and S3 in 13.525 seconds. Independent preflight passes **1/1 in
+4.868 seconds including 0.187 seconds cleanup**, zero leaks; reporter
+`/var/folders/p3/lj5f1_ys6650hwvry91_qr2c0000gn/T/maister-ab-isolation-VHfDey/vitest.json`,
+invocation `4500dc6e-cbea-4f68-bd00-e227ac8112b1`, log
+`/private/tmp/s52-final-preflight.log`.
+
+Web/supervisor/MCP types, MCP build, API contracts and adapter mirrors, the
+A/B lane runner tests, scoped lint, docs/ERD and whitespace gates pass. The
+production and test fixes received read-only adversarial review, including
+the fourth SQL-observation correction. The owner sequencing override and
+concrete Linux-driver entry criteria are in `stage-ab-stabilization.md` S5.3.
+No local ARM result closes hosted S5.2, proves the Intel envelope, or explains
+the unobserved Docker initialization subphase. T5/T13b remain open; no push,
+hosted rerun, runner change or limit increase was performed.
+
+Local phase commits: `248f99ff8` (scratch lock-cycle fix, controls and canonical
+contract), `f3b47dc54` (real Review rework fixture), `a2804dcfa` (Docker client
+phase diagnostics). Qualification, baseline and S5.3 entry criteria form the
+following documentation commit. All long-running lanes completed before HEAD
+moved; no production/test source changed after the final passing reports.
