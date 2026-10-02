@@ -4,6 +4,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import {
+  afterAll,
   afterEach,
   beforeAll,
   beforeEach,
@@ -29,11 +30,13 @@ import {
   invocationFromEnvironment,
 } from "@/test-support/process-invocation";
 import {
-  startProductionFaultFixture,
+  startProductionFaultSuite,
+  type ProductionFaultSuite,
   type ProductionFaultFixture,
 } from "@/test-support/production-fault-fixture";
 
 let fixture: ProductionFaultFixture | undefined;
+let suite: ProductionFaultSuite;
 
 type CommandRow = {
   id: string;
@@ -194,11 +197,16 @@ beforeAll(async () => {
     (await mkdtempReal("s52-partition-build-"));
 
   await buildProductionWeb(path.join(logs, "partition-next-build.log"));
+  suite = await startProductionFaultSuite();
 }, 600_000);
+
+afterAll(async () => {
+  await suite?.stop();
+}, 90_000);
 
 describe("S5.2 production-boot fault partitions", () => {
   beforeEach(async () => {
-    fixture = await startProductionFaultFixture();
+    fixture = await suite.startFixture();
     ({ database, supervisor, proxy, web, projectId, adapterLog, cookie } =
       fixture);
   }, 120_000);
@@ -742,7 +750,7 @@ describe("S5.2 production-boot fault partitions", () => {
 
 it("P4: delayed checkpoint ACK reaches its original handler after successor epoch without a current-owner write", async () => {
   // Outside the shared describe so this control can select a held ACP prompt.
-  const stack = await startProductionFaultFixture({
+  const stack = await suite.startFixture({
     fixtureArgs: ["--controlled-prompt"],
   });
 

@@ -15,7 +15,7 @@ import {
   seedFlowTask,
   WORKER_ADMIN,
 } from "./durable-workers-seed";
-import { startMainAndBrainPostgresTestDb } from "./pg-container";
+import { startMainAndBrainPostgresTestDbTemplate } from "./pg-container";
 import { startRealSupervisor } from "./real-supervisor";
 import { signInWithCredentials, startRealWeb } from "./real-web";
 import { startSupervisorFaultProxy } from "./supervisor-fault-proxy";
@@ -48,15 +48,37 @@ export type ProductionFaultFixture = {
   close(): Promise<void>;
 };
 
+type ProductionFaultOptions = {
+  fixture?: string;
+  fixtureArgs?: string[];
+  fixtureEnv?: Record<string, string>;
+};
+
+export type ProductionFaultSuite = {
+  startFixture(
+    options?: ProductionFaultOptions,
+  ): Promise<ProductionFaultFixture>;
+  stop(): Promise<void>;
+};
+
+/** Migrate once per suite; every stack receives its own unseeded database. */
+export async function startProductionFaultSuite(): Promise<ProductionFaultSuite> {
+  const template = await startMainAndBrainPostgresTestDbTemplate({
+    databaseName: "s52_faults",
+  });
+
+  return {
+    startFixture: async (options = {}) =>
+      startProductionFaultFixture(await template.createDatabase(), options),
+    stop: () => template.stop(),
+  };
+}
+
 /** One disposable production stack. Only HTTP drives domain transitions. */
-export async function startProductionFaultFixture(
-  options: {
-    fixture?: string;
-    fixtureArgs?: string[];
-    fixtureEnv?: Record<string, string>;
-  } = {},
+async function startProductionFaultFixture(
+  database: StartedPostgresTestDb,
+  options: ProductionFaultOptions,
 ): Promise<ProductionFaultFixture> {
-  let database: StartedPostgresTestDb | undefined;
   let supervisor: RealSupervisor | undefined;
   let proxy: SupervisorFaultProxy | undefined;
   let web: RealWeb | undefined;
@@ -85,9 +107,6 @@ export async function startProductionFaultFixture(
       );
   }
   try {
-    database = await startMainAndBrainPostgresTestDb({
-      databaseName: "s52_faults",
-    });
     const root = await mkdtempReal("s52-fault-");
     const adapterLog = path.join(root, "adapter-invocations.ndjson");
     const cronToken = randomUUID();

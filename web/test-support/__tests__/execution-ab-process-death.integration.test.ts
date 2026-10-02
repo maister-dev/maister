@@ -1,12 +1,13 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-import { afterEach, beforeAll, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
 
 import { buildProductionWeb } from "@/test-support/real-web";
 import { poll } from "@/test-support/durable-workers-ledger";
 import {
-  startProductionFaultFixture,
+  startProductionFaultSuite,
+  type ProductionFaultSuite,
   type ProductionFaultFixture,
 } from "@/test-support/production-fault-fixture";
 import {
@@ -16,6 +17,7 @@ import {
 import { mkdtempReal } from "@/test-support/worktree-test-root";
 
 let fixture: ProductionFaultFixture | undefined;
+let suite: ProductionFaultSuite;
 
 beforeAll(async () => {
   const logs =
@@ -23,7 +25,12 @@ beforeAll(async () => {
     (await mkdtempReal("s52-death-build-"));
 
   await buildProductionWeb(path.join(logs, "death-next-build.log"));
+  suite = await startProductionFaultSuite();
 }, 600_000);
+
+afterAll(async () => {
+  await suite?.stop();
+}, 90_000);
 
 afterEach(async (context) => {
   if (context.task.result?.state === "fail") {
@@ -128,7 +135,7 @@ async function releaseAdapter(pid: number): Promise<void> {
 }
 
 it("D2a: supervisor restart before create effect reissues the original durable intent once", async () => {
-  fixture = await startProductionFaultFixture();
+  fixture = await suite.startFixture();
   await bindingAudit();
   const held = fixture.proxy.arm(
     { caseId: "D2a-create", method: "POST", path: /^\/sessions$/ },
@@ -179,7 +186,7 @@ it("D2a: supervisor restart before create effect reissues the original durable i
 }, 240_000);
 
 it("D2b: supervisor restart after create commit folds its receipt without another create", async () => {
-  fixture = await startProductionFaultFixture();
+  fixture = await suite.startFixture();
   await bindingAudit();
   const held = fixture.proxy.arm(
     { caseId: "D2b-create-ACK", method: "POST", path: /^\/sessions$/ },
@@ -255,7 +262,7 @@ it("D2b: supervisor restart after create commit folds its receipt without anothe
 }, 240_000);
 
 it("D4: web dies after durable create ACK and before first host prompt; restart sends one prompt", async () => {
-  fixture = await startProductionFaultFixture();
+  fixture = await suite.startFixture();
   await bindingAudit();
   const held = fixture.proxy.arm(
     {
@@ -293,7 +300,7 @@ it("D4: web dies after durable create ACK and before first host prompt; restart 
 }, 240_000);
 
 it("L1: active scratch cancellation settles once and the same session accepts a later turn", async () => {
-  fixture = await startProductionFaultFixture({
+  fixture = await suite.startFixture({
     fixtureArgs: ["--controlled-prompt"],
   });
   const launched = fixture.launchScratch();
@@ -401,7 +408,7 @@ it("L1: active scratch cancellation settles once and the same session accepts a 
 }, 240_000);
 
 it("D3: connection loss after projection claim rolls back effect and cursor; a successor projects once without a new event", async () => {
-  fixture = await startProductionFaultFixture();
+  fixture = await suite.startFixture();
   const runId = await fixture.launchScratch();
 
   await completedPrompt(runId);
@@ -566,7 +573,7 @@ it("D3: connection loss after projection claim rolls back effect and cursor; a s
 it("D1: supervisor death during NeedsInput preserves the 503 response intent and resumes through checkpoint idle", async () => {
   const journal = await mkdtempReal("s52-permission-journal-");
 
-  fixture = await startProductionFaultFixture({
+  fixture = await suite.startFixture({
     fixture: "mock-acp-adapter-resumable.mjs",
     fixtureEnv: {
       MOCK_ACP_REQUEST_PERMISSION: "1",

@@ -572,3 +572,55 @@ this check changes no runner, platform, timeout or provisioning retry. S5.2
 stays **42/45**, and T5/T13b stay unchecked. No CI rerun or push was performed.
 The one-run monitor was paused after report validation to avoid duplicate
 notifications.
+
+
+### Intel fixture setup cost follow-up (2026-10-02, locally qualified)
+
+The owner's report of exit 124 on run `36877828238` reopened software diagnosis
+within the existing runner/platform/budget. Hosted timestamps attribute 926.013
+seconds of the 2,294-second slice to 19 fresh database setups: container startup
+266.31 seconds, main migrations 621.18 seconds, Brain migrations 38.53 seconds.
+The successful production build took 228.795 seconds; 28 required production web
+boots took 342.42 seconds. Scratch recovery progresses before HTTP readiness;
+there is no evidence here that recovery hangs. P2's real receipt budget remains
+part of its control.
+
+- [x] Replace repeated migration in the shared production fault fixture with a
+  suite-owned, connection-disabled main-then-Brain template and a distinct
+  database clone for every case. All three consumers (partitions, process death,
+  scratch dispatch window) use it; the other isolation suites already migrate
+  once per suite. No production API, migration, runner, platform, test case name
+  or timeout changes.
+- [x] Add real Postgres controls for clone/schema/ledger isolation, frozen
+  template, cleanup failure, leaked case and allocation racing with shutdown.
+  The RED control delegates clone creation to the former fresh-container path
+  and fails on distinct container IDs (`/private/tmp/s52-template-red.log`).
+  Adversarial review found the allocation/shutdown race and failure-path test
+  cleanup; both are corrected.
+- [x] Obtain a complete fresh GREEN helper report and run the unchanged full
+  seven-suite / 50-case isolation inventory. On the awake host, helper controls
+  pass 8/8 in 14.25 seconds (`/private/tmp/s52-template-awake.json`); existing
+  helper unit controls pass 2/2. The full isolation CLI passes 50/50 with exact
+  suite/title validation, no skips and zero leaks in **813.192 seconds**,
+  including 0.360 seconds cleanup. Report:
+  `/private/tmp/s52-template-isolation-evidence/maister-ab-isolation-APXssI/vitest.json`;
+  invocation `08df6d7f-553f-4c64-9a2c-e1b7bf0a7cff`. The local host is Darwin
+  ARM64 / Node 24.15.0, with a 2048 MiB V8 heap cap. The production build takes
+  17.872 seconds using the existing Next cache; this is not a cold-build
+  benchmark. All 22 fault-case clones total 572 ms (22–32 ms each), after the
+  unchanged migrations run once in each of the three owning suites. Independent
+  preflight passes 1/1 in 4.761 seconds with zero leaks; reporter
+  `maister-ab-isolation-umiKvn/vitest.json` under the same evidence root.
+- [ ] Owner integration/push and hosted artifact validation on that exact SHA.
+  S5.2 remains 42/45. These local ARM measurements do not establish Intel job
+  duration; the runner, platform and all deadlines stay unchanged.
+
+The tested source is the working diff over `97645c362`; the close-out commit
+contains that source plus evidence documentation. Earlier helper aggregates
+remain failed diagnostic evidence: the host entered Clamshell/Maintenance
+Sleep with 45-second DarkWake intervals separated by 30–90 minutes, confirmed
+by `pmset -g log`. The fresh awake aggregate supersedes them; no deadline was
+relaxed. Logs are retained under `/private/tmp/s52-template-*`.
+
+Static checks pass: web and supervisor types, MCP types/build, scoped lint,
+all docs including ERD, API/adapter contracts and diff whitespace checks.

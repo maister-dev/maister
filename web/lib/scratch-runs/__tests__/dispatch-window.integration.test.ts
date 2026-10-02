@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { readFile, writeFile } from "node:fs/promises";
 
-import { afterEach, beforeAll, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
 
 import {
   invocationFromEnvironment,
@@ -22,13 +22,15 @@ import { serializeScaffoldManifest } from "@/lib/local-packages/manifest";
 import { FLOW_ASSISTANT_ACTION_SCHEMA_VERSION } from "@/lib/studio/flow-assistant/protocol";
 import { poll } from "@/test-support/durable-workers-ledger";
 import {
-  startProductionFaultFixture,
+  startProductionFaultSuite,
+  type ProductionFaultSuite,
   type ProductionFaultFixture,
 } from "@/test-support/production-fault-fixture";
 import { buildProductionWeb } from "@/test-support/real-web";
 import { mkdtempReal } from "@/test-support/worktree-test-root";
 
 let fixture: ProductionFaultFixture | undefined;
+let suite: ProductionFaultSuite;
 
 beforeAll(async () => {
   const logs =
@@ -36,7 +38,12 @@ beforeAll(async () => {
     (await mkdtempReal("r9-s1-build-"));
 
   await buildProductionWeb(path.join(logs, "scratch-dispatch-next-build.log"));
+  suite = await startProductionFaultSuite();
 }, 600_000);
+
+afterAll(async () => {
+  await suite?.stop();
+}, 90_000);
 
 afterEach(async (context) => {
   if (context.task.result?.state === "fail") {
@@ -275,7 +282,7 @@ async function signalAdapter(
 }
 
 it("S1 launch: a web death after Running commits and before prompt admission re-drives the original turn once", async () => {
-  fixture = await startProductionFaultFixture();
+  fixture = await suite.startFixture();
   const recovered = await restartUnadmittedTurn(() =>
     fixture!.launchScratch(outputPrompt),
   );
@@ -284,7 +291,7 @@ it("S1 launch: a web death after Running commits and before prompt admission re-
 }, 240_000);
 
 it("S1 direct message: a later turn on the same incarnation is recovered after an earlier completed prompt", async () => {
-  fixture = await startProductionFaultFixture();
+  fixture = await suite.startFixture();
   const runId = await fixture.launchScratch(outputPrompt);
   const recovered = await restartUnadmittedTurn(() =>
     message(runId, outputPrompt),
@@ -295,7 +302,7 @@ it("S1 direct message: a later turn on the same incarnation is recovered after a
 }, 240_000);
 
 it("S1 queue: death after FIFO queued-to-prompted commit re-drives that message", async () => {
-  fixture = await startProductionFaultFixture({
+  fixture = await suite.startFixture({
     fixtureArgs: ["--controlled-prompt"],
   });
   const runId = await fixture.launchScratch("");
@@ -336,7 +343,7 @@ it("S1 queue: death after FIFO queued-to-prompted commit re-drives that message"
 }, 240_000);
 
 it("S1 Recover: death after the recovery generation's Running commit preserves its recovery key", async () => {
-  fixture = await startProductionFaultFixture({
+  fixture = await suite.startFixture({
     fixtureArgs: ["--controlled-prompt"],
   });
   const runId = await fixture.launchScratch("");
@@ -378,7 +385,7 @@ it("S1 Recover: death after the recovery generation's Running commit preserves i
 }, 240_000);
 
 it("S1 D-A8: death after a parked permission respawns preserves the generation turn and stored answer", async () => {
-  fixture = await startProductionFaultFixture({
+  fixture = await suite.startFixture({
     fixtureEnv: { MAISTER_PERMISSION_MAX_HOURS: "0.00222" },
   });
   const launching = fixture
@@ -434,7 +441,7 @@ it("S1 D-A8: death after a parked permission respawns preserves the generation t
 }, 240_000);
 
 it("S1 legacy: a Running dialog without frozen intent exposes unknown delivery and sends nothing", async () => {
-  fixture = await startProductionFaultFixture();
+  fixture = await suite.startFixture();
   const runId = await fixture.launchScratch("");
 
   // Mixed-version writer fixture: the old writer could commit Running without
@@ -479,7 +486,7 @@ it("S1 legacy: a Running dialog without frozen intent exposes unknown delivery a
 }, 120_000);
 
 it("S1 race: a live dispatcher paused at admission and the worker share one immutable command", async () => {
-  fixture = await startProductionFaultFixture();
+  fixture = await suite.startFixture();
   const runId = await fixture.launchScratch("");
   const barrier = await fixture.holdWrite({
     caseId: "s1-live-worker-race",
@@ -678,7 +685,7 @@ async function assertRecoveredPackageAction(
 }
 
 it("S1 package launch: restart retains request context, edit-lock generation and exactly one postprocess action", async () => {
-  fixture = await startProductionFaultFixture();
+  fixture = await suite.startFixture();
   const pkg = await packageEditor();
   const recovered = await restartUnadmittedTurn(() =>
     launchPackage(pkg, packageActionPrompt("rules/launch-recovered.md")),
@@ -693,7 +700,7 @@ it("S1 package launch: restart retains request context, edit-lock generation and
 }, 240_000);
 
 it("S1 package message: restart retains request-only follow-up context and its original action ID", async () => {
-  fixture = await startProductionFaultFixture();
+  fixture = await suite.startFixture();
   const pkg = await packageEditor();
   const runId = await launchPackage(pkg, outputPrompt);
   const recovered = await restartUnadmittedTurn(() =>
@@ -721,7 +728,7 @@ it("S1 package message: restart retains request-only follow-up context and its o
 }, 240_000);
 
 it("S3 transport: a held parked exit is fenced before the canonical scratch consumer", async () => {
-  fixture = await startProductionFaultFixture({
+  fixture = await suite.startFixture({
     fixtureEnv: { MAISTER_PERMISSION_MAX_HOURS: "0.00222" },
   });
   const oldExit = fixture.proxy.arm(

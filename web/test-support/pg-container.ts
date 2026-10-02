@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -460,4 +461,183 @@ export async function startMainAndBrainPostgresTestDb(
   } catch (error) {
     return throwAfterCleanup(options.lane ?? "integration", error, database);
   }
+}
+
+export type PostgresTestDbTemplate = {
+  createDatabase(): Promise<StartedPostgresTestDb>;
+  stop(): Promise<void>;
+};
+
+/** One immutable migrated database; each case owns a fresh writable clone. */
+export async function startMainAndBrainPostgresTestDbTemplate(
+  options: TestDatabaseOptions,
+): Promise<PostgresTestDbTemplate> {
+  const template = await startMainAndBrainPostgresTestDb(options);
+  const lane = options.lane ?? "integration";
+  const templateName = quoteDatabaseIdentifier(
+    template.container.getDatabase(),
+  );
+  const adminUrl = new URL(template.databaseUrl);
+
+  adminUrl.pathname = "/postgres";
+  let admin: Pool | undefined;
+
+  try {
+    await template.pool.end();
+    admin = new Pool({ connectionString: adminUrl.href, max: 1 });
+    await admin.query(`ALTER DATABASE ${templateName} ALLOW_CONNECTIONS false`);
+  } catch (error) {
+    return throwAfterCleanup(lane, error, {
+      container: template.container,
+      pool: admin,
+    });
+  }
+  const controlPool = admin;
+  const activeCases = new Map<string, () => Promise<void>>();
+  const allocations = new Set<Promise<StartedPostgresTestDb>>();
+  let stopping: Promise<void> | undefined;
+
+  async function allocateDatabase(): Promise<StartedPostgresTestDb> {
+    const startedAt = Date.now();
+    const databaseName = `case_${randomUUID().replaceAll("-", "")}`;
+    const identifier = quoteDatabaseIdentifier(databaseName);
+    const databaseUrl = new URL(template.databaseUrl);
+
+    databaseUrl.pathname = `/${databaseName}`;
+    await controlPool.query(
+      `CREATE DATABASE ${identifier} TEMPLATE ${templateName}`,
+    );
+    if (stopping) {
+      await controlPool.query(`DROP DATABASE ${identifier}`);
+      throw new Error(
+        "test database allocation interrupted by template shutdown",
+      );
+    }
+    const pool = new Pool({
+      connectionString: databaseUrl.href,
+      max: options.poolMax,
+    });
+    const db = Object.assign(
+      drizzle(pool),
+      drizzle(pool, { schema: mainSchema }),
+    );
+    let closing: Promise<void> | undefined;
+    const stop = (): Promise<void> => {
+      closing ??= (async () => {
+        const errors: unknown[] = [];
+
+        try {
+          await pool.end();
+        } catch (error) {
+          errors.push(error);
+        }
+        try {
+          // Refuse live application connections: teardown must stop clients first.
+          await controlPool.query(`DROP DATABASE ${identifier}`);
+          activeCases.delete(databaseName);
+        } catch (error) {
+          errors.push(error);
+        }
+        if (errors.length)
+          throw new AggregateError(
+            errors,
+            "test database clone cleanup failed",
+          );
+        logger.info(
+          { lane, phase: "clone-stop", databaseName },
+          "dropped test database clone",
+        );
+      })();
+
+      return closing;
+    };
+
+    activeCases.set(databaseName, stop);
+    logger.info(
+      {
+        lane,
+        phase: "clone-ready",
+        databaseName,
+        containerId: template.container.getId(),
+        durationMs: Date.now() - startedAt,
+      },
+      "cloned migrated test database",
+    );
+
+    return {
+      container: template.container,
+      databaseUrl: databaseUrl.href,
+      pool,
+      db,
+      stop,
+    };
+  }
+
+  return {
+    createDatabase(): Promise<StartedPostgresTestDb> {
+      if (stopping)
+        return Promise.reject(new Error("test database template is stopping"));
+      const allocation = allocateDatabase();
+
+      allocations.add(allocation);
+      // Observe settlement without hiding the error from the caller.
+      void allocation.then(
+        () => allocations.delete(allocation),
+        () => allocations.delete(allocation),
+      );
+
+      return allocation;
+    },
+    stop(): Promise<void> {
+      stopping ??= (async () => {
+        const errors: unknown[] = [];
+        const pending = await Promise.allSettled([...allocations]);
+
+        for (const result of pending) {
+          if (result.status === "rejected") errors.push(result.reason);
+        }
+        if (activeCases.size) {
+          errors.push(
+            new Error(
+              `test database template has unclosed cases: ${[...activeCases.keys()].join(", ")}`,
+            ),
+          );
+        }
+        for (const close of activeCases.values()) {
+          try {
+            await close();
+          } catch (error) {
+            errors.push(error);
+          }
+        }
+        try {
+          await stopTestDatabaseResources({
+            pool: controlPool,
+            container: template.container,
+          });
+        } catch (error) {
+          errors.push(error);
+        }
+        if (errors.length)
+          throw new AggregateError(
+            errors,
+            "test database template cleanup failed",
+          );
+        logger.info(
+          {
+            lane,
+            phase: "template-stop",
+            containerId: template.container.getId(),
+          },
+          "stopped test database template",
+        );
+      })();
+
+      return stopping;
+    },
+  };
+}
+
+function quoteDatabaseIdentifier(name: string): string {
+  return `"${name.replaceAll('"', '""')}"`;
 }

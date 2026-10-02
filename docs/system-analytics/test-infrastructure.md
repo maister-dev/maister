@@ -489,6 +489,15 @@ existing checkpoint contract, not an unqualified delayed session-create ACK.
 3. Every helper-created database MUST be unique to its test process and
    disposed through pool-before-container teardown; container shutdown MUST
    still be attempted if pool shutdown fails.
+   Production fault suites may own one disposable container and a frozen,
+   main-then-Brain migrated template for their lifetime. Each case receives a
+   distinct database cloned from that template before any application seed or
+   audit trigger is installed. The template accepts no connections after
+   migration; application state, DDL and sequences cannot carry between cases.
+   Case teardown ends its pool and drops only its database after its web and
+   supervisor stop. Suite teardown stops the container even when case cleanup
+   fails, and reports any unclosed case as a failure. Historical migration tests
+   retain fresh bare containers. This changes no production schema or API.
 4. Raw historical SQL replay MUST start from the bare lineage only.
 5. Main migrations MUST precede Brain migrations in every applicable lineage.
 6. E2E MUST pass only its ephemeral `DB_URL` to Playwright and MUST NEVER

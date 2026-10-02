@@ -417,22 +417,21 @@ The exact original reporters, tested SHAs and production-source equivalence
 are recorded in [the CI/R9 plan](../.ai-factory/plans/codex-stage-ab-ci-r9.md).
 Full source types, contracts/docs/ERD and migration checks pass; full lint has
 zero errors (web 769 existing warnings, supervisor four). Hosted acceptance
-remains open: master run `36858618377` at `1ef389077` passes both supervisor
-legs and three web shards, but Node 24.15.0 shard 1 misses the initial gate
-permission in `gate-permission-resume`. Intel uploads only preflight 1/1 and
-times out after production-build heap exhaustion. The latest investigation and
-scoped fix qualification belong to the linked CI/R9 plan; this earlier local
-baseline is not a hosted pass.
+remains open: master run `36877828238` at `370f8dbd5` passes both supervisor
+legs and all four web shards. Intel's production build succeeds, but the
+serial slice exceeds its remaining 2,295-second budget and uploads only the
+preflight reporter. The linked CI/R9 plan records the exact hosted evidence.
 
-**Hosted-failure follow-up (2026-10-01, local ARM64 / Node 24.15.0):**
-the fixture now uses the production default bundler. With a 2048 MiB V8 heap
-cap, a fresh owned build takes 59.292 seconds and the full isolation lane
-passes 50/50 in seven suites in 907.263 seconds including cleanup, with zero
-leaks. Separate preflight passes 1/1. Busy session-content and Flow reader
-continuation controls are RED-first; the corrected gate/permission/content/
-consensus families pass 67 distinct cases. Exact reports and later shared
-consumer qualification are in the CI/R9 plan. These results do not close
-hosted Intel acceptance or prove the original gate timeout's exact cause.
+**Hosted-failure follow-up (2026-10-02, local ARM64 / Node 24.15.0):**
+the fixture uses the production default bundler and suite-owned migrated
+Postgres templates with a fresh database clone for every fault case. With a
+2048 MiB V8 heap cap, the complete isolation lane passes **50/50 in seven
+suites in 813.192 seconds** including cleanup, with zero skips/leaks. Helper
+integration controls pass 8/8 and existing unit controls 2/2. The 22 clones
+cost 572 ms combined; this is local evidence, not an Intel speed prediction.
+Busy session-content and Flow reader continuation controls retain their
+previous RED-first qualification. Exact reports are in the CI/R9 plan.
+Hosted Intel acceptance remains open.
 
 **A first-hit Next-dev compile can exhaust a 10s e2e timeout.** Before calling
 such a failure a regression, re-run the spec in isolation and read the RETRY
