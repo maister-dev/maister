@@ -470,21 +470,23 @@ and epoch semantics live in [prompt lifecycle](execution-prompt-lifecycle.md),
 [S5.2 implementation plan](../../.ai-factory/plans/s5-2-closeout.md) maps each
 requirement to its RED/GREEN/falsification and phase gate.
 
-### S5.2 P4 concrete response window (2026-09-22 specification amendment)
+### S5.2 P4 concrete response window (2026-10-02 specification amendment)
 
-P4 holds the first operator `POST /sessions/{id}/checkpoint` response after
-host commit. A second ordinary node interrupt parks the observed attempt;
-answering that interrupt with `restart_node` / `workspacePolicy=keep` mints
-N+1. Hold N+1's first prompt before forwarding and hold its `session.created`
-projection. Prove the exact command-target incarnation is `created`, release
-that event and wait for its committed `active` state before snapshotting current
-authority and installing a scoped domain-write audit. Then release the original checkpoint ACK
-while its 30-second request is still alive. Require the original web handler's
-409 CONFLICT and zero current run/session/attempt writes. Old attempt closure
-and historical command receipt settlement are permitted. Release successor
-prompt and complete it through the controlled ACP fixture. A response arriving
-after its HTTP deadline is not a passing stale-response control. This uses the
-existing checkpoint contract, not an unqualified delayed session-create ACK.
+P4 installs its scoped domain-write audit before holding the first operator
+`POST /sessions/{id}/checkpoint` response after host commit. A second ordinary
+node interrupt parks the observed attempt; answering with `restart_node` /
+`workspacePolicy=keep` mints N+1. Hold N+1's `POST /sessions` before forwarding:
+the new assignment and Running attempt must exist, but its incarnation must
+not exist yet. Drain the old prompt's superseded application, clear preceding
+audit entries and snapshot current authority. Release the original checkpoint
+ACK while its unchanged 30-second request is alive. Require the original web
+handler's 409 CONFLICT, unchanged snapshot and zero current run/session/attempt
+writes. Old command receipt settlement is permitted. Then release session
+creation, prove the exact successor command-target incarnation becomes active,
+and release its held prompt for exactly-once completion. Session startup and
+projection are outside the stale HTTP response window; the stale-handler audit
+does not claim to run against an already-active successor incarnation. A response
+arriving after its HTTP deadline is not a passing control.
 
 The scratch dispatch-window permission control similarly holds the successor
 prompt until the restarted web is ready and its command is durably admitted.
@@ -493,6 +495,12 @@ letting a second cap expire during web startup. The two-tick admission and
 stored-answer assertions remain unchanged. Agent owner interruption triggers
 match actual status transitions only; metadata and unchanged-status writes
 must pass before the intended terminal application is interrupted.
+
+S3's late-exit control holds the initial epoch's prompt request before forwarding
+and starts its unchanged permission deadline only after that boundary releases.
+The permission query is scoped to the witnessed command's run. Worktree and
+session creation consume the setup deadline, not the permission observation
+deadline; the host permission cap and stale-exit assertions remain unchanged.
 
 ## Expectations
 

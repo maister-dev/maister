@@ -873,19 +873,14 @@ skipping AT cases or calling an unavailable driver successful. If CI runtime,
 60-minute budget, parent-death reachability or exact fault-window evidence is
 unproven, retain S5.2 as open with that precise missing gate.
 
-### S5.2 P4 concrete response window (2026-09-22 specification amendment)
+### S5.2 P4 concrete response window
 
-P4 holds the first operator `POST /sessions/{id}/checkpoint` response after
-host commit. A second ordinary node interrupt parks the observed attempt;
-answering that interrupt with `restart_node` / `workspacePolicy=keep` mints
-N+1. Hold N+1's first prompt before forwarding, snapshot current authority and
-install a scoped domain-write audit, then release the original checkpoint ACK
-while its 30-second request is still alive. Require the original web handler's
-409 CONFLICT and zero current run/session/attempt writes. Old attempt closure
-and historical command receipt settlement are permitted. Release successor
-prompt and complete it through the controlled ACP fixture. A response arriving
-after its HTTP deadline is not a passing stale-response control. This uses the
-existing checkpoint contract, not an unqualified delayed session-create ACK.
+The current [P4 response-window contract](../../docs/system-analytics/test-infrastructure.md#s52-p4-concrete-response-window-2026-10-02-specification-amendment)
+supersedes the original 2026-09-22 control arrangement. It preserves the delayed
+real HTTP ACK, original handler's 409, current-authority snapshot/write audit,
+and exactly-once successor completion. Successor creation is held after its
+assignment and Running attempt commit; session initialization and activation
+are verified after stale-handler rejection, outside the original wire deadline.
 
 ### Phase 2 execution evidence in progress
 

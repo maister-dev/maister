@@ -801,6 +801,24 @@ it("P4: delayed checkpoint ACK reaches its original handler after successor epoc
     await events.awaitReached();
     ack.cut();
     await receipt.awaitReached();
+    const originalAttempts = await stack.database.pool.query<{ id: string }>(
+      "SELECT id FROM node_attempts WHERE run_id=$1 AND status='Running'",
+      [runId],
+    );
+
+    expect(originalAttempts.rows).toHaveLength(1);
+    const originalAttemptId = originalAttempts.rows[0]!.id;
+
+    await stack.database.pool
+      .query(`CREATE TABLE s52_stale_writes(table_name text);
+      CREATE FUNCTION s52_audit_stale() RETURNS trigger LANGUAGE plpgsql AS $audit$
+      BEGIN IF to_jsonb(NEW) - ARRAY['updated_at','flow_driver_lease_expires_at'] IS DISTINCT FROM to_jsonb(OLD) - ARRAY['updated_at','flow_driver_lease_expires_at'] THEN
+        INSERT INTO s52_stale_writes VALUES(TG_TABLE_NAME); END IF; RETURN NEW; END $audit$;
+      CREATE TRIGGER s52_audit_stale AFTER UPDATE ON runs FOR EACH ROW WHEN (NEW.id = '${runId}') EXECUTE FUNCTION s52_audit_stale();
+      CREATE TRIGGER s52_audit_stale AFTER UPDATE ON execution_assignments FOR EACH ROW WHEN (NEW.run_id = '${runId}' AND NEW.epoch = 2) EXECUTE FUNCTION s52_audit_stale();
+      CREATE TRIGGER s52_audit_stale AFTER UPDATE ON run_sessions FOR EACH ROW WHEN (NEW.run_id = '${runId}') EXECUTE FUNCTION s52_audit_stale();
+      CREATE TRIGGER s52_audit_stale AFTER UPDATE ON run_session_incarnations FOR EACH ROW WHEN (NEW.run_id = '${runId}' AND NEW.assignment_epoch = 2) EXECUTE FUNCTION s52_audit_stale();
+      CREATE TRIGGER s52_audit_stale AFTER UPDATE ON node_attempts FOR EACH ROW WHEN (NEW.run_id = '${runId}' AND NEW.id <> '${originalAttemptId}') EXECUTE FUNCTION s52_audit_stale()`);
     const checkpointRequest = stack.proxy.arm(
       {
         caseId: "P4-checkpoint-request",
@@ -855,15 +873,14 @@ it("P4: delayed checkpoint ACK reaches its original handler after successor epoc
       },
       "hold-request",
     );
-    const successorCreated = stack.proxy.arm(
+    const successorCreate = stack.proxy.arm(
       {
-        caseId: "P4-successor-created",
-        method: "GET",
-        path: /^\/runtime-events$/,
-        eventType: "session.created",
+        caseId: "P4-successor-create",
+        method: "POST",
+        path: /^\/sessions$/,
         assignmentEpoch: 2,
       },
-      "hold-events",
+      "hold-request",
     );
     const restart = await stack.api(
       `/api/runs/${runId}/hitl/${hitlRequestId}/respond`,
@@ -880,38 +897,33 @@ it("P4: delayed checkpoint ACK reaches its original handler after successor epoc
     expect(restart.status).toBe(202);
     events.release();
     receipt.release();
-    const successor = await successorPrompt.awaitReached();
+    const creating = await successorCreate.awaitReached();
 
-    expect(successor.assignmentEpoch).toBe(2);
+    expect(creating.assignmentEpoch).toBe(2);
     expect(
       oldResponseSettled,
-      "successor commits before old handler settles",
+      "successor assignment commits before old handler settles",
     ).toBe(false);
-    await successorCreated.awaitReached();
-    const successorIncarnationStates = async (): Promise<{ state: string }[]> =>
+    expect(
       (
-        await stack.database.pool.query<{ state: string }>(
-          `SELECT state FROM run_session_incarnations
-           WHERE run_id=$1 AND assignment_epoch=$2
-             AND host_session_id=(SELECT target_session_id FROM execution_commands WHERE id=$3)`,
-          [runId, successor.assignmentEpoch, successor.commandId],
+        await stack.database.pool.query(
+          "SELECT id FROM run_session_incarnations WHERE run_id=$1 AND assignment_epoch=2",
+          [runId],
         )
-      ).rows;
-
-    expect(await successorIncarnationStates()).toEqual([{ state: "created" }]);
-    // Prompt admission may precede canonical session.created projection. Finish
-    // that legitimate successor write before auditing the stale handler alone.
-    successorCreated.release();
+      ).rows,
+    ).toEqual([]);
     await poll(
       async () => {
-        const states = await successorIncarnationStates();
+        const result = await stack.database.pool.query<{
+          application_state: string;
+        }>("SELECT application_state FROM execution_commands WHERE id=$1", [
+          selected.commandId,
+        ]);
 
-        return states.length === 1 && states[0]!.state === "active"
-          ? states
-          : null;
+        return result.rows[0]?.application_state === "superseded" ? true : null;
       },
-      60_000,
-      "successor incarnation activated before stale ACK audit",
+      10_000,
+      "old prompt application drained before stale ACK audit",
     );
     const snapshot = async (): Promise<unknown> =>
       (
@@ -926,28 +938,30 @@ it("P4: delayed checkpoint ACK reaches its original handler after successor epoc
           [runId],
         )
       ).rows[0].state;
-    const before = await snapshot();
     const currentAttempts = await stack.database.pool.query<{ id: string }>(
-      "SELECT id FROM node_attempts WHERE run_id=$1 AND status='Running'",
+      `SELECT n.id FROM node_attempts n
+       JOIN runs r ON r.id=n.run_id
+       JOIN execution_assignments a ON a.id=r.execution_assignment_id
+       WHERE n.run_id=$1 AND n.status='Running'
+         AND n.execution_assignment_id=a.id AND a.epoch=2`,
       [runId],
     );
 
     expect(currentAttempts.rows).toHaveLength(1);
-    const currentAttemptId = currentAttempts.rows[0]!.id;
+    expect(currentAttempts.rows[0]!.id).not.toBe(originalAttemptId);
+    await stack.database.pool.query("TRUNCATE s52_stale_writes");
+    const before = await snapshot();
 
-    await stack.database.pool
-      .query(`CREATE TABLE s52_stale_writes(table_name text);
-      CREATE FUNCTION s52_audit_stale() RETURNS trigger LANGUAGE plpgsql AS $audit$
-      BEGIN IF to_jsonb(NEW) - ARRAY['updated_at','flow_driver_lease_expires_at'] IS DISTINCT FROM to_jsonb(OLD) - ARRAY['updated_at','flow_driver_lease_expires_at'] THEN
-        INSERT INTO s52_stale_writes VALUES(TG_TABLE_NAME); END IF; RETURN NEW; END $audit$;
-      CREATE TRIGGER s52_audit_stale AFTER UPDATE ON runs FOR EACH ROW WHEN (NEW.id = '${runId}') EXECUTE FUNCTION s52_audit_stale();
-      CREATE TRIGGER s52_audit_stale AFTER UPDATE ON execution_assignments FOR EACH ROW WHEN (NEW.run_id = '${runId}' AND NEW.epoch = 2) EXECUTE FUNCTION s52_audit_stale();
-      CREATE TRIGGER s52_audit_stale AFTER UPDATE ON run_sessions FOR EACH ROW WHEN (NEW.run_id = '${runId}') EXECUTE FUNCTION s52_audit_stale();
-      CREATE TRIGGER s52_audit_stale AFTER UPDATE ON run_session_incarnations FOR EACH ROW WHEN (NEW.run_id = '${runId}' AND NEW.assignment_epoch = 2) EXECUTE FUNCTION s52_audit_stale();
-      CREATE TRIGGER s52_audit_stale AFTER UPDATE ON node_attempts FOR EACH ROW WHEN (NEW.id = '${currentAttemptId}') EXECUTE FUNCTION s52_audit_stale()`);
     oldAck.release();
     const stale = await oldResponse;
 
+    expect(oldAck.responseClosures).toEqual([
+      {
+        commandId: request.commandId,
+        headersSent: true,
+        writableFinished: true,
+      },
+    ]);
     expect(
       await snapshot(),
       "stale evidence cannot mutate current owner state",
@@ -957,6 +971,24 @@ it("P4: delayed checkpoint ACK reaches its original handler after successor epoc
     ).toEqual([]);
     expect(stale.status).toBe(409);
     expect(await stale.json()).toMatchObject({ code: "CONFLICT" });
+    successorCreate.release();
+    const successor = await successorPrompt.awaitReached();
+
+    expect(successor.assignmentEpoch).toBe(2);
+    await poll(
+      async () => {
+        const result = await stack.database.pool.query<{ state: string }>(
+          `SELECT state FROM run_session_incarnations
+           WHERE run_id=$1 AND assignment_epoch=2
+             AND host_session_id=(SELECT target_session_id FROM execution_commands WHERE id=$2)`,
+          [runId, successor.commandId],
+        );
+
+        return result.rows[0]?.state === "active" ? true : null;
+      },
+      60_000,
+      "successor incarnation activated after stale ACK rejection",
+    );
     successorPrompt.release();
     const second = await poll(
       async () => {

@@ -782,6 +782,16 @@ it("S3 transport: a held parked exit is fenced before the canonical scratch cons
   let terminalReleased = false;
   let oldTerminal: FaultBarrier | undefined;
   let nextReleased = false;
+  const initialPrompt = fixture.proxy.arm(
+    {
+      caseId: "s3-initial-prompt",
+      method: "POST",
+      path: /^\/sessions\/[^/]+\/prompts$/,
+      assignmentEpoch: 1,
+    },
+    "hold-request",
+  );
+  let initialReleased = false;
   const launching = fixture
     .launchScratch(
       'fixture-output:{"bytes":0,"text":"successor result","permission":true}',
@@ -789,13 +799,18 @@ it("S3 transport: a held parked exit is fenced before the canonical scratch cons
     .catch((error: unknown) => error);
 
   try {
+    const initial = await initialPrompt.awaitReached(60_000);
+
+    initialPrompt.release();
+    initialReleased = true;
     const request = await poll(
       async () => {
         const result = await fixture!.database.pool.query<{
           run_id: string;
           id: string;
         }>(
-          "SELECT h.run_id,h.id FROM hitl_requests h WHERE h.kind='permission' AND h.responded_at IS NULL AND h.superseded_at IS NULL",
+          "SELECT h.run_id,h.id FROM hitl_requests h WHERE h.run_id=(SELECT run_id FROM execution_commands WHERE id=$1) AND h.kind='permission' AND h.responded_at IS NULL AND h.superseded_at IS NULL",
+          [initial.commandId],
         );
 
         return result.rows[0] ?? null;
@@ -894,6 +909,8 @@ it("S3 transport: a held parked exit is fenced before the canonical scratch cons
     );
   } finally {
     await fixture.web.kill("SIGKILL");
+    if (!initialReleased && initialPrompt.observations.length)
+      initialPrompt.ownedProcessKilled();
     if (!oldReleased && oldExit.observations.length)
       oldExit.ownedProcessKilled();
     if (!terminalReleased && oldTerminal?.observations.length)
