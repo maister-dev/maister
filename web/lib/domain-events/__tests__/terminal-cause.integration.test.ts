@@ -253,7 +253,7 @@ describe("the terminal cause on each writer (D-B2)", () => {
       for (;;) {
         const { rows } = await testDatabase.pool.query<{ waiting: number }>(
           `SELECT count(*)::int AS waiting FROM pg_stat_activity
-            WHERE wait_event_type = 'Lock' AND query ILIKE '%FROM runs WHERE id%FOR UPDATE%'`,
+            WHERE wait_event_type = 'Lock' AND query ILIKE '%FROM runs WHERE id%FOR NO KEY UPDATE%'`,
         );
 
         if (rows[0].waiting >= 2) break;

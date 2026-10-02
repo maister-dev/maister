@@ -94,7 +94,10 @@ import {
   normalizeScratchPrompt,
   sendScratchPromptAndProjectEvents,
 } from "@/lib/scratch-runs/events";
-import { readScratchDialogStatus } from "@/lib/scratch-runs/turn-completion";
+import {
+  lockScratchRunRows,
+  readScratchDialogStatus,
+} from "@/lib/scratch-runs/turn-completion";
 import {
   decoratePromptForPlanMode,
   deriveScratchBranchName,
@@ -230,13 +233,6 @@ export type ScratchMessageResponse = {
 };
 
 export type ScratchMessageDelivery = "prompted" | "steered" | "queued";
-
-async function lockRunRows(tx: Db, runId: string): Promise<void> {
-  await tx.execute(sql`SELECT id FROM runs WHERE id = ${runId} FOR UPDATE`);
-  await tx.execute(
-    sql`SELECT run_id FROM scratch_runs WHERE run_id = ${runId} FOR UPDATE`,
-  );
-}
 
 function launchResponse(args: {
   runId: string;
@@ -747,7 +743,7 @@ export async function markScratchPromptRetryable(args: {
   const now = new Date();
 
   const outcome = await db.transaction(async (tx: Db) => {
-    await lockRunRows(tx, args.runId);
+    await lockScratchRunRows(tx, args.runId);
 
     const rows = await tx
       .select({
@@ -763,8 +759,8 @@ export async function markScratchPromptRetryable(args: {
     // concurrent discard/stop/recover or a live supervisor event may already
     // have moved the run to a terminal / NeedsInput / WaitingForUser state while
     // the prompt was in flight — a late EXECUTOR_UNAVAILABLE must NOT resurrect
-    // or clobber that newer state. lockRunRows serializes against those writers
-    // and the guard is re-read under the lock (sibling pattern:
+    // or clobber that newer state. The run lock serializes those writers;
+    // the guard is re-read under it (sibling pattern:
     // applyScratchPromptCompletion / markScratchCrashed).
     // ADR-183: the host's park exits the session, and that event may idle the
     // dialog to WaitingForUser before this failure arrives. That is the same
@@ -2386,7 +2382,7 @@ export async function queueScratchRecoverMessageBehind(
   runId: string,
   content: string,
 ): Promise<boolean> {
-  await lockRunRows(tx, runId);
+  await lockScratchRunRows(tx, runId);
   const [queuedAhead] = await tx
     .select({ id: runMessages.id })
     .from(runMessages)
@@ -2474,7 +2470,7 @@ export async function dispatchQueuedScratchMessages(
     // Binding precedes the claim: a refusal cannot strand a prompted row.
     // Preserve the visible retry diagnostic only while this queue still waits.
     await db.transaction(async (tx: Db) => {
-      await lockRunRows(tx, runId);
+      await lockScratchRunRows(tx, runId);
       const [waiting] = await tx
         .select({ dialogStatus: scratchRuns.dialogStatus })
         .from(scratchRuns)
@@ -2497,7 +2493,7 @@ export async function dispatchQueuedScratchMessages(
     throw err;
   }
   const claim = await db.transaction(async (tx: Db) => {
-    await lockRunRows(tx, runId);
+    await lockScratchRunRows(tx, runId);
     const [scratch] = await tx
       .select({ dialogStatus: scratchRuns.dialogStatus })
       .from(scratchRuns)
@@ -2813,7 +2809,7 @@ async function appendScratchUserMessage(args: {
 
   try {
     return await args.db.transaction(async (tx: Db) => {
-      await lockRunRows(tx, args.runId);
+      await lockScratchRunRows(tx, args.runId);
 
       const {
         run: lockedRun,
@@ -3477,7 +3473,7 @@ export async function stopScratchWorkbench(
     // Re-checked under the run's locks (`runs`, then the dialog): a concurrent
     // stop, discard or crash that ended the dialog first wins, and this one
     // writes — and emits — nothing.
-    await lockRunRows(tx, runId);
+    await lockScratchRunRows(tx, runId);
     const [locked] = await tx
       .select({ dialogStatus: scratchRuns.dialogStatus })
       .from(scratchRuns)

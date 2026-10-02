@@ -9,12 +9,18 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { eq } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/node-postgres";
 import { NextRequest } from "next/server";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import * as schema from "@/lib/db/schema";
 import { sendScratchPromptAndProjectEvents } from "@/lib/scratch-runs/events";
 import { applyScratchPromptCompletion } from "@/lib/scratch-runs/turn-completion";
+import { appendScratchMessage } from "@/lib/scratch-runs/messages";
+import { queueScratchRecoverMessageBehind } from "@/lib/scratch-runs/service";
+import { lockTranscriptState } from "@/lib/execution-host/events/run-message-store";
+import { projectTranscriptEvent } from "@/lib/execution-host/events/transcript-projector";
+import { poll } from "@/test-support/durable-workers-ledger";
 import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import { startMainPostgresTestDb } from "@/test-support/pg-container";
 
@@ -282,6 +288,163 @@ async function permissionConsumer(runId: string) {
 }
 
 describe("S2 terminal scratch permission ownership", () => {
+  it.each([
+    {
+      writer: "a live permission",
+      consume: async (runId: string): Promise<void> => {
+        const consumer = await permissionConsumer(runId);
+
+        await consumer.consume();
+      },
+      expectedStatus: "NeedsInput",
+      expectedOpen: 1,
+      expectedRole: "system",
+    },
+    {
+      writer: "a queued recovery message",
+      consume: async (runId: string): Promise<void> => {
+        const queued = await db.transaction((tx) =>
+          queueScratchRecoverMessageBehind(tx, runId, "recover after queued"),
+        );
+
+        expect(queued).toBe(true);
+      },
+      expectedStatus: "Running",
+      expectedOpen: 0,
+      expectedRole: "user",
+    },
+  ])(
+    "persists $writer while the canonical transcript holds its allocator",
+    async (control) => {
+      const { runId } = await seedTurn();
+
+      await db
+        .delete(schema.hitlRequests)
+        .where(eq(schema.hitlRequests.runId, runId));
+      await db
+        .update(schema.runs)
+        .set({ status: "Running" })
+        .where(eq(schema.runs.id, runId));
+      await db
+        .update(schema.scratchRuns)
+        .set({ dialogStatus: "Running" })
+        .where(eq(schema.scratchRuns.runId, runId));
+      await drizzle(database.pool, { schema }).transaction((tx) =>
+        appendScratchMessage(tx, {
+          runId,
+          role: "user",
+          content: "initial prompt",
+          delivery: "queued",
+        }),
+      );
+      const payload = {
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "concurrent reply" },
+        },
+      };
+      const [event] = await db
+        .insert(schema.executionEvents)
+        .values({
+          id: randomUUID(),
+          source: "manager",
+          sourceKey: randomUUID(),
+          runId,
+          eventType: "session.update",
+          payloadSchema: "maister.session.update.v1",
+          payload,
+          payloadBytes: Buffer.byteLength(JSON.stringify(payload)),
+          occurredAt: new Date(),
+          runSequence: 1n,
+          ingestDisposition: "accepted",
+        })
+        .returning();
+      const projector = await database.pool.connect();
+      let consuming: Promise<unknown> | undefined;
+
+      try {
+        await projector.query("BEGIN");
+        const {
+          rows: [{ pid }],
+        } = await projector.query<{ pid: number }>(
+          "SELECT pg_backend_pid() AS pid",
+        );
+        const projectorDb = drizzle(projector, { schema });
+
+        await lockTranscriptState(projectorDb, runId, null);
+        consuming = control.consume(runId).then(
+          () => null,
+          (error: unknown) => error,
+        );
+        // Prove the scratch writer reached its allocator behind the real
+        // projector, rather than relying on a delay to arrange the FK cycle.
+        await poll(
+          async () => {
+            const { rows } = await database.pool.query<{ blocked: boolean }>(
+              "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid)) AND query LIKE '%run_transcript_states%') AS blocked",
+              [pid],
+            );
+
+            return rows[0].blocked ? true : null;
+          },
+          10_000,
+          "scratch writer blocked on the transcript allocator",
+        );
+        await projectTranscriptEvent(projectorDb, event);
+        await projector.query("COMMIT");
+        expect(await consuming).toBeNull();
+      } finally {
+        await projector.query("ROLLBACK");
+        projector.release();
+        await consuming;
+      }
+      const { rows } = await database.pool.query<{
+        status: string;
+        dialog_status: string;
+        open: number;
+      }>(
+        "SELECT r.status,s.dialog_status,(SELECT count(*)::int FROM hitl_requests WHERE run_id=r.id AND responded_at IS NULL AND superseded_at IS NULL) AS open FROM runs r JOIN scratch_runs s ON s.run_id=r.id WHERE r.id=$1",
+        [runId],
+      );
+
+      expect(rows[0]).toEqual({
+        status: control.expectedStatus,
+        dialog_status: control.expectedStatus,
+        open: control.expectedOpen,
+      });
+      const messages = await db
+        .select()
+        .from(schema.runMessages)
+        .where(eq(schema.runMessages.runId, runId))
+        .orderBy(schema.runMessages.sequence);
+
+      expect(messages.map((row) => row.role)).toEqual([
+        "user",
+        "assistant",
+        control.expectedRole,
+      ]);
+      expect(messages[1].content).toBe("concurrent reply");
+      expect(messages[0]).toMatchObject({
+        content: "initial prompt",
+        delivery: "queued",
+      });
+      if (control.expectedRole === "user")
+        expect(messages[2]).toMatchObject({
+          content: "recover after queued",
+          delivery: "queued",
+        });
+      expect(new Set(messages.map((row) => row.sequence)).size).toBe(3);
+      const commands = await db
+        .select()
+        .from(schema.executionCommands)
+        .where(eq(schema.executionCommands.runId, runId));
+
+      expect(
+        commands.filter((row) => row.kind === "session.input"),
+      ).toHaveLength(0);
+    },
+  );
+
   it.each(["Stop", "Discard"] as const)(
     "a late permission after %s cannot reopen its committed terminal state",
     async (action) => {

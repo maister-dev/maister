@@ -740,7 +740,7 @@ describe("scratch re-drive — the agent continuation worker's scratch arm (ADR-
               await testDatabase.pool.query<{ count: number }>(
                 `SELECT count(*)::int AS count FROM pg_stat_activity
                  WHERE wait_event_type = 'Lock'
-                   AND query ILIKE 'SELECT id FROM runs WHERE id = %FOR UPDATE'`,
+                   AND query ILIKE 'SELECT id FROM runs WHERE id = %FOR NO KEY UPDATE'`,
               )
             ).rows[0].count,
           { timeout: 30_000, interval: 50 },

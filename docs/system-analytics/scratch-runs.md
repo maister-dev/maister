@@ -438,6 +438,15 @@ Stop/Discard commits cannot reopen the terminal dialog or create another open
 permission. A predecessor's notification cannot change its successor's
 permission or deliver a stored answer to the old session.
 
+The shared scratch authority lock takes `runs FOR NO KEY UPDATE`, then
+`scratch_runs FOR UPDATE`. It serializes status/permission writers while
+allowing the canonical transcript's foreign-key `KEY SHARE` on `runs`;
+permission notices and canonical messages can then share the transcript
+allocator without a run-row/allocator deadlock. These operations never change
+the run's primary key. The real-Postgres permission-terminal suite proves
+concurrent canonical message projection and permission persistence both commit,
+without cancelling the host permission.
+
 ### Scratch terminal consumer incarnation fence (Implemented — R9 S3)
 
 A scratch terminal observer must recheck the observed incarnation against the
@@ -593,7 +602,7 @@ assistant never re-queues a row, see above — that are `Running` with the dialo
 5 s (`scratch_runs.updated_at`), hold a `queued` row, and have a default run
 session whose incarnation is admissible on the run's active assignment. It
 wakes `dispatchQueuedScratchMessages` detached and never awaits the turn; the
-dispatcher's `lockRunRows`, its `WaitingForUser` check and the `queued →
+dispatcher's `lockScratchRunRows`, its `WaitingForUser` check and the `queued →
 prompted` CAS make a concurrent live wake a no-op, and `ORDER BY sequence`
 keeps FIFO. The wake is fire-and-forget: its failure logs WARN
 `scratch-redrive-failed` and the next pass retries. There is no attempt
@@ -812,7 +821,7 @@ history automatically.
   `scratch_runs` row locks, allowing at most one OWNED prompt per run; steers
   ride inside it and a queued row owns no prompt until
   `dispatchQueuedScratchMessages` CASes it `queued → prompted` (enforced by
-  `lockRunRows`, the dispatcher's `WaitingForUser` guard, the `delivery` CAS
+  `lockScratchRunRows`, the dispatcher's `WaitingForUser` guard, the `delivery` CAS
   and the host's `command_in_progress` refusal; Implemented — ADR-182).
 - Scratch messages MUST be append-only with monotonic sequence per run.
 - Scratch capability selection MUST snapshot platform/project/Flow-package

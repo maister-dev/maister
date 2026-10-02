@@ -535,7 +535,7 @@ it("S1 race: a live dispatcher paused at admission and the worker share one immu
     await poll(
       async () => {
         const result = await fixture!.database.pool.query<{ pid: number }>(
-          `SELECT pid FROM pg_stat_activity WHERE pid <> $1 AND datname = current_database() AND wait_event_type = 'Lock' AND query ILIKE '%runs%for update%'`,
+          `SELECT pid FROM pg_stat_activity WHERE pid <> $1 AND datname = current_database() AND wait_event_type = 'Lock' AND query ILIKE '%runs%for no key update%'`,
           [writerPid],
         );
 

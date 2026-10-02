@@ -950,6 +950,7 @@ describe("scratch message while the agent is busy — no steering (ADR-182 S4b)"
     const lockKey = Math.floor(Math.random() * 2_000_000_000) + 1;
     const lock = await testDatabase.pool.connect();
     const racers: Array<Promise<{ dispatched: boolean }>> = [];
+    let primaryError: unknown;
 
     try {
       await lock.query("SELECT pg_advisory_lock(260926, $1)", [lockKey]);
@@ -987,7 +988,7 @@ describe("scratch message while the agent is busy — no steering (ADR-182 S4b)"
               await testDatabase.pool.query<{ count: number }>(
                 `SELECT count(*)::int AS count FROM pg_stat_activity
                  WHERE wait_event_type = 'Lock'
-                   AND query ILIKE 'SELECT id FROM runs WHERE id = %FOR UPDATE'`,
+                   AND query ILIKE 'SELECT id FROM runs WHERE id = %FOR NO KEY UPDATE'`,
               )
             ).rows[0].count,
           { timeout: 30_000, interval: 25 },
@@ -999,13 +1000,26 @@ describe("scratch message while the agent is busy — no steering (ADR-182 S4b)"
         { dispatched: false, skipped: "not_waiting" },
         { dispatched: false, skipped: "not_waiting" },
       ]);
+    } catch (error) {
+      primaryError = error;
+      throw error;
     } finally {
       await lock.query("SELECT pg_advisory_unlock_all()");
+      const settled = await Promise.allSettled(racers);
+
       lock.release();
       await testDatabase.pool.query(
         `DROP TRIGGER IF EXISTS ${trigger} ON run_messages`,
       );
       await testDatabase.pool.query(`DROP FUNCTION IF EXISTS ${trigger}()`);
+      const errors: unknown[] = settled.flatMap((result) =>
+        result.status === "rejected" ? [result.reason] : [],
+      );
+
+      if (errors.length > 0)
+        throw new AggregateError(errors, "scratch dispatch racers failed", {
+          cause: primaryError,
+        });
     }
     await releasePrompt(runId, 2);
     await awaitDialog(runId, "WaitingForUser");

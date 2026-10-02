@@ -22,7 +22,12 @@ const log = pino({
 });
 
 export async function lockScratchRunRows(tx: Db, runId: string): Promise<void> {
-  await tx.execute(sql`SELECT id FROM runs WHERE id = ${runId} FOR UPDATE`);
+  // Serialize authority/status writers without blocking transcript inserts'
+  // FK KEY SHARE: their allocator can already be held while a permission
+  // writer waits to append its notice. None of these writers changes run.id.
+  await tx.execute(
+    sql`SELECT id FROM runs WHERE id = ${runId} FOR NO KEY UPDATE`,
+  );
   await tx.execute(
     sql`SELECT run_id FROM scratch_runs WHERE run_id = ${runId} FOR UPDATE`,
   );
