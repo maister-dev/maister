@@ -987,15 +987,26 @@ export async function signalInvocationGroup(
   );
 
   if (!members.length) return;
-  if (
-    pgid <= 1 ||
-    members.some(
-      (entry) => !entry.owned || !entry.inspected || entry.pid === process.pid,
-    )
-  )
+  const unverified = members.filter(
+    (entry) => !entry.owned || !entry.inspected || entry.pid === process.pid,
+  );
+
+  if (pgid <= 1 || unverified.length) {
+    logInvocation(invocation, "fixture-group-signal-refused", {
+      pgid,
+      signal,
+      memberCount: members.length,
+      unverifiedCount: unverified.length,
+    });
+    for (const member of unverified.slice(0, 8))
+      logInvocation(invocation, "fixture-group-unverified-member", {
+        ...member,
+        signal,
+      });
     throw new InvocationOwnershipError(
       `refusing unverifiable fixture group ${pgid}`,
     );
+  }
   try {
     process.kill(-pgid, signal);
   } catch (error) {

@@ -8,6 +8,8 @@ import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 
+import pino from "pino";
+
 import {
   seedAdmin,
   seedPlatformRunner,
@@ -23,6 +25,8 @@ import { mkdtempReal } from "./worktree-test-root";
 import { holdDatabaseWrite } from "./fault-barriers";
 
 import { readLaunchResult } from "@/e2e/_seed/launch-stream";
+
+const log = pino({ name: "production-fault-fixture" });
 
 export type ProductionFaultFixture = {
   database: StartedPostgresTestDb;
@@ -87,16 +91,30 @@ async function startProductionFaultFixture(
   async function close(): Promise<void> {
     const errors: unknown[] = [];
 
-    for (const action of [
-      () => web?.stop(),
-      ...barriers.map((barrier) => () => barrier.close()),
-      () => proxy?.close(),
-      () => supervisor?.stop(),
-      () => database?.stop(),
-    ]) {
+    const actions: { stage: string; close: () => Promise<void> | undefined }[] =
+      [
+        { stage: "web", close: () => web?.stop() },
+        ...barriers.map((barrier, index) => ({
+          stage: `database-barrier-${index}`,
+          close: () => barrier.close(),
+        })),
+        { stage: "proxy", close: () => proxy?.close() },
+        { stage: "supervisor", close: () => supervisor?.stop() },
+        { stage: "database", close: () => database.stop() },
+      ];
+
+    for (const action of actions) {
       try {
-        await action();
+        await action.close();
       } catch (error) {
+        log.error(
+          {
+            err: error,
+            stage: action.stage,
+            caseName: process.env.MAISTER_TEST_CASE_NAME,
+          },
+          "production fault fixture cleanup failed",
+        );
         errors.push(error);
       }
     }

@@ -37,6 +37,7 @@ import {
   type Invocation,
   registerRoot,
   processIdentity,
+  signalInvocationGroup,
 } from "@/test-support/process-invocation";
 import {
   buildProductionWeb,
@@ -721,6 +722,18 @@ describe("S5.2 invocation process ownership", () => {
           other.pid!,
         ),
       ).rejects.toThrow("lacks the exact invocation environment tag");
+      await expect(
+        signalInvocationGroup(invocation, other.pid!, "SIGTERM"),
+      ).rejects.toThrow("refusing unverifiable fixture group");
+      // Observe signal delivery before asserting survival; exitCode alone can
+      // still be null while the child's exit event is queued in this process.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(await processIdentity(invocation, other.pid!)).toMatchObject({
+        pid: other.pid,
+        owned: false,
+        inspected: true,
+        zombie: false,
+      });
       expect(other.exitCode).toBeNull();
       expect(decoy.exitCode).toBeNull();
       // The deny-process-info probe below is macOS-only. The isolation lane is
