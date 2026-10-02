@@ -112,6 +112,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter maister-web exec playwright install --with-deps chromium
       - run: pnpm --filter maister-web test:e2e:librarian
+        env:
+          # Runtime client initialization includes Docker, Compose discovery and DNS.
+          # Keep container/exec output namespaces disabled; diagnose the unchanged probe deadline.
+          DEBUG: testcontainers
 
   execution-data-plane:
     name: A/B web (Node ${{ matrix.node }}, shard ${{ matrix.shard }}/2)
