@@ -434,6 +434,16 @@ The final real foreign-process refusal control passes. These ARM results do
 not explain the two hosted cleanup-only failures or establish Intel budget
 acceptance. Exact RED/GREEN reporters and remaining gates are in the CI/R9 plan.
 
+**Fault-window follow-up (2026-10-02, local ARM64 / Node 24.15.0):**
+P4 audits the real stale checkpoint handler after successor assignment/attempt
+commit and before session creation; S3 starts its permission wait at prompt
+dispatch. Full isolation passes **50/50 in seven suites**, no skips or leaks,
+in **797.973 seconds** including cleanup; independent preflight passes 1/1 in
+4.056 seconds. P4's stale-attempt CAS mutation and S3's withheld-dispatch
+negative control fail as expected. Hosted `36990724261` remains failed with
+only a preflight reporter; these corrections do not establish Intel timing
+acceptance. The CI/R9 plan owns exact evidence and the open S5.2 gate.
+
 **A first-hit Next-dev compile can exhaust a 10s e2e timeout.** Before calling
 such a failure a regression, re-run the spec in isolation and read the RETRY
 time: `scratch-detail.spec.ts:50` ("suggests project skills"; `:57` since

@@ -708,3 +708,77 @@ no local pass is described as their fix or as hosted S5.2 acceptance.
 Local implementation phases are committed as `7be4f350d` (fault controls) and
 `7fd4b1425` (cleanup diagnostics and refusal control). Documentation is committed
 separately. No push or CI rerun was performed.
+
+
+### Hosted follow-up: bounded fault windows (2026-10-02)
+
+[Run 36990724261](https://github.com/maister-dev/maister/actions/runs/36990724261)
+on `384e7589d0e43dc400618d4c92713315321fb224` completed failure. All four
+web reports validate (22 suites each; 327/307 cases per Node), as do both
+supervisor reports (10 suites, 111 cases). Web durations: Node 24.15.0
+28m16s/36m09s; Node 24.19.0 28m20s/38m43s. Runtime/supervisor durations:
+2m16s/2m18s. All other required jobs passed; the optional integration job
+was skipped by its workflow condition.
+
+Intel isolation lasted 51m11s. Timing records runtime ready at 513 seconds,
+independent preflight complete at 688 seconds, slice allowance 2340 seconds,
+exit 124 at 3036 seconds, runtime cleanup complete at 3053 seconds. The report
+artifact contains only the passing 1/1 preflight; full isolation 50/50 across
+seven suites is absent. The main invocation reaped one remaining owned resource
+at forced termination; this is not leak-free acceptance. Evidence is retained
+under `/private/tmp/s52-36990724261-artifacts`; exact-SHA validation is
+`/private/tmp/s52-36990724261-validation.json`.
+
+P4's original checkpoint timed out after 30022 ms: successor activation left
+143 ms before its wire deadline for the snapshot, audit DDL and ACK release.
+Subsequent duplicate barrier matches are retry consequences. S3 started its
+10-second permission wait before worktree/session/prompt preparation, which
+consumed almost the entire observation window. S1 launch, D2b and D-A8 passed
+on this host; that does not retrospectively prove the prior cleanup-only causes.
+
+- [x] Synchronize S3 permission observation to the witnessed initial prompt
+  dispatch, scoped by command/run identity; preserve the 10-second wait and
+  host cap. Hosted failure is the slow-launch RED. A withheld-prompt negative
+  control independently proves permission cannot appear before forwarding.
+- [x] Preserve P4's real delayed HTTP ACK and original callback. Install the
+  audit before checkpoint, hold successor session creation after assignment2
+  and its Running attempt commit, drain the old prompt, then snapshot/audit
+  stale-handler rejection. Afterwards prove successor incarnation activation
+  and exactly-once prompt completion. This supersedes the preceding phase's
+  activation-before-audit arrangement; the current canonical contract is in
+  `test-infrastructure.md`. No timeout or product code changes.
+- [x] Qualify the complete seven-suite isolation lane and independent preflight
+  on the final tree, run static gates, and commit the completed local phases.
+
+Focused GREEN reports: S3 `/private/tmp/s52-focused-BKSJ6Q/vitest.json`, P4
+`/private/tmp/s52-focused-IUkJ19/vitest.json`. Negative controls are S3
+`/private/tmp/s52-focused-Z6vVK9/vitest.json` (withheld dispatch: expected
+permission timeout) and P4 `/private/tmp/s52-focused-ShAwWQ/vitest.json`
+(removing only the stale-attempt CAS: expected successor snapshot mismatch).
+All four invocation finalizers report zero leaks. Temporary mutations are
+restored. An ACK-ledger-write barrier was rejected after a focused run proved
+it deadlocks with restart; it is absent from the final implementation.
+
+Budget remains a hosted gate. Comparable recorded web startup totals are
+452.533 seconds on Intel versus 81.669 seconds locally across 31 boots; this
+is a measurement, not proof of an identified optimization. The changes do not
+claim to eliminate the fixed slice shortfall. T5/T13b remain open, S5.2 remains
+42/45, and any runner/platform/budget decision stays with S5.3a. No API, DB
+migration, runtime limit or production ownership contract changes are needed.
+
+Final local qualification (Darwin ARM64 / Node 24.15.0): the full seven-suite
+lane passes **50/50**, no failures or skips, in **797.973 seconds**, including
+0.333 seconds cleanup; main invocation `c99b77c1-ab47-4a3d-ac03-3c9b8a0e4a54`
+reports zero leaks. Reporter:
+`/var/folders/p3/lj5f1_ys6650hwvry91_qr2c0000gn/T/maister-ab-isolation-OXXSWV/vitest.json`;
+log `/private/tmp/s52-controls-isolation-final.log`. `validateLaneReport`
+confirms exact seven-suite membership and the 50 owning required case names.
+Separate real preflight passes **1/1 in 4.056 seconds**, cleanup 0.171 seconds,
+zero leaks; reporter
+`/var/folders/p3/lj5f1_ys6650hwvry91_qr2c0000gn/T/maister-ab-isolation-jjrpEK/vitest.json`,
+invocation `850c789c-9f5a-45d4-9e9d-126cc2b1745a`.
+Docs/ERD, API contracts, web/supervisor/MCP types, MCP build, scoped lint and
+whitespace validation pass. Read-only adversarial review found no remaining
+code issue; the duplicate P4 amendment in the original closeout plan now links
+to the canonical current contract. Test/contract corrections are committed as `3ecdf0cec`; qualification evidence
+is a separate local documentation phase. No push or hosted rerun.
