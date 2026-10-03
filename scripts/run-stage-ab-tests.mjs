@@ -194,6 +194,12 @@ export const requiredIsolationCases = {
   ],
   "test-support/__tests__/execution-ab-preflight.integration.test.ts": [
     "I-CI: the real driver denies the host root and the real PostgreSQL container is reachable"
+  ],
+  // The interim driver tree owns these two controls. A10 promotes the complete
+  // five-case Linux suite into the default serial platform manifest.
+  "test-support/__tests__/linux-isolation-driver.integration.test.ts": [
+    "LI-boundary: exact mounts deny private reads and escape paths while descendants retain authorized access",
+    "LI-refusal: unavailable capabilities and invalid policies refuse launch and probes release on every failure"
   ]
 };
 

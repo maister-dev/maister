@@ -181,6 +181,14 @@ async function startPostgresContainer(
   const invocation = invocationFromEnvironment();
 
   if (invocation) await registerContainerAllocation(invocation);
+  logger.info(
+    {
+      lane,
+      phase: "container-create-start",
+      durationMs: Date.now() - startedAt,
+    },
+    "starting owned PostgreSQL container",
+  );
   try {
     const container = await new PostgreSqlContainer(PGVECTOR_IMAGE)
       .withDatabase(options.databaseName)
@@ -215,8 +223,27 @@ export async function assertTestDatabaseDockerRuntime(
   let timeout: ReturnType<typeof setTimeout> | undefined;
 
   try {
+    logger.info(
+      { lane, phase: "docker-client-construction", outcome: "started" },
+      "constructing test container runtime client",
+    );
     await Promise.race([
-      getContainerRuntimeClient(),
+      getContainerRuntimeClient().then((client) => {
+        // The installed client only resolves after Docker info and client
+        // initialization succeeded; this is actual daemon contact evidence.
+        logger.info(
+          {
+            lane,
+            phase: "docker-daemon-contact",
+            outcome: "passed",
+            durationMs: Date.now() - startedAt,
+            serverVersion: client.info.containerRuntime.serverVersion,
+          },
+          "test container daemon contacted",
+        );
+
+        return client;
+      }),
       new Promise<never>((_, reject) => {
         timeout = setTimeout(
           () => reject(new Error("container runtime probe timed out")),

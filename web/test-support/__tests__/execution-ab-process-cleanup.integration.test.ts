@@ -11,6 +11,7 @@ import {
   symlink,
   mkdir,
   readlink,
+  readFile,
   unlink,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -27,6 +28,7 @@ import {
   invocationEnvironment,
   readProcessSnapshot,
   registerProcess,
+  registerSpawnedProcess,
   sameProcess,
   fixtureProcessEnvironment,
   sweepInvocation,
@@ -38,6 +40,9 @@ import {
   registerRoot,
   processIdentity,
   signalInvocationGroup,
+  signalInvocationProcess,
+  assertInvocationGroupEmpty,
+  FIXTURE_WATCHDOG,
 } from "@/test-support/process-invocation";
 import {
   buildProductionWeb,
@@ -250,6 +255,87 @@ async function stopIdleChild(child: ChildProcess): Promise<void> {
   await exited;
 }
 
+async function assertMissingBuildLockIdentity(
+  invocation: Invocation,
+  directory: string,
+): Promise<void> {
+  const child = spawn(
+    process.execPath,
+    [
+      "--import",
+      FIXTURE_WATCHDOG,
+      "--import",
+      createRequire(import.meta.url).resolve("tsx"),
+      fileURLToPath(
+        new URL("../fixtures/build-lock-refusal.mjs", import.meta.url),
+      ),
+      path.join(directory, "missing-owner-build.log"),
+    ],
+    {
+      cwd: process.cwd(),
+      env: { ...process.env, ...(await fixtureProcessEnvironment(invocation)) },
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  let output = "";
+  let diagnostics = "";
+  const closed = new Promise<{
+    code: number | null;
+    signal: NodeJS.Signals | null;
+  }>((resolve) =>
+    child.once("close", (code, signal) => resolve({ code, signal })),
+  );
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  child.stdout!.on("data", (chunk: Buffer) => {
+    output = `${output}${chunk.toString()}`.slice(-8192);
+  });
+  child.stderr!.on("data", (chunk: Buffer) => {
+    diagnostics = `${diagnostics}${chunk.toString()}`.slice(-8192);
+  });
+  try {
+    await registerSpawnedProcess(
+      invocation,
+      {
+        role: "fixture",
+        caseName: "O-build-lock missing identity",
+        rootRole: "build-lock-control",
+        root: null,
+        bootId: String(child.pid),
+        logFile: null,
+      },
+      child,
+    );
+    const result = await Promise.race([
+      closed,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              new Error(
+                "missing build-lock identity did not refuse within 20000ms",
+              ),
+            ),
+          20_000,
+        );
+      }),
+    ]);
+
+    expect(result, diagnostics).toEqual({ code: 0, signal: null });
+    expect(JSON.parse(output.trim())).toEqual({
+      event: "build-lock-missing-identity",
+      outcome: "refused",
+    });
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (child.pid && child.exitCode === null && child.signalCode === null)
+      await signalInvocationGroup(invocation, child.pid, "SIGKILL");
+    await closed;
+    if (child.pid) await assertInvocationGroupEmpty(invocation, child.pid);
+  }
+}
+
 describe("S5.2 invocation process ownership", () => {
   it("O-build-lock: a proved dead owner is reclaimed and the verified artifact is reused", async () => {
     const directory = await mkdtemp(
@@ -257,9 +343,6 @@ describe("S5.2 invocation process ownership", () => {
         process.env.MAISTER_TEST_EVIDENCE_DIR ?? tmpdir(),
         "s52-build-lock-",
       ),
-    );
-    const buildId = await buildProductionWeb(
-      path.join(directory, "next-build.log"),
     );
     const invocation = await createInvocation(directory);
     const child = await startIdleChild({
@@ -270,12 +353,21 @@ describe("S5.2 invocation process ownership", () => {
     const ownerFile = path.join(invocation.directory, "dead-build-owner.json");
 
     try {
-      await writeFile(
-        ownerFile,
-        JSON.stringify(await processIdentity(invocation, child.pid!)),
-      );
+      const owner = await processIdentity(invocation, child.pid!);
+
+      await writeFile(ownerFile, JSON.stringify(owner));
       await symlink(ownerFile, lock);
       await stopIdleChild(child);
+      await unlink(ownerFile);
+      await assertMissingBuildLockIdentity(invocation, directory);
+      expect(await readlink(lock)).toBe(ownerFile);
+      await unlink(lock);
+      const buildId = await buildProductionWeb(
+        path.join(directory, "next-build.log"),
+      );
+
+      await writeFile(ownerFile, JSON.stringify(owner));
+      await symlink(ownerFile, lock);
       expect(
         await buildProductionWeb(path.join(directory, "next-build.log")),
       ).toBe(buildId);
@@ -736,13 +828,87 @@ describe("S5.2 invocation process ownership", () => {
       });
       expect(other.exitCode).toBeNull();
       expect(decoy.exitCode).toBeNull();
-      // The deny-process-info probe below is macOS-only. The isolation lane is
-      // macOS-only by design (`process-isolation.ts` refuses a host it cannot
-      // enforce; Linux is S5.3), so say that rather than letting the host fail
-      // with a bare ENOENT on a missing `sandbox-exec`.
+      if (process.platform === "linux") {
+        const executable = path.join(directory, "process-info-denied");
+        const source = fileURLToPath(
+          new URL("../fixtures/process-info-denied.c", import.meta.url),
+        );
+
+        await execFileAsync(
+          "cc",
+          ["-std=c11", "-Wall", "-Wextra", "-Werror", source, "-o", executable],
+          {
+            timeout: 10_000,
+            maxBuffer: 16 * 1024,
+          },
+        );
+        const denied = spawn(executable, [], {
+          env: { ...process.env, ...invocationEnvironment(invocation) },
+          detached: true,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+
+        children.push(denied);
+        if (!denied.stdout)
+          throw new Error("inspection-denial readiness pipe is missing");
+        const readiness = await Promise.race([
+          once(denied.stdout, "data"),
+          new Promise<never>((_resolve, reject) => {
+            const timeout = setTimeout(
+              () =>
+                reject(
+                  new Error(
+                    "inspection-denial fixture did not reach prctl readiness",
+                  ),
+                ),
+              10_000,
+            );
+
+            denied.once("close", () => {
+              clearTimeout(timeout);
+              reject(
+                new Error("inspection-denial fixture exited before readiness"),
+              );
+            });
+            denied.stdout!.once("data", () => clearTimeout(timeout));
+          }),
+        ]);
+
+        expect(readiness[0].toString()).toBe(`denied:${denied.pid}\n`);
+        await expect(
+          readFile(`/proc/${denied.pid}/environ`).then((bytes) => bytes.length),
+        ).rejects.toMatchObject({ code: "EACCES" });
+        await expect(
+          registerProcess(
+            invocation,
+            {
+              role: "fixture",
+              caseName: "O-identity",
+              rootRole: "none",
+              root: null,
+              bootId: "uninspectable",
+              logFile: null,
+            },
+            denied.pid!,
+          ),
+        ).rejects.toThrow(
+          /could not be inspected|lacks the exact invocation environment tag/u,
+        );
+        await expect(
+          signalInvocationProcess(
+            invocation,
+            { ...record.identity, pid: denied.pid! },
+            "SIGTERM",
+          ),
+        ).rejects.toThrow(/could not be inspected|uninspectable/u);
+        expect(denied.exitCode).toBeNull();
+        expect(other.exitCode).toBeNull();
+
+        return;
+      }
       expect(
         process.platform,
-        "O-identity's process-info denial probe requires macOS sandbox-exec",
+        "O-identity requires a supported process-inspection platform",
       ).toBe("darwin");
 
       const readerUrl = new URL("../process-invocation.ts", import.meta.url)

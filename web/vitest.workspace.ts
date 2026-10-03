@@ -81,6 +81,12 @@ export default defineWorkspace([
     plugins: [nodeSqliteShim],
     test: {
       name: "integration",
+      exclude:
+        process.platform === "linux"
+          ? []
+          : [
+              "test-support/__tests__/linux-isolation-driver.integration.test.ts",
+            ],
       include: [
         "lib/**/*.integration.test.ts",
         "app/**/*.integration.test.ts",

@@ -1,4 +1,6 @@
 import type { IsolationDriver } from "./process-isolation";
+import type { LinuxIsolationPolicy } from "./linux-isolation";
+import type { LinuxApplicationOutcome } from "./linux-isolation-protocol";
 
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -28,8 +30,14 @@ import {
   sameProcess,
   readLogTail,
   logInvocation,
+  signalInvocationProcess,
 } from "./process-invocation";
 import { retryFixtureStart, startOwnedFixture } from "./owned-fixture";
+import { IsolationPolicyError, linuxOuterEnvironment } from "./linux-isolation";
+import {
+  observeLinuxApplication,
+  waitForLinuxApplication,
+} from "./process-isolation";
 
 // AT-16 (D10): a REAL production web process for integration tests — the
 // `server.ts` entrypoint the systemd unit and the image run (`next build`
@@ -55,7 +63,11 @@ export type RealWebOptions = {
   worktreesRoot: string;
   port?: number;
   authSecret?: string;
-  isolation?: { driver: IsolationDriver; deniedRoots: readonly string[] };
+  isolation?: Readonly<{
+    driver: IsolationDriver;
+    deniedRoots: readonly string[];
+    policy?: LinuxIsolationPolicy;
+  }>;
   env?: Record<string, string | undefined>;
   logFile?: string;
   startTimeoutMs?: number;
@@ -69,6 +81,7 @@ export type RealWeb = {
   logFile: string;
   options: RealWebOptions;
   exited: Promise<number | null>;
+  outcome: Promise<LinuxApplicationOutcome>;
   kill(signal?: NodeJS.Signals): Promise<void>;
   stop(): Promise<void>;
   logTail(maxBytes?: number): Promise<string>;
@@ -129,8 +142,10 @@ async function acquireBuildLock(): Promise<() => Promise<void>> {
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      let target: string | undefined;
+
       try {
-        const target = await readlink(BUILD_LOCK_DIR);
+        target = await readlink(BUILD_LOCK_DIR);
         const owner = JSON.parse(
           await readFile(BUILD_LOCK_DIR, "utf8"),
         ) as typeof identity;
@@ -163,6 +178,21 @@ async function acquireBuildLock(): Promise<() => Promise<void>> {
           continue;
         }
         if (code !== "ENOENT") throw inspectionError;
+        if (target !== undefined) {
+          const currentTarget = await readlink(BUILD_LOCK_DIR).catch(
+            (readError: NodeJS.ErrnoException) => {
+              if (readError.code !== "ENOENT") throw readError;
+
+              return null;
+            },
+          );
+
+          if (currentTarget === target)
+            throw new Error(
+              `production build lock owner identity is missing at ${target}; preserve the lock and reconcile its owner explicitly`,
+              { cause: inspectionError },
+            );
+        }
         // Another contender released the same lock. Retry acquisition.
       }
     }
@@ -348,13 +378,22 @@ async function waitForLogin(
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   let done = false;
+  let exitFailure: unknown;
 
-  void exited.then(() => {
-    done = true;
-  });
+  void exited.then(
+    () => {
+      done = true;
+    },
+    (error: unknown) => {
+      done = true;
+      exitFailure = error;
+    },
+  );
   while (Date.now() < deadline) {
     if (done)
-      throw new Error(`real web exited before /login answered (${url})`);
+      throw new Error(`real web exited before /login answered (${url})`, {
+        cause: exitFailure,
+      });
     try {
       // `server.ts` listens only after `instrumentation.ts` finished booting,
       // so a served page means the production initialization completed.
@@ -414,23 +453,39 @@ export async function startRealWeb(options: RealWebOptions): Promise<RealWeb> {
   const command = [
     process.execPath,
     "--import",
-    FIXTURE_WATCHDOG,
-    "--import",
+    ...(options.isolation?.driver.name === "bubblewrap"
+      ? []
+      : [FIXTURE_WATCHDOG, "--import"]),
     TSX_LOADER,
     SERVER_ENTRY,
   ];
   const wrapped = options.isolation
-    ? options.isolation.driver.wrap(command, options.isolation.deniedRoots)
+    ? options.isolation.driver.wrap(
+        command,
+        options.isolation.deniedRoots,
+        options.isolation.policy,
+      )
     : { file: command[0], args: command.slice(1) };
   const logFd = openSync(logFile, "a");
   const child: ChildProcess = spawn(wrapped.file, wrapped.args, {
     cwd: WEB_DIR,
-    env,
-    stdio: ["ignore", logFd, logFd],
+    env:
+      options.isolation?.driver.name === "bubblewrap"
+        ? linuxOuterEnvironment(options.isolation.policy!, env)
+        : env,
+    stdio:
+      options.isolation?.driver.name === "bubblewrap"
+        ? ["ignore", logFd, logFd, "pipe"]
+        : ["ignore", logFd, logFd],
     detached: true,
   });
 
   closeSync(logFd);
+  const application =
+    options.isolation?.driver.name === "bubblewrap"
+      ? observeLinuxApplication(child)
+      : undefined;
+  const startupDeadline = Date.now() + (options.startTimeoutMs ?? 120_000);
 
   const owned = await startOwnedFixture({
     invocation,
@@ -440,8 +495,22 @@ export async function startRealWeb(options: RealWebOptions): Promise<RealWeb> {
     logFile,
     bootId: `${buildId}:${child.pid ?? -1}`,
     killGraceMs: 30_000,
+    outcome: application?.outcome,
+    gracefulSignal: application
+      ? (identity, signal) =>
+          signalInvocationProcess(invocation, identity, signal)
+      : undefined,
     ready: async (exited: Promise<number | null>) => {
-      await waitForLogin(url, options.startTimeoutMs ?? 120_000, exited);
+      if (application)
+        await waitForLinuxApplication(
+          application,
+          Math.max(1, startupDeadline - Date.now()),
+        );
+      await waitForLogin(
+        url,
+        Math.max(1, startupDeadline - Date.now()),
+        exited,
+      );
 
       return undefined;
     },
@@ -455,11 +524,38 @@ export async function startRealWeb(options: RealWebOptions): Promise<RealWeb> {
     logFile,
     options: { ...options, port },
     exited,
+    outcome: owned.outcome,
     kill,
     stop: () => kill("SIGTERM"),
     logTail: (maxBytes = LOG_TAIL_BYTES) => owned.logTail(maxBytes),
     restart: async (overrides = {}) => {
+      if (handle.options.isolation?.driver.name === "bubblewrap") {
+        if (
+          Object.hasOwn(overrides, "isolation") &&
+          overrides.isolation !== handle.options.isolation
+        )
+          throw new IsolationPolicyError(
+            "Linux web restart cannot replace or clear its isolation policy",
+          );
+        for (const key of [
+          "runtimeRoot",
+          "worktreesRoot",
+          "databaseUrl",
+          "supervisorUrl",
+          "port",
+        ] as const)
+          if (
+            Object.hasOwn(overrides, key) &&
+            overrides[key] !== handle.options[key]
+          )
+            throw new IsolationPolicyError(
+              `Linux web restart cannot change frozen ${key}`,
+            );
+      }
       await kill("SIGKILL");
+
+      if (handle.options.isolation?.driver.name === "bubblewrap")
+        return startRealWeb({ ...handle.options, ...overrides, logFile });
 
       return retryFixtureStart(() =>
         startRealWeb({ ...handle.options, ...overrides, logFile }),

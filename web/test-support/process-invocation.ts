@@ -410,23 +410,21 @@ async function writeRecord(
   await rename(temporary, filename);
 }
 
-export async function registerProcess(
+async function writeProcessRecord(
   invocation: Invocation,
   record: Omit<ProcessRecord, "kind" | "identity">,
-  pid: number,
+  identity: ProcessIdentity,
 ): Promise<ProcessRecord> {
-  const identity = await processIdentity(invocation, pid);
-
   if (record.role !== "runner" && (!identity.owned || !identity.inspected)) {
     throw new InvocationOwnershipError(
-      `process ${pid} lacks the exact invocation environment tag`,
+      `process ${identity.pid} lacks the exact invocation environment tag`,
     );
   }
   const entry: ProcessRecord = { kind: "process", identity, ...record };
 
   await writeRecord(invocation, entry);
   logInvocation(invocation, "process-registered", {
-    pid,
+    pid: identity.pid,
     pgid: identity.pgid,
     role: record.role,
     caseName: record.caseName,
@@ -439,6 +437,18 @@ export async function registerProcess(
   });
 
   return entry;
+}
+
+export async function registerProcess(
+  invocation: Invocation,
+  record: Omit<ProcessRecord, "kind" | "identity">,
+  pid: number,
+): Promise<ProcessRecord> {
+  return writeProcessRecord(
+    invocation,
+    record,
+    await processIdentity(invocation, pid),
+  );
 }
 
 /** A known direct child can be observed across an exec wrapper's startup window. */
@@ -459,7 +469,7 @@ export async function registerSpawnedProcess(
         "spawned process identity changed before registration",
       );
     if (current.owned && current.inspected)
-      return registerProcess(invocation, record, child.pid);
+      return writeProcessRecord(invocation, record, current);
     if (
       child.exitCode !== null ||
       child.signalCode !== null ||
@@ -975,6 +985,31 @@ export async function fixtureProcessEnvironment(
     MAISTER_TEST_PROCESS_OWNER: owner,
     MAISTER_TEST_PROCESS_PARENT: JSON.stringify(parent),
   };
+}
+
+export async function signalInvocationProcess(
+  invocation: Invocation,
+  expected: ProcessIdentity,
+  signal: NodeJS.Signals,
+): Promise<void> {
+  const current = await findProcessIdentity(invocation, expected.pid);
+
+  if (!current) return;
+  if (
+    expected.pid <= 1 ||
+    expected.pid === process.pid ||
+    !current.owned ||
+    !current.inspected ||
+    !sameProcess(expected, current)
+  )
+    throw new InvocationOwnershipError(
+      "refusing signal to changed, foreign or uninspectable process identity",
+    );
+  try {
+    process.kill(current.pid, signal);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+  }
 }
 
 export async function signalInvocationGroup(
