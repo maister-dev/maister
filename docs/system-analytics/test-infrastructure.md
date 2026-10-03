@@ -226,7 +226,12 @@ All nested cleanup invocations reuse the outer lane's one build,
 but retain separate cleanup IDs and ports. No unverified skip-build flag and no
 production server change. Register build subprocesses too. Build-lock ownership
 uses PID/start identity: reclaim a proved dead owner rather than waiting for the
-current age-only stale threshold. Never delete the worktree's `.next` as a temp
+current age-only stale threshold. A published symlink whose owner identity is
+missing fails immediately with the lock target and original filesystem cause;
+it is preserved for explicit reconciliation. Missing identity never proves a
+dead owner and must not cause an unbounded acquisition retry. The existing
+O-build-lock control owns both dead-owner reclamation and this refusal, using
+a real bounded child process. Never delete the worktree's `.next` as a temp
 root. A startup-failure/worker-death control must prove no build descendant or
 dead-owner lock obstructs the next run.
 
@@ -515,6 +520,28 @@ outer launcher, Bubblewrap monitor/reaper, namespace child bridge, application
 identity, bounded status record and invocation cleanup reference. None is a
 product database entity or public API.
 
+The bridge's status socket is harness authority. Private proc alone does not
+prove that a descendant cannot duplicate it or read bridge memory. The Linux
+capability gate requires existing Yama `ptrace_scope` 1–3; no host-wide sysctl
+change is permitted. The trusted bridge disables SIGUSR1 inspector activation.
+LI-boundary attempts actual parent pidfd duplication/ptrace and status-socket
+reopening, while host UID/PID/start-time/tag inspection must remain available.
+Missing kernel capability fails explicitly. This additional contract remains
+Designed; earlier LinuxKit ARM development receipts do not qualify it.
+
+The read-only application view includes the explicit `web/{app,lib,components,
+config,i18n,styles,types}` trees reached by the fresh build trace, plus individual
+required files and verified pnpm package trees. The optional `web/public` tree
+is mounted only when present as a regular directory; required inputs stay
+mandatory. Do not compact this view by binding all `web` or the repository.
+Traced test sources stay individual files; their generated fixture directories
+remain outside the application view. Canonical trace inputs outside approved
+material refuse. Launch-policy metadata is bounded at 112KiB before spawn and
+decode, below the qualifying host's 128KiB per-argument limit. Status frames
+retain a separate 64KiB bound and command metadata has a 32KiB bound. Redundant
+bind elimination reads each candidate's filesystem metadata once before
+comparing path coverage. These metadata limits do not change test/CI deadlines.
+
 The launch and teardown states distinguish application outcome from containment.
 
 ```mermaid
@@ -584,7 +611,10 @@ Private tmp/HOME and minimal devices are namespace-owned. Host networking is
 intentional; an accessible unauthenticated Docker TCP endpoint refuses preflight.
 
 Policy checks cover canonical overlap in both ancestor directions, symlink and
-traversal aliases, conflicting destinations and cwd membership. Freeze device
+traversal aliases, conflicting destinations and cwd membership. A cwd may be a
+synthesized parent of approved application files; the fresh namespace root is
+remounted read-only after verified pnpm links and binds, retaining separate
+private tmp/home and owned RW mounts. Freeze device
 and inode identities and revalidate before each spawn/restart and mount-ready
 acknowledgement. Refuse replaced sources and unapproved nested host mounts.
 Snapshot only the known sentinel and SQLite files, rejecting multiple links or
@@ -599,7 +629,7 @@ checks do not claim to resist a concurrent privileged host remounter.
 | Policy preparation or restart override | `IsolationPolicyError` before exec; no catch-all startup retry; only a proved bind-conflict may consume the existing bounded retry budget |
 | Namespace ready | Required `--unshare-user`, `--unshare-pid`, `--proc /proc`, `--die-with-parent`, `--disable-userns`, `--assert-userns-disabled`, `--cap-drop ALL`; application NoNewPrivs=1 and effective/permitted/ambient caps=0; retain reaper, no `--as-pid-1` |
 | Process inspection or signal | Exact tagged inspected identity required; mismatch/unreadable/mixed group throws existing `InvocationOwnershipError`; captured direct-child containment uses existing narrow authority |
-| Application ready/drain/exit | Typed bounded ready/output/exit protocol; app bytes cannot impersonate status; verify host child ancestry and NSpid before forwarding; await real exit, never `subprocess.killed` |
+| Application ready/drain/exit | Typed bounded ready/output/exit protocol; app bytes cannot impersonate status; a trusted Node preload holds main execution on one readiness acknowledgement, then closes its transient descriptor before application code; verify host child ancestry and NSpid before releasing that acknowledgement or forwarding; await real exit, never `subprocess.killed` |
 | Access probe | Exactly one typed `AccessProbe`, bounded output, successful app exit within 20s; malformed/empty output, spawn refusal, signal or timeout is an explicit probe error, never a denial result; await closure on every path |
 | Parent death/forced KILL | Kernel namespace-init death contains descendants; loss of app status is recorded separately from observed code/signal; no synthetic signal from 128+code |
 | Restart | Same policy/roots/DB/port, fresh boot identity and verified build; capability/policy/ownership failure propagates immediately |

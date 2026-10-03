@@ -71,6 +71,9 @@ GNU coreutils, Git, a C compiler and an authenticated distro Bubblewrap package
 supporting every required namespace option. Record the installed package
 revision, binary checksum and corresponding source. Probe capabilities as the
 actual nonroot test user; package installation alone proves no boundary.
+The trusted process bridge also requires the existing Yama `ptrace_scope` to
+be `1`, `2` or `3` and Node's `--disable-sigusr1` support. An absent or permissive
+Yama policy refuses launch; provisioning never changes this host-wide sysctl.
 Provisioning may install dependencies or a narrowly scoped Bubblewrap AppArmor
 profile, but never globally disable AppArmor or namespace restrictions.
 
