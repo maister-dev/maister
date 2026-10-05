@@ -201,7 +201,7 @@ The web A/B runner accepts `--shard i/n`; CI uses `1/2` and `2/2` as complete,
 disjoint file lists. The isolation runner does not accept this flag.
 
 The test-only `MAISTER_TEST_ISOLATION` selector is owned by
-`test-support/process-isolation.ts`; its platform/capability and planned Linux
+`test-support/process-isolation.ts`; its platform/capability and implemented Linux
 namespace semantics are in `../docs/configuration.md#test-only-isolation-selector`.
 Linux development evidence and hosted qualification are separate gates in
 `../docs/system-analytics/test-infrastructure.md`. No product config/API/schema

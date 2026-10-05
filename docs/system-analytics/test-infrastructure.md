@@ -512,8 +512,13 @@ deadline; the host permission cap and stale-exit assertions remain unchanged.
 The filesystem and lifecycle contract below covers isolated production web
 fixtures and their access probes. The rationale is owned by
 [ADR-193](../decisions.md#adr-193-rootless-linux-namespace-isolation-for-production-test-fixtures).
-The existing macOS hosted acceptance contract remains in force; no Linux
-qualification or hosting decision has passed yet.
+The driver, immutable policy, trusted status bridge and shared production/probe
+integration are **Implemented** and Phase-1 qualified. The owning
+[C2 evidence](../../.ai-factory/plans/s53a-linux-isolation.md#c2--final-source-phase-1-qualification-2026-10-05)
+records native Ubuntu's current 52-case lane and the complete final-source
+Darwin regression. The extended 55-case lifecycle/refusal inventory, full
+qualification at both exact Node versions and Linux hosting remain **Designed**.
+The existing macOS hosted acceptance contract remains in force.
 
 Entities added to this test-only domain are an immutable launch policy, trusted
 outer launcher, Bubblewrap monitor/reaper, namespace child bridge, application
@@ -526,8 +531,10 @@ capability gate requires existing Yama `ptrace_scope` 1–3; no host-wide sysctl
 change is permitted. The trusted bridge disables SIGUSR1 inspector activation.
 LI-boundary attempts actual parent pidfd duplication/ptrace and status-socket
 reopening, while host UID/PID/start-time/tag inspection must remain available.
-Missing kernel capability fails explicitly. This additional contract remains
-Designed; earlier LinuxKit ARM development receipts do not qualify it.
+Missing kernel capability fails explicitly. These guards and LI-boundary's
+actual escape attempts passed in the native Phase-1 receipt; earlier LinuxKit
+ARM development receipts do not qualify them. The remaining lifecycle controls
+and complete local/hosted gates remain open.
 
 The read-only application view includes the explicit `web/{app,lib,components,
 config,i18n,styles,types}` trees reached by the fresh build trace, plus individual
@@ -654,6 +661,10 @@ The frozen baseline is the exact owning runner title set below: seven full
 suites/50 cases plus one separately invoked preflight. Linux adds only the
 five distinct controls below; Darwin discovery excludes that new file. The
 runner uses Vitest project `integration`; no placeholder/todo cases are active.
+The current Linux suite implements LI-boundary and LI-refusal; its Phase-1
+inventory is 52 plus separate preflight 1. The remaining three lifecycle cases
+and the nested-mount/invalid-restart subcontrols remain required before the
+final 55-case inventory can qualify. The original Darwin 50 titles remain mandatory.
 
 | Owning file | Exact case title | Disposition |
 |---|---|---|

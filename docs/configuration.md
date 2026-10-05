@@ -1133,9 +1133,9 @@ configuration or `maister.yaml` field.
 
 | Value | Contract |
 |---|---|
-| unset | Select the supported platform's driver: Darwin `sandbox-exec`; Linux `bubblewrap` is Designed and unavailable until implemented |
+| unset | Select the supported platform's driver: Darwin `sandbox-exec`; Linux `bubblewrap`, with explicit capability/policy prerequisites |
 | `sandbox-exec` | Darwin kernel sandbox; unsupported platform or missing executable fails explicitly |
-| `bubblewrap` | Designed Linux rootless namespace driver; required namespace/options/policy refusal fails explicitly, with no ordinary-exec fallback |
+| `bubblewrap` | Implemented Linux rootless namespace test driver; required namespace/options/policy refusal fails explicitly, with no ordinary-exec fallback; full Linux 55/both-Node and hosted qualification remain open |
 | any other value | Explicit unsupported-driver failure |
 
 Linux prerequisites and their qualification scope live in

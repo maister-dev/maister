@@ -59,8 +59,9 @@ git --version
 ### Production isolation test prerequisites
 
 The production isolation lane is separate from ordinary unit/build tests.
-Darwin uses the existing `sandbox-exec` driver. Linux namespace isolation is
-**Designed**; its prerequisite and qualification contract is owned by
+Darwin uses the existing `sandbox-exec` driver. The Linux namespace test driver
+is **Implemented** and Phase-1 qualified; its extended 55-case/both-Node and
+hosted gates remain open. The prerequisite and qualification contract is owned by
 [test infrastructure](system-analytics/test-infrastructure.md#linux-environments-and-qualification-designed).
 Do not interpret a Linux process-inspection smoke as driver qualification.
 
