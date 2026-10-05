@@ -18,6 +18,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 
+import { getContainerRuntimeClient } from "testcontainers";
 import { expect, it } from "vitest";
 
 import {
@@ -46,17 +47,19 @@ import {
 import { assertNoLinuxDockerTcpAuthority } from "@/test-support/linux-network-authority";
 
 async function assertRealDockerTcpRefusal(): Promise<void> {
-  const endpoint = new URL(
-    process.env.DOCKER_HOST ?? "unix:///var/run/docker.sock",
+  const runtime = await getContainerRuntimeClient();
+  const socketPath: unknown = Reflect.get(
+    runtime.container.dockerode.modem,
+    "socketPath",
   );
 
-  if (endpoint.protocol !== "unix:")
+  if (typeof socketPath !== "string" || !path.isAbsolute(socketPath))
     throw new Error(
       "Linux refusal control requires the documented local Unix Docker daemon",
     );
   const connections = new Set<Socket>();
   const server = createServer((client) => {
-    const daemon = createConnection(endpoint.pathname);
+    const daemon = createConnection(socketPath);
 
     connections.add(client);
     connections.add(daemon);

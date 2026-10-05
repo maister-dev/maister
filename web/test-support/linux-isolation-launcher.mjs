@@ -242,7 +242,7 @@ try {
       process.execPath,
       "--disable-sigusr1",
       LINUX_CHILD,
-      JSON.stringify(policy),
+      serializeLinuxIsolationPolicy(policy),
       JSON.stringify(command),
     ],
     {

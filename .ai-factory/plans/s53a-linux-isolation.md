@@ -384,7 +384,7 @@ Checkpoint C1 is `728502267` (`docs(test): specify Linux isolation and ownership
 
 Remaining A5/A9 measurements must include the bridge's current close-based application-outcome emission when a detached descendant holds stdio open, the outer frame-processing backlog during asynchronous inspection, readiness arriving across separate Bubblewrap/child status pipes, and forced containment after a descendant clears its tag. These are source-review concerns, not established runtime failures. Capture discriminating real RED controls under the existing LI-term/LI-kill/LI-parent owners before changing those seams; preserve exact foreign-process refusal and do not add duplicate lifecycle cases. A8 also retains its unimplemented nested-mount and invalid-policy restart subcontrols. No later-phase acceptance is inferred from the two-case driver receipt.
 
-The current blocking prerequisite is a suitable Ubuntu24.04 amd64 environment in which the complete production/ownership inventory can reach its barriers and finish under the unchanged budgets. The accessible amd64 VM uses TCG emulation on an ARM64 host; no native amd64 environment has been established. Preserve this environment distinction rather than claiming emulation explains every failure. Resume at A4–A7 with exact runtime/source provenance, RED-first diagnosis of the real failures, separate preflight and the complete original50 plus every active Linux control. Obtain full validator/zero-leak evidence and full applicable phase gates before C2; do not advance A8–A15, amend S5.2 hosting or migrate CI from partial Linux controls.
+At the transfer checkpoint, the blocking prerequisite was a suitable Ubuntu24.04 amd64 environment in which the complete production/ownership inventory can reach its barriers and finish under the unchanged budgets. That accessible amd64 VM used TCG emulation on an ARM64 host; the native Ubuntu evidence below supersedes this environment blocker. Preserve this environment distinction rather than claiming emulation explains every failure. Resume at A4–A7 with exact runtime/source provenance, RED-first diagnosis of the real failures, separate preflight and the complete original50 plus every active Linux control. Obtain full validator/zero-leak evidence and full applicable phase gates before C2; do not advance A8–A15, amend S5.2 hosting or migrate CI from partial Linux controls.
 
 Required before C2: production I1–I4 GREEN, complete original50 regression plus every active new control, separate preflight, probe failure/deadline controls and source restoration receipts, full applicable suites/static/spec gates and Darwin50 regression. A8–A15 and all hosted gates remain open. Failed/diagnostic/filtered attempts cannot be borrowed as complete qualification.
 
@@ -398,6 +398,62 @@ symlink; only an actual saved identity can authorize dead-owner reclamation.
 This narrow A5/Ownership correction changes no case title or manifest count,
 does not reclaim unknown locks, and requires RED/GREEN/refactor plus complete
 owning regression before C2.
+
+### Native Ubuntu evidence (2026-10-05)
+
+The transfer checkpoint `8e0d85a3a2741d88f502cc76390819c9bb755f77` is checked out
+in `codex/s53a-linux-isolation`. Native Ubuntu24.04.4 amd64, kernel
+`6.8.0-134-generic`, ordinary UID1002, Bubblewrap `0.9.0-1ubuntu0.3`, scoped
+AppArmor profile and rootless Docker29.5.3 now pass the real namespace and
+Postgres preflight without sudo during test execution. Administrative package
+and profile provisioning is already complete; this receipt does not claim the
+setup script itself is sudo-free.
+
+Two reproduced defects required narrow corrections: the long worktree's
+production mount policy was144827bytes, exceeding the unchanged112KiB bound;
+and LI-refusal assumed `/var/run/docker.sock` instead of the runtime-selected
+rootless endpoint. The policy codec uses an explicit null marker for identical
+source/destination paths on both launch hops, reconstructing the exact policy.
+The refusal control uses Testcontainers' selected host Unix socket. No mount
+authority, frame limit, timeout or test inventory was relaxed.
+
+- RED: invocation `84dca0fe-4604-4708-a709-d57e7503d5f1`, reporter
+  `/tmp/maister-ab-isolation-Q8Xkmz/vitest.json`: LI-boundary passed,
+  LI-refusal failed and production setup refused the oversized policy before
+  I1–I4 ran. Cleanup reported zero leaks; subsequent diagnostic log retrieval
+  also failed. The new long-path codec regression failed before the fix and
+  all3 codec cases passed afterward.
+- Node24.19.0 complete current inventory: original50 plus active Linux2,
+  8files/52cases, no skips, report validator passed, final sweep zero leaks,
+  1452.939s including cleanup under the unchanged2340s allowance. Invocation
+  `4f4cd199-202e-4872-9ac3-31d3db8760ea`; reporter
+  `/tmp/maister-s53a-native-24.19/maister-ab-isolation-rjCNDw/vitest.json`;
+  log `/tmp/maister-s53a-native-24.19/full.log`.
+- Node24.19.0 separate final-code preflight: 1/1, validator passed, zero leaks,
+  11.570s, invocation `407af545-d808-462a-a959-87e65a5caf08`; reporter
+  `/tmp/maister-s53a-native-24.19/maister-ab-isolation-doTgeM/vitest.json`.
+- Node24.15.0 separate preflight: 1/1, zero leaks, 12.405s, invocation
+  `0ade3761-ce4a-4814-b091-002c5e378999`; reporter
+  `/tmp/maister-s53a-native-24.15/maister-ab-isolation-A0JZY6/vitest.json`.
+  Focused LI-boundary/LI-refusal and production I1–I4: 2files/6cases,
+  validator passed, zero leaks, 186.128s, invocation
+  `da7d5c73-86c4-4916-8b0b-11b18f63c9fd`; reporter
+  `/tmp/maister-s53a-native-24.15/maister-ab-isolation-D6k2C7/vitest.json`.
+  This focused receipt is not the complete52 inventory at the minimum Node.
+- Static/spec checks passed: changed-code lint, web/supervisor/MCP typechecks,
+  MCP build, full docs validation, contract validation and adapter mirrors.
+  The tested uncommitted source is identified in
+  `/tmp/maister-s53a-native-24.19/source.json`: tracked diff SHA256
+  `8345963fc06c2a9a2db80a27a190ce463eb32a5faeb0a6904a859e57bed87947`
+  and untracked codec-test SHA256
+  `bdf06bdc65a285276188eb828bca8dced17b1003a727c218b6b8ccabae15e49c`.
+  Subsequent changes only record this evidence and the fix learning note.
+
+The environment blocker is resolved and current Linux production controls are
+GREEN. C2 remains open pending the remaining complete phase gates and final-source
+Darwin regression. A8–A15, future lifecycle controls, complete minimum-Node
+inventory and hosted acceptance remain open. No CI migration, push or hosted
+qualification is inferred from this local evidence.
 
 ## Commit Plan
 

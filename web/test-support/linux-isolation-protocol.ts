@@ -135,7 +135,14 @@ function jsonRecord(line: string): Record<string, unknown> {
 export function serializeLinuxIsolationPolicy(
   policy: LinuxIsolationPolicy,
 ): string {
-  const line = JSON.stringify(policy);
+  const line = JSON.stringify({
+    ...policy,
+    mounts: policy.mounts.map((mount) => ({
+      ...mount,
+      destination:
+        mount.destination === mount.source ? null : mount.destination,
+    })),
+  });
 
   if (Buffer.byteLength(line) > POLICY_LIMIT)
     throw new IsolationProtocolError(
@@ -178,7 +185,7 @@ export function decodeLinuxIsolationPolicy(line: string): LinuxIsolationPolicy {
     if (
       !record(mount) ||
       !pathValue(mount.source) ||
-      !pathValue(mount.destination) ||
+      (mount.destination !== null && !pathValue(mount.destination)) ||
       typeof mount.device !== "number" ||
       !Number.isSafeInteger(mount.device) ||
       !positiveInteger(mount.inode) ||
@@ -228,7 +235,13 @@ export function decodeLinuxIsolationPolicy(line: string): LinuxIsolationPolicy {
     ...policy,
     invocation: Object.freeze({ ...policy.invocation }),
     mounts: Object.freeze(
-      policy.mounts.map((mount) => Object.freeze({ ...mount })),
+      policy.mounts.map((mount) =>
+        Object.freeze({
+          ...mount,
+          destination:
+            mount.destination === null ? mount.source : mount.destination,
+        }),
+      ),
     ),
     deniedRoots: Object.freeze([...policy.deniedRoots]),
     protectedFiles: Object.freeze(

@@ -538,8 +538,12 @@ Traced test sources stay individual files; their generated fixture directories
 remain outside the application view. Canonical trace inputs outside approved
 material refuse. Launch-policy metadata is bounded at 112KiB before spawn and
 decode, below the qualifying host's 128KiB per-argument limit. Status frames
-retain a separate 64KiB bound and command metadata has a 32KiB bound. Redundant
-bind elimination reads each candidate's filesystem metadata once before
+retain a separate 64KiB bound and command metadata has a 32KiB bound. The
+policy codec represents a mount destination identical to its source as an
+explicit JSON `null`, reconstructing the exact path before validation and use;
+a missing destination remains invalid. Both launcher and namespace bridge use
+this bounded encoding. This removes repeated path bytes without widening any
+mount. Redundant bind elimination reads each candidate's filesystem metadata once before
 comparing path coverage. These metadata limits do not change test/CI deadlines.
 
 The launch and teardown states distinguish application outcome from containment.
