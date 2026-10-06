@@ -524,6 +524,110 @@ Nested cleanup-control reporters are not substitutes for the absent full
 report. No workflow was dispatched or rerun, and this remains failed macOS
 hosted evidence rather than Linux qualification.
 
+### A8 — nested-mount control (2026-10-05, in progress)
+
+On the existing disposable Ubuntu24.04.5 amd64 VM (kernel6.8.0-142,
+Node24.15.0, ordinary UID1001, pinned bwrap0.9.0-1ubuntu0.3), LI-refusal now
+creates a real tmpfs submount in a trusted validator namespace. The application
+driver's exact bind policy is not widened. The control reaches `/proc/self/mountinfo`,
+then calls the actual pre-exec validator and checks an execution witness.
+It remains a subcontrol of the existing LI-refusal title; the inventory is
+still two active Linux cases, not the future five.
+
+- Valid RED: only the nested-host-mount guard was removed, preserving valid
+  source syntax. Invocation `edc6b865-e5ae-46f6-be4f-6cdc7c57ccb2`,
+  `red-nested-mount-2/maister-ab-isolation-teFP4k/vitest.json`, 25.660s:
+  LI-boundary passed; LI-refusal failed with `nested:true`, `refused:false`
+  and `execWitness:true`. Cleanup observed zero leaks. Earlier compiler and
+  missing-ledger setup failures are retained but do not count as RED proof.
+- Exact restoration: validator source SHA256
+  `e78a13864e15e0ea6b5dbc6b356421b142a67f1fb71669003bb89b14b343c199`;
+  mutant SHA256 `a7701a303940d32ddb50dee28ae10e709a095f2f5d4a83f0784cdf845b8c666a`.
+- GREEN: invocation `c74a59dc-f938-4f0d-9818-80a3ec2987c0`,
+  `green-nested-mount/maister-ab-isolation-Zjt5ah/vitest.json`, 62.557s:
+  both active cases passed, validator passed, zero leaks, witness absent.
+- REFACTOR: one typed input object and existing structured `logInvocation`;
+  invocation `02e33d4d-4d6b-4319-9d82-07fb477f3e85`,
+  `refactor-nested-mount/maister-ab-isolation-qciLve/vitest.json`, 61.642s:
+  both cases, validator and zero-leak cleanup passed again. Web typecheck,
+  changed-file lint and formatting checks passed.
+
+Guest reports are under `/home/fixture/evidence/phase2-oct05/`; the exact
+reports, source restoration receipt and both-stream logs are retained locally
+under `/private/tmp/maister-s53a/amd64-vm/`. This is real kernel behavior in
+emulated amd64 development, not a full native or hosted budget qualification.
+A8 still requires the actual production invalid-policy restart control; A9–A15
+and all full-inventory/hosting gates remain open.
+
+### A8 — production restart checkpoint and environment limit (2026-10-06)
+
+The current LI-refusal subcontrol also uses real migrated PostgreSQL and the
+production supervisor/web entrypoints. Clearing isolation or changing the
+runtime root refuses before a launch attempt and leaves the original `/login`
+serving. Replacing the frozen web-root inode kills the original web, causes
+one typed policy refusal and leaves no serving replacement. This adds no case
+title and does not duplicate I3's successful domain-continuity scenario.
+
+- Passing development receipt: invocation
+  `17f55eea-7d9b-48d6-9b0c-325e42e8825a`, reporter
+  `restart-fixture-ready-built/maister-ab-isolation-MwN72L/vitest.json`:
+  current owner 2/2, report validator passed, no skips/runtime errors,
+  `overrideLaunches:0`, `invalidPolicyAttempts:1`, no replacement and zero
+  terminal leaks. The reported 296.277s is guest timing, not budget acceptance.
+- The explicit existing `MAISTER_TEST_BUILT_WEB` handoff carried a verified
+  default production build: revision
+  `2720fcfb129158e49b8a4579e33d1c6be0297017`, BuildID
+  `5kWhY8ukjoLmcMQK64fI-`, artifact `/home/fixture/repo/web/.next`, build
+  invocation `b4cdb732-2973-4172-afab-cc48949e4071`. The separately owned
+  diagnostic builder reported 599.798s and zero leaks. This is a diagnostic
+  handoff, not a fresh build inside the current owning lane and not G-LINUX.
+- The preceding default attempt, invocation
+  `cc4fd663-8593-4660-8cbc-038be46c9697`, reporter
+  `restart-fixture-ready/maister-ab-isolation-9kA9ma/vitest.json`, hit the
+  unchanged 600000ms setup limit before production readiness: both cases were
+  skipped and terminal cleanup removed one PostgreSQL container. It is failed
+  setup evidence, not RED for restart behavior. The new fixture exposes
+  build-stage cleanup before awaiting the build; timeout/startup cancellation
+  qualification remains open rather than inferred from a normal cleanup pass.
+- Restart retry falsification was attempted with a syntactically valid
+  substitution of the existing retry helper. Invocation
+  `208edc89-97dc-435e-b881-36033e384422` did not reach the restart assertion.
+  At host UTC `2026-10-05 22:48:10`, the guest reported
+  `2026-10-05 15:50:02`. The host/guest clock divergence invalidates budget
+  conclusions. The exact registered/tagged Vitest PID31666 received SIGTERM;
+  the owning runner failed with no complete reporter, reaped eight surviving
+  processes and removed one container. Those discoveries remain failures.
+  Mutant source SHA256
+  `fa445a02d73bd001d602d76c1f9c9d902cb0a0c024b3889af2050b6a2f9a7164`
+  was restored exactly to
+  `4fee19922fb14bf6de28a3e93addc598da89336be0995123c228aac75a63d2dd`.
+  This attempt does not satisfy the required RED/GREEN/REFACTOR cycle.
+- The existing ARM64 LinuxKit development kernel has no
+  `/proc/sys/kernel/yama/ptrace_scope`, so it cannot satisfy the current
+  bridge-authority prerequisite. No host sysctl/profile change, privileged
+  fallback, timeout/resource increase, CI edit or infrastructure migration
+  was made to obtain a pass.
+
+Checkpoint source identities: Linux owning test SHA256
+`b51aaee397aa9c20491b231a5d8079f87c421f79603c6ac6ce808fa7eaf0291e`,
+lifecycle fixture SHA256
+`2d7a67b0693833e4fed6995569f13aedf2137ddde8268bb40a61db60d8e480ff`,
+nested-mount fixture SHA256
+`67f5dd056d35930f1d4d252db51c24b636002c3dc34fb993b55447819e40a423`.
+Exact guest evidence directories and both-stream logs were copied under
+`/private/tmp/maister-s53a/amd64-vm/`; failed attempts and restoration metadata
+are retained. No final-source native qualification is inferred from these
+receipts. Web typecheck, changed-file lint/formatting, runner controls,
+contracts/docs/unchanged ERD and diff validation are the checkpoint's static gates.
+
+A8 remains unchecked: reproduce the real retry RED on native Ubuntu, restore
+and rerun the complete current owner through GREEN/REFACTOR, then qualify the
+remaining cancellation controls. A9's three wrapped lifecycle cases and A10's
+mandatory 55-case inventory are still required before A11's complete both-Node
+Linux/Darwin phase gates. C3/G-LINUX, all prospective hosting work, S5.2/S5.3/
+S5.4 and 42/45 remain unchanged. This checkpoint is prepared for native work;
+it is not the qualified C3 or owner-push hosting candidate.
+
 ## Commit Plan
 
 Implementation commits preserve focused, qualified trees; no remote visibility before owner push.

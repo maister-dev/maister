@@ -520,6 +520,13 @@ Darwin regression. The extended 55-case lifecycle/refusal inventory, full
 qualification at both exact Node versions and Linux hosting remain **Designed**.
 The existing macOS hosted acceptance contract remains in force.
 
+LI-refusal now includes actual nested-mount refusal and frozen-policy
+production-restart subcontrols. The nested-mount guard completed a reached
+RED/GREEN/REFACTOR cycle; the restart subcontrol has a passing development
+receipt, while its retry falsification and complete native qualification remain
+open. The [A8 checkpoint](../../.ai-factory/plans/s53a-linux-isolation.md#a8--production-restart-checkpoint-and-environment-limit-2026-10-06)
+retains the failed setup/clock-divergent attempts and build provenance.
+
 Entities added to this test-only domain are an immutable launch policy, trusted
 outer launcher, Bubblewrap monitor/reaper, namespace child bridge, application
 identity, bounded status record and invocation cleanup reference. None is a

@@ -1146,6 +1146,16 @@ neither setting this variable nor choosing a Linux image creates a production
 filesystem boundary. Production Docker/Compose/systemd and server env contracts
 remain unchanged.
 
+`MAISTER_TEST_BUILT_WEB` is an existing private fixture handoff, consumed by
+`web/test-support/fixtures/process-cleanup-stack.ts` and the Linux lifecycle
+fixture. It carries the outer fixture's verified `ProductionWebBuild` JSON
+(`revision`, `buildId`, `artifactPath`, `invocationId`). `startRealWeb` verifies
+the current revision, build stamp, BuildID and artifact path before launch;
+a malformed or stale handle fails explicitly. Without this handoff, the Linux
+fixture builds through the ordinary owning invocation. A diagnostic that uses
+a separately built handle must report that provenance and its build time; it
+does not satisfy the fresh-build/full-lane qualification gate by itself.
+
 ## Environment variables (server tier)
 
 Read by Next.js (`web/`) and `supervisor/` at startup:
