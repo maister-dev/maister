@@ -93,7 +93,7 @@ sequenceDiagram
 
 **As built.** `web/test-support/filesystem-ownership.ts` is the operation-scoped scanner: it parses every production source (`.ts/.tsx/.mts/.cts/.js/.mjs/.cjs` under `app`, `lib`, `components`, `scripts`, `i18n`, `config`, `types`, the top-level entrypoints and the shared `../runtime`), role-tags test sources instead of dropping them, resolves `node:fs`, `node:fs/promises`, `node:child_process` and `node:sqlite` bindings through import aliases, `require`/`createRequire`/dynamic-import forms, destructuring and `promisify`, records each callsite as `{source, enclosing function, callee, operation, literal command}`, reports value uses it cannot resolve to a call as `unresolved`, and closes "performs a filesystem effect" over each module's local calls to enumerate exported wrappers. The inventory (`web/lib/execution-host/__tests__/fixtures/runtime-data-boundary-inventory.ts`) classifies 537 callsites in 110 modules and 261 wrappers in 80 modules; wrappers flagged path-generic (`atomicWriteJson`, the config/package loaders, …) have every caller enumerated, and the guard (`runtime-data-boundary-inventory.test.ts`) fails on any unclassified callsite, stale entry, `supervisor-runtime` class, `watch` operation or unexplained unresolved use, and carries three mutation cases (a host-runtime read injected into an already classified mixed file, a new call of a path-generic wrapper, an fs-using `.tsx` page and script). RED evidence: the previous file-level guard, brought current with the tree, passed 4/4 with the same host read injected into an allow-listed file.
 
-`web/test-support/process-isolation.ts` resolves the kernel isolation driver this host can enforce (macOS `sandbox-exec`, denial = `EPERM`; the Linux uid/mount-namespace driver is scheduled with S5.3 and an unsupported host fails loudly) and `web/test-support/real-web.ts` starts the production web (`next build` of the checked-out tree, `server.ts`, production `instrumentation.ts` boot) in its own process group under that driver, with a credentials sign-in over the production Auth.js endpoints. `web/test-support/__tests__/execution-ab-isolation.integration.test.ts` (4/4) is AT-16's core: disjoint private roots for web and supervisor with only the worktrees root shared; the web identity is denied the host's sentinel and its live `state.sqlite` while the harness and the host keep them; a scratch launch with an upload completes through HTTP/Postgres with the real host executing the prompt; the object reads back under the AB-12 policy with the transcript; a SIGKILLed web restarts through production initialization under the same isolation, serves the same history and bytes, and completes a further turn on the still-live host session. It runs alone (`node scripts/run-stage-ab-tests.mjs isolation`, serial slice) with `MAISTER_TEST_EVIDENCE_DIR` keeping build/web/supervisor logs outside the worktree.
+`web/test-support/process-isolation.ts` resolves the kernel isolation driver this host can enforce (macOS `sandbox-exec`, denial = `EPERM`; the implemented Linux Bubblewrap driver uses explicit mount/user/PID namespaces, denial = `ENOENT`, and an unsupported host fails loudly; remaining lifecycle and hosted qualification are described below) and `web/test-support/real-web.ts` starts the production web (`next build` of the checked-out tree, `server.ts`, production `instrumentation.ts` boot) in its own process group under that driver, with a credentials sign-in over the production Auth.js endpoints. `web/test-support/__tests__/execution-ab-isolation.integration.test.ts` (4/4) is AT-16's core: disjoint private roots for web and supervisor with only the worktrees root shared; the web identity is denied the host's sentinel and its live `state.sqlite` while the harness and the host keep them; a scratch launch with an upload completes through HTTP/Postgres with the real host executing the prompt; the object reads back under the AB-12 policy with the transcript; a SIGKILLed web restarts through production initialization under the same isolation, serves the same history and bytes, and completes a further turn on the still-live host session. It runs alone (`node scripts/run-stage-ab-tests.mjs isolation`, serial slice) with `MAISTER_TEST_EVIDENCE_DIR` keeping build/web/supervisor logs outside the worktree.
 
 ### S5.2 close-out protocol (as built; hosted CI qualification pending)
 
@@ -165,6 +165,16 @@ supervisor death is forwarded as a reset, not recorded as a proxy defect. A
 single-shot client's early close is an error unless the test records its owned
 process kill before disposal; persistent receipt/response partitions tolerate
 individual request expiry without disposing the partition.
+
+Ordinary downstream cancellation is transport evidence: an aborted upload's
+`ECONNRESET` and SSE write callbacks reporting `EPIPE`, `ECONNRESET`,
+`ECANCELED` or `ERR_STREAM_DESTROYED` close that response without poisoning
+the proxy. Structured disconnect metadata remains visible. Forwarding errors
+are classified even after downstream closure, so malformed buffered SSE,
+frame limits and unresolved barriers still fail `assertDrained`/`close`.
+`supervisor-fault-proxy.integration.test.ts` owns three real loopback controls:
+upload cancellation with continued forwarding, SSE cancellation with reconnect,
+and parser/barrier refusal both before and after client cancellation.
 
 D1 drives checkpointing through the existing authenticated `POST /api/cron/gc`
 endpoint and its durable scheduler claim, after observing the unavailable
@@ -252,7 +262,12 @@ its compilation is itself owned by a parent-death wrapper. The process reader
 retains bounded native inspection diagnostics (PID, syscall stage, result,
 expected size and errno), including successful-reader omissions; neither argv
 nor environment bytes enter those diagnostics. Inspection failure still refuses
-ownership and cleanup. The real sandbox-denial control verifies actionable
+ownership and cleanup. Records use the second kernel read's current parent,
+group and status after revalidating PID, UID and start identity. Full environment
+scan failures retain at most 16 numeric diagnostics plus an omitted count.
+The existing O-identity control schedules real child `setpgid`/`SIGSTOP` and
+exit transitions around those reads; no synthetic ownership fields are used.
+The real sandbox-denial control verifies actionable
 diagnostics and that the inspected child survives the refusal.
 The fixture watchdog checks parent and runner identities immediately and every 500 ms; owned-group
 termination, including a TERM-resistant adapter, is verified within five seconds.
@@ -277,6 +292,33 @@ SIGKILL, the surviving outer control/CI finalizer performs this same recorded
 cleanup after proving watchdog termination. Never prune a shared Docker daemon
 or stop its shared Ryuk container. The installed Testcontainers implementation
 can reuse one reaper across invocations; its liveness is not per-lane evidence.
+
+Before spawning disposable web/isolation Vitest workers, the A/B runner acquires the public
+Testcontainers reaper through `lane-reaper.ts`. Its retained unreferenced socket
+lasts until the actual runner process exits, including terminal invocation
+cleanup; returning from `runStageAbLane` does not end the lease. Unavailable or
+disabled reaping fails explicitly before workers start. Acquisition has the
+existing lane Docker-probe deadline and is interrupted by runner SIGINT/TERM.
+This bounds rejection before worker spawn. Testcontainers exposes no cancellation
+API for an already started `getReaper`; every actual runner entry terminates its
+process on acquisition failure. The guard prevents runtime discovery that finishes
+after rejection from starting reaper acquisition.
+The supervisor-only lane retains its Docker-free process/SQLite contract.
+The shared reaper is never an invocation-owned deletion target. The separate web owner
+`execution-ab-reaper.integration.test.ts` kills a real PostgreSQL worker, waits
+beyond Ryuk's reconnect grace, verifies the same reaper survives and a second
+worker queries real PostgreSQL, then removes only exact invocation-labelled
+resources. It also holds an actual Docker `/info` response to prove deadline
+and owner interruption, then releases that response and refuses a late reaper
+lookup. These controls forward real Docker bytes through its configured Unix
+endpoint. Lease-removal falsification requires a quiet daemon: another live
+Testcontainers client can otherwise keep shared Ryuk alive and mask removal.
+Ordinary direct Vitest execution enters the same real A/B runner
+with a private invocation minted by its parent before spawn, so timeout or
+early runner death still permits exact process/container cleanup. A supplied
+invocation must match the runner's inherited private capability. The direct
+control calls `createInvocation` for this lane, preserving the outer generic
+Vitest invocation and sibling suites.
 
 Sweep authority is exactly one minted invocation ID. Exclude the runner and its
 short-lived inspection helpers explicitly. Validate registered groups and their
@@ -364,7 +406,11 @@ The runner passes exactly its selected file list to Vitest and
 empty, skipped and failed suites/cases. `--shard 1/2` and `--shard 2/2` are web
 only; the production isolation slice remains serial and rejects sharding.
 
-The R9 inventory contains 44 web files, partitioned into 22/22. Its mandatory
+The current inventory contains the 44 R9 web files plus two harness owners,
+partitioned into 23/23. The proxy cancellation/refusal owner and reaper lifetime
+owner are appended, preserving all original shard assignments and acceptance
+cases. Their three and one required case titles respectively are explicit in
+the runner manifest. The R9 mandatory
 owning suites include permission-crash-boundary and reconcile-sweep, migration
 0192, CLI-driver-reconcile, scratch permission-terminal and incarnation-terminal,
 and system-sweep-admission. The existing prompt-owner and gate suites remain

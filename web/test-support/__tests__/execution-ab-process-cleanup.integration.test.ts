@@ -911,6 +911,73 @@ describe("S5.2 invocation process ownership", () => {
         "O-identity requires a supported process-inspection platform",
       ).toBe("darwin");
 
+      const transitionExecutable = path.join(
+        directory,
+        "process-info-transition",
+      );
+      const transitionSource = fileURLToPath(
+        new URL("../fixtures/process-info-transition.c", import.meta.url),
+      );
+
+      await execFileAsync(
+        "cc",
+        [
+          "-Wall",
+          "-Wextra",
+          "-Werror",
+          "-O2",
+          transitionSource,
+          "-o",
+          transitionExecutable,
+        ],
+        { timeout: 10_000, maxBuffer: 16 * 1024 },
+      );
+      for (const boundary of ["status", "environment"] as const) {
+        const transition = await execFileAsync(
+          transitionExecutable,
+          [invocation.id, boundary],
+          {
+            env: { ...process.env, ...invocationEnvironment(invocation) },
+            timeout: 10_000,
+            maxBuffer: 4 * 1024 * 1024,
+          },
+        );
+        const receipt =
+          /\{"event":"native-transition-control","pid":(\d+),"infoReads":2,"firstStatus":[1-3],"secondStatus":([0-9]+)\}/u.exec(
+            transition.stderr,
+          );
+
+        expect(
+          receipt,
+          "the child reached the scheduled second kernel read",
+        ).not.toBeNull();
+        const row = transition.stdout
+          .trim()
+          .split("\n")
+          .find((line) => line.startsWith(`${receipt![1]}\t`))
+          ?.split("\t");
+
+        if (boundary === "status") {
+          expect(receipt![2], "the kernel observed SIGSTOP").toBe("4");
+          expect(
+            row?.[2],
+            "the revalidated process group follows the child's real setpgid",
+          ).toBe(receipt![1]);
+          expect(
+            row?.[6],
+            "the reader publishes the revalidated kernel status",
+          ).toBe("4");
+          expect(row?.[5]).toBe("1");
+        } else {
+          expect(transition.stderr).toMatch(
+            new RegExp(
+              `process-inspection-failed","pid":${receipt![1]},"stage":"kern_procargs","result":-\\d+,"expected":0,"errno":\\d+`,
+              "u",
+            ),
+          );
+        }
+      }
+
       const readerUrl = new URL("../process-invocation.ts", import.meta.url)
         .href;
       const probe = `const reader = await import(${JSON.stringify(readerUrl)}); await reader.processIdentity(${JSON.stringify(invocation)}, ${owned.pid});`;

@@ -628,6 +628,103 @@ Linux/Darwin phase gates. C3/G-LINUX, all prospective hosting work, S5.2/S5.3/
 S5.4 and 42/45 remain unchanged. This checkpoint is prepared for native work;
 it is not the qualified C3 or owner-push hosting candidate.
 
+## PR #9 harness-repair checkpoint — 2026-10-06
+
+The owner requested refresh and build repair on the same
+`codex/s53a-linux-isolation` branch. Explicit ff-only pull and later refetch
+confirmed owner source `73da16895d84029ec92686308ec950cae201dc89`, master
+`f43ac1570380d2be19f7c59a70cd993f24ace440`, and retained local checkpoint
+`33165ce635e69d901cab0a83394c2e708a5e6530`. PR #9 remains open. No agent
+push, hosted rerun, merge or infrastructure change was performed.
+
+[Run 37445755131](https://github.com/maister-dev/maister/actions/runs/37445755131)
+tested merge `2d5a947fddcd73d0801855dbcb9e12c3e7df7008`. Node24.15 web
+shard1 failed one gate-permission-resume case with a retained proxy `write EPIPE`;
+the equivalent Node24.19 shard passed. Intel isolation exited124 after54m29s:
+separate preflight1/1 passed249.746s; three completed suites reported26/29,
+and no complete50-case reporter exists. Its cleanup failures were an unverifiable
+group member and subsequent real database starts unable to connect to reused
+Ryuk. Missing native errno and reaper socket/container retirement evidence
+leave the exact hosted interleavings uncertain.
+
+The bounded repair corrects common SSE/upload cancellation handling while
+preserving parser/barrier refusal, publishes the second revalidated Darwin
+kernel status/group/parent with bounded numeric environment diagnostics, and
+retains the public reaper in the web/isolation runner until actual process exit.
+Acquisition has the existing deadline and owner interruption; supervisor-only
+execution remains Docker-free. Direct entry uses a parent-minted private
+invocation before allocation and releases only that capability after runner death.
+Real TCP/kernel/Docker/PostgreSQL RED/GREEN/refactor and valid removal controls,
+source hashes, all sibling classifications and review findings are recorded in
+[the owning patch](../patches/2026-10-06-14.05.md).
+
+The two appended web owners add three proxy cases and one reaper case; the
+web inventory is46 files,23/23, with all original44 shard assignments intact.
+Darwin isolation remains the original seven suites/50 cases plus separate1
+preflight. The native transition assertions remain inside O-identity; fixture
+scheduling only places its actual target first to keep its bounded diagnostic
+receipt independent of unrelated process omissions. No acceptance case was
+removed, skipped or weakened. Product HTTP/SSE/ACP/OpenAPI, PostgreSQL/SQLite
+schema and migrations, configuration, dependencies, deployment and CI recipe
+remain unchanged; no ADR/migration allocation is needed.
+
+Final local receipts are Darwin ARM64 development evidence. Owning reports
+must pass `validateLaneReport`, contain no failed/skipped/todo/runtime errors,
+and pair with an exact invocation terminal sweep reporting zero leaks.
+
+| Gate | Node | Exact invocation / complete receipt | Duration |
+|---|---|---|---|
+| Separate final preflight |24.19.0|`e0229797-a442-4f25-95ae-22a99bca63e4`,1/1|4.947s|
+| Final serial isolation |24.19.0|`73467b75-ff34-46ae-a6e0-8b7d431beda5`,7 suites/50/50|817.219s|
+| Complete web shard1/2 |24.15.0|`72ede667-c925-46d8-a71f-c514e9a77e39`,23 suites/332/332|749.177s|
+| Complete web shard2/2 |24.15.0|`61a960bd-e021-4a84-9a14-b2c4666d5982`,23 suites/308/308|1398.810s|
+| Complete web inventory, both shard file sets in one bounded pool |24.19.0|`44ab5ab5-914f-4f5d-b7d8-b2fb6b3e5216`,46 suites/640/640|1401.489s|
+| Docker-free supervisor, absent endpoint/Ryuk disabled |24.15.0|`df5dfbfc-c0c7-40a1-8d39-2a3997df8d54`,10 suites/111/111|17.247s|
+| Docker-free supervisor, absent endpoint/Ryuk disabled |24.19.0|`637ca17f-d81d-4827-9530-441ea3e617e1`,10 suites/111/111|16.035s|
+| Remaining direct proxy consumers, each complete owner serially |24.15.0|11 exact invocation reports,68/68; `proxy-consumers/qualified-owners.json`|382.308s summed|
+| Enabled standalone host-span load owner |24.15.0|`090903a3-8055-4078-85c2-3b5deadd21ac`,1/1; six runs,120s ingest lag|127.389s; P95=5583ms<10000ms|
+
+Evidence root: `/private/tmp/maister-s53a/pr9-fixes/`. Final preflight/full
+reporters: `final-node24.19/maister-ab-isolation-OzdwkX/vitest.json` and
+`final-node24.19/maister-ab-isolation-smBrsh/vitest.json`. The50-case reporter
+contains partitions6, cleanup13, dispatch10, process-death6, production-boot8,
+isolation4 and concurrency3. Its native O-identity passed1.044s; all three
+previously failed cleanup owners passed. The intermediate full50 invocation
+`e990086e-2e4e-4421-b46a-9dba4e0d440e`789.804s predates the final acquisition
+and direct-entry refinements and is not borrowed as their final qualification.
+
+Production web build passed on official Darwin ARM64 Node24.19.0; all-document
+and unchanged ERD validation, API/event/adapter contracts, web/supervisor/MCP
+typechecks, MCP build, changed-file lint/format and runner/workflow controls
+passed. `final-qualified-reports.json` independently revalidates all seven main
+receipts above, exact case-name equality across Node versions, and preservation
+of all636 original hosted web cases plus the four harness cases. Node24.19's
+local aggregate uses the existing four-worker pool and validates all46 files;
+it does not supply the four separate mandatory hosted shard artifacts. The CI
+matrix still runs both shards on each Node. All11 additional proxy owners passed
+their complete68-case inventory with independent validators/zero-leak receipts.
+The separate opt-in load control ran enabled and alone: all six flows settled
+through host spans without conflicts; P95=5583ms under the unchanged10000ms
+limit while ingest lag remained120000ms. Its owning reporter is
+`proxy-load/maister-ab-web-kBoIoh/vitest.json`, with validator success and zero leaks.
+The12 source-file SHA256 identities are retained in `final-source-identity.json`;
+runner source SHA256 is
+`ad69a0db59247cd3b6592f959665e5bb46b9fd2388849d0ffb84ee738312125f`.
+
+- [x] Repair cancellation, native inspection and runner-owned cleanup lifetimes
+  through discriminating RED/GREEN/refactor and valid restored falsifications.
+- [x] Complete local owning/consumer inventories, production build, spec/static
+  gates and adversarial review; preserve exact authority and zero-leak acceptance.
+- [ ] Owner push followed by exact-source/merge-parent hosted artifact verification.
+  Local ARM64 receipts do not close the hosted budget or Linux qualification gates.
+
+This corrective checkpoint does not complete A8–A15/C3/G-LINUX or establish
+hosted Intel budget success. S5.2/S5.3/S5.4 and42/45 remain unchanged. After
+local repair commit, the owner alone pushes; verify the exact pushed source
+SHA, PR merge parents, every mandatory hosted job and its independent complete
+report/timing/zero-leak artifacts before claiming hosted repair. Continue native
+Ubuntu A8–A11 qualification before any hosting amendment or Linux CI migration.
+
 ## Commit Plan
 
 Implementation commits preserve focused, qualified trees; no remote visibility before owner push.

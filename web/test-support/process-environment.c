@@ -8,7 +8,15 @@
 #include <unistd.h>
 
 /* Fixed fields only: diagnostics must never disclose argv or environment bytes. */
+static unsigned int inspection_diagnostics_emitted;
+static unsigned int inspection_diagnostics_omitted;
+
 static void inspection_diagnostic(pid_t pid, const char *stage, long long result, long long expected, int error) {
+  if (inspection_diagnostics_emitted >= 16) {
+    inspection_diagnostics_omitted++;
+    return;
+  }
+  inspection_diagnostics_emitted++;
   fprintf(stderr, "{\"event\":\"process-inspection-failed\",\"pid\":%d,\"stage\":\"%s\",\"result\":%lld,\"expected\":%lld,\"errno\":%d}\n", pid, stage, result, expected, error);
 }
 
@@ -99,8 +107,10 @@ int main(int argc, char **argv) {
       continue;
     }
     int owned = owns_invocation(pids[i], entry, buffer, (size_t)argmax);
-    if (selected && owned < 0) inspection_diagnostic(selected, "kern_procargs", owned, 0, -owned);
-    if (owns_invocation(pids[i], inspector_entry, buffer, (size_t)argmax) == 1) continue;
+    if (owned < 0) inspection_diagnostic(pids[i], "kern_procargs", owned, 0, -owned);
+    int inspector = owns_invocation(pids[i], inspector_entry, buffer, (size_t)argmax);
+    if (inspector < 0) inspection_diagnostic(pids[i], "kern_procargs_inspector", inspector, 0, -inspector);
+    if (inspector == 1) continue;
     struct proc_bsdinfo after;
     errno = 0;
     found = proc_pidinfo(pids[i], PROC_PIDTBSDINFO, 0, &after, sizeof(after));
@@ -109,13 +119,22 @@ int main(int argc, char **argv) {
       if (selected) inspection_diagnostic(selected, "proc_pidinfo_after", found, sizeof(after), info_error);
       continue;
     }
+    if (after.pbi_pid != (unsigned int)pids[i] || after.pbi_pid != info.pbi_pid) {
+      if (selected) inspection_diagnostic(selected, "pid_identity_changed", after.pbi_pid, pids[i], 0);
+      continue;
+    }
+    if (after.pbi_uid != info.pbi_uid || after.pbi_uid != getuid()) {
+      if (selected) inspection_diagnostic(selected, "uid_identity_changed", after.pbi_uid, info.pbi_uid, 0);
+      continue;
+    }
     if (after.pbi_start_tvsec != info.pbi_start_tvsec || after.pbi_start_tvusec != info.pbi_start_tvusec) {
       if (selected) inspection_diagnostic(selected, "start_identity_changed", 0, 0, 0);
       continue;
     }
-    printf("%u\t%u\t%u\t%u\t%llu:%llu\t%d\t%u\n", info.pbi_pid, info.pbi_ppid, info.pbi_pgid, info.pbi_uid, info.pbi_start_tvsec, info.pbi_start_tvusec, owned, info.pbi_status);
+    printf("%u\t%u\t%u\t%u\t%llu:%llu\t%d\t%u\n", after.pbi_pid, after.pbi_ppid, after.pbi_pgid, after.pbi_uid, after.pbi_start_tvsec, after.pbi_start_tvusec, owned, after.pbi_status);
   }
   if (selected && !selected_seen) inspection_diagnostic(selected, "selected_pid_missing", 0, 1, 0);
+  if (inspection_diagnostics_omitted) fprintf(stderr, "{\"event\":\"process-inspection-diagnostics-limited\",\"omitted\":%u}\n", inspection_diagnostics_omitted);
   free(buffer);
   free(pids);
   return ferror(stdout) ? 74 : 0;
