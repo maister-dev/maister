@@ -368,6 +368,13 @@ Three enforcement levels:
 
 Runner SIGKILL cannot execute a finalizer. The watchdog must handle its orphaned
 fixture processes; normal/failure/catchable-signal runner paths own root cleanup.
+On Darwin, a process-group signal can return `EPERM` after concurrent watchdog
+termination leaves only zombies. Retirement may be acknowledged only after a
+fresh kernel group catalogue proves there is no live member, including other
+UIDs and inspector helpers. That proof grants no signal authority. A live member,
+incomplete catalogue or inspection failure retains the original signal failure;
+there is no per-PID permission fallback. Recorded survivors remain leaks even
+when terminal containment subsequently reaps them.
 For CI cancellation, `always()` cleanup consumes the same recorded invocation
 ledger; do not promise cleanup after host power loss. O-controls must prove
 their claimed boundaries separately rather than one mechanism masking another.
@@ -423,7 +430,19 @@ The one macOS Intel isolation job keeps Colima 0.10.3/Lima 2.2.0 and one
 Provisioning traces the downloaded pins, resolved
 profile and status JSON; `DOCKER_HOST` uses Colima's reported host socket URI,
 while `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE` names the VM-side
-`/var/run/docker.sock`. A missing URI/socket or failed `docker version`/`info`
+`/var/run/docker.sock`. Create the job-private `COLIMA_HOME` before any Colima
+command; the pinned version ignores a nonexistent home. Create a separate
+job-owned `LIMA_HOME` at the runtime root: the nested Colima path exceeds
+Lima's SSH socket limit on the hosted runner. Resolve that home and require the
+full pinned socket path to contain fewer than 104 UTF-8 bytes before downloads
+or VM startup; an overlong path fails explicitly. The reported socket
+must resolve to `COLIMA_HOME/maister-s52/docker.sock`; a foreign socket
+refuses before Docker contact or environment publication. The VM declares
+`1.1.1.1` as its sole upstream resolver and records the guest resolver and
+dnsmasq configuration. This replaces the implicit gateway resolver, without
+changing host or production DNS. Hosted reachability remains an executed gate;
+a daemon `info` response does not prove registry access. The separate preflight
+retains the real Ryuk pull and PostgreSQL operation. A missing URI/socket or failed `docker version`/`info`
 fails with a recorded cause. Cleanup targets only the job-owned profile and
 finishes before the diagnostics artifact is uploaded. Timing records setup,
 preflight, suite, cleanup and the report-upload outcome; the hosted job result

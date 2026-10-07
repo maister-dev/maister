@@ -770,7 +770,10 @@ independent name-set/validator/sweep proof live in
   full semantic parity, actual timeout/refusal/removal controls and cleanup pass.
 - [x] Complete original50 plus independent preflight, both-Node full affected
   consumer inventories, default browser13, spec/static gates and adversarial review.
-- [ ] Owner-push checkpoint: push the complete three-phase correction, then verify
+- [x] Owner delivered the preceding three-phase correction as
+  `c9e37308791d88bf8c4f72afbc01fe0f86f7f2a5`; exact PR/push source trees verified.
+  This records delivery only; hosted isolation qualification failed below.
+- [ ] Hosted acceptance: verify
   the exact pushed SHA and PR merge parents/tree, all four web and two runtime/
   supervisor reports, static/image/browser jobs, independent preflight and complete
   seven-suite/50-case isolation report via `validateLaneReport`. Inspect saved
@@ -786,6 +789,89 @@ work. If hosted timing still fails, preserve these bounded receipts and measure
 remaining setup/build/boot costs; do not change budgets, cases or runner size.
 Push and all hosted visibility remain the owner's action.
 
+### PR #9 third hosted audit and bounded correction (2026-10-07)
+
+The owner-pushed source is `c9e37308791d88bf8c4f72afbc01fe0f86f7f2a5`.
+[PR37610010758](https://github.com/maister-dev/maister/actions/runs/37610010758)
+tested merge `a0cbdc875910e644350b85d0334c335e098a4bdf`, with parents
+`f43ac157`/`c9e373087` and tree `fb2fb6bb13311f1de9cfafb9ddda8e5545dae2f5`
+equal to the pushed source. Its four web reports pass `validateLaneReport`:
+23 suites/332 cases and23/308 at each Node; both runtime reports pass10/111.
+Static, production-image and Librarian jobs passed. Only Intel isolation failed.
+
+PR preflight never entered Vitest: the retained reaper's real Ryuk0.11.0 pull
+failed Docker500, guest DNS `registry-1.docker.io` through192.168.5.1:53 timed
+out. No actual report exists; report upload correctly failed. Diagnostic upload
+then exhausted its five host-side request attempts after successful runtime
+deletion. These are separate observed failures; a common network cause is
+unproved. The script's absent `COLIMA_HOME` directory made the pinned Colima
+ignore that setting and use `~/.colima`, as its source and actual CLI control
+confirm. The corrected recipe must create both private runtime homes before
+Colima, refuse a foreign/symlinked profile socket, declare its VM resolver and
+capture guest DNS configuration, preserving the same pins/resources/start count.
+Use the separate owned `runtime_dir/lima` home: the nested Colima home makes
+the pinned SSH socket108 bytes on GitHub, versus100 with the shorter path.
+The canonical UTF-8 path must be strictly shorter than104 bytes, checked before
+downloads/start. Real-shell103-byte positive and104-byte refusal controls pass
+7/7 at both exact Nodes; removing the early guard falsifies the refusal control.
+The task-private native VZ smoke on Darwin ARM64 captured actual dnsmasq
+upstream1.1.1.1, pulled Ryuk0.11.0 and ran real Postgres16.15 SELECT53 at both
+Nodes. Containers, profiles and VZ processes were absent after cleanup. These
+are development receipts, not hosted Intel or Linux-driver qualification.
+
+[Push37610004437](https://github.com/maister-dev/maister/actions/runs/37610004437)
+passed independent preflight1/1 (224.37s test;255.427s lane). Runtime was ready
+at764s; preflight finished at1028s; the dynamic suite allowance was2212s.
+Cleanup completed13 cases,12passed/1failed in1242.262s: SIGINT failed on process-group
+`kill EPERM` while the parent-death watchdog terminated fixtures. Partitions
+passed6/6 in693.852s. Dispatch began, but no complete owning report exists.
+The outer lane exited124 after2215.123s, reaping one remaining web process and
+an owned PostgreSQL container; runtime deletion finished at3251s. This is
+contained failure, never zero-leak qualification.
+
+Apple's kernel rejects a signal to an existing zombie-only group with `EPERM`.
+The correction may acknowledge concurrent retirement only after a complete
+fresh kernel group catalogue, including every UID and inspector helper, proves
+no live member. Existing invocation snapshots intentionally omit those entries
+and cannot prove that condition. Real permission denial, incomplete inspection
+and a live/foreign member retain the original failure; signal authority is never
+widened. The existing O-identity owner must cover the actual syscall race and
+refusal, preserving all original50 owning cases and separate preflight.
+
+Measured push costs: one reused production build249.717s; nine independent
+cleanup databases549.686s total startup/main/Brain; two suite templates95.547s;
+22 web births-to-listening410.917s; ten DB clones5.792s. These are overlapping
+phase costs, not additive extra suite overhead. Already-completed suites use
+1936.114s; even instantaneous setup can restore only128s before the fixed2340s
+slice cap. DNS repair alone cannot qualify the remaining31 cases. Do not claim
+the budget fixed, share cleanup resources across invocations, or weaken cases.
+
+Final corrective worktree qualification is bound to23 frozen source hashes
+and the unchanged lockfile in
+`/private/tmp/maister-s53a/ci-run-37610010758/final-qualified-reports.json`.
+Darwin ARM64/Node24.19 passed original7/50 in812.562s, separate preflight1/1
+in4.643s and ordinary browser13 in165.941s, all with clean terminal receipts.
+Both exact Nodes passed all22 shared-consumer owners/161 original cases;
+Node24.15 additionally passed the full cleanup13 owner in93.643s. Independent
+`validateLaneReport` and exact original name-set comparisons passed. All
+source hashes remained unchanged through execution. Docs/contracts, web and
+supervisor/MCP types, MCP build, changed-source lint, formatting, native strict
+compilation and runner/recipe19 controls passed; adversarial review found no
+material code or acceptance defect. This qualifies the local correction only.
+The earlier local4/13 attempt failed because its command omitted the Docker
+CLI from PATH; it is retained as environment failure, not behavioral RED.
+
+- [x] Audit both exact-source attempts, complete green reports and failed
+      preflight/cleanup/budget/upload evidence before choosing the correction.
+- [x] Complete real RED → GREEN → REFACTOR group-retirement controls, full Darwin
+      owning regression/preflight, both-Node affected controls and adversarial review.
+- [x] Complete private-home/socket/DNS setup controls and platform-labelled real
+      CLI/VM evidence; hosted Intel resolver reachability remains unqualified.
+- [ ] Owner-push checkpoint: push only the verified focused phase commits; verify
+      that exact SHA/merge tree and all hosted reports/timing/cleanup artifacts.
+      Preserve the existing macOS S5.2 contract until A8–A15/C3/G-LINUX legitimately
+      qualify and prospectively amend Linux hosting. S5.2/S5.3/S5.4 remain open42/45.
+
 ## Commit Plan
 
 Implementation commits preserve focused, qualified trees; no remote visibility before owner push.
@@ -797,6 +883,9 @@ The second hosted-audit correction uses disjoint local phase groups:
 | CI-R2a | Native inspector/fixture, invocation reader, watchdog and existing O-identity owner; real RED/GREEN/refactor, exact authority and full Darwin50 | `fix(test): inspect selected processes and retain watchdog causes` |
 | CI-R2b | Docker probe, full test migration adapter, shared pg helper, owning pg controls/fixtures;7-case real owner, complete affected consumers on both Nodes, browser13 | `fix(test): bound Docker discovery and batch test migrations` |
 | CI-R2c | Canonical test-infrastructure contract, owning plan/checkpoint and fix patch; spec/static/source/case audit and owner-push gate remain truthful | `docs(test): record CI correction contracts and qualification` |
+| CI-R3a | Invocation group signaling, kernel retirement probe and real native controls under O-identity; full Darwin50/preflight and minimum-Node owning controls | `fix(test): verify Darwin group retirement after signal races` |
+| CI-R3b | Existing Intel runtime setup and executable workflow controls; private homes, exact socket, explicit VM resolver and platform-labelled evidence | `fix(ci): own Colima state and declare its VM resolver` |
+| CI-R3c | Canonical analytics contract, exact-source failed audit and corrective receipts; fixed-budget/LINUX/owner-push gates remain truthful | `docs(test): record remaining hosted isolation failures` |
 
 
 | Checkpoint | Tasks / required green gate | Suggested conventional commit |
