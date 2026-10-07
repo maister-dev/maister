@@ -835,6 +835,38 @@ exercise the existing contracts. Any demonstrated persistent/API delta first
 returns to specification and fresh/upgrade gates; no migration number is
 reserved for this driver.
 
+### CI setup and inspection controls
+
+The Docker availability guard measures actual Engine `/info` contact against
+the endpoint selected by the installed Testcontainers strategies. Its default
+deadline remains three seconds, with the existing 30-second override in
+known-Docker lanes. Compose discovery and complete client construction have
+a separate 30-second startup ceiling; they cannot produce a
+late success receipt after that phase has failed. Endpoint, TLS and socket
+selection must match Testcontainers, and a configured unreachable endpoint
+must fail explicitly. No container may start before both phases pass.
+
+Fresh test migration setup may batch the existing SQL fragments within each
+migration file. It uses Drizzle's original migration metadata and official
+dialect transaction/ledger implementation: main precedes Brain, hashes and
+timestamps remain identical, repeated migration is a no-op, and an error
+rolls back the lineage SQL and ledger rows while preserving its cause.
+Ledger schema/table scaffolding remains as in the standard migrator.
+Every SQL fragment still
+executes against real PostgreSQL. Production migration commands and historical
+partial-upgrade helpers retain their existing execution paths. The owning
+`pg-container.integration.test.ts` controls compare full schema, ledgers and
+seeded data with the standard migrator, and prove submission reduction and
+rollback; elapsed timings are evidence, not a promised hosted speedup.
+
+An explicit Darwin PID lookup reads that PID directly, independently of a
+global process catalogue. Its PID, UID, start identity and invocation tag
+checks remain mandatory. Inspector exclusion applies to resource-discovery
+snapshots, not explicit parent-identity reads; returning an unowned parent
+identity never authorizes signaling it. A watchdog inspection failure writes
+its invocation, expected identities and bounded native/cause diagnostics
+synchronously before terminating itself. Unknown identity still fails closed.
+
 ## Expectations
 
 1. Unit/build tests MUST NOT require a reachable Docker runtime.

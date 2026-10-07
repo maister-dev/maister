@@ -715,7 +715,9 @@ runner source SHA256 is
   through discriminating RED/GREEN/refactor and valid restored falsifications.
 - [x] Complete local owning/consumer inventories, production build, spec/static
   gates and adversarial review; preserve exact authority and zero-leak acceptance.
-- [ ] Owner push followed by exact-source/merge-parent hosted artifact verification.
+- [x] Owner pushed64ca10b8; exact-source/merge-parent hosted artifact audit
+  completed in the second audit below. Both isolation attempts failed, so this
+  verifies the attempted delivery and failure, not hosted acceptance.
   Local ARM64 receipts do not close the hosted budget or Linux qualification gates.
 
 This corrective checkpoint does not complete A8–A15/C3/G-LINUX or establish
@@ -725,9 +727,77 @@ SHA, PR merge parents, every mandatory hosted job and its independent complete
 report/timing/zero-leak artifacts before claiming hosted repair. Continue native
 Ubuntu A8–A11 qualification before any hosting amendment or Linux CI migration.
 
+### PR #9 second hosted audit and CI correction (2026-10-07)
+
+Owner-pushed `64ca10b8f61c8c3365898f330703c5ac0b53574b` reached both
+[PR37501035415](https://github.com/maister-dev/maister/actions/runs/37501035415)
+and [push37501030544](https://github.com/maister-dev/maister/actions/runs/37501030544).
+PR merge4551ab9d has parentsf43ac157/64ca10b8; its tree537230d4 matches the
+pushed source. Four web shards, both runtime/supervisor jobs, static and image
+checks passed in both; PR Librarian13/13 passed. Intel isolation failed exit124
+in47m07s/53m10s, with no complete50-case reporter. PR completed42/43 cases:
+missing-reporter cleanup's watchdog could not inspect a live owner. Push
+Librarian failed before browser startup because actual25ms daemon contact was
+combined with5.130s SDK/Compose discovery under the3s absent-Docker guard.
+These are failed hosted attempts; no deployment migration is required.
+
+The bounded correction separates actual daemon contact from bounded SDK
+construction, inspects explicitly selected Darwin PIDs without global catalogue
+reliance, preserves synchronous refusal causes, and batches only fresh test
+main+Brain migration transport through public Drizzle transaction/ledger APIs.
+No production SQL/schema/journal, API/auth/event, product configuration,
+dependency, deployment, CI recipe, job/slice budget or acceptance case changed.
+Full repair, discriminating RED/GREEN/refactor/removal receipts, exact sibling
+searches and adversarial invariants are in
+[the owning patch](../patches/2026-10-07-13.38.md).
+
+Final local development proof is Darwin ARM64. Separate Node24.19 preflight1/1
+passed4.699s; complete7/50 isolation passed820.588s with fresh production build,
+validator success, unchanged exact owning titles and zero leaks. Both exact Node
+versions passed every full main+Brain DB consumer:21ordinary owners/155cases plus
+serial clock6; total90.401s on24.15,90.849s on24.19. The generic pg owner is7
+cases (original4 plus three distinct controls); the default browser lane passed
+13/13 in163.213s with zero process leaks and its exact DB container removed.
+Local main submission count1511→383 (779→521ms), Brain79→17 (60→43ms), with
+full catalog/ledger/seed/idempotence and rollback parity. This proves transport
+reduction, not hosted Intel/Linux wall time. Complete reports, source hashes and
+independent name-set/validator/sweep proof live in
+`/private/tmp/maister-s53a/ci-oct07/final-qualified-reports.json`.
+
+- [x] Repair explicit PID/inspector observation and durable watchdog diagnostics
+  with real native/process RED/GREEN/refactor controls and preserved authority.
+- [x] Repair daemon/SDK phase attribution and reduce test-only migration transport;
+  full semantic parity, actual timeout/refusal/removal controls and cleanup pass.
+- [x] Complete original50 plus independent preflight, both-Node full affected
+  consumer inventories, default browser13, spec/static gates and adversarial review.
+- [ ] Owner-push checkpoint: push the complete three-phase correction, then verify
+  the exact pushed SHA and PR merge parents/tree, all four web and two runtime/
+  supervisor reports, static/image/browser jobs, independent preflight and complete
+  seven-suite/50-case isolation report via `validateLaneReport`. Inspect saved
+  diagnostics for setup/build/suite/slice/upload/cleanup/total durations and zero
+  leaks under the unchanged60-minute job and existing dynamic2340s-max slice.
+  Partial reporter, timeout or contained survivor remains failed qualification.
+
+A8–A15/C3/G-LINUX and S5.2/S5.3/S5.4 remain open at42/45. The52-case native
+Linux Phase-1 proof is not the required final55 at both Nodes; current common
+harness changes also need final-source Linux qualification before hosting work.
+Browser lifecycle expansion and separate-user deployment remain separate S5.3
+work. If hosted timing still fails, preserve these bounded receipts and measure
+remaining setup/build/boot costs; do not change budgets, cases or runner size.
+Push and all hosted visibility remain the owner's action.
+
 ## Commit Plan
 
 Implementation commits preserve focused, qualified trees; no remote visibility before owner push.
+
+The second hosted-audit correction uses disjoint local phase groups:
+
+| Group | Owned files / acceptance | Commit |
+|---|---|---|
+| CI-R2a | Native inspector/fixture, invocation reader, watchdog and existing O-identity owner; real RED/GREEN/refactor, exact authority and full Darwin50 | `fix(test): inspect selected processes and retain watchdog causes` |
+| CI-R2b | Docker probe, full test migration adapter, shared pg helper, owning pg controls/fixtures;7-case real owner, complete affected consumers on both Nodes, browser13 | `fix(test): bound Docker discovery and batch test migrations` |
+| CI-R2c | Canonical test-infrastructure contract, owning plan/checkpoint and fix patch; spec/static/source/case audit and owner-push gate remain truthful | `docs(test): record CI correction contracts and qualification` |
+
 
 | Checkpoint | Tasks / required green gate | Suggested conventional commit |
 |---|---|---|
