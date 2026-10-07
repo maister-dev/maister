@@ -45,7 +45,14 @@ async function checkOwners() {
       await terminateOwnedGroup("owner identity disappeared");
     }
   } catch (error) {
-    writeSync(2, `${JSON.stringify({ event: "fixture-watchdog-error", pid: process.pid, outcome: "failed", message: error instanceof Error ? error.message : String(error) })}\n`);
+    const causes = [];
+    let cause = error;
+
+    for (let depth = 0; cause instanceof Error && depth < 4; depth++) {
+      causes.push({ name: cause.name, message: cause.message.slice(-4096), code: typeof cause.code === "string" ? cause.code : null, signal: typeof cause.signal === "string" ? cause.signal : null });
+      cause = cause.cause;
+    }
+    writeSync(2, `${JSON.stringify({ invocationId: invocation.id, event: "fixture-watchdog-error", pid: process.pid, outcome: "failed", owner, parent: expectedParent, message: (error instanceof Error ? error.message : String(error)).slice(-4096), causes })}\n`);
     // Refuse to keep spending after the ownership mechanism itself failed.
     process.kill(process.pid, "SIGKILL");
   } finally {

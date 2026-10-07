@@ -199,7 +199,7 @@ async function nativeReader(invocation: Invocation): Promise<string> {
 async function readDarwinProcesses(
   invocation: Invocation,
   pid?: number,
-): Promise<ProcessIdentity[]> {
+): Promise<Readonly<{ identities: ProcessIdentity[]; diagnostics: string }>> {
   const executable = await nativeReader(invocation);
   const env = {
     ...process.env,
@@ -234,7 +234,7 @@ async function readDarwinProcesses(
       nativeDiagnostics: stderr.slice(-4096).trim(),
     });
 
-  return stdout
+  const identities = stdout
     .trim()
     .split("\n")
     .filter(Boolean)
@@ -261,6 +261,8 @@ async function readDarwinProcesses(
         zombie: status === "5",
       };
     });
+
+  return { identities, diagnostics: stderr.slice(-4096).trim() };
 }
 
 async function readLinuxProcesses(
@@ -331,7 +333,8 @@ async function readLinuxProcesses(
 export async function readProcessSnapshot(
   invocation: Invocation,
 ): Promise<ProcessIdentity[]> {
-  if (process.platform === "darwin") return readDarwinProcesses(invocation);
+  if (process.platform === "darwin")
+    return (await readDarwinProcesses(invocation)).identities;
   if (process.platform === "linux") return readLinuxProcesses(invocation);
   throw new InvocationOwnershipError(
     `no process environment reader for ${process.platform}`,
@@ -353,12 +356,15 @@ export async function findProcessIdentity(
   invocation: Invocation,
   pid: number,
 ): Promise<ProcessIdentity | null> {
-  const snapshot =
+  const native =
     process.platform === "darwin"
       ? await readDarwinProcesses(invocation, pid)
-      : process.platform === "linux"
-        ? await readLinuxProcesses(invocation, pid)
-        : await readProcessSnapshot(invocation);
+      : undefined;
+  const snapshot =
+    native?.identities ??
+    (process.platform === "linux"
+      ? await readLinuxProcesses(invocation, pid)
+      : await readProcessSnapshot(invocation));
 
   const entry = snapshot.find((candidate) => candidate.pid === pid);
 
@@ -371,6 +377,12 @@ export async function findProcessIdentity(
   }
   throw new InvocationOwnershipError(
     `live process ${pid} could not be inspected`,
+    {
+      cause: new Error(
+        native?.diagnostics ||
+          "process reader returned no identity for a live PID",
+      ),
+    },
   );
 }
 

@@ -13,6 +13,8 @@ import {
   readlink,
   readFile,
   unlink,
+  chmod,
+  readdir,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -43,6 +45,7 @@ import {
   signalInvocationProcess,
   assertInvocationGroupEmpty,
   FIXTURE_WATCHDOG,
+  releaseInvocation,
 } from "@/test-support/process-invocation";
 import {
   buildProductionWeb,
@@ -932,50 +935,290 @@ describe("S5.2 invocation process ownership", () => {
         ],
         { timeout: 10_000, maxBuffer: 16 * 1024 },
       );
-      for (const boundary of ["status", "environment"] as const) {
+      const parseTransitionReceipt = (
+        diagnostics: string,
+      ): Readonly<{
+        pid: string;
+        infoReads: number;
+        firstStatus: number;
+        secondStatus: number;
+        catalogueCalls: number;
+        catalogueDenied: number;
+      }> => {
+        const match =
+          /\{"event":"native-transition-control","pid":(\d+),"infoReads":(\d+),"firstStatus":(\d+),"secondStatus":(\d+),"catalogueCalls":(\d+),"catalogueDenied":([01])\}/u.exec(
+            diagnostics,
+          );
+
+        if (!match)
+          throw new Error("native transition control receipt is missing");
+
+        return {
+          pid: match[1]!,
+          infoReads: Number(match[2]),
+          firstStatus: Number(match[3]),
+          secondStatus: Number(match[4]),
+          catalogueCalls: Number(match[5]),
+          catalogueDenied: Number(match[6]),
+        };
+      };
+      const transitionControls = [
+        { boundary: "status", query: invocation.id, owned: "1", calls: 0 },
+        {
+          boundary: "environment",
+          query: invocation.id,
+          owned: null,
+          calls: 2,
+        },
+        {
+          boundary: "selected-catalogue",
+          query: invocation.id,
+          owned: "1",
+          calls: 0,
+        },
+        {
+          boundary: "selected-catalogue",
+          query: sibling.id,
+          owned: "0",
+          calls: 0,
+        },
+        {
+          boundary: "selected-inspector",
+          query: invocation.id,
+          owned: "0",
+          calls: 0,
+        },
+        {
+          boundary: "selected-inspector",
+          query: sibling.id,
+          owned: "0",
+          calls: 0,
+        },
+        {
+          boundary: "snapshot-inspector",
+          query: invocation.id,
+          owned: null,
+          calls: 2,
+        },
+      ] as const;
+
+      for (const control of transitionControls) {
         const transition = await execFileAsync(
           transitionExecutable,
-          [invocation.id, boundary],
+          [control.query, control.boundary],
           {
             env: { ...process.env, ...invocationEnvironment(invocation) },
             timeout: 10_000,
             maxBuffer: 4 * 1024 * 1024,
           },
         );
-        const receipt =
-          /\{"event":"native-transition-control","pid":(\d+),"infoReads":2,"firstStatus":[1-3],"secondStatus":([0-9]+)\}/u.exec(
-            transition.stderr,
-          );
-
-        expect(
-          receipt,
-          "the child reached the scheduled second kernel read",
-        ).not.toBeNull();
+        const receipt = parseTransitionReceipt(transition.stderr);
         const row = transition.stdout
           .trim()
           .split("\n")
-          .find((line) => line.startsWith(`${receipt![1]}\t`))
+          .find((line) => line.startsWith(`${receipt.pid}\t`))
           ?.split("\t");
 
-        if (boundary === "status") {
-          expect(receipt![2], "the kernel observed SIGSTOP").toBe("4");
+        expect(receipt.catalogueCalls).toBe(control.calls);
+        expect(receipt.catalogueDenied).toBe(
+          control.boundary === "selected-catalogue" ? 1 : 0,
+        );
+        if (control.owned !== null) {
+          expect(receipt.infoReads).toBe(2);
+          expect(receipt.firstStatus).toBeGreaterThan(0);
+          expect(receipt.firstStatus).toBeLessThan(4);
+          expect(receipt.secondStatus, "the kernel observed SIGSTOP").toBe(4);
           expect(
             row?.[2],
             "the revalidated process group follows the child's real setpgid",
-          ).toBe(receipt![1]);
+          ).toBe(receipt.pid);
           expect(
             row?.[6],
             "the reader publishes the revalidated kernel status",
           ).toBe("4");
-          expect(row?.[5]).toBe("1");
+          expect(row?.[5]).toBe(control.owned);
+        } else if (control.boundary === "snapshot-inspector") {
+          expect(
+            row,
+            "full snapshots exclude helpers from group ownership",
+          ).toBeUndefined();
         } else {
           expect(transition.stderr).toMatch(
             new RegExp(
-              `process-inspection-failed","pid":${receipt![1]},"stage":"kern_procargs","result":-\\d+,"expected":0,"errno":\\d+`,
+              `process-inspection-failed","pid":${receipt.pid},"stage":"kern_procargs","result":-\\d+,"expected":0,"errno":\\d+`,
               "u",
             ),
           );
         }
+      }
+      await expect(
+        execFileAsync(
+          transitionExecutable,
+          [invocation.id, "snapshot-catalogue"],
+          {
+            env: { ...process.env, ...invocationEnvironment(invocation) },
+            timeout: 10_000,
+            maxBuffer: 16 * 1024,
+          },
+        ),
+      ).rejects.toMatchObject({
+        code: 70,
+        stderr: expect.stringMatching(
+          /"stage":"proc_listpids_size".*"errno":1/u,
+        ),
+      });
+      const inspector = await startIdleChild({
+        ...process.env,
+        ...invocationEnvironment(invocation),
+        MAISTER_TEST_PROCESS_INSPECTOR: invocation.id,
+      });
+
+      children.push(inspector);
+      const inspectorIdentity = await processIdentity(
+        invocation,
+        inspector.pid!,
+      );
+
+      expect(inspectorIdentity).toMatchObject({
+        pid: inspector.pid,
+        owned: false,
+        inspected: true,
+        zombie: false,
+      });
+      await expect(
+        signalInvocationProcess(invocation, inspectorIdentity, "SIGTERM"),
+      ).rejects.toThrow(
+        "refusing signal to changed, foreign or uninspectable process identity",
+      );
+      expect(await processIdentity(invocation, inspector.pid!)).toEqual(
+        inspectorIdentity,
+      );
+
+      const watchdogInvocation = await createInvocation(directory);
+      let watchdog: ChildProcess | undefined;
+      let watchdogReader: string | undefined;
+
+      try {
+        const watchdogEnvironment =
+          await fixtureProcessEnvironment(watchdogInvocation);
+        const spawnedWatchdog = spawn(
+          process.execPath,
+          [
+            "--import",
+            "tsx",
+            "--import",
+            FIXTURE_WATCHDOG,
+            "-e",
+            'process.stderr.write("inspection-control-ready\\n"); setInterval(() => {}, 60000);',
+          ],
+          {
+            env: { ...process.env, ...watchdogEnvironment },
+            detached: true,
+            stdio: ["ignore", "ignore", "pipe"],
+          },
+        );
+
+        watchdog = spawnedWatchdog;
+        children.push(spawnedWatchdog);
+        let watchdogOutput = "";
+        const watchdogExited = new Promise<{
+          code: number | null;
+          signal: NodeJS.Signals | null;
+        }>((resolve, reject) => {
+          spawnedWatchdog.once("error", reject);
+          spawnedWatchdog.once("close", (code, signal) =>
+            resolve({ code, signal }),
+          );
+        });
+
+        // Observe startup failure immediately; the awaited promise retains it.
+        void watchdogExited.catch(() => undefined);
+
+        spawnedWatchdog.stderr!.on("data", (chunk: Buffer) => {
+          watchdogOutput = `${watchdogOutput}${chunk.toString()}`.slice(
+            -32 * 1024,
+          );
+        });
+        await registerSpawnedProcess(
+          watchdogInvocation,
+          {
+            role: "fixture",
+            caseName: "O-identity",
+            rootRole: "none",
+            root: null,
+            bootId: "watchdog-inspection-refusal",
+            logFile: null,
+          },
+          spawnedWatchdog,
+        );
+        await expect
+          .poll(() => watchdogOutput.includes("inspection-control-ready"), {
+            timeout: 10_000,
+            interval: 50,
+          })
+          .toBe(true);
+        const executableName = (
+          await readdir(watchdogInvocation.directory)
+        ).find((name) => /^process-environment-[a-f0-9]{16}$/u.test(name));
+
+        if (!executableName)
+          throw new Error("watchdog native reader is missing");
+        watchdogReader = path.join(
+          watchdogInvocation.directory,
+          executableName,
+        );
+
+        await chmod(watchdogReader, 0o000);
+        await expect
+          .poll(() => spawnedWatchdog.signalCode, {
+            timeout: 10_000,
+            interval: 50,
+          })
+          .toBe("SIGKILL");
+        expect(await watchdogExited).toEqual({ code: null, signal: "SIGKILL" });
+        const receiptLine = watchdogOutput
+          .split("\n")
+          .find((line) => line.includes('"event":"fixture-watchdog-error"'));
+
+        if (!receiptLine)
+          throw new Error(
+            `watchdog failure receipt is missing\n${watchdogOutput}`,
+          );
+        const receipt = JSON.parse(receiptLine) as {
+          invocationId: string;
+          owner: { pid: number; started: string };
+          parent: { pid: number; started: string };
+          causes: { code: string | null }[];
+        };
+
+        expect(receipt.invocationId).toBe(watchdogInvocation.id);
+        expect(receipt.owner).toMatchObject(
+          JSON.parse(watchdogEnvironment.MAISTER_TEST_PROCESS_OWNER!),
+        );
+        expect(receipt.parent).toMatchObject(
+          JSON.parse(watchdogEnvironment.MAISTER_TEST_PROCESS_PARENT!),
+        );
+        expect(receipt.causes.some((cause) => cause.code === "EACCES")).toBe(
+          true,
+        );
+        expect(await processIdentity(invocation, owned.pid!)).toMatchObject(
+          record.identity,
+        );
+        expect(other.exitCode).toBeNull();
+        expect(decoy.exitCode).toBeNull();
+      } finally {
+        if (watchdogReader) await chmod(watchdogReader, 0o755);
+        if (watchdog) await stopIdleChild(watchdog);
+        const cleanupErrors = await releaseInvocation(
+          watchdogInvocation,
+          "watchdog inspection control",
+        );
+
+        if (cleanupErrors.length)
+          throw new AggregateError(
+            cleanupErrors,
+            "watchdog inspection control cleanup failed",
+          );
       }
 
       const readerUrl = new URL("../process-invocation.ts", import.meta.url)

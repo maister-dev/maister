@@ -9,7 +9,7 @@
 static int scheduled_proc_pidinfo(int pid, int flavor, uint64_t arg, void *buffer, int buffersize);
 static int scheduled_proc_listpids(uint32_t type, uint32_t typeinfo, void *buffer, int buffersize);
 
-/* Only scheduling is interposed: ownership and process fields come from the kernel. */
+/* Scheduling and catalogue failure are interposed; identity and tags remain kernel reads. */
 #define main native_reader_main
 #define proc_pidinfo scheduled_proc_pidinfo
 #define proc_listpids scheduled_proc_listpids
@@ -24,8 +24,30 @@ static unsigned int info_reads;
 static unsigned int first_status;
 static unsigned int second_status;
 static int release_after_first_info;
+static int deny_catalogue;
+static unsigned int catalogue_calls;
+static int child_released;
+
+enum transition_control {
+  CONTROL_STATUS,
+  CONTROL_ENVIRONMENT,
+  CONTROL_SELECTED_CATALOGUE,
+  CONTROL_SNAPSHOT_CATALOGUE,
+  CONTROL_SELECTED_INSPECTOR,
+  CONTROL_SNAPSHOT_INSPECTOR
+};
+
+static const char *const control_names[] = {
+  "status", "environment", "selected-catalogue", "snapshot-catalogue",
+  "selected-inspector", "snapshot-inspector"
+};
 
 static int scheduled_proc_listpids(uint32_t type, uint32_t typeinfo, void *buffer, int buffersize) {
+  catalogue_calls++;
+  if (deny_catalogue) {
+    errno = EPERM;
+    return 0;
+  }
   int result = proc_listpids(type, typeinfo, buffer, buffersize);
   if (buffer && result > 0) {
     pid_t *pids = buffer;
@@ -73,6 +95,7 @@ static void release_child(void) {
     perror("native transition child outcome");
     exit(70);
   }
+  child_released = 1;
 }
 
 static int scheduled_proc_pidinfo(int pid, int flavor, uint64_t arg, void *buffer, int buffersize) {
@@ -101,12 +124,18 @@ int main(int argc, char **argv) {
     if (!strcmp(argv[4], "stop") && raise(SIGSTOP) != 0) return 70;
     return 0;
   }
-  if (argc != 3 || (strcmp(argv[2], "status") && strcmp(argv[2], "environment"))) return 64;
+  if (argc != 3) return 64;
+  int control = -1;
+  for (size_t index = 0; index < sizeof(control_names) / sizeof(control_names[0]); index++) {
+    if (!strcmp(argv[2], control_names[index])) control = (int)index;
+  }
+  if (control < 0) return 64;
   if (signal(SIGALRM, contain_on_signal) == SIG_ERR ||
       signal(SIGTERM, contain_on_signal) == SIG_ERR ||
       signal(SIGINT, contain_on_signal) == SIG_ERR) return 70;
   alarm(5);
-  release_after_first_info = !strcmp(argv[2], "environment");
+  release_after_first_info = control == CONTROL_ENVIRONMENT;
+  deny_catalogue = control == CONTROL_SELECTED_CATALOGUE || control == CONTROL_SNAPSHOT_CATALOGUE;
   int release[2], ready[2];
   if (pipe(release) != 0 || pipe(ready) != 0) return 70;
   target_pid = fork();
@@ -117,6 +146,8 @@ int main(int argc, char **argv) {
     close(ready[0]);
     snprintf(release_number, sizeof(release_number), "%d", release[0]);
     snprintf(ready_number, sizeof(ready_number), "%d", ready[1]);
+    if ((control == CONTROL_SELECTED_INSPECTOR || control == CONTROL_SNAPSHOT_INSPECTOR) &&
+        setenv("MAISTER_TEST_PROCESS_INSPECTOR", argv[1], 1) != 0) _exit(70);
     execl(argv[0], argv[0], "--child", release_number, ready_number, release_after_first_info ? "exit" : "stop", NULL);
     _exit(70);
   }
@@ -133,8 +164,10 @@ int main(int argc, char **argv) {
   char pid_number[32];
   snprintf(pid_number, sizeof(pid_number), "%d", target_pid);
   char *reader_args[] = {argv[0], argv[1], pid_number, NULL};
-  int result = native_reader_main(release_after_first_info ? 2 : 3, reader_args);
-  fprintf(stderr, "{\"event\":\"native-transition-control\",\"pid\":%d,\"infoReads\":%u,\"firstStatus\":%u,\"secondStatus\":%u}\n", target_pid, info_reads, first_status, second_status);
+  int snapshot = control == CONTROL_ENVIRONMENT || control == CONTROL_SNAPSHOT_CATALOGUE || control == CONTROL_SNAPSHOT_INSPECTOR;
+  int result = native_reader_main(snapshot ? 2 : 3, reader_args);
+  fprintf(stderr, "{\"event\":\"native-transition-control\",\"pid\":%d,\"infoReads\":%u,\"firstStatus\":%u,\"secondStatus\":%u,\"catalogueCalls\":%u,\"catalogueDenied\":%d}\n", target_pid, info_reads, first_status, second_status, catalogue_calls, deny_catalogue);
+  if (!child_released) release_child();
   close(release_fd);
   if (!release_after_first_info && kill(target_pid, SIGCONT) != 0) return 70;
   int outcome;
