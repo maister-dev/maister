@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  probeContainerRuntimeDaemon:
+    vi.fn<() => Promise<{ serverVersion: string; strategy: string }>>(),
   getContainerRuntimeClient:
     vi.fn<
       () => Promise<{ info: { containerRuntime: { serverVersion: string } } }>
@@ -38,6 +40,10 @@ vi.mock("testcontainers", () => ({
   getContainerRuntimeClient: mocks.getContainerRuntimeClient,
 }));
 
+vi.mock("../docker-runtime-probe", () => ({
+  probeContainerRuntimeDaemon: mocks.probeContainerRuntimeDaemon,
+}));
+
 import {
   startBarePostgresTestDb,
   TestDatabaseDockerUnavailableError,
@@ -45,6 +51,10 @@ import {
 
 describe("shared Testcontainers database helper lifecycle", () => {
   beforeEach(() => {
+    mocks.probeContainerRuntimeDaemon.mockResolvedValue({
+      serverVersion: "lifecycle-control",
+      strategy: "lifecycle-control",
+    });
     mocks.getContainerRuntimeClient.mockResolvedValue({
       info: { containerRuntime: { serverVersion: "lifecycle-control" } },
     });
