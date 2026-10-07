@@ -43,6 +43,9 @@ import {
   processIdentity,
   signalInvocationGroup,
   signalInvocationProcess,
+  signalCheckedInvocationGroup,
+  processGroupRetired,
+  logInvocation,
   assertInvocationGroupEmpty,
   FIXTURE_WATCHDOG,
   releaseInvocation,
@@ -256,6 +259,183 @@ async function stopIdleChild(child: ChildProcess): Promise<void> {
 
   process.kill(-child.pid, "SIGKILL");
   await exited;
+}
+
+async function assertDarwinGroupRetirement(
+  invocation: Invocation,
+  sibling: Invocation,
+  directory: string,
+): Promise<void> {
+  const executable = path.join(directory, "process-group-transition");
+  const source = fileURLToPath(
+    new URL("../fixtures/process-group-transition.c", import.meta.url),
+  );
+
+  await execFileAsync(
+    "cc",
+    ["-Wall", "-Wextra", "-Werror", "-O2", source, "-o", executable],
+    {
+      timeout: 10_000,
+      maxBuffer: 16 * 1024,
+    },
+  );
+  for (const kind of ["owned", "inspector"] as const) {
+    const control = spawn(executable, [invocation.id, kind], {
+      env: { ...process.env, ...invocationEnvironment(sibling) },
+      detached: true,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const exited = once(control, "exit");
+
+    void exited.catch(() => {});
+    let zombie = false;
+
+    try {
+      const [readyData] = await once(control.stdout, "data", {
+        signal: AbortSignal.timeout(5_000),
+      });
+      const ready = JSON.parse(String(readyData)) as {
+        event: string;
+        pid: number;
+      };
+
+      expect(ready.event).toBe("group-transition-ready");
+      expect(Number.isSafeInteger(ready.pid) && ready.pid > 1).toBe(true);
+      const members = (await readProcessSnapshot(invocation)).filter(
+        (entry) => entry.pgid === ready.pid && !entry.zombie,
+      );
+
+      if (kind === "owned") {
+        expect(members).toHaveLength(1);
+        expect(members[0]).toMatchObject({
+          pid: ready.pid,
+          owned: true,
+          inspected: true,
+        });
+        const modulePath = fileURLToPath(
+          new URL("../process-invocation.ts", import.meta.url),
+        );
+        const denial = await execFileAsync(
+          "/usr/bin/sandbox-exec",
+          [
+            "-p",
+            "(version 1)(allow default)(deny signal)",
+            process.execPath,
+            "--import",
+            createRequire(import.meta.url).resolve("tsx"),
+            "--input-type=module",
+            "-e",
+            `import {signalInvocationGroup} from ${JSON.stringify(modulePath)};
+const invocation = JSON.parse(process.argv[1]);
+try {
+  await signalInvocationGroup(invocation, Number(process.argv[2]), "SIGTERM");
+  throw new Error("live group signal denial was hidden");
+} catch (error) {
+  if (error.code !== "EPERM") throw error;
+  process.stdout.write(JSON.stringify({event:"group-signal-denied",code:error.code}) + "\\n");
+}`,
+            JSON.stringify(invocation),
+            String(ready.pid),
+          ],
+          { timeout: 10_000, maxBuffer: 16 * 1024 },
+        );
+
+        expect(JSON.parse(denial.stdout)).toEqual({
+          event: "group-signal-denied",
+          code: "EPERM",
+        });
+        expect(await processIdentity(invocation, ready.pid)).toMatchObject({
+          owned: true,
+          inspected: true,
+          zombie: false,
+        });
+      } else {
+        expect(members).toEqual([]);
+        expect(await processIdentity(invocation, ready.pid)).toMatchObject({
+          owned: false,
+          inspected: true,
+          zombie: false,
+        });
+      }
+      // The unfiltered kernel proof must see a live inspector omitted by the ownership reader.
+      expect(await processGroupRetired(invocation, ready.pid)).toBe(false);
+      const zombieData = once(control.stdout, "data", {
+        signal: AbortSignal.timeout(5_000),
+      });
+
+      control.stdin.write("z");
+      const [receiptData] = await zombieData;
+      const receipt = JSON.parse(String(receiptData)) as {
+        event: string;
+        pid: number;
+        status: number;
+      };
+
+      expect(receipt).toEqual({
+        event: "group-transition-zombie",
+        pid: ready.pid,
+        status: 5,
+      });
+      zombie = true;
+      expect(await processGroupRetired(invocation, ready.pid)).toBe(true);
+      if (kind === "owned") {
+        // Real identities were captured while live. The barrier schedules death
+        // between that ownership read and the real group syscall, with no reaping.
+        for (const signal of ["SIGTERM", "SIGKILL"] as const) {
+          let failure: unknown;
+
+          try {
+            process.kill(-ready.pid, signal);
+          } catch (error) {
+            failure = error;
+          }
+          expect(failure).toMatchObject({ code: "EPERM", syscall: "kill" });
+          logInvocation(invocation, "native-group-retirement-control", {
+            pgid: ready.pid,
+            signal,
+            status: receipt.status,
+            errorCode: "EPERM",
+            outcome: "observed",
+          });
+          await expect(
+            signalCheckedInvocationGroup(
+              invocation,
+              ready.pid,
+              members,
+              signal,
+            ),
+          ).resolves.toBeUndefined();
+        }
+        const livenessProgram = (await readdir(invocation.directory)).find(
+          (file) => /^process-group-liveness-[a-f0-9]{16}$/u.test(file),
+        );
+
+        if (!livenessProgram)
+          throw new Error("native group liveness executable is missing");
+        const livenessPath = path.join(invocation.directory, livenessProgram);
+
+        await chmod(livenessPath, 0o000);
+        try {
+          await expect(
+            signalCheckedInvocationGroup(
+              invocation,
+              ready.pid,
+              members,
+              "SIGTERM",
+            ),
+          ).rejects.toMatchObject({
+            cause: { code: "EPERM" },
+            errors: [{ code: "EPERM" }, { code: "EACCES" }],
+          });
+        } finally {
+          await chmod(livenessPath, 0o755);
+        }
+      }
+    } finally {
+      control.stdin.end(zombie ? "r" : "zr");
+      expect(await exited).toEqual([0, null]);
+    }
+  }
 }
 
 async function assertMissingBuildLockIdentity(
@@ -914,6 +1094,7 @@ describe("S5.2 invocation process ownership", () => {
         "O-identity requires a supported process-inspection platform",
       ).toBe("darwin");
 
+      await assertDarwinGroupRetirement(invocation, sibling, directory);
       const transitionExecutable = path.join(
         directory,
         "process-info-transition",
