@@ -942,6 +942,85 @@ R4 correction, while its owner-push/hosted and Linux gates remain open.
 CI-R4a implementation commit `47d5a5a80ec760bb8e62218d92b8fa4693c4a1aa`
 matches all 105 frozen source hashes; CI-R4b records its receipts and remaining gates.
 
+### CI-R5 — measured macOS module compilation reuse (2026-10-09)
+
+[PR37925546122](https://github.com/maister-dev/maister/actions/runs/37925546122/job/113803484976)
+tested owner-pushed `5c33875449efbf37857d36a50c289f6a4da04aed` through merge
+`75f82adc86099892afa1b9bb336b925ae193ce6f`. Its parents are `f43ac157` and
+`5c338754`; tree `e73a1b49f781c56d87f5010ef642e807a197c677` matches the pushed
+tree. All four web reports validate at 640 cases per Node and both supervisor
+reports validate at 111 cases. Independent preflight passes 1/1 with zero leaks
+in 187.219s. The Intel job still fails: the unchanged 2340s slice exits 124,
+with four completed owners/35 cases in 2144.263s and no complete outer reporter.
+The three remaining owners/15 cases do not qualify. Terminal containment reaps
+one adapter and one PostgreSQL container; the job takes 52m42s.
+
+R4 reduces the same completed-owner total by 168.846s; its fresh main/Brain
+transport remains 6/6 and suite templates already clone per case. The one
+production build takes 244.737s, with subsequent reuse taking 30–134ms.
+Deduplicated physical and embedded application logs show 43 real web boots,
+median 12.833s and total 590.843s from kernel start to listening. Native-reader
+latency/counts are absent, so a native redesign has no measured justification.
+The retry-exhaustion and independent process-death resources retain their
+owning contracts; neither is a removable wait or a reusable shared stack.
+
+A bounded Darwin ARM64 experiment uses the same freshly verified build,
+real PostgreSQL clones, real supervisor, production web, sandbox boundary and
+HTTP readiness on both exact Nodes. Alternating disabled/cold/warm boots
+measure warm startup savings of about 15%; first OS/process warmup is separate.
+Actual child cache status/path witnesses, enabled-oracle failure with caching
+disabled, restored enabled HTTP readiness and zero leaks precede adoption.
+The experiment's final SIGKILL/restart runs with caching disabled and proves
+ordinary restart continuity; the final cache-enabled owning suite must prove
+its restart controls separately. This local measurement does not predict
+Intel's final budget.
+
+The correction owns only the macOS CI recipe, its setup script and executable
+workflow control. A fresh private job-temporary cache is inherited by the
+build/preflight/fixtures; an actual selected-Node child must prove activation,
+exact containment and persisted file-module entries before environment export.
+Unavailable/disabled caching fails explicitly. No cross-job artifact/cache is
+restored. Kernel isolation, native process identity/foreign-signal refusal,
+production API, SQL/migrations, configuration and deployment stay unchanged.
+The default serial inventory remains seven suites/50 cases plus independent
+preflight; both Nodes/two web shards, 60-minute job and original slice budget
+remain binding. The new setup control explicitly advances the runner/workflow
+owning inventory from 19 to 20 cases, including existing nested controls.
+
+- [x] Bind the actual pushed/merge tree, strict uploaded reports, incomplete
+      isolation inventory, fixed timing and failed containment receipts.
+- [x] Measure cold/warm versus disabled production boots and cache witnesses
+      on both exact Nodes; retain genuine falsification and restart evidence.
+- [x] Specify private cache lifetime, capability refusal, source/Node
+      invalidation, artifact exclusion and unchanged product/kernel contracts.
+- [x] Complete setup/workflow RED → GREEN → REFACTOR on both exact Nodes;
+      retain failed activation oracle and complete owning name sets.
+- [x] Freeze the final executable sources and recipe; run independent Darwin
+      preflight/full 7/50, minimum-Node cleanup 13, strict reporters, timings
+      and zero leaks with the actual fresh cache setup.
+- [x] Complete all required static/format/spec gates and adversarial review;
+      commit implementation and qualification records as focused phases.
+- [ ] Owner pushes the qualified phases; verify exact SHA/merge tree and
+      hosted preflight/full reporter, all mandatory jobs, headroom and zero
+      leaks. An incomplete reporter, overrun or containment still fails.
+      S5.2/S5.3/S5.4 remain open at 42/45; Linux qualification/hosting, expanded
+      browser lifecycle and separate-user deployment retain their own gates.
+
+Local R5 qualification freezes 111 executable/config hashes at base
+`5c338754`. The actual fresh-cache setup and all outer commands exit 0:
+Darwin ARM64 separate preflight 1/1 in 5.166s (181ms cleanup), full seven/50
+in 785.294s (370ms), and minimum-Node cleanup 13/13 in 93.189s (149ms).
+Strict reporters and all original names validate with zero leaks. Two job
+caches are removed; 33 read-only exact invocation/session/reaper queries find
+no remaining containers. Both Nodes pass the original 19 controls plus one
+new setup control; all 11 static gates pass. Adversarial source review finds
+no material defect. The whole local lane does not improve on R4's 782.510s;
+only the alternating boot experiment demonstrates the cache benefit.
+Implementation phase `c5a3ddbddc4ea77f8000cd7e1cda2c11064b0965`
+matches every frozen hash; the qualification phase changes only its records.
+[The R5 fix record](../patches/2026-10-09-16.42.md) binds commands, hashes,
+falsification, timings and remaining owner-push/hosted qualification.
+
 ## Commit Plan
 
 Implementation commits preserve focused, qualified trees; no remote visibility before owner push.
@@ -958,6 +1037,8 @@ The second hosted-audit correction uses disjoint local phase groups:
 | CI-R3c | Canonical analytics contract, exact-source failed audit and corrective receipts; fixed-budget/LINUX/owner-push gates remain truthful | `docs(test): record remaining hosted isolation failures` |
 | CI-R4a | Shared PostgreSQL storage/migration adapter, existing owner controls and canonical setup contract; full local qualification | `perf(test): bound PostgreSQL storage and batch lineage transport` |
 | CI-R4b | Owning plan and timestamped fix patch; exact-source receipts, remaining hosted qualification and owner-push gate | `docs(test): record macOS isolation setup qualification` |
+| CI-R5a | Private compile-cache setup, actual workflow wiring/control and canonical lifetime contract; full local owner qualification | `perf(ci): reuse verified Node compilation in macOS isolation` |
+| CI-R5b | Owning plan and timestamped fix patch; measured disabled/cold/warm evidence, exact-source reporters and remaining hosted gate | `docs(test): record measured macOS compile-cache qualification` |
 
 
 | Checkpoint | Tasks / required green gate | Suggested conventional commit |
