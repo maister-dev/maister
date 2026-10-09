@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  getContainerRuntimeClient: vi.fn<() => Promise<void>>(),
+  probeContainerRuntimeDaemon:
+    vi.fn<() => Promise<{ serverVersion: string; strategy: string }>>(),
+  getContainerRuntimeClient:
+    vi.fn<
+      () => Promise<{ info: { containerRuntime: { serverVersion: string } } }>
+    >(),
   start: vi.fn<() => Promise<never>>(),
 }));
 
@@ -16,6 +21,14 @@ vi.mock("@testcontainers/postgresql", () => {
     }
 
     withPassword(): this {
+      return this;
+    }
+
+    withTmpFs(): this {
+      return this;
+    }
+
+    withCommand(): this {
       return this;
     }
 
@@ -35,6 +48,10 @@ vi.mock("testcontainers", () => ({
   getContainerRuntimeClient: mocks.getContainerRuntimeClient,
 }));
 
+vi.mock("../docker-runtime-probe", () => ({
+  probeContainerRuntimeDaemon: mocks.probeContainerRuntimeDaemon,
+}));
+
 import {
   startBarePostgresTestDb,
   TestDatabaseDockerUnavailableError,
@@ -42,7 +59,13 @@ import {
 
 describe("shared Testcontainers database helper lifecycle", () => {
   beforeEach(() => {
-    mocks.getContainerRuntimeClient.mockResolvedValue(undefined);
+    mocks.probeContainerRuntimeDaemon.mockResolvedValue({
+      serverVersion: "lifecycle-control",
+      strategy: "lifecycle-control",
+    });
+    mocks.getContainerRuntimeClient.mockResolvedValue({
+      info: { containerRuntime: { serverVersion: "lifecycle-control" } },
+    });
     mocks.start.mockRejectedValue(
       new Error("Docker daemon stopped after probe"),
     );

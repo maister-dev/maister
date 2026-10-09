@@ -24,6 +24,9 @@ const LEDGER_KEY = "MAISTER_TEST_PROCESS_LEDGER";
 const NATIVE_SOURCE = fileURLToPath(
   new NodeURL("./process-environment.c", import.meta.url),
 );
+const GROUP_LIVENESS_SOURCE = fileURLToPath(
+  new NodeURL("./process-group-liveness.c", import.meta.url),
+);
 
 export type ProcessIdentity = Readonly<{
   pid: number;
@@ -122,15 +125,16 @@ export function logInvocation(
   );
 }
 
-async function nativeReader(invocation: Invocation): Promise<string> {
+async function nativeExecutable(
+  invocation: Invocation,
+  source: string,
+  name: string,
+): Promise<string> {
   const digest = createHash("sha256")
-    .update(await readFile(NATIVE_SOURCE, "utf8"))
+    .update(await readFile(source, "utf8"))
     .digest("hex")
     .slice(0, 16);
-  const executable = path.join(
-    invocation.directory,
-    `process-environment-${digest}`,
-  );
+  const executable = path.join(invocation.directory, `${name}-${digest}`);
 
   try {
     await stat(executable);
@@ -156,7 +160,7 @@ async function nativeReader(invocation: Invocation): Promise<string> {
         "-Wextra",
         "-Werror",
         "-O2",
-        NATIVE_SOURCE,
+        source,
         "-o",
         temporary,
       ],
@@ -182,7 +186,7 @@ async function nativeReader(invocation: Invocation): Promise<string> {
         else
           reject(
             new Error(
-              `native reader compilation failed: ${code}/${signal}\n${diagnostics}`,
+              `native ${name} compilation failed: ${code}/${signal}\n${diagnostics}`,
               { cause: failure },
             ),
           );
@@ -199,8 +203,12 @@ async function nativeReader(invocation: Invocation): Promise<string> {
 async function readDarwinProcesses(
   invocation: Invocation,
   pid?: number,
-): Promise<ProcessIdentity[]> {
-  const executable = await nativeReader(invocation);
+): Promise<Readonly<{ identities: ProcessIdentity[]; diagnostics: string }>> {
+  const executable = await nativeExecutable(
+    invocation,
+    NATIVE_SOURCE,
+    "process-environment",
+  );
   const env = {
     ...process.env,
     ...invocationEnvironment(invocation),
@@ -234,7 +242,7 @@ async function readDarwinProcesses(
       nativeDiagnostics: stderr.slice(-4096).trim(),
     });
 
-  return stdout
+  const identities = stdout
     .trim()
     .split("\n")
     .filter(Boolean)
@@ -261,6 +269,8 @@ async function readDarwinProcesses(
         zombie: status === "5",
       };
     });
+
+  return { identities, diagnostics: stderr.slice(-4096).trim() };
 }
 
 async function readLinuxProcesses(
@@ -331,7 +341,8 @@ async function readLinuxProcesses(
 export async function readProcessSnapshot(
   invocation: Invocation,
 ): Promise<ProcessIdentity[]> {
-  if (process.platform === "darwin") return readDarwinProcesses(invocation);
+  if (process.platform === "darwin")
+    return (await readDarwinProcesses(invocation)).identities;
   if (process.platform === "linux") return readLinuxProcesses(invocation);
   throw new InvocationOwnershipError(
     `no process environment reader for ${process.platform}`,
@@ -353,12 +364,15 @@ export async function findProcessIdentity(
   invocation: Invocation,
   pid: number,
 ): Promise<ProcessIdentity | null> {
-  const snapshot =
+  const native =
     process.platform === "darwin"
       ? await readDarwinProcesses(invocation, pid)
-      : process.platform === "linux"
-        ? await readLinuxProcesses(invocation, pid)
-        : await readProcessSnapshot(invocation);
+      : undefined;
+  const snapshot =
+    native?.identities ??
+    (process.platform === "linux"
+      ? await readLinuxProcesses(invocation, pid)
+      : await readProcessSnapshot(invocation));
 
   const entry = snapshot.find((candidate) => candidate.pid === pid);
 
@@ -371,6 +385,12 @@ export async function findProcessIdentity(
   }
   throw new InvocationOwnershipError(
     `live process ${pid} could not be inspected`,
+    {
+      cause: new Error(
+        native?.diagnostics ||
+          "process reader returned no identity for a live PID",
+      ),
+    },
   );
 }
 
@@ -410,23 +430,21 @@ async function writeRecord(
   await rename(temporary, filename);
 }
 
-export async function registerProcess(
+async function writeProcessRecord(
   invocation: Invocation,
   record: Omit<ProcessRecord, "kind" | "identity">,
-  pid: number,
+  identity: ProcessIdentity,
 ): Promise<ProcessRecord> {
-  const identity = await processIdentity(invocation, pid);
-
   if (record.role !== "runner" && (!identity.owned || !identity.inspected)) {
     throw new InvocationOwnershipError(
-      `process ${pid} lacks the exact invocation environment tag`,
+      `process ${identity.pid} lacks the exact invocation environment tag`,
     );
   }
   const entry: ProcessRecord = { kind: "process", identity, ...record };
 
   await writeRecord(invocation, entry);
   logInvocation(invocation, "process-registered", {
-    pid,
+    pid: identity.pid,
     pgid: identity.pgid,
     role: record.role,
     caseName: record.caseName,
@@ -439,6 +457,18 @@ export async function registerProcess(
   });
 
   return entry;
+}
+
+export async function registerProcess(
+  invocation: Invocation,
+  record: Omit<ProcessRecord, "kind" | "identity">,
+  pid: number,
+): Promise<ProcessRecord> {
+  return writeProcessRecord(
+    invocation,
+    record,
+    await processIdentity(invocation, pid),
+  );
 }
 
 /** A known direct child can be observed across an exec wrapper's startup window. */
@@ -459,7 +489,7 @@ export async function registerSpawnedProcess(
         "spawned process identity changed before registration",
       );
     if (current.owned && current.inspected)
-      return registerProcess(invocation, record, child.pid);
+      return writeProcessRecord(invocation, record, current);
     if (
       child.exitCode !== null ||
       child.signalCode !== null ||
@@ -563,6 +593,113 @@ function signalOwnedPid(
   }
 }
 
+/** Complete Darwin PGID/status query: absence proof only, never signal authority. */
+export async function processGroupRetired(
+  invocation: Invocation,
+  pgid: number,
+): Promise<boolean> {
+  if (process.platform !== "darwin" || !Number.isSafeInteger(pgid) || pgid <= 1)
+    throw new InvocationOwnershipError(
+      "group retirement requires a Darwin PGID",
+    );
+  const executable = await nativeExecutable(
+    invocation,
+    GROUP_LIVENESS_SOURCE,
+    "process-group-liveness",
+  );
+  const { stdout } = await execFileAsync(executable, [String(pgid)], {
+    env: {
+      ...process.env,
+      ...invocationEnvironment(invocation),
+      MAISTER_TEST_PROCESS_INSPECTOR: invocation.id,
+    },
+    timeout: 10_000,
+    maxBuffer: 16 * 1024,
+  });
+  const receipt = /^(\d+)\t(\d+)\t(\d+)\n$/u.exec(stdout);
+  const values = receipt?.slice(1).map(Number);
+
+  if (
+    !values ||
+    !values.every(Number.isSafeInteger) ||
+    values[0] !== pgid ||
+    values[2] > values[1]
+  )
+    throw new InvocationOwnershipError(
+      "malformed native group liveness receipt",
+    );
+
+  return values[2] === 0;
+}
+
+/** Callers supply the full group from their immediately preceding ownership read. */
+export async function signalCheckedInvocationGroup(
+  invocation: Invocation,
+  pgid: number,
+  members: readonly ProcessIdentity[],
+  signal: NodeJS.Signals,
+): Promise<void> {
+  if (!members.length) return;
+  const unverified = members.filter(
+    (entry) =>
+      !entry.owned ||
+      !entry.inspected ||
+      entry.zombie ||
+      entry.pgid !== pgid ||
+      entry.uid !== process.getuid?.() ||
+      entry.pid <= 1 ||
+      entry.pid === process.pid,
+  );
+
+  if (pgid <= 1 || unverified.length) {
+    logInvocation(invocation, "fixture-group-signal-refused", {
+      pgid,
+      signal,
+      memberCount: members.length,
+      unverifiedCount: unverified.length,
+    });
+    for (const member of unverified.slice(0, 8))
+      logInvocation(invocation, "fixture-group-unverified-member", {
+        ...member,
+        signal,
+      });
+    throw new InvocationOwnershipError(
+      `refusing unverifiable fixture group ${pgid}`,
+    );
+  }
+  try {
+    process.kill(-pgid, signal);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+
+    if (code === "ESRCH") return;
+    if (code !== "EPERM" || process.platform !== "darwin") throw error;
+    let retired: boolean;
+
+    try {
+      retired = await processGroupRetired(invocation, pgid);
+    } catch (inspectionFailure) {
+      throw new AggregateError(
+        [error, inspectionFailure],
+        `group ${pgid} signal ${signal} failed and retirement could not be verified`,
+        { cause: error },
+      );
+    }
+    logInvocation(
+      invocation,
+      retired ? "fixture-group-retired" : "fixture-group-signal-denied",
+      {
+        pgid,
+        signal,
+        errorCode: code,
+        memberCount: members.length,
+        outcome: retired ? "already-exited" : "failed",
+      },
+    );
+    if (!retired) throw error;
+  }
+}
+
 /** A discovered leak remains a failed lane even when reaping succeeds. */
 export async function sweepInvocation(
   invocation: Invocation,
@@ -625,11 +762,7 @@ export async function sweepInvocation(
         });
       }
       if (groupOwned) {
-        try {
-          process.kill(-pgid, signal);
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
-        }
+        await signalCheckedInvocationGroup(invocation, pgid, members, signal);
       } else {
         for (const target of targets) {
           const latest = (await readProcessSnapshot(invocation)).find((entry) =>
@@ -977,6 +1110,31 @@ export async function fixtureProcessEnvironment(
   };
 }
 
+export async function signalInvocationProcess(
+  invocation: Invocation,
+  expected: ProcessIdentity,
+  signal: NodeJS.Signals,
+): Promise<void> {
+  const current = await findProcessIdentity(invocation, expected.pid);
+
+  if (!current) return;
+  if (
+    expected.pid <= 1 ||
+    expected.pid === process.pid ||
+    !current.owned ||
+    !current.inspected ||
+    !sameProcess(expected, current)
+  )
+    throw new InvocationOwnershipError(
+      "refusing signal to changed, foreign or uninspectable process identity",
+    );
+  try {
+    process.kill(current.pid, signal);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+  }
+}
+
 export async function signalInvocationGroup(
   invocation: Invocation,
   pgid: number,
@@ -987,31 +1145,7 @@ export async function signalInvocationGroup(
   );
 
   if (!members.length) return;
-  const unverified = members.filter(
-    (entry) => !entry.owned || !entry.inspected || entry.pid === process.pid,
-  );
-
-  if (pgid <= 1 || unverified.length) {
-    logInvocation(invocation, "fixture-group-signal-refused", {
-      pgid,
-      signal,
-      memberCount: members.length,
-      unverifiedCount: unverified.length,
-    });
-    for (const member of unverified.slice(0, 8))
-      logInvocation(invocation, "fixture-group-unverified-member", {
-        ...member,
-        signal,
-      });
-    throw new InvocationOwnershipError(
-      `refusing unverifiable fixture group ${pgid}`,
-    );
-  }
-  try {
-    process.kill(-pgid, signal);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
-  }
+  await signalCheckedInvocationGroup(invocation, pgid, members, signal);
 }
 
 export async function assertInvocationGroupEmpty(

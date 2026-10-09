@@ -1,4 +1,6 @@
 import type { ChildProcess } from "node:child_process";
+import type { LinuxApplicationOutcome } from "./linux-isolation-protocol";
+import type { ProcessIdentity } from "./process-invocation";
 
 import {
   assertInvocationGroupEmpty,
@@ -22,6 +24,7 @@ export type OwnedFixture = {
   pid: number;
   bootId: string;
   exited: Promise<number | null>;
+  outcome: Promise<LinuxApplicationOutcome>;
   kill(signal?: NodeJS.Signals): Promise<void>;
   logTail(maxBytes: number): Promise<string>;
 };
@@ -34,6 +37,11 @@ export type OwnedFixtureInput = {
   logFile: string;
   bootId: string;
   killGraceMs: number;
+  outcome?: Promise<LinuxApplicationOutcome>;
+  gracefulSignal?(
+    identity: ProcessIdentity,
+    signal: NodeJS.Signals,
+  ): Promise<void>;
   // Resolves when the process is serving. A returned string replaces the
   // provisional boot id and re-registers the process under it.
   ready(exited: Promise<number | null>): Promise<string | undefined>;
@@ -44,9 +52,22 @@ export async function startOwnedFixture(
 ): Promise<OwnedFixture> {
   const { invocation, child, role, root, logFile } = input;
   const pid = child.pid ?? -1;
-  const exited = new Promise<number | null>((resolve) => {
-    child.once("exit", (code) => resolve(code));
+  const nativeOutcome = new Promise<LinuxApplicationOutcome>((resolve) => {
+    child.once("close", (code, signal) =>
+      resolve(
+        code === null && signal === null
+          ? { kind: "unobserved", reason: "status-unavailable" }
+          : { kind: "observed", code, signal },
+      ),
+    );
   });
+  const outcome = input.outcome ?? nativeOutcome;
+  const exited = outcome.then((result) =>
+    result.kind === "observed" ? result.code : null,
+  );
+
+  // Keep the public rejection observable without a pre-readiness unhandled rejection.
+  void exited.catch(() => undefined);
   const leaderGone = () => child.exitCode !== null || child.signalCode !== null;
   const caseName = () => process.env.MAISTER_TEST_CASE_NAME ?? "fixture";
   const registration = (bootId: string) => ({
@@ -58,9 +79,12 @@ export async function startOwnedFixture(
     logFile,
   });
   let bootId = input.bootId;
+  let identity: ProcessIdentity | undefined;
 
   try {
-    await registerSpawnedProcess(invocation, registration(bootId), child);
+    identity = (
+      await registerSpawnedProcess(invocation, registration(bootId), child)
+    ).identity;
 
     const confirmed = await input.ready(exited);
 
@@ -72,7 +96,11 @@ export async function startOwnedFixture(
     const failures: unknown[] = [error];
 
     try {
-      if (pid > 0) await signalInvocationGroup(invocation, pid, "SIGKILL");
+      if (pid > 0) {
+        await signalInvocationGroup(invocation, pid, "SIGKILL");
+        await nativeOutcome;
+        await assertInvocationGroupEmpty(invocation, pid);
+      }
     } catch (cleanupError) {
       failures.push(cleanupError);
     }
@@ -80,6 +108,12 @@ export async function startOwnedFixture(
       cause: new AggregateError(failures, `${role} startup/cleanup`),
     });
   }
+  const capturedIdentity = identity;
+
+  if (!capturedIdentity)
+    throw new Error(
+      "fixture startup completed without a registered process identity",
+    );
 
   return {
     pid,
@@ -87,25 +121,41 @@ export async function startOwnedFixture(
       return bootId;
     },
     exited,
+    outcome,
     async kill(signal: NodeJS.Signals = "SIGKILL") {
       if (!leaderGone()) {
-        await signalInvocationGroup(invocation, pid, signal);
+        if (signal !== "SIGKILL" && input.gracefulSignal)
+          await input.gracefulSignal(capturedIdentity, signal);
+        else await signalInvocationGroup(invocation, pid, signal);
+        // Closure and namespace status are separate: a rejected status frame
+        // must still contain the captured child and preserve its log.
         await Promise.race([
-          exited,
+          nativeOutcome,
           new Promise<void>((resolve) => {
             setTimeout(resolve, input.killGraceMs).unref();
           }),
         ]);
         if (!leaderGone()) {
           await signalInvocationGroup(invocation, pid, "SIGKILL");
-          await exited;
+          await nativeOutcome;
         }
+      }
+      const failures: unknown[] = [];
+
+      try {
+        await outcome;
+      } catch (error) {
+        failures.push(error);
       }
       try {
         await assertInvocationGroupEmpty(invocation, pid);
+      } catch (error) {
+        failures.push(error);
       } finally {
         await preserveFixtureLog(invocation, logFile);
       }
+      if (failures.length)
+        throw new AggregateError(failures, `${role} status/cleanup failed`);
       logInvocation(
         invocation,
         signal === "SIGKILL" ? "fixture-kill" : "fixture-stop",

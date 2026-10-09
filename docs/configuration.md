@@ -1124,6 +1124,38 @@ Field types are limited to `string | number | boolean | enum | array`.
 Add new types by extending `formFieldSchema` in
 `web/lib/config.schema.ts`.
 
+## Test-only isolation selector
+
+`MAISTER_TEST_ISOLATION` is read only by
+`web/test-support/process-isolation.ts`; `real-web.ts` and the owning
+isolation/preflight suites consume the resolved driver. It is not a production
+configuration or `maister.yaml` field.
+
+| Value | Contract |
+|---|---|
+| unset | Select the supported platform's driver: Darwin `sandbox-exec`; Linux `bubblewrap`, with explicit capability/policy prerequisites |
+| `sandbox-exec` | Darwin kernel sandbox; unsupported platform or missing executable fails explicitly |
+| `bubblewrap` | Implemented Linux rootless namespace test driver; required namespace/options/policy refusal fails explicitly, with no ordinary-exec fallback; full Linux 55/both-Node and hosted qualification remain open |
+| any other value | Explicit unsupported-driver failure |
+
+Linux prerequisites and their qualification scope live in
+[getting started](getting-started.md#production-isolation-test-prerequisites)
+and [test infrastructure](system-analytics/test-infrastructure.md#linux-environments-and-qualification-designed).
+The current production Dockerfile does not provision this test-only dependency;
+neither setting this variable nor choosing a Linux image creates a production
+filesystem boundary. Production Docker/Compose/systemd and server env contracts
+remain unchanged.
+
+`MAISTER_TEST_BUILT_WEB` is an existing private fixture handoff, consumed by
+`web/test-support/fixtures/process-cleanup-stack.ts` and the Linux lifecycle
+fixture. It carries the outer fixture's verified `ProductionWebBuild` JSON
+(`revision`, `buildId`, `artifactPath`, `invocationId`). `startRealWeb` verifies
+the current revision, build stamp, BuildID and artifact path before launch;
+a malformed or stale handle fails explicitly. Without this handoff, the Linux
+fixture builds through the ordinary owning invocation. A diagnostic that uses
+a separately built handle must report that provenance and its build time; it
+does not satisfy the fresh-build/full-lane qualification gate by itself.
+
 ## Environment variables (server tier)
 
 Read by Next.js (`web/`) and `supervisor/` at startup:

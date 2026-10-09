@@ -8,7 +8,15 @@
 #include <unistd.h>
 
 /* Fixed fields only: diagnostics must never disclose argv or environment bytes. */
+static unsigned int inspection_diagnostics_emitted;
+static unsigned int inspection_diagnostics_omitted;
+
 static void inspection_diagnostic(pid_t pid, const char *stage, long long result, long long expected, int error) {
+  if (inspection_diagnostics_emitted >= 16) {
+    inspection_diagnostics_omitted++;
+    return;
+  }
+  inspection_diagnostics_emitted++;
   fprintf(stderr, "{\"event\":\"process-inspection-failed\",\"pid\":%d,\"stage\":\"%s\",\"result\":%lld,\"expected\":%lld,\"errno\":%d}\n", pid, stage, result, expected, error);
 }
 
@@ -57,32 +65,48 @@ int main(int argc, char **argv) {
     return 70;
   }
   char *buffer = malloc((size_t)argmax);
-  errno = 0;
-  int bytes = proc_listpids(PROC_ALL_PIDS, 0, NULL, 0);
-  int list_error = errno;
-  if (!buffer || bytes <= 0) {
-    inspection_diagnostic(selected, buffer ? "proc_listpids_size" : "argument_buffer", bytes, 1, buffer ? list_error : ENOMEM);
+  if (!buffer) {
+    inspection_diagnostic(selected, "argument_buffer", 0, argmax, ENOMEM);
     return 70;
   }
-  size_t capacity = (size_t)bytes + 4096 * sizeof(pid_t);
-  pid_t *pids = malloc(capacity);
-  if (!pids) {
-    inspection_diagnostic(selected, "pid_buffer", 0, capacity, ENOMEM);
-    return 70;
-  }
-  errno = 0;
-  bytes = proc_listpids(PROC_ALL_PIDS, 0, pids, (int)capacity);
-  list_error = errno;
-  if (bytes <= 0 || (size_t)bytes >= capacity) {
-    inspection_diagnostic(selected, "proc_listpids", bytes, capacity, list_error);
-    return 70;
+  pid_t *catalogue = NULL;
+  pid_t *pids = &selected;
+  size_t count = 1;
+  /* Known-PID identity reads cannot depend on a separate global catalogue. */
+  if (!selected) {
+    errno = 0;
+    int bytes = proc_listpids(PROC_ALL_PIDS, 0, NULL, 0);
+    int list_error = errno;
+    if (bytes <= 0) {
+      inspection_diagnostic(0, "proc_listpids_size", bytes, 1, list_error);
+      free(buffer);
+      return 70;
+    }
+    size_t capacity = (size_t)bytes + 4096 * sizeof(pid_t);
+    catalogue = malloc(capacity);
+    if (!catalogue) {
+      inspection_diagnostic(0, "pid_buffer", 0, capacity, ENOMEM);
+      free(buffer);
+      return 70;
+    }
+    errno = 0;
+    bytes = proc_listpids(PROC_ALL_PIDS, 0, catalogue, (int)capacity);
+    list_error = errno;
+    if (bytes <= 0 || (size_t)bytes >= capacity) {
+      inspection_diagnostic(0, "proc_listpids", bytes, capacity, list_error);
+      free(catalogue);
+      free(buffer);
+      return 70;
+    }
+    pids = catalogue;
+    count = (size_t)bytes / sizeof(pid_t);
   }
   char entry[256];
   snprintf(entry, sizeof(entry), "MAISTER_TEST_WORKTREE_INVOCATION_ID=%s", argv[1]);
   char inspector_entry[256];
   snprintf(inspector_entry, sizeof(inspector_entry), "MAISTER_TEST_PROCESS_INSPECTOR=%s", argv[1]);
   int selected_seen = 0;
-  for (size_t i = 0; i < (size_t)bytes / sizeof(pid_t); i++) {
+  for (size_t i = 0; i < count; i++) {
     struct proc_bsdinfo info;
     /* The untagged inspector shares its caller's group but is not a group owner. */
     if (pids[i] <= 0 || pids[i] == getpid() || (selected && pids[i] != selected)) continue;
@@ -99,8 +123,14 @@ int main(int argc, char **argv) {
       continue;
     }
     int owned = owns_invocation(pids[i], entry, buffer, (size_t)argmax);
-    if (selected && owned < 0) inspection_diagnostic(selected, "kern_procargs", owned, 0, -owned);
-    if (owns_invocation(pids[i], inspector_entry, buffer, (size_t)argmax) == 1) continue;
+    if (owned < 0) inspection_diagnostic(pids[i], "kern_procargs", owned, 0, -owned);
+    int inspector = owns_invocation(pids[i], inspector_entry, buffer, (size_t)argmax);
+    if (inspector < 0) inspection_diagnostic(pids[i], "kern_procargs_inspector", inspector, 0, -inspector);
+    if (inspector == 1) {
+      if (!selected) continue;
+      /* A directly inspected helper is observable but never gains signal authority. */
+      if (owned > 0) owned = 0;
+    }
     struct proc_bsdinfo after;
     errno = 0;
     found = proc_pidinfo(pids[i], PROC_PIDTBSDINFO, 0, &after, sizeof(after));
@@ -109,14 +139,23 @@ int main(int argc, char **argv) {
       if (selected) inspection_diagnostic(selected, "proc_pidinfo_after", found, sizeof(after), info_error);
       continue;
     }
+    if (after.pbi_pid != (unsigned int)pids[i] || after.pbi_pid != info.pbi_pid) {
+      if (selected) inspection_diagnostic(selected, "pid_identity_changed", after.pbi_pid, pids[i], 0);
+      continue;
+    }
+    if (after.pbi_uid != info.pbi_uid || after.pbi_uid != getuid()) {
+      if (selected) inspection_diagnostic(selected, "uid_identity_changed", after.pbi_uid, info.pbi_uid, 0);
+      continue;
+    }
     if (after.pbi_start_tvsec != info.pbi_start_tvsec || after.pbi_start_tvusec != info.pbi_start_tvusec) {
       if (selected) inspection_diagnostic(selected, "start_identity_changed", 0, 0, 0);
       continue;
     }
-    printf("%u\t%u\t%u\t%u\t%llu:%llu\t%d\t%u\n", info.pbi_pid, info.pbi_ppid, info.pbi_pgid, info.pbi_uid, info.pbi_start_tvsec, info.pbi_start_tvusec, owned, info.pbi_status);
+    printf("%u\t%u\t%u\t%u\t%llu:%llu\t%d\t%u\n", after.pbi_pid, after.pbi_ppid, after.pbi_pgid, after.pbi_uid, after.pbi_start_tvsec, after.pbi_start_tvusec, owned, after.pbi_status);
   }
   if (selected && !selected_seen) inspection_diagnostic(selected, "selected_pid_missing", 0, 1, 0);
+  if (inspection_diagnostics_omitted) fprintf(stderr, "{\"event\":\"process-inspection-diagnostics-limited\",\"omitted\":%u}\n", inspection_diagnostics_omitted);
   free(buffer);
-  free(pids);
+  free(catalogue);
   return ferror(stdout) ? 74 : 0;
 }
