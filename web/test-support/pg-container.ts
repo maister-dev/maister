@@ -35,6 +35,13 @@ type MigrationJournalEntry = { idx: number; tag: string };
 export const PGVECTOR_IMAGE = "pgvector/pgvector:pg16";
 export const TEST_DATABASE_DOCKER_MESSAGE =
   "integration/e2e require Docker; build/unit do not";
+const postgresStorage = {
+  storageKind: "tmpfs",
+  storagePath: "/var/lib/postgresql/data",
+  storageLimitBytes: 512 * 1024 * 1024,
+  maxWalSizeMb: 64,
+  minWalSizeMb: 32,
+} as const;
 
 // Daemon reachability has a short absent-Docker guard. SDK construction also
 // discovers Compose and DNS, which must not consume that guard after a genuine
@@ -185,25 +192,48 @@ async function startPostgresContainer(
     {
       lane,
       phase: "container-create-start",
-      durationMs: Date.now() - startedAt,
+      preparationDurationMs: Date.now() - startedAt,
+      ...postgresStorage,
     },
     "starting owned PostgreSQL container",
   );
+  const containerStartedAt = Date.now();
+
   try {
     const container = await new PostgreSqlContainer(PGVECTOR_IMAGE)
       .withDatabase(options.databaseName)
       .withUsername("test")
       .withPassword("test")
+      .withTmpFs({ [postgresStorage.storagePath]: "rw,size=512m" })
+      .withCommand([
+        "postgres",
+        "-c",
+        `max_wal_size=${postgresStorage.maxWalSizeMb}MB`,
+        "-c",
+        `min_wal_size=${postgresStorage.minWalSizeMb}MB`,
+      ])
       .withLabels(
         invocation ? { [INVOCATION_CONTAINER_LABEL]: invocation.id } : {},
       )
       .start();
+    const containerStartDurationMs = Date.now() - containerStartedAt;
 
     try {
       if (invocation) await registerContainer(invocation, container.getId());
     } catch (error) {
       await throwAfterCleanup(lane, error, { container });
     }
+    logger.info(
+      {
+        lane,
+        phase: "container-start",
+        outcome: "passed",
+        durationMs: containerStartDurationMs,
+        containerId: container.getId(),
+        ...postgresStorage,
+      },
+      "started owned PostgreSQL container",
+    );
 
     return container;
   } catch (cause) {

@@ -24,6 +24,14 @@ vi.mock("@testcontainers/postgresql", () => {
       return this;
     }
 
+    withTmpFs(): this {
+      return this;
+    }
+
+    withCommand(): this {
+      return this;
+    }
+
     withLabels(): this {
       return this;
     }

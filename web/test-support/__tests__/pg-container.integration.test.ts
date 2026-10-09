@@ -366,6 +366,35 @@ describe("shared Testcontainers Postgres helper", () => {
     );
 
     expect(ledgers.rows).toEqual([]);
+    const directory = await database.pool.query<{ data_directory: string }>(
+      "SHOW data_directory",
+    );
+    const filesystem = await database.container.exec([
+      "stat",
+      "-f",
+      "-c",
+      "%T %S %b",
+      directory.rows[0].data_directory,
+    ]);
+    const [kind, blockSize, blocks] = filesystem.output.trim().split(/\s+/u);
+
+    expect(filesystem.exitCode).toBe(0);
+    expect(kind).toBe("tmpfs");
+    expect(Number(blockSize) * Number(blocks)).toBe(512 * 1024 * 1024);
+    const durability = await database.pool.query<{
+      name: string;
+      setting: string;
+    }>(
+      "SELECT name, setting FROM pg_settings WHERE name IN ('fsync', 'full_page_writes', 'max_wal_size', 'min_wal_size', 'synchronous_commit') ORDER BY name",
+    );
+
+    expect(durability.rows).toEqual([
+      { name: "fsync", setting: "on" },
+      { name: "full_page_writes", setting: "on" },
+      { name: "max_wal_size", setting: "64" },
+      { name: "min_wal_size", setting: "32" },
+      { name: "synchronous_commit", setting: "on" },
+    ]);
   });
 
   it("migrates the main lineage and preserves the requested pool limit", async () => {
@@ -456,7 +485,7 @@ describe("shared Testcontainers Postgres helper", () => {
         "compared real PostgreSQL migration execution",
       );
 
-      expect(receipt.querySubmissions).toBe(source.length * 2 + 5);
+      expect(receipt.querySubmissions).toBe(6);
       expect(receipt.querySubmissions).toBeLessThan(standardSubmissions);
       const ledger = config.migrationsTable ?? "__drizzle_migrations";
       const expected = source.map((entry) => ({
@@ -511,18 +540,18 @@ describe("shared Testcontainers Postgres helper", () => {
       );
       await writeFile(
         join(invalid, "0000_before_failure.sql"),
-        "CREATE TABLE migration_rollback_probe (id integer PRIMARY KEY);\n",
+        "CREATE TABLE migration_rollback_probe (id integer PRIMARY KEY);\nINSERT INTO migration_rollback_probe VALUES (1)\n",
       );
       await writeFile(
         join(invalid, "0001_failure.sql"),
-        "ALTER TABLE migration_rollback_probe ADD COLUMN added text;\n--> statement-breakpoint\nINTENTIONALLY INVALID SQL;\n",
+        "ALTER TABLE migration_rollback_probe ADD COLUMN added text;\n--> statement-breakpoint\nSELECT 1 / 0;\n",
       );
       await expect(
         migrateTestDatabase(batched.pool, {
           migrationsFolder: invalid,
           migrationsSchema: "rollback_checks",
         }),
-      ).rejects.toMatchObject({ code: "42601" });
+      ).rejects.toMatchObject({ code: "22012" });
       expect(
         (
           await batched.pool.query<{ relation: string | null }>(
@@ -540,6 +569,73 @@ describe("shared Testcontainers Postgres helper", () => {
       expect(
         await migrationLedger(batched.pool, "__drizzle_migrations"),
       ).toEqual(await migrationLedger(standard.pool, "__drizzle_migrations"));
+      const fullJournal = JSON.parse(
+        await readFile(join(invalid, "meta/_journal.json"), "utf8"),
+      ) as { entries: { idx: number; when: number; tag: string }[] };
+      const incrementalConfig: MigrationConfig = {
+        migrationsFolder: invalid,
+        migrationsSchema: "rollback_checks",
+      };
+
+      await writeFile(
+        join(invalid, "meta/_journal.json"),
+        JSON.stringify({
+          ...fullJournal,
+          entries: fullJournal.entries.slice(0, 1),
+        }),
+      );
+      expect(
+        (await migrateTestDatabase(batched.pool, incrementalConfig))
+          .querySubmissions,
+      ).toBe(6);
+      const firstLedger = await batched.pool.query<{
+        hash: string;
+        created_at: string;
+      }>(
+        "SELECT hash, created_at FROM rollback_checks.__drizzle_migrations ORDER BY id",
+      );
+
+      expect(firstLedger.rows).toEqual(
+        readMigrationFiles(incrementalConfig).map((entry) => ({
+          hash: entry.hash,
+          created_at: String(entry.folderMillis),
+        })),
+      );
+      await writeFile(
+        join(invalid, "0001_failure.sql"),
+        "ALTER TABLE migration_rollback_probe ADD COLUMN added text;\n--> statement-breakpoint\nUPDATE migration_rollback_probe SET added = 'literal '' quote; -- retained'; -- trailing comment",
+      );
+      await writeFile(
+        join(invalid, "meta/_journal.json"),
+        JSON.stringify(fullJournal),
+      );
+      expect(
+        (await migrateTestDatabase(batched.pool, incrementalConfig))
+          .querySubmissions,
+      ).toBe(6);
+      expect(
+        (await migrateTestDatabase(batched.pool, incrementalConfig))
+          .querySubmissions,
+      ).toBe(5);
+      expect(
+        (
+          await batched.pool.query<{ id: number; added: string }>(
+            "SELECT id, added FROM migration_rollback_probe",
+          )
+        ).rows,
+      ).toEqual([{ id: 1, added: "literal ' quote; -- retained" }]);
+      expect(
+        (
+          await batched.pool.query<{ hash: string; created_at: string }>(
+            "SELECT hash, created_at FROM rollback_checks.__drizzle_migrations ORDER BY id",
+          )
+        ).rows,
+      ).toEqual(
+        readMigrationFiles(incrementalConfig).map((entry) => ({
+          hash: entry.hash,
+          created_at: String(entry.folderMillis),
+        })),
+      );
     } finally {
       await rm(invalid, { recursive: true, force: true });
     }

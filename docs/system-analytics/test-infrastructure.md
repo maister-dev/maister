@@ -27,6 +27,21 @@ is recorded; the existing denied-root and durable-worker core is Implemented.
 - **Barrier** — reached evidence plus explicit release or owned-process death.
 - **Build handle** — verified immutable production build reused by nested controls.
 
+Disposable PostgreSQL containers use a 512 MiB `tmpfs` for their data directory.
+Each container still starts a fresh real PostgreSQL 16/pgvector server, keeps its
+own invocation label and reaper lifetime, and retains `fsync`,
+`full_page_writes` and `synchronous_commit` enabled. The helper promises data
+persistence for the live container's lifetime; stopping the disposable container
+ends that lifetime. Web/supervisor restarts use the same live database. No test
+container data is a production durability or host-reboot acceptance witness.
+WAL recycling uses a 64 MiB `max_wal_size` checkpoint target and 32 MiB
+`min_wal_size`, rather than PostgreSQL's default target larger than this filesystem.
+These are soft recycling targets; the 512 MiB filesystem remains the hard cap.
+The real bare-lineage owner verifies the filesystem, capacity and server settings,
+and the full scheduler admission owner retains its two 24,000-row controls and
+updates of accumulated history to qualify actual capacity. Container startup or
+capacity errors remain explicit, with no disk-backed fallback.
+
 ## State machine
 
 ```mermaid
@@ -865,18 +880,20 @@ late success receipt after that phase has failed. Endpoint, TLS and socket
 selection must match Testcontainers, and a configured unreachable endpoint
 must fail explicitly. No container may start before both phases pass.
 
-Fresh test migration setup may batch the existing SQL fragments within each
-migration file. It uses Drizzle's original migration metadata and official
-dialect transaction/ledger implementation: main precedes Brain, hashes and
-timestamps remain identical, repeated migration is a no-op, and an error
-rolls back the lineage SQL and ledger rows while preserving its cause.
-Ledger schema/table scaffolding remains as in the standard migrator.
-Every SQL fragment still
-executes against real PostgreSQL. Production migration commands and historical
-partial-upgrade helpers retain their existing execution paths. The owning
-`pg-container.integration.test.ts` controls compare full schema, ledgers and
-seeded data with the standard migrator, and prove submission reduction and
-rollback; elapsed timings are evidence, not a promised hosted speedup.
+`migrateTestDatabase` reads the committed lineages through Drizzle and preserves
+its ledger schema, hashes, timestamps, ordering and pending-migration selection.
+Main precedes Brain. It creates/checks the ledger, then submits all pending SQL
+and each corresponding ledger insertion together inside one Drizzle transaction.
+A fresh lineage takes six query submissions regardless of its file count; a
+no-op takes five. SQL bytes and full-lineage rollback remain unchanged, including
+the original failure cause. Every SQL fragment executes against real PostgreSQL.
+The existing `pg-container.integration.test.ts` parity owner compares schema,
+seeds and both ledgers with the installed official migrator, exercises
+incremental application/reapplication and runtime-failure rollback, and records
+measured transport costs. Production migration commands and historical
+partial-upgrade helpers retain their existing execution paths. These setup
+optimizations preserve every acceptance case; elapsed timings remain
+platform-labelled evidence, not a promised hosted speedup.
 
 An explicit Darwin PID lookup reads that PID directly, independently of a
 global process catalogue. Its PID, UID, start identity and invocation tag
