@@ -872,6 +872,76 @@ CLI from PATH; it is retained as environment failure, not behavioral RED.
       Preserve the existing macOS S5.2 contract until A8–A15/C3/G-LINUX legitimately
       qualify and prospectively amend Linux hosting. S5.2/S5.3/S5.4 remain open42/45.
 
+### CI-R4 — macOS fixed-budget database setup (2026-10-09)
+
+The owner pushed R3 through `6bdb8970130c40e7b6f813ad5d97de98be7a370c`.
+[PR37643544568](https://github.com/maister-dev/maister/actions/runs/37643544568)
+tested merge `20b91d4194c6d1928efc519df9d31fd6aa19fc7e`; its parents are
+`f43ac157` and `6bdb897`, and tree `d75471572df214bad9a4c0aacfc1a918d0e1c904`
+equals the owner-pushed tree. Runtime was ready at 311s, independent preflight
+finished at 454s and passed 1/1 with zero leaks. Four web and two supervisor
+reporters pass `validateLaneReport`; other mandatory jobs passed. All 13 cleanup
+cases, including SIGINT, passed. The full isolation slice still exited 124 at
+its unchanged 2340s cap: four completed suites passed 35/35 in 2313.109s,
+leaving 26.891s before collection/runner overhead for three owners/15 cases.
+The full reporter is absent. Terminal containment removed one owned PostgreSQL
+container; this remains failed qualification. The matching owner-push run
+37643538064 also failed only the Intel job; no rerun was dispatched.
+
+Deduplicated phase evidence shows nine independent cleanup databases consumed
+375.327s (174.440s startup and 200.887s main/Brain migrations), and three suite
+templates consumed 109.400s. These costs overlap suite durations. Existing
+`container-create-start.durationMs` measured preparation before SDK `.start()`,
+not actual container creation; correct that field and record actual startup.
+Build reuse already works and shutdown deadlines have no measured defect.
+No process-inspection optimization or compile-cache assumption is needed.
+
+Owner authorized fixing the macOS job. The correction preserves fresh labelled
+real PostgreSQL containers and unchanged durability settings, with bounded 512 MiB
+disposable data tmpfs. It batches pending main/Brain SQL and ledger insertions
+inside Drizzle's transaction, preserving installed migrator parity while
+reducing fresh-lineage submissions 383/17→6/6. Existing database owners gain
+actual filesystem/capacity/settings, incremental/reapply and runtime rollback
+controls; no new isolation case or manifest change is required. SQL/journals,
+production API/config/deployment and both drivers remain unchanged. Linux must
+requalify this changed harness before its future hosting gate.
+
+The first full minimum-Node web pass exposed a capacity regression: 6 of 640
+cases failed in the scheduler owner after PostgreSQL exhausted tmpfs while
+allocating WAL. The original 16-case owner retains two 24,000-row cardinality
+controls and updates accumulated history. Its isolated run reproduced the
+failure. Retain the 512 MiB hard cap and qualify 64/32 MiB max/min WAL recycling
+targets with all durability settings enabled. These targets are soft; actual
+capacity, fix-disabled falsification and complete owners must pass. Preserve
+the first failed reporter and requalify all affected sources after correction.
+
+- [x] Reconcile exact pushed/merge source, uploaded reports, fixed-budget timing
+      and the measured repeat-cost envelope; preserve failed hosted evidence.
+- [x] Amend the canonical test contract and reproduce real RED: disk filesystem
+      instead of tmpfs, and 383 instead of 6 main-lineage submissions.
+- [x] Complete GREEN → REFACTOR for both exact Nodes, full database/template
+      owners, original name sets, runtime-failure rollback and measured capacity.
+- [x] Freeze final sources; qualify separate Darwin preflight/full 7/50,
+      minimum-Node cleanup 13, applicable web/browser consumers, zero leaks and
+      all spec/static/format gates; perform adversarial review before commit.
+- [ ] Owner-push checkpoint: owner publishes the locally verified R4 phase
+      commits; verify that exact SHA/merge tree, actual preflight/full reporter,
+      `validateLaneReport`, slice/job headroom, cleanup and all mandatory jobs.
+      Leave S5.2/S5.3/S5.4 unchecked at 42/45 until their real gates pass. If setup
+      savings still do not fit the budget, retain the failure and measure the
+      next bottleneck; never increase timeout/resources, shard, or drop cases.
+
+Local post-refactor Darwin ARM64 qualification preserves all 105 frozen source
+hashes: both exact Nodes pass database/template/scheduler 27/27 and full web
+640/640; Node24.19 separate preflight 1/1, complete serial isolation 7/50 in
+782.510s, and original browser 13/13 pass; Node24.15 cleanup 13/13 passes. All
+actual exits, original name sets, strict reporters, zero leaks, capacity receipts
+and 13 static/compile gates pass. The [R4 fix record](../patches/2026-10-09-12.23.md)
+contains timings, falsifications and exact-source receipts. This closes the local
+R4 correction, while its owner-push/hosted and Linux gates remain open.
+CI-R4a implementation commit `47d5a5a80ec760bb8e62218d92b8fa4693c4a1aa`
+matches all 105 frozen source hashes; CI-R4b records its receipts and remaining gates.
+
 ## Commit Plan
 
 Implementation commits preserve focused, qualified trees; no remote visibility before owner push.
@@ -886,6 +956,8 @@ The second hosted-audit correction uses disjoint local phase groups:
 | CI-R3a | Invocation group signaling, kernel retirement probe and real native controls under O-identity; full Darwin50/preflight and minimum-Node owning controls | `fix(test): verify Darwin group retirement after signal races` |
 | CI-R3b | Existing Intel runtime setup and executable workflow controls; private homes, exact socket, explicit VM resolver and platform-labelled evidence | `fix(ci): own Colima state and declare its VM resolver` |
 | CI-R3c | Canonical analytics contract, exact-source failed audit and corrective receipts; fixed-budget/LINUX/owner-push gates remain truthful | `docs(test): record remaining hosted isolation failures` |
+| CI-R4a | Shared PostgreSQL storage/migration adapter, existing owner controls and canonical setup contract; full local qualification | `perf(test): bound PostgreSQL storage and batch lineage transport` |
+| CI-R4b | Owning plan and timestamped fix patch; exact-source receipts, remaining hosted qualification and owner-push gate | `docs(test): record macOS isolation setup qualification` |
 
 
 | Checkpoint | Tasks / required green gate | Suggested conventional commit |
