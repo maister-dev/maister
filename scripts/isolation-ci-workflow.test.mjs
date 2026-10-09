@@ -7,7 +7,10 @@ import {
   mkdirSync,
   readFileSync,
   realpathSync,
+  readdirSync,
   rmSync,
+  statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { createServer } from "node:net";
@@ -30,6 +33,148 @@ const cleanup = workflow.jobs["execution-isolation"].steps.find(
 );
 
 assert(cleanup, "isolation workflow must retain its cleanup step");
+
+test("isolation compile cache proves real inherited compilation before publishing a fresh private path and refuses disabled or missing capabilities", (context) => {
+  const steps = workflow.jobs["execution-isolation"].steps;
+  const index = steps.findIndex(
+    (step) => step.name === "Prepare private Node compile cache",
+  );
+  const cacheSetup = fileURLToPath(
+    new URL("./setup-isolation-ci-compile-cache.mjs", import.meta.url),
+  );
+  const runtimeModule = new URL("../runtime/node-version.ts", import.meta.url)
+    .href;
+  const root = mkdtempSync(join(tmpdir(), "maister-ci-cache-"));
+  const runnerTemp = join(root, "job-temp");
+  const linkedTemp = join(root, "linked-temp");
+  const githubEnv = join(root, "github.env");
+  const evidence = join(runnerTemp, "maister-isolation-evidence");
+  const baseEnv = {
+    ...process.env,
+    RUNNER_TEMP: linkedTemp,
+    GITHUB_ENV: githubEnv,
+    NODE_COMPILE_CACHE: join(root, "foreign-cache"),
+    MAISTER_TEST_EVIDENCE_DIR: evidence,
+  };
+
+  delete baseEnv.NODE_DISABLE_COMPILE_CACHE;
+  function run(env) {
+    const result = spawnSync(process.execPath, [cacheSetup], {
+      encoding: "utf8",
+      timeout: 15_000,
+      env,
+    });
+
+    assert.ifError(result.error);
+
+    return result;
+  }
+  function persistedFiles(directory) {
+    return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+      const item = join(directory, entry.name);
+
+      return entry.isDirectory() ? persistedFiles(item) : [item];
+    });
+  }
+
+  try {
+    assert(index > 0);
+    assert.equal(
+      steps[index].run,
+      "node scripts/setup-isolation-ci-compile-cache.mjs",
+    );
+    assert.equal(steps[index - 1].run, "pnpm runtime:check");
+    assert.equal(
+      steps[index + 1].name,
+      "Provision pinned isolated container runtime",
+    );
+    mkdirSync(runnerTemp);
+    mkdirSync(evidence);
+    symlinkSync(runnerTemp, linkedTemp);
+    const ready = [];
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      writeFileSync(githubEnv, "");
+      const result = run(baseEnv);
+
+      assert.equal(result.status, 0, result.stderr);
+      const receipt = JSON.parse(result.stdout);
+
+      assert.equal(receipt.event, "isolation-node-compile-cache-ready");
+      assert.equal(receipt.node, process.versions.node);
+      assert.equal(receipt.cacheStatus, "ALREADY_ENABLED");
+      assert.equal(receipt.runtimeModule, runtimeModule);
+      assert.equal(dirname(receipt.cacheRoot), realpathSync(runnerTemp));
+      assert.equal(realpathSync(receipt.cacheRoot), receipt.cacheRoot);
+      assert.equal(statSync(receipt.cacheRoot).mode & 0o777, 0o700);
+      assert(receipt.cacheDirectory.startsWith(`${receipt.cacheRoot}/`));
+      assert(!receipt.cacheRoot.startsWith(`${realpathSync(evidence)}/`));
+      const files = persistedFiles(receipt.cacheDirectory);
+
+      assert(files.length > 0);
+      assert.equal(receipt.cacheFiles, files.length);
+      assert.equal(
+        receipt.cacheBytes,
+        files.reduce((total, file) => total + statSync(file).size, 0),
+      );
+      assert(receipt.cacheBytes > 0);
+      assert.equal(
+        readFileSync(githubEnv, "utf8"),
+        `NODE_COMPILE_CACHE=${receipt.cacheRoot}\n`,
+      );
+      ready.push(receipt);
+    }
+    assert.notEqual(ready[0].cacheRoot, ready[1].cacheRoot);
+    const refusals = [];
+    const unpublished = "OWNER_ENTRY=untouched\n";
+
+    for (const disabled of ["1", "0"]) {
+      writeFileSync(githubEnv, unpublished);
+      const result = run({ ...baseEnv, NODE_DISABLE_COMPILE_CACHE: disabled });
+
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /compile cache witness failed/u);
+      assert.match(
+        result.stderr,
+        /initial compile cache directory is unavailable/u,
+      );
+      assert.equal(readFileSync(githubEnv, "utf8"), unpublished);
+      refusals.push({ disabled, status: result.status, stderr: result.stderr });
+    }
+    for (const missing of ["RUNNER_TEMP", "GITHUB_ENV"]) {
+      writeFileSync(githubEnv, unpublished);
+      const env = { ...baseEnv };
+
+      delete env[missing];
+      const result = run(env);
+
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, new RegExp(`${missing} is required`, "u"));
+      assert.equal(readFileSync(githubEnv, "utf8"), unpublished);
+    }
+    for (const key of ["RUNNER_TEMP", "GITHUB_ENV"]) {
+      writeFileSync(githubEnv, unpublished);
+      const result = run({
+        ...baseEnv,
+        [key]: `${baseEnv[key]}\nforeign-export`,
+      });
+
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /must not contain CR or LF/u);
+      assert.equal(readFileSync(githubEnv, "utf8"), unpublished);
+    }
+    context.diagnostic(
+      JSON.stringify({
+        event: "compile-cache-real-control",
+        node: process.versions.node,
+        ready,
+        refusals,
+      }),
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 function installCommand(binDir, name, body) {
   const path = join(binDir, name);

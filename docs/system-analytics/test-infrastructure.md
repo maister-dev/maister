@@ -442,6 +442,21 @@ both Node versions fit the unchanged budget.
 
 The one macOS Intel isolation job keeps Colima 0.10.3/Lima 2.2.0 and one
 `colima start` attempt. It runs `runtime:check` before provisioning.
+After that check, `scripts/setup-isolation-ci-compile-cache.mjs` creates a fresh
+0700 Node compile-cache directory under the canonical job temporary root,
+outside the evidence directory. An actual child on the selected Node must
+prove cache activation, directory containment and persisted file-module cache
+before the script publishes `NODE_COMPILE_CACHE` through `GITHUB_ENV`.
+Disablement or an unavailable cache fails explicitly before provisioning.
+The build, preflight and production fixtures inherit that job-local cache;
+source and Node-version invalidation remain Node's responsibility. A cold
+module graph still compiles the checked-out source, and SIGKILL cannot be
+assumed to persist new entries. No cached application state or production
+build is restored from a previous job. Cache files stay outside artifact
+uploads and disappear with the ephemeral runner; only the bounded capability
+receipt is logged. This job does not collect V8 coverage; other jobs and the
+Linux driver environment retain their existing configuration. These semantics
+follow the [pinned Node module-cache contract](https://nodejs.org/download/release/v24.19.0/docs/api/module.html#module-compile-cache).
 Provisioning traces the downloaded pins, resolved
 profile and status JSON; `DOCKER_HOST` uses Colima's reported host socket URI,
 while `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE` names the VM-side

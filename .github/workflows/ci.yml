@@ -206,6 +206,8 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm runtime:check
+      - name: Prepare private Node compile cache
+        run: node scripts/setup-isolation-ci-compile-cache.mjs
       - name: Provision pinned isolated container runtime
         timeout-minutes: 15
         shell: bash
