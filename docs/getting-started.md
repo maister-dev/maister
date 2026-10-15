@@ -56,6 +56,40 @@ pnpm --version    # 9.x or newer
 git --version
 ```
 
+### Production isolation test prerequisites
+
+The production isolation lane is separate from ordinary unit/build tests.
+Darwin uses the existing `sandbox-exec` driver. The Linux namespace test driver
+is **Implemented** and Phase-1 qualified; its extended 55-case/both-Node and
+hosted gates remain open. The prerequisite and qualification contract is owned by
+[test infrastructure](system-analytics/test-infrastructure.md#linux-environments-and-qualification-designed).
+Do not interpret a Linux process-inspection smoke as driver qualification.
+
+Local Linux qualification requires an Ubuntu 24.04 **amd64 native host or VM**,
+ordinary nonroot harness, separate exact Node 24.15.0 and 24.19.0 environments,
+frozen pnpm install, Docker-backed Postgres 16, readable host proc identities,
+GNU coreutils, Git, a C compiler and an authenticated distro Bubblewrap package
+supporting every required namespace option. Record the installed package
+revision, binary checksum and corresponding source. Probe capabilities as the
+actual nonroot test user; package installation alone proves no boundary.
+The trusted process bridge also requires the existing Yama `ptrace_scope` to
+be `1`, `2` or `3` and Node's `--disable-sigusr1` support. An absent or permissive
+Yama policy refuses launch; provisioning never changes this host-wide sysctl.
+Provisioning may install dependencies or a narrowly scoped Bubblewrap AppArmor
+profile, but never globally disable AppArmor or namespace restrictions.
+
+ARM64 containers are development environments only. Record image digest, host
+kernel, architecture, UID mapping, seccomp and capabilities. Nested namespace
+support must pass explicitly; do not use blanket privileged mode, host PID or
+host-root mounts. A container-specific namespace syscall allowance is distinct
+from changing the host policy. The independent preflight and complete owning
+lane are required even after a capability probe succeeds.
+
+The existing production Dockerfile/Compose setup does **not** install or expose
+this test driver. This work adds no production separate-user isolation guarantee;
+that deployment deliverable remains separate. Test-only selector semantics are
+in [configuration](configuration.md#test-only-isolation-selector).
+
 ## Install
 
 ```bash

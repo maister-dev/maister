@@ -20,6 +20,7 @@ import {
 } from "../host-state";
 import { commandRequestDigest } from "../command-receipts";
 import { SESSION_EVENT_CHANNEL } from "../registry";
+import { pendingPermissions } from "../pending-permissions";
 import { canonicalCommandJson } from "../../../runtime/command-json";
 import {
   parseCommandReceiptV2,
@@ -1073,7 +1074,7 @@ describe("session.command events", () => {
   it("N1: a closed ACP transport publishes the crashed session before the failed prompt terminal", async () => {
     const host = await bootHost({
       runtimeRoot: await tempRoot(),
-      fixtureArgs: ["--hang", "--lines", "0", "--controlled-prompt"],
+      fixtureArgs: ["--hang", "--lines", "0", "--hang-permission"],
     });
 
     booted.push(host);
@@ -1096,22 +1097,60 @@ describe("session.command events", () => {
       15_000,
     );
     const entry = host.registry.get(sessionId)!;
+    const outputDrained = entry.record.outputDrained;
+    let releasePublication: () => void = () => {};
+    const publication = new Promise<void>((resolve) => {
+      releasePublication = resolve;
+    });
+
+    // Hold the real framer-drain boundary before the heartbeat can publish.
+    // SDK EOF rejects the prompt independently of this lifecycle barrier.
+    entry.record.outputDrained = Promise.resolve(outputDrained).then(
+      () => publication,
+    );
 
     try {
       await waitFor(
-        () => host.hostState.getReceipt(commandId)?.phase === "accepted",
+        () =>
+          host.hostState.getReceipt(commandId)?.phase === "accepted" &&
+          pendingPermissions.size(sessionId) === 1,
         5_000,
       );
       // The real ACP stream closes while the child is still alive. Its
       // rejected prompt can race ahead of the child's exit notification.
+      expect(entry.child.exitCode).toBeNull();
+      expect(entry.child.signalCode).toBeNull();
       entry.child.stdout!.destroy();
+      await waitFor(
+        () =>
+          entry.connection?.signal.aborted === true &&
+          entry.child.signalCode === "SIGKILL" &&
+          entry.record.outputTerminal !== undefined,
+        5_000,
+      );
+      expect(entry.record.terminalPublished).not.toBe(true);
+      expect(host.hostState.getReceipt(commandId)?.phase).toBe("accepted");
+      expect(pendingPermissions.size(sessionId)).toBe(1);
+      expect(entry.record.outputFailure).toBeUndefined();
+      releasePublication();
       const result = await prompt;
 
-      expect(result.status).toBeGreaterThanOrEqual(400);
+      expect(result.status).toBe(500);
+      expect(result.body).toMatchObject({
+        code: "ACP_PROTOCOL",
+        details: {
+          reason: "required_output_incomplete",
+          outputFailure: "producer_permission_failed",
+        },
+      });
+      expect(pendingPermissions.size(sessionId)).toBe(0);
     } finally {
+      releasePublication();
       if (entry.child.exitCode === null && entry.child.signalCode === null)
         entry.child.kill("SIGKILL");
       await waitFor(() => entry.record.terminalPublished === true, 5_000);
+      await entry.record.outputTerminal;
+      await prompt;
     }
     const events = canonicalRuntimeEvents(host, runId);
     const crashIndex = events.findIndex(

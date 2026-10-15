@@ -21,6 +21,7 @@ import {
 import { getCommand } from "./commands";
 import { defaultTransport } from "./default-transport";
 import { readPromptRequest } from "./command-request";
+import { openRuntimeObjectContent } from "./runtime-object-content";
 import {
   SessionContentReferenceSchema,
   sessionContentSource,
@@ -54,6 +55,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 async function readObjectJson(
   transport: ExecutionHostTransport,
   reference: ImmutableObjectReference,
+  context: { commandId: string; eventId?: string },
   signal: AbortSignal,
 ): Promise<Record<string, unknown>> {
   signal.throwIfAborted();
@@ -68,10 +70,12 @@ async function readObjectJson(
     metadata.sha256 !== reference.sha256
   )
     throw incomplete("object_metadata");
-  const response = await transport.openRuntimeObjectContent(
-    reference.objectId,
-    { signal },
-  );
+  const response = await openRuntimeObjectContent({
+    transport,
+    objectId: reference.objectId,
+    context,
+    signal,
+  });
   const reader = response.body.getReader();
   let completed = false;
 
@@ -192,7 +196,12 @@ export async function* commandEvents(input: {
         reference.firstFrame !== event.payload.sourceMonotonicId
       )
         throw incomplete("content_binding");
-      const payload = await readObjectJson(transport, reference, signal);
+      const payload = await readObjectJson(
+        transport,
+        reference,
+        { commandId: command.id, eventId: event.id },
+        signal,
+      );
 
       if (
         payload.sourceCommandId !== command.id ||
@@ -243,7 +252,12 @@ async function openPromptOutput(input: {
   if (health.identity?.hostKey !== host.hostKey)
     throw incomplete("host_identity");
   const manifest = parseCommandOutputManifestV2(
-    await readObjectJson(transport, reference, signal),
+    await readObjectJson(
+      transport,
+      reference,
+      { commandId: command.id },
+      signal,
+    ),
   );
 
   if (
@@ -270,7 +284,12 @@ async function openPromptOutput(input: {
       ),
     )
     .limit(1);
-  const original = await readObjectJson(transport, manifest.response, signal);
+  const original = await readObjectJson(
+    transport,
+    manifest.response,
+    { commandId: command.id },
+    signal,
+  );
 
   if (
     Object.keys(original).length !== 5 ||

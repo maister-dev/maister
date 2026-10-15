@@ -1,11 +1,17 @@
 import type { Db } from "@/lib/execution-host/db";
 import type { ExecutionHosts } from "@/lib/execution-host/client";
 import type { RealSupervisor } from "@/test-support/real-supervisor";
+import type { FaultBarrier } from "@/test-support/supervisor-fault-proxy";
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { fork, type ChildProcess } from "node:child_process";
 import path from "node:path";
-import { createServer, request as httpRequest } from "node:http";
+import {
+  createServer,
+  get,
+  request as httpRequest,
+  type IncomingMessage,
+} from "node:http";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -13,6 +19,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { DatabaseError, Pool } from "pg";
 
+import { parseCommandOutputReferenceV2 } from "../../../../runtime/command-evidence";
 import { issueOwnedPrompt } from "../ledger";
 import { defaultTransport } from "../default-transport";
 import {
@@ -92,6 +99,7 @@ import {
   useRealSupervisorUrl,
 } from "@/test-support/real-supervisor";
 import { seedNodePromptOwner } from "@/test-support/prompt-owner-fixture";
+import { startSupervisorFaultProxy } from "@/test-support/supervisor-fault-proxy";
 
 let database: StartedPostgresTestDb;
 let supervisor: RealSupervisor;
@@ -666,63 +674,252 @@ describe("AT-01 bounded output on the production supervisor", () => {
       .from(executionCommands)
       .where(eq(executionCommands.id, handle.commandId));
 
-    // The default registry stays closed until S2.7 supplies its domain adapter.
-    await expect(
-      preparePromptOwner({
-        db,
-        command,
-        registry: agentPromptOwners,
-        signal: AbortSignal.timeout(15_000),
-      }),
-    ).rejects.toMatchObject({
-      details: { causeCode: "agent_variant_not_implemented" },
+    await untilIngested(handle.commandId);
+    await worker.stop();
+    const reference = parseCommandOutputReferenceV2(
+      command.receiptEvidence?.evidenceV2?.terminal?.result?.output,
+    );
+    const bytes = new Uint8Array(8 * 1024 * 1024).fill(120);
+    const objectId = randomUUID();
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+
+    await producer.client.reserveRuntimeObject({
+      objectId,
+      kind: "generated_artifact",
+      logicalName: "draft-read-cap-control.bin",
+      mimeType: "application/octet-stream",
+      sizeBytes: bytes.length,
+      sha256,
+      generation: 1,
+      retentionClass: "run",
     });
-    const owners = createAgentPromptOwners({
-      prepareConsensusDraft: async ({ owner, outcome, command: original }) => {
-        expect(owner.ref).toEqual(ref);
-        if (outcome.state !== "succeeded")
-          throw new Error("fixture requires successful draft");
-        let text = "";
+    await producer.client.uploadRuntimeObject({
+      objectId,
+      generation: 1,
+      bytes,
+      sha256,
+    });
+    const proxy = await startSupervisorFaultProxy(supervisor.url);
+    const restoreOwnerUrl = useRealSupervisorUrl(proxy.url);
+    const occupiedReads: IncomingMessage[] = [];
+    const pendingBarriers = new Set<FaultBarrier>();
+    let caseFailure: { error: unknown } | null = null;
 
-        for await (const event of outcome.events) {
-          expect(event.payload?.sourceCommandId).toBe(original.id);
-          if (event.eventType === "session.update")
-            text += agentMessageText(event.payload?.update) ?? "";
-        }
-        expect(text).toBe(expected);
-
-        return {
-          apply: async (tx) => {
-            await tx.insert(runMessages).values({
-              id: `${original.id}:draft-adapter`,
-              runId: owner.ref.runId,
-              sequence: 1_000_000,
-              role: "assistant",
-              content: text,
-            });
-
-            return "applied";
+    try {
+      // Unread real responses retain both host verification slots until cancelled.
+      for (let index = 0; index < 2; index += 1) {
+        const response = await new Promise<IncomingMessage>(
+          (resolve, reject) => {
+            get(
+              `${supervisor.url}/runtime-objects/${objectId}/content`,
+              resolve,
+            ).once("error", reject);
           },
-        };
-      },
-    });
+        );
 
-    await queryPrompt({ db, handle, owners });
-    await queryPrompt({ db, handle, owners });
-    const messages = await db
-      .select()
-      .from(runMessages)
-      .where(eq(runMessages.id, `${command.id}:draft-adapter`));
-    const [applied] = await db
-      .select()
-      .from(executionCommands)
-      .where(eq(executionCommands.id, command.id));
+        occupiedReads.push(response);
+        expect(response.statusCode).toBe(200);
+      }
+      const contentPath = `/runtime-objects/${reference.objectId}/content`;
+      const countReads = (): number =>
+        proxy.traffic.filter(
+          (request) => request.method === "GET" && request.path === contentPath,
+        ).length;
+      const beforeExhausted = countReads();
 
-    expect(messages).toHaveLength(1);
-    expect(messages[0].content).toBe(expected);
-    expect(applied.applicationState).toBe("applied");
-    expect(applied.completionAppliedAt).not.toBeNull();
-    await producer.client.deleteSession(producer.session.hostSessionId);
+      await expect(
+        readPromptOutput({
+          db,
+          commandId: command.id,
+          signal: AbortSignal.timeout(15_000),
+        }),
+      ).rejects.toMatchObject({
+        code: "PRECONDITION",
+        details: { httpStatus: 409, reason: "command_in_progress" },
+      });
+      expect(countReads() - beforeExhausted).toBe(5);
+
+      const cancelledBusy = proxy.arm(
+        {
+          caseId: "draft-owner-cancel-busy-response",
+          method: "GET",
+          path: /^\/runtime-objects\/[^/]+\/content$/,
+          objectId: reference.objectId,
+        },
+        "hold-response",
+      );
+
+      pendingBarriers.add(cancelledBusy);
+      const cancellation = new AbortController();
+      const beforeCancellation = countReads();
+      const cancelled = expect(
+        readPromptOutput({
+          db,
+          commandId: command.id,
+          signal: cancellation.signal,
+        }),
+      ).rejects.toMatchObject({
+        code: "EXECUTOR_UNAVAILABLE",
+        details: { reason: "timeout" },
+      });
+
+      expect((await cancelledBusy.awaitReached()).status).toBe(409);
+      const heldRetry = proxy.arm(
+        {
+          caseId: "draft-owner-cancel-retried-read",
+          method: "GET",
+          path: /^\/runtime-objects\/[^/]+\/content$/,
+          objectId: reference.objectId,
+        },
+        "hold-request",
+      );
+
+      pendingBarriers.add(heldRetry);
+      cancelledBusy.release();
+      pendingBarriers.delete(cancelledBusy);
+      await heldRetry.awaitReached();
+      heldRetry.release();
+      pendingBarriers.delete(heldRetry);
+      cancellation.abort();
+      await cancelled;
+      expect(countReads() - beforeCancellation).toBe(2);
+
+      const heldRead = proxy.arm(
+        {
+          caseId: "draft-owner-content-read",
+          method: "GET",
+          path: /^\/runtime-objects\/[^/]+\/content$/,
+          objectId: reference.objectId,
+        },
+        "hold-request",
+      );
+
+      pendingBarriers.add(heldRead);
+      // The default registry stays closed until S2.7 supplies its domain adapter.
+      const unsupported = expect(
+        preparePromptOwner({
+          db,
+          command,
+          registry: agentPromptOwners,
+          signal: AbortSignal.timeout(15_000),
+        }),
+      ).rejects.toMatchObject({
+        details: { causeCode: "agent_variant_not_implemented" },
+      });
+
+      await heldRead.awaitReached();
+      const busyResponse = proxy.arm(
+        {
+          caseId: "draft-owner-real-busy-response",
+          method: "GET",
+          path: /^\/runtime-objects\/[^/]+\/content$/,
+          objectId: reference.objectId,
+        },
+        "hold-response",
+      );
+
+      pendingBarriers.add(busyResponse);
+      heldRead.release();
+      pendingBarriers.delete(heldRead);
+      expect((await busyResponse.awaitReached()).status).toBe(409);
+      for (const response of occupiedReads) response.destroy();
+      occupiedReads.length = 0;
+      busyResponse.release();
+      pendingBarriers.delete(busyResponse);
+      await unsupported;
+      const owners = createAgentPromptOwners({
+        prepareConsensusDraft: async ({
+          owner,
+          outcome,
+          command: original,
+        }) => {
+          expect(owner.ref).toEqual(ref);
+          if (outcome.state !== "succeeded")
+            throw new Error("fixture requires successful draft");
+          let text = "";
+
+          for await (const event of outcome.events) {
+            expect(event.payload?.sourceCommandId).toBe(original.id);
+            if (event.eventType === "session.update")
+              text += agentMessageText(event.payload?.update) ?? "";
+          }
+          expect(text).toBe(expected);
+
+          return {
+            apply: async (tx) => {
+              await tx.insert(runMessages).values({
+                id: `${original.id}:draft-adapter`,
+                runId: owner.ref.runId,
+                sequence: 1_000_000,
+                role: "assistant",
+                content: text,
+              });
+
+              return "applied";
+            },
+          };
+        },
+      });
+
+      await queryPrompt({ db, handle, owners });
+      await queryPrompt({ db, handle, owners });
+      const messages = await db
+        .select()
+        .from(runMessages)
+        .where(eq(runMessages.id, `${command.id}:draft-adapter`));
+      const [applied] = await db
+        .select()
+        .from(executionCommands)
+        .where(eq(executionCommands.id, command.id));
+
+      expect(messages).toHaveLength(1);
+      expect(messages[0].content).toBe(expected);
+      expect(applied.applicationState).toBe("applied");
+      expect(applied.completionAppliedAt).not.toBeNull();
+    } catch (error) {
+      caseFailure = { error };
+      throw error;
+    } finally {
+      restoreOwnerUrl();
+
+      const cleanupErrors: unknown[] = [];
+
+      try {
+        for (const response of occupiedReads) response.destroy();
+        for (const barrier of pendingBarriers)
+          if (barrier.observations.length > 0) barrier.cut();
+      } catch (error) {
+        cleanupErrors.push(error);
+      } finally {
+        try {
+          await proxy.close();
+        } catch (error) {
+          cleanupErrors.push(error);
+        } finally {
+          try {
+            worker = startProjectionWorker({
+              db,
+              projectors: canonicalProjectors,
+            });
+          } catch (error) {
+            cleanupErrors.push(error);
+          } finally {
+            try {
+              await producer.client.deleteSession(
+                producer.session.hostSessionId,
+              );
+            } catch (error) {
+              cleanupErrors.push(error);
+            }
+          }
+        }
+      }
+      if (cleanupErrors.length > 0)
+        throw new AggregateError(
+          [...(caseFailure ? [caseFailure.error] : []), ...cleanupErrors],
+          "draft owner fixture cleanup failed",
+        );
+    }
   });
 
   it("S2.8: domain deferral keeps the result pending without poisoning or running cleanup", async () => {

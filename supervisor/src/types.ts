@@ -1298,6 +1298,8 @@ export type SessionRecord = {
   // ADR-183: epoch ms of the first unanswered capacity wait; cleared on wake.
   outputPausedSince?: number;
   outputTerminal?: Promise<void>;
+  // Bounded ACP permission continuations settle after terminal purge.
+  settlePermissionCallbacks?: () => Promise<void>;
   terminalPublished?: boolean;
   outputFailure?: SupervisorErrorBody;
   abortOutput?: (error: SupervisorError) => void;

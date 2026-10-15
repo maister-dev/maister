@@ -3,10 +3,11 @@ import type { RealSupervisor } from "@/test-support/real-supervisor";
 import type { ProjectionWorker } from "@/lib/execution-host/events/projection-worker";
 import type { FlowYamlV1 } from "@/lib/config.schema";
 import type { ExecutionCommand } from "@/lib/db/schema";
+import type { ProcessIdentity } from "@/test-support/process-invocation";
 
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { execFile, fork, type ChildProcess } from "node:child_process";
+import { fork, spawn, type ChildProcess } from "node:child_process";
 import path from "node:path";
 
 import { and, eq, isNotNull } from "drizzle-orm";
@@ -74,6 +75,14 @@ import {
   useRealSupervisorUrl,
 } from "@/test-support/real-supervisor";
 import { startSupervisorFaultProxy } from "@/test-support/supervisor-fault-proxy";
+import {
+  FIXTURE_WATCHDOG,
+  fixtureProcessEnvironment,
+  invocationFromEnvironment,
+  registerSpawnedProcess,
+  readProcessSnapshot,
+  signalInvocationProcess,
+} from "@/test-support/process-invocation";
 
 let database: StartedPostgresTestDb;
 let supervisor: RealSupervisor;
@@ -2974,29 +2983,149 @@ describe("Flow prompt owners through the production graph driver", () => {
   // host any of these assertions (its `select` ignores `WHERE` and it stubs
   // `resumeCrashedRun` outright).
 
-  async function adapterPids(): Promise<number[]> {
-    return await new Promise((resolve) => {
-      execFile("pgrep", ["-f", supervisor.fixturePath], (_err, stdout) => {
-        resolve(
-          String(stdout)
-            .split("\n")
-            .map((line) => Number.parseInt(line.trim(), 10))
-            .filter((pid) => Number.isInteger(pid) && pid > 0),
-        );
-      });
+  /** A separate live adapter shares the executable, but never this host's
+   * process group. Crash injection must leave it able to answer real ACP. */
+  async function startSiblingAdapter(): Promise<
+    Readonly<{
+      assertResponsive: () => Promise<void>;
+      stop: () => Promise<void>;
+    }>
+  > {
+    const invocation = invocationFromEnvironment();
+
+    if (!invocation) throw new Error("adapter witness requires an invocation");
+    const child = spawn(
+      process.execPath,
+      ["--import", FIXTURE_WATCHDOG, supervisor.fixturePath],
+      {
+        env: {
+          ...process.env,
+          ...(await fixtureProcessEnvironment(invocation)),
+        },
+        detached: true,
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
+    let output = "";
+    let diagnostics = "";
+    let failure: Error | undefined;
+    let requestId = 0;
+    const closed = new Promise<void>((resolve) =>
+      child.once("close", () => resolve()),
+    );
+
+    child.once("error", (error: Error) => {
+      failure = error;
     });
+    child.stdin.on("error", (error: Error) => {
+      failure = error;
+    });
+    child.stdout.on("data", (chunk: Buffer) => {
+      output = `${output}${chunk.toString()}`.slice(-8192);
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      diagnostics = `${diagnostics}${chunk.toString()}`.slice(-8192);
+    });
+    let identity: ProcessIdentity | undefined;
+    const stop = async (): Promise<void> => {
+      if (child.exitCode === null && child.signalCode === null) {
+        if (identity)
+          await signalInvocationProcess(invocation, identity, "SIGKILL");
+        else child.kill("SIGKILL");
+      }
+      await closed;
+    };
+    const assertResponsive = async (): Promise<void> => {
+      const id = ++requestId;
+
+      await new Promise<void>((resolve, reject) =>
+        child.stdin.write(
+          `${JSON.stringify({
+            jsonrpc: "2.0",
+            id,
+            method: "initialize",
+            params: { protocolVersion: 1, clientCapabilities: {} },
+          })}\n`,
+          (error) => (error ? reject(error) : resolve()),
+        ),
+      );
+      await expect
+        .poll(
+          () => {
+            if (failure) throw failure;
+            if (child.exitCode !== null || child.signalCode !== null)
+              throw new Error(
+                `foreign adapter exited: code=${child.exitCode} signal=${child.signalCode} ${diagnostics}`,
+              );
+
+            return output
+              .split("\n")
+              .slice(0, -1)
+              .some((line) => {
+                const response: unknown = JSON.parse(line);
+
+                return (
+                  typeof response === "object" &&
+                  response !== null &&
+                  "id" in response &&
+                  response.id === id &&
+                  "result" in response
+                );
+              });
+          },
+          { timeout: 5_000, interval: 25 },
+        )
+        .toBe(true);
+    };
+
+    try {
+      identity = (
+        await registerSpawnedProcess(
+          invocation,
+          {
+            role: "fixture",
+            caseName: "N1 foreign adapter witness",
+            rootRole: "test-support",
+            root: null,
+            bootId: invocation.id,
+            logFile: null,
+          },
+          child,
+        )
+      ).identity;
+      await assertResponsive();
+
+      return { assertResponsive, stop };
+    } catch (error) {
+      try {
+        await stop();
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [error, cleanupError],
+          "adapter witness startup and cleanup failed",
+        );
+      }
+      throw error;
+    }
   }
 
   // Kill the adapter the way a host-side crash does: the supervisor survives,
   // its session goes terminal, and the ACP resume handle outlives it.
   async function killAdapterProcesses(): Promise<void> {
-    for (const pid of await adapterPids()) {
-      try {
-        process.kill(pid, "SIGKILL");
-      } catch {
-        // already gone
-      }
-    }
+    const invocation = invocationFromEnvironment();
+
+    if (!invocation)
+      throw new Error("adapter crash injection requires an invocation");
+    const processes = await readProcessSnapshot(invocation);
+    const adapters = processes.filter(
+      (identity) =>
+        identity.ppid === supervisor.pid &&
+        identity.pgid === supervisor.pid &&
+        !identity.zombie,
+    );
+
+    for (const identity of adapters)
+      await signalInvocationProcess(invocation, identity, "SIGKILL");
   }
 
   async function liveSessionCount(runId: string): Promise<number> {
@@ -3176,14 +3305,9 @@ describe("Flow prompt owners through the production graph driver", () => {
       };
     }
 
-    // Robustness, NOT a diagnosed fix. This helper was seen to time out ONCE at
-    // the old 30 s budget during a family run, and the hypothesis was that
-    // `pgrep` had raced the adapter's appearance so a one-shot kill never
-    // retried. That hypothesis is UNCONFIRMED: restoring the one-shot form and
-    // re-running the family passed 4/4, so the observation remains unexplained
-    // and the failing assertion was never captured. Re-killing each iteration
-    // and doubling the budget cost nothing and remove a real (if unproven)
-    // window; if this times out again, capture the assertion before theorising.
+    // Re-observe this supervisor's direct children until its own session is
+    // terminal. Each signal checks the captured UID/start identity and exact
+    // invocation tag; another fixture using the same executable is untouched.
     await expect
       .poll(
         async () => {
@@ -4251,8 +4375,10 @@ describe("Flow prompt owners through the production graph driver", () => {
       }),
     }).catch(() => undefined);
     let released = false;
+    let sibling: Awaited<ReturnType<typeof startSiblingAdapter>> | undefined;
 
     try {
+      sibling = await startSiblingAdapter();
       await expect
         .poll(
           async () => {
@@ -4278,6 +4404,7 @@ describe("Flow prompt owners through the production graph driver", () => {
         )
         .toBe(true);
       await killAdapterProcesses();
+      await sibling.assertResponsive();
       const crashFrame = await held.awaitReached(15_000);
 
       await expect
@@ -4324,6 +4451,7 @@ describe("Flow prompt owners through the production graph driver", () => {
     } finally {
       if (held.observations.length > 0 && !released) held.release();
       await killAdapterProcesses();
+      await sibling?.stop();
       await driver;
       restoreProxy();
       resetRegistrarStateForTests();

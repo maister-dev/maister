@@ -5,9 +5,7 @@ import type { Db } from "./db";
 import type { CommandReceipt } from "./contracts";
 import type { PromptEvidenceResult } from "./prompt-evidence";
 import type { HostSpanVerdict } from "./types";
-import type { ExecutionCommand, ExecutionEvent } from "@/lib/db/schema";
-
-import { setTimeout as delay } from "node:timers/promises";
+import type { ExecutionCommand } from "@/lib/db/schema";
 
 import { and, eq, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import pino from "pino";
@@ -26,6 +24,7 @@ import {
   isPromptProtocolConflict,
 } from "./prompt-transport";
 import { OPEN_COMMAND_STATES } from "./types";
+import { OBJECT_CONTENT_READ_ATTEMPTS as HOST_SPAN_BUSY_ATTEMPTS } from "./runtime-object-content";
 
 import { executionCommands, executionEventStreams } from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
@@ -37,11 +36,7 @@ const log = pino({
 const RECEIPT_CLAIM_MS = 30_000;
 const RECEIPT_RETRY_MS = 5_000;
 
-// Both sides cap concurrent object reads (the host at 2) and answer a busy
-// read `command_in_progress`, "retry the read". Waiting out RECEIPT_RETRY_MS
-// for it doubled host-span settlement latency under concurrency (T5.3).
-export const HOST_SPAN_BUSY_ATTEMPTS = 5;
-const HOST_SPAN_BUSY_BACKOFF_MS = 100;
+export { HOST_SPAN_BUSY_ATTEMPTS };
 // A settlement write that failed on one of these can succeed on a retry, so it
 // is no verdict on the span: serialization/deadlock (class 40), lock or
 // statement timeout, lost connection (class 08).
@@ -241,29 +236,6 @@ function verdictOf(
   return attempt === "busy" || attempt === "refused" ? attempt : null;
 }
 
-/** A capped object read answers `command_in_progress`; it is re-read after a
- * short backoff inside the held claim, never counted as an unverified span. */
-async function verifySpanRetryingBusyReads(
-  db: Db,
-  command: ExecutionCommand,
-  signal: AbortSignal,
-): Promise<ExecutionEvent | "canonical_available"> {
-  for (let attempt = 1; ; attempt += 1) {
-    try {
-      return await verifyHostPromptSpan({ db, command, signal });
-    } catch (error) {
-      if (
-        signal.aborted ||
-        !isMaisterError(error) ||
-        error.details?.reason !== "command_in_progress" ||
-        attempt >= HOST_SPAN_BUSY_ATTEMPTS
-      )
-        throw error;
-      await delay(HOST_SPAN_BUSY_BACKOFF_MS * attempt, undefined, { signal });
-    }
-  }
-}
-
 /** One host-span attempt under a held claim. A span that is unreadable,
  * unverifiable or signal-bearing is never evidence against the command: the
  * command keeps waiting for the canonical feed. The answer is the verdict the
@@ -295,7 +267,7 @@ async function attemptHostSpan(
   let terminal;
 
   try {
-    terminal = await verifySpanRetryingBusyReads(db, command, signal);
+    terminal = await verifyHostPromptSpan({ db, command, signal });
   } catch (error) {
     if (signal.aborted) throw error;
     if (error instanceof HostSpanSignals) {

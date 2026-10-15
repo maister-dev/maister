@@ -696,8 +696,13 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     roots: opts.workspaceRoots,
     runtimeRoot,
     logger,
-    isWorkspaceLive: (id) => registry.list().some((record) =>
-      record.executionWorkspaceId === id && record.status === "live"),
+    isWorkspaceLive: (id) =>
+      registry
+        .list()
+        .some(
+          (record) =>
+            record.executionWorkspaceId === id && record.status === "live",
+        ),
   });
   const fenceLog = logger.child({ component: "execution-fence" });
 
@@ -1506,6 +1511,19 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     );
   }
 
+  function throwIfProducerOutputFailed(
+    entry: RegistryEntry,
+    cause?: unknown,
+  ): void {
+    const failure = entry.record.outputFailure;
+
+    if (failure)
+      throw new SupervisorError(failure.code, failure.message, {
+        details: failure.details,
+        cause,
+      });
+  }
+
   async function executePromptTurn(input: {
     entry: RegistryEntry;
     sessionId: string;
@@ -1625,13 +1643,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       chatBudget.release();
       throwIfFenced(entry, parsed.envelope);
       throwIfParkedByPressure(entry);
-      if (entry.record.outputFailure) {
-        throw new SupervisorError(
-          entry.record.outputFailure.code,
-          entry.record.outputFailure.message,
-          { details: entry.record.outputFailure.details },
-        );
-      }
+      throwIfProducerOutputFailed(entry, error);
       // A closed ACP transport cannot carry another turn. Its method rejection
       // may arrive before Node publishes the child's exit; let the heartbeat
       // durably publish the crashed incarnation before this command's failed
@@ -1644,12 +1656,20 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       ) {
         if (entry.child.exitCode === null && entry.child.signalCode === null)
           entry.child.kill("SIGKILL");
-        if (!(await waitForChildExit(entry, killGraceMs))) {
+        const terminalSettled = await waitForChildExit(entry, killGraceMs);
+
+        // A terminal purge settles the bounded permission callbacks. Derive
+        // the same precedence again from this causal barrier, not a timed tick.
+        throwIfFenced(entry, parsed.envelope);
+        throwIfParkedByPressure(entry);
+        throwIfProducerOutputFailed(entry, error);
+        if (!terminalSettled) {
           throw new SupervisorError(
             "EXECUTOR_UNAVAILABLE",
             "closed ACP transport has no durable session terminal",
             {
               details: { reason: "required_output_incomplete" },
+              cause: error,
             },
           );
         }
@@ -1673,13 +1693,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       // ADR-183: a turn the outbox-pressure bound parked was cut short, even
       // when the adapter answered before it died — it is never a success.
       throwIfParkedByPressure(entry);
-      if (entry.record.outputFailure) {
-        throw new SupervisorError(
-          entry.record.outputFailure.code,
-          entry.record.outputFailure.message,
-          { details: entry.record.outputFailure.details },
-        );
-      }
+      throwIfProducerOutputFailed(entry);
       if (chatHitlId) {
         entry.record.monotonicId += 1;
         entry.emitter.emit(SESSION_EVENT_CHANNEL, {

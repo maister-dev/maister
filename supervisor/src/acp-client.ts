@@ -939,6 +939,8 @@ export async function createAcpConnection(
       stdin.destroy();
     },
   });
+
+  record.settlePermissionCallbacks = stream.settlePermissionCallbacks;
   const connection = new acp.ClientSideConnection(() => clientImpl, stream);
 
   logger.info({ sessionId }, "acp connection-init");

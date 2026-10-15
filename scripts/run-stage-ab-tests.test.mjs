@@ -89,16 +89,22 @@ test("the isolation slice runs serially on any host", () => {
 
 // A surviving test in a suite is not evidence that all required fault windows ran.
 test("the isolation report refuses a missing required case in a nonempty passing suite", () => {
-  const file = "test-support/__tests__/execution-ab-isolation.integration.test.ts";
+  for (const [file, title] of [
+    ["test-support/__tests__/execution-ab-isolation.integration.test.ts",
+      "I1: the web identity is denied the host's private root while the harness and the host keep it"],
+    ["test-support/__tests__/linux-isolation-driver.integration.test.ts",
+      "LI-boundary: exact mounts deny private reads and escape paths while descendants retain authorized access"],
+  ]) {
   const report = {
     testResults: [{ name: `/repo/web/${file}`, assertionResults: [
-      { title: "I1: the web identity is denied the host's private root while the harness and the host keep it", status: "passed" },
+      { title, status: "passed" },
     ] }],
     numFailedTests: 0, numPendingTests: 0, numTodoTests: 0,
     numRuntimeErrorTestSuites: 0, success: true,
   };
 
   assert.throws(() => validateLaneReport(report, [file]), /required case/);
+  }
 });
 
 test("the complete isolation manifest passes and rejects duplicate or skipped required cases", () => {

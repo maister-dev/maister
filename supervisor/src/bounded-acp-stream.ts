@@ -122,6 +122,11 @@ export type BoundedAcpClient = Client & {
   ): Promise<RequestPermissionResponse>;
 };
 
+export type BoundedAcpStream = Stream &
+  Readonly<{
+    settlePermissionCallbacks: () => Promise<void>;
+  }>;
+
 async function acquireDecoder(): Promise<() => void> {
   if (decoding)
     await new Promise<void>((resolve) => decodeWaiters.push(resolve));
@@ -487,11 +492,11 @@ export function boundedAcpStream(input: {
   stdin: NodeWritable;
   client: BoundedAcpClient;
   onFailure: (error: SupervisorError) => void;
-}): Stream {
+}): BoundedAcpStream {
   if (input.source.readableObjectMode !== true)
     throw incomplete("producer_frame_invalid");
   const iterator = input.source[Symbol.asyncIterator]();
-  let pendingPermissions = 0;
+  const pendingPermissions = new Set<Promise<void>>();
   let stopped = false;
   const send = (message: AnyMessage): Promise<void> =>
     writeChunk(
@@ -515,19 +520,19 @@ export function boundedAcpStream(input: {
     id: string | number | null,
     params: unknown,
   ): Promise<void> {
-    if (pendingPermissions >= 32) throw incomplete("producer_permission_limit");
+    if (pendingPermissions.size >= 32)
+      throw incomplete("producer_permission_limit");
     const parsed = zRequestPermissionRequest.safeParse(params);
 
     if (!parsed.success) throw incomplete("producer_permission_invalid");
-    pendingPermissions += 1;
-    // The continuation captures only the small RPC id and the pending count.
+    // The continuation captures only the small RPC id and its bounded slot.
     let prepared: () => void = () => {};
     const admission = new Promise<void>((resolve) => {
       prepared = resolve;
     });
     const result = input.client.requestPermission(parsed.data, prepared);
 
-    void result
+    const settled: Promise<void> = result
       .then(
         (outcome) => send({ jsonrpc: "2.0", id, result: outcome }),
         () => {
@@ -536,8 +541,10 @@ export function boundedAcpStream(input: {
       )
       .catch(() => fail("producer_response_failed"))
       .finally(() => {
-        pendingPermissions -= 1;
+        pendingPermissions.delete(settled);
       });
+
+    pendingPermissions.add(settled);
 
     return admission;
   }
@@ -615,5 +622,14 @@ export function boundedAcpStream(input: {
   );
   const writable = new WritableStream<AnyMessage>({ write: send });
 
-  return { readable, writable } as unknown as Stream;
+  return {
+    readable,
+    writable,
+    async settlePermissionCallbacks(): Promise<void> {
+      // outputDrained proves admission finished and EOF prevents new frames.
+      // Terminal publication purges deferreds; await their actual continuations
+      // before allowing the failed prompt to classify the producer outcome.
+      await Promise.all([...pendingPermissions]);
+    },
+  } as unknown as BoundedAcpStream;
 }

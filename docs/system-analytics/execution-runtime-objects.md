@@ -205,6 +205,10 @@ Internal consumers of command output and session content
 path: they bound the object to 2 MiB, compare the catalogue metadata with the
 immutable reference, refuse ranges and length mismatches, and hash every
 received byte against the reference before decoding.
+Their content GET admission uses the shared bounded retry contract in
+[the event plane](execution-event-plane.md):
+only `command_in_progress` is retried; prompt POST admission and integrity or
+authorization refusals keep their original failure paths.
 
 The filesystem inventory classifies these specific operations as
 `manager-response-spool`: they copy received HTTP bytes into manager-owned temp

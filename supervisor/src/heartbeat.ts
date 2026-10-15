@@ -81,6 +81,10 @@ export function attachHeartbeat(opts: AttachHeartbeatOptions): void {
       });
     }
     entry.record.status = treatAsExited ? "exited" : "crashed";
+    // Emitting the terminal synchronously purges registered permissions. Their
+    // bounded stream continuations must classify producer failure before this
+    // terminal barrier releases a pending command's failed receipt.
+    await entry.record.settlePermissionCallbacks?.();
   };
 
   const settle = (code: number | null, signal: NodeJS.Signals | null): void => {

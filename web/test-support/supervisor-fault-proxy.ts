@@ -241,7 +241,33 @@ function write(response: ServerResponse, data: Buffer): Promise<void> {
   if (response.destroyed) return Promise.resolve();
 
   return new Promise((resolve, reject) => {
-    response.write(data, (error) => (error ? reject(error) : resolve()));
+    response.write(data, (error) => {
+      if (!error) {
+        resolve();
+
+        return;
+      }
+      const code = (error as NodeJS.ErrnoException).code;
+
+      if (
+        code === "EPIPE" ||
+        code === "ECONNRESET" ||
+        code === "ECANCELED" ||
+        code === "ERR_STREAM_DESTROYED"
+      ) {
+        recordFaultEvent("proxy", "downstream-disconnected", {
+          method: response.req.method ?? "GET",
+          path: response.req.url ?? "/",
+          code,
+          error: error.message,
+        });
+        response.destroy();
+        resolve();
+
+        return;
+      }
+      reject(error);
+    });
   });
 }
 
@@ -593,7 +619,6 @@ export async function startSupervisorFaultProxy(
       };
 
       void forward().catch((error: unknown) => {
-        if (downstream.destroyed) return;
         if (
           error instanceof Error &&
           (error as NodeJS.ErrnoException).code === "ECONNRESET"
@@ -609,9 +634,23 @@ export async function startSupervisorFaultProxy(
     upstream.end(body);
   }
   const server = createServer((incoming, response) => {
-    void serve(incoming, response).catch((error: unknown) =>
-      fail(error, response),
-    );
+    void serve(incoming, response).catch((error: unknown) => {
+      if (
+        incoming.aborted &&
+        error instanceof Error &&
+        (error as NodeJS.ErrnoException).code === "ECONNRESET"
+      ) {
+        recordFaultEvent("proxy", "downstream-request-aborted", {
+          method: incoming.method ?? "GET",
+          path: incoming.url ?? "/",
+          error: error.message,
+        });
+        response.destroy();
+
+        return;
+      }
+      fail(error, response);
+    });
   });
 
   server.on("connection", (socket) => {

@@ -234,6 +234,7 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-190](#adr-190-librarian-memory-summaries-reset-barrier-and-history-deletion) | Librarian memory, summaries, reset barrier and history deletion | Accepted | 2026-09-26 |
 | [ADR-191](#adr-191-librarian-surface-top-navigation-entry-and-right-side-panel) | Librarian surface: top-navigation entry and right-side panel | Accepted | 2026-09-26 |
 | [ADR-192](#adr-192-durable-scratch-prompt-intent-before-command-admission) | Durable scratch prompt intent before command admission | Accepted | 2026-09-30 |
+| [ADR-193](#adr-193-rootless-linux-namespace-isolation-for-production-test-fixtures) | Rootless Linux namespace isolation for production test fixtures | Accepted | 2026-10-03 |
 
 ---
 
@@ -1951,6 +1952,15 @@ Full record: [`decisions/adr-191.md`](decisions/adr-191.md)
 **Date:** 2026-09-30
 
 Full record: [`decisions/adr-192.md`](decisions/adr-192.md)
+
+---
+
+### ADR-193: Rootless Linux namespace isolation for production test fixtures
+
+**Status:** Accepted
+**Date:** 2026-10-03
+
+Full record: [`decisions/adr-193.md`](decisions/adr-193.md)
 
 ---
 

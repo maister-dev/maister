@@ -19,13 +19,15 @@
 // Environment failure (no isolation driver, no Docker, no build) fails the
 // suite explicitly; it never degrades to an unisolated run.
 import type { Db } from "@/lib/execution-host/db";
+import type { LinuxIsolationPolicy } from "@/test-support/linux-isolation";
 
 import { createHash, randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import bcrypt from "bcryptjs";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { readLaunchResult } from "@/e2e/_seed/launch-stream";
@@ -51,6 +53,12 @@ import {
   startRealWeb,
   type RealWeb,
 } from "@/test-support/real-web";
+import { invocationFromEnvironment } from "@/test-support/process-invocation";
+import { prepareLinuxWebPolicy } from "@/test-support/linux-web-policy";
+import {
+  prepareSupervisorSentinelWitness,
+  type SupervisorSentinelWitness,
+} from "@/test-support/supervisor-sentinel-witness";
 import { mkdtempReal } from "@/test-support/worktree-test-root";
 
 const ADMIN = {
@@ -76,6 +84,9 @@ let projectId = "";
 let cookie = "";
 let runId = "";
 let objectId = "";
+let isolationPolicy: LinuxIsolationPolicy | undefined;
+let sentinelWitness: SupervisorSentinelWitness;
+let committedCommandId = "";
 
 function sha256(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
@@ -158,8 +169,17 @@ describe("AT-16 isolated single-host lifecycle", () => {
     await writeFile(path.join(webRoot, "web-private.txt"), "web-private\n");
     const repo = await initRepo(path.join(base, "repo"));
 
+    const invocation = invocationFromEnvironment();
+
+    if (!invocation)
+      throw new Error("isolated lifecycle requires a test invocation");
+    sentinelWitness = await prepareSupervisorSentinelWitness(
+      invocation,
+      sentinel,
+    );
     supervisor = await startRealSupervisor({
       runtimeRoot: supervisorRoot,
+      env: { NODE_OPTIONS: sentinelWitness.nodeOptions },
       workspaceRoots: [worktreesRoot],
       // The adapter stays alive between turns and advertises resume, so the
       // restarted web must re-attach to a LIVE host session for the extra turn.
@@ -207,12 +227,37 @@ describe("AT-16 isolated single-host lifecycle", () => {
     await mkdir(logs, { recursive: true });
     const buildId = await buildProductionWeb(path.join(logs, "next-build.log"));
 
+    isolationPolicy =
+      driver.name === "bubblewrap"
+        ? await prepareLinuxWebPolicy({
+            invocation,
+            deniedRoots: [supervisorRoot],
+            writableRoots: [webRoot, worktreesRoot, repo],
+            protectedFiles: [
+              { path: sentinel },
+              { path: path.join(supervisor.stateDir, "state.sqlite") },
+              {
+                path: path.join(supervisor.stateDir, "state.sqlite-wal"),
+                optional: true,
+              },
+              {
+                path: path.join(supervisor.stateDir, "state.sqlite-shm"),
+                optional: true,
+              },
+            ],
+          })
+        : undefined;
     web = await startRealWeb({
       databaseUrl: testDatabase.container.getConnectionUri(),
       supervisorUrl: supervisor.url,
       runtimeRoot: webRoot,
       worktreesRoot,
-      isolation: { driver, deniedRoots: [supervisorRoot] },
+      isolation: {
+        driver,
+        deniedRoots: [supervisorRoot],
+        policy: isolationPolicy,
+      },
+      env: { TSX_DISABLE_CACHE: "1" },
       logFile: path.join(logs, "web.log"),
     });
     // eslint-disable-next-line no-console
@@ -240,17 +285,29 @@ describe("AT-16 isolated single-host lifecycle", () => {
   it("I1: the web identity is denied the host's private root while the harness and the host keep it", async () => {
     const denied = [supervisorRoot];
 
-    expect(await probeFilesystemAccess(driver, denied, sentinel)).toEqual({
+    expect(
+      await probeFilesystemAccess(driver, denied, sentinel, isolationPolicy),
+    ).toEqual({
       outcome: "denied",
       code: driver.deniedCode,
     });
-    expect(
-      await probeFilesystemAccess(
-        driver,
-        denied,
-        path.join(supervisor.stateDir, "state.sqlite"),
-      ),
-    ).toEqual({ outcome: "denied", code: driver.deniedCode });
+    for (const filename of [
+      "state.sqlite",
+      "state.sqlite-wal",
+      "state.sqlite-shm",
+    ]) {
+      const stateFile = path.join(supervisor.stateDir, filename);
+
+      if (filename === "state.sqlite" || existsSync(stateFile))
+        expect(
+          await probeFilesystemAccess(
+            driver,
+            denied,
+            stateFile,
+            isolationPolicy,
+          ),
+        ).toEqual({ outcome: "denied", code: driver.deniedCode });
+    }
     // The deny is scoped: the same identity reads its own root and the file
     // exists for the harness, so the denial is the boundary, not absence.
     expect(
@@ -258,6 +315,7 @@ describe("AT-16 isolated single-host lifecycle", () => {
         driver,
         denied,
         path.join(webRoot, "web-private.txt"),
+        isolationPolicy,
       ),
     ).toEqual({ outcome: "readable", bytes: 12 });
     expect(await readFile(sentinel, "utf8")).toBe("host-private\n");
@@ -328,6 +386,18 @@ describe("AT-16 isolated single-host lifecycle", () => {
     );
     const transcript = await api(`/api/runs/${runId}/transcript`);
 
+    const [command] = await db
+      .select({ id: schema.executionCommands.id })
+      .from(schema.executionCommands)
+      .where(
+        and(
+          eq(schema.executionCommands.runId, runId),
+          eq(schema.executionCommands.kind, "session.create"),
+        ),
+      );
+
+    expect(command).toBeDefined();
+    committedCommandId = command!.id;
     expect(transcript.status).toBe(200);
     expect(detail.messages.length).toBeGreaterThan(0);
   });
@@ -371,8 +441,27 @@ describe("AT-16 isolated single-host lifecycle", () => {
 
     expect(health.status).toBe(200);
     expect(await readFile(sentinel, "utf8")).toBe("host-private\n");
+    await sentinelWitness.verify(supervisor.pid);
     expect(
-      await probeFilesystemAccess(driver, [supervisorRoot], sentinel),
+      (await readFile(path.join(supervisor.stateDir, "state.sqlite")))
+        .byteLength,
+    ).toBeGreaterThan(0);
+    const receipt = await fetch(
+      `${supervisor.url}/commands/${committedCommandId}`,
+    );
+
+    expect(receipt.status).toBe(200);
+    expect(await receipt.json()).toMatchObject({
+      commandId: committedCommandId,
+      phase: "completed",
+    });
+    expect(
+      await probeFilesystemAccess(
+        driver,
+        [supervisorRoot],
+        sentinel,
+        isolationPolicy,
+      ),
     ).toEqual({
       outcome: "denied",
       code: driver.deniedCode,

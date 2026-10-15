@@ -323,12 +323,14 @@ the same repository-content permission as the corresponding object download.
 
 Referenced-content reads retry only the host's `command_in_progress` refusal,
 at most five attempts with 100/200/300/400 ms abortable backoff inside the
-existing read deadline. Each refusal logs the event/object identity and whether
-the budget is exhausted. Other errors and cancellation propagate unchanged;
-neither a failed read nor a retry advances the canonical session cursor. A Flow
-event-reader failure ends its local waiter through the existing durable
-continuation boundary, preserving the accepted prompt and session for
-reattachment instead of leaving permission HITL stranded. The real gate-resume
+existing read deadline. Each refusal logs the event or command identity, object
+identity and whether the budget is exhausted. Command-output and session-content
+readers share this per-GET budget, so a whole-span retry cannot multiply it.
+Other errors and cancellation propagate unchanged; neither a failed read nor a
+retry advances the canonical session cursor. A Flow event-reader failure ends
+its local waiter through the existing durable continuation boundary, preserving
+the accepted prompt and session for reattachment instead of leaving permission
+HITL stranded. The real gate-resume
 controls fill the host's two-read cap, then prove both transient read recovery
 and exhausted-reader continuation without another prompt admission.
 
@@ -470,6 +472,11 @@ newline boundaries in the exact object delimit complete frames. A captured
 prefix is retained even when draining exceeds its bound or ends mid-frame.
 The interrupted prompt fails with `required_output_incomplete`; raw preservation
 does not claim that skipped semantic callbacks completed successfully.
+After output drains, session terminal publication purges pending permissions
+and settles their bounded producer continuations before classifying a failed
+prompt. A producer-permission failure retains its structured details instead
+of becoming a generic transport rejection; fence, pressure and intentional
+shutdown decisions keep their existing precedence (see [ADR-177](../decisions/adr-177.md)).
 
 SQLite admission measures DB/WAL/SHM size, page/free-page counters and disk free space. Pending object copies, logs, spools and producer/frame promises are durably charged before host-managed writes; startup inventories retained files before admission. Native storage failures latch unavailable readiness and preserve evidence. Host, pressure/restart, pinned-reader, maximum-output and 20-producer memory tests exercise these paths. Exact defaults and physical headroom arithmetic live in [configuration](../configuration.md#ab-stabilization-resource-budget-implemented). These are application admission bounds; arbitrary same-UID agent writes are not an operating-system disk quota. Immutable sealing and retirement of agent output writers remain S3 work.
 
