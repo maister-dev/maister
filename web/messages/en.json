@@ -4824,6 +4824,7 @@
     "composerMentionListLabel": "Agents you can summon",
     "composerMentionMatchCount": "$count agents match",
     "composerErrorConfig": "Comment must be 1–10000 characters.",
+    "composerErrorTimeout": "Posting timed out. Refresh the page to check whether the comment was saved before trying again.",
     "errorForbidden": "You need member access for that.",
     "errorGeneric": "Action failed. Try again.",
     "runAgain": "Run again",
