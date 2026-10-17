@@ -7,7 +7,7 @@ import { ArrowPathIcon } from "@heroicons/react/24/outline";
 import { Button, Input, ListBox, Select } from "@heroui/react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
@@ -68,6 +68,9 @@ export type ReviewPanelLabels = {
   behindAhead: string;
   syncBranch: string;
   syncInProgress: string;
+  promotionInProgress: string;
+  promotionInProgressHint: string;
+  operationTakingLonger: string;
   resolveWithAgent: string;
   autoFinalize: string;
   autoFinalizeHint: string;
@@ -130,6 +133,43 @@ const shell =
 const syncLink =
   "inline-flex items-center gap-1.5 rounded-md border border-line bg-paper px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-ink-2 hover:border-mute";
 
+function OperationStatus({
+  detail,
+  slow,
+  slowText,
+  title,
+}: {
+  detail: string;
+  slow: boolean;
+  slowText: string;
+  title: string;
+}): ReactElement {
+  return (
+    <div
+      aria-live="polite"
+      className="flex items-start gap-3 rounded-[10px] border border-accent-4/40 bg-accent-4-soft p-3 text-accent-4"
+      data-testid="review-promotion-in-progress"
+      role="status"
+    >
+      <ArrowPathIcon
+        aria-hidden="true"
+        className="mt-0.5 h-4 w-4 flex-none animate-spin"
+      />
+      <div className="min-w-0">
+        <p className="font-mono text-[11px] font-bold">{title}</p>
+        <p className="mt-0.5 font-mono text-[10.5px] leading-[1.45] text-ink-2">
+          {detail}
+        </p>
+        {slow ? (
+          <p className="mt-2 border-t border-accent-4/20 pt-2 font-mono text-[10.5px] leading-[1.45] text-amber">
+            {slowText}
+          </p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function selectionKey(key: Key | null, fallback: PromotionMode): PromotionMode {
   if (key === null) return fallback;
 
@@ -166,6 +206,7 @@ export function ReviewPanel({
   const router = useRouter();
   const [mode, setMode] = useState<PromotionMode>(promotionMode);
   const [busy, setBusy] = useState(false);
+  const [promotionSlow, setPromotionSlow] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [drift, setDrift] = useState(driftDetected);
   // ADR-181 (C): the last Promote was refused — the PR branch holds commits
@@ -200,6 +241,14 @@ export function ReviewPanel({
   };
   const blockedPromotion = promotionBlockReason(promotionInput);
 
+  useEffect(() => {
+    if (!busy) return;
+
+    const timer = window.setTimeout(() => setPromotionSlow(true), 8_000);
+
+    return () => window.clearTimeout(timer);
+  }, [busy]);
+
   async function promote(allowTargetDrift: boolean): Promise<void> {
     const body = buildPromotionRequestBody(promotionInput, allowTargetDrift);
 
@@ -208,6 +257,7 @@ export function ReviewPanel({
     setBusy(true);
     setError(null);
     setDiverged(false);
+    setPromotionSlow(false);
 
     try {
       const res = await fetch(`/api/runs/${runId}/promote`, {
@@ -268,6 +318,7 @@ export function ReviewPanel({
 
   return (
     <section
+      aria-busy={busy || syncClaimed}
       className={clsx(shell, "mt-6 p-5")}
       data-testid="review-panel"
       id={id}
@@ -488,6 +539,15 @@ export function ReviewPanel({
         </div>
       ) : blockedPromotion ? null : (
         <div className="flex flex-col gap-3">
+          {busy ? (
+            <OperationStatus
+              detail={labels.promotionInProgressHint}
+              slow={promotionSlow}
+              slowText={labels.operationTakingLonger}
+              title={labels.promotionInProgress}
+            />
+          ) : null}
+
           <label className="flex flex-col gap-1">
             <span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.06em] text-mute">
               {labels.promotionMode}
@@ -586,7 +646,13 @@ export function ReviewPanel({
                   variant="outline"
                   onClick={() => void promote(true)}
                 >
-                  {labels.promoteAnyway}
+                  {busy ? (
+                    <ArrowPathIcon
+                      aria-hidden="true"
+                      className="h-3.5 w-3.5 animate-spin"
+                    />
+                  ) : null}
+                  {busy ? labels.promotionInProgress : labels.promoteAnyway}
                 </Button>
               </div>
             </div>
@@ -603,7 +669,15 @@ export function ReviewPanel({
               variant="primary"
               onClick={() => void promote(false)}
             >
-              {labels.promoteTo} {targetBranch}
+              {busy ? (
+                <ArrowPathIcon
+                  aria-hidden="true"
+                  className="h-3.5 w-3.5 animate-spin"
+                />
+              ) : null}
+              {busy
+                ? labels.promotionInProgress
+                : `${labels.promoteTo} ${targetBranch}`}
             </Button>
           )}
 

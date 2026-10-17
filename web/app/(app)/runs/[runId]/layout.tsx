@@ -851,6 +851,9 @@ export default async function RunDetailLayout({
     syncInProgress: syncPanel?.sync.inProgress
       ? t("syncInProgress", { phase: syncPanel.sync.inProgress.phase })
       : "",
+    promotionInProgress: t("promotionInProgress"),
+    promotionInProgressHint: t("promotionInProgressHint"),
+    operationTakingLonger: t("operationTakingLonger"),
     resolveWithAgent: t("resolveWithAgent"),
     autoFinalize: t("autoFinalize"),
     autoFinalizeHint: t("autoFinalizeHint"),
