@@ -16,6 +16,9 @@ export interface TabItem {
   // URL-driven nav: present → the tab renders as a <Link>. Absent → it renders
   // as a <button> that calls onSelect(key) (state-driven nav).
   href?: string;
+  // Forwarded to Next.js Link. Set false for tab bars that should keep their
+  // current viewport position while switching URL-driven panels.
+  scroll?: boolean;
   // Optional trailing count badge (e.g. board card count, package element count).
   count?: number;
   // Optional leading icon (e.g. the density toggle's grid/list glyphs).
@@ -112,6 +115,7 @@ export function Tabs({
               data-testid={item.testId}
               href={item.href}
               role="tab"
+              scroll={item.scroll}
             >
               {inner}
             </Link>

@@ -84,6 +84,7 @@ export async function ProjectTabs({
     key: tab,
     label: label[tab],
     href: hrefFor(tab),
+    scroll: false,
     count: tab === "board" ? boardCount : undefined,
   }));
 
