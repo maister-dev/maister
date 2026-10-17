@@ -116,6 +116,7 @@ export default async function ScratchRunDetailLayout({
     : null;
 
   const shellLabels: RunShellLabels = {
+    runStatus: t("headerRunStatus"),
     branch: t("headerBranch"),
     changes: t("headerChanges"),
     changesUnavailable: t("headerChangesUnavailable"),

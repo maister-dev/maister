@@ -389,6 +389,60 @@ paths:
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
 
+  /api/v1/ext/projects/{slug}/tasks/{taskId}/complete:
+    post:
+      tags: [tasks]
+      summary: Complete a task after its latest result has been delivered
+      description: |
+        Scope `tasks:complete`. Requires a global personal user token whose
+        owner currently has `editTask` access to the addressed project. Project,
+        agent, service, run-bound, and librarian tokens are refused.
+
+        The newest Flow run must be `Done` and its workspace promotion state
+        must be `done`. Pull-request delivery additionally requires the provider
+        state to be `merged`; opening a PR is not sufficient. The transition is
+        idempotent, increments `tasks.revision`, cancels open task
+        clarifications, records `task_completed`, and releases relation blockers.
+        A later unfinished run prevents completion even when an older run was
+        delivered.
+      operationId: extCompleteTask
+      security:
+        - projectToken: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExtCompleteTaskBody" }
+      responses:
+        "200":
+          description: Task completed, or an idempotent replay of completion.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtCompleteTaskResult" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
   /api/v1/ext/projects/{slug}/tasks/{taskId}/comments:
     get:
       tags: [comments]
@@ -5947,11 +6001,17 @@ components:
           type: string
         status:
           type: string
-          description: Task lifecycle status on the board.
-          enum: [Backlog, InFlight, Done]
+          description: Authoritative terminal/task lifecycle status.
+          enum: [Backlog, InFlight, Done, Abandoned]
         stage:
           type: string
-          description: Finer-grained stage within the task lifecycle.
+          enum: [Backlog, Prepare]
+          description: |
+            Persisted pre-launch specification phase (`tasks.stage`), not the
+            task's current board column or derived cross-project work stage.
+            It may remain `Backlog` after `status` becomes `Done`. Use
+            `GET /api/v1/ext/work` and its `stage` field for the current
+            derived `WorkStage` (`Triage`, `Executing`, `Promoted`, and so on).
         flowId:
           type: string
           description: |
@@ -6775,6 +6835,32 @@ components:
             (Designed — ADR-188, `TST-02`) Optional optimistic guard: the
             `TaskDTO.revision` the caller last read. A mismatch is refused
             `409 CONFLICT` with `details.reason: "stale_revision"`.
+
+    ExtCompleteTaskBody:
+      type: object
+      additionalProperties: false
+      properties:
+        expectedRevision:
+          type: integer
+          minimum: 0
+          description: |
+            Optional optimistic guard. A replay against a task already in Done
+            remains successful even if this is the pre-completion revision.
+
+    ExtCompleteTaskResult:
+      type: object
+      additionalProperties: false
+      required: [taskId, status, revision, runId, alreadyDone]
+      properties:
+        taskId: { type: string, format: uuid }
+        status: { type: string, enum: [Done] }
+        revision: { type: integer, minimum: 0 }
+        runId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Null on an idempotent replay of an already-Done task.
+        alreadyDone: { type: boolean }
 
     ExtLaunchRunBody:
       type: object

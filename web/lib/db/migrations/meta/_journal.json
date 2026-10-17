@@ -1324,6 +1324,13 @@
       "when": 1790725023041,
       "tag": "0192_scratch_prompt_intent",
       "breakpoints": true
+    },
+    {
+      "idx": 193,
+      "version": "7",
+      "when": 1792238999145,
+      "tag": "0193_numerous_spectrum",
+      "breakpoints": true
     }
   ]
 }

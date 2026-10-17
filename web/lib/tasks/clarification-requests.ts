@@ -559,7 +559,8 @@ async function cancelMatchingOpenClarifications(
   cause:
     | "recipient_deactivated"
     | "recipient_access_removed"
-    | "task_abandoned",
+    | "task_abandoned"
+    | "task_completed",
 ): Promise<number> {
   const rows = await db
     .select({
@@ -663,5 +664,18 @@ export function cancelClarificationsForAbandonedTasks(
     db,
     inArray(taskClarifications.taskId, taskIds),
     "task_abandoned",
+  );
+}
+
+export function cancelClarificationsForCompletedTasks(
+  db: Db,
+  taskIds: string[],
+): Promise<number> {
+  if (taskIds.length === 0) return Promise.resolve(0);
+
+  return cancelMatchingOpenClarifications(
+    db,
+    inArray(taskClarifications.taskId, taskIds),
+    "task_completed",
   );
 }

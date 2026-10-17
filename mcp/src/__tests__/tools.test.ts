@@ -105,6 +105,7 @@ describe("TOOL_SPECS registry", () => {
         "librarian_memory_remember",
         "project_members_list",
         "runner_list",
+        "task_complete",
         "task_create",
         "task_get",
         "task_list",
@@ -563,6 +564,26 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
       title: "New title",
       prompt: "New prompt",
     });
+  });
+
+  it("task_complete → POST /api/v1/ext/projects/{slug}/tasks/{taskId}/complete", async () => {
+    mockOnce({ taskId: "task-1", status: "Done", revision: 3 }, 200);
+
+    await dispatchTool({
+      name: "task_complete",
+      args: { slug: "demo", taskId: "task-1", expectedRevision: "2" },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { url, init } = lastRequest();
+
+    expect(init.method).toBe("POST");
+    expect(url).toBe(
+      `${BASE_URL}/api/v1/ext/projects/demo/tasks/task-1/complete`,
+    );
+    expect(headerAuth(init)).toBe(AUTH);
+    expect(parsedBody(init)).toEqual({ expectedRevision: 2 });
   });
 
   it("ask_human → POST task-bound endpoint and omits an unspecified re-trigger mode", async () => {

@@ -2298,6 +2298,7 @@
     "flowCenterPromptCopy": "Копировать",
     "flowCenterNoGraph": "Для этого запуска нет графа Flow.",
     "flowCenterNoNode": "Нода не выбрана.",
+    "headerRunStatus": "Запуск",
     "headerBranch": "Ветка",
     "headerChanges": "Изменения",
     "headerChangesUnavailable": "Недоступно",
@@ -3924,6 +3925,7 @@
     "scopeTasksCreate": "Создание задач",
     "scopeTasksRead": "Чтение задач",
     "scopeTasksUpdate": "Обновление задач",
+    "scopeTasksComplete": "Завершение доставленных задач",
     "scopeRunsLaunch": "Запуск прогонов",
     "scopeRunsRead": "Чтение прогонов",
     "scopeReadinessRead": "Чтение готовности",
@@ -4815,7 +4817,8 @@
       "relationRemoved": "удалил(а) связь с %ref%",
       "runLaunched": "запустил(а) попытку %attempt%",
       "experimentConcluded": "завершил(а) эксперимент",
-      "agentSummonSuppressed": "не стал(а) вызывать %agent% — он уже работает над этой задачей"
+      "agentSummonSuppressed": "не стал(а) вызывать %agent% — он уже работает над этой задачей",
+      "taskCompleted": "завершил(а) задачу после доставки результата"
     },
     "composerPlaceholder": "Напишите комментарий… KEY-N станет ссылкой, @agent вызовет агента.",
     "composerSubmit": "Комментировать",
@@ -4826,6 +4829,9 @@
     "composerErrorConfig": "Комментарий должен быть от 1 до 10000 символов.",
     "errorForbidden": "Нужны права участника проекта.",
     "errorGeneric": "Не получилось. Попробуйте ещё раз.",
+    "completeTask": "Завершить задачу",
+    "completingTask": "Завершаем…",
+    "completeTaskFailed": "Не удалось завершить задачу. Обновите страницу и проверьте, что последний запуск доставлен.",
     "runAgain": "Запустить снова",
     "runAgainConcurrent": "Запустить ещё",
     "launchFirst": "Запустить",
@@ -4920,7 +4926,8 @@
       "relationRemoved": "связь удалена",
       "runLaunched": "запуск",
       "experimentConcluded": "эксперимент завершён",
-      "agentSummonSuppressed": "вызов пропущен"
+      "agentSummonSuppressed": "вызов пропущен",
+      "taskCompleted": "задача завершена"
     }
   },
   "agents": {

@@ -529,6 +529,7 @@ export default async function ProjectBoardPage({
                   run_launched: tLog("kind.runLaunched"),
                   experiment_concluded: tLog("kind.experimentConcluded"),
                   agent_summon_suppressed: tLog("kind.agentSummonSuppressed"),
+                  task_completed: tLog("kind.taskCompleted"),
                 },
               }}
               page={activityLog.page}

@@ -91,6 +91,7 @@ const labels: TokenLabels = {
   scopeTasksCreate: "Create tasks",
   scopeTasksRead: "Read tasks",
   scopeTasksUpdate: "Update tasks",
+  scopeTasksComplete: "Complete delivered tasks",
   scopeRunsLaunch: "Launch runs",
   scopeRunsRead: "Read runs",
   scopeReadinessRead: "Read readiness",

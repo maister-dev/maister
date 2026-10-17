@@ -27,6 +27,7 @@ import { FlowGraphViewSection } from "@/components/board/flow-graph-view-section
 import { CommentComposer } from "@/components/social/comment-composer";
 import { FollowButton } from "@/components/social/follow-button";
 import { TaskAgentActions } from "@/components/social/task-agent-actions";
+import { TaskCompleteAction } from "@/components/social/task-complete-action";
 import { RelationsEditor } from "@/components/social/relations-editor";
 import { TaskDetailPromptEditor } from "@/components/social/task-detail-prompt-editor";
 import { TaskTimeline } from "@/components/social/task-timeline";
@@ -405,6 +406,7 @@ export default async function TaskDetailPage({
       run_launched: t("event.runLaunched"),
       experiment_concluded: t("event.experimentConcluded"),
       agent_summon_suppressed: t("event.agentSummonSuppressed"),
+      task_completed: t("event.taskCompleted"),
     },
   };
   const editableTask: TaskEditableTarget = {
@@ -525,6 +527,20 @@ export default async function TaskDetailPage({
             ) : null}
           </div>
           <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+            {canAct &&
+            detail.task.status === "InFlight" &&
+            detail.latestFlowRun?.completionReady ? (
+              <TaskCompleteAction
+                expectedRevision={detail.task.revision}
+                labels={{
+                  complete: t("completeTask"),
+                  completing: t("completingTask"),
+                  error: t("completeTaskFailed"),
+                }}
+                slug={slug}
+                taskNumber={detail.task.number}
+              />
+            ) : null}
             <TaskQueueControls
               canAct={canAct}
               labels={{

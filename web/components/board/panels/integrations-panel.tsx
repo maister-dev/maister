@@ -73,6 +73,7 @@ export interface TokenLabels {
   scopeTasksCreate: string;
   scopeTasksRead: string;
   scopeTasksUpdate: string;
+  scopeTasksComplete: string;
   scopeRunsLaunch: string;
   scopeRunsRead: string;
   scopeReadinessRead: string;
@@ -142,6 +143,8 @@ function scopeLabel(labels: TokenLabels, scope: string): string {
       return labels.scopeTasksRead;
     case "tasks:update":
       return labels.scopeTasksUpdate;
+    case "tasks:complete":
+      return labels.scopeTasksComplete;
     case "runs:launch":
       return labels.scopeRunsLaunch;
     case "runs:read":
@@ -416,6 +419,7 @@ export async function IntegrationsPanel({
     scopeTasksCreate: t("scopeTasksCreate"),
     scopeTasksRead: t("scopeTasksRead"),
     scopeTasksUpdate: t("scopeTasksUpdate"),
+    scopeTasksComplete: t("scopeTasksComplete"),
     scopeRunsLaunch: t("scopeRunsLaunch"),
     scopeRunsRead: t("scopeRunsRead"),
     scopeReadinessRead: t("scopeReadinessRead"),

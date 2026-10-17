@@ -14,7 +14,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
 import {
@@ -1898,13 +1898,30 @@ export async function* launchRunStaged(
         // relaunch the task is already InFlight, so this set is an idempotent
         // no-op (no real status flip) while the run_launched activity below still
         // fires per launch (each launch is a real creation event).
-        await tx
+        const taskTransition = await tx
           .update(tasks)
           .set({
             status: "InFlight",
             updatedAt: new Date(),
           })
-          .where(eq(tasks.id, task.id));
+          .where(
+            and(
+              eq(tasks.id, task.id),
+              inArray(tasks.status, ["Backlog", "InFlight"]),
+            ),
+          )
+          .returning({ id: tasks.id });
+
+        // Completion and launch can race after the preflight read. The
+        // conditional write is the commit-time fence: once a task is terminal,
+        // a stale launch must roll back its run/workspace rows and compensate
+        // the worktree instead of resurrecting the task as InFlight.
+        if (taskTransition.length === 0) {
+          throw new MaisterError(
+            "PRECONDITION",
+            "task became terminal before the run could be created",
+          );
+        }
 
         // ADR-078 D7: run_launched is the activity for the only real
         // task-status transition (the launch flip), written in the same tx.

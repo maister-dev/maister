@@ -10,6 +10,7 @@ import {
 import { RunShell } from "@/components/runs/run-shell";
 
 const LABELS: RunHeaderLabels = {
+  runStatus: "Run",
   branch: "Branch",
   changes: "Changes",
   changesUnavailable: "Unavailable",

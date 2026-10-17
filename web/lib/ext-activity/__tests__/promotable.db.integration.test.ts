@@ -2,6 +2,7 @@ import type { ReadinessState } from "@/lib/flows/graph/readiness-core";
 
 import { randomUUID } from "node:crypto";
 
+import { eq } from "drizzle-orm";
 import {
   afterAll,
   beforeAll,
@@ -90,6 +91,7 @@ beforeEach(async () => {
 async function seedReviewRun(input: {
   readiness?: ReadinessState;
   status?: string;
+  taskStatus?: "Backlog" | "InFlight" | "Done" | "Abandoned";
   runKind?: "flow" | "scratch" | "agent";
   promotionHold?: boolean;
   launchedParticipant?: boolean;
@@ -107,6 +109,7 @@ async function seedReviewRun(input: {
     number: Math.trunc(Math.random() * 1e9) + 1,
     title: `Task ${suffix}`,
     prompt: "p",
+    status: input.taskStatus ?? "Backlog",
   });
   await db.insert(schema.runs).values({
     id: runId,
@@ -314,6 +317,51 @@ describe("REQ-A2 AC1 / AC4 — the allow-list and the ordering hold against real
     });
 
     expect(promotable.map((item) => item.runId)).toEqual([flowReviewId]);
+  });
+
+  it("excludes Review runs whose task is already terminal", async () => {
+    const activeRunId = await seedReviewRun({
+      readiness: "ready",
+      taskStatus: "InFlight",
+    });
+
+    await seedReviewRun({ readiness: "ready", taskStatus: "Done" });
+    await seedReviewRun({ readiness: "ready", taskStatus: "Abandoned" });
+
+    const promotable = await listProjectPromotable(projectId, {
+      db: testDatabase.db,
+    });
+
+    expect(promotable.map((item) => item.runId)).toEqual([activeRunId]);
+  });
+
+  it("excludes an older Review attempt after the task has a newer flow run", async () => {
+    const reviewedRunId = await seedReviewRun({
+      readiness: "ready",
+      taskStatus: "InFlight",
+    });
+    const [reviewed] = await testDatabase.db
+      .select({ taskId: schema.runs.taskId, startedAt: schema.runs.startedAt })
+      .from(schema.runs)
+      .where(eq(schema.runs.id, reviewedRunId));
+
+    await testDatabase.db.insert(schema.runs).values({
+      id: randomUUID(),
+      projectId,
+      taskId: reviewed.taskId,
+      runKind: "flow",
+      status: "Done",
+      flowVersion: "v1.0.0",
+      flowRevision: "manual",
+      startedAt: new Date(reviewed.startedAt.getTime() + 1_000),
+      endedAt: new Date(reviewed.startedAt.getTime() + 2_000),
+    });
+
+    const promotable = await listProjectPromotable(projectId, {
+      db: testDatabase.db,
+    });
+
+    expect(promotable).toEqual([]);
   });
 
   it("orders by inReviewSince ascending with nulls last", async () => {

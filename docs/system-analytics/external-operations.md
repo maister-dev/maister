@@ -658,6 +658,7 @@ New and extended ext routes (every path is under `/api/v1/ext`):
 | `GET /tasks/search?q&cursor` | `tasks:read` | visible projects only, page 25, `truncated` flag |
 | `GET /work` · `GET /activity/feed` · `GET /decisions` | `work:read` · `activity:read` · `decisions:read` | librarian and personal tokens; the decision queue is read, never answered |
 | `POST /projects/{slug}/tasks` (+`statement`) · `PATCH …/tasks/{taskId}` (+`expectedRevision`) · `POST …/tasks/{taskId}/statement` | `tasks:create` · `tasks:update` | effectful; a stale `expectedRevision` → `CONFLICT{reason:"stale_revision"}` |
+| `POST …/tasks/{taskId}/complete {expectedRevision?}` | `tasks:complete` | global personal user token only; completes only after the newest Flow run has delivered, and requires a PR to be merged |
 | `POST …/tasks/{taskId}/send-to-triage {launchIntent}` | `tasks:triage` | effectful; see [triage.md](triage.md) |
 | `POST …/tasks/{taskId}/clarifications` · `DELETE …/clarifications/{id}` · `POST …/clarifications/{id}/answer` | `hitl:request` · `hitl:request` · exact `hitl:respond:human` (global personal token only) | effectful; the answer is never reachable with a librarian or agent token |
 | `POST /runs/{runId}/operator-message` | `runs:message` | effectful; outcome `delivered \| queued \| refused_requires_rework`; never `runs:delegate` |
@@ -671,6 +672,7 @@ MCP tools (`mcp/src/tools.ts`), each a thin client of the route above it:
 | `project_list` · `project_get` | new | `GET /projects` · `GET /projects/{slug}/directory` |
 | `task_search` · `work_list` · `decisions_list` · `activity_feed` | new | `GET /tasks/search` · `GET /work` · `GET /decisions` · `GET /activity/feed` |
 | `task_statement_accept` · `task_send_to_triage` | new | `POST …/statement` · `POST …/send-to-triage` |
+| `task_complete` | new | `POST …/tasks/{taskId}/complete`; global personal token only |
 | `task_publish_excerpt` | new | the ext comment route, as an explicit comment quoting the excerpt, plus a `mentioned` link |
 | `clarification_request` · `clarification_cancel` | new | `POST …/clarifications` · `DELETE …/clarifications/{id}` |
 | `run_operator_message` | new | `POST /runs/{runId}/operator-message` |

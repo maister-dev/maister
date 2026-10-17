@@ -2298,6 +2298,7 @@
     "flowCenterPromptCopy": "Copy",
     "flowCenterNoGraph": "No Flow graph for this run.",
     "flowCenterNoNode": "No node selected.",
+    "headerRunStatus": "Run",
     "headerBranch": "Branch",
     "headerChanges": "Changes",
     "headerChangesUnavailable": "Unavailable",
@@ -3924,6 +3925,7 @@
     "scopeTasksCreate": "Create tasks",
     "scopeTasksRead": "Read tasks",
     "scopeTasksUpdate": "Update tasks",
+    "scopeTasksComplete": "Complete delivered tasks",
     "scopeRunsLaunch": "Launch runs",
     "scopeRunsRead": "Read runs",
     "scopeReadinessRead": "Read readiness",
@@ -4815,7 +4817,8 @@
       "relationRemoved": "removed a relation to %ref%",
       "runLaunched": "launched run attempt %attempt%",
       "experimentConcluded": "concluded an experiment",
-      "agentSummonSuppressed": "skipped summoning %agent% — it is already working on this task"
+      "agentSummonSuppressed": "skipped summoning %agent% — it is already working on this task",
+      "taskCompleted": "completed this task after delivery"
     },
     "composerPlaceholder": "Write a comment… KEY-N references become links, @agent summons an agent.",
     "composerSubmit": "Comment",
@@ -4826,6 +4829,9 @@
     "composerErrorConfig": "Comment must be 1–10000 characters.",
     "errorForbidden": "You need member access for that.",
     "errorGeneric": "Action failed. Try again.",
+    "completeTask": "Complete task",
+    "completingTask": "Completing…",
+    "completeTaskFailed": "The task could not be completed. Refresh and verify that the latest run was delivered.",
     "runAgain": "Run again",
     "runAgainConcurrent": "Run another",
     "launchFirst": "Launch",
@@ -4920,7 +4926,8 @@
       "relationRemoved": "relation removed",
       "runLaunched": "run launched",
       "experimentConcluded": "experiment concluded",
-      "agentSummonSuppressed": "summon suppressed"
+      "agentSummonSuppressed": "summon suppressed",
+      "taskCompleted": "task completed"
     }
   },
   "agents": {

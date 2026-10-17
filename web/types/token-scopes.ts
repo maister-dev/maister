@@ -4,6 +4,10 @@ export const TOKEN_SCOPES = [
   "tasks:create",
   "tasks:read",
   "tasks:update",
+  // Explicit terminal transition after delivery evidence has been verified.
+  // Deliberately absent from agent/librarian grants: completing a task releases
+  // downstream work and remains an owner/member decision.
+  "tasks:complete",
   "tasks:triage",
   "runs:launch",
   "runs:read",

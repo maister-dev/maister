@@ -25,6 +25,7 @@ export interface RunHeaderChangeSummary {
 }
 
 export interface RunHeaderLabels {
+  runStatus: string;
   branch: string;
   changes: string;
   changesUnavailable: string;
@@ -167,7 +168,7 @@ export function RunHeader({
             )}
             data-testid="run-header-status"
           >
-            {status}
+            {labels.runStatus}: {status}
           </span>
           {status === "Pending" && labels.queueReason ? (
             <span

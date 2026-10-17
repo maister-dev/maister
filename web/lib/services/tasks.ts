@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { Task } from "@/lib/db/schema";
 import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 import type { TaskPriority } from "@/lib/tasks/criticality";
 
@@ -263,8 +264,10 @@ export type TaskDTO = {
   title: string;
   prompt: string;
   revision: number;
-  status: string;
-  stage: string;
+  status: Task["status"];
+  // Persisted pre-launch spec phase, not the derived board/work position.
+  // It intentionally may remain Backlog after status becomes Done.
+  stage: Task["stage"];
   flowId: string | null;
   // M34 launch-verdict fields (ADR-089): triage stamps them, the board's
   // launch popover edits them pre-launch. ADR-112: `flagged` marks a confirmed

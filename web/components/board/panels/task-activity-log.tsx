@@ -35,6 +35,7 @@ const EVENT_KINDS = [
   "relation_added",
   "relation_removed",
   "run_launched",
+  "task_completed",
 ] as const;
 
 function detailsOf(row: TaskActivityLogRow): string {

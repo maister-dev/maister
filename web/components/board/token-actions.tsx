@@ -244,6 +244,8 @@ function scopeText(labels: TokenLabels, scope: UserTokenScope): string {
       return labels.scopeTasksRead;
     case "tasks:update":
       return labels.scopeTasksUpdate;
+    case "tasks:complete":
+      return labels.scopeTasksComplete;
     case "runs:launch":
       return labels.scopeRunsLaunch;
     case "runs:read":

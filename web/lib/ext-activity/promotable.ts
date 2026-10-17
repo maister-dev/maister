@@ -4,7 +4,17 @@ import type { PromotionReadyItem } from "@/lib/ext-activity/types";
 import type { ReadinessState } from "@/lib/flows/graph/readiness-core";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
-import { and, eq, inArray } from "drizzle-orm";
+import {
+  and,
+  eq,
+  gt,
+  inArray,
+  isNull,
+  notExists,
+  notInArray,
+  or,
+} from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -96,6 +106,8 @@ async function loadPromotableCandidates(
 ): Promise<CandidateRow[]> {
   if (projectIds.length === 0) return [];
 
+  const newerFlowRun = alias(runs, "newer_promotable_flow_run");
+
   const joined: CandidateRow[] = await client
     .select({
       runId: runs.id,
@@ -119,6 +131,37 @@ async function loadPromotableCandidates(
         inArray(runs.projectId, [...projectIds]),
         inArray(runs.runKind, [...PROMOTABLE_RUN_KINDS]),
         inArray(runs.status, [...PROMOTABLE_RUN_STATUSES]),
+        // A decision must still be actionable for the task it belongs to.
+        // Completing/abandoning a task does not rewrite historical attempts,
+        // so an older Review run may legitimately remain in the runs table.
+        // Likewise, relaunching creates a newer flow run without destroying
+        // the reviewed attempt. Neither historical row belongs in the owner's
+        // current decisions queue.
+        or(
+          isNull(runs.taskId),
+          and(
+            notInArray(tasks.status, ["Done", "Abandoned"]),
+            notExists(
+              client
+                .select({ id: newerFlowRun.id })
+                .from(newerFlowRun)
+                .where(
+                  and(
+                    eq(newerFlowRun.projectId, runs.projectId),
+                    eq(newerFlowRun.taskId, runs.taskId),
+                    eq(newerFlowRun.runKind, "flow"),
+                    or(
+                      gt(newerFlowRun.startedAt, runs.startedAt),
+                      and(
+                        eq(newerFlowRun.startedAt, runs.startedAt),
+                        gt(newerFlowRun.id, runs.id),
+                      ),
+                    ),
+                  ),
+                ),
+            ),
+          ),
+        ),
       ),
     );
 
