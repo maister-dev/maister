@@ -57,6 +57,18 @@ describe("UT-STG-10 i18n — every WorkStage member has an RU label", () => {
       expect((ruNs[key] as string).trim().length).toBeGreaterThan(0);
     });
   }
+
+  it("uses task-oriented Russian labels instead of internal workflow jargon", () => {
+    expect(ruNs).toMatchObject({
+      Triage: "Ожидает разбора",
+      Held: "Требует уточнения",
+      Ready: "Готова к выполнению",
+      Executing: "В работе",
+      WaitingOnHuman: "Ждёт ответа",
+      Review: "На проверке",
+      Promoted: "Завершена",
+    });
+  });
 });
 
 describe("UT-STG-10 i18n — workStage EN and RU are translated, not duplicated", () => {
