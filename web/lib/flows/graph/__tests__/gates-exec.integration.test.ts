@@ -327,9 +327,18 @@ describe("gate execution", () => {
 
     // The node is `cli`, so the gate owns the run's only session create. A gate
     // that answered to "default" would claim the run's logical session.
+    const [create] = creates();
+
     expect(creates().map((payload) => payload.sessionName)).toEqual([
       "gate-judge",
     ]);
+    expect(create.runner).toMatchObject({
+      runnerId: expect.any(String),
+      adapter: "claude",
+      capabilityAgent: "claude",
+      model: "claude-sonnet-4-6",
+      provider: { kind: "anthropic" },
+    });
 
     // ...and that session's row records the runner it spawned on. Nothing
     // pre-inserts a substep row at launch, so without the seed the create ack's
