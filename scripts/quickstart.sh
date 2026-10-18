@@ -95,11 +95,10 @@ check_node() {
 
 check_pnpm() {
   if ! have pnpm; then
-    have corepack || die "pnpm is required: npm install -g pnpm@${PNPM_VERSION}  (https://pnpm.io/installation)"
-    warn "pnpm is not installed; enabling pnpm@${PNPM_VERSION} through corepack"
-    COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack enable pnpm \
-      && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare "pnpm@${PNPM_VERSION}" --activate \
-      || die "corepack could not enable pnpm; install it with: npm install -g pnpm@${PNPM_VERSION}"
+    have npm || die "pnpm is required: npm install -g pnpm@${PNPM_VERSION}  (https://pnpm.io/installation)"
+    warn "pnpm is not installed; installing pnpm@${PNPM_VERSION} through npm"
+    npm install --global "pnpm@${PNPM_VERSION}" \
+      || die "npm could not install pnpm; install it with: npm install -g pnpm@${PNPM_VERSION}"
     hash -r
     have pnpm || die "pnpm is still not on PATH; open a new shell or run: npm install -g pnpm@${PNPM_VERSION}"
   fi

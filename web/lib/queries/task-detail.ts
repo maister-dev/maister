@@ -25,6 +25,7 @@ import {
   getTaskClarificationProjection,
   type TaskClarificationHistory,
 } from "@/lib/queries/task-clarifications";
+import { taskCompletionEvidence } from "@/lib/tasks/completion-evidence";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches lib/services/tasks.ts).
 const {
@@ -186,6 +187,7 @@ export type TaskDetailData = {
     targetBranch: string | null;
     promotionMode: "local_merge" | "pull_request" | null;
     executionPolicy: ExecutionPolicy | null;
+    revision: number;
     status: string;
     // M34: the triager's verdict mark (nullable 'triaged').
     triageStatus: "triaged" | "flagged" | null;
@@ -209,6 +211,7 @@ export type TaskDetailData = {
     id: string;
     status: string;
     currentStepId: string | null;
+    completionReady: boolean;
   } | null;
 };
 
@@ -410,6 +413,8 @@ export async function getTaskDetail(
       capabilityAgent: activeSessionCapabilityAgent(runs.id),
       runnerSnapshot: activeSessionRunnerSnapshot(runs.id),
       promotionMode: workspaces.promotionMode,
+      promotionState: workspaces.promotionState,
+      prState: workspaces.prState,
       prUrl: workspaces.prUrl,
       prNumber: workspaces.prNumber,
       deliveryPolicySnapshot: runs.deliveryPolicySnapshot,
@@ -436,6 +441,8 @@ export async function getTaskDetail(
     capabilityAgent: string | null;
     runnerSnapshot: unknown | null;
     promotionMode: string | null;
+    promotionState: string | null;
+    prState: string | null;
     prUrl: string | null;
     prNumber: number | null;
     deliveryPolicySnapshot: unknown | null;
@@ -504,6 +511,7 @@ export async function getTaskDetail(
           id: latest.id,
           status: latest.status,
           currentStepId: latest.currentStepId,
+          completionReady: taskCompletionEvidence(latest).ok,
         }
       : null,
   };
@@ -560,6 +568,7 @@ async function taskExtrasOf(
   targetBranch: string | null;
   promotionMode: "local_merge" | "pull_request" | null;
   executionPolicy: ExecutionPolicy | null;
+  revision: number;
   triageStatus: "triaged" | "flagged" | null;
   priority: TaskPriority;
   queuePaused: boolean;
@@ -574,6 +583,7 @@ async function taskExtrasOf(
       targetBranch: schemaModule.tasks.targetBranch,
       promotionMode: schemaModule.tasks.promotionMode,
       executionPolicy: schemaModule.tasks.executionPolicy,
+      revision: schemaModule.tasks.revision,
       triageStatus: schemaModule.tasks.triageStatus,
       priority: schemaModule.tasks.priority,
       queuePaused: schemaModule.tasks.queuePaused,
@@ -588,6 +598,7 @@ async function taskExtrasOf(
     targetBranch: string | null;
     promotionMode: "local_merge" | "pull_request" | null;
     executionPolicy: ExecutionPolicy | null;
+    revision: number;
     triageStatus: "triaged" | "flagged" | null;
     priority: TaskPriority | null;
     queuePaused: boolean | null;
@@ -606,6 +617,7 @@ async function taskExtrasOf(
     targetBranch: rows[0]?.targetBranch ?? null,
     promotionMode: rows[0]?.promotionMode ?? null,
     executionPolicy: rows[0]?.executionPolicy ?? null,
+    revision: rows[0]?.revision ?? 0,
     triageStatus: rows[0]?.triageStatus ?? null,
     priority: rows[0]?.priority ?? "normal",
     queuePaused: rows[0]?.queuePaused ?? false,

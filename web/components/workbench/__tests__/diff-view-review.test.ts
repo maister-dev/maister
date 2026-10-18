@@ -171,6 +171,20 @@ function render(over: Partial<DiffViewProps> = {}): string {
 }
 
 describe("DiffView — review mode off (regression pin)", () => {
+  it("defaults to one unified review surface", () => {
+    const html = render({ mode: undefined });
+
+    expect(html).toContain('data-diff-mode="unified"');
+    expect(html).toContain('aria-label="L.split"');
+  });
+
+  it("keeps the side-by-side view as an explicit choice", () => {
+    const html = render({ mode: "split" });
+
+    expect(html).toContain('data-diff-mode="split"');
+    expect(html).toContain('aria-label="L.unified"');
+  });
+
   it("renders the default code-review chrome without review state", () => {
     const html = render();
 

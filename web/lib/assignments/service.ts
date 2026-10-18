@@ -136,6 +136,10 @@ export type SystemCloseActiveAssignmentsForRunArgs = {
   db?: Db;
   runId: string;
   reason: string;
+  // Omitted for terminal-run cleanup, where every active assignment belongs to
+  // the run being closed. Narrow callers (for example a successful branch
+  // conflict resolution) may close only the assignment they actually settled.
+  actionKinds?: readonly Assignment["actionKind"][];
 };
 
 export type SystemCloseActiveAssignmentsForHitlRequestArgs = {
@@ -989,7 +993,14 @@ export async function systemCloseActiveAssignmentsForRun(
       runId: args.runId,
     });
 
-    if (active.length === 0) return [];
+    const actionKinds = args.actionKinds
+      ? new Set<Assignment["actionKind"]>(args.actionKinds)
+      : null;
+    const matching = actionKinds
+      ? active.filter((assignment) => actionKinds.has(assignment.actionKind))
+      : active;
+
+    if (matching.length === 0) return [];
 
     const [run] = await tx
       .select({ projectId: runs.projectId })
@@ -1011,7 +1022,7 @@ export async function systemCloseActiveAssignmentsForRun(
     });
     const closed: Assignment[] = [];
 
-    for (const assignment of active) {
+    for (const assignment of matching) {
       closed.push(
         await cancelAssignment({
           db: tx,
@@ -1028,6 +1039,7 @@ export async function systemCloseActiveAssignmentsForRun(
         runId: args.runId,
         actorId: actor.id,
         closedCount: closed.length,
+        actionKinds: args.actionKinds ?? null,
         reason: args.reason,
       },
       "[FIX:M13] active assignments system-closed for terminal run",

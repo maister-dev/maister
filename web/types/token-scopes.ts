@@ -4,6 +4,10 @@ export const TOKEN_SCOPES = [
   "tasks:create",
   "tasks:read",
   "tasks:update",
+  // Explicit terminal transition after delivery evidence has been verified.
+  // Deliberately absent from agent/librarian grants: completing a task releases
+  // downstream work and remains an owner/member decision.
+  "tasks:complete",
   "tasks:triage",
   "runs:launch",
   "runs:read",
@@ -35,6 +39,9 @@ export const TOKEN_SCOPES = [
   // and the enabled platform ACP runners a triage verdict may assign.
   "flows:read",
   "runners:read",
+  // Project-admin package attachment lifecycle. Installing/trusting a package
+  // revision remains a separate platform-admin operation.
+  "packages:manage",
   "agents:trigger",
   "runs:delegate",
   "runs:collect",

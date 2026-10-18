@@ -527,3 +527,17 @@ run-detail card. The primary card shows the total outstanding-request count;
 after an answer refreshes the page, focus moves to the first remaining pending
 card so keyboard users continue the decision sequence without searching the
 page.
+
+## Review information hierarchy
+
+Final-delivery Review opens with changed files and their diff, followed by the
+promotion decision and check results. Flow review gates keep their diff and
+approve/rework decision together, with the decision below the diff. The header's
+Review link targets the applicable review surface directly.
+
+Flow and technical history are collapsed during review. Workspace operations
+live under **Advanced**, labelled **Workspace operations** (RU: «Операции с
+рабочей копией»). One contextual shortcut offers restoration, conflict resolution,
+branch update, or first publication when current facts and policy allow it.
+Operation deep links expand Advanced. Update parameters (base/target,
+strategy, push, resolver and runner) and delivery strategy are collapsed by default.

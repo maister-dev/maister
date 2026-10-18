@@ -68,7 +68,9 @@ function project(ws: PortfolioWorkspace): PortfolioProject {
 }
 
 async function render(ws: PortfolioWorkspace): Promise<string> {
-  return renderToStaticMarkup(await ProjectCard({ project: project(ws) }));
+  return renderToStaticMarkup(
+    await ProjectCard({ project: project(ws), technicalOpen: true }),
+  );
 }
 
 describe("ProjectCard — auto-promoted workspace glyph (ADR-126, T19)", () => {
@@ -85,5 +87,41 @@ describe("ProjectCard — auto-promoted workspace glyph (ADR-126, T19)", () => {
     const html = await render(workspace({ autoPromotedLane: null }));
 
     expect(html).not.toContain('data-testid="workspace-auto-promoted"');
+  });
+});
+
+describe("ProjectCard — project summary", () => {
+  it("keeps conflict and Git details behind the technical link by default", async () => {
+    const data = project(workspace({ prHasConflicts: true }));
+    const html = renderToStaticMarkup(await ProjectCard({ project: data }));
+
+    expect(html).toContain("portfolio.attentionCount(count=1)");
+    expect(html).toContain("portfolio.openProject");
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain("/projects?technical=demo");
+    expect(html).not.toContain("maister/docs-bump");
+    expect(html).not.toContain("portfolio.gitConflict");
+  });
+
+  it("reveals conflict details and configuration links when opened", async () => {
+    const html = await render(workspace({ prHasConflicts: true }));
+
+    expect(html).toContain('aria-expanded="true"');
+    expect(html).toContain("maister/docs-bump");
+    expect(html).toContain("portfolio.gitConflict");
+    expect(html).toContain("?tab=packages");
+    expect(html).toContain("?tab=mcps");
+    expect(html).toContain("?tab=agents");
+  });
+
+  it("does not count a retained terminal workspace as an active run", async () => {
+    const html = renderToStaticMarkup(
+      await ProjectCard({
+        project: project(workspace({ status: "done" })),
+      }),
+    );
+
+    expect(html).toMatch(/portfolio.runningCount<\/dt><dd[^>]*>0<\/dd>/);
+    expect(html).toContain("portfolio.attentionCount(count=0)");
   });
 });

@@ -21,12 +21,16 @@ const LABELS = {
   agentPickerLabel: "Agent to run",
 };
 
-function render(agents: Array<{ id: string; name: string }>): string {
+function render(
+  agents: Array<{ id: string; name: string }>,
+  showSendToTriage = true,
+): string {
   return renderToStaticMarkup(
     createElement(TaskAgentActions, {
       slug: "demo",
       taskId: "22222222-2222-4222-8222-222222222222",
       taskNumber: 7,
+      showSendToTriage,
       agents,
       labels: LABELS,
     }),
@@ -48,5 +52,12 @@ describe("TaskAgentActions (M34 D11/D13)", () => {
 
     expect(html).not.toContain("Run agent");
     expect(html).toContain("Send to triage");
+  });
+
+  it("hides Send to triage while the task has an active run", () => {
+    const html = render([{ id: "triager", name: "Triager" }], false);
+
+    expect(html).toContain("Run agent");
+    expect(html).not.toContain("Send to triage");
   });
 });

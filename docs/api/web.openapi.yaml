@@ -23582,6 +23582,7 @@ components:
         - tasks:create
         - tasks:read
         - tasks:update
+        - tasks:complete
         - runs:launch
         - runs:read
         - readiness:read

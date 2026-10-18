@@ -7752,6 +7752,7 @@ export const TASK_ACTIVITY_EVENT_KINDS = [
   "clarification_requested",
   "clarification_answered",
   "clarification_cancelled",
+  "task_completed",
 ] as const;
 
 export type TaskActivityEventKind = (typeof TASK_ACTIVITY_EVENT_KINDS)[number];
@@ -7794,7 +7795,7 @@ export const taskActivity = pgTable(
     ),
     eventKindCheck: check(
       "task_activity_event_kind_check",
-      sql`${t.eventKind} in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched', 'triage_set', 'triage_requeued', 'agent_quarantined', 'experiment_concluded', 'run_pr_merged', 'evaluation_decided', 'agent_summon_suppressed', 'statement_accepted', 'clarification_requested', 'clarification_answered', 'clarification_cancelled')`,
+      sql`${t.eventKind} in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched', 'triage_set', 'triage_requeued', 'agent_quarantined', 'experiment_concluded', 'run_pr_merged', 'evaluation_decided', 'agent_summon_suppressed', 'statement_accepted', 'clarification_requested', 'clarification_answered', 'clarification_cancelled', 'task_completed')`,
     ),
     // ADR-151: the structural backstop for at-least-once event redelivery —
     // the consumer inserts with onConflictDoNothing instead of reading first,

@@ -27,7 +27,7 @@ async function call(
   url: string,
   method: "POST" | "DELETE",
   body?: unknown,
-): Promise<{ ok: boolean; writeBack?: string }> {
+): Promise<{ ok: boolean; writeBack?: string; message?: string }> {
   const res = await fetch(url, {
     method,
     headers: { "content-type": "application/json" },
@@ -35,10 +35,11 @@ async function call(
   });
   const payload = (await res.json().catch(() => null)) as {
     writeBack?: string;
+    message?: string;
   } | null;
 
   if (!res.ok) {
-    return { ok: false };
+    return { ok: false, message: payload?.message };
   }
 
   return { ok: true, writeBack: payload?.writeBack };
@@ -85,8 +86,12 @@ export function ProjectPackagesSection({
     if (notice) noticeRef.current?.focus();
   }, [notice]);
 
-  function surface(result: { ok: boolean; writeBack?: string }): void {
-    if (!result.ok) setNotice(t("errorGeneric"));
+  function surface(result: {
+    ok: boolean;
+    writeBack?: string;
+    message?: string;
+  }): void {
+    if (!result.ok) setNotice(result.message ?? t("errorGeneric"));
     else if (result.writeBack === "failed")
       setNotice(t("attachWriteBackFailed"));
     else setNotice(null);
@@ -123,9 +128,9 @@ export function ProjectPackagesSection({
     }
   }
 
-  // Both upgrade and downgrade flip the attachment pointer through the same
-  // endpoint; the direction is decided server-side (att.upgradeTarget /
-  // att.downgradeTargets), never by picking an arbitrary other install.
+  // Upgrade, downgrade, and an explicit source switch all flip the attachment
+  // pointer through the same endpoint. The read model decides which installed
+  // revisions are offered for each operation.
   async function switchVersion(
     att: ProjectPackageAttachmentView,
     targetInstallId: string,
@@ -289,6 +294,13 @@ export function ProjectPackagesSection({
                     </td>
                     <td className="px-4 py-3 font-mono text-[12px] text-ink">
                       {att.versionLabel}
+                      <span className="ml-2 rounded-full border border-line px-1.5 py-0.5 text-[9.5px] uppercase text-mute">
+                        {t(
+                          att.sourceKind === "local"
+                            ? "sourceLocal"
+                            : "sourceGit",
+                        )}
+                      </span>
                       <span className="block text-[10.5px] text-mute">
                         {att.resolvedRevision.slice(0, 12)}
                       </span>
@@ -353,6 +365,38 @@ export function ProjectPackagesSection({
                                     value={tgt.installId}
                                   >
                                     {tgt.versionLabel}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : null}
+                            {att.sourceTargets.length > 0 ? (
+                              <select
+                                aria-label={t("switchSource")}
+                                className="h-8 rounded-[8px] border border-line bg-paper px-2 font-mono text-[12px] text-ink disabled:opacity-50"
+                                disabled={busy === `switch:${att.id}`}
+                                value=""
+                                onChange={(e) =>
+                                  switchVersion(att, e.target.value)
+                                }
+                              >
+                                <option value="">
+                                  {t("switchSourcePick")}
+                                </option>
+                                {att.sourceTargets.map((target) => (
+                                  <option
+                                    key={target.installId}
+                                    disabled={!target.compatible}
+                                    title={
+                                      target.incompatibilityReason ?? undefined
+                                    }
+                                    value={target.installId}
+                                  >
+                                    {t(
+                                      target.sourceKind === "local"
+                                        ? "sourceLocal"
+                                        : "sourceGit",
+                                    )}{" "}
+                                    · {target.versionLabel}
                                   </option>
                                 ))}
                               </select>

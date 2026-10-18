@@ -220,6 +220,23 @@ export function runnerLaunchErrorLabel(error: unknown): string | null {
   return readLaunchErrorDetails(error.details)?.label ?? null;
 }
 
+export function launchPreconditionMessage(error: unknown): string | null {
+  if (!error || typeof error !== "object") return null;
+
+  const candidate = error as { code?: unknown; message?: unknown };
+
+  if (
+    candidate.code !== "PRECONDITION" ||
+    typeof candidate.message !== "string"
+  ) {
+    return null;
+  }
+
+  const message = candidate.message.trim();
+
+  return message.length > 0 ? message : null;
+}
+
 export interface LaunchPopoverProps {
   taskId: string;
   label: string;
@@ -978,11 +995,13 @@ export function LaunchPopover({
         } | null;
 
         const role = runnerLaunchErrorLabel(data);
+        const preconditionMessage = launchPreconditionMessage(data);
 
         setError(
           role
             ? t("runnerSlotUnresolved", { role })
-            : tRun(resolveUiErrorMessageKey(data?.code)),
+            : (preconditionMessage ??
+                tRun(resolveUiErrorMessageKey(data?.code))),
         );
 
         return;
@@ -995,11 +1014,13 @@ export function LaunchPopover({
 
       if (streamed.error) {
         const role = runnerLaunchErrorLabel(streamed.error);
+        const preconditionMessage = launchPreconditionMessage(streamed.error);
 
         setError(
           role
             ? t("runnerSlotUnresolved", { role })
-            : tRun(resolveUiErrorMessageKey(streamed.error.code)),
+            : (preconditionMessage ??
+                tRun(resolveUiErrorMessageKey(streamed.error.code))),
         );
 
         return;

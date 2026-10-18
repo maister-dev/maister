@@ -30,7 +30,10 @@ import {
 } from "@/components/board/panels/agents-attach-panel";
 import { SchedulesPanel } from "@/components/schedules/schedules-panel";
 import { AutomationsPanel } from "@/components/automations/automations-panel";
-import { WorkbenchLifecycleActions } from "@/components/workbench/lifecycle-actions";
+import {
+  ProjectMenu,
+  ProjectWorkspacesPanel,
+} from "@/components/board/project-controls";
 import {
   getProjectRole,
   getSessionUser,
@@ -38,6 +41,12 @@ import {
 } from "@/lib/authz";
 import { isBrainSchemaApplied } from "@/lib/brain/guard";
 import { isProjectBrainIndexingAvailable } from "@/lib/brain/availability";
+import {
+  BOARD_FILTER_NONE,
+  filterBoardData,
+  getBoardFilterOptions,
+  normalizeBoardFilters,
+} from "@/lib/board/filters";
 import {
   loadProjectBrainPanelData,
   type BrainUiDb,
@@ -117,6 +126,10 @@ interface PageProps {
     audit_result?: string | string[];
     audit_page?: string | string[];
     brain_query?: string | string[];
+    board_flow?: string | string[];
+    board_agent?: string | string[];
+    board_priority?: string | string[];
+    board_touched?: string | string[];
   }>;
 }
 
@@ -143,6 +156,10 @@ export default async function ProjectBoardPage({
     audit_result: rawAuditResult,
     audit_page: rawAuditPage,
     brain_query: rawBrainQuery,
+    board_flow: rawBoardFlow,
+    board_agent: rawBoardAgent,
+    board_priority: rawBoardPriority,
+    board_touched: rawBoardTouched,
   } = await searchParams;
   const requestedTab = parseTab(rawTab);
   const one = (v: string | string[] | undefined): string | undefined =>
@@ -231,6 +248,17 @@ export default async function ProjectBoardPage({
       // second local sum that is free to disagree with the rail badge.
       getDecisionsCount(user.id, user.role, { projectId: project.id }),
     ]);
+  const boardFilterOptions = getBoardFilterOptions(board);
+  const boardFilters = normalizeBoardFilters(
+    {
+      flow: one(rawBoardFlow),
+      agent: one(rawBoardAgent),
+      priority: one(rawBoardPriority),
+      touched: one(rawBoardTouched),
+    },
+    boardFilterOptions,
+  );
+  const filteredBoard = filterBoardData(board, boardFilters);
   const activityLog =
     tab === "activity"
       ? await getProjectActivityLog(project.id, logFilters)
@@ -338,44 +366,71 @@ export default async function ProjectBoardPage({
         settingsHref={`/projects/${slug}?tab=settings`}
         slug={slug}
       />
-      <header className="mb-6 grid grid-cols-1 items-start gap-6 border-b border-line pb-[22px] lg:grid-cols-[1fr_auto]">
+      <header className="mb-3 flex flex-wrap items-center justify-between gap-3 border-b border-line pb-3">
         <div className="min-w-0">
-          <div className="mb-3 inline-flex items-center gap-2.5 font-mono text-[10.5px] font-semibold uppercase tracking-[0.14em] text-mute before:h-px before:w-[18px] before:bg-amber before:content-['']">
-            <span>{tNav("crumbProjects")}</span>
-            <span className="opacity-50">/</span>
-            <b className="text-[12.5px] font-bold normal-case tracking-normal text-ink-2">
-              {project.name}
-            </b>
-          </div>
-          <div className="mb-1.5 flex flex-wrap items-baseline gap-3.5">
-            <h1 className="m-0 text-[36px] font-semibold leading-[1.05] tracking-[-0.024em] text-ink">
-              {project.name}
-            </h1>
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-line bg-amber-soft py-1 pl-[9px] pr-2.5 font-mono text-[11px] font-semibold tracking-[0.04em] text-amber">
-              <span className="h-1.5 w-1.5 rounded-full bg-amber animate-[pulse-dot_2.2s_ease-out_infinite]" />
-              {board.inProd > 0 ? "running" : "idle"}
-            </span>
-          </div>
-          <p className="mt-2 max-w-[56ch] text-sm leading-[1.5] text-body">
+          <nav
+            aria-label={tNav("breadcrumbLabel")}
+            className="mb-1 font-mono text-[10.5px] font-semibold uppercase tracking-[0.14em] text-mute"
+          >
+            <ol className="inline-flex min-w-0 items-center gap-2">
+              <li>
+                <Link
+                  className="underline decoration-transparent underline-offset-4 transition-colors hover:text-amber hover:decoration-amber focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/40"
+                  href="/projects"
+                >
+                  {tNav("projects")}
+                </Link>
+              </li>
+              <li aria-hidden="true" className="opacity-50">
+                /
+              </li>
+              <li
+                aria-current="page"
+                className="truncate font-bold normal-case tracking-normal text-ink-2"
+              >
+                {project.name}
+              </li>
+            </ol>
+          </nav>
+          <h1 className="text-2xl font-semibold tracking-tight text-ink">
+            {project.name}
+          </h1>
+          <p
+            className="max-w-[56ch] truncate text-xs text-mute"
+            title={displayRepoPath}
+          >
             {displayRepoPath}
           </p>
         </div>
-
-        <div className="flex flex-col items-end gap-3.5">
-          <div className="flex items-center overflow-hidden rounded-[10px] border border-line bg-paper">
-            <Count label={t("needYou")} tone="needs" value={projectDecisions} />
-            <Count label={t("inProd")} tone="flight" value={board.inProd} />
-            <Count label={t("backlogCount")} value={board.backlog} />
-            <Count label={t("mergedDays")} value={board.merged7d} />
-          </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <ProjectWorkspacesPanel
+            closeLabel={tCommon("cancel")}
+            label={t("workspacesButton", {
+              count: pageData.activeWorkspaces.length,
+            })}
+            title={tPortfolio("workspaces")}
+          >
+            <ProjectActiveWorkspaces
+              activeLabel={tPortfolio("activeCount", {
+                count: pageData.activeWorkspaces.length,
+              })}
+              activeWorkspaces={pageData.activeWorkspaces}
+              noneLabel={tPortfolio("noneActive")}
+              title={tPortfolio("workspaces")}
+              workspaceActionLabel={(action) =>
+                tPortfolio(`workspaceAction.${action}`)
+              }
+            />
+          </ProjectWorkspacesPanel>
+          <ProjectTabs
+            compact
+            active={tab}
+            boardCount={board.totalTasks}
+            showBrain={brainIndexingAvailable}
+            slug={slug}
+          />
           {canAct ? (
-            <div className="flex gap-2">
-              <Link
-                className="inline-flex items-center rounded-md border border-line bg-ink px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-paper transition-colors hover:bg-ink-2"
-                href={`/scratch-runs/new?projectId=${project.id}`}
-              >
-                {tScratch("launch")}
-              </Link>
+            <>
               <NewTaskModal
                 flows={pageData.flows}
                 labels={{
@@ -395,60 +450,38 @@ export default async function ProjectBoardPage({
                 packagesHref={`/projects/${slug}?tab=packages`}
                 slug={slug}
               />
-            </div>
+              <ProjectMenu
+                more
+                items={[
+                  {
+                    key: "scratch",
+                    label: tScratch("launch"),
+                    href: `/scratch-runs/new?projectId=${project.id}`,
+                  },
+                ]}
+                label={t("moreActions")}
+              />
+            </>
           ) : null}
         </div>
       </header>
-
-      <div className="mb-6 grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-line bg-line md:grid-cols-4">
-        <MetaCell
-          dot="bg-amber"
-          label={t("defaultAgent")}
-          sub={
-            pageData.defaultRunnerLabel
-              ? `${pageData.defaultRunnerLabel} · ${
-                  pageData.defaultRunnerSource ?? "inherited"
-                }`
-              : undefined
-          }
-          value={pageData.defaultAgent ?? "—"}
-        />
-        <MetaCell
-          dot="bg-accent-2"
-          label={t("flowsConfigured")}
-          sub={pageData.flows.map((f) => f.ref).join(" · ") || undefined}
-          value={String(pageData.flows.length)}
-        />
-        <MetaCell
-          dot="bg-accent-3"
-          label={t("mcps")}
-          value={String(mcpHub.effectiveCount)}
-        />
-        <MetaCell
-          dot="bg-accent-4"
-          label={t("team")}
-          value={`${pageData.members.length}`}
-        />
+      <div
+        aria-label={t("statistics")}
+        className="mb-4 flex flex-wrap items-center gap-x-5 gap-y-2"
+      >
+        <Count label={t("needYou")} tone="needs" value={projectDecisions} />
+        <Count label={t("inProd")} tone="flight" value={board.inProd} />
+        <Count label={t("backlogCount")} value={board.backlog} />
+        <Count label={t("mergedDays")} value={board.merged7d} />
       </div>
-
-      <ProjectActiveWorkspaces
-        activeLabel={tPortfolio("activeCount", {
-          count: pageData.activeWorkspaces.length,
-        })}
-        activeWorkspaces={pageData.activeWorkspaces}
-        noneLabel={tPortfolio("noneActive")}
-        title={tPortfolio("workspaces")}
-        workspaceActionLabel={(action) =>
-          tPortfolio(`workspaceAction.${action}`)
-        }
-      />
-
-      <ProjectTabs
-        active={tab}
-        boardCount={board.totalTasks}
-        showBrain={brainIndexingAvailable}
-        slug={slug}
-      />
+      {tab !== "board" ? (
+        <Link
+          className="mb-4 inline-block text-sm text-amber hover:underline"
+          href={`/projects/${slug}`}
+        >
+          {tNav("board")}
+        </Link>
+      ) : null}
 
       {tab === "board" ? (
         <section>
@@ -469,13 +502,15 @@ export default async function ProjectBoardPage({
             </section>
           ) : null}
           <BoardTools
+            filters={boardFilters}
             labels={{
               filterFlow: t("filterFlow"),
               filterAgent: t("filterAgent"),
               filterPrio: t("filterPrio"),
               filterTouched: t("filterTouched"),
               filterAny: t("filterAny"),
-              touchedValue: "7d",
+              filterAnyTime: t("filterAnyTime"),
+              clearFilters: t("clearFilters"),
               layout: t("layout"),
               layoutBoard: t("layoutBoard"),
               layoutSwimlanes: t("layoutSwimlanes"),
@@ -483,10 +518,51 @@ export default async function ProjectBoardPage({
               asOf: t("asOf"),
               justNow: t("justNow"),
             }}
+            options={{
+              flow: [
+                ...(boardFilterOptions.hasFlowless
+                  ? [
+                      {
+                        value: BOARD_FILTER_NONE,
+                        label: t("filterNoFlow"),
+                      },
+                    ]
+                  : []),
+                ...boardFilterOptions.flows.map((flow) => ({
+                  value: flow,
+                  label: flow,
+                })),
+              ],
+              agent: [
+                ...(boardFilterOptions.hasAgentless
+                  ? [
+                      {
+                        value: BOARD_FILTER_NONE,
+                        label: t("filterNoAgent"),
+                      },
+                    ]
+                  : []),
+                ...boardFilterOptions.agents.map((agent) => ({
+                  value: agent,
+                  label: agent,
+                })),
+              ],
+              priority: [
+                { value: "urgent", label: t("priorityUrgent") },
+                { value: "high", label: t("priorityHigh") },
+                { value: "normal", label: t("priorityNormal") },
+                { value: "low", label: t("priorityLow") },
+              ],
+              touched: [
+                { value: "1d", label: t("filterTouchedDay") },
+                { value: "7d", label: t("filterTouchedWeek") },
+                { value: "30d", label: t("filterTouchedMonth") },
+              ],
+            }}
           >
             <Board
               canAct={canAct}
-              data={board}
+              data={filteredBoard}
               platformStatus={platformStatus}
               slug={slug}
             />
@@ -529,6 +605,7 @@ export default async function ProjectBoardPage({
                   run_launched: tLog("kind.runLaunched"),
                   experiment_concluded: tLog("kind.experimentConcluded"),
                   agent_summon_suppressed: tLog("kind.agentSummonSuppressed"),
+                  task_completed: tLog("kind.taskCompleted"),
                 },
               }}
               page={activityLog.page}
@@ -948,7 +1025,7 @@ function ProjectActiveWorkspaces({
         </span>
       </header>
       {activeWorkspaces.length > 0 ? (
-        <ul className="m-0 grid list-none grid-cols-1 gap-px overflow-hidden rounded-lg border border-line-soft bg-line-soft p-0 md:grid-cols-2 xl:grid-cols-3">
+        <ul className="m-0 grid list-none grid-cols-1 gap-px overflow-hidden rounded-lg border border-line-soft bg-line-soft p-0 ">
           {activeWorkspaces.map((workspace) => (
             <li key={workspace.runId} className="bg-paper">
               <Link
@@ -980,15 +1057,6 @@ function ProjectActiveWorkspaces({
                   {workspace.time}
                 </span>
               </Link>
-              {workspace.lifecycleActions.length > 0 ? (
-                <WorkbenchLifecycleActions
-                  workspaceAvailable
-                  actions={workspace.lifecycleActions}
-                  className="px-3 pb-2.5"
-                  runId={workspace.runId}
-                  runKind={workspace.runKind}
-                />
-              ) : null}
             </li>
           ))}
         </ul>
@@ -1028,45 +1096,16 @@ function Count({
         : "text-mute";
 
   return (
-    <div className="flex flex-col gap-0.5 border-r border-line px-4 py-2.5 text-center font-mono last:border-r-0">
+    <div className="inline-flex items-baseline gap-2 font-mono">
       <span
-        className={`text-[18px] font-bold leading-none tracking-[-0.01em] ${numTone}`}
+        className={`text-sm font-bold leading-none tracking-[-0.01em] ${numTone}`}
       >
         {value}
       </span>
       <span
-        className={`mt-[3px] text-[9px] font-semibold uppercase tracking-[0.12em] ${lblTone}`}
+        className={`text-[10px] font-semibold uppercase tracking-[0.12em] ${lblTone}`}
       >
         {label}
-      </span>
-    </div>
-  );
-}
-
-function MetaCell({
-  label,
-  value,
-  sub,
-  dot,
-}: {
-  label: string;
-  value: string;
-  sub?: string;
-  dot: string;
-}): ReactElement {
-  return (
-    <div className="flex cursor-pointer flex-col gap-1 bg-paper px-4 py-3 transition-colors hover:bg-ivory">
-      <span className="inline-flex items-center gap-1.5 font-mono text-[9.5px] font-semibold uppercase tracking-[0.12em] text-mute">
-        <span className={`h-[5px] w-[5px] rounded-full ${dot}`} />
-        {label}
-      </span>
-      <span className="flex items-center gap-2 font-mono text-[12.5px] font-semibold tracking-[-0.005em] text-ink">
-        {value}
-        {sub ? (
-          <span className="truncate text-[11px] font-normal text-mute">
-            · {sub}
-          </span>
-        ) : null}
       </span>
     </div>
   );

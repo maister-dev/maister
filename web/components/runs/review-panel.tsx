@@ -7,7 +7,7 @@ import { ArrowPathIcon } from "@heroicons/react/24/outline";
 import { Button, Input, ListBox, Select } from "@heroui/react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
@@ -68,6 +68,9 @@ export type ReviewPanelLabels = {
   behindAhead: string;
   syncBranch: string;
   syncInProgress: string;
+  promotionInProgress: string;
+  promotionInProgressHint: string;
+  operationTakingLonger: string;
   resolveWithAgent: string;
   autoFinalize: string;
   autoFinalizeHint: string;
@@ -79,6 +82,13 @@ export type ReviewPanelSync = {
   // Non-null ⇒ a sync claim is live (phase from the latest attempt); the panel
   // shows the phase and disables both promote and a second sync launch.
   inProgress: { phase: string } | null;
+  defaultRunnerId?: string | null;
+};
+
+export type ReviewPanelUnavailable = {
+  reason: "missing-worktree" | "diff-error";
+  canReattach: boolean;
+  reattachHref?: string | null;
 };
 
 export interface ReviewPanelProps {
@@ -103,6 +113,10 @@ export interface ReviewPanelProps {
   // A pre-M18 row whose branch metadata cannot be derived: the panel shows the
   // "relaunch to promote" PRECONDITION state instead of the Promote action.
   legacyNeedsRelaunch?: boolean;
+  // A current run whose workspace cannot be read is not a legacy run. Keep
+  // that operational failure distinct so the owner gets the right recovery
+  // action (or an honest terminal explanation when no source survives).
+  reviewUnavailable?: ReviewPanelUnavailable | null;
   // Server-resolved drift (the live target HEAD moved since this render): the
   // panel opens directly in the drift state offering "Promote anyway".
   driftDetected?: boolean;
@@ -130,6 +144,43 @@ const shell =
 const syncLink =
   "inline-flex items-center gap-1.5 rounded-md border border-line bg-paper px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-ink-2 hover:border-mute";
 
+function OperationStatus({
+  detail,
+  slow,
+  slowText,
+  title,
+}: {
+  detail: string;
+  slow: boolean;
+  slowText: string;
+  title: string;
+}): ReactElement {
+  return (
+    <div
+      aria-live="polite"
+      className="flex items-start gap-3 rounded-[10px] border border-accent-4/40 bg-accent-4-soft p-3 text-accent-4"
+      data-testid="review-promotion-in-progress"
+      role="status"
+    >
+      <ArrowPathIcon
+        aria-hidden="true"
+        className="mt-0.5 h-4 w-4 flex-none animate-spin"
+      />
+      <div className="min-w-0">
+        <p className="font-mono text-[11px] font-bold">{title}</p>
+        <p className="mt-0.5 font-mono text-[10.5px] leading-[1.45] text-ink-2">
+          {detail}
+        </p>
+        {slow ? (
+          <p className="mt-2 border-t border-accent-4/20 pt-2 font-mono text-[10.5px] leading-[1.45] text-amber">
+            {slowText}
+          </p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function selectionKey(key: Key | null, fallback: PromotionMode): PromotionMode {
   if (key === null) return fallback;
 
@@ -154,6 +205,7 @@ export function ReviewPanel({
   parentRepoPath,
   displayParentRepoPath,
   legacyNeedsRelaunch = false,
+  reviewUnavailable = null,
   driftDetected = false,
   conflict,
   canPromote = true,
@@ -166,6 +218,8 @@ export function ReviewPanel({
   const router = useRouter();
   const [mode, setMode] = useState<PromotionMode>(promotionMode);
   const [busy, setBusy] = useState(false);
+  const [resolvingConflict, setResolvingConflict] = useState(false);
+  const [promotionSlow, setPromotionSlow] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [drift, setDrift] = useState(driftDetected);
   // ADR-181 (C): the last Promote was refused — the PR branch holds commits
@@ -194,11 +248,19 @@ export function ReviewPanel({
     canPromote,
     reviewReady: readinessReady,
     diffTruncated: diff.truncated,
-    legacyNeedsRelaunch,
+    legacyNeedsRelaunch: legacyNeedsRelaunch || reviewUnavailable !== null,
     truncationAcknowledged: truncationAck,
     autoFinalize,
   };
   const blockedPromotion = promotionBlockReason(promotionInput);
+
+  useEffect(() => {
+    if (!busy) return;
+
+    const timer = window.setTimeout(() => setPromotionSlow(true), 8_000);
+
+    return () => window.clearTimeout(timer);
+  }, [busy]);
 
   async function promote(allowTargetDrift: boolean): Promise<void> {
     const body = buildPromotionRequestBody(promotionInput, allowTargetDrift);
@@ -208,6 +270,7 @@ export function ReviewPanel({
     setBusy(true);
     setError(null);
     setDiverged(false);
+    setPromotionSlow(false);
 
     try {
       const res = await fetch(`/api/runs/${runId}/promote`, {
@@ -266,8 +329,44 @@ export function ReviewPanel({
     }
   }
 
+  async function resolveConflictWithAgent(): Promise<void> {
+    setResolvingConflict(true);
+    setError(null);
+
+    try {
+      const res = await fetch(`/api/runs/${runId}/sync`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          onto: "target",
+          strategy: "rebase",
+          agent: true,
+          push: false,
+          ...(sync?.defaultRunnerId ? { runnerId: sync.defaultRunnerId } : {}),
+        }),
+      });
+
+      if (res.ok) {
+        router.refresh();
+
+        return;
+      }
+
+      const data = (await res.json().catch(() => null)) as {
+        code?: string;
+      } | null;
+
+      setError(t(resolveUiErrorMessageKey(data?.code)));
+    } catch {
+      setError(t("error.generic"));
+    } finally {
+      setResolvingConflict(false);
+    }
+  }
+
   return (
     <section
+      aria-busy={busy || resolvingConflict || syncClaimed}
       className={clsx(shell, "mt-6 p-5")}
       data-testid="review-panel"
       id={id}
@@ -276,40 +375,103 @@ export function ReviewPanel({
         {t("reviewTitle")}
       </h2>
 
-      {/* base → run → target spine */}
-      <div className="mb-4 flex flex-wrap items-center gap-2 font-mono text-[11px] text-ink-2">
-        {baseBranch ? (
-          <span
-            className="rounded-md border border-line bg-paper px-2 py-1 font-semibold"
-            data-testid="review-base-branch"
-          >
-            {baseBranch}
-            {baseCommit ? (
-              <span className="ml-1.5 text-mute">{baseCommit.slice(0, 7)}</span>
-            ) : null}
-          </span>
-        ) : null}
-        <span aria-hidden="true" className="text-mute">
-          →
-        </span>
-        <span
-          className="rounded-md border border-amber-line bg-amber-soft px-2 py-1 font-semibold text-amber"
-          data-testid="review-run-branch"
+      {reviewUnavailable ? (
+        <div
+          className="mb-4 rounded-[10px] border border-amber-line bg-amber-soft p-4 font-mono text-[11px] leading-[1.5] text-amber"
+          data-testid="review-worktree-unavailable"
+          role="alert"
         >
-          {runBranch}
-        </span>
-        <span aria-hidden="true" className="text-mute">
-          →
-        </span>
-        {targetBranch ? (
-          <span
-            className="rounded-md border border-[color-mix(in_oklab,var(--accent-4)_35%,var(--line))] bg-accent-4-soft px-2 py-1 font-semibold text-accent-4"
-            data-testid="review-target-branch"
-          >
-            {targetBranch}
+          <p>
+            {t(
+              reviewUnavailable.reason === "missing-worktree"
+                ? reviewUnavailable.canReattach
+                  ? "reviewWorktreeMissingRecoverable"
+                  : "reviewWorktreeMissing"
+                : "reviewDiffUnavailable",
+            )}
+          </p>
+          {reviewUnavailable.canReattach && reviewUnavailable.reattachHref ? (
+            <Link
+              className={clsx(syncLink, "mt-3")}
+              data-testid="review-reattach-worktree"
+              href={reviewUnavailable.reattachHref}
+              scroll={false}
+            >
+              {t("reattachWorktree")}
+            </Link>
+          ) : null}
+        </div>
+      ) : (
+        /* ADR-066 diff (server-built Shiki bundle, split/inline) */
+        <div className="mb-4">
+          <DiffView
+            files={diff.files}
+            labels={{
+              empty: tWorkbench("diff.empty"),
+              bodyUnavailable: tWorkbench("diff.bodyUnavailable"),
+              added: tWorkbench("diff.added"),
+              removed: tWorkbench("diff.removed"),
+              displayMode: tWorkbench("diff.displayMode"),
+              rich: tWorkbench("diff.rich"),
+              raw: tWorkbench("diff.raw"),
+              filterFiles: tWorkbench("diff.filterFiles"),
+              filterFilesPlaceholder: tWorkbench("diff.filterFilesPlaceholder"),
+              filterNoMatches: tWorkbench("diff.filterNoMatches"),
+              showFiles: tWorkbench("diff.showFiles"),
+              hideFiles: tWorkbench("diff.hideFiles"),
+              refresh: tWorkbench("diff.refresh"),
+              viewMode: tWorkbench("diff.viewMode"),
+              split: tWorkbench("diff.split"),
+              unified: tWorkbench("diff.unified"),
+              truncated: tWorkbench("diff.truncated"),
+            }}
+            perFile={diff.perFile}
+            truncated={diff.truncated}
+          />
+        </div>
+      )}
+
+      <details className="mb-4">
+        <summary className="cursor-pointer font-mono text-[11px] text-mute">
+          {t("reviewParameters")}
+        </summary>
+        {/* base → run → target spine */}
+        <div className="mb-4 flex flex-wrap items-center gap-2 font-mono text-[11px] text-ink-2">
+          {baseBranch ? (
+            <span
+              className="rounded-md border border-line bg-paper px-2 py-1 font-semibold"
+              data-testid="review-base-branch"
+            >
+              {baseBranch}
+              {baseCommit ? (
+                <span className="ml-1.5 text-mute">
+                  {baseCommit.slice(0, 7)}
+                </span>
+              ) : null}
+            </span>
+          ) : null}
+          <span aria-hidden="true" className="text-mute">
+            →
           </span>
-        ) : null}
-      </div>
+          <span
+            className="rounded-md border border-amber-line bg-amber-soft px-2 py-1 font-semibold text-amber"
+            data-testid="review-run-branch"
+          >
+            {runBranch}
+          </span>
+          <span aria-hidden="true" className="text-mute">
+            →
+          </span>
+          {targetBranch ? (
+            <span
+              className="rounded-md border border-[color-mix(in_oklab,var(--accent-4)_35%,var(--line))] bg-accent-4-soft px-2 py-1 font-semibold text-accent-4"
+              data-testid="review-target-branch"
+            >
+              {targetBranch}
+            </span>
+          ) : null}
+        </div>
+      </details>
 
       {/* ADR-141: behind/ahead chip + branch-sync affordance */}
       {aheadBehind && (aheadBehind.behind > 0 || aheadBehind.ahead > 0) ? (
@@ -347,57 +509,6 @@ export function ReviewPanel({
           {labels.syncInProgress}
         </p>
       ) : null}
-
-      {/* readiness summary */}
-      {readiness ? (
-        <div className="mb-4" data-testid="review-readiness">
-          <span
-            className={clsx(
-              "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[10.5px] font-bold",
-              readinessReady
-                ? "border-[color-mix(in_oklab,var(--accent-4)_35%,var(--line))] bg-accent-4-soft text-accent-4"
-                : "border-amber-line bg-amber-soft text-amber",
-            )}
-          >
-            {readinessReady ? labels.readinessReady : labels.readinessBlocked}
-          </span>
-          {!readinessReady && readiness.reasons.length > 0 ? (
-            <ul className="mt-2 flex list-none flex-col gap-1 p-0 font-mono text-[10.5px] text-mute">
-              {readiness.reasons.map((reason) => (
-                <li key={reason}>{reason}</li>
-              ))}
-            </ul>
-          ) : null}
-        </div>
-      ) : null}
-
-      {/* ADR-066 diff (server-built Shiki bundle, split/inline) */}
-      <div className="mb-4">
-        <DiffView
-          files={diff.files}
-          labels={{
-            empty: tWorkbench("diff.empty"),
-            bodyUnavailable: tWorkbench("diff.bodyUnavailable"),
-            added: tWorkbench("diff.added"),
-            removed: tWorkbench("diff.removed"),
-            displayMode: tWorkbench("diff.displayMode"),
-            rich: tWorkbench("diff.rich"),
-            raw: tWorkbench("diff.raw"),
-            filterFiles: tWorkbench("diff.filterFiles"),
-            filterFilesPlaceholder: tWorkbench("diff.filterFilesPlaceholder"),
-            filterNoMatches: tWorkbench("diff.filterNoMatches"),
-            showFiles: tWorkbench("diff.showFiles"),
-            hideFiles: tWorkbench("diff.hideFiles"),
-            refresh: tWorkbench("diff.refresh"),
-            viewMode: tWorkbench("diff.viewMode"),
-            split: tWorkbench("diff.split"),
-            unified: tWorkbench("diff.unified"),
-            truncated: tWorkbench("diff.truncated"),
-          }}
-          perFile={diff.perFile}
-          truncated={diff.truncated}
-        />
-      </div>
 
       {prUrl ? (
         <p className="mb-4 font-mono text-[11px]">
@@ -445,15 +556,28 @@ export function ReviewPanel({
               <dd className="inline font-bold">{conflictState.command}</dd>
             </div>
           </dl>
-          {sync && !syncClaimed && updateHref ? (
-            <Link
-              className={clsx(syncLink, "mt-3")}
+          {sync && !syncClaimed && !reviewUnavailable ? (
+            <Button
+              className="mt-3 border-[#d9534f]/40 bg-paper font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-ink-2"
               data-testid="review-conflict-resolve-agent"
-              href={updateHref}
-              scroll={false}
+              isDisabled={resolvingConflict}
+              size="sm"
+              type="button"
+              variant="outline"
+              onClick={() => void resolveConflictWithAgent()}
             >
               {labels.resolveWithAgent}
-            </Link>
+            </Button>
+          ) : null}
+          {resolvingConflict ? (
+            <div className="mt-3">
+              <OperationStatus
+                detail={t("resolveInProgressHint")}
+                slow={false}
+                slowText={labels.operationTakingLonger}
+                title={t("resolveInProgress")}
+              />
+            </div>
           ) : null}
         </div>
       ) : null}
@@ -488,69 +612,82 @@ export function ReviewPanel({
         </div>
       ) : blockedPromotion ? null : (
         <div className="flex flex-col gap-3">
-          <label className="flex flex-col gap-1">
-            <span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.06em] text-mute">
-              {labels.promotionMode}
-            </span>
-            <span className="sr-only" id={modeLabelId}>
-              {labels.promotionMode}
-            </span>
-            <Select
-              aria-labelledby={modeLabelId}
-              className="w-full max-w-[260px]"
-              selectedKey={mode}
-              variant="secondary"
-              onSelectionChange={(key) => setMode(selectionKey(key, mode))}
-            >
-              <Select.Trigger className="h-9 rounded-md border-line bg-paper px-2 font-mono text-[11px] text-ink">
-                <Select.Value />
-                <Select.Indicator />
-              </Select.Trigger>
-              <Select.Popover className="rounded-md border border-line bg-paper p-1 shadow-lg">
-                <ListBox aria-label={labels.promotionMode}>
-                  <ListBox.Item id="merge" textValue={labels.promotionMerge}>
-                    {labels.promotionMerge}
-                  </ListBox.Item>
-                  <ListBox.Item
-                    id="rebase_merge"
-                    textValue={labels.promotionRebaseMerge}
-                  >
-                    {labels.promotionRebaseMerge}
-                  </ListBox.Item>
-                  <ListBox.Item
-                    id="pull_request"
-                    textValue={labels.promotionPullRequest}
-                  >
-                    {labels.promotionPullRequest}
-                  </ListBox.Item>
-                  <ListBox.Item
-                    id="ai_rebase_merge"
-                    textValue={labels.promotionAiRebaseMerge}
-                  >
-                    {labels.promotionAiRebaseMerge}
-                  </ListBox.Item>
-                </ListBox>
-              </Select.Popover>
-            </Select>
-          </label>
-
-          {/* ADR-141 (decision 19): ai_rebase_merge one-click chaining — OFF by
-              default (two-step: the resolver returns the run to Review). */}
-          {mode === "ai_rebase_merge" ? (
-            <div data-testid="review-auto-finalize">
-              <label className="flex items-center gap-2 font-mono text-[11px] text-ink-2">
-                <input
-                  checked={autoFinalize}
-                  type="checkbox"
-                  onChange={(e) => setAutoFinalize(e.target.checked)}
-                />
-                {labels.autoFinalize}
-              </label>
-              <p className="ml-6 mt-0.5 font-mono text-[10.5px] text-mute">
-                {labels.autoFinalizeHint}
-              </p>
-            </div>
+          {busy ? (
+            <OperationStatus
+              detail={labels.promotionInProgressHint}
+              slow={promotionSlow}
+              slowText={labels.operationTakingLonger}
+              title={labels.promotionInProgress}
+            />
           ) : null}
+          <details>
+            <summary className="cursor-pointer font-mono text-[11px] text-mute">
+              {t("reviewParameters")}
+            </summary>
+            <label className="mt-2 flex flex-col gap-1">
+              <span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.06em] text-mute">
+                {labels.promotionMode}
+              </span>
+              <span className="sr-only" id={modeLabelId}>
+                {labels.promotionMode}
+              </span>
+              <Select
+                aria-labelledby={modeLabelId}
+                className="w-full max-w-[260px]"
+                selectedKey={mode}
+                variant="secondary"
+                onSelectionChange={(key) => setMode(selectionKey(key, mode))}
+              >
+                <Select.Trigger className="h-9 rounded-md border-line bg-paper px-2 font-mono text-[11px] text-ink">
+                  <Select.Value />
+                  <Select.Indicator />
+                </Select.Trigger>
+                <Select.Popover className="rounded-md border border-line bg-paper p-1 shadow-lg">
+                  <ListBox aria-label={labels.promotionMode}>
+                    <ListBox.Item id="merge" textValue={labels.promotionMerge}>
+                      {labels.promotionMerge}
+                    </ListBox.Item>
+                    <ListBox.Item
+                      id="rebase_merge"
+                      textValue={labels.promotionRebaseMerge}
+                    >
+                      {labels.promotionRebaseMerge}
+                    </ListBox.Item>
+                    <ListBox.Item
+                      id="pull_request"
+                      textValue={labels.promotionPullRequest}
+                    >
+                      {labels.promotionPullRequest}
+                    </ListBox.Item>
+                    <ListBox.Item
+                      id="ai_rebase_merge"
+                      textValue={labels.promotionAiRebaseMerge}
+                    >
+                      {labels.promotionAiRebaseMerge}
+                    </ListBox.Item>
+                  </ListBox>
+                </Select.Popover>
+              </Select>
+            </label>
+
+            {/* ADR-141 (decision 19): ai_rebase_merge one-click chaining — OFF by
+              default (two-step: the resolver returns the run to Review). */}
+            {mode === "ai_rebase_merge" ? (
+              <div data-testid="review-auto-finalize">
+                <label className="flex items-center gap-2 font-mono text-[11px] text-ink-2">
+                  <input
+                    checked={autoFinalize}
+                    type="checkbox"
+                    onChange={(e) => setAutoFinalize(e.target.checked)}
+                  />
+                  {labels.autoFinalize}
+                </label>
+                <p className="ml-6 mt-0.5 font-mono text-[10.5px] text-mute">
+                  {labels.autoFinalizeHint}
+                </p>
+              </div>
+            ) : null}
+          </details>
 
           {drift ? (
             <div
@@ -586,7 +723,13 @@ export function ReviewPanel({
                   variant="outline"
                   onClick={() => void promote(true)}
                 >
-                  {labels.promoteAnyway}
+                  {busy ? (
+                    <ArrowPathIcon
+                      aria-hidden="true"
+                      className="h-3.5 w-3.5 animate-spin"
+                    />
+                  ) : null}
+                  {busy ? labels.promotionInProgress : labels.promoteAnyway}
                 </Button>
               </div>
             </div>
@@ -603,7 +746,15 @@ export function ReviewPanel({
               variant="primary"
               onClick={() => void promote(false)}
             >
-              {labels.promoteTo} {targetBranch}
+              {busy ? (
+                <ArrowPathIcon
+                  aria-hidden="true"
+                  className="h-3.5 w-3.5 animate-spin"
+                />
+              ) : null}
+              {busy
+                ? labels.promotionInProgress
+                : `${labels.promoteTo} ${targetBranch}`}
             </Button>
           )}
 
@@ -650,6 +801,28 @@ export function ReviewPanel({
           ) : null}
         </div>
       )}
+      {/* readiness summary */}
+      {readiness ? (
+        <div className="mb-4" data-testid="review-readiness">
+          <span
+            className={clsx(
+              "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[10.5px] font-bold",
+              readinessReady
+                ? "border-[color-mix(in_oklab,var(--accent-4)_35%,var(--line))] bg-accent-4-soft text-accent-4"
+                : "border-amber-line bg-amber-soft text-amber",
+            )}
+          >
+            {readinessReady ? labels.readinessReady : labels.readinessBlocked}
+          </span>
+          {!readinessReady && readiness.reasons.length > 0 ? (
+            <ul className="mt-2 flex list-none flex-col gap-1 p-0 font-mono text-[10.5px] text-mute">
+              {readiness.reasons.map((reason) => (
+                <li key={reason}>{reason}</li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
     </section>
   );
 }

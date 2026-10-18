@@ -224,14 +224,22 @@ test("manual takeover loop: claim → board → commit → return → diff → s
   await expect(passedGates.first()).toBeVisible(); // fresh passed gate verdict
 
   // (h, continued) The fresh review HITL is the live pending input — the
-  // "Waiting on you" review panel is back, confirming a new review gate.
+  // "Your input is needed" review panel is back, confirming a new review gate.
   // Match the panel HEADING with a prefix regex. Two things defeat the obvious
   // locators here, both because the fresh review gate joins one already open:
-  // the heading appends a count ("Waiting on you (2 requests)"), so `exact:
+  // the heading appends a count ("Your input is needed (2 requests)"), so `exact:
   // true` can never hold; and each pending request renders its own
   // `pending-input-card`, so that testid resolves to two elements. Only the
   // primary panel carries this h2.
   await expect(
-    page.getByRole("heading", { name: /^Waiting on you/u }),
+    page.getByRole("heading", { name: /^Your input is needed/u }),
   ).toBeVisible();
+  const prioritizedSections = page.locator(
+    '[data-testid="pending-input-card"], [data-testid="run-primary-result"]',
+  );
+
+  await expect(prioritizedSections.first()).toHaveAttribute(
+    "data-testid",
+    "pending-input-card",
+  );
 });

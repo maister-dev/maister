@@ -677,4 +677,99 @@ describe("POST /api/v1/ext/runs", () => {
 
     expect(runRows[0].createdByUserId).toBe(ownerUserId);
   });
+
+  it("global personal token launches a task when its owner may launch in the project", async () => {
+    const { projectId, flowId } = await seedProject(
+      `ext-runs-global-owner-${randomUUID().slice(0, 8)}`,
+    );
+    const ownerUserId = randomUUID();
+    const taskId = await seedTask(projectId, flowId, "Backlog");
+
+    await (db as any).insert(schema.users).values({
+      id: ownerUserId,
+      email: `global-run-owner-${ownerUserId.slice(0, 8)}@example.test`,
+      role: "member",
+      accountStatus: "active",
+      passwordHash: "x",
+    });
+    await (db as any)
+      .insert(schema.projectMembers)
+      .values({ projectId, userId: ownerUserId, role: "owner" });
+
+    const token = await issueToken(
+      {
+        projectId: null,
+        name: "Global Personal Run Agent",
+        tokenKind: "user",
+        ownerUserId,
+        scopes: ["runs:launch"],
+      },
+      db,
+    );
+    const req = makeRequest({ taskId });
+
+    req.headers.set("authorization", `Bearer ${token.secret}`);
+
+    const res = await POST(req, {});
+
+    expect(res.status).toBe(202);
+
+    const body = await res.json();
+    const runRows = await (db as any)
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.id, body.runId))
+      .execute();
+
+    expect(runRows[0]).toMatchObject({
+      projectId,
+      taskId,
+      createdByUserId: ownerUserId,
+    });
+  });
+
+  it("global personal token hides a task when its owner cannot access the project", async () => {
+    const { projectId, flowId } = await seedProject(
+      `ext-runs-global-hidden-${randomUUID().slice(0, 8)}`,
+    );
+    const ownerUserId = randomUUID();
+    const taskId = await seedTask(projectId, flowId, "Backlog");
+
+    await (db as any).insert(schema.users).values({
+      id: ownerUserId,
+      email: `global-run-hidden-${ownerUserId.slice(0, 8)}@example.test`,
+      role: "member",
+      accountStatus: "active",
+      passwordHash: "x",
+    });
+
+    const token = await issueToken(
+      {
+        projectId: null,
+        name: "Global Personal Run Agent Without Access",
+        tokenKind: "user",
+        ownerUserId,
+        scopes: ["runs:launch"],
+      },
+      db,
+    );
+    const req = makeRequest({ taskId });
+
+    req.headers.set("authorization", `Bearer ${token.secret}`);
+
+    const res = await POST(req, {});
+
+    expect(res.status).toBe(404);
+    expect(await res.json()).toMatchObject({
+      code: "NOT_FOUND",
+      message: "resource not found",
+    });
+    expect(
+      await (db as any)
+        .select()
+        .from(schema.runs)
+        .where(eq(schema.runs.taskId, taskId))
+        .execute(),
+    ).toHaveLength(0);
+  });
 });

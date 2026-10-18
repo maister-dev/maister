@@ -476,7 +476,10 @@ export interface DiffViewProps {
 }
 
 function parseDiffView(raw: string | null): DiffViewMode {
-  return raw === "unified" ? "unified" : "split";
+  // A unified diff is the safest default for the run page: it reads as one
+  // review surface on every viewport instead of resembling two duplicated
+  // editors. Keep the side-by-side view as an explicit reviewer choice.
+  return raw === "split" ? "split" : "unified";
 }
 
 function parseDiffBody(raw: string | null): DiffBodyMode {

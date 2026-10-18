@@ -54,6 +54,10 @@ import {
 } from "./prompt-owner";
 
 import { ensureSubstepRunSession } from "@/lib/runs/substep-session";
+import {
+  mergeRunnerAdapterLaunch,
+  runnerSupervisorInput,
+} from "@/lib/acp-runners/spawn-intent";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { createExecutionHosts, isFencedError } from "@/lib/execution-host";
@@ -581,6 +585,13 @@ async function runOneGate(
                 | Record<string, string>
                 | undefined,
             },
+            // The executor is legacy display/compatibility metadata. The
+            // supervisor applies the configured model and provider only from
+            // the versioned runner launch intent. Omitting it makes adapters
+            // fall back to their own current default, which can be unavailable
+            // for the run's authentication mode.
+            runner: runnerSupervisorInput({ snapshot: loaded.runner }),
+            adapterLaunch: mergeRunnerAdapterLaunch(loaded.runner),
           },
           ctx.execution,
         ),

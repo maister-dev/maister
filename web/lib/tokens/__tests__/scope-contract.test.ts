@@ -9,6 +9,7 @@ import { PROJECT_ACTION_MIN } from "@/lib/authz";
 import {
   AGENT_TOKEN_SCOPES,
   CROSS_PROJECT_AGENT_SCOPES,
+  LIBRARIAN_TOKEN_SCOPES,
   TOKEN_SCOPES,
 } from "@/types/token-scopes";
 
@@ -76,6 +77,19 @@ describe("external token scope contract", () => {
     // ADR-141's manual-only stance reserves for a deliberate human click.
     expect(ORCHESTRATOR_TOKEN_SCOPES).not.toContain("runs:sync");
     expect(ORCHESTRATOR_TOKEN_SCOPES).not.toContain("runs:reopen");
+  });
+
+  it("maps run promotion and explicit task completion to their write actions", () => {
+    expect(PROJECT_ACTION_BY_SCOPE["runs:promote"]).toBe("promoteRun");
+    expect(PROJECT_ACTION_BY_SCOPE["tasks:complete"]).toBe("editTask");
+  });
+
+  it("keeps task completion as a human-owned terminal transition", () => {
+    expect(TOKEN_SCOPES).toContain("tasks:complete");
+    expect(AGENT_TOKEN_SCOPES).not.toContain("tasks:complete");
+    expect(ORCHESTRATOR_TOKEN_SCOPES).not.toContain("tasks:complete");
+    expect(CROSS_PROJECT_AGENT_SCOPES).not.toContain("tasks:complete");
+    expect(LIBRARIAN_TOKEN_SCOPES).not.toContain("tasks:complete");
   });
 
   it("maps runs:recover to recoverRun so ext == internal authz (never readBoard)", () => {

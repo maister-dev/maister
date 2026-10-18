@@ -82,6 +82,11 @@ export interface HitlDecisionControlsLabels extends ConsensusCardMappedLabels {
   reviewComments: string;
   decisionApprove: string;
   decisionRework: string;
+  decisionTakeover?: string;
+  permissionAllowOnce?: string;
+  permissionAllowWithUpdates?: string;
+  permissionAllowAlways?: string;
+  permissionReject?: string;
   sendBackWithComments: string;
   responseLabel: string;
   responseHint: string;
@@ -96,6 +101,7 @@ export interface HitlDecisionControlsLabels extends ConsensusCardMappedLabels {
   reviewOpenCount?: string;
   reviewOutdatedCount?: string;
   reviewLoopChip?: string;
+  reviewLoopHint?: string;
   reviewApproveOpenWarn?: string;
   reviewReworkExhausted?: string;
   // ADR-162 `json` field live-validity hint. Optional so pre-feature consumers
@@ -446,6 +452,70 @@ export interface HitlDecisionControlsProps {
   onOption: (optionId: string) => void;
   onSubmitJson: () => void;
   onSubmitForm: () => void;
+}
+
+type PermissionOptionMeaning =
+  | "allow_once"
+  | "allow_with_updates"
+  | "allow_always"
+  | "reject";
+
+function normalizedPermissionOption(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, "-");
+}
+
+function permissionOptionMeaning(
+  option: HitlOption,
+): PermissionOptionMeaning | null {
+  const values = new Set([
+    normalizedPermissionOption(option.optionId),
+    normalizedPermissionOption(option.label),
+  ]);
+
+  if (values.has("allow-once")) {
+    return "allow_once";
+  }
+
+  if (values.has("allow-with-updates")) return "allow_with_updates";
+
+  if (values.has("allow-always")) return "allow_always";
+
+  if (values.has("reject") || values.has("reject-once")) {
+    return "reject";
+  }
+
+  return null;
+}
+
+export function permissionOptionLabel(
+  option: HitlOption,
+  labels: Pick<
+    HitlDecisionControlsLabels,
+    | "permissionAllowOnce"
+    | "permissionAllowWithUpdates"
+    | "permissionAllowAlways"
+    | "permissionReject"
+  >,
+): string {
+  switch (permissionOptionMeaning(option)) {
+    case "allow_once":
+      return labels.permissionAllowOnce ?? option.label;
+    case "allow_with_updates":
+      return labels.permissionAllowWithUpdates ?? option.label;
+    case "allow_always":
+      return labels.permissionAllowAlways ?? option.label;
+    case "reject":
+      return labels.permissionReject ?? option.label;
+    default:
+      return option.label;
+  }
+}
+
+function isRejectPermissionOption(option: HitlOption): boolean {
+  return permissionOptionMeaning(option) === "reject";
 }
 
 // Structural view of the watchdog-stamped budget_breach `schema` (LOCKED in the
@@ -1395,6 +1465,7 @@ export function HitlDecisionControls({
   const decisionLabel = (d: string): string => {
     if (d === "approve") return labels.decisionApprove;
     if (d === "rework") return labels.decisionRework;
+    if (d === "takeover") return labels.decisionTakeover ?? d;
 
     return d;
   };
@@ -1415,6 +1486,9 @@ export function HitlDecisionControls({
   const loopInfo = reviewLoopInfo(reviewSchema);
   const planReviewParent = planReviewParentFromSchema(reviewSchema);
   const reworkExhausted = loopInfo?.exhausted ?? false;
+  const remainingReworks = loopInfo
+    ? Math.max(0, loopInfo.totalVisits - loopInfo.gateAttempt)
+    : 0;
   const openCount = reviewCounts?.openCount ?? 0;
   const outdatedCount = reviewCounts?.outdatedCount ?? 0;
   const exhaustedText =
@@ -1460,7 +1534,11 @@ export function HitlDecisionControls({
                 </div>
               ))}
               {planReviewParent.decisionCount > 0 ? (
-                <p className="font-mono text-[11px] text-amber">
+                <p
+                  className="rounded-[8px] border border-amber-line bg-amber-soft px-3 py-2 font-mono text-[11px] leading-[1.5] text-amber"
+                  data-testid="plan-review-approval-blocked"
+                  role="status"
+                >
                   {labels.planReviewApprovalBlocked ??
                     "Answer blocking plan decisions before approval."}
                 </p>
@@ -1477,6 +1555,16 @@ export function HitlDecisionControls({
                   {fillTemplate(labels.reviewLoopChip, {
                     $n: loopInfo.gateAttempt,
                     $m: loopInfo.totalVisits,
+                  })}
+                </span>
+              ) : null}
+              {loopInfo && labels.reviewLoopHint ? (
+                <span
+                  className="font-mono text-[10.5px] leading-[1.4] text-mute"
+                  data-testid="review-loop-hint"
+                >
+                  {fillTemplate(labels.reviewLoopHint, {
+                    $count: remainingReworks,
                   })}
                 </span>
               ) : null}
@@ -1632,7 +1720,7 @@ export function HitlDecisionControls({
               key={opt.optionId}
               className={clsx(
                 "rounded-lg border px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em]",
-                opt.optionId.includes("deny")
+                isRejectPermissionOption(opt)
                   ? "border-line bg-paper text-mute hover:border-mute hover:text-ink-2"
                   : "border-amber bg-amber text-white shadow-[0_4px_12px_-6px_var(--amber)] hover:bg-amber-2",
                 disabled && "opacity-60",
@@ -1641,7 +1729,7 @@ export function HitlDecisionControls({
               type="button"
               onClick={() => onOption(opt.optionId)}
             >
-              {opt.label}
+              {permissionOptionLabel(opt, labels)}
             </button>
           ))}
         </div>

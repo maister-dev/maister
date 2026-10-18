@@ -25,6 +25,7 @@ export interface RunHeaderChangeSummary {
 }
 
 export interface RunHeaderLabels {
+  runStatus: string;
   branch: string;
   changes: string;
   changesUnavailable: string;
@@ -167,7 +168,7 @@ export function RunHeader({
             )}
             data-testid="run-header-status"
           >
-            {status}
+            {labels.runStatus}: {status}
           </span>
           {status === "Pending" && labels.queueReason ? (
             <span
@@ -265,7 +266,8 @@ export function RunHeader({
             operation={promotionOperation}
             reviewHref={reviewHref}
           />
-        ) : reviewHref && labels.review ? (
+        ) : null}
+        {reviewHref && labels.review ? (
           <Link
             className="rounded-[6px] border border-line bg-paper px-2.5 py-1.5 font-mono text-[11px] font-semibold text-ink-2 hover:bg-ivory"
             data-testid="run-header-review"

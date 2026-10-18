@@ -59,6 +59,10 @@ const LABELS = {
   reviewComments: "run.reviewComments",
   decisionApprove: "run.decisionApprove",
   decisionRework: "run.decisionRework",
+  permissionAllowOnce: "Разрешить один раз",
+  permissionAllowWithUpdates: "Разрешить и запомнить",
+  permissionAllowAlways: "Разрешать всегда",
+  permissionReject: "Отклонить",
   sendBackWithComments: "run.sendBackWithComments",
   responseLabel: "run.responseLabel",
   responseHint: "run.responseHint",
@@ -255,6 +259,7 @@ describe("HitlDecisionControls — pure HITL response rendering (M17 P4)", () =>
       expect(html).toContain("Keep scope");
       expect(html).toContain("Avoids expanding the implementation work.");
       expect(html).toContain("Answer blockers first");
+      expect(html).toContain('data-testid="plan-review-approval-blocked"');
       expect(html).toMatch(
         /<button[^>]*disabled[^>]*>run\.decisionApprove<\/button>/,
       );
@@ -275,6 +280,25 @@ describe("HitlDecisionControls — pure HITL response rendering (M17 P4)", () =>
 
       expect(html).toContain("run.decisionApprove");
       expect(html).toContain("run.decisionRework");
+    });
+
+    it("uses the human label for a manual takeover decision", () => {
+      const html = render({
+        kind: "human",
+        reviewSchema: {
+          allowedDecisions: ["approve", "takeover"],
+          transitions: { approve: "done", takeover: "manual" },
+          reworkTargets: [],
+          workspacePolicies: [],
+        },
+        labels: {
+          ...LABELS,
+          decisionTakeover: "Continue manually",
+        },
+      });
+
+      expect(html).toContain("Continue manually");
+      expect(html).not.toContain(">takeover<");
     });
 
     it("renders the comments textarea", () => {
@@ -330,10 +354,12 @@ describe("HitlDecisionControls — pure HITL response rendering (M17 P4)", () =>
   });
 
   describe("permission branch", () => {
-    it("renders option buttons", () => {
+    it("localizes standard ACP option labels without changing custom labels", () => {
       const options: HitlOption[] = [
-        { optionId: "allow", label: "Allow this request" },
-        { optionId: "deny", label: "Deny" },
+        { optionId: "allow-once", label: "allow-once" },
+        { optionId: "reject", label: "reject" },
+        { optionId: "allow-with-updates", label: "allow-with-updates" },
+        { optionId: "custom-scope", label: "Allow with custom scope" },
       ];
 
       const html = render({
@@ -341,8 +367,13 @@ describe("HitlDecisionControls — pure HITL response rendering (M17 P4)", () =>
         options,
       });
 
-      expect(html).toContain("Allow this request");
-      expect(html).toContain("Deny");
+      expect(html).toContain("Разрешить один раз");
+      expect(html).toContain("Разрешить и запомнить");
+      expect(html).toContain("Отклонить");
+      expect(html).toContain("Allow with custom scope");
+      expect(html).not.toContain(">allow-once<");
+      expect(html).not.toContain(">allow-with-updates<");
+      expect(html).not.toContain(">reject<");
     });
   });
 
@@ -667,6 +698,7 @@ const PANEL_LABELS = {
   reviewOpenCount: "$count unresolved",
   reviewOutdatedCount: "$count outdated",
   reviewLoopChip: "Rework loop $n of $m",
+  reviewLoopHint: "$count reworks remain",
   reviewApproveOpenWarn: "$count open threads stay unresolved on approve",
   reviewReworkExhausted: "rework limit reached: all $m review visits used",
 };
@@ -700,6 +732,8 @@ describe("HitlDecisionControls — review gate panel (ADR-072 Task 13)", () => {
       });
 
       expect(html).toContain("Rework loop 2 of 4");
+      expect(html).toContain("2 reworks remain");
+      expect(html).toContain('data-testid="review-loop-hint"');
     });
 
     it("renders the boundary visit as N = M", () => {

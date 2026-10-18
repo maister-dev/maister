@@ -96,7 +96,7 @@ describe("RunHitlResponse — stale-view re-sync on a refused response", () => {
   it("refreshes the run view when the answer is refused as CONFLICT", async () => {
     respondsWith(409, "CONFLICT");
     renderRunHitlResponse();
-    await clickOption("allow-with-updates");
+    await clickOption("run.permissionAllowWithUpdates");
 
     expect(router.refresh).toHaveBeenCalled();
     expect(container.textContent).toContain("run.error.CONFLICT");
@@ -105,7 +105,7 @@ describe("RunHitlResponse — stale-view re-sync on a refused response", () => {
   it("refreshes when the request is gone (PRECONDITION)", async () => {
     respondsWith(409, "PRECONDITION");
     renderRunHitlResponse();
-    await clickOption("allow-once");
+    await clickOption("run.permissionAllowOnce");
 
     expect(router.refresh).toHaveBeenCalled();
   });
@@ -113,7 +113,7 @@ describe("RunHitlResponse — stale-view re-sync on a refused response", () => {
   it("refreshes when the permission window expired (HITL_TIMEOUT)", async () => {
     respondsWith(410, "HITL_TIMEOUT");
     renderRunHitlResponse();
-    await clickOption("reject");
+    await clickOption("run.permissionReject");
 
     expect(router.refresh).toHaveBeenCalled();
   });
@@ -121,7 +121,7 @@ describe("RunHitlResponse — stale-view re-sync on a refused response", () => {
   it("keeps the current view for a retryable supervisor outage", async () => {
     respondsWith(503, "EXECUTOR_UNAVAILABLE");
     renderRunHitlResponse();
-    await clickOption("allow-once");
+    await clickOption("run.permissionAllowOnce");
 
     expect(router.refresh).not.toHaveBeenCalled();
     expect(container.textContent).toContain("run.error.EXECUTOR_UNAVAILABLE");
@@ -130,7 +130,7 @@ describe("RunHitlResponse — stale-view re-sync on a refused response", () => {
   it("keeps the current view for an incomplete answer", async () => {
     respondsWith(422, "NEEDS_INPUT");
     renderRunHitlResponse();
-    await clickOption("allow-once");
+    await clickOption("run.permissionAllowOnce");
 
     expect(router.refresh).not.toHaveBeenCalled();
   });

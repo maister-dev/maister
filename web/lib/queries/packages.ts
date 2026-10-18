@@ -65,6 +65,10 @@ export type ProjectPackageVersionTarget = PackageVersionTarget & {
   incompatibilityReason: string | null;
 };
 
+export type ProjectPackageSourceTarget = ProjectPackageVersionTarget & {
+  sourceKind: "git" | "local";
+};
+
 export type ProjectPackageAttachmentView = {
   id: string;
   packageInstallId: string;
@@ -80,6 +84,12 @@ export type ProjectPackageAttachmentView = {
   // path). An older version is NEVER surfaced as an upgrade.
   upgradeTarget: ProjectPackageVersionTarget | null;
   downgradeTargets: ProjectPackageVersionTarget[];
+  // Installed revisions of the same package from a different source. These
+  // are deliberately separate from semver upgrade/downgrade targets: moving
+  // between an upstream checkout and a local source is an explicit,
+  // reversible source switch.
+  sourceKind: "git" | "local";
+  sourceTargets: ProjectPackageSourceTarget[];
   flows: string[];
 };
 
@@ -319,7 +329,10 @@ export async function getProjectPackageAttachments(
   return attachments.map((att: any) => {
     const install = installById.get(att.packageInstallId);
     const manifest = install?.manifest as PackageInstallManifest | undefined;
-    const sourceKind = install ? kindByUrl.get(install.sourceUrl) : undefined;
+    const sourceKind = install
+      ? (kindByUrl.get(install.sourceUrl) ??
+        (install.sourceLocalPackageId ? "local" : "git"))
+      : "git";
     const discoveredEntry = install
       ? (discoveredByUrl.get(install.sourceUrl) ?? []).find(
           (d) => d.name === att.packageName,
@@ -381,6 +394,33 @@ export async function getProjectPackageAttachments(
         ...(compatibilityByInstallId.get(target.installId) ??
           UNKNOWN_PACKAGE_COMPATIBILITY),
       })),
+      sourceKind,
+      sourceTargets: install
+        ? siblingInstalls
+            .filter(
+              (candidate: any) =>
+                candidate.name === att.packageName &&
+                candidate.sourceUrl !== install.sourceUrl &&
+                candidate.id !== install.id,
+            )
+            .map(
+              (candidate: any): ProjectPackageSourceTarget => ({
+                installId: candidate.id as string,
+                versionLabel: candidate.versionLabel as string,
+                sourceKind:
+                  kindByUrl.get(candidate.sourceUrl) ??
+                  (candidate.sourceLocalPackageId ? "local" : "git"),
+                ...(compatibilityByInstallId.get(candidate.id) ??
+                  UNKNOWN_PACKAGE_COMPATIBILITY),
+              }),
+            )
+            .sort(
+              (a: ProjectPackageSourceTarget, b: ProjectPackageSourceTarget) =>
+                `${a.sourceKind}:${a.versionLabel}`.localeCompare(
+                  `${b.sourceKind}:${b.versionLabel}`,
+                ),
+            )
+        : [],
       flows: manifest?.spec?.flows?.map((f) => f.id) ?? [],
     };
   });

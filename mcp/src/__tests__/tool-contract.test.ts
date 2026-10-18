@@ -106,6 +106,10 @@ const TOOL_OP: Record<string, { method: string; path: string }> = {
     method: "patch",
     path: "/api/v1/ext/projects/{slug}/tasks/{taskId}",
   },
+  task_complete: {
+    method: "post",
+    path: "/api/v1/ext/projects/{slug}/tasks/{taskId}/complete",
+  },
   flow_list: { method: "get", path: "/api/v1/ext/projects/{slug}/flows" },
   runner_list: { method: "get", path: "/api/v1/ext/projects/{slug}/runners" },
   evaluation_context_get: {

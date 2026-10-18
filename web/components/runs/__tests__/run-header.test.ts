@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { RunHeader, type RunHeaderLabels } from "@/components/runs/run-header";
 
 const labels: RunHeaderLabels = {
+  runStatus: "Run",
   branch: "Branch",
   changes: "Changes",
   changesUnavailable: "Unavailable",
@@ -43,6 +44,12 @@ describe("RunHeader — task-first header", () => {
 
     expect(html).toContain('data-testid="run-header-keyref"');
     expect(html).toContain("MAI-42");
+  });
+
+  it("labels the badge as run status so it cannot be mistaken for task status", () => {
+    const html = render({ status: "Done" });
+
+    expect(html).toContain("Run: Done");
   });
 
   it("renders the KEY-N chip as a link to the task page when taskHref is set", () => {

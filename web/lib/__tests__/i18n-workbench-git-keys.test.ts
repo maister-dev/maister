@@ -227,7 +227,7 @@ describe("i18n — the run git panel (ADR-181)", () => {
     expect(ru.workbenchLifecycle.action.openPr).toBe("Открыть PR");
     expect(ru.workbenchLifecycle.action.finalizePr).toBe("Завершить по PR");
     expect(ru.workbenchLifecycle.action.reattach).toBe("Вернуть рабочую копию");
-    expect(ru.workbenchGit.title).toBe("Git-панель");
+    expect(ru.workbenchGit.title).toBe("Операции с рабочей копией");
     expect(ru.workbenchGit.section.tree).toBe("Рабочее дерево");
     expect(ru.workbenchGit.section.update).toBe("Обновление");
   });

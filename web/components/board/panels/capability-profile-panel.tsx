@@ -10,6 +10,7 @@ export interface CapabilityProfilePanelLabels {
   // catalog.
   subtitle: string;
   digestLabel: string;
+  digestHint: string;
   revisionLabel: string;
   enforcedLabel: string;
   instructedLabel: string;
@@ -130,12 +131,21 @@ export function CapabilityProfilePanel({
                 ) : null}
               </div>
 
-              <div className="mt-2 flex flex-wrap items-center gap-1.5 font-mono text-[10.5px] text-mute">
+              <div
+                className="mt-2 flex flex-wrap items-center gap-1.5 font-mono text-[10.5px] text-mute"
+                title={labels.digestHint}
+              >
                 <span className="uppercase tracking-[0.08em]">
                   {labels.digestLabel}
                 </span>
                 <span className="text-ink-2">
                   {node.profileDigest.slice(0, 12)}
+                </span>
+                <span
+                  aria-label={labels.digestHint}
+                  className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-line text-[9px] font-bold normal-case tracking-normal text-mute"
+                >
+                  ?
                 </span>
               </div>
 

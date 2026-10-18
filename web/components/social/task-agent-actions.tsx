@@ -19,6 +19,7 @@ export interface TaskAgentActionsProps {
   slug: string;
   taskId: string;
   taskNumber: number;
+  showSendToTriage: boolean;
   // Attached agents with the `manual` trigger — the "Run agent" candidates.
   agents: Array<{ id: string; name: string }>;
   labels: TaskAgentActionsLabels;
@@ -30,6 +31,7 @@ export function TaskAgentActions({
   slug,
   taskId,
   taskNumber,
+  showSendToTriage,
   agents,
   labels,
 }: TaskAgentActionsProps): ReactElement {
@@ -96,16 +98,20 @@ export function TaskAgentActions({
           </button>
         </span>
       ) : null}
-      <button
-        className={buttonClass}
-        disabled={busy}
-        type="button"
-        onClick={() =>
-          void post(`/api/projects/${slug}/tasks/${taskNumber}/send-to-triage`)
-        }
-      >
-        {busy ? labels.busy : labels.sendToTriage}
-      </button>
+      {showSendToTriage ? (
+        <button
+          className={buttonClass}
+          disabled={busy}
+          type="button"
+          onClick={() =>
+            void post(
+              `/api/projects/${slug}/tasks/${taskNumber}/send-to-triage`,
+            )
+          }
+        >
+          {busy ? labels.busy : labels.sendToTriage}
+        </button>
+      ) : null}
       {error ? (
         <span
           aria-live="polite"

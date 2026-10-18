@@ -36,6 +36,14 @@ const attachment = {
   affectedProjectCount: undefined as number | undefined,
   attachedAt: "2026-06-12T10:00:00.000Z",
   updateAvailable: false,
+  sourceKind: "git" as const,
+  sourceTargets: [] as {
+    installId: string;
+    versionLabel: string;
+    sourceKind: "git" | "local";
+    compatible: boolean;
+    incompatibilityReason: string | null;
+  }[],
   upgradeTarget: null,
   downgradeTargets: [] as {
     installId: string;
@@ -128,6 +136,7 @@ afterEach(() => {
   for (const root of roots) act(() => root.unmount());
   roots.length = 0;
   document.body.innerHTML = "";
+  fetchMock.mockReset();
   vi.unstubAllGlobals();
 });
 
@@ -200,5 +209,72 @@ describe("ProjectPackagesSection name-collision pre-flight", () => {
         '[data-testid="package-trust-confirm-submit"]',
       ),
     ).not.toHaveProperty("disabled", true);
+  });
+
+  it("surfaces the API refusal message instead of a generic package error", async () => {
+    vi.stubGlobal("fetch", fetchMock);
+    const host = render();
+    const refusal =
+      'package "aif" has an active run pinned to a member revision';
+
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ code: "PRECONDITION", message: refusal }), {
+        status: 409,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    await click(
+      [...host.querySelectorAll("button")].find(
+        (button) => button.textContent === "packages.detach",
+      )!,
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/projects/demo/packages/att-1",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+    expect(host.textContent).toContain(refusal);
+    expect(host.textContent).not.toContain("packages.errorGeneric");
+  });
+
+  it("switches to a revision from another source through the attachment endpoint", async () => {
+    vi.stubGlobal("fetch", fetchMock);
+    const host = render({
+      ...attachment,
+      sourceTargets: [
+        {
+          installId: "inst-local",
+          versionLabel: "local-abcdef123456",
+          sourceKind: "local",
+          compatible: true,
+          incompatibilityReason: null,
+        },
+      ],
+    });
+
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ ok: true }), { status: 200 }),
+    );
+    const select = host.querySelector(
+      'select[aria-label="packages.switchSource"]',
+    ) as HTMLSelectElement;
+    const setter = Object.getOwnPropertyDescriptor(
+      HTMLSelectElement.prototype,
+      "value",
+    )?.set;
+
+    await act(async () => {
+      setter?.call(select, "inst-local");
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/projects/demo/packages/att-1/upgrade",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ packageInstallId: "inst-local" }),
+      }),
+    );
   });
 });

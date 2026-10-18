@@ -30,6 +30,7 @@ export function NodeInterruptTrigger({
   const [error, setError] = useState<string | null>(null);
 
   const disabled = busy || pending || !canAct;
+  const helpId = `node-interrupt-help-${runId}`;
 
   async function interrupt(): Promise<void> {
     setBusy(true);
@@ -59,6 +60,7 @@ export function NodeInterruptTrigger({
   return (
     <div className="flex flex-col gap-2">
       <button
+        aria-describedby={helpId}
         aria-label={t("interruptNode")}
         className={clsx(
           "inline-flex w-max items-center gap-1.5 rounded-lg border border-line bg-paper px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-ink-2 hover:text-ink",
@@ -71,6 +73,12 @@ export function NodeInterruptTrigger({
         <PauseCircleIcon aria-hidden className="size-4" />
         {t("interruptNode")}
       </button>
+      <p
+        className="max-w-[62ch] font-mono text-[11px] leading-relaxed text-mute"
+        id={helpId}
+      >
+        {t("interruptNodeHelp")}
+      </p>
       {error ? (
         <p className="font-mono text-[12px] text-[#d9534f]">{error}</p>
       ) : null}

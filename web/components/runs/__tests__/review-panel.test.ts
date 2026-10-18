@@ -4,6 +4,9 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { ReviewPanel } from "@/components/runs/review-panel";
+import ru from "@/messages/ru.json";
+
 // ---------------------------------------------------------------------------
 // CONTRACT under test — `components/runs/review-panel.tsx` (M18 T4.2).
 //
@@ -50,8 +53,6 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/runs/run-1",
 }));
 
-import { ReviewPanel } from "@/components/runs/review-panel";
-
 const READY: ReadinessDTO = {
   readiness: "ready",
   externalGates: [],
@@ -89,6 +90,9 @@ const LABELS = {
   behindAhead: "run.behindAhead:3:2",
   syncBranch: "run.syncBranch",
   syncInProgress: "run.syncInProgress:agent_running",
+  promotionInProgress: "run.promotionInProgress",
+  promotionInProgressHint: "run.promotionInProgressHint",
+  operationTakingLonger: "run.operationTakingLonger",
   resolveWithAgent: "run.resolveWithAgent",
   autoFinalize: "run.autoFinalize",
   autoFinalizeHint: "run.autoFinalizeHint",
@@ -135,6 +139,30 @@ describe("ReviewPanel — base→run→target review surface (M18 T4.2)", () => 
     vi.clearAllMocks();
   });
 
+  it("uses clear Russian delivery terms instead of the internal promote jargon", () => {
+    expect(ru.run.reviewTitle).toBe("Ревью и доставка изменений");
+    expect(ru.run.promotionMode).toBe("Режим слияния");
+    expect(ru.run.promotionMerge).toBe("Слияние");
+    expect(ru.run.promotionRebaseMerge).toBe("Rebase + слияние");
+    expect(ru.run.promotionAiRebaseMerge).toBe(
+      "Перебазирование и слияние с помощью ИИ",
+    );
+    expect(ru.run.promoteTo).toBe("Доставить в");
+    expect(ru.autoPromotion.panel.title).toBe("Автоматическая доставка");
+
+    expect(
+      [
+        ru.run.reviewTitle,
+        ru.run.promotionMode,
+        ru.run.promotionMerge,
+        ru.run.promotionRebaseMerge,
+        ru.run.promotionAiRebaseMerge,
+        ru.run.promoteTo,
+        ru.autoPromotion.panel.title,
+      ].join(" "),
+    ).not.toMatch(/промоут|promot/i);
+  });
+
   it("renders the base→run→target spine (all three branch names + base commit)", () => {
     const html = render();
 
@@ -163,6 +191,17 @@ describe("ReviewPanel — base→run→target review surface (M18 T4.2)", () => 
     // wrapper's stable container testid — NOT Shiki/git-diff-view internals,
     // which do not render meaningfully under renderToStaticMarkup.
     expect(html).toContain('data-testid="diff-view"');
+  });
+
+  it("puts the diff before the decision and checks after the decision", () => {
+    const html = render();
+    const diff = html.indexOf('data-testid="diff-view"');
+    const decision = html.indexOf('data-testid="review-promote"');
+    const checks = html.indexOf('data-testid="review-readiness"');
+
+    expect(diff).toBeGreaterThan(-1);
+    expect(decision).toBeGreaterThan(diff);
+    expect(checks).toBeGreaterThan(decision);
   });
 
   it("names the exact target in the Promote button label", () => {
@@ -372,6 +411,33 @@ describe("ReviewPanel — branch sync (ADR-141)", () => {
     expect(html).toContain('data-testid="review-conflict"');
     expect(html).toContain('data-testid="review-conflict-resolve-agent"');
     expect(html).toContain("run.resolveWithAgent");
-    expect(html).toContain('href="/runs/run-1?git=update"');
+    expect(html).not.toContain('href="/runs/run-1?git=update"');
+  });
+
+  it("distinguishes a missing current worktree from a legacy run", () => {
+    const html = render({
+      reviewUnavailable: {
+        reason: "missing-worktree",
+        canReattach: false,
+      },
+    });
+
+    expect(html).toContain('data-testid="review-worktree-unavailable"');
+    expect(html).toContain("run.reviewWorktreeMissing");
+    expect(html).not.toContain("run.relaunchToPromote");
+    expect(html).not.toContain('data-testid="review-promote"');
+  });
+
+  it("offers re-attach only when a recovery source survives", () => {
+    const html = render({
+      reviewUnavailable: {
+        reason: "missing-worktree",
+        canReattach: true,
+        reattachHref: "/runs/run-1?git=reattach",
+      },
+    });
+
+    expect(html).toContain('data-testid="review-reattach-worktree"');
+    expect(html).toContain('href="/runs/run-1?git=reattach"');
   });
 });

@@ -30,6 +30,7 @@ import {
   coerceFormFieldValue,
   consensusHitlFromSchema,
   formFieldsFromSchema,
+  permissionOptionLabel,
 } from "@/components/board/hitl-decision-controls";
 import { requestPendingHitlFocus } from "@/components/board/pending-hitl-focus-restorer";
 import {
@@ -66,6 +67,43 @@ type PendingReviewRework = {
   response: Record<string, unknown>;
   preview: ReviewFeedbackPreview;
 };
+
+function HitlResponseStatus({
+  detail,
+  slow,
+  slowText,
+  title,
+}: {
+  detail: string;
+  slow: boolean;
+  slowText: string;
+  title: string;
+}): ReactElement {
+  return (
+    <div
+      aria-live="polite"
+      className="flex items-start gap-3 rounded-[10px] border border-accent-4/40 bg-accent-4-soft p-3 text-accent-4"
+      data-testid="hitl-response-in-progress"
+      role="status"
+    >
+      <ArrowPathIcon
+        aria-hidden="true"
+        className="mt-0.5 h-4 w-4 flex-none animate-spin"
+      />
+      <div className="min-w-0">
+        <p className="font-mono text-[11px] font-bold">{title}</p>
+        <p className="mt-0.5 font-mono text-[10.5px] leading-[1.45] text-ink-2">
+          {detail}
+        </p>
+        {slow ? (
+          <p className="mt-2 border-t border-accent-4/20 pt-2 font-mono text-[10.5px] leading-[1.45] text-amber">
+            {slowText}
+          </p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
 
 export interface RunHitlResponseProps {
   runId: string;
@@ -132,6 +170,7 @@ export function RunHitlResponse({
   const [pending, startTransition] = useTransition();
   const submissionOrdinal = useRef(0);
   const [busyRequestKey, setBusyRequestKey] = useState<string | null>(null);
+  const [responseSlow, setResponseSlow] = useState(false);
   const [errorState, setErrorState] = useState<{
     requestKey: string;
     message: string | null;
@@ -153,6 +192,7 @@ export function RunHitlResponse({
   } | null>(null);
   const requestKey = `${runId}:${hitlRequestId}`;
   const busy = busyRequestKey === requestKey;
+  const responseInProgress = busy || pending;
   const error =
     refusal?.requestKey === requestKey
       ? t(refusal.descriptor.key, refusal.descriptor.values)
@@ -183,6 +223,13 @@ export function RunHitlResponse({
   useEffect(() => {
     activeRequestKey.current = requestKey;
   }, [requestKey]);
+  useEffect(() => {
+    if (!busy) return;
+
+    const timer = window.setTimeout(() => setResponseSlow(true), 8_000);
+
+    return () => window.clearTimeout(timer);
+  }, [busy]);
   const currentAnswer =
     localAnswer?.requestKey === requestKey ? localAnswer : null;
   const budgetClaimCanBeReplaced =
@@ -264,6 +311,7 @@ export function RunHitlResponse({
     const submissionId = `${requestKey}:${++submissionOrdinal.current}`;
 
     setBusyRequestKey(requestKey);
+    setResponseSlow(false);
     setError(null);
 
     try {
@@ -348,6 +396,7 @@ export function RunHitlResponse({
     response: Record<string, unknown>,
   ): Promise<void> {
     setBusyRequestKey(requestKey);
+    setResponseSlow(false);
     setError(null);
 
     try {
@@ -567,6 +616,11 @@ export function RunHitlResponse({
     reviewComments: t("reviewComments"),
     decisionApprove: t("decisionApprove"),
     decisionRework: t("decisionRework"),
+    decisionTakeover: t("decisionTakeover"),
+    permissionAllowOnce: t("permissionAllowOnce"),
+    permissionAllowWithUpdates: t("permissionAllowWithUpdates"),
+    permissionAllowAlways: t("permissionAllowAlways"),
+    permissionReject: t("permissionReject"),
     sendBackWithComments: t("sendBackWithComments"),
     responseLabel: t("responseLabel"),
     responseHint: t("responseHint"),
@@ -590,6 +644,7 @@ export function RunHitlResponse({
     reviewOpenCount: t("reviewOpenCount"),
     reviewOutdatedCount: t("reviewOutdatedCount"),
     reviewLoopChip: t("reviewLoopChip"),
+    reviewLoopHint: t("reviewLoopHint"),
     reviewApproveOpenWarn: t("reviewApproveOpenWarn"),
     reviewReworkExhausted: t("reviewReworkExhausted"),
     infraRecoveryRetry: t("infraRecoveryRetry"),
@@ -770,6 +825,14 @@ export function RunHitlResponse({
       onSubmitJson={submitJson}
     />
   );
+  const operationStatus = responseInProgress ? (
+    <HitlResponseStatus
+      detail={t("hitlResponseInProgressHint")}
+      slow={responseSlow}
+      slowText={t("operationTakingLonger")}
+      title={t("hitlResponseInProgress")}
+    />
+  ) : null;
 
   if (isStored) {
     const savedOption =
@@ -787,7 +850,9 @@ export function RunHitlResponse({
         <span aria-live="polite" className="sr-only">
           {t(currentAnswer?.completed ? "answerRecorded" : "answerSaved")}
         </span>
+        {operationStatus}
         <div
+          aria-busy={responseInProgress}
           className="grid gap-2 rounded-lg border border-line bg-ivory p-3"
           data-testid={
             currentAnswer?.completed
@@ -802,7 +867,9 @@ export function RunHitlResponse({
             </p>
           )}
           {savedOption ? (
-            <p className="font-semibold text-ink">{savedOption.label}</p>
+            <p className="font-semibold text-ink">
+              {permissionOptionLabel(savedOption, labels)}
+            </p>
           ) : null}
           {retryPayload && "response" in retryPayload ? (
             <div>
@@ -872,12 +939,15 @@ export function RunHitlResponse({
   return (
     <>
       <span aria-live="polite" className="sr-only" />
-      {decisionControls}
-      {diagnostic ? (
-        <p className="text-xs text-mute">
-          {t("errorDiagnostic")}: <code>{diagnostic}</code>
-        </p>
-      ) : null}
+      <div aria-busy={responseInProgress} className="grid gap-3">
+        {operationStatus}
+        {decisionControls}
+        {diagnostic ? (
+          <p className="text-xs text-mute">
+            {t("errorDiagnostic")}: <code>{diagnostic}</code>
+          </p>
+        ) : null}
+      </div>
       {pendingReviewRework ? (
         <ConfirmDialog
           body={t("reviewPreviewBody", {

@@ -648,6 +648,13 @@ describe("POST /api/v1/ext/projects/[slug]/tasks", () => {
     expect(body).toHaveProperty("taskId");
     expect(typeof body.taskId).toBe("string");
 
+    const [createdTask] = await db
+      .select({ attemptNumber: schema.tasks.attemptNumber })
+      .from(schema.tasks)
+      .where(eq(schema.tasks.id, body.taskId));
+
+    expect(createdTask.attemptNumber).toBe(0);
+
     const auditRows = await db
       .select()
       .from(schema.tokenAuditLog as any)

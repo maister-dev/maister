@@ -452,6 +452,19 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       required: ["slug", "taskId"],
     },
   },
+  task_complete: {
+    description:
+      "Mark a task Done only after its newest Flow run has completed delivery. This does not promote a run: the latest run must already be Done with a completed merge, or with an observed merged pull request. The operation is idempotent and requires a global personal token; project, agent, service, run-bound, and librarian tokens are refused.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: { type: "string" },
+        taskId: { type: "string" },
+        expectedRevision: { type: "integer", minimum: 0 },
+      },
+      required: ["slug", "taskId"],
+    },
+  },
   run_launch: {
     description:
       "Launch a run for a task. `runnerId` is an optional per-launch platform ACP runner override (highest priority in runner resolution). `baseBranch`/`targetBranch` (M18) optionally set the worktree base and the promotion target — both server-validated against the project's branch allow-list. `executorOverrideId` is the DEPRECATED alias for `runnerId`; send `runnerId` instead — the route refuses both when they conflict.",
@@ -1594,6 +1607,23 @@ function resolveRouting(
       return {
         method: "PATCH",
         path: `/api/v1/ext/projects/${slug}/tasks/${taskId}`,
+        body,
+      };
+    }
+    case "task_complete": {
+      const { slug, taskId, expectedRevision } = args as {
+        slug: string;
+        taskId: string;
+        expectedRevision?: number;
+      };
+      const body: Record<string, unknown> = {};
+
+      if (expectedRevision !== undefined)
+        body.expectedRevision = expectedRevision;
+
+      return {
+        method: "POST",
+        path: `/api/v1/ext/projects/${slug}/tasks/${taskId}/complete`,
         body,
       };
     }

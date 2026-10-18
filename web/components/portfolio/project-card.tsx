@@ -4,12 +4,17 @@ import type { CSSProperties, ReactElement } from "react";
 import { getTranslations } from "next-intl/server";
 import Link from "next/link";
 import clsx from "clsx";
+import {
+  ArrowRightIcon,
+  WrenchScrewdriverIcon,
+} from "@heroicons/react/24/outline";
 
 import { READINESS_BADGE } from "@/components/readiness-badge";
 import { WorkbenchLifecycleActions } from "@/components/workbench/lifecycle-actions";
 
 export interface ProjectCardProps {
   project: PortfolioProject;
+  technicalOpen?: boolean;
 }
 
 const ACCENT_VARS: Record<1 | 2 | 3 | 4, CSSProperties> = {
@@ -57,12 +62,19 @@ const wsAgentChip: Record<string, string> = {
 
 export async function ProjectCard({
   project,
+  technicalOpen = false,
 }: ProjectCardProps): Promise<ReactElement> {
   const t = await getTranslations("portfolio");
   const tReadiness = await getTranslations("readiness");
 
   const accentStyle = ACCENT_VARS[project.accent];
   const visibleMembers = project.members.slice(0, 5);
+  const attentionCount =
+    project.pendingHitlCount +
+    project.activeWorkspaces.filter((ws) => ws.prHasConflicts).length;
+  const runningCount = project.activeWorkspaces.filter(
+    (ws) => ws.status === "running",
+  ).length;
 
   return (
     <article
@@ -74,7 +86,7 @@ export async function ProjectCard({
 
       <header className="mb-3.5 flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <h2 className="mb-1 inline-flex items-center gap-2 text-[18px] font-bold leading-[1.15] tracking-[-0.018em] text-ink">
+          <h2 className="mb-1 inline-flex items-center gap-2 text-[18px] font-bold leading-[1.15] tracking-[-0.018em] text-ink break-words">
             <Link
               className="hover:underline"
               href={`/projects/${project.slug}`}
@@ -100,7 +112,7 @@ export async function ProjectCard({
                   : "bg-mute-2",
               )}
             />
-            {project.status === "running" ? "running" : "idle"}
+            {t(project.status === "running" ? "projectRunning" : "projectIdle")}
           </span>
         </div>
       </header>
@@ -153,212 +165,264 @@ export async function ProjectCard({
         </span>
       </div>
 
-      <div className="mb-3.5 flex items-stretch overflow-hidden rounded-[10px] border border-line-soft bg-[color-mix(in_oklab,var(--ivory)_50%,var(--paper))] p-0.5">
-        <span className="relative flex min-w-0 flex-1 cursor-pointer flex-col gap-px rounded-lg px-2.5 py-2 font-mono text-[10.5px] tracking-[0.02em] transition-colors hover:bg-paper">
-          <span className="inline-flex items-center gap-[5px] text-[9px] font-semibold uppercase tracking-[0.12em] text-mute">
-            <span
-              className={clsx(
-                "inline-block h-[5px] w-[5px] rounded-full",
-                project.defaultAgent
-                  ? agentIcoColor[project.defaultAgent]
-                  : "bg-mute-2",
-              )}
-            />
-            agent
-          </span>
-          <b className="truncate text-[11.5px] font-semibold text-ink">
-            {project.defaultAgent ?? "—"}
-          </b>
-        </span>
-        <span className="relative flex min-w-0 flex-1 cursor-pointer flex-col gap-px rounded-lg px-2.5 py-2 font-mono text-[10.5px] tracking-[0.02em] transition-colors before:absolute before:inset-y-2 before:-left-px before:w-px before:bg-line before:content-[''] hover:bg-paper">
-          <span className="text-[9px] font-semibold uppercase tracking-[0.12em] text-mute">
-            flows
-          </span>
-          <b className="truncate text-[11.5px] font-semibold text-ink">
-            {project.flowsCount} configured
-          </b>
-        </span>
-        <span className="relative flex min-w-0 flex-1 cursor-pointer flex-col gap-px rounded-lg px-2.5 py-2 font-mono text-[10.5px] tracking-[0.02em] transition-colors before:absolute before:inset-y-2 before:-left-px before:w-px before:bg-line before:content-[''] hover:bg-paper">
-          <span className="text-[9px] font-semibold uppercase tracking-[0.12em] text-mute">
-            mcps
-          </span>
-          <b className="truncate text-[11.5px] font-semibold text-ink">—</b>
-        </span>
-      </div>
-
-      {project.need ? (
+      <dl className="mb-4 grid grid-cols-2 gap-3 border-y border-line-soft py-3 text-sm">
+        <div>
+          <dt className="text-xs text-mute">{t("tasksBacklog")}</dt>
+          <dd className="mt-1 text-lg font-semibold text-ink">
+            {project.backlogCount}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-xs text-mute">{t("runningCount")}</dt>
+          <dd className="mt-1 text-lg font-semibold text-ink">
+            {runningCount}
+          </dd>
+        </div>
+      </dl>
+      <Link
+        className={clsx(
+          "mb-4 text-sm font-medium",
+          attentionCount > 0 ? "text-amber" : "text-mute",
+        )}
+        href={`/projects/${project.slug}`}
+      >
+        {t("attentionCount", { count: attentionCount })}
+      </Link>
+      <div className="mt-auto flex flex-wrap items-center gap-3">
         <Link
-          className="mb-3.5 flex cursor-pointer items-center gap-2.5 rounded-[10px] border border-[var(--p-line)] bg-[color-mix(in_oklab,var(--p-soft)_70%,var(--paper))] px-3 py-2.5 transition-[background,transform] hover:translate-x-0.5 hover:bg-[var(--p-soft)]"
+          className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-amber px-4 py-2 text-sm font-semibold text-white hover:bg-amber-2"
           href={`/projects/${project.slug}`}
         >
-          <span className="inline-flex h-[22px] w-[22px] flex-none items-center justify-center rounded-full bg-[var(--p-accent)] font-mono text-[11px] font-extrabold text-white">
-            !
-          </span>
-          <span className="flex-1 text-[12.5px] font-medium leading-[1.35] text-ink">
-            <b>{project.need.agent}</b> in{" "}
-            <code className="rounded-[3px] border border-line bg-paper px-[5px] py-px font-mono text-[10.5px] text-ink-2">
-              {project.need.branch}
-            </code>{" "}
-            — {project.need.prompt}
-          </span>
-          <span className="font-mono text-[12px] font-bold text-[var(--p-accent)]">
-            →
-          </span>
+          {t("openProject")}
+          <ArrowRightIcon aria-hidden="true" className="size-4" />
         </Link>
-      ) : null}
-
-      <div className="mt-1">
-        <header className="mb-1.5 flex items-center justify-between font-mono text-[9.5px] font-semibold uppercase tracking-[0.12em] text-mute">
-          <span>{t("workspaces")}</span>
-          <span className="text-ink-2">
-            {project.activeWorkspaces.length > 0
-              ? t("activeCount", { count: project.activeWorkspaces.length })
-              : t("noneActive")}
-          </span>
-        </header>
-        {project.activeWorkspaces.length > 0 ? (
-          <ul className="m-0 flex list-none flex-col gap-px overflow-hidden rounded-lg border border-line-soft bg-[color-mix(in_oklab,var(--ivory)_35%,var(--paper))] p-0">
-            {project.activeWorkspaces.map((ws, idx) => (
-              <li
-                key={`${ws.runId}-${idx}`}
-                className="[&+li]:border-t [&+li]:border-line-soft"
-              >
-                <Link
-                  className="grid cursor-pointer grid-cols-[10px_1fr_auto_auto_auto_auto] items-center gap-2 px-2.5 py-2 font-mono text-[11px] transition-colors hover:bg-paper"
-                  href={ws.href}
-                >
+        <Link
+          aria-controls={`technical-${project.id}`}
+          aria-expanded={technicalOpen}
+          className="inline-flex min-h-10 items-center gap-2 text-xs text-mute hover:text-ink"
+          href={
+            technicalOpen
+              ? "/projects"
+              : `/projects?technical=${encodeURIComponent(project.slug)}`
+          }
+          scroll={false}
+        >
+          <WrenchScrewdriverIcon aria-hidden="true" className="size-4" />
+          {t("technicalInfo")}
+        </Link>
+      </div>
+      <section hidden={!technicalOpen} id={`technical-${project.id}`}>
+        {technicalOpen ? (
+          <>
+            <nav
+              aria-label={t("technicalInfo")}
+              className="my-4 flex flex-wrap gap-3 text-xs text-mute underline"
+            >
+              <Link href={`/projects/${project.slug}?tab=packages`}>
+                {t("flowSettings")}
+              </Link>
+              <Link href={`/projects/${project.slug}?tab=mcps`}>MCP</Link>
+              <Link href={`/projects/${project.slug}?tab=agents`}>
+                {t("agentSettings")}
+              </Link>
+              <Link href={`/projects/${project.slug}?tab=settings`}>
+                {t("gitSettings")}
+              </Link>
+            </nav>
+            <div className="mb-3.5 flex items-stretch overflow-hidden rounded-[10px] border border-line-soft bg-[color-mix(in_oklab,var(--ivory)_50%,var(--paper))] p-0.5">
+              <span className="relative flex min-w-0 flex-1 flex-col gap-px rounded-lg px-2.5 py-2 font-mono text-[10.5px] tracking-[0.02em] transition-colors hover:bg-paper">
+                <span className="inline-flex items-center gap-[5px] text-[9px] font-semibold uppercase tracking-[0.12em] text-mute">
                   <span
                     className={clsx(
-                      "h-[7px] w-[7px] rounded-full",
-                      wsDotByStatus[ws.status],
+                      "inline-block h-[5px] w-[5px] rounded-full",
+                      project.defaultAgent
+                        ? agentIcoColor[project.defaultAgent]
+                        : "bg-mute-2",
                     )}
                   />
-                  <span className="flex min-w-0 items-center gap-1.5">
-                    <span className="truncate font-semibold tracking-[-0.005em] text-ink">
-                      {ws.branch}
-                    </span>
-                    {ws.autoPromotedLane ? (
-                      <span
-                        aria-label={t("autoPromoted", {
-                          lane: ws.autoPromotedLane,
-                        })}
-                        className="shrink-0 rounded-[3px] border border-good bg-good-soft px-1 py-px text-[9px] font-bold uppercase tracking-[0.04em] text-good"
-                        data-testid="workspace-auto-promoted"
-                        title={t("autoPromoted", { lane: ws.autoPromotedLane })}
-                      >
-                        ⚡ auto
-                      </span>
-                    ) : null}
-                  </span>
-                  {ws.runKind === "scratch" &&
-                  ws.scratchAction &&
-                  ws.scratchAction !== "none" ? (
-                    <span className="rounded-[3px] border border-amber-line bg-amber-soft px-1.5 py-px text-[9.5px] tracking-[0.02em] text-amber">
-                      {t(`workspaceAction.${ws.scratchAction}`)}
-                    </span>
-                  ) : null}
-                  {ws.runKind === "agent" && ws.triggerSource ? (
-                    <span className="rounded-[3px] border border-line bg-ivory px-1.5 py-px text-[9.5px] tracking-[0.02em] text-mute">
-                      {ws.triggerSource}
-                    </span>
-                  ) : null}
-                  <span
-                    className={clsx(
-                      "rounded-[3px] border px-1.5 py-px text-[10px] tracking-[0.02em]",
-                      (ws.agent ? wsAgentChip[ws.agent] : null) ??
-                        "border-line bg-ivory text-mute",
-                    )}
-                  >
-                    {ws.runKind === "scratch"
-                      ? "scratch"
-                      : ws.runKind === "agent"
-                        ? "agent"
-                        : (ws.agent ?? "—")}
-                  </span>
-                  {ws.readiness !== "ready" ? (
-                    <span
-                      aria-label={tReadiness(ws.readiness)}
-                      className={clsx(
-                        "rounded-full border px-1.5 py-px text-[9px] font-bold uppercase tracking-[0.04em]",
-                        READINESS_BADGE[ws.readiness],
-                      )}
-                      data-readiness={ws.readiness}
-                      title={tReadiness(ws.readiness)}
+                  {t("defaultAgent")}
+                </span>
+                <b className="truncate text-[11.5px] font-semibold text-ink">
+                  {project.defaultAgent ?? "—"}
+                </b>
+              </span>
+              <span className="relative flex min-w-0 flex-1 flex-col gap-px rounded-lg px-2.5 py-2 font-mono text-[10.5px] tracking-[0.02em] transition-colors before:absolute before:inset-y-2 before:-left-px before:w-px before:bg-line before:content-[''] hover:bg-paper">
+                <span className="text-[9px] font-semibold uppercase tracking-[0.12em] text-mute">
+                  Flow
+                </span>
+                <b className="truncate text-[11.5px] font-semibold text-ink">
+                  {project.flowsCount}
+                </b>
+              </span>
+            </div>
+
+            {project.need ? (
+              <Link
+                className="mb-3.5 flex cursor-pointer items-center gap-2.5 rounded-[10px] border border-[var(--p-line)] bg-[color-mix(in_oklab,var(--p-soft)_70%,var(--paper))] px-3 py-2.5 transition-[background,transform] hover:translate-x-0.5 hover:bg-[var(--p-soft)]"
+                href={`/projects/${project.slug}`}
+              >
+                <span className="inline-flex h-[22px] w-[22px] flex-none items-center justify-center rounded-full bg-[var(--p-accent)] font-mono text-[11px] font-extrabold text-white">
+                  !
+                </span>
+                <span className="flex-1 text-[12.5px] font-medium leading-[1.35] text-ink">
+                  <b>{project.need.agent}</b> in{" "}
+                  <code className="rounded-[3px] border border-line bg-paper px-[5px] py-px font-mono text-[10.5px] text-ink-2">
+                    {project.need.branch}
+                  </code>{" "}
+                  — {project.need.prompt}
+                </span>
+                <span className="font-mono text-[12px] font-bold text-[var(--p-accent)]">
+                  →
+                </span>
+              </Link>
+            ) : null}
+
+            <div className="mt-1">
+              <header className="mb-1.5 flex items-center justify-between font-mono text-[9.5px] font-semibold uppercase tracking-[0.12em] text-mute">
+                <span>{t("workspaces")}</span>
+                <span className="text-ink-2">
+                  {project.activeWorkspaces.length > 0
+                    ? t("activeCount", {
+                        count: project.activeWorkspaces.length,
+                      })
+                    : t("noneActive")}
+                </span>
+              </header>
+              {project.activeWorkspaces.length > 0 ? (
+                <ul className="m-0 flex list-none flex-col gap-px overflow-hidden rounded-lg border border-line-soft bg-[color-mix(in_oklab,var(--ivory)_35%,var(--paper))] p-0">
+                  {project.activeWorkspaces.map((ws, idx) => (
+                    <li
+                      key={`${ws.runId}-${idx}`}
+                      className="[&+li]:border-t [&+li]:border-line-soft"
                     >
-                      {tReadiness(ws.readiness)}
-                    </span>
-                  ) : null}
-                  <span
-                    className={clsx(
-                      "text-[10px] tracking-[0.04em]",
-                      ws.status === "needs"
-                        ? "font-bold text-amber"
-                        : "text-mute-2",
-                    )}
-                  >
-                    {ws.time}
+                      <Link
+                        className="grid cursor-pointer grid-cols-[10px_1fr_auto_auto_auto_auto] items-center gap-2 px-2.5 py-2 font-mono text-[11px] transition-colors hover:bg-paper"
+                        href={ws.href}
+                      >
+                        <span
+                          className={clsx(
+                            "h-[7px] w-[7px] rounded-full",
+                            wsDotByStatus[ws.status],
+                          )}
+                        />
+                        <span className="flex min-w-0 items-center gap-1.5">
+                          <span className="truncate font-semibold tracking-[-0.005em] text-ink">
+                            {ws.branch}
+                          </span>
+                          {ws.autoPromotedLane ? (
+                            <span
+                              aria-label={t("autoPromoted", {
+                                lane: ws.autoPromotedLane,
+                              })}
+                              className="shrink-0 rounded-[3px] border border-good bg-good-soft px-1 py-px text-[9px] font-bold uppercase tracking-[0.04em] text-good"
+                              data-testid="workspace-auto-promoted"
+                              title={t("autoPromoted", {
+                                lane: ws.autoPromotedLane,
+                              })}
+                            >
+                              ⚡ auto
+                            </span>
+                          ) : null}
+                        </span>
+                        {ws.runKind === "scratch" &&
+                        ws.scratchAction &&
+                        ws.scratchAction !== "none" ? (
+                          <span className="rounded-[3px] border border-amber-line bg-amber-soft px-1.5 py-px text-[9.5px] tracking-[0.02em] text-amber">
+                            {t(`workspaceAction.${ws.scratchAction}`)}
+                          </span>
+                        ) : null}
+                        {ws.runKind === "agent" && ws.triggerSource ? (
+                          <span className="rounded-[3px] border border-line bg-ivory px-1.5 py-px text-[9.5px] tracking-[0.02em] text-mute">
+                            {ws.triggerSource}
+                          </span>
+                        ) : null}
+                        <span
+                          className={clsx(
+                            "rounded-[3px] border px-1.5 py-px text-[10px] tracking-[0.02em]",
+                            (ws.agent ? wsAgentChip[ws.agent] : null) ??
+                              "border-line bg-ivory text-mute",
+                          )}
+                        >
+                          {ws.runKind === "scratch"
+                            ? "scratch"
+                            : ws.runKind === "agent"
+                              ? "agent"
+                              : (ws.agent ?? "—")}
+                        </span>
+                        {ws.prHasConflicts ? (
+                          <span className="text-xs font-semibold text-amber">
+                            {t("gitConflict")}
+                          </span>
+                        ) : null}
+                        {ws.readiness !== "ready" ? (
+                          <span
+                            aria-label={tReadiness(ws.readiness)}
+                            className={clsx(
+                              "rounded-full border px-1.5 py-px text-[9px] font-bold uppercase tracking-[0.04em]",
+                              READINESS_BADGE[ws.readiness],
+                            )}
+                            data-readiness={ws.readiness}
+                            title={tReadiness(ws.readiness)}
+                          >
+                            {tReadiness(ws.readiness)}
+                          </span>
+                        ) : null}
+                        <span
+                          className={clsx(
+                            "text-[10px] tracking-[0.04em]",
+                            ws.status === "needs"
+                              ? "font-bold text-amber"
+                              : "text-mute-2",
+                          )}
+                        >
+                          {ws.time}
+                        </span>
+                      </Link>
+                      {ws.lifecycleActions.length > 0 ? (
+                        <WorkbenchLifecycleActions
+                          workspaceAvailable
+                          actions={ws.lifecycleActions}
+                          className="px-2.5 pb-2"
+                          runId={ws.runId}
+                          runKind={ws.runKind}
+                        />
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+
+            {project.recentMerges.length > 0 ? (
+              <div className="mt-2 flex flex-col gap-1 rounded-lg border border-dashed border-[color-mix(in_oklab,var(--accent-4)_30%,var(--line))] bg-[color-mix(in_oklab,var(--accent-4-soft)_35%,var(--paper))] px-2.5 py-2">
+                <div className="flex items-center justify-between font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-mute">
+                  <span className="before:mr-1.5 before:font-bold before:text-accent-4 before:content-['✔']">
+                    {t("recentlyMerged")}
                   </span>
-                </Link>
-                {ws.lifecycleActions.length > 0 ? (
-                  <WorkbenchLifecycleActions
-                    workspaceAvailable
-                    actions={ws.lifecycleActions}
-                    className="px-2.5 pb-2"
-                    runId={ws.runId}
-                    runKind={ws.runKind}
-                  />
-                ) : null}
-              </li>
-            ))}
-          </ul>
+                </div>
+                <ul className="m-0 flex list-none flex-col gap-0.5 p-0">
+                  {project.recentMerges.map((merge, idx) => (
+                    <li
+                      key={`${merge.branch}-${idx}`}
+                      className="grid cursor-pointer grid-cols-[1fr_auto_auto] items-center gap-2 py-0.5 font-mono text-[10.5px] text-ink-2 hover:text-ink"
+                    >
+                      <span className="truncate font-semibold text-ink-2 before:mr-1.5 before:inline-block before:h-[5px] before:w-[5px] before:rounded-full before:bg-accent-4 before:align-[1px] before:opacity-[0.65] before:content-['']">
+                        {merge.branch}
+                      </span>
+                      <span className="text-[9.5px] tracking-[0.04em] text-mute">
+                        {merge.agent} · main
+                      </span>
+                      <span className="text-[9.5px] tracking-[0.04em] text-mute-2">
+                        {merge.time}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </>
         ) : null}
-      </div>
-
-      {project.recentMerges.length > 0 ? (
-        <div className="mt-2 flex flex-col gap-1 rounded-lg border border-dashed border-[color-mix(in_oklab,var(--accent-4)_30%,var(--line))] bg-[color-mix(in_oklab,var(--accent-4-soft)_35%,var(--paper))] px-2.5 py-2">
-          <div className="flex items-center justify-between font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-mute">
-            <span className="before:mr-1.5 before:font-bold before:text-accent-4 before:content-['✔']">
-              {t("recentlyMerged")}
-            </span>
-          </div>
-          <ul className="m-0 flex list-none flex-col gap-0.5 p-0">
-            {project.recentMerges.map((merge, idx) => (
-              <li
-                key={`${merge.branch}-${idx}`}
-                className="grid cursor-pointer grid-cols-[1fr_auto_auto] items-center gap-2 py-0.5 font-mono text-[10.5px] text-ink-2 hover:text-ink"
-              >
-                <span className="truncate font-semibold text-ink-2 before:mr-1.5 before:inline-block before:h-[5px] before:w-[5px] before:rounded-full before:bg-accent-4 before:align-[1px] before:opacity-[0.65] before:content-['']">
-                  {merge.branch}
-                </span>
-                <span className="text-[9.5px] tracking-[0.04em] text-mute">
-                  {merge.agent} · main
-                </span>
-                <span className="text-[9.5px] tracking-[0.04em] text-mute-2">
-                  {merge.time}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-
-      <footer className="mt-3.5 flex items-center justify-between gap-2.5 border-t border-line-soft pt-3">
-        <div className="inline-flex flex-wrap gap-1.5">
-          {project.pendingHitlCount > 0 ? (
-            <span className="inline-flex items-center gap-1 rounded-full border border-amber-line bg-amber-soft px-2 py-0.5 font-mono text-[10px] font-semibold tracking-[0.04em] text-amber">
-              {t("pendingChip", { count: project.pendingHitlCount })}
-            </span>
-          ) : null}
-        </div>
-        <Link
-          className="inline-flex items-center gap-[5px] font-mono text-[10.5px] tracking-[0.04em] text-mute hover:text-ink"
-          href={`/projects/${project.slug}`}
-        >
-          {t("backlog")} ·{" "}
-          <b className="font-semibold text-ink-2">{project.backlogCount}</b>{" "}
-          <span className="font-bold text-[var(--p-accent)]">→</span>
-        </Link>
-      </footer>
+      </section>
     </article>
   );
 }
