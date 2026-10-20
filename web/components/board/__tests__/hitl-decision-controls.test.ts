@@ -259,6 +259,7 @@ describe("HitlDecisionControls — pure HITL response rendering (M17 P4)", () =>
       expect(html).toContain("Keep scope");
       expect(html).toContain("Avoids expanding the implementation work.");
       expect(html).toContain("Answer blockers first");
+      expect(html).toContain('data-testid="plan-review-approval-blocked"');
       expect(html).toMatch(
         /<button[^>]*disabled[^>]*>run\.decisionApprove<\/button>/,
       );
@@ -279,6 +280,25 @@ describe("HitlDecisionControls — pure HITL response rendering (M17 P4)", () =>
 
       expect(html).toContain("run.decisionApprove");
       expect(html).toContain("run.decisionRework");
+    });
+
+    it("uses the human label for a manual takeover decision", () => {
+      const html = render({
+        kind: "human",
+        reviewSchema: {
+          allowedDecisions: ["approve", "takeover"],
+          transitions: { approve: "done", takeover: "manual" },
+          reworkTargets: [],
+          workspacePolicies: [],
+        },
+        labels: {
+          ...LABELS,
+          decisionTakeover: "Continue manually",
+        },
+      });
+
+      expect(html).toContain("Continue manually");
+      expect(html).not.toContain(">takeover<");
     });
 
     it("renders the comments textarea", () => {
@@ -678,6 +698,7 @@ const PANEL_LABELS = {
   reviewOpenCount: "$count unresolved",
   reviewOutdatedCount: "$count outdated",
   reviewLoopChip: "Rework loop $n of $m",
+  reviewLoopHint: "$count reworks remain",
   reviewApproveOpenWarn: "$count open threads stay unresolved on approve",
   reviewReworkExhausted: "rework limit reached: all $m review visits used",
 };
@@ -711,6 +732,8 @@ describe("HitlDecisionControls — review gate panel (ADR-072 Task 13)", () => {
       });
 
       expect(html).toContain("Rework loop 2 of 4");
+      expect(html).toContain("2 reworks remain");
+      expect(html).toContain('data-testid="review-loop-hint"');
     });
 
     it("renders the boundary visit as N = M", () => {

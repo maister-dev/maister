@@ -80,6 +80,13 @@ describe("ReviewWorkspace", () => {
     expect(html).toContain('data-testid="run-diff-loading"');
     expect(html).toContain("Review decision");
     expect(html).toContain("Approve");
+    expect(html).toContain('data-review-layout="stacked"');
+    expect(html).not.toContain("xl:grid-cols");
+    expect(html).not.toContain("xl:sticky");
+    expect(html).toContain('id="review-workspace"');
+    expect(html.indexOf('data-testid="review-diff-panel"')).toBeLessThan(
+      html.indexOf('data-testid="review-decision-panel"'),
+    );
   });
 
   it("makes a non-review deep link visibly unavailable", () => {

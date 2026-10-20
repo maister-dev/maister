@@ -102,12 +102,13 @@ export function AssignmentActions({
       ) : null}
       <button
         className={clsx(
-          "rounded-lg border px-3 py-[7px] font-mono text-[10.5px] font-bold uppercase leading-none tracking-[0.06em]",
+          "inline-flex min-h-9 min-w-36 items-center justify-center rounded-lg border px-4 py-2 font-mono text-[11px] font-bold uppercase leading-none tracking-[0.06em]",
           action === "take-over"
             ? "border-amber bg-amber text-white shadow-[0_4px_12px_-6px_var(--amber)] hover:bg-amber-2"
             : "border-line bg-paper text-mute hover:border-mute hover:text-ink-2",
           disabled && "opacity-60",
         )}
+        data-testid="assignment-action"
         disabled={disabled}
         type="button"
         onClick={() => void postAction()}

@@ -16,6 +16,7 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { RUN_SYNC_TERMINAL_PHASES, type RunSyncPhase } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { systemCloseActiveAssignmentsForRun } from "@/lib/assignments/service";
 import { isLaunchedLineageRun } from "@/lib/evaluations/membership";
 import { syncShapeRefusal } from "@/lib/runs/sync-shape";
 import {
@@ -670,6 +671,17 @@ async function settleAttempt(
         fence: { kind: "lifecycle", attemptId: claim.lifecycleAttemptId },
       });
     }
+    // A failed promotion leaves a durable merge-conflict assignment behind.
+    // Once this sync has verified the resolved branch, close that one piece of
+    // work in the same lifecycle transaction. Otherwise a page refresh keeps
+    // advertising a conflict that no longer exists and a later retry can never
+    // create a fresh assignment for a genuinely new conflict.
+    await systemCloseActiveAssignmentsForRun({
+      db: tx,
+      runId: args.runId,
+      actionKinds: ["merge_conflict"],
+      reason: "branch conflict resolved by successful sync",
+    });
     await releaseSyncClaim(tx, claim);
   });
 }

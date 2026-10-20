@@ -18,6 +18,7 @@ export interface DirtySummaryView {
 export interface DirtyResolutionLabels {
   title: string;
   summary: string; // expects {staged} {unstaged} {untracked} already interpolated by caller
+  hint: string;
   viewDiff: string;
   commit: string;
   discard: string;
@@ -101,6 +102,9 @@ export function DirtyResolutionBanner(props: {
       </h3>
       <p className="mb-2 font-mono text-[11px] text-mute">
         {props.labels.summary}
+      </p>
+      <p className="mb-3 text-[12px] leading-[1.5] text-ink-2">
+        {props.labels.hint}
       </p>
       {props.diffHref ? (
         <a

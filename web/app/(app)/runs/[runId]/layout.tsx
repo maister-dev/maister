@@ -3,10 +3,12 @@ import type { FlowResultDegradationCode } from "@/lib/runs/flow-result-dto";
 import type { ResultStatus } from "@/lib/run-results/types";
 import type { ReactElement, ReactNode } from "react";
 
+import Link from "next/link";
 import { getLocale, getTranslations } from "next-intl/server";
 import { notFound, redirect } from "next/navigation";
 import { ExclamationTriangleIcon } from "@heroicons/react/24/outline";
 
+import { RunReviewDisclosure } from "@/components/runs/run-review-disclosure";
 import {
   CRASH_RECOVER_DECISION,
   TURN_LOST_DECISION,
@@ -81,8 +83,10 @@ import { RunShell, type RunShellLabels } from "@/components/runs/run-shell";
 import { ExecutionPolicyBadge } from "@/components/runs/execution-policy-badge";
 import {
   ReviewPanel,
+  type ReviewPanelConflict,
   type ReviewPanelDiff,
   type ReviewPanelLabels,
+  type ReviewPanelUnavailable,
 } from "@/components/runs/review-panel";
 import FileTree, {
   type FileTreeLabels,
@@ -144,6 +148,7 @@ import {
   statusPorcelain,
 } from "@/lib/worktree";
 import { buildRunSyncPanelData } from "@/lib/runs/sync-panel-data";
+import { findActiveAssignmentForRun } from "@/lib/assignments/service";
 import { gitPanelHref } from "@/lib/workbench-git/panel-link";
 import { deliveryPolicyFromLegacyPromotionMode } from "@/lib/runs/delivery-policy";
 import {
@@ -196,6 +201,7 @@ async function buildReviewPanelData(detail: RunDetailForReview): Promise<{
   diff: ReviewPanelDiff;
   driftDetected: boolean;
   legacyNeedsRelaunch: boolean;
+  reviewUnavailable: ReviewPanelUnavailable | null;
 }> {
   const targetBranch = detail.targetBranch ?? detail.projectMainBranch;
   const deliveryPolicy =
@@ -205,6 +211,27 @@ async function buildReviewPanelData(detail: RunDetailForReview): Promise<{
       projectMainBranch: targetBranch,
     });
   const promotionMode = deliveryPolicy.strategy;
+
+  // Missing current worktree is an operational lifecycle state, not evidence
+  // that the row predates branch targeting. Keep the recorded branch metadata
+  // visible and route the owner to re-attach only when a source actually exists.
+  if (detail.lifecycleFacts.worktreePresent === false) {
+    return {
+      baseBranch: detail.baseBranch,
+      baseCommit: detail.baseCommit,
+      targetBranch,
+      reviewedTargetCommit: null,
+      promotionMode,
+      deliveryPolicy,
+      diff: EMPTY_DIFF,
+      driftDetected: false,
+      legacyNeedsRelaunch: false,
+      reviewUnavailable: {
+        reason: "missing-worktree",
+        canReattach: detail.lifecycleFacts.reattachSource === true,
+      },
+    };
+  }
 
   // The diff base: the EXACT commit the run forked from (a stable point — the
   // target branch may have advanced since), else the recorded base branch, else
@@ -234,6 +261,7 @@ async function buildReviewPanelData(detail: RunDetailForReview): Promise<{
         diff: EMPTY_DIFF,
         driftDetected: false,
         legacyNeedsRelaunch: true,
+        reviewUnavailable: null,
       };
     }
   }
@@ -270,6 +298,7 @@ async function buildReviewPanelData(detail: RunDetailForReview): Promise<{
     diff,
     driftDetected: false,
     legacyNeedsRelaunch: false,
+    reviewUnavailable: null,
   };
 }
 
@@ -634,6 +663,7 @@ export default async function RunDetailLayout({
     title: t("capabilityTitle"),
     subtitle: t("capabilitySubtitle"),
     digestLabel: t("capabilityDigest"),
+    digestHint: t("capabilityDigestHint"),
     revisionLabel: t("capabilityRevision"),
     enforcedLabel: t("capabilityEnforced"),
     instructedLabel: t("capabilityInstructed"),
@@ -705,6 +735,11 @@ export default async function RunDetailLayout({
   // gate (one threads query + at most one diff prep, per the D5 perf rule);
   // every other run pays nothing.
   const hasReviewGate = isFlowReviewGate(detail.runKind, detail.pendingHitl);
+  const planDecisionHitls = hasReviewGate
+    ? detail.pendingHitls
+        .slice(1)
+        .filter((pendingHitl) => pendingHitl.kind === "decision_request")
+    : [];
   let reviewGateCounts: ReviewThreadCounts | null = null;
   let gateDiffReview: RunDiffReviewContext | undefined;
   const flowResultDegradations: FlowResultDegradationCode[] = [];
@@ -775,13 +810,14 @@ export default async function RunDetailLayout({
   let reviewReadiness = null;
   let syncPanel: Awaited<ReturnType<typeof buildRunSyncPanelData>> | null =
     null;
+  let reviewConflict: ReviewPanelConflict | undefined;
 
   if (showReview) {
     try {
       reviewData = await buildReviewPanelData(detail);
     } catch (err) {
-      // A derivation failure that is not a clean legacy-relaunch case (e.g. the
-      // worktree is gone): fall back to the relaunch state rather than crash.
+      // A current run whose review data cannot be read is not a legacy row.
+      // Preserve its target metadata and render an explicit unavailable state.
       if (isMaisterError(err)) {
         const fallbackPolicy =
           detail.deliveryPolicySnapshot ??
@@ -793,13 +829,17 @@ export default async function RunDetailLayout({
         reviewData = {
           baseBranch: detail.baseBranch,
           baseCommit: detail.baseCommit,
-          targetBranch: null,
+          targetBranch: detail.targetBranch ?? detail.projectMainBranch,
           reviewedTargetCommit: null,
           promotionMode: fallbackPolicy.strategy,
           deliveryPolicy: fallbackPolicy,
           diff: EMPTY_DIFF,
           driftDetected: false,
-          legacyNeedsRelaunch: true,
+          legacyNeedsRelaunch: false,
+          reviewUnavailable: {
+            reason: "diff-error",
+            canReattach: detail.lifecycleFacts.reattachSource === true,
+          },
         };
         flowResultDegradations.push("review-diff-fallback");
       } else {
@@ -809,11 +849,32 @@ export default async function RunDetailLayout({
 
     reviewReadiness = await getRunReadiness(detail.runId, detail.projectId);
 
+    const activeConflict = await findActiveAssignmentForRun({
+      runId: detail.runId,
+      actionKinds: ["merge_conflict"],
+    });
+
+    if (activeConflict) {
+      const conflictTarget =
+        activeConflict.ref ??
+        reviewData?.targetBranch ??
+        detail.projectMainBranch;
+      const conflictBranch = activeConflict.branch ?? detail.branch;
+
+      reviewConflict = {
+        parentRepoPath: detail.parentRepoPath,
+        targetBranch: conflictTarget,
+        runBranch: conflictBranch,
+        command: `git merge --no-ff ${conflictBranch}`,
+      };
+    }
+
     // ADR-141: behind/ahead + branch-sync dialog seed. Only when a
     // real target + worktree are known (never for the legacy-relaunch fallback).
     if (
       reviewData &&
       !reviewData.legacyNeedsRelaunch &&
+      !reviewData.reviewUnavailable &&
       reviewData.targetBranch
     ) {
       syncPanel = await buildRunSyncPanelData({
@@ -1253,6 +1314,24 @@ export default async function RunDetailLayout({
   // ADR-181 D2: the viewer's own set — the claim owner of an open rework claim
   // gets the git set; `detail.lifecycleActions` is the viewer-less projection.
   const viewerLifecycleActions = lifecycleActionsForViewer(detail, user.id);
+  const contextualGitAction = viewerLifecycleActions.includes("reattach")
+    ? { id: "reattach", label: t("reviewRestoreWorkspace") }
+    : viewerLifecycleActions.includes("update") && detail.prHasConflicts
+      ? { id: "update", label: t("reviewResolveConflict") }
+      : viewerLifecycleActions.includes("update") &&
+          (syncPanel?.aheadBehind?.behind ?? 0) > 0
+        ? { id: "update", label: t("reviewUpdateBranch") }
+        : viewerLifecycleActions.includes("exportBranch") &&
+            !detail.lifecycleFacts.publishedBranch
+          ? { id: "exportBranch", label: t("reviewPublish") }
+          : null;
+  const contextualGitHref = contextualGitAction
+    ? gitPanelHref({
+        runId: detail.runId,
+        runKind: detail.runKind,
+        actionId: contextualGitAction.id,
+      })
+    : null;
   const policyActions = deriveInspectorActions({
     runId: detail.runId,
     runKind: detail.runKind,
@@ -1424,56 +1503,157 @@ export default async function RunDetailLayout({
       </>
     ) : null;
 
-  const primaryResult =
-    flowGraphData || showAgentCenter ? (
-      <section className="min-w-0 max-w-full" data-testid="run-primary-result">
-        {flowGraphData ? (
-          <FlowRunCenter
-            graphView={
-              <FlowGraphViewSection
-                labels={flowGraphData.labels}
-                layout={flowGraphData.layout}
-                nodeTooltips={flowGraphData.nodeTooltips}
-                runContext={{
-                  runId: detail.runId,
-                  initialStatuses: flowGraphData.statuses.nodes,
-                  currentStepId: flowGraphData.statuses.currentStepId,
-                  runStatus: detail.status,
-                  restrictedNodeIds: settings
-                    ? settings.nodes
-                        .filter((n) => n.classes.length > 0)
-                        .map((n) => n.nodeId)
-                    : [],
-                }}
-                topology={flowGraphData.topology}
-              />
-            }
-            labels={flowRunCenterLabels}
-            locale={locale}
-            result={flowResultDto}
-          />
-        ) : (
-          <>
-            <AgentRunCenter
-              labels={agentRunCenterLabels}
+  const reviewMode = showReview || hasReviewGate;
+  const flowContent = (
+    <>
+      {flowGraphData || showAgentCenter ? (
+        <section
+          className="min-w-0 max-w-full"
+          data-testid="run-primary-result"
+        >
+          {flowGraphData ? (
+            <FlowRunCenter
+              graphView={
+                <FlowGraphViewSection
+                  labels={flowGraphData.labels}
+                  layout={flowGraphData.layout}
+                  nodeTooltips={flowGraphData.nodeTooltips}
+                  runContext={{
+                    runId: detail.runId,
+                    initialStatuses: flowGraphData.statuses.nodes,
+                    currentStepId: flowGraphData.statuses.currentStepId,
+                    runStatus: detail.status,
+                    restrictedNodeIds: settings
+                      ? settings.nodes
+                          .filter((n) => n.classes.length > 0)
+                          .map((n) => n.nodeId)
+                      : [],
+                  }}
+                  topology={flowGraphData.topology}
+                />
+              }
+              labels={flowRunCenterLabels}
+              locale={locale}
               result={flowResultDto}
             />
-            <AgentRunTranscript
-              defaultOpen
-              labels={flowRunCenterLabels.transcript}
-              live={isLiveRunStatus(detail.status)}
-              runId={detail.runId}
+          ) : (
+            <>
+              <AgentRunCenter
+                labels={agentRunCenterLabels}
+                result={flowResultDto}
+              />
+              <AgentRunTranscript
+                defaultOpen
+                labels={flowRunCenterLabels.transcript}
+                live={isLiveRunStatus(detail.status)}
+                runId={detail.runId}
+              />
+            </>
+          )}
+          {isOrchestratorRun ? (
+            <OrchestratorRunSubtree
+              childRuns={childRuns}
+              labels={orchestratorSubtreeLabels}
             />
-          </>
-        )}
-        {isOrchestratorRun ? (
-          <OrchestratorRunSubtree
-            childRuns={childRuns}
-            labels={orchestratorSubtreeLabels}
+          ) : null}
+        </section>
+      ) : null}
+    </>
+  );
+  const workbenchContent = (
+    <>
+      {flowGraphData || showAgentCenter || isCutoverHistory ? (
+        <section className="min-w-0 max-w-full" data-testid="run-workbench">
+          <WorkbenchPanel
+            diff={
+              <RunDiff
+                labels={flowGraphData?.diffLabels ?? workbenchDiffLabels}
+                runId={detail.runId}
+                scopeSwitcher={workbenchDiffScopeLabels}
+              />
+            }
+            evidence={
+              <section>
+                <h2 className="mb-3 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink">
+                  {evidenceLabels.title}
+                </h2>
+                <EvidenceGraphSection
+                  graph={evidence}
+                  labels={evidenceLabels}
+                  runId={detail.runId}
+                />
+              </section>
+            }
+            filesPane={children}
+            filesTree={
+              <FileTree
+                filesApiBase={`/api/runs/${detail.runId}/files`}
+                labels={flowGraphData?.filesLabels ?? workbenchFilesLabels}
+              />
+            }
+            runId={detail.runId}
+            tabLabels={flowGraphData?.tabLabels ?? workbenchTabLabels}
+            timeline={
+              <RunTimeline
+                assignmentEvents={timeline.assignmentEvents}
+                entries={timeline.entries as TimelineEntry[]}
+                labels={timelineLabels}
+                locale={locale}
+              />
+            }
           />
-        ) : null}
-      </section>
-    ) : null;
+        </section>
+      ) : null}
+    </>
+  );
+  const technicalHistory = (
+    <>
+      {flowContent}
+      {workbenchContent}
+    </>
+  );
+  const lifecycleControls = (
+    <>
+      {viewerLifecycleActions.length > 0 ? (
+        <WorkbenchLifecycleActions
+          actions={viewerLifecycleActions}
+          runId={detail.runId}
+          runKind={detail.runKind}
+          syncDefaults={{
+            strategy: detail.syncStrategyDefault,
+            runnerOptions: syncPanel?.sync.runnerOptions ?? [],
+            defaultRunnerId: syncPanel?.sync.defaultRunnerId ?? null,
+          }}
+          variant="detail"
+          workspaceAvailable={Boolean(detail.worktreePath) && !detail.pruned}
+        />
+      ) : null}
+    </>
+  );
+  const readinessSummary = (
+    <>
+      {readiness &&
+      detail.status !== "Failed" &&
+      detail.status !== "Crashed" ? (
+        <ReadinessSummary
+          labels={{
+            state: {
+              ready: tReadiness("ready"),
+              blocked: tReadiness("blocked"),
+              stale: tReadiness("stale"),
+              failed: tReadiness("failed"),
+              waiting: tReadiness("waiting"),
+              overridden: tReadiness("overridden"),
+            },
+            summary: tReadiness("summary"),
+            reasons: tReadiness("reasons"),
+          }}
+          reasons={readiness.reasons}
+          state={readiness.readiness}
+        />
+      ) : null}
+    </>
+  );
 
   return (
     <RunStreamProvider runId={detail.runId} runStatus={detail.status}>
@@ -1530,7 +1710,13 @@ export default async function RunDetailLayout({
         projectHref={`/projects/${detail.projectSlug}`}
         projectLabel={t("backToBoard")}
         promotionOperation={headerPromotionOperation}
-        reviewHref={showReview && reviewData ? "#review-panel" : null}
+        reviewHref={
+          hasReviewGate
+            ? "#review-workspace"
+            : showReview && reviewData
+              ? "#review-panel"
+              : null
+        }
         runId={detail.runId}
         status={detail.status}
         subtitle={shellSubtitle}
@@ -1544,6 +1730,50 @@ export default async function RunDetailLayout({
         title={shellTitle}
       >
         <div className="grid min-w-0 max-w-full gap-5">
+          {showReview && reviewData ? (
+            <ReviewPanel
+              aheadBehind={syncPanel?.aheadBehind ?? null}
+              baseBranch={reviewData.baseBranch}
+              baseCommit={reviewData.baseCommit}
+              canPromote={canAct}
+              conflict={reviewConflict}
+              deliveryPolicy={reviewData.deliveryPolicy}
+              diff={reviewData.diff}
+              displayParentRepoPath={displayParentRepoPath}
+              driftDetected={reviewData.driftDetected}
+              id="review-panel"
+              labels={reviewLabels}
+              legacyNeedsRelaunch={reviewData.legacyNeedsRelaunch}
+              parentRepoPath={detail.parentRepoPath}
+              prNumber={detail.prNumber}
+              prUrl={detail.prUrl}
+              promotionMode={reviewData.promotionMode}
+              readiness={reviewReadiness}
+              reviewUnavailable={
+                reviewData.reviewUnavailable
+                  ? {
+                      ...reviewData.reviewUnavailable,
+                      reattachHref: gitPanelHref({
+                        runId: detail.runId,
+                        runKind: detail.runKind,
+                        actionId: "reattach",
+                      }),
+                    }
+                  : null
+              }
+              reviewedTargetCommit={reviewData.reviewedTargetCommit}
+              runBranch={detail.branch}
+              runId={detail.runId}
+              sync={syncPanel?.sync ?? null}
+              targetBranch={reviewData.targetBranch}
+              updateHref={gitPanelHref({
+                runId: detail.runId,
+                runKind: detail.runKind,
+                actionId: "update",
+              })}
+            />
+          ) : null}
+
           {detail.runnerResolutionWarnings.length > 0 ? (
             <section
               className="flex gap-2 rounded-[10px] border border-amber-line bg-amber-soft px-3 py-2 text-[12px] text-amber"
@@ -1597,44 +1827,8 @@ export default async function RunDetailLayout({
             />
           ) : null}
 
-          {viewerLifecycleActions.length > 0 ? (
-            <WorkbenchLifecycleActions
-              actions={viewerLifecycleActions}
-              runId={detail.runId}
-              runKind={detail.runKind}
-              syncDefaults={{
-                strategy: detail.syncStrategyDefault,
-                runnerOptions: syncPanel?.sync.runnerOptions ?? [],
-                defaultRunnerId: syncPanel?.sync.defaultRunnerId ?? null,
-              }}
-              variant="detail"
-              workspaceAvailable={
-                Boolean(detail.worktreePath) && !detail.pruned
-              }
-            />
-          ) : null}
-
-          {readiness &&
-          detail.status !== "Failed" &&
-          detail.status !== "Crashed" ? (
-            <ReadinessSummary
-              labels={{
-                state: {
-                  ready: tReadiness("ready"),
-                  blocked: tReadiness("blocked"),
-                  stale: tReadiness("stale"),
-                  failed: tReadiness("failed"),
-                  waiting: tReadiness("waiting"),
-                  overridden: tReadiness("overridden"),
-                },
-                summary: tReadiness("summary"),
-                reasons: tReadiness("reasons"),
-              }}
-              reasons={readiness.reasons}
-              state={readiness.readiness}
-            />
-          ) : null}
-
+          {!reviewMode ? lifecycleControls : null}
+          {!reviewMode ? readinessSummary : null}
           {policy?.trigger === "auto_on_ready" && detail.status === "Review" ? (
             <section
               className="rounded-[10px] border border-amber-line bg-amber-soft p-4"
@@ -1656,8 +1850,9 @@ export default async function RunDetailLayout({
             </section>
           ) : null}
 
-          {!detail.pendingHitl || isCutoverHistory ? primaryResult : null}
-
+          {!reviewMode && (!detail.pendingHitl || isCutoverHistory)
+            ? flowContent
+            : null}
           {detail.status === "Failed" || detail.status === "Abandoned" ? (
             <TerminalCauseNotice
               cause={detail.terminalCause}
@@ -1781,36 +1976,54 @@ export default async function RunDetailLayout({
                       status={detail.pendingHitl.assignmentStatus}
                     />
                   </div>
-                  {detail.pendingHitl &&
-                  (detail.pendingHitl.kind === "human" ||
-                    detail.pendingHitl.kind === "form") ? (
-                    <div id="agent-chat">
-                      <GateChatPanel
-                        canAct={canAct}
-                        hitlRequestId={detail.pendingHitl.hitlRequestId}
-                        labels={{
-                          title: t("chatTitle"),
-                          placeholder: t("chatPlaceholder"),
-                          send: t("chatSend"),
-                          sending: t("chatSending"),
-                          unavailable: t("chatUnavailable"),
-                          idleCostWarning: t("chatIdleCostWarning"),
-                          revertNotice: t("chatRevertNotice"),
-                          agentLabel: t("chatAgentLabel"),
-                          error: t("chatError"),
-                          transcript: {
-                            thinking: t("chatThinking"),
-                            rawEvent: t("chatRawEvent"),
-                            input: t("chatToolInput"),
-                            result: t("chatToolResult"),
-                            copy: t("chatCopy"),
-                            copied: t("chatCopied"),
-                            toolCount: "{name} ×{count}",
-                          },
-                        }}
-                        runId={detail.runId}
-                      />
-                    </div>
+                  {planDecisionHitls.length > 0 ? (
+                    <section
+                      className="mb-4 rounded-[12px] border border-amber-line bg-paper p-4"
+                      data-testid="plan-decision-group"
+                      id="plan-decisions"
+                    >
+                      <h3 className="font-sans text-[15px] font-bold tracking-[-0.01em] text-ink">
+                        {t("planDecisionGroupTitle")}
+                      </h3>
+                      <p className="mt-1 font-mono text-[11px] leading-[1.5] text-mute">
+                        {t("planDecisionGroupHint", {
+                          count: planDecisionHitls.length,
+                        })}
+                      </p>
+                      <div className="mt-4 grid gap-3">
+                        {planDecisionHitls.map((pendingHitl) => (
+                          <div
+                            key={pendingHitl.hitlRequestId}
+                            className="rounded-[10px] border border-line bg-ivory/45 p-4"
+                            data-pending-hitl-card="true"
+                            data-testid="pending-plan-decision"
+                            tabIndex={-1}
+                          >
+                            <p className="mb-3 text-[14px] leading-[1.4] text-ink">
+                              {pendingHitl.prompt}
+                            </p>
+                            <RunHitlResponse
+                              restoreFocusAfterResponse
+                              answerState={pendingHitl.answerState}
+                              availableOptions={pendingHitl.availableOptions}
+                              budgetProgress={pendingHitl.budgetProgress}
+                              canAct={canAct}
+                              canReadRepoFiles={canReadRepoFiles}
+                              claimStage={pendingHitl.claimStage}
+                              criticality={pendingHitl.criticality}
+                              hitlRequestId={pendingHitl.hitlRequestId}
+                              kind={pendingHitl.kind}
+                              nodeInterrupt={pendingHitl.nodeInterrupt}
+                              options={pendingHitl.options}
+                              reviewCounts={null}
+                              runId={detail.runId}
+                              schema={pendingHitl.schema}
+                              storedResponse={pendingHitl.storedResponse}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </section>
                   ) : null}
                   {detail.pendingHitl &&
                   hasReviewGate &&
@@ -1836,6 +2049,7 @@ export default async function RunDetailLayout({
                           unstaged: dirtySummary?.unstaged ?? 0,
                           untracked: dirtySummary?.untracked ?? 0,
                         }),
+                        hint: t("dirtyHint"),
                         viewDiff: t("dirtyViewDiff"),
                         commit: t("dirtyCommit"),
                         discard: t("dirtyDiscard"),
@@ -1900,6 +2114,37 @@ export default async function RunDetailLayout({
                       storedResponse={detail.pendingHitl.storedResponse}
                     />
                   )}
+                  {detail.pendingHitl &&
+                  (detail.pendingHitl.kind === "human" ||
+                    detail.pendingHitl.kind === "form") ? (
+                    <div id="agent-chat">
+                      <GateChatPanel
+                        canAct={canAct}
+                        hitlRequestId={detail.pendingHitl.hitlRequestId}
+                        labels={{
+                          title: t("chatTitle"),
+                          placeholder: t("chatPlaceholder"),
+                          send: t("chatSend"),
+                          sending: t("chatSending"),
+                          unavailable: t("chatUnavailable"),
+                          idleCostWarning: t("chatIdleCostWarning"),
+                          revertNotice: t("chatRevertNotice"),
+                          agentLabel: t("chatAgentLabel"),
+                          error: t("chatError"),
+                          transcript: {
+                            thinking: t("chatThinking"),
+                            rawEvent: t("chatRawEvent"),
+                            input: t("chatToolInput"),
+                            result: t("chatToolResult"),
+                            copy: t("chatCopy"),
+                            copied: t("chatCopied"),
+                            toolCount: "{name} ×{count}",
+                          },
+                        }}
+                        runId={detail.runId}
+                      />
+                    </div>
+                  ) : null}
                   {canClaim ? (
                     <div className="mt-4 border-t border-dashed border-amber-line pt-4">
                       <RunTakeoverActions
@@ -1922,57 +2167,65 @@ export default async function RunDetailLayout({
             </p>
           )}
 
-          {detail.pendingHitls.slice(1).map((pendingHitl) => (
-            <section
-              key={pendingHitl.hitlRequestId}
-              className="mt-4 rounded-[14px] border border-amber-line bg-[color-mix(in_oklab,var(--amber-soft)_25%,var(--paper))] p-5"
-              data-pending-hitl-card="true"
-              data-testid="pending-input-card"
-              tabIndex={-1}
-            >
-              <p className="mb-3 text-[14px] leading-[1.4] text-ink">
-                {pendingHitl.prompt}
-              </p>
-              <div className="mb-4 flex flex-wrap gap-2 font-mono text-[10.5px] tracking-[0.02em] text-mute">
-                {pendingHitl.assignmentActionKind ? (
+          {detail.pendingHitls
+            .slice(1)
+            .filter(
+              (pendingHitl) =>
+                !hasReviewGate || pendingHitl.kind !== "decision_request",
+            )
+            .map((pendingHitl) => (
+              <section
+                key={pendingHitl.hitlRequestId}
+                className="mt-4 rounded-[14px] border border-amber-line bg-[color-mix(in_oklab,var(--amber-soft)_25%,var(--paper))] p-5"
+                data-pending-hitl-card="true"
+                data-testid="pending-input-card"
+                tabIndex={-1}
+              >
+                <p className="mb-3 text-[14px] leading-[1.4] text-ink">
+                  {pendingHitl.prompt}
+                </p>
+                <div className="mb-4 flex flex-wrap gap-2 font-mono text-[10.5px] tracking-[0.02em] text-mute">
+                  {pendingHitl.assignmentActionKind ? (
+                    <span className="rounded-md border border-amber-line bg-paper px-2 py-1 font-semibold text-ink-2">
+                      {t("assignmentAction", {
+                        action: pendingHitl.assignmentActionKind,
+                      })}
+                    </span>
+                  ) : null}
                   <span className="rounded-md border border-amber-line bg-paper px-2 py-1 font-semibold text-ink-2">
-                    {t("assignmentAction", {
-                      action: pendingHitl.assignmentActionKind,
-                    })}
+                    {pendingHitl.assigneeLabel
+                      ? t("assignmentClaimedBy", {
+                          actor: pendingHitl.assigneeLabel,
+                        })
+                      : t("assignmentUnclaimed")}
                   </span>
-                ) : null}
-                <span className="rounded-md border border-amber-line bg-paper px-2 py-1 font-semibold text-ink-2">
-                  {pendingHitl.assigneeLabel
-                    ? t("assignmentClaimedBy", {
-                        actor: pendingHitl.assigneeLabel,
-                      })
-                    : t("assignmentUnclaimed")}
-                </span>
-              </div>
-              <RunHitlResponse
-                restoreFocusAfterResponse
-                answerState={pendingHitl.answerState}
-                availableOptions={pendingHitl.availableOptions}
-                budgetProgress={pendingHitl.budgetProgress}
-                canAct={canAct}
-                canReadRepoFiles={canReadRepoFiles}
-                claimStage={pendingHitl.claimStage}
-                criticality={pendingHitl.criticality}
-                hitlRequestId={pendingHitl.hitlRequestId}
-                kind={pendingHitl.kind}
-                nodeInterrupt={pendingHitl.nodeInterrupt}
-                options={pendingHitl.options}
-                reviewCounts={
-                  pendingHitl.kind === "human" ? reviewGateCounts : null
-                }
-                runId={detail.runId}
-                schema={pendingHitl.schema}
-                storedResponse={pendingHitl.storedResponse}
-              />
-            </section>
-          ))}
+                </div>
+                <RunHitlResponse
+                  restoreFocusAfterResponse
+                  answerState={pendingHitl.answerState}
+                  availableOptions={pendingHitl.availableOptions}
+                  budgetProgress={pendingHitl.budgetProgress}
+                  canAct={canAct}
+                  canReadRepoFiles={canReadRepoFiles}
+                  claimStage={pendingHitl.claimStage}
+                  criticality={pendingHitl.criticality}
+                  hitlRequestId={pendingHitl.hitlRequestId}
+                  kind={pendingHitl.kind}
+                  nodeInterrupt={pendingHitl.nodeInterrupt}
+                  options={pendingHitl.options}
+                  reviewCounts={
+                    pendingHitl.kind === "human" ? reviewGateCounts : null
+                  }
+                  runId={detail.runId}
+                  schema={pendingHitl.schema}
+                  storedResponse={pendingHitl.storedResponse}
+                />
+              </section>
+            ))}
 
-          {detail.pendingHitl && !isCutoverHistory ? primaryResult : null}
+          {detail.pendingHitl && !isCutoverHistory && !reviewMode
+            ? flowContent
+            : null}
 
           {!hasReviewGate ? (
             <ReviewWorkspaceUnavailable
@@ -2036,78 +2289,33 @@ export default async function RunDetailLayout({
             </section>
           ) : null}
 
-          {flowGraphData || showAgentCenter || isCutoverHistory ? (
-            <section className="min-w-0 max-w-full" data-testid="run-workbench">
-              <WorkbenchPanel
-                diff={
-                  <RunDiff
-                    labels={flowGraphData?.diffLabels ?? workbenchDiffLabels}
-                    runId={detail.runId}
-                    scopeSwitcher={workbenchDiffScopeLabels}
-                  />
-                }
-                evidence={
-                  <section>
-                    <h2 className="mb-3 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink">
-                      {evidenceLabels.title}
-                    </h2>
-                    <EvidenceGraphSection
-                      graph={evidence}
-                      labels={evidenceLabels}
-                      runId={detail.runId}
-                    />
-                  </section>
-                }
-                filesPane={children}
-                filesTree={
-                  <FileTree
-                    filesApiBase={`/api/runs/${detail.runId}/files`}
-                    labels={flowGraphData?.filesLabels ?? workbenchFilesLabels}
-                  />
-                }
-                runId={detail.runId}
-                tabLabels={flowGraphData?.tabLabels ?? workbenchTabLabels}
-                timeline={
-                  <RunTimeline
-                    assignmentEvents={timeline.assignmentEvents}
-                    entries={timeline.entries as TimelineEntry[]}
-                    labels={timelineLabels}
-                    locale={locale}
-                  />
-                }
-              />
-            </section>
+          {!reviewMode ? workbenchContent : null}
+          {reviewMode ? readinessSummary : null}
+          {reviewMode && contextualGitAction && contextualGitHref ? (
+            <Link
+              className="w-fit rounded-md border border-line bg-paper px-3 py-2 text-[12px] font-semibold text-ink-2"
+              href={contextualGitHref}
+              scroll={false}
+            >
+              {contextualGitAction.label}
+            </Link>
           ) : null}
-
-          {showReview && reviewData ? (
-            <ReviewPanel
-              aheadBehind={syncPanel?.aheadBehind ?? null}
-              baseBranch={reviewData.baseBranch}
-              baseCommit={reviewData.baseCommit}
-              canPromote={canAct}
-              deliveryPolicy={reviewData.deliveryPolicy}
-              diff={reviewData.diff}
-              displayParentRepoPath={displayParentRepoPath}
-              driftDetected={reviewData.driftDetected}
-              id="review-panel"
-              labels={reviewLabels}
-              legacyNeedsRelaunch={reviewData.legacyNeedsRelaunch}
-              parentRepoPath={detail.parentRepoPath}
-              prNumber={detail.prNumber}
-              prUrl={detail.prUrl}
-              promotionMode={reviewData.promotionMode}
-              readiness={reviewReadiness}
-              reviewedTargetCommit={reviewData.reviewedTargetCommit}
-              runBranch={detail.branch}
-              runId={detail.runId}
-              sync={syncPanel?.sync ?? null}
-              targetBranch={reviewData.targetBranch}
-              updateHref={gitPanelHref({
-                runId: detail.runId,
-                runKind: detail.runKind,
-                actionId: "update",
-              })}
-            />
+          {reviewMode ? (
+            <RunReviewDisclosure
+              collapsed={reviewMode}
+              label={t("reviewTechnicalHistory")}
+            >
+              {technicalHistory}
+            </RunReviewDisclosure>
+          ) : null}
+          {reviewMode ? (
+            <RunReviewDisclosure
+              advanced
+              collapsed={reviewMode}
+              label={t("reviewAdditional")}
+            >
+              {lifecycleControls}
+            </RunReviewDisclosure>
           ) : null}
 
           {/* ADR-126: auto-promotion verdict + Hold/Release (Review flow runs) or
