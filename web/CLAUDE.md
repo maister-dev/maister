@@ -452,8 +452,15 @@ of overwriting Done during directory cleanup. Final consumer suites qualify
 4.868 seconds; both isolation invocations have zero leaks and use the default
 Docker probe deadline. Hosted `37010985789` remains failed: its Docker
 initialization subphase and Intel budget remain unresolved. The CI/R9 plan
-owns exact RED/GREEN reports and local probe settings. S5.2 stays 42/45;
+owns exact RED/GREEN reports and local probe settings. At that historical checkpoint S5.2 stayed 42/45;
 the owner authorized proceeding next to S5.3a's Linux-driver proof.
+
+**Current S5.2 acceptance (2026-10-20):** owner-pushed `b8e72adfe` passed
+both macOS Intel isolation parts (19/31 cases), both preflights, four web
+shards and two supervisor legs on the required Nodes, within unchanged budgets
+and with zero leaks. Parent stabilization is 43/45; S5.3/S5.4 remain open.
+Exact-source receipts and limits: [CI-R9d checkpoint](../.ai-factory/plans/s53a-linux-isolation.md#ci-r9d--t15--accepted-macos-hosted-checkpoint-2026-10-20).
+This does not qualify later sources or Linux.
 
 **A first-hit Next-dev compile can exhaust a 10s e2e timeout.** Before calling
 such a failure a regression, re-run the spec in isolation and read the RETRY

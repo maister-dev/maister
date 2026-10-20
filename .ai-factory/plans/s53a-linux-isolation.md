@@ -5,7 +5,7 @@ Implementation branch suggestion: `codex/s53a-linux-isolation`; pass this explic
 Created: 2026-10-02.
 Refined through `aif-improve`: 2026-10-03; same source baseline and planning-only authority.
 Planning source: `f43ac1570380d2be19f7c59a70cd993f24ace440`.
-Status: **A1–A7 complete through C2 on `codex/s53a-linux-isolation`. Native Ubuntu's complete current 52-case inventory and final-source Darwin/full phase regression qualify the Phase-1 driver subset. A8–A15, extended lifecycle controls, Linux55/both-Node qualification and Linux hosting remain open. S5.2/S5.3/S5.4 remain unchecked; stabilization remains 42/45.**
+Status: **A1–A7 complete through C2 on `codex/s53a-linux-isolation`. Native Ubuntu's complete current 52-case inventory and final-source Darwin/full phase regression qualify the Phase-1 driver subset. A8–A15, extended lifecycle controls, Linux55/both-Node qualification and Linux hosting remain open. CI-R9d and S5.2 are accepted on the exact hosted source below; stabilization is 43/45. S5.3/S5.4 and Linux qualification remain open.**
 
 Implementation authorized 2026-10-03 through `aif-implement`: execute the whole plan, commit by qualified phases and mark tasks only after their acceptance evidence passes. Initial implementation HEAD is the planning source. The owner-push boundary remains binding.
 
@@ -1458,7 +1458,7 @@ pending to available: ACK metadata can complete before the projection fault.
       migrations, deployed configuration and production isolation are unchanged;
       no migration or ADR allocation is needed. Record uncertainties and
       measured durations; local evidence is not hosted qualification.
-- [ ] **CI-R9d — Owner-push/hosted checkpoint.** After phase commits the owner
+- [x] **CI-R9d — Owner-push/hosted checkpoint.** After phase commits the owner
       pushes. Read-only verification must bind the exact pushed SHA (and PR
       merge tree), both macOS jobs, both separate preflights, combined 50 cases,
       four web shards, both supervisor jobs and remaining mandatory artifacts.
@@ -1482,7 +1482,58 @@ The hosted verifier correctly rejects local ARM64 receipts. The
 RED/falsification controls, actual reporters, timings, review corrections and
 the unproved original B4 socket cause. Phase commits organize the same tested
 combined source; they are not separate complete-lane qualification runs.
-CI-R9d remains the owner's push followed by exact-SHA hosted verification.
+CI-R9d is closed by the independently verified hosted checkpoint below. Earlier local receipts retain their original scope.
+
+### CI-R9d / T15 — accepted macOS hosted checkpoint (2026-10-20)
+
+Read-only verification closes CI-R9d, S5.2 closeout T03/T13/T15 and R9
+T5/T13b/T13. S5.2 is complete: **43/45** parent tasks; S5.3, S5.4 and C11
+remain open. No push, dispatch, rerun, production change or Linux qualification
+was performed for this audit.
+
+- Owner push: [run 39423192590](https://github.com/maister-dev/maister/actions/runs/39423192590),
+  exact source `b8e72adfe4e7e6088b845a65adb0c91310515184`.
+  PR validation: [run 39423199759](https://github.com/maister-dev/maister/actions/runs/39423199759),
+  executed merge `a4ee231d33d8f20e99457931f1757aa2a89667ac`; GitHub commit metadata
+  and checkout log bind it to the same tree
+  `255d6b5d7d1bcd6f007ceb013fefbbe1012742ee` as the pushed source.
+  The later working baseline `8237993223fa5a7c3aafe9db42d9438612990938` is a
+  different candidate; these receipts are not relabeled as its qualification.
+- Both downloaded push and PR part pairs pass `aggregateIsolationEvidence`;
+  recomputed aggregates equal their published `combined.json` exactly.
+  Each preserves all original seven suite/name sets, 19 + 31 cases, two
+  independent successful preflights, four distinct invocation identities,
+  serial concurrency, Intel macOS 15 image `20260824.0482.1`, Node 24.19.0,
+  matching SHA/run/report hashes and clean cleanup with zero errors/leaks.
+- Push part durations: **835.805 / 1424.798 seconds**, each within 2340 seconds
+  (headroom **1504.195 / 915.202 seconds**). Preflights: 111.462 / 178.666
+  seconds within 600. Whole jobs: **1305 / 2155 seconds**, leaving
+  **2295 / 1445 seconds** below the unchanged 3600-second job limit.
+  Runtime ready: 328 / 526 seconds; preflight complete: 442 / 709; suite
+  start: 442 / 710; isolation complete: 1278 / 2135; cleanup complete:
+  1290 / 2142. Both report uploads and runtime cleanup exit statuses pass.
+  PR slices independently pass in 1100.561 / 996.792 seconds.
+- Push artifacts: part reports **12265427685 / 12265814410**, diagnostics
+  **12266765206 / 12265684966**, combined **12266772276**. Downloaded original
+  reports/diagnostics, API job metadata and artifact digests are retained under
+  `/private/tmp/maister-ci-close-39423192590` and
+  `/private/tmp/maister-ci-close-39423199759`; metadata/audit script use the
+  sibling `maister-ci-close-*` paths. Nested intentional failure reports are
+  not substituted for the outer accepted reports.
+- All four web shards independently pass `validateLaneReport`: 23 files / 332
+  cases and 23 files / 308 cases on each exact Node 24.15.0 and 24.19.0.
+  Both supervisor reports pass: 10 files / 111 cases per Node. Artifacts:
+  web **12265808171 / 12266876764 / 12266306676 / 12265724480**;
+  supervisor **12264468144 / 12265335583**. All mandatory runtime, static,
+  browser and production-image jobs succeed. The optional label-gated broad
+  integration job is skipped by existing policy and supplies no evidence.
+
+The existing parent acceptance rows map P1–P4/B4, D1–D4, I1–I4, cleanup,
+boot/concurrency and scratch dispatch to these exact outer reporters. Earlier
+web-lane ADR-177 supervisor-restart evidence and S4.1's five named fake-host
+suites retain their lane/source identity. This closes the non-browser S5.2
+contract; Linux55, browser lifecycle and separate-user deployment remain
+separate acceptance work. One accepted attempt does not prove a flake rate.
 
 ## Commit Plan
 

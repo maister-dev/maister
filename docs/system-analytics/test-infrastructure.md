@@ -1088,9 +1088,14 @@ from Darwin qualification.
     enforced by platform manifests, validateLaneReport and the owner-push
     checkpoint (Designed).
 
-### S5.2 partition and process-death acceptance (implemented controls; final gate open)
+### S5.2 partition and process-death acceptance (Implemented; hosted checkpoint accepted)
 
-The full local qualification report is
+The [CI-R9d hosted checkpoint](../../.ai-factory/plans/s53a-linux-isolation.md#ci-r9d--t15--accepted-macos-hosted-checkpoint-2026-10-20)
+qualifies the owner-pushed source on macOS Intel: seven suites/50 cases, two
+preflights, unchanged budgets and zero leaks. Linux, browser lifecycle and
+separate-user deployment remain separate gates.
+
+The historical full local qualification report is
 `/private/tmp/maister-s52-20260922/maister-ab-isolation-B4QR4S/vitest.json`:
 40/40 required controls across all six isolation files, exit 0, zero skips or
 runtime errors, zero process/container leaks, 836.089 s including cleanup.
@@ -1099,7 +1104,7 @@ Runtime: Darwin ARM64/Node 24.15.0 with `sandbox-exec`; invocation
 working tree recorded by `qualified-source-sha256.json` under that evidence
 root, now incorporated in `c191e3dc` (now `259f6ae5`). The implementation plan records the exact fault/guard falsification
 assertions and their restored source hashes. This local report does not supply
-the still-required hosted Intel CI run, artifact or total-job duration.
+hosted Intel CI evidence; the linked checkpoint supplies that separately.
 Accepted in-process web rows are qualified by
 `maister-ab-isolation-wA8ncn/vitest.json` under the same evidence root:
 445/445 tests in all 33 web A/B files, invocation
@@ -1208,7 +1213,7 @@ AT-17. Browser half stays open under S5.3.
 - [Colima provisioning script](../../scripts/setup-isolation-ci-runtime.sh)
 - [feature specification](../../.ai-factory/specs/feature-unified-test-database-testcontainers.md)
 
-The mandatory push workflow runs the explicit web A/B inventory in two shards per Node version and the complete supervisor A/B inventory once per Node, as specified above. Missing files, empty discovery, failed or skipped cases fail each leg. The same runner owns the serial `isolation` slice (AT-16 core, above) and the AT-12 browser lane is `pnpm --filter maister-web test:e2e:execution-ab` (`playwright.execution-ab.config.ts`: a REAL supervisor started by `e2e/execution-ab-global-setup.ts` behind a `next dev` web server; `e2e/execution-ab-content.spec.ts`). The real-supervisor fixture refuses to start without a process invocation, so the lane's wrapper `web/e2e/run.ts` mints one the way the A/B runner does and replaces any caller-supplied `MAISTER_TEST_WORKTREE_INVOCATION_ID`; the Playwright process, the web server, the supervisor and its adapters all carry the tag and are released through the same `releaseInvocation` as the A/B lanes when the lane ends. That lane must run on an otherwise idle host — concurrent CPU load or file writes under `web/` livelocked the dev server's edge-instrumentation recompile at boot (observed before the 2026-09-08 instrumentation split: ~135k warning lines and a 180 s readiness timeout versus ~3k lines and readiness in ~15 s when idle). `web/instrumentation.ts` now reaches its Node-only body (`web/instrumentation-node.ts`) solely through the `NEXT_RUNTIME === "nodejs"` branch, so the Edge instrumentation entry no longer bundles the server graph and a dev boot plus page compile prints none of those warnings; the idle-host requirement has not been re-measured since. The isolation slice is wired to the mandatory two-part `execution-isolation` macOS Intel matrix and combined gate; its actual hosted run and sub-60-minute budget remain unqualified. The browser lane stays with S5.3. A separate mandatory image job builds the pinned Dockerfile, exercises real binary HTTP and runs `web/scripts/smoke-production-image.ts` through the default image ENTRYPOINT/CMD with a migrated PostgreSQL container. It verifies HTTP readiness, SIGTERM completion and no remaining web PostgreSQL sessions. The browser runtime/image matrix remains part of S5.3.
+The mandatory push workflow runs the explicit web A/B inventory in two shards per Node version and the complete supervisor A/B inventory once per Node, as specified above. Missing files, empty discovery, failed or skipped cases fail each leg. The same runner owns the serial `isolation` slice (AT-16 core, above) and the AT-12 browser lane is `pnpm --filter maister-web test:e2e:execution-ab` (`playwright.execution-ab.config.ts`: a REAL supervisor started by `e2e/execution-ab-global-setup.ts` behind a `next dev` web server; `e2e/execution-ab-content.spec.ts`). The real-supervisor fixture refuses to start without a process invocation, so the lane's wrapper `web/e2e/run.ts` mints one the way the A/B runner does and replaces any caller-supplied `MAISTER_TEST_WORKTREE_INVOCATION_ID`; the Playwright process, the web server, the supervisor and its adapters all carry the tag and are released through the same `releaseInvocation` as the A/B lanes when the lane ends. That lane must run on an otherwise idle host — concurrent CPU load or file writes under `web/` livelocked the dev server's edge-instrumentation recompile at boot (observed before the 2026-09-08 instrumentation split: ~135k warning lines and a 180 s readiness timeout versus ~3k lines and readiness in ~15 s when idle). `web/instrumentation.ts` now reaches its Node-only body (`web/instrumentation-node.ts`) solely through the `NEXT_RUNTIME === "nodejs"` branch, so the Edge instrumentation entry no longer bundles the server graph and a dev boot plus page compile prints none of those warnings; the idle-host requirement has not been re-measured since. The isolation slice is wired to the mandatory two-part `execution-isolation` macOS Intel matrix and combined gate; its exact-source hosted run and sub-60-minute budgets are accepted at the linked CI-R9d checkpoint. The browser lane stays with S5.3. A separate mandatory image job builds the pinned Dockerfile, exercises real binary HTTP and runs `web/scripts/smoke-production-image.ts` through the default image ENTRYPOINT/CMD with a migrated PostgreSQL container. It verifies HTTP readiness, SIGTERM completion and no remaining web PostgreSQL sessions. The browser runtime/image matrix remains part of S5.3.
 
 Admin browser specs are opt-in alternatives in `AUTHED_SPEC`; discovery is a
 contract because any omitted filename falls into the unauthenticated Chromium

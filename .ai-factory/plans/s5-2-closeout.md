@@ -1,6 +1,10 @@
 # Implementation Plan: Close S5.2 — process death, partitions and denied roots
 
-Created: 2026-09-22. Status: **Implementing; All local implementation and verification complete (T01–T02, T04–T12, T14); T03/T13 hosted qualification and T15 final S5.2 closure remain blocked on publishing/running CI.**
+Created: 2026-09-22. Status: **Complete. T03/T13/T15 and parent S5.2 accepted on 2026-10-20 by the exact-source CI-R9d hosted checkpoint; parent 43/45, S5.3/S5.4 open.**
+
+Current evidence: [CI-R9d / T15 hosted acceptance](s53a-linux-isolation.md#ci-r9d--t15--accepted-macos-hosted-checkpoint-2026-10-20).
+Dated local/failure records below remain historical and do not reopen this accepted checkpoint.
+
 Branch: none (existing detached worktree preserved).
 Planning HEAD: `c4216cd532c9fe7df2ca38c6045bea23ed54e8fa`.
 User-supplied qualification baseline: local `master @ 1056c5c1`.
@@ -482,7 +486,7 @@ supervisor/web `logTail`, proxy transcript and relevant ledger/PG observations.
   no schema migration. `validate:docs` and `validate:contracts` passed under
   Node 24.15.0; logs in `/private/tmp/maister-s52-20260922/`.
 
-- [ ] **T03 — Freeze runnable baseline and deployment/CI wiring inventory.**
+- [x] **T03 — Freeze runnable baseline and deployment/CI wiring inventory.**
   Files: this plan, parent-plan evidence references and analytics; no runtime
   configuration change. Record actual master/implementation SHAs, clean state,
   Node/Undici, driver, Docker, load and power/sleep conditions. Run owning
@@ -507,10 +511,9 @@ supervisor/web `logTail`, proxy transcript and relevant ledger/PG observations.
   sandbox-exec, Docker 29.4.2: 15/15, errors=0, exit=0, 372.13 s, no tagged
   survivors. Evidence `/private/tmp/maister-s52-20260922/baseline.json` and
   `baseline-isolation/vitest.json`. Master observed at `053ee078`.
-  **Open external prerequisite:** T13a requires the new workflow to be
-  published; no push is authorized. Keep this checkbox open and proceed with
-  local implementation on the verified baseline; remote qualification is not
-  replaced with this local result.
+  **External prerequisite satisfied:** the owner-pushed source, real preflights
+  and full hosted reports are independently verified at the linked CI-R9d
+  checkpoint. This local baseline remains separately attributed.
 
 Phase exit: internally consistent normative tables, no claimed unexecuted
 qualification, exact baseline and no broadened process authority. Commit C1.
@@ -680,7 +683,7 @@ fix cycle. Commit C3.
   `evidence-readiness-all-blocking-kinds`. Logging: suite, fake-host identity,
   transport-call count and exact outcome. Depends: T11.
 
-- [ ] **T13 — Wire and qualify the CI isolation job.** Files:
+- [x] **T13 — Wire and qualify the CI isolation job.** Files:
   `web/package.json`, `.github/workflows/ci.yml`, runner/report metadata and
   CI-only runtime setup helper if needed. Add
   `test:integration:isolation = node ../scripts/run-stage-ab-tests.mjs isolation`.
@@ -716,7 +719,7 @@ fix cycle. Commit C3.
   completion gate. Independent local checks completed while that execution
   prerequisite was unavailable; no CI requirement is waived.
 
-- [ ] **T15 — Apply the as-built evidence and stop at S5.2.** Files:
+- [x] **T15 — Apply the as-built evidence and stop at S5.2.** Files:
   `.ai-factory/plans/stage-ab-stabilization.md`, this plan,
   `docs/system-analytics/test-infrastructure.md`, `docs/deployment.md`,
   `docs/getting-started.md`, `web/CLAUDE.md`; API/analytics contract amendments
