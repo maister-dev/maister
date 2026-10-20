@@ -907,20 +907,22 @@ S4 rollback: before 0134, keep sources and all import checkpoints; stop maintena
   positive supervisor reads, working HTTP/Postgres/object access, web restart,
   and owned-process cleanup with no ability to signal foreign processes.
   Missing isolation capability is an explicit failure, never an unisolated
-  fallback. Only then amend the CI hosting contract and run the unchanged
-  seven-suite/50-case isolation inventory plus separate preflight, both Node
+  fallback. S5.2 is already accepted on macOS at CI-R9d. After Linux55 local
+  qualification, explicitly decide whether to retain macOS (default) or adopt
+  Linux; only adoption amends the CI hosting contract. Preserve the original
+  seven-suite/50-case inventory within Linux55 plus separate preflight, both Node
   versions' data-plane gates, complete reports, timings and zero-leak proof
   within the existing job envelope. If a runtime fix adds a case, update the
   explicit inventory and required-case manifest together. Preserve macOS
   evidence as platform-specific evidence. Driver/hosting acceptance and the
   separate-user deployment/browser matrix are distinct S5.3 deliverables.
 
-  First implementation slice: extend the existing `IsolationDriver` in
-  `web/test-support/process-isolation.ts` and preserve the command-wrapping
-  seam used by `real-web.ts`. Today its name union contains only
-  `sandbox-exec`; Linux deliberately throws `IsolationUnavailableError`.
-  Start with a real Linux negative access control before implementing the
-  new driver, then reuse preflight and I1–I4 to prove production startup,
+  The implemented `IsolationDriver` in
+  `web/test-support/process-isolation.ts` preserves the command-wrapping
+  seam used by `real-web.ts`. Both `sandbox-exec` and
+  `bubblewrap` drivers are implemented; the latter has Phase-1 qualification.
+  Resume the S5.3a plan at A8 with real RED controls and reuse preflight and
+  I1–I4 to prove production startup,
   authorized object access and restart. Add only missing descendant/escape
   and cleanup-identity controls; the existing Linux process reader is not
   itself a filesystem isolation driver. A local Linux container can provide

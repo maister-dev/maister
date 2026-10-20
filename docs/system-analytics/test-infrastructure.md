@@ -957,7 +957,10 @@ The current production Dockerfile does not provision this test driver.
 Docker client, daemon, container startup, migration and query failures are
 distinct diagnostic stages; retries require an identified transient operation.
 
-Linux hosting remains gated by the existing plan. Its qualification remains
+The accepted macOS recipe remains the default. After complete local Linux
+qualification, A13 in the existing plan explicitly decides retention or
+adoption; only adoption activates a prospective hosting amendment and recipe
+change. Retention never claims hosted Linux qualification. Linux qualification remains
 serial/unsharded; the authorized two-job macOS recipe does not qualify Linux,
 with the 60-minute job limit, 15-minute setup and 10-minute separate preflight
 steps. The full-slice budget remains `min(2340, 3240 - elapsed_job_seconds)`;
