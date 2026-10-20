@@ -29,6 +29,7 @@ import { fileURLToPath } from "node:url";
 import { and, eq } from "drizzle-orm";
 import pino from "pino";
 
+import { ensureWorktreeGitExclude } from "@/lib/capabilities/materialize";
 import {
   loadFlowManifest,
   readAndValidateFormSchemaDoc,
@@ -1311,6 +1312,10 @@ async function installFlowPluginImpl(
     flowId,
   );
 
+  // Package attachment materializes the project-level `.maister/` flow link
+  // before any run exists. Prime the same repo-local excludes used by run
+  // materialization so attaching a package never dirties the consumer repo.
+  await ensureWorktreeGitExclude(workspaceRoot);
   await ensureSymlink({ target: rev.installedPath, linkPath: symlinkPath });
   log.info({ symlinkPath }, "symlink ready");
 

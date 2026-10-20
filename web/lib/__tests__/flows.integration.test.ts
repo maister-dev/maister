@@ -1,7 +1,9 @@
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   mkdir,
   mkdtemp,
+  readFile,
   readlink,
   rm,
   stat,
@@ -9,6 +11,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -24,6 +27,7 @@ import {
 } from "@/test-support/pg-container";
 
 const schema = schemaModule as unknown as Record<string, any>;
+const execFileAsync = promisify(execFile);
 
 let testDatabase: StartedPostgresTestDb;
 
@@ -46,6 +50,7 @@ beforeAll(async () => {
   homeDir = await mkdtemp(join(tmpdir(), "flows-test-home-"));
   workspaceRoot = await mkdtemp(join(tmpdir(), "flows-test-ws-"));
   fixturesDir = await mkdtemp(join(tmpdir(), "flows-test-fixtures-"));
+  await execFileAsync("git", ["-C", workspaceRoot, "init", "-q"]);
 
   originalHome = process.env.HOME;
   process.env.HOME = homeDir;
@@ -106,6 +111,13 @@ describe("installFlowPlugin (integration)", () => {
     const linkTarget = await readlink(result.symlinkPath);
 
     expect(linkTarget).toBe(result.installedPath);
+
+    const exclude = await readFile(
+      join(workspaceRoot, ".git", "info", "exclude"),
+      "utf8",
+    );
+
+    expect(exclude).toContain(".maister/");
 
     const [row] = await db
       .select()
