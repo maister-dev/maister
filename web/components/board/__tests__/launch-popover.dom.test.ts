@@ -128,7 +128,39 @@ describe("launch destination", () => {
 
     expect(router.push).not.toHaveBeenCalled();
     expect(document.querySelector('[role="dialog"]')).not.toBeNull();
-    expect(document.querySelector('[role="alert"]')).not.toBeNull();
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+      "Cannot launch",
+    );
+  });
+
+  it("shows an actionable pre-stream PRECONDITION message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.startsWith("/api/runs/launch-options?")) {
+          return Response.json(launchOptions);
+        }
+        if (url === "/api/runs") {
+          return Response.json(
+            {
+              code: "PRECONDITION",
+              message: "flow requirements not met: run sk-init first",
+            },
+            { status: 409 },
+          );
+        }
+
+        throw new Error(`Unexpected launch request: ${url}`);
+      }),
+    );
+    await clickButton("Launch");
+    await clickButton("launch.createRun");
+
+    expect(router.push).not.toHaveBeenCalled();
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+      "flow requirements not met: run sk-init first",
+    );
   });
 
   it("refreshes the current page without navigating when scheduling a future run", async () => {
