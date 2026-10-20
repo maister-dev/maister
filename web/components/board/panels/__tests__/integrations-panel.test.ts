@@ -111,6 +111,7 @@ const labels: TokenLabels = {
   scopeRelationsDelete: "Delete relations",
   scopeFlowsRead: "Read flows",
   scopeRunnersRead: "Read runners",
+  scopePackagesManage: "Manage project packages",
   scopeAgentsTrigger: "Trigger agents",
   scopeRunsDelegate: "Delegate runs",
   scopeRunsCollect: "Collect child runs",
