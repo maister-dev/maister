@@ -19,10 +19,13 @@ export interface CommentComposerLabels {
   hint: string;
   errorConfig: string;
   errorForbidden: string;
+  errorTimeout: string;
   errorGeneric: string;
   mentionListLabel: string;
   mentionMatchCount: string;
 }
+
+export const COMMENT_SUBMIT_TIMEOUT_MS = 30_000;
 
 export function CommentComposer({
   slug,
@@ -130,6 +133,11 @@ export function CommentComposer({
     if (busy || body.trim().length === 0) return;
     setBusy(true);
     setError(null);
+    const abort = new AbortController();
+    const timeout = window.setTimeout(
+      () => abort.abort(),
+      COMMENT_SUBMIT_TIMEOUT_MS,
+    );
 
     try {
       const res = await fetch(
@@ -138,6 +146,7 @@ export function CommentComposer({
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ body }),
+          signal: abort.signal,
         },
       );
 
@@ -161,8 +170,11 @@ export function CommentComposer({
       setMention(null);
       router.refresh();
     } catch {
-      setError(labels.errorGeneric);
+      setError(
+        abort.signal.aborted ? labels.errorTimeout : labels.errorGeneric,
+      );
     } finally {
+      window.clearTimeout(timeout);
       setBusy(false);
     }
   }

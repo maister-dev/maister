@@ -878,6 +878,7 @@ export default async function TaskDetailPage({
               hint: t("composerHint"),
               errorConfig: t("composerErrorConfig"),
               errorForbidden: t("errorForbidden"),
+              errorTimeout: t("composerErrorTimeout"),
               errorGeneric: t("errorGeneric"),
               mentionListLabel: t("composerMentionListLabel"),
               mentionMatchCount: t("composerMentionMatchCount"),
