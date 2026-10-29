@@ -148,7 +148,7 @@ async function refusal(p: Promise<unknown>): Promise<PushRefusal> {
 }
 
 describe("publish under a public branch name", () => {
-  it("refuses operational delivery at service boundaries before any repository or provider mutation", async () => {
+  it("IT-OPL-04 refuses operational delivery at service boundaries before any repository or provider mutation", async () => {
     const branch = "maister/operational";
     const worktree = await addRunWorktree(root, repo.parent, branch);
     const seed = await seedWorkbenchRun(db, {

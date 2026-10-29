@@ -334,7 +334,13 @@ describe("operational result contract", () => {
           integrity: "clean",
           resultRevision: 1,
         },
-        operational_cleanup: { state: "armed", attempts: 0 },
+        // This scripted fixture owns no managed host workspace. Its committed
+        // success is independent from the fenced disposal retry.
+        operational_cleanup: {
+          state: "retry",
+          attempts: 1,
+          errorCode: "operational_cleanup_failed",
+        },
       });
       expect(
         (await getEvents(runId)).filter((event) => event.kind === "run.done"),
@@ -446,13 +452,17 @@ describe("operational result contract", () => {
     }
   });
 
-  it("IT-OPR-03 records cancellation and crash once, atomically with the cleanup intent", async () => {
+  it("IT-OPR-03 IT-EDGE-OPL-03 records cancellation and crash once, atomically with the cleanup intent", async () => {
     const { prepareAgentRunFinalization } =
       await import("@/lib/agents/finalization");
 
     for (const status of ["Abandoned", "Crashed"] as const) {
       const { runId } = await seedOperationalRun();
       const prepared = await prepareAgentRunFinalization(runId, status, { db });
+      const lateSuccess = await prepareAgentRunFinalization(runId, "Done", {
+        db,
+        finalText: `${OPEN}\n${JSON.stringify(operationalSuccessFixture())}\n${CLOSE}`,
+      });
 
       await expect(
         db.transaction(async (tx) => {
@@ -468,6 +478,9 @@ describe("operational result contract", () => {
       ]);
 
       expect(results.filter((result) => result.finalized)).toHaveLength(1);
+      expect(
+        (await db.transaction((tx) => lateSuccess.apply(tx))).finalized,
+      ).toBe(false);
       const row = (
         await pool.query(
           "SELECT status, operational_terminal, operational_cleanup FROM runs WHERE id=$1",

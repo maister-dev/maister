@@ -47,6 +47,9 @@ export async function operationalReferenceEvidence(
       branch: workspaces.branch,
       baseCommit: workspaces.baseCommit,
       removedAt: workspaces.removedAt,
+      archivedBranch: workspaces.archivedBranch,
+      archivedCommit: workspaces.archivedCommit,
+      archivedAt: workspaces.archivedAt,
     })
     .from(workspaces)
     .innerJoin(runs, eq(runs.id, workspaces.runId))
@@ -58,11 +61,11 @@ export async function operationalReferenceEvidence(
       ),
     );
 
-  return rows.flatMap((row): OperationalRefEvidence[] =>
-    row.baseCommit
+  return rows.flatMap((row): OperationalRefEvidence[] => [
+    ...(row.baseCommit
       ? [
           {
-            kind: "allocated",
+            kind: "allocated" as const,
             ref: `refs/heads/${row.branch}`,
             sha: row.baseCommit,
           },
@@ -76,8 +79,17 @@ export async function operationalReferenceEvidence(
               ]
             : []),
         ]
-      : [],
-  );
+      : []),
+    ...(row.archivedAt && row.archivedBranch && row.archivedCommit
+      ? [
+          {
+            kind: "allocated" as const,
+            ref: `refs/heads/${row.archivedBranch}`,
+            sha: row.archivedCommit,
+          },
+        ]
+      : []),
+  ]);
 }
 
 export async function operationalWorkspace(

@@ -49,6 +49,7 @@ describe("parseAgentDefinition", () => {
         "kind: operational\ncompletion:\n  contract: operational_v1\nmode: session",
       ),
     );
+
     expect(parsed).toMatchObject({
       kind: "operational",
       completion: { contract: "operational_v1" },
@@ -60,7 +61,7 @@ describe("parseAgentDefinition", () => {
     ).toEqual(parsed);
   });
 
-  it("IT-EDGE-OPA-03 rejects incompatible kind/completion and execution combinations", () => {
+  it("IT-EDGE-OPA-02 rejects incompatible kind/completion and execution combinations", () => {
     for (const declaration of [
       "kind: operational",
       "completion: {contract: operational_v1}",

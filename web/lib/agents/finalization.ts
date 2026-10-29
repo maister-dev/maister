@@ -70,8 +70,6 @@ import {
   inspectOperationalRun,
   operationalResourceKind,
 } from "@/lib/agents/operational-context";
-import { createExecutionHosts } from "@/lib/execution-host/client";
-import { disposeOperationalRun } from "@/lib/gc/operational-disposition";
 
 const log = pino({
   name: "agent-finalization",
@@ -418,6 +416,8 @@ async function prepareAgentFinalization(
     preparedRun.executionAssignmentId
   ) {
     try {
+      const { createExecutionHosts } =
+        await import("@/lib/execution-host/client");
       const client = await createExecutionHosts({ db: _db }).forAssignment({
         id: preparedRun.executionAssignmentId,
       });
@@ -655,6 +655,12 @@ async function prepareAgentFinalization(
     const operationalTerminal: OperationalTerminal | null = operationalDecision
       ? {
           ...operationalDecision,
+          reasonCodes: [
+            ...new Set([
+              ...operationalDecision.reasonCodes,
+              ...(opts.causeReason ? [opts.causeReason] : []),
+            ]),
+          ],
           resultRevision,
           baselineGeneration:
             preparedRun.operationalIntegrityBaseline?.generation ?? null,
@@ -932,6 +938,9 @@ async function prepareAgentFinalization(
         { runId, status: result.status },
         "operational-terminal-cleanup-armed",
       );
+      const { disposeOperationalRun } =
+        await import("@/lib/gc/operational-disposition");
+
       await disposeOperationalRun(runId, { db: _db }).catch((error: unknown) =>
         log.error(
           { runId, errorType: error instanceof Error ? error.name : "unknown" },
@@ -1077,6 +1086,8 @@ export async function finalizeAgentRun(
 
   if (run?.agentKind === "operational" && run.executionAssignmentId) {
     try {
+      const { createExecutionHosts } =
+        await import("@/lib/execution-host/client");
       const client = await createExecutionHosts({ db }).forAssignment({
         id: run.executionAssignmentId,
       });

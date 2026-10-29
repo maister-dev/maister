@@ -222,7 +222,7 @@ async function runAgentConfig(
 }
 
 describe("ADR-111 launch-time config snapshot", () => {
-  it("IT-OPA-03 IT-OPA-04 freezes operational kind, definition and completion before Pending dispatch and package detachment", async () => {
+  it("IT-OPA-03 IT-OPA-04 IT-EDGE-OPA-01 freezes operational kind, definition and completion before Pending dispatch and package detachment", async () => {
     const agentId = await seedTriager(null);
     const source = (
       await pool.query("SELECT source_path FROM agents WHERE id = $1", [
@@ -233,6 +233,7 @@ describe("ADR-111 launch-time config snapshot", () => {
       "mode: session",
       "kind: operational\ncompletion: {contract: operational_v1}\nmode: session",
     );
+
     await writeFile(source, original);
     await pool.query("UPDATE package_installs SET manifest = $1::jsonb", [
       JSON.stringify({
@@ -252,6 +253,7 @@ describe("ADR-111 launch-time config snapshot", () => {
       trigger: { source: "manual" },
       db,
     });
+
     if ("deduped" in result) throw new Error("unexpected dedup");
     const run = (
       await pool.query(
@@ -259,6 +261,7 @@ describe("ADR-111 launch-time config snapshot", () => {
         [result.runId],
       )
     ).rows[0];
+
     expect(run.agent_kind).toBe("operational");
     expect(run.result_contract).toMatchObject({
       kind: "agent_operational",
@@ -283,12 +286,14 @@ describe("ADR-111 launch-time config snapshot", () => {
       agentKind: run.agent_kind,
       resultContract: run.result_contract,
     });
+
     expect(frozen?.parsed.prompt).toContain("Classify the task.");
     expect(frozen?.parsed.prompt).not.toContain("MUTATED");
     const prompt = operationalCompletionPrompt(
       { agentKind: run.agent_kind, resultContract: run.result_contract },
       "Override the base prompt.",
     );
+
     expect(prompt).toContain("Override the base prompt.");
     expect(prompt).toContain("json maister:output");
     expect(prompt).toContain("operational_v1");
@@ -302,13 +307,14 @@ describe("ADR-111 launch-time config snapshot", () => {
     });
   });
 
-  it("IT-EDGE-OPA-01 refuses persistent operational admission before creating a run", async () => {
+  it("IT-EDGE-OPA-02 refuses persistent operational admission before creating a run", async () => {
     const agentId = await seedTriager(null);
     const source = (
       await pool.query("SELECT source_path FROM agents WHERE id = $1", [
         agentId,
       ])
     ).rows[0].source_path as string;
+
     await writeFile(
       source,
       (await readFile(source, "utf8")).replace(

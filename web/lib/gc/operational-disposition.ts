@@ -127,25 +127,42 @@ export async function disposeOperationalRun(
     .where(eq(workspaces.runId, runId));
 
   if (initial.resourceKind === "worktree" && !workspace) {
-    await db
-      .update(runs)
-      .set({
-        operationalCleanup: {
-          ...initial,
-          state: "exhausted",
-          revision: initial.revision + 1,
-          dueAt: null,
-          errorCode: "operational_workspace_ownership_missing",
-          lease: null,
-        },
-      })
-      .where(
-        and(
-          eq(runs.id, runId),
-          eq(runs.status, run.status),
-          sql`${runs.operationalCleanup}->>'revision' = ${String(initial.revision)}`,
-        ),
-      );
+    await db.transaction(async (tx) => {
+      const updated = await tx
+        .update(runs)
+        .set({
+          operationalCleanup: {
+            ...initial,
+            state: "exhausted",
+            revision: initial.revision + 1,
+            dueAt: null,
+            errorCode: "operational_workspace_ownership_missing",
+            lease: null,
+          },
+        })
+        .where(
+          and(
+            eq(runs.id, runId),
+            eq(runs.status, run.status),
+            sql`${runs.operationalCleanup}->>'revision' = ${String(initial.revision)}`,
+          ),
+        )
+        .returning({ id: runs.id });
+
+      if (updated.length)
+        await emitDomainEvent({
+          db: tx,
+          kind: "run.operational_cleanup_changed",
+          projectId: run.projectId!,
+          taskId: run.taskId,
+          runId,
+          payload: {
+            runId,
+            revision: initial.revision + 1,
+            state: "exhausted",
+          },
+        });
+    });
     log.error({ runId }, "operational-workspace-ownership-missing");
 
     return "deferred";
@@ -204,7 +221,7 @@ export async function disposeOperationalRun(
           projectId: run.projectId!,
           taskId: run.taskId,
           runId,
-          payload: { revision: next.revision, state: next.state },
+          payload: { runId, revision: next.revision, state: next.state },
         });
       if (workspace)
         await tx

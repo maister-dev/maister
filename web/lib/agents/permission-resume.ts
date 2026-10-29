@@ -139,16 +139,45 @@ async function pendingPermissions(
   return current;
 }
 
-/** Reconcile host evidence before acquiring scheduler/run locks. This records
- * historical evidence only; it cannot grant a new execution generation.
+/** Reconcile host evidence before acquiring scheduler/run locks. Conflicting
+ * checkpoint generations fail closed; reconciliation never grants execution.
  */
 export async function reconcileAgentPermissionResume(
   db: Db,
   runId: string,
   transport: ExecutionHostTransport,
 ): Promise<void> {
-  for (const hitl of await pendingPermissions(db, runId))
-    await reconcilePermission(db, hitl, transport);
+  let requests: HitlRequest[];
+
+  try {
+    requests = await pendingPermissions(db, runId);
+  } catch (error) {
+    if (
+      !(error instanceof PromptOwnerInvariantError) ||
+      error.details?.causeCode !== "agent_permission_resume_source_identity"
+    )
+      throw error;
+    const [run] = await db
+      .select({ kind: runs.agentKind, status: runs.status })
+      .from(runs)
+      .where(eq(runs.id, runId));
+
+    if (run?.kind !== "operational" || run.status !== "NeedsInputIdle")
+      throw error;
+    // A checkpoint with conflicting generations cannot safely replay either
+    // choice. Preserve its evidence and make reconciliation an explicit action.
+    const { finalizeAgentRun } = await import("./finalization");
+
+    await finalizeAgentRun(runId, "Crashed", {
+      db,
+      causeReason: "agent_permission_resume_source_identity",
+      reason:
+        "Parallel permission recovery has conflicting execution generations. Inspect the retained permission receipts and reconcile external effects before starting a new attempt.",
+    });
+
+    return;
+  }
+  for (const hitl of requests) await reconcilePermission(db, hitl, transport);
 }
 
 async function reconcilePermission(

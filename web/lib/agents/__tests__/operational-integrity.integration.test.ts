@@ -3,6 +3,7 @@ import {
   mkdtemp,
   mkdir,
   readFile,
+  rename,
   rm,
   symlink,
   writeFile,
@@ -77,6 +78,32 @@ describe("operational source integrity", () => {
     });
     expect(baseline.generation).toBe(0);
     expect(baseline.platform).toEqual([]);
+  });
+
+  it("IT-EDGE-OPL-04 rejects a replaced execution root and Git configuration drift", async () => {
+    const baseline = await captureOperationalGeneration(
+      cwd,
+      await captureOperationalBaseline(cwd, "worktree"),
+      [],
+    );
+
+    await git(
+      "config",
+      "remote.origin.url",
+      "https://example.invalid/unexpected.git",
+    );
+    expect((await verifyOperationalIntegrity(cwd, baseline)).verdict).toBe(
+      "changed",
+    );
+    await git("config", "--unset", "remote.origin.url");
+    await rename(cwd, join(root, "moved"));
+    await symlink(join(root, "moved"), cwd, "dir");
+    expect((await verifyOperationalIntegrity(cwd, baseline)).verdict).toBe(
+      "indeterminate",
+    );
+    await expect(
+      captureOperationalBaseline(cwd, "worktree"),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
   });
 
   it.each([
@@ -213,5 +240,13 @@ describe("operational source integrity", () => {
     expect(
       (await verifyOperationalIntegrity(plain, plainBaseline)).verdict,
     ).toBe("clean");
+    await mkdir(join(plain, ".git"));
+    await writeFile(
+      join(plain, ".git", "config"),
+      "unexpected repository state",
+    );
+    expect(
+      (await verifyOperationalIntegrity(plain, plainBaseline)).verdict,
+    ).toBe("changed");
   });
 });

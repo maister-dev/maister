@@ -201,6 +201,7 @@ async function persistPendingQuestion(
         reTriggerMode: hitlRequests.reTriggerMode,
         activationState: hitlRequests.activationState,
         supersededAt: hitlRequests.supersededAt,
+        respondedAt: hitlRequests.respondedAt,
       })
       .from(hitlRequests)
       .where(
@@ -210,7 +211,15 @@ async function persistPendingQuestion(
         ),
       )
       .for("update");
-    const existing = existingRows[0];
+    const existing = existingRows.find((row) => {
+      if (source.agentKind !== "operational" || row.respondedAt === null)
+        return true;
+      const proof = row.schema as {
+        agentPrompt?: { assignmentId?: string };
+      } | null;
+
+      return proof?.agentPrompt?.assignmentId === source.executionAssignmentId;
+    });
 
     if (existing) {
       if (
@@ -640,6 +649,9 @@ export async function cancelOpenAgentQuestionsForTaskInTransaction(
         eq(hitlRequests.kind, "agent_question"),
         isNull(hitlRequests.respondedAt),
         isNull(hitlRequests.supersededAt),
+        // Independent operations keep their own checkpoint and human decision.
+        // A task-bound code successor cannot silently orphan that operation.
+        sql`NOT EXISTS (SELECT 1 FROM ${runs} WHERE ${runs.id} = ${hitlRequests.runId} AND ${runs.agentKind} = 'operational')`,
         inArray(hitlRequests.activationState, [
           "pending_termination",
           "active",

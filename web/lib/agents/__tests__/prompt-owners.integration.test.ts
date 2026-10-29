@@ -920,11 +920,11 @@ describe("Agent owned prompts through the production launcher", () => {
     120_000 + KILLED_CLAIM_WAIT_MS * 2,
   );
 
-  it("IT-OPL-01 an operational business question checkpoints and resumes the same run before structured completion", async () => {
+  it("IT-OPL-03 an operational business question checkpoints and resumes the same run before structured completion", async () => {
     const runId = await seedAgent({
       bytes: 0,
       operational: true,
-      terminalDelayMs: 5000,
+      terminalDelayMs: 10000,
     });
     const [initial] = await db.select().from(runs).where(eq(runs.id, runId));
     const taskId = randomUUID();
@@ -1022,6 +1022,82 @@ describe("Agent owned prompts through the production launcher", () => {
     try {
       await expect
         .poll(
+          async () => {
+            const [turn] = await db
+              .select()
+              .from(agentTurns)
+              .where(
+                and(eq(agentTurns.runId, runId), eq(agentTurns.ordinal, 1)),
+              );
+
+            if (!turn?.incarnationId || turn.state !== "dispatched")
+              return false;
+
+            return (
+              (
+                await db
+                  .select()
+                  .from(executionEvents)
+                  .where(
+                    and(
+                      eq(executionEvents.runId, runId),
+                      eq(
+                        executionEvents.executionAssignmentId,
+                        turn.executionAssignmentId!,
+                      ),
+                      eq(executionEvents.eventType, "session.update"),
+                    ),
+                  )
+              ).length > 0
+            );
+          },
+          { timeout: 30_000, interval: 50 },
+        )
+        .toBe(true);
+      const followup = await createOrActivateAgentQuestion(
+        {
+          projectId: initial.projectId!,
+          taskId,
+          sourceRunId: runId,
+          sourceAgentId: initial.agentId!,
+          question: "Which batch size?",
+          schema: {
+            schemaVersion: 1,
+            fields: [
+              {
+                name: "batch",
+                type: "enum",
+                required: true,
+                options: ["small", "large"],
+              },
+            ],
+          },
+          reTriggerMode: "agent",
+        },
+        { db, executionHosts: createExecutionHosts({ db }) },
+      );
+
+      expect(followup.hitlRequestId).not.toBe(question.hitlRequestId);
+      expect(
+        (
+          await respondToHitl(
+            {
+              runId,
+              hitlRequestId: followup.hitlRequestId,
+              body: { response: { batch: "small" } },
+            },
+            {
+              kind: "user",
+              userId: "agent-permission-user",
+              label: "Operational follow-up decision",
+              preauthorizedProjectId: initial.projectId!,
+            },
+            { db },
+          )
+        ).status,
+      ).toBe(202);
+      await expect
+        .poll(
           async () =>
             (await db.select().from(runs).where(eq(runs.id, runId)))[0].status,
           { timeout: 60_000, interval: 100 },
@@ -1033,9 +1109,10 @@ describe("Agent owned prompts through the production launcher", () => {
         .where(eq(agentTurns.runId, runId))
         .orderBy(asc(agentTurns.ordinal));
 
-      expect(turns).toHaveLength(2);
-      expect(turns[1]).toMatchObject({ variant: "resume", state: "applied" });
-      expect(turns[1].prompt).toContain('"scope":"recent"');
+      expect(turns).toHaveLength(3);
+      expect(turns[2]).toMatchObject({ variant: "resume", state: "applied" });
+      expect(turns[2].prompt).toContain('"scope":"recent"');
+      expect(turns[2].prompt).toContain('"batch":"small"');
       expect(
         (
           await db.select().from(runResults).where(eq(runResults.runId, runId))
@@ -1055,7 +1132,7 @@ describe("Agent owned prompts through the production launcher", () => {
     }
   }, 120_000);
 
-  it("IT-OPA-03 IT-OPL-01 launches independent operations with parallel human permissions, frozen source witnesses and disposal", async () => {
+  it("IT-OPA-03 IT-OPL-03 launches independent operations with parallel human permissions, frozen source witnesses and disposal", async () => {
     const ids = await Promise.all([
       seedAgent({
         bytes: 0,
@@ -1158,77 +1235,211 @@ describe("Agent owned prompts through the production launcher", () => {
     }
   }, 120_000);
 
-  it("IT-OPL-01 parallel permission answers retain NeedsInput until every request is delivered", async () => {
+  it.each([
+    { operational: false, second: "allow", expected: "Review" },
+    { operational: true, second: "deny", expected: "Failed" },
+  ])(
+    "IT-OPL-03 parallel permission answers retain NeedsInput until every request is delivered ($operational/$second)",
+    async ({ operational, second, expected }) => {
+      const runId = await seedAgent({
+        bytes: 0,
+        operational,
+        permission: true,
+        parallelPermission: true,
+      });
+      const driver = startDriver(runId);
+
+      await expect
+        .poll(
+          async () =>
+            (
+              await db
+                .select()
+                .from(hitlRequests)
+                .where(eq(hitlRequests.runId, runId))
+            ).length,
+          { timeout: 30_000, interval: 50 },
+        )
+        .toBe(2);
+      const requests = await db
+        .select()
+        .from(hitlRequests)
+        .where(eq(hitlRequests.runId, runId));
+      const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+      const answer = (id: string, optionId = "allow") =>
+        respondToHitl(
+          { runId, hitlRequestId: id, body: { optionId } },
+          {
+            kind: "user",
+            userId: "agent-permission-user",
+            label: "Parallel permission",
+            preauthorizedProjectId: run.projectId!,
+          },
+          { db },
+        );
+
+      expect((await answer(requests[0].id)).status).toBe(200);
+      expect(
+        (await db.select().from(runs).where(eq(runs.id, runId)))[0].status,
+      ).toBe("NeedsInput");
+      expect(
+        (
+          await db
+            .select()
+            .from(hitlRequests)
+            .where(eq(hitlRequests.id, requests[1].id))
+        )[0].respondedAt,
+      ).toBeNull();
+      expect((await answer(requests[1].id, second)).status).toBe(200);
+      await expect
+        .poll(
+          async () =>
+            (await db.select().from(runs).where(eq(runs.id, runId)))[0].status,
+          { timeout: 30_000, interval: 50 },
+        )
+        .toBe(expected);
+      expect(
+        (
+          await db
+            .select()
+            .from(hitlRequests)
+            .where(eq(hitlRequests.runId, runId))
+        ).every((request) => request.respondedAt !== null),
+      ).toBe(true);
+      const answered = await db
+        .select()
+        .from(hitlRequests)
+        .where(eq(hitlRequests.runId, runId));
+
+      expect(
+        new Map(
+          answered.map((item) => [
+            item.id,
+            (item.response as { optionId?: string }).optionId,
+          ]),
+        ),
+      ).toEqual(
+        new Map([
+          [requests[0].id, "allow"],
+          [requests[1].id, second],
+        ]),
+      );
+      expect(driver.output()).not.toContain(
+        "agent_permission_resume_source_count",
+      );
+    },
+    60_000,
+  );
+
+  it("IT-EDGE-OPL-02 failed permission persistence cancels only the orphaned host deferred", async () => {
     const runId = await seedAgent({
       bytes: 0,
       permission: true,
-      parallelPermission: true,
+      operational: true,
     });
-    const driver = startDriver(runId);
 
-    await expect
-      .poll(
-        async () =>
-          (
-            await db
-              .select()
-              .from(hitlRequests)
-              .where(eq(hitlRequests.runId, runId))
-          ).length,
-        { timeout: 30_000, interval: 50 },
-      )
-      .toBe(2);
-    const requests = await db
-      .select()
-      .from(hitlRequests)
-      .where(eq(hitlRequests.runId, runId));
-    const [run] = await db.select().from(runs).where(eq(runs.id, runId));
-    const answer = (id: string) =>
-      respondToHitl(
-        { runId, hitlRequestId: id, body: { optionId: "allow" } },
-        {
-          kind: "user",
-          userId: "agent-permission-user",
-          label: "Parallel permission",
-          preauthorizedProjectId: run.projectId!,
-        },
-        { db },
-      );
-
-    expect((await answer(requests[0].id)).status).toBe(200);
-    expect(
-      (await db.select().from(runs).where(eq(runs.id, runId)))[0].status,
-    ).toBe("NeedsInput");
-    expect(
-      (
-        await db
-          .select()
-          .from(hitlRequests)
-          .where(eq(hitlRequests.id, requests[1].id))
-      )[0].respondedAt,
-    ).toBeNull();
-    expect((await answer(requests[1].id)).status).toBe(200);
-    await expect
-      .poll(
-        async () =>
-          (await db.select().from(runs).where(eq(runs.id, runId)))[0].status,
-        { timeout: 30_000, interval: 50 },
-      )
-      .toBe("Review");
-    expect(
-      (
-        await db
-          .select()
-          .from(hitlRequests)
-          .where(eq(hitlRequests.runId, runId))
-      ).every((request) => request.respondedAt !== null),
-    ).toBe(true);
-    expect(driver.output()).not.toContain(
-      "agent_permission_resume_source_count",
+    await database.pool.query(
+      `CREATE FUNCTION reject_operational_permission_fixture() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.run_id = '${runId}' AND NEW.kind = 'permission' THEN RAISE EXCEPTION 'fixture permission persistence failure' USING ERRCODE='23514'; END IF; RETURN NEW; END $$`,
     );
+    await database.pool.query(
+      `CREATE TRIGGER reject_operational_permission_fixture BEFORE INSERT ON hitl_requests FOR EACH ROW EXECUTE FUNCTION reject_operational_permission_fixture()`,
+    );
+    startDriver(runId);
+
+    try {
+      await expect
+        .poll(
+          async () =>
+            (
+              await db
+                .select()
+                .from(executionCommands)
+                .where(
+                  and(
+                    eq(executionCommands.runId, runId),
+                    eq(executionCommands.kind, "session.input"),
+                  ),
+                )
+            ).filter(
+              (command) =>
+                command.payload.action === "cancel" &&
+                command.payload.reason === "permission_persistence_failed",
+            ),
+          { timeout: 30_000, interval: 50 },
+        )
+        .toMatchObject([
+          {
+            state: "succeeded",
+            payload: {
+              kind: "permission",
+              action: "cancel",
+              requestId: expect.any(String),
+            },
+          },
+        ]);
+      expect(
+        await db
+          .select()
+          .from(hitlRequests)
+          .where(eq(hitlRequests.runId, runId)),
+      ).toHaveLength(0);
+      const [session] = await db
+        .select()
+        .from(runSessions)
+        .where(eq(runSessions.runId, runId));
+      const cancellations = await db
+        .select()
+        .from(executionCommands)
+        .where(
+          and(
+            eq(executionCommands.runId, runId),
+            eq(executionCommands.kind, "session.input"),
+          ),
+        );
+
+      expect(cancellations).toHaveLength(1);
+      expect(cancellations[0].targetSessionId).toBe(session.hostSessionId);
+      expect(cancellations[0].payload).toMatchObject({
+        reason: "permission_persistence_failed",
+      });
+      await database.pool.query(
+        "DROP TRIGGER reject_operational_permission_fixture ON hitl_requests",
+      );
+      await expect
+        .poll(
+          async () =>
+            (await db.select().from(runs).where(eq(runs.id, runId)))[0].status,
+          { timeout: 30_000, interval: 50 },
+        )
+        .toBe("Failed");
+      expect(
+        await db
+          .select()
+          .from(hitlRequests)
+          .where(eq(hitlRequests.runId, runId)),
+      ).toHaveLength(0);
+      expect(
+        await db
+          .select()
+          .from(executionCommands)
+          .where(
+            and(
+              eq(executionCommands.runId, runId),
+              eq(executionCommands.kind, "session.input"),
+            ),
+          ),
+      ).toHaveLength(1);
+    } finally {
+      await database.pool.query(
+        "DROP TRIGGER IF EXISTS reject_operational_permission_fixture ON hitl_requests",
+      );
+      await database.pool.query(
+        "DROP FUNCTION reject_operational_permission_fixture()",
+      );
+    }
   }, 60_000);
 
-  it("IT-EDGE-OPL-02 checkpointed parallel permissions keep both choices and one resumed turn", async () => {
+  it("IT-EDGE-OPL-01 checkpointed parallel permissions keep both choices and one resumed turn", async () => {
     const runId = await seedAgent({
       bytes: 0,
       permission: true,

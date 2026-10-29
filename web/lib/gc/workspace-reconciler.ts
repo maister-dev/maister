@@ -13,6 +13,7 @@ import { and, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { CONFIG_PERSISTENCE_DIRECTORY } from "@/lib/project-config-persistence/review-files";
+import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -611,23 +612,39 @@ async function processTrustedCandidate(args: {
     const cleanup = operationalOwner.cleanup;
 
     if (cleanup && cleanup.state === "released")
-      await args.database
-        .update(runs)
-        .set({
-          operationalCleanup: {
-            ...cleanup,
-            state: "exhausted",
-            revision: cleanup.revision + 1,
-            dueAt: null,
-            errorCode: "operational_resource_reappeared",
-          },
-        })
-        .where(
-          and(
-            eq(runs.id, provenance.runId),
-            sql`${runs.operationalCleanup}->>'revision' = ${String(cleanup.revision)}`,
-          ),
-        );
+      await args.database.transaction(async (tx) => {
+        const updated = await tx
+          .update(runs)
+          .set({
+            operationalCleanup: {
+              ...cleanup,
+              state: "exhausted",
+              revision: cleanup.revision + 1,
+              dueAt: null,
+              errorCode: "operational_resource_reappeared",
+            },
+          })
+          .where(
+            and(
+              eq(runs.id, provenance.runId),
+              sql`${runs.operationalCleanup}->>'revision' = ${String(cleanup.revision)}`,
+            ),
+          )
+          .returning({ id: runs.id });
+
+        if (updated.length)
+          await emitDomainEvent({
+            db: tx,
+            kind: "run.operational_cleanup_changed",
+            projectId: project.id,
+            runId: provenance.runId,
+            payload: {
+              runId: provenance.runId,
+              revision: cleanup.revision + 1,
+              state: "exhausted",
+            },
+          });
+      });
     await quarantineReconciliationFinding({
       database: args.database,
       claim: args.claim,

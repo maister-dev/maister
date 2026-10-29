@@ -124,6 +124,9 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "Bounded integrity hashes over server-resolved repository/worktree material; no host runtime paths",
       [
         ["captureTree", "node:fs/promises.realpath", "stat"],
+        ["captureTree", "node:fs/promises.lstat", "stat"],
+        ["captureTree", "node:fs/promises.open", "open"],
+        ["captureTree", "node:fs.constants", "unresolved"],
         ["visit", "node:fs/promises.lstat", "stat"],
         ["visit", "node:fs/promises.readlink", "read"],
         ["visit", "node:fs/promises.realpath", "stat"],

@@ -56,7 +56,12 @@ async function captureTree(
   resourceKind: OperationalResourceKind,
   limits: Limits,
 ): Promise<Tree> {
-  const root = await realpath(cwd);
+  const candidate = path.resolve(cwd);
+  const rootInfo = await lstat(candidate);
+
+  if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink())
+    throw probeError("operational_integrity_root_replaced");
+  const root = await realpath(candidate);
   const deadline =
     performance.now() +
     Math.min(limits.maxProbeMs ?? MAX_PROBE_MS, MAX_PROBE_MS);
@@ -154,7 +159,8 @@ async function captureTree(
   };
 
   for (const name of (await readdir(root)).sort())
-    if (name !== ".git") await visit(name);
+    if (name !== ".git" || resourceKind === "plain_directory")
+      await visit(name);
   if (resourceKind === "plain_directory")
     return {
       source,
@@ -164,6 +170,7 @@ async function captureTree(
       indexContentDigest: null,
       historyDigest: null,
       gitIdentity: null,
+      gitConfigDigest: null,
       refs: [],
     };
   const git = async (args: string[]): Promise<string> => {
@@ -182,16 +189,78 @@ async function captureTree(
 
     return result.stdout;
   };
-  const [head, branch, index, indexContent, history, gitDirectory, refsText] =
-    await Promise.all([
-      git(["rev-parse", "--verify", "HEAD"]),
-      git(["rev-parse", "--abbrev-ref", "HEAD"]),
-      git(["ls-files", "--stage", "-v", "-z"]),
-      git(["ls-files", "--stage", "-z"]),
-      git(["reflog", "show", "--format=%H:%gD", "HEAD"]),
-      git(["rev-parse", "--absolute-git-dir"]),
-      git(["for-each-ref", "--format=%(refname) %(objectname)"]),
-    ]);
+  const [
+    head,
+    branch,
+    index,
+    indexContent,
+    history,
+    gitDirectory,
+    refsText,
+    localConfig,
+  ] = await Promise.all([
+    git(["rev-parse", "--verify", "HEAD"]),
+    git(["rev-parse", "--abbrev-ref", "HEAD"]),
+    git(["ls-files", "--stage", "-v", "-z"]),
+    git(["ls-files", "--stage", "-z"]),
+    git(["reflog", "show", "--format=%H:%gD", "HEAD"]),
+    git(["rev-parse", "--absolute-git-dir"]),
+    git(["for-each-ref", "--format=%(refname) %(objectname)"]),
+    git(["config", "--local", "--null", "--list"]),
+  ]);
+
+  let worktreeConfigDigest: string | null = null;
+
+  try {
+    const handle = await open(
+      path.join(gitDirectory.trim(), "config.worktree"),
+      constants.O_RDONLY | constants.O_NOFOLLOW,
+    );
+
+    try {
+      const before = await handle.stat();
+      const hash = createHash("sha256");
+      const buffer = Buffer.alloc(64 * 1024);
+      let total = 0;
+
+      while (true) {
+        const { bytesRead } = await handle.read(
+          buffer,
+          0,
+          buffer.length,
+          total,
+        );
+
+        if (!bytesRead) break;
+        total += bytesRead;
+        if (total > 1024 * 1024)
+          throw probeError("operational_integrity_limit");
+        hash.update(buffer.subarray(0, bytesRead));
+        check();
+      }
+      const after = await handle.stat();
+
+      if (
+        !before.isFile() ||
+        before.size !== total ||
+        before.size !== after.size ||
+        before.mtimeMs !== after.mtimeMs ||
+        before.ctimeMs !== after.ctimeMs
+      )
+        throw probeError("operational_integrity_file_race");
+      worktreeConfigDigest = hash.digest("hex");
+    } finally {
+      await handle.close();
+    }
+  } catch (error) {
+    if (!(
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      error.code === "ENOENT"
+    ))
+      throw error;
+  }
 
   return {
     source,
@@ -201,6 +270,9 @@ async function captureTree(
     indexContentDigest: digest(indexContent),
     historyDigest: digest(history),
     gitIdentity: digest(await realpath(gitDirectory.trim())),
+    gitConfigDigest: digest(
+      canonicalCommandJson({ localConfig, worktreeConfigDigest }),
+    ),
     refs: refsText
       .trim()
       .split("\n")
@@ -324,6 +396,8 @@ export async function captureOperationalGeneration(
     tree.branch !== baseline.branch ||
     tree.historyDigest !== baseline.historyDigest ||
     tree.gitIdentity !== baseline.gitIdentity ||
+    (baseline.gitConfigDigest !== undefined &&
+      tree.gitConfigDigest !== baseline.gitConfigDigest) ||
     tree.indexContentDigest !== baseline.indexContentDigest ||
     changed.some((entry) => !allowed(entry))
   ) {
@@ -362,7 +436,9 @@ export async function verifyOperationalIntegrity(
       tree.head !== baseline.head ||
       tree.branch !== baseline.branch ||
       tree.historyDigest !== baseline.historyDigest ||
-      tree.gitIdentity !== baseline.gitIdentity
+      tree.gitIdentity !== baseline.gitIdentity ||
+      (baseline.gitConfigDigest !== undefined &&
+        tree.gitConfigDigest !== baseline.gitConfigDigest)
     )
       reasonCodes.push("operational_history_changed");
     if (

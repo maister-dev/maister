@@ -1,4 +1,5 @@
 import type { Db } from "@/lib/execution-host/db";
+import type { ReserveRuntimeObjectPayload } from "@/lib/execution-host/contracts";
 
 import { mkdtemp, mkdir, lstat, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -19,7 +20,10 @@ import {
   prepareAgentRunFinalization,
   finalizeAgentRun,
 } from "@/lib/agents/finalization";
-import { operationalWorkspace } from "@/lib/agents/operational-context";
+import {
+  operationalWorkspace,
+  inspectOperationalRun,
+} from "@/lib/agents/operational-context";
 import {
   captureOperationalBaseline,
   captureOperationalGeneration,
@@ -27,6 +31,7 @@ import {
 import { operationalAgentRuntimePath } from "@/lib/agents/workspace-paths";
 import {
   executionAssignments,
+  executionCommands,
   executionRuntimeObjects,
   runs,
   workspaces,
@@ -39,6 +44,8 @@ import { runWorkspaceGcSweep } from "@/lib/gc/workspace-gc";
 import { runPlainAgentDirectoryGcSweep } from "@/lib/gc/plain-agent-directory-gc";
 import { runEphemeralAgentGcSweep } from "@/lib/gc/ephemeral-agent-gc";
 import { runAgentMaterializationCleanupSweep } from "@/lib/gc/agent-materialization-gc";
+import { recoverExecutionCommands } from "@/lib/execution-host/recovery";
+import { reconcileAgentPermissionResume } from "@/lib/agents/permission-resume";
 import { sweepExpiredRuntimeObjects } from "@/lib/execution-host/runtime-object-retention";
 import { addDetachedWorktree } from "@/lib/worktree";
 import { gcAgeDays } from "@/lib/instance-config";
@@ -59,6 +66,7 @@ let db: Db;
 let root: string;
 let seam: Awaited<ReturnType<typeof fakeExecutionHosts>>;
 const previousRoot = process.env.MAISTER_WORKTREES_ROOT;
+const previousArchivePush = process.env.MAISTER_GC_ARCHIVE_PUSH;
 
 beforeAll(async () => {
   database = await startMainPostgresTestDb({
@@ -70,6 +78,9 @@ beforeAll(async () => {
   seam = await fakeExecutionHosts(db);
 }, 180_000);
 afterEach(async () => {
+  if (previousArchivePush === undefined)
+    delete process.env.MAISTER_GC_ARCHIVE_PUSH;
+  else process.env.MAISTER_GC_ARCHIVE_PUSH = previousArchivePush;
   await database.pool.query("DELETE FROM execution_commands");
   await database.pool.query("DELETE FROM runs");
   await database.pool.query("DELETE FROM projects");
@@ -126,7 +137,7 @@ const output = `\`\`\`json maister:output\n${JSON.stringify(operationalSuccessFi
 
 describe("operational disposition through existing lifecycle owners", () => {
   it.each(["none", "worktree"] as const)(
-    "IT-OPL-02 disposes successful %s execution and its native home after commit",
+    "IT-OPL-05 disposes successful %s execution and its native home after commit",
     async (workspace) => {
       const seeded = await seed(workspace);
 
@@ -171,8 +182,13 @@ describe("operational disposition through existing lifecycle owners", () => {
     },
   );
 
-  it("IT-EDGE-OPL-01 preserves ignored binary bytes before deleting unexpected source, without minting an assignment", async () => {
+  it("IT-OPL-07 IT-EDGE-OPL-07 preserves ignored binary bytes before deleting unexpected source, without minting an assignment", async () => {
     const seeded = await seed();
+    const remote = path.join(root, `diagnostic-remote-${seeded.runId}.git`);
+
+    await git(root, "init", "--bare", remote);
+    await git(seeded.context.repoPath, "remote", "add", "origin", remote);
+    process.env.MAISTER_GC_ARCHIVE_PUSH = "true";
     const bytes = Buffer.from([0, 255, 128, 1, 2, 0]);
 
     await writeFile(
@@ -261,6 +277,7 @@ describe("operational disposition through existing lifecycle owners", () => {
 
     expect(expired.scanned).toBeGreaterThan(0);
     expect(expired.failed).toBe(0);
+    expect(await git(remote, "for-each-ref", "--format=%(refname)")).toBe("");
   });
 
   it("IT-OPL-05 legacy cleaners cannot bypass crash hold or retry exhaustion", async () => {
@@ -278,6 +295,183 @@ describe("operational disposition through existing lifecycle owners", () => {
     expect(
       await disposeOperationalRun(seeded.runId, { db, hosts: seam.hosts }),
     ).toBe("skipped");
+  });
+
+  it("IT-OPL-03 recognizes a concurrent operation's recorded local archive without trusting an unrecorded ref", async () => {
+    const live = await seed();
+    const sibling = await seed();
+    const retained = await prepareAgentRunFinalization(
+      sibling.runId,
+      "Crashed",
+      { db },
+    );
+
+    await db.transaction((tx) => retained.apply(tx));
+    const archive = `archive/${sibling.runId}`;
+    const source = await row(live.runId);
+    const sha = source.operationalIntegrityBaseline!.head!;
+
+    await git(live.context.repoPath, "branch", archive, sha);
+    expect((await inspectOperationalRun(db, source)).verdict).toBe(
+      "indeterminate",
+    );
+    await db
+      .update(runs)
+      .set({ projectId: source.projectId })
+      .where(eq(runs.id, sibling.runId));
+    await db
+      .update(workspaces)
+      .set({
+        projectId: source.projectId!,
+        archivedBranch: archive,
+        archivedCommit: sha,
+        archivedAt: new Date(),
+        preservationOutcome: "snapshot_created",
+      })
+      .where(eq(workspaces.runId, sibling.runId));
+    expect((await inspectOperationalRun(db, source)).verdict).toBe("clean");
+    const forged = await git(
+      live.context.repoPath,
+      "-c",
+      "user.name=Operation",
+      "-c",
+      "user.email=operation@example.test",
+      "commit-tree",
+      "HEAD^{tree}",
+      "-p",
+      "HEAD",
+      "-m",
+      "unrecorded archive replacement",
+    );
+
+    await git(
+      live.context.repoPath,
+      "update-ref",
+      `refs/heads/${archive}`,
+      forged.trim(),
+    );
+    expect((await inspectOperationalRun(db, source)).verdict).toBe(
+      "indeterminate",
+    );
+  });
+
+  it("IT-OPL-07 released assignments admit only bounded run-owned diagnostic evidence while preserving", async () => {
+    const seeded = await seed();
+    const prepared = await prepareAgentRunFinalization(seeded.runId, "Done", {
+      db,
+      finalText: output,
+    });
+
+    await db.transaction((tx) => prepared.apply(tx));
+    const current = await row(seeded.runId);
+
+    await db
+      .update(runs)
+      .set({
+        operationalCleanup: {
+          ...current.operationalCleanup!,
+          state: "preserving",
+        },
+      })
+      .where(eq(runs.id, seeded.runId));
+    const client = await seam.hosts.forAssignment({
+      id: current.executionAssignmentId!,
+    });
+    const previousReservations = seam.fake.callsOf(
+      "reserveRuntimeObject",
+    ).length;
+    const reservation = {
+      kind: "diagnostic",
+      logicalName: "operational-diagnosis-bounded",
+      mimeType: "application/x-ndjson",
+      sizeBytes: 1,
+      sha256: "a".repeat(64),
+      generation: 1,
+      retentionClass: "run",
+      expiresAt: null,
+    } satisfies Omit<ReserveRuntimeObjectPayload, "objectId">;
+
+    for (const change of [
+      { kind: "generated_artifact" as const },
+      { logicalName: "ordinary-output" },
+      {
+        retentionClass: "ephemeral" as const,
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      },
+      { sizeBytes: 25 * 1024 * 1024 + 1 },
+    ]) {
+      await expect(
+        client.reserveRuntimeObject({
+          ...reservation,
+          ...change,
+          objectId: crypto.randomUUID(),
+        }),
+      ).rejects.toMatchObject({
+        code: "CONFLICT",
+        details: { reason: "assignment_fenced" },
+      });
+    }
+    const admitted = await client.reserveRuntimeObject({
+      ...reservation,
+      objectId: crypto.randomUUID(),
+    });
+
+    expect(admitted.state).toBe("pending");
+    expect(seam.fake.callsOf("reserveRuntimeObject")).toHaveLength(
+      previousReservations + 1,
+    );
+    await db
+      .update(runs)
+      .set({
+        operationalCleanup: { ...current.operationalCleanup!, state: "armed" },
+      })
+      .where(eq(runs.id, seeded.runId));
+    await expect(
+      client.reserveRuntimeObject({
+        ...reservation,
+        objectId: crypto.randomUUID(),
+      }),
+    ).rejects.toMatchObject({ details: { reason: "assignment_fenced" } });
+  });
+
+  it("IT-OPL-06 an interrupted parallel reissue with conflicting source generations becomes actionable without replay", async () => {
+    const seeded = await seed();
+
+    await database.pool.query(
+      "UPDATE runs SET status='NeedsInputIdle' WHERE id=$1",
+      [seeded.runId],
+    );
+    for (const ordinal of [1, 2]) {
+      await database.pool.query(
+        `INSERT INTO hitl_requests(id,run_id,step_id,kind,schema,prompt) VALUES ($1,$2,'agent','permission',$3::jsonb,'Retained parallel permission')`,
+        [
+          `mixed-permission-${seeded.runId}-${ordinal}`,
+          seeded.runId,
+          JSON.stringify({
+            requestId: `request-${ordinal}`,
+            supervisorSessionId: `session-${ordinal}`,
+            options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+            toolCall: { toolCallId: `tool-${ordinal}`, title: "Read provider" },
+            agentPrompt: {
+              version: 1,
+              commandId: `command-${ordinal}`,
+              turnId: `turn-${ordinal}`,
+              promptOrdinal: ordinal,
+              assignmentId: `assignment-${ordinal}`,
+              incarnationId: `incarnation-${ordinal}`,
+            },
+          }),
+        ],
+      );
+    }
+    await reconcileAgentPermissionResume(db, seeded.runId, seam.fake.transport);
+    expect(await row(seeded.runId)).toMatchObject({
+      status: "Crashed",
+      operationalTerminal: { successful: false, cause: "operational_crashed" },
+      operationalCleanup: { state: "retained" },
+    });
+    expect(seam.fake.callsOf("deliverInput")).toHaveLength(0);
+    expect((await lstat(seeded.context.cwd)).isDirectory()).toBe(true);
   });
 
   it("IT-EDGE-OPL-06 fences a second cleaner and refuses stale completion after lease expiry", async () => {
@@ -326,7 +520,7 @@ describe("operational disposition through existing lifecycle owners", () => {
     );
   });
 
-  it("IT-EDGE-OPL-07 converges after local removal precedes its cleanup receipt without recreating source", async () => {
+  it("IT-EDGE-OPL-05 converges after local removal precedes its cleanup receipt without recreating source", async () => {
     const seeded = await seed();
     const prepared = await prepareAgentRunFinalization(seeded.runId, "Done", {
       db,
@@ -376,6 +570,70 @@ describe("operational disposition through existing lifecycle owners", () => {
     ).not.toBeNull();
   });
 
+  it("IT-EDGE-OPL-05 host release acknowledgement loss converges without another assignment or recreated files", async () => {
+    const seeded = await seed();
+    const initial = await row(seeded.runId);
+    const client = await seam.hosts.forAssignment({
+      id: initial.executionAssignmentId!,
+    });
+
+    await client.ensureWorkspace();
+    const prepared = await prepareAgentRunFinalization(seeded.runId, "Done", {
+      db,
+      finalText: output,
+    });
+
+    await db.transaction((tx) => prepared.apply(tx));
+    seam.fake.loseResponseOnce("releaseWorkspace");
+    const first = await disposeOperationalRun(seeded.runId, {
+      db,
+      hosts: seam.hosts,
+    });
+
+    if (first === "deferred") {
+      const recovery = await recoverExecutionCommands({
+        db,
+        transport: seam.fake.transport,
+        graceMs: 0,
+      });
+
+      expect(recovery.errors).toEqual([]);
+      const retry = (await row(seeded.runId)).operationalCleanup!;
+
+      expect(retry.removedAt).not.toBeNull();
+      await expect(lstat(seeded.context.cwd)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      expect(
+        await disposeOperationalRun(seeded.runId, {
+          db,
+          hosts: seam.hosts,
+          now: new Date(retry.dueAt!),
+        }),
+      ).toBe("released");
+    } else expect(first).toBe("released");
+    expect((await row(seeded.runId)).operationalCleanup?.state).toBe(
+      "released",
+    );
+    expect(
+      await db
+        .select()
+        .from(executionAssignments)
+        .where(eq(executionAssignments.runId, seeded.runId)),
+    ).toHaveLength(1);
+    expect(
+      (
+        await db
+          .select()
+          .from(executionCommands)
+          .where(eq(executionCommands.runId, seeded.runId))
+      ).filter((command) => command.kind === "workspace.adopt"),
+    ).toHaveLength(1);
+    await expect(lstat(seeded.context.cwd)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
   it("IT-OPL-08 rotates a bounded disposition cursor past a poison run", async () => {
     const template = await seed("none");
     const prepared = await prepareAgentRunFinalization(template.runId, "Done", {
@@ -417,7 +675,7 @@ describe("operational disposition through existing lifecycle owners", () => {
     await db.insert(runs).values(
       inserts.map((item, index) => ({
         ...item,
-        status: "Abandoned",
+        status: "Abandoned" as const,
         resultContract:
           index === 0
             ? { ...item.resultContract!, sha256: "0".repeat(64) }

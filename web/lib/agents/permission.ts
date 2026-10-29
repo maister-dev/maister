@@ -175,6 +175,31 @@ export async function recordOwnedAgentPermission(
   client: BoundClient,
   event: PermissionEvent,
 ): Promise<boolean> {
+  const [compensation] = await db
+    .select()
+    .from(executionCommands)
+    .where(
+      and(
+        eq(executionCommands.runId, client.assignment.runId),
+        eq(executionCommands.executionAssignmentId, client.assignment.id),
+        eq(executionCommands.targetSessionId, event.sessionId),
+        eq(executionCommands.kind, "session.input"),
+        sql`${executionCommands.payload}->>'requestId' = ${event.requestId}`,
+        sql`${executionCommands.payload}->>'action' = 'cancel'`,
+        sql`${executionCommands.payload}->>'reason' = 'permission_persistence_failed'`,
+      ),
+    )
+    .limit(1);
+
+  if (compensation) {
+    if (
+      compensation.state === "succeeded" ||
+      (compensation.state === "failed" &&
+        compensation.lastError?.code === "HITL_TIMEOUT")
+    )
+      return true;
+    throw new PromptOwnerDeferred("agent_permission_compensation_pending");
+  }
   try {
     return await db.transaction((tx) =>
       recordOwnedAgentPermissionInTransaction(tx, client, event),

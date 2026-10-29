@@ -63,7 +63,7 @@ afterAll(async () => {
 });
 
 describe("operational migration", () => {
-  it("IT-OPA-02 preserves historical semantics and refuses contradictory operational snapshots", async () => {
+  it("IT-OPA-02 IT-OPA-07 IT-EDGE-OPA-03 preserves historical semantics and refuses contradictory operational snapshots", async () => {
     const rows = await database.pool.query(
       "SELECT id, status, agent_kind, operational_terminal FROM runs ORDER BY id",
     );
