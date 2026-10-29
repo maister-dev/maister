@@ -500,6 +500,9 @@ export async function completeAgentPermissionDelivery(
       },
     })
     .where(eq(hitlRequests.id, hitl.id));
+  // Reissued delivery acknowledges its ancestors in this same transaction.
+  // Count outstanding decisions only after those historical markers settle.
+  await completeAgentPermissionOrigin(tx, hitl.id);
   await tx
     .update(runs)
     .set({ status: "Running", keepaliveUntil: null })
@@ -526,7 +529,6 @@ export async function completeAgentPermissionDelivery(
     { runId: hitl.runId, hitlRequestId, deliveryCommandId },
     "agent-owned-permission-delivered",
   );
-  await completeAgentPermissionOrigin(tx, hitl.id);
   await completeHitlAssignmentFromCurrentActor({
     db: tx,
     hitlRequestId: hitl.id,
