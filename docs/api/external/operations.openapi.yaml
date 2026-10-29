@@ -5022,6 +5022,316 @@ components:
           schema: { $ref: "#/components/schemas/ExtErrorBody" }
 
   schemas:
+    # Operational components mirror web.openapi.yaml; runtime parity is required.
+    OperationalReference:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - id
+        - state
+      properties:
+        kind:
+          type: string
+          enum:
+            - task
+            - external_issue
+            - operation_receipt
+            - other
+        id:
+          type: string
+          minLength: 1
+          maxLength: 512
+        state:
+          type: string
+          enum:
+            - confirmed
+            - unresolved
+        url:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          format: uri
+          description: http/https only; no embedded credentials.
+    OperationalDiagnostic:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - severity
+        - operation
+        - message
+        - retryable
+        - remediation
+      properties:
+        code:
+          type: string
+          minLength: 1
+          maxLength: 128
+        severity:
+          type: string
+          enum:
+            - warning
+            - error
+        operation:
+          type: string
+          minLength: 1
+          maxLength: 256
+        message:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        retryable:
+          type: boolean
+        remediation:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        referenceIds:
+          type: array
+          maxItems: 1000
+          items:
+            type: string
+            minLength: 1
+            maxLength: 512
+        service:
+          type: string
+          minLength: 1
+          maxLength: 256
+        httpStatus:
+          type: integer
+          minimum: 100
+          maximum: 599
+    OperationalResultV1:
+      type: object
+      additionalProperties: false
+      required:
+        - schemaVersion
+        - outcome
+        - summary
+        - coverage
+        - counts
+        - references
+        - diagnostics
+      properties:
+        schemaVersion:
+          type: integer
+          enum:
+            - 1
+        outcome:
+          type: string
+          enum:
+            - success
+            - partial
+            - blocked
+            - failed
+        summary:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        coverage:
+          type: object
+          additionalProperties: false
+          required:
+            - state
+            - remainingKnown
+          properties:
+            state:
+              type: string
+              enum:
+                - complete
+                - incomplete
+                - not_started
+            remainingKnown:
+              type: integer
+              minimum: 0
+              maximum: 9007199254740991
+              nullable: true
+        counts:
+          type: object
+          additionalProperties: false
+          required:
+            - scanned
+            - attempted
+            - completed
+            - failed
+            - skipped
+            - created
+          properties:
+            scanned: &a1
+              type: integer
+              minimum: 0
+              maximum: 9007199254740991
+            attempted: *a1
+            completed: *a1
+            failed: *a1
+            skipped: *a1
+            created: *a1
+        references:
+          type: array
+          maxItems: 1000
+          items:
+            $ref: "#/components/schemas/OperationalReference"
+        diagnostics:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/OperationalDiagnostic"
+      description: Designed — fixed operational_v1 value. Existing output limits plus
+        operational count/coverage/outcome/link semantics apply; schema validity is
+        distinct from business success.
+    OperationalCompletionDeclaration:
+      type: object
+      additionalProperties: false
+      required:
+        - contract
+      properties:
+        contract:
+          type: string
+          enum:
+            - operational_v1
+    OperationalAcknowledgementBody:
+      type: object
+      additionalProperties: false
+      required:
+        - reason
+        - revision
+      properties:
+        reason:
+          type: string
+          enum:
+            - operation_failure
+            - cleanup_failure
+        revision:
+          type: integer
+          minimum: 1
+    OperationalCleanupRetryBody:
+      type: object
+      additionalProperties: false
+      required:
+        - expectedRevision
+      properties:
+        expectedRevision:
+          type: integer
+          minimum: 1
+    OperationalCleanupState:
+      type: object
+      additionalProperties: false
+      required:
+        - state
+        - revision
+        - attempts
+        - dueAt
+        - errorCode
+      properties:
+        state:
+          type: string
+          enum:
+            - retained
+            - armed
+            - preserving
+            - removed
+            - released
+            - retry
+            - exhausted
+        revision:
+          type: integer
+          minimum: 1
+        attempts:
+          type: integer
+          minimum: 0
+          maximum: 5
+        dueAt:
+          type: string
+          format: date-time
+          nullable: true
+        errorCode:
+          type: string
+          nullable: true
+    OperationalOutcome:
+      type: object
+      additionalProperties: false
+      required:
+        - version
+        - state
+        - reportedOutcome
+        - effectiveOutcome
+        - successful
+        - validation
+        - integrity
+        - resultRevision
+        - reportedResult
+        - reasonCodes
+        - cleanup
+      properties:
+        version:
+          type: integer
+          enum:
+            - 1
+        state:
+          type: string
+          enum:
+            - pending
+            - terminal
+        reportedOutcome:
+          type: string
+          nullable: true
+          enum:
+            - success
+            - partial
+            - blocked
+            - failed
+            - null
+        effectiveOutcome:
+          type: string
+          nullable: true
+          enum:
+            - success
+            - partial
+            - blocked
+            - failed
+            - cancelled
+            - crashed
+            - null
+        successful:
+          type: boolean
+        validation:
+          type: string
+          enum:
+            - pending
+            - valid
+            - invalid
+            - unchecked
+        integrity:
+          type: string
+          enum:
+            - pending
+            - clean
+            - changed
+            - indeterminate
+            - unchecked
+        resultRevision:
+          type: integer
+          minimum: 1
+          nullable: true
+        reportedResult:
+          allOf:
+            - $ref: "#/components/schemas/OperationalResultV1"
+          nullable: true
+        reasonCodes:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+        cleanup:
+          allOf:
+            - $ref: "#/components/schemas/OperationalCleanupState"
+          nullable: true
+      description: Designed — platform terminal receipt joined to the exact validated
+        result revision. Failed ordinary result remains unavailable; this diagnostic
+        projection never makes it a successful answer.
+
     ExtErrorBody:
       type: object
       required: [code, message]
@@ -7742,7 +8052,14 @@ components:
         of the bound orchestrator is refused `PRECONDITION` → 409 instead of
         being reported as a fictional child.
       required:
-        [childRunId, status, settled, resultStatus, result, resultRevision, resultFailure, artifacts]
+        - childRunId
+        - status
+        - settled
+        - resultStatus
+        - result
+        - resultRevision
+        - resultFailure
+        - artifacts
       additionalProperties: false
       properties:
         childRunId:
@@ -7762,7 +8079,14 @@ components:
             `result`.
         resultStatus:
           type: string
-          enum: [pending, valid, absent, missing, stale, invalid, unavailable]
+          enum:
+            - pending
+            - valid
+            - absent
+            - missing
+            - stale
+            - invalid
+            - unavailable
           description: |
             (Implemented — ADR-165) Derived by ONE server-side predicate:
             `pending` — still running.
@@ -7780,12 +8104,15 @@ components:
           description: |
             (Implemented — ADR-165) The validated public result. Non-null ONLY when
             `resultStatus` is `valid`.
-          required: [schemaRef, value]
+          required:
+            - schemaRef
+            - value
           additionalProperties: false
           properties:
             schemaRef:
               type: string
-              description: "`<flowRefId>@<resolvedRevision[:12]>:<schemaStem>` — the contract the value was validated against."
+              description: "`<flowRefId>@<resolvedRevision[:12]>:<schemaStem>` — the contract
+                the value was validated against."
             value:
               description: |
                 The validated payload — an open JSON object. Undeclared nested
@@ -7803,13 +8130,22 @@ components:
             (Implemented — ADR-165) Why the child has no usable result. Non-null
             only when an `invalid` result row exists (`resultStatus` `invalid`,
             or `unavailable` after a result-caused failure).
-          required: [reason, message]
+          required:
+            - reason
+            - message
           additionalProperties: false
           properties:
             reason:
               type: string
               enum:
-                [result_missing, malformed_json, oversize, unsafe_key, depth_limit, key_limit, array_limit, schema_mismatch]
+                - result_missing
+                - malformed_json
+                - oversize
+                - unsafe_key
+                - depth_limit
+                - key_limit
+                - array_limit
+                - schema_mismatch
             message:
               type: string
         artifacts:
@@ -7820,7 +8156,12 @@ components:
             naming a fabricated artifact id changes nothing.
           items:
             type: object
-            required: [id, kind, name, nodeId, validity]
+            required:
+              - id
+              - kind
+              - name
+              - nodeId
+              - validity
             additionalProperties: false
             properties:
               id:
@@ -7835,11 +8176,17 @@ components:
               nodeId:
                 type: string
                 nullable: true
-                description: "(Implemented — ADR-165) Producing graph node id; null for a non-graph producer."
+                description: (Implemented — ADR-165) Producing graph node id; null for a
+                  non-graph producer.
               validity:
                 type: string
-                enum: [current, stale, superseded, failed, skipped]
-                description: "(Implemented — ADR-165) Artifact validity at read time."
+                enum:
+                  - current
+                  - stale
+                  - superseded
+                  - failed
+                  - skipped
+                description: (Implemented — ADR-165) Artifact validity at read time.
         diffRef:
           type: string
           nullable: true
@@ -7860,6 +8207,12 @@ components:
             projector-derived text here now receives `null` unless the child
             recorded a real inline `log` / `human_note` / `ai_judgment`
             artifact of its own.
+        operationalOutcome:
+          allOf:
+            - $ref: "#/components/schemas/OperationalOutcome"
+          nullable: true
+          description: Designed — validated diagnostic outcome for operational runs,
+            including Failed; successful only from the committed platform receipt.
 
     ExtRunCancelBody:
       type: object

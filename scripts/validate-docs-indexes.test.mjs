@@ -60,7 +60,17 @@ const LIBRARIAN = {
   ],
 };
 
-const GROUPS = [STAGE_B, M51, RUN_TRACE, LIBRARIAN];
+const OPERATIONAL = {
+  label: "Operational agents",
+  traceabilityFile: "operational-agents-traceability.md",
+  documents: [
+    ["operational-agents.md", "OPA-01", "EDGE-OPA-01"],
+    ["operational-agent-results.md", "OPR-01", "EDGE-OPR-01"],
+    ["operational-agent-lifecycle.md", "OPL-01", "EDGE-OPL-01"],
+  ],
+};
+
+const GROUPS = [STAGE_B, M51, RUN_TRACE, LIBRARIAN, OPERATIONAL];
 
 function documentBody(requirement, edge, traceability = "") {
   return `# Fixture\n\n## Purpose\n\nText.\n\n## Domain entities\n\n- Entity.\n\n## State machine\n\nText.\n\n## Process flows\n\nText.\n\n## Expectations\n\n- **${requirement}:** Contract.\n\n## Edge cases\n\n- **${edge}:** Case.\n\n## Linked artifacts\n\n- [Artifact](artifact.md)\n${traceability}`;

@@ -17482,6 +17482,88 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "422": { $ref: "#/components/responses/Config" }
 
+  /api/runs/{runId}/operational/acknowledge:
+    post:
+      operationId: acknowledgeOperationalRun
+      summary: Acknowledge one operational attention revision
+      description: Designed — per authenticated reader; does not change business
+        outcome or another reader. Exact identical prior acknowledgement is
+        idempotent.
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OperationalAcknowledgementBody"
+      responses:
+        "200":
+          description: Acknowledgement persisted, or identical prior acknowledgement found.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - acknowledged
+                  - revision
+                properties:
+                  acknowledged:
+                    type: boolean
+                    enum:
+                      - true
+                  revision:
+                    type: integer
+                    minimum: 1
+        "400": &a1
+          description: Invalid JSON/body or unsupported contract.
+        "401": &a2
+          $ref: "#/components/responses/Unauthenticated"
+        "403": &a3
+          $ref: "#/components/responses/Forbidden"
+        "404": &a4
+          description: Run not found or not visible.
+        "409": &a5
+          description: Wrong run kind, stale reason/revision or conflicting lifecycle intent.
+  /api/runs/{runId}/operational/cleanup/retry:
+    post:
+      operationId: retryOperationalCleanup
+      summary: Re-arm an exhausted operational cleanup intent
+      description: Designed — existing project discard/archive authority; 202 records
+        intent, not removal. Latest identical expectedRevision retry returns the
+        existing re-arm receipt without resetting attempts again. Stale/different
+        revision conflicts. No filesystem path is body-controlled.
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OperationalCleanupRetryBody"
+      responses:
+        "202":
+          description: Cleanup intent durably armed, or latest identical re-arm receipt
+            returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperationalCleanupState"
+        "400": *a1
+        "401": *a2
+        "403": *a3
+        "404": *a4
+        "409": *a5
+
 components:
   securitySchemes:
     cronToken:
@@ -17670,6 +17752,315 @@ components:
             properties:
               ok: { type: boolean, enum: [true] }
   schemas:
+    OperationalReference:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - id
+        - state
+      properties:
+        kind:
+          type: string
+          enum:
+            - task
+            - external_issue
+            - operation_receipt
+            - other
+        id:
+          type: string
+          minLength: 1
+          maxLength: 512
+        state:
+          type: string
+          enum:
+            - confirmed
+            - unresolved
+        url:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          format: uri
+          description: http/https only; no embedded credentials.
+    OperationalDiagnostic:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - severity
+        - operation
+        - message
+        - retryable
+        - remediation
+      properties:
+        code:
+          type: string
+          minLength: 1
+          maxLength: 128
+        severity:
+          type: string
+          enum:
+            - warning
+            - error
+        operation:
+          type: string
+          minLength: 1
+          maxLength: 256
+        message:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        retryable:
+          type: boolean
+        remediation:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        referenceIds:
+          type: array
+          maxItems: 1000
+          items:
+            type: string
+            minLength: 1
+            maxLength: 512
+        service:
+          type: string
+          minLength: 1
+          maxLength: 256
+        httpStatus:
+          type: integer
+          minimum: 100
+          maximum: 599
+    OperationalResultV1:
+      type: object
+      additionalProperties: false
+      required:
+        - schemaVersion
+        - outcome
+        - summary
+        - coverage
+        - counts
+        - references
+        - diagnostics
+      properties:
+        schemaVersion:
+          type: integer
+          enum:
+            - 1
+        outcome:
+          type: string
+          enum:
+            - success
+            - partial
+            - blocked
+            - failed
+        summary:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        coverage:
+          type: object
+          additionalProperties: false
+          required:
+            - state
+            - remainingKnown
+          properties:
+            state:
+              type: string
+              enum:
+                - complete
+                - incomplete
+                - not_started
+            remainingKnown:
+              type: integer
+              minimum: 0
+              maximum: 9007199254740991
+              nullable: true
+        counts:
+          type: object
+          additionalProperties: false
+          required:
+            - scanned
+            - attempted
+            - completed
+            - failed
+            - skipped
+            - created
+          properties:
+            scanned: &a1
+              type: integer
+              minimum: 0
+              maximum: 9007199254740991
+            attempted: *a1
+            completed: *a1
+            failed: *a1
+            skipped: *a1
+            created: *a1
+        references:
+          type: array
+          maxItems: 1000
+          items:
+            $ref: "#/components/schemas/OperationalReference"
+        diagnostics:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/OperationalDiagnostic"
+      description: Designed — fixed operational_v1 value. Existing output limits plus
+        operational count/coverage/outcome/link semantics apply; schema validity is
+        distinct from business success.
+    OperationalCompletionDeclaration:
+      type: object
+      additionalProperties: false
+      required:
+        - contract
+      properties:
+        contract:
+          type: string
+          enum:
+            - operational_v1
+    OperationalAcknowledgementBody:
+      type: object
+      additionalProperties: false
+      required:
+        - reason
+        - revision
+      properties:
+        reason:
+          type: string
+          enum:
+            - operation_failure
+            - cleanup_failure
+        revision:
+          type: integer
+          minimum: 1
+    OperationalCleanupRetryBody:
+      type: object
+      additionalProperties: false
+      required:
+        - expectedRevision
+      properties:
+        expectedRevision:
+          type: integer
+          minimum: 1
+    OperationalCleanupState:
+      type: object
+      additionalProperties: false
+      required:
+        - state
+        - revision
+        - attempts
+        - dueAt
+        - errorCode
+      properties:
+        state:
+          type: string
+          enum:
+            - retained
+            - armed
+            - preserving
+            - removed
+            - released
+            - retry
+            - exhausted
+        revision:
+          type: integer
+          minimum: 1
+        attempts:
+          type: integer
+          minimum: 0
+          maximum: 5
+        dueAt:
+          type: string
+          format: date-time
+          nullable: true
+        errorCode:
+          type: string
+          nullable: true
+    OperationalOutcome:
+      type: object
+      additionalProperties: false
+      required:
+        - version
+        - state
+        - reportedOutcome
+        - effectiveOutcome
+        - successful
+        - validation
+        - integrity
+        - resultRevision
+        - reportedResult
+        - reasonCodes
+        - cleanup
+      properties:
+        version:
+          type: integer
+          enum:
+            - 1
+        state:
+          type: string
+          enum:
+            - pending
+            - terminal
+        reportedOutcome:
+          type: string
+          nullable: true
+          enum:
+            - success
+            - partial
+            - blocked
+            - failed
+            - null
+        effectiveOutcome:
+          type: string
+          nullable: true
+          enum:
+            - success
+            - partial
+            - blocked
+            - failed
+            - cancelled
+            - crashed
+            - null
+        successful:
+          type: boolean
+        validation:
+          type: string
+          enum:
+            - pending
+            - valid
+            - invalid
+            - unchecked
+        integrity:
+          type: string
+          enum:
+            - pending
+            - clean
+            - changed
+            - indeterminate
+            - unchecked
+        resultRevision:
+          type: integer
+          minimum: 1
+          nullable: true
+        reportedResult:
+          allOf:
+            - $ref: "#/components/schemas/OperationalResultV1"
+          nullable: true
+        reasonCodes:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+        cleanup:
+          allOf:
+            - $ref: "#/components/schemas/OperationalCleanupState"
+          nullable: true
+      description: Designed — platform terminal receipt joined to the exact validated
+        result revision. Failed ordinary result remains unavailable; this diagnostic
+        projection never makes it a successful answer.
+
     InboxCardContext:
       type: object
       description: |
@@ -18027,117 +18418,194 @@ components:
         filesystem internals. `definitionPath` is the logical path within the
         providing package, never a host filesystem path.
       required:
-        [
-          id,
-          packageName,
-          versionLabel,
-          origin,
-          name,
-          description,
-          workspace,
-          mode,
-          triggers,
-          riskTier,
-          definitionPath,
-          enabled,
-        ]
+        - id
+        - packageName
+        - versionLabel
+        - origin
+        - name
+        - description
+        - workspace
+        - mode
+        - triggers
+        - riskTier
+        - definitionPath
+        - enabled
       properties:
-        id: { type: string }
+        id:
+          type: string
         packageName:
-          {
-            type: string,
-            description: "(ADR-106) Providing package = `package_installs.name` (was `flowRefId`).",
-          }
-        versionLabel: { type: string }
-        origin: { type: string, enum: [git, authored] }
-        name: { type: string }
-        description: { type: string }
-        runnerId: { type: string, nullable: true }
-        workspace: { type: string, enum: [none, repo_read, worktree] }
+          type: string
+          description: (ADR-106) Providing package = `package_installs.name` (was `flowRefId`).
+        versionLabel:
+          type: string
+        origin:
+          type: string
+          enum:
+            - git
+            - authored
+        name:
+          type: string
+        description:
+          type: string
+        runnerId:
+          type: string
+          nullable: true
+        workspace:
+          type: string
+          enum:
+            - none
+            - repo_read
+            - worktree
         workspaceRef:
           type: string
           nullable: true
           description: "`trigger` or a literal branch; repo_read only (ADR-090 amendment)."
-        mode: { type: string, enum: [session, subagent] }
+        mode:
+          type: string
+          enum:
+            - session
+            - subagent
         triggers:
           type: array
           items:
             type: string
-            enum: [manual, cron, domain_event, webhook, flow]
-        riskTier: { type: string, enum: [read_only, standard, destructive] }
+            enum:
+              - manual
+              - cron
+              - domain_event
+              - webhook
+              - flow
+        riskTier:
+          type: string
+          enum:
+            - read_only
+            - standard
+            - destructive
         recommended:
           type: object
           nullable: true
           description: Package-recommended bindings — seed/pre-fill the attach panel (RD5).
           additionalProperties: false
           properties:
-            runner: { type: string }
+            runner:
+              type: string
             branchBase:
-              {
-                type: string,
-                description: "(ADR-106) Recommended branch base.",
-              }
+              type: string
+              description: (ADR-106) Recommended branch base.
             cron:
               type: object
               additionalProperties: false
               properties:
-                expr: { type: string }
-                timezone: { type: string }
+                expr:
+                  type: string
+                timezone:
+                  type: string
             events:
               type: array
-              items: { type: string }
-            executionPolicy: { $ref: "#/components/schemas/AgentRunnerPolicy" }
+              items:
+                type: string
+            executionPolicy:
+              $ref: "#/components/schemas/AgentRunnerPolicy"
         flowRef:
           type: string
           nullable: true
-          description: "(ADR-106) Same-package flow the agent drives (a `flows[].id` of the providing package manifest); `null` → standalone."
+          description: (ADR-106) Same-package flow the agent drives (a `flows[].id` of the
+            providing package manifest); `null` → standalone.
         branchBase:
-          {
-            type: string,
-            nullable: true,
-            description: "(ADR-106) Agent branch base; defaults to the project main branch.",
-          }
+          type: string
+          nullable: true
+          description: (ADR-106) Agent branch base; defaults to the project main branch.
         definitionPath:
           type: string
           description: Logical package-relative path (for example `maister-agents/triager.md`).
-        enabled: { type: boolean }
-        quarantinedAt: { type: string, format: date-time, nullable: true }
-        quarantineReason: { type: string, nullable: true }
+        enabled:
+          type: boolean
+        quarantinedAt:
+          type: string
+          format: date-time
+          nullable: true
+        quarantineReason:
+          type: string
+          nullable: true
+        kind:
+          type: string
+          enum:
+            - code_delivery
+            - operational
+          description: Designed — independent definition purpose; omitted legacy
+            definitions resolve code_delivery.
+        completion:
+          allOf:
+            - $ref: "#/components/schemas/OperationalCompletionDeclaration"
+          nullable: true
+          description: Designed — required operational contract declaration, null for
+            legacy code delivery.
+
     AttachedAgent:
       type: object
       description: |
         (M34 — Implemented; M39 instance config Implemented — ADR-106) Attach-panel
         row — the agent summary joined with its link, per-project INSTANCE
         overrides, and trigger bindings for this project.
-      required: [agent, linkId, enabled, schedules]
+      required:
+        - agent
+        - linkId
+        - enabled
+        - schedules
       properties:
-        agent: { $ref: "#/components/schemas/AgentSummary" }
-        linkId: { type: string, format: uuid }
-        enabled: { type: boolean }
-        runnerOverrideId: { type: string, nullable: true }
+        agent:
+          $ref: "#/components/schemas/AgentSummary"
+        linkId:
+          type: string
+          format: uuid
+        enabled:
+          type: boolean
+        runnerOverrideId:
+          type: string
+          nullable: true
         branchBase:
-          {
-            type: string,
-            nullable: true,
-            description: "(ADR-106) Instance override of the branch base; `null` → fall back to the agent `recommended`/project main.",
-          }
+          type: string
+          nullable: true
+          description: (ADR-106) Instance override of the branch base; `null` → fall back
+            to the agent `recommended`/project main.
         executionPolicyOverride:
           type: object
           nullable: true
-          allOf: [{ $ref: "#/components/schemas/AgentRunnerPolicy" }]
-          description: "(ADR-106) Instance override of `{autoApply, onBudgetBreach}`; `null` → fall back to the agent `recommended`."
+          allOf:
+            - $ref: "#/components/schemas/AgentRunnerPolicy"
+          description: (ADR-106) Instance override of `{autoApply, onBudgetBreach}`;
+            `null` → fall back to the agent `recommended`.
         canReadBrain:
           type: boolean
-          description: "(ADR-122) Per-link Brain read axis (default false)."
+          description: (ADR-122) Per-link Brain read axis (default false).
         canWriteBrain:
           type: boolean
-          description: "(ADR-122) Per-link Brain write axis (default false; read never grants write)."
+          description: (ADR-122) Per-link Brain write axis (default false; read never
+            grants write).
         memoryEnabled:
           type: boolean
-          description: "(ADR-152) Per-link agent-memory axis (default false). A SEPARATE store from Brain — neither `canReadBrain` nor `canWriteBrain` implies it. Seeded server-side from the effective definition's `memory:` field on attach, effective thereafter."
+          description: (ADR-152) Per-link agent-memory axis (default false). A SEPARATE
+            store from Brain — neither `canReadBrain` nor `canWriteBrain` implies
+            it. Seeded server-side from the effective definition's `memory:` field
+            on attach, effective thereafter.
         schedules:
           type: array
-          items: { $ref: "#/components/schemas/AgentScheduleBody" }
+          items:
+            $ref: "#/components/schemas/AgentScheduleBody"
+        kind:
+          type: string
+          enum:
+            - code_delivery
+            - operational
+          description: Designed — independent definition purpose; omitted legacy
+            definitions resolve code_delivery.
+        completion:
+          allOf:
+            - $ref: "#/components/schemas/OperationalCompletionDeclaration"
+          nullable: true
+          description: Designed — required operational contract declaration, null for
+            legacy code delivery.
+
     AgentMemoryState:
       type: object
       description: |
@@ -19605,24 +20073,40 @@ components:
     AutomationRunLink:
       type: object
       nullable: true
-      required: [id, status]
+      required:
+        - id
+        - status
       properties:
-        id: { type: string, format: uuid }
+        id:
+          type: string
+          format: uuid
         status:
           type: string
           enum:
-            [
-              Pending,
-              Running,
-              NeedsInput,
-              NeedsInputIdle,
-              HumanWorking,
-              Review,
-              Done,
-              Abandoned,
-              Crashed,
-              Failed,
-            ]
+            - Pending
+            - Running
+            - NeedsInput
+            - NeedsInputIdle
+            - HumanWorking
+            - Review
+            - Done
+            - Abandoned
+            - Crashed
+            - Failed
+        agentKind:
+          type: string
+          nullable: true
+          enum:
+            - code_delivery
+            - operational
+            - null
+        operationalOutcome:
+          allOf:
+            - $ref: "#/components/schemas/OperationalOutcome"
+          nullable: true
+          description: Designed — actual resulting run outcome, separate from scheduler
+            dispatch success.
+
     OneTimeTaskLaunchAutomationRow:
       type: object
       required:

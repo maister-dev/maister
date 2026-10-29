@@ -38,6 +38,15 @@ export const COVERAGE_GROUPS = {
     implementationPhases: /^T(?:[2-9]|14)\./,
     testRoots: ["web"],
   },
+  "operational-agents": {
+    label: "Operational agents",
+    planPath: ".ai-factory/plans/feature-operational-agent-kind.md",
+    documents: ["operational-agents.md", "operational-agent-results.md", "operational-agent-lifecycle.md"],
+    prefixes: ["OPA", "OPR", "OPL"],
+    matrixPath: "docs/system-analytics/operational-agents-traceability.md",
+    implementationPhases: /^T(?:[4-9]|1[0-8])$/,
+    testRoots: ["web", "supervisor", "mcp"],
+  },
   m51: {
     label: "M51",
     planPath: ".ai-factory/plans/feature-m51-see-everything.md",
@@ -113,7 +122,7 @@ export function matrixRows(src, prefixes) {
   for (const m of src.matchAll(rowRe)) {
     rows.set(m[1], {
       contract: m[2].trim(),
-      tasks: [...m[3].matchAll(/T\d+\.\d+/g)].map((t) => t[0]),
+      tasks: [...m[3].matchAll(/\bT\d+(?:\.\d+)?\b/g)].map((t) => t[0]),
       primaryTest: m[4].trim(),
       status: m[5].trim(),
     });
@@ -177,7 +186,8 @@ function suiteTestIds(roots, prefixes) {
 export function planTaskIds(src) {
   // Task definitions only — the bold header that opens a task body. Prose
   // cross-references elsewhere in the plan must not be mistaken for one.
-  return [...src.matchAll(/\*\*(T\d+\.\d+)\s*\[[ x]\]\s*—/g)].map((m) => m[1]);
+  return [...src.matchAll(/(?:^\*\*(T\d+\.\d+)\s*\[[ x]\]\s*—|^- \[[ x]\] \*\*(T\d+)\.\s)/gm)]
+    .map((match) => match[1] ?? match[2]);
 }
 
 // Pure: every input is supplied, so fixtures exercise it without the repo.

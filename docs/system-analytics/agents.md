@@ -67,6 +67,10 @@ can read them. The scope subset and the token-authority rules live in
 in [flow-settings.md](flow-settings.md) + [workspaces.md](workspaces.md) (R7 —
 not restated here).
 
+Operational agent semantics are **Designed** in the [operational lifecycle](operational-agent-lifecycle.md),
+[result contract](operational-agent-results.md) and [definition contract](operational-agents.md).
+They preserve this domain's existing code-delivery behavior.
+
 ## Domain entities
 
 - **`agent_turns`** — accepted immutable agent input, its ordinal and exact

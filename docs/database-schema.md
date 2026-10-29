@@ -5538,3 +5538,13 @@ Trust/timestamp-only updates
 remain DB-only. See the owning [persistence
 analytics](system-analytics/project-config-persistence.md) for independent push
 process ownership and cleanup recovery.
+
+## Operational agents (Designed)
+
+[Operational persistence](db/operational-agents-domain.md) specifies additive main-lineage
+0194/0195 fields: agents.kind/completion_contract; runs.agent_kind,
+operational_integrity_baseline, operational_terminal and operational_cleanup;
+and per-reader operational_run_acknowledgements. Existing result_contract and
+workspaces lifecycle records remain authoritative. Historical rows receive no
+operational backfill. Named immutable/terminal constraints and seeded incremental
+upgrade tests must pass before these additions are marked Implemented.

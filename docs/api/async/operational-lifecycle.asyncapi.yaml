@@ -1,0 +1,43 @@
+asyncapi: 2.6.0
+info:
+  title: Operational agent lifecycle facts
+  version: 1.0.0
+  description: >-
+    Designed — transactional domain-outbox facts for operational attention and
+    cleanup. No new transport, scheduler or run status. Existing terminal events
+    remain authoritative for business completion. Payloads are content-free pointers.
+channels:
+  domain_events/operational:
+    subscribe:
+      operationId: observeOperationalLifecycle
+      message:
+        oneOf:
+          - $ref: '#/components/messages/AttentionAcknowledged'
+          - $ref: '#/components/messages/CleanupChanged'
+components:
+  messages:
+    AttentionAcknowledged:
+      name: run.operational_attention_acknowledged
+      summary: One reader acknowledged an exact failure reason revision
+      payload:
+        type: object
+        additionalProperties: false
+        required: [runId, ownerUserId, reason, revision]
+        properties:
+          runId: {type: string, minLength: 1}
+          ownerUserId: {type: string, minLength: 1}
+          reason: {type: string, enum: [operation_failure, cleanup_failure]}
+          revision: {type: integer, minimum: 1}
+    CleanupChanged:
+      name: run.operational_cleanup_changed
+      summary: Cleanup reason/state changed independently of terminal business outcome
+      payload:
+        type: object
+        additionalProperties: false
+        required: [runId, revision, state]
+        properties:
+          runId: {type: string, minLength: 1}
+          revision: {type: integer, minimum: 1}
+          state:
+            type: string
+            enum: [retained, armed, preserving, removed, released, retry, exhausted]

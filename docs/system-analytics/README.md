@@ -22,6 +22,10 @@ One row per file — this table is the **canonical index** of the folder
 
 | Domain | File | What it covers |
 | ------ | ---- | -------------- |
+| Operational agents | [`operational-agents.md`](operational-agents.md) | Designed: independent kind/policy axes, frozen launch contract and package compatibility. |
+| Operational results | [`operational-agent-results.md`](operational-agent-results.md) | Designed: operational_v1 values, semantic validation, terminal mapping and diagnostic collection. |
+| Operational lifecycle | [`operational-agent-lifecycle.md`](operational-agent-lifecycle.md) | Designed: integrity, concurrent HITL, safe disposal, retention and actionable failures. |
+| Operational traceability | [`operational-agents-traceability.md`](operational-agents-traceability.md) | Operational requirement/edge ownership, implementation tasks and primary tests. |
 | Acp runners | [`acp-runners.md`](acp-runners.md) | Platform ACP runner catalog CRUD on `/settings`: create/edit/delete + default + enable/disable, usage-guarded hard delete, readiness recompute (ADR-065). |
 | Agent memory | [`agent-memory.md`](agent-memory.md) | Agent memory files (ADR-152, Implemented): per-attachment `memory_enabled` axis, injective on-disk `memory.md` store, launch-time injection with a `runs.agent_memory_hash` provenance stamp, content-hash CAS write path, and the owner's view/edit/clear surface. |
 | Agent mentions | [`agent-mentions.md`](agent-mentions.md) | Agent mentions in task comments (ADR-151, Implemented): write-time `@<agentId>` resolution/expansion, `agent_schedules` mention binding, summonability predicate, and the additive directed-summon branch of the `agent_triggers` consumer. |

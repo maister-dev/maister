@@ -10,7 +10,7 @@
     "validate:docs": "node scripts/validate-docs-mermaid.mjs && node scripts/validate-docs-adr-anchors.mjs && node scripts/validate-docs-links.mjs && node scripts/validate-docs-indexes.mjs && pnpm --filter maister-web db:erd --check",
     "validate:contracts": "node scripts/validate-contracts.mjs && node --test scripts/validate-contracts.test.mjs && pnpm validate:adapter-mirrors",
     "validate:adapter-mirrors": "node scripts/validate-adapter-mirrors.ts",
-    "validate:docs:all": "node scripts/validate-docs-mermaid.mjs --all && node scripts/validate-docs-adr-anchors.mjs --all && node scripts/validate-docs-links.mjs --all && node scripts/validate-docs-indexes.mjs && node --test scripts/validate-docs-indexes.test.mjs && node --test scripts/validate-requirement-coverage.test.mjs && node --test scripts/validate-docs-adr-anchors.test.mjs && pnpm --filter maister-web db:erd --check",
+    "validate:docs:all": "node scripts/validate-docs-mermaid.mjs --all && node scripts/validate-docs-adr-anchors.mjs --all && node scripts/validate-docs-links.mjs --all && node scripts/validate-docs-indexes.mjs && node --test scripts/validate-docs-indexes.test.mjs && node --test scripts/validate-requirement-coverage.test.mjs && node --test scripts/validate-docs-adr-anchors.test.mjs && pnpm validate:operational-coverage && pnpm --filter maister-web db:erd --check",
     "validate:m51-coverage": "node scripts/validate-requirement-coverage.mjs --group m51",
     "validate:librarian-coverage": "node scripts/validate-requirement-coverage.mjs --group librarian",
     "validate:docs:adr": "node scripts/validate-docs-adr-anchors.mjs",
@@ -24,7 +24,8 @@
     "site-docs:validate": "pnpm --filter @maister/site-docs validate",
     "runtime:check": "node scripts/check-runtime.mjs",
     "test:runtime": "node --test scripts/runtime-contract.test.mjs",
-    "test:stage-ab-lane": "node --test scripts/run-stage-ab-tests.test.mjs scripts/isolation-ci-workflow.test.mjs scripts/isolation-ci-evidence.test.mjs"
+    "test:stage-ab-lane": "node --test scripts/run-stage-ab-tests.test.mjs scripts/isolation-ci-workflow.test.mjs scripts/isolation-ci-evidence.test.mjs",
+    "validate:operational-coverage": "node scripts/validate-requirement-coverage.mjs --group operational-agents"
   },
   "devDependencies": {
     "@apidevtools/swagger-parser": "13.1.0",

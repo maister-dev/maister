@@ -20,6 +20,10 @@ reconciliation, row-backed GC, disk-only reconciliation, and reconstructible
 agent-directory cleanup with isolated per-item failures. No compatibility path
 may call a GC bundle directly or create a second scheduler state machine.
 
+Operational agent semantics are **Designed** in the [operational lifecycle](operational-agent-lifecycle.md),
+[result contract](operational-agent-results.md) and [definition contract](operational-agents.md).
+They preserve this domain's existing code-delivery behavior.
+
 ## Domain entities
 
 - **Scheduler job** (`scheduler_jobs`, Implemented) — durable schedule

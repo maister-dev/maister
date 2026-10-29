@@ -13,6 +13,10 @@ recursion bounds recorded beside it. It does **not** own evidence
 ([`flow-graph.md`](flow-graph.md)), promotion ([`workspaces.md`](workspaces.md)),
 or the delegation toolset itself ([`orchestrator.md`](orchestrator.md)).
 
+Operational agent semantics are **Designed** in the [operational lifecycle](operational-agent-lifecycle.md),
+[result contract](operational-agent-results.md) and [definition contract](operational-agents.md).
+They preserve this domain's existing code-delivery behavior.
+
 ## Domain entities
 
 - **Run result contract** — `runs.result_contract` (jsonb, NULL = none). Written

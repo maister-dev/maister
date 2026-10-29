@@ -93,3 +93,26 @@ test("M51 group has complete task and test coverage", () => {
   assert.deepEqual(failures, []);
   assert.equal(ids.length, rows.size);
 });
+
+test("flat task headers are non-vacuous and missing enforcement fails", () => {
+  const plan = "- [ ] **T1. Specify**\n- [x] **T4. Build**\n- [ ] **T18. Qualify**\nProse refers to **T9**.\n";
+  assert.deepEqual(planTaskIds(plan), ["T1", "T4", "T18"]);
+  const rows = matrixRows(row("LCV-01", "T4", "IT-LCV-01", "Implemented"), PREFIXES);
+  assert.deepEqual(rows.get("LCV-01").tasks, ["T4"]);
+  const failures = evaluateCoverage({
+    ids: ["LCV-01"], rows, tasks: planTaskIds(plan), suiteIds: new Set(),
+    prefixes: PREFIXES, implementationPhases: /^T(?:[4-9]|1[0-8])$/,
+  }).join("\n");
+  assert.match(failures, /T18: implementation task named by no requirement row/);
+  assert.match(failures, /IT-LCV-01 resolves to no test/);
+});
+
+test("operational group covers all 34 contracts and all 15 implementation tasks", () => {
+  const group = COVERAGE_GROUPS["operational-agents"];
+  assert.ok(group);
+  const { failures, ids, rows, tasks } = checkGroupCoverage(group);
+  assert.deepEqual(failures, []);
+  assert.equal(ids.length, 34);
+  assert.equal(rows.size, 34);
+  assert.equal(tasks.filter((task) => group.implementationPhases.test(task)).length, 15);
+});
