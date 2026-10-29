@@ -133,6 +133,8 @@ table agents {
   name text [not null]
   description text [not null]
   runner_id text
+  kind text [not null, default: 'code_delivery']
+  completion_contract jsonb
   workspace text [not null]
   mode text [not null]
   triggers jsonb [not null]
@@ -152,6 +154,7 @@ table agents {
 
   indexes {
     package_name [name: 'agents_package_name_idx']
+
   }
 }
 
@@ -1806,6 +1809,20 @@ table notification_subscriptions {
   }
 }
 
+table operational_run_acknowledgements {
+  user_id text [not null]
+  run_id text [not null]
+  reason text [not null]
+  revision integer [not null]
+  acknowledged_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (user_id, run_id, reason, revision) [pk]
+    run_id [name: 'operational_ack_run_idx']
+
+  }
+}
+
 table package_installs {
   id text [pk, not null]
   source_url text [not null]
@@ -2391,6 +2408,10 @@ table run_transcript_states {
 table runs {
   id text [pk, not null]
   run_kind text [not null, default: 'flow']
+  agent_kind text
+  operational_integrity_baseline jsonb
+  operational_terminal jsonb
+  operational_cleanup jsonb
   agent_id text
   trigger_source text
   trigger_event_id bigint
@@ -2454,6 +2475,11 @@ table runs {
 
   indexes {
     (project_id, status) [name: 'runs_project_status_idx']
+    (operational_cleanup, id) [name: 'runs_operational_cleanup_due_idx']
+
+
+
+
 
 
 
@@ -3672,6 +3698,10 @@ ref node_attempts_owner_user_id_users_id_fk: node_attempts.owner_user_id > users
 ref node_attempts_execution_assignment_id_execution_assignments_id_fk: node_attempts.execution_assignment_id > execution_assignments.id [delete: set null, update: no action]
 
 ref notification_subscriptions_owner_user_id_users_id_fk: notification_subscriptions.owner_user_id > users.id [delete: cascade, update: no action]
+
+ref operational_run_acknowledgements_user_id_users_id_fk: operational_run_acknowledgements.user_id > users.id [delete: cascade, update: no action]
+
+ref operational_run_acknowledgements_run_id_runs_id_fk: operational_run_acknowledgements.run_id > runs.id [delete: cascade, update: no action]
 
 ref package_installs_source_local_package_id_local_packages_id_fk: package_installs.source_local_package_id > local_packages.id [delete: set null, update: no action]
 

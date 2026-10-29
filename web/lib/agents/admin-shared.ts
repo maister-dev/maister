@@ -88,6 +88,8 @@ export function projectAgentSummary(
     origin: row.origin,
     name: row.name,
     description: row.description,
+    kind: row.kind ?? "code_delivery",
+    completion: row.completionContract ?? null,
     runnerId: row.runnerId ?? null,
     workspace: row.workspace,
     workspaceRef: row.workspaceRef ?? null,

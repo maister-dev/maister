@@ -18430,6 +18430,8 @@ components:
         - riskTier
         - definitionPath
         - enabled
+        - kind
+        - completion
       properties:
         id:
           type: string
@@ -18532,13 +18534,13 @@ components:
           enum:
             - code_delivery
             - operational
-          description: Designed — independent definition purpose; omitted legacy
+          description: Independent definition purpose; omitted legacy
             definitions resolve code_delivery.
         completion:
           allOf:
             - $ref: "#/components/schemas/OperationalCompletionDeclaration"
           nullable: true
-          description: Designed — required operational contract declaration, null for
+          description: Required operational contract declaration, null for
             legacy code delivery.
 
     AttachedAgent:
@@ -18592,20 +18594,6 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AgentScheduleBody"
-        kind:
-          type: string
-          enum:
-            - code_delivery
-            - operational
-          description: Designed — independent definition purpose; omitted legacy
-            definitions resolve code_delivery.
-        completion:
-          allOf:
-            - $ref: "#/components/schemas/OperationalCompletionDeclaration"
-          nullable: true
-          description: Designed — required operational contract declaration, null for
-            legacy code delivery.
-
     AgentMemoryState:
       type: object
       description: |

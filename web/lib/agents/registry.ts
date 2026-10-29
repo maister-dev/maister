@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { MaisterPackageManifest } from "@/lib/config.schema";
+
 import { readdir, readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 
@@ -13,6 +15,7 @@ import {
   type ParsedAgentDefinition,
 } from "@/lib/agents/definition";
 import { getDb } from "@/lib/db/client";
+import { assertOperationalAgentCompatibility } from "@/lib/agents/package-contract";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import {
@@ -42,7 +45,12 @@ type InstallRow = {
   packageStatus: string;
   sourceUrl: string;
   // The stored jsonb is the PackageInstallManifest ({ spec, inventory, … }).
-  manifest: { spec?: { flows?: Array<{ id: string }> } } | null;
+  manifest: {
+    spec?: {
+      flows?: Array<{ id: string }>;
+      compat?: MaisterPackageManifest["compat"];
+    };
+  } | null;
 };
 
 export type AgentRegistrationSummary = {
@@ -133,6 +141,8 @@ async function upsertAgentRow(
     origin: install.sourceUrl.startsWith("/") ? "authored" : "git",
     name: parsed.name,
     description: parsed.description,
+    kind: parsed.kind,
+    completionContract: parsed.completion,
     runnerId: parsed.runner,
     workspace: parsed.workspace,
     workspaceRef: parsed.workspaceRef,
@@ -217,6 +227,11 @@ export async function registerPackageAgents(
       const qualifiedId = qualifyAgentId(install.name, stem);
       const content = await readFile(sourcePath, "utf8");
       const parsed = parseAgentDefinition(qualifiedId, content);
+
+      assertOperationalAgentCompatibility(
+        parsed,
+        install.manifest?.spec?.compat,
+      );
 
       assertRecommendedCron(parsed);
 

@@ -120,6 +120,7 @@ async function installPackageFixture(opts: {
   source?: string;
   packageStatus?: string;
   createdAt?: Date;
+  engineMin?: string;
 }): Promise<string> {
   const installId = randomUUID();
   const installedPath = path.join(
@@ -139,6 +140,7 @@ async function installPackageFixture(opts: {
   const manifest = {
     spec: {
       name: opts.name,
+      ...(opts.engineMin ? { compat: { engine_min: opts.engineMin } } : {}),
       flows: (opts.manifestFlows ?? []).map((id) => ({ id })),
     },
     inventory: {
@@ -182,6 +184,29 @@ async function agentRow(
 }
 
 describe("registerPackageAgents", () => {
+  it("IT-OPA-07 synchronizes kind and completion through SET/CLEAR/re-SET", async () => {
+    const operational = definitionMd().replace(
+      "mode: session",
+      "kind: operational\ncompletion: {contract: operational_v1}\nmode: session",
+    );
+    for (const [version, content, kind, completion] of [
+      ["v1", operational, "operational", { contract: "operational_v1" }],
+      ["v2", definitionMd(), "code_delivery", null],
+      ["v3", operational, "operational", { contract: "operational_v1" }],
+    ] as const) {
+      const installId = await installPackageFixture({
+        name: "core",
+        versionLabel: version,
+        agents: { scan: content },
+        engineMin: "3.9.0",
+      });
+      expect((await registerPackageAgents(installId, db)).invalid).toEqual([]);
+      expect(await agentRow("core:scan")).toMatchObject({
+        kind,
+        completionContract: completion,
+      });
+    }
+  });
   it("registers package agents under qualified ids with provenance", async () => {
     const installId = await installPackageFixture({
       name: "aif",

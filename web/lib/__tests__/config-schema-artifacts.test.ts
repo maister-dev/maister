@@ -7,8 +7,8 @@ import {
 import { nodeOutputSchema } from "@/lib/config.schema";
 
 describe("config.schema — artifact produces[] fields", () => {
-  it("asserts MAISTER_ENGINE_VERSION is 3.8.0 for consensus prompt rendering", () => {
-    expect(MAISTER_ENGINE_VERSION).toBe("3.8.0");
+  it("asserts MAISTER_ENGINE_VERSION is 3.9.0 for operational agent contracts", () => {
+    expect(MAISTER_ENGINE_VERSION).toBe("3.9.0");
   });
 
   it("asserts GRAPH_MIN_ENGINE_VERSION remains 1.1.0", () => {

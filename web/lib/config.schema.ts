@@ -1679,6 +1679,7 @@ export const maisterPackageManifestSchema = z
   .object({
     schemaVersion: z.literal(1),
     name: capabilityRefIdSchema,
+    compat: flowCompatSchema.optional(),
     metadata: flowMetadataSchema.optional(),
     // A package may ship zero flows (capability/agent-only, or a fresh in-Studio
     // draft) — empty is valid (ADR-105/M39). Other entry arrays already default.

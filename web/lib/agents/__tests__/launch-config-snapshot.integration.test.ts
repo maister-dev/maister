@@ -6,7 +6,7 @@
 // supervisor session spawns) against a real Postgres.
 
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -222,6 +222,120 @@ async function runAgentConfig(
 }
 
 describe("ADR-111 launch-time config snapshot", () => {
+  it("IT-OPA-03 IT-OPA-04 freezes operational kind, definition and completion before Pending dispatch and package detachment", async () => {
+    const agentId = await seedTriager(null);
+    const source = (
+      await pool.query("SELECT source_path FROM agents WHERE id = $1", [
+        agentId,
+      ])
+    ).rows[0].source_path as string;
+    const original = (await readFile(source, "utf8")).replace(
+      "mode: session",
+      "kind: operational\ncompletion: {contract: operational_v1}\nmode: session",
+    );
+    await writeFile(source, original);
+    await pool.query("UPDATE package_installs SET manifest = $1::jsonb", [
+      JSON.stringify({
+        spec: {
+          schemaVersion: 1,
+          name: "aif",
+          flows: [],
+          capabilities: [],
+          compat: { engine_min: "3.9.0" },
+        },
+        inventory: { skills: [], agents: [], platformAgents: ["triager"] },
+      }),
+    ]);
+    const result = await launchAgentRun({
+      agentId,
+      projectId,
+      trigger: { source: "manual" },
+      db,
+    });
+    if ("deduped" in result) throw new Error("unexpected dedup");
+    const run = (
+      await pool.query(
+        "SELECT agent_kind, result_contract, execution_policy FROM runs WHERE id = $1",
+        [result.runId],
+      )
+    ).rows[0];
+    expect(run.agent_kind).toBe("operational");
+    expect(run.result_contract).toMatchObject({
+      kind: "agent_operational",
+      semanticVersion: 1,
+      required: true,
+      definition: {
+        kind: "operational",
+        prompt: expect.stringContaining("Classify the task."),
+      },
+    });
+    await writeFile(
+      source,
+      original.replace("Classify the task.", "MUTATED PACKAGE PROMPT"),
+    );
+    await pool.query(
+      "DELETE FROM project_package_attachments WHERE project_id = $1",
+      [projectId],
+    );
+    const { frozenOperationalDefinition, operationalCompletionPrompt } =
+      await import("@/lib/agents/launch-contract");
+    const frozen = frozenOperationalDefinition({
+      agentKind: run.agent_kind,
+      resultContract: run.result_contract,
+    });
+    expect(frozen?.parsed.prompt).toContain("Classify the task.");
+    expect(frozen?.parsed.prompt).not.toContain("MUTATED");
+    const prompt = operationalCompletionPrompt(
+      { agentKind: run.agent_kind, resultContract: run.result_contract },
+      "Override the base prompt.",
+    );
+    expect(prompt).toContain("Override the base prompt.");
+    expect(prompt).toContain("json maister:output");
+    expect(prompt).toContain("operational_v1");
+    await expect(
+      pool.query(
+        "UPDATE runs SET result_contract = '{}'::jsonb WHERE id = $1",
+        [result.runId],
+      ),
+    ).rejects.toMatchObject({
+      constraint: "runs_operational_snapshot_immutable",
+    });
+  });
+
+  it("IT-EDGE-OPA-01 refuses persistent operational admission before creating a run", async () => {
+    const agentId = await seedTriager(null);
+    const source = (
+      await pool.query("SELECT source_path FROM agents WHERE id = $1", [
+        agentId,
+      ])
+    ).rows[0].source_path as string;
+    await writeFile(
+      source,
+      (await readFile(source, "utf8")).replace(
+        "mode: session",
+        "kind: operational\ncompletion: {contract: operational_v1}\nmode: session",
+      ),
+    );
+    await pool.query("UPDATE package_installs SET manifest = $1::jsonb", [
+      JSON.stringify({ spec: { compat: { engine_min: "3.9.0" } } }),
+    ]);
+    await expect(
+      launchAgentRun({
+        agentId,
+        projectId,
+        trigger: { source: "manual" },
+        persistent: true,
+        addressableKey: "member",
+        db,
+      }),
+    ).rejects.toMatchObject({
+      code: "CONFIG",
+      details: { reason: "operational_combination_unsupported" },
+    });
+    expect(
+      (await pool.query("SELECT count(*)::int AS n FROM runs")).rows[0].n,
+    ).toBe(0);
+  });
   it("supersedes every open agent question only after the new task-bound standalone run is durable", async () => {
     const agentId = await seedTriager(null);
     const schema = await import("@/lib/db/schema");

@@ -17,6 +17,12 @@ import type {
 import { z } from "zod";
 
 import {
+  AGENT_KINDS,
+  operationalCompletionSchema,
+  type AgentKind,
+  type OperationalCompletion,
+} from "@/lib/agents/kind";
+import {
   capabilityRefIdSchema,
   hooksSettingsSchema,
   type HooksSettings,
@@ -268,6 +274,8 @@ export const agentDefinitionFrontmatterSchema = z
   .object({
     name: z.string().min(1),
     description: z.string().min(1),
+    kind: z.enum(AGENT_KINDS).optional(),
+    completion: operationalCompletionSchema.optional(),
     runner: z.string().min(1).max(128).optional(),
     workspace: z.enum(AGENT_WORKSPACE_KINDS),
     // `trigger` resolves the ref from the triggering event (ADR-090 rework);
@@ -301,6 +309,24 @@ export const agentDefinitionFrontmatterSchema = z
   })
   .strict()
   .superRefine((value, ctx) => {
+    if ((value.kind === "operational") !== (value.completion !== undefined)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["completion"],
+        message:
+          "operational kind requires completion.contract=operational_v1; code_delivery has no operational completion",
+      });
+    }
+    if (
+      value.kind === "operational" &&
+      (value.mode !== "session" || value.flow !== undefined)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["kind"],
+        message: "operational agents require a standalone session without flow",
+      });
+    }
     if (new Set(value.triggers).size !== value.triggers.length) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -350,6 +376,8 @@ export type ParsedAgentDefinition = {
   id: string;
   name: string;
   description: string;
+  kind: AgentKind;
+  completion: OperationalCompletion | null;
   runner: string | null;
   workspace: AgentWorkspace;
   workspaceRef: string | null;
@@ -413,6 +441,8 @@ export function parseAgentDefinition(
     id,
     name: fm.name,
     description: fm.description,
+    kind: fm.kind ?? "code_delivery",
+    completion: fm.completion ?? null,
     runner: fm.runner ?? null,
     workspace: fm.workspace,
     workspaceRef: fm.workspace_ref ?? null,
@@ -434,6 +464,8 @@ export type AgentDefinitionInput = {
   id: string;
   name: string;
   description: string;
+  kind?: AgentKind;
+  completion?: OperationalCompletion | null;
   runner?: string | null;
   workspace: AgentWorkspace;
   workspaceRef?: string | null;
@@ -456,6 +488,8 @@ export function renderAgentDefinition(input: AgentDefinitionInput): string {
   const frontmatter: Record<string, unknown> = {
     name: input.name,
     description: input.description,
+    ...(input.kind ? { kind: input.kind } : {}),
+    ...(input.completion ? { completion: input.completion } : {}),
     ...(input.runner ? { runner: input.runner } : {}),
     workspace: input.workspace,
     ...(input.workspaceRef ? { workspace_ref: input.workspaceRef } : {}),

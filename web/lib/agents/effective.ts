@@ -11,6 +11,7 @@ import {
   type ParsedAgentDefinition,
 } from "@/lib/agents/definition";
 import { getDb } from "@/lib/db/client";
+import { assertOperationalAgentCompatibility } from "@/lib/agents/package-contract";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { type PackageInstallManifest } from "@/lib/packages/attach";
@@ -47,6 +48,7 @@ export type EffectiveAgentDefinition = {
   installedPath: string;
   manifest: PackageInstallManifest | null;
   versionLabel: string;
+  resolvedRevision?: string;
   // T-B3 exec-trust axis — gates stdio MCP spawn for the agent's
   // capability_profile (RD7). A resolved definition always comes from a
   // trusted / trusted_by_policy install (untrusted is refused below), and
@@ -80,6 +82,7 @@ export async function resolveEffectiveAgentDefinition(
       packageStatus: packageInstalls.packageStatus,
       trustStatus: packageInstalls.trustStatus,
       versionLabel: packageInstalls.versionLabel,
+      resolvedRevision: packageInstalls.resolvedRevision,
     })
     .from(projectPackageAttachments)
     .innerJoin(
@@ -137,14 +140,22 @@ export async function resolveEffectiveAgentDefinition(
     );
   }
 
+  const parsed = parseAgentDefinition(input.agentId, content);
+
+  assertOperationalAgentCompatibility(
+    parsed,
+    (install.manifest as PackageInstallManifest | null)?.spec?.compat,
+  );
+
   return {
-    parsed: parseAgentDefinition(input.agentId, content),
+    parsed,
     sourcePath,
     packageName,
     packageInstallId: install.packageInstallId as string,
     installedPath: install.installedPath as string,
     manifest: install.manifest as PackageInstallManifest | null,
     versionLabel: install.versionLabel as string,
+    resolvedRevision: install.resolvedRevision as string,
     execTrust: "trusted",
   };
 }

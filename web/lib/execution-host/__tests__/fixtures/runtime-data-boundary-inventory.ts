@@ -93,6 +93,16 @@ function wrappers(
 
 export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
   [
+    ...classified("lib/agents/package-contract.ts", "repository-worktree", "Inert validation of package-owned agent sources before operational admission", [
+      ["readPackageAgentSources", "node:fs/promises.readdir", "list"],
+      ["readPackageAgentSources", "node:fs/promises.readFile", "read"],
+    ]),
+    ...classified("lib/packages/manifest.ts", "repository-worktree", "Package-root operational contract validation; no execution", [
+      ["loadMaisterPackageManifest", "lib/agents/package-contract.ts#assertPackageOperationalContracts", "wrapper"],
+    ]),
+    ...classified("scripts/validate-package-compatibility.ts", "build-tooling", "Release gate reads inert agent definitions from the candidate package", [
+      ["validatePackageCompatibility", "lib/agents/package-contract.ts#readPackageAgentSources", "wrapper"],
+    ]),
     ...classified(
       "lib/project-config-persistence/git-conversation.ts",
       "repository-worktree",
@@ -2160,6 +2170,10 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
   ];
 
 export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
+  ...wrappers("lib/agents/package-contract.ts", "repository-worktree", [
+    ["readPackageAgentSources", true],
+    ["assertPackageOperationalContracts", true],
+  ]),
   ...wrappers(
     "lib/project-config-persistence/git-conversation.ts",
     "repository-worktree",

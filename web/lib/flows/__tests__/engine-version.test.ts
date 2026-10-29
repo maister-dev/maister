@@ -7,8 +7,8 @@ import {
 } from "@/lib/flows/engine-version";
 
 describe("MAISTER_ENGINE_VERSION", () => {
-  it("is 3.8.0 for consensus prompt rendering", () => {
-    expect(MAISTER_ENGINE_VERSION).toBe("3.8.0");
+  it("is 3.9.0 for operational agent contracts", () => {
+    expect(MAISTER_ENGINE_VERSION).toBe("3.9.0");
   });
 });
 

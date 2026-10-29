@@ -1335,36 +1335,15 @@
     {
       "idx": 194,
       "version": "7",
-      "when": 1793284056809,
-      "tag": "0194_project_config_persistence",
+      "when": 1793303772251,
+      "tag": "0194_operational_agents",
       "breakpoints": true
     },
     {
       "idx": 195,
       "version": "7",
-      "when": 1793284759150,
-      "tag": "0195_project_config_publication_guard",
-      "breakpoints": true
-    },
-    {
-      "idx": 196,
-      "version": "7",
-      "when": 1793306820970,
-      "tag": "0196_project_config_install_guard",
-      "breakpoints": true
-    },
-    {
-      "idx": 197,
-      "version": "7",
-      "when": 1793310013043,
-      "tag": "0197_project_config_cleanup_ownership",
-      "breakpoints": true
-    },
-    {
-      "idx": 198,
-      "version": "7",
-      "when": 1793349207363,
-      "tag": "0198_project_config_attachment_binding_guard",
+      "when": 1793303809061,
+      "tag": "0195_operational_guards",
       "breakpoints": true
     }
   ]

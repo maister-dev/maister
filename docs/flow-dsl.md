@@ -47,8 +47,8 @@ The graph-only cut-over started with engine 3.0.0: manifests require a non-empty
 top-level `nodes[]`. The parser and compiler reject any manifest containing
 `steps[]` with the locked migration message: `legacy steps[] flows are not
 supported since engine 3.0.0; republish the package with nodes[]`. The current
-host engine is `3.8.0` (Implemented — `MAISTER_ENGINE_VERSION` moved
-`3.7.0 → 3.8.0` for consensus prompt rendering, below). Graph packages remain
+host engine is `3.9.0` (Implemented — operational agents require a package
+`compat.engine_min >= 3.9.0`; consensus prompt rendering retains its 3.8.0 floor). Graph packages remain
 compatible when their declared `compat` range includes that version. They do not
 need to raise an open-ended historical `engine_min`.
 

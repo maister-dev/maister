@@ -95,7 +95,8 @@ const log = pino({
 // prompt uses template variables SHOULD `compat.engine_min >= 3.8.0`; an older
 // engine forwards the literal text, which this engine cannot refuse on its
 // behalf, so the floor is documented rather than enforced at load.
-export const MAISTER_ENGINE_VERSION = "3.8.0";
+// 3.9.0 adds operational agents and their mandatory package compatibility floor.
+export const MAISTER_ENGINE_VERSION = "3.9.0";
 
 // Minimum engine version a graph (`nodes[]`) manifest must declare in
 // `compat.engine_min` (ADR-026). Enforced in `loadFlowManifest`.

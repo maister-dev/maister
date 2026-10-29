@@ -31,7 +31,11 @@ describe("parseValidatePackageArgs", () => {
       "core/v1.1.0",
     ]);
 
-    expect(args).toEqual({ mode: "release", source: "/repo", tag: "core/v1.1.0" });
+    expect(args).toEqual({
+      mode: "release",
+      source: "/repo",
+      tag: "core/v1.1.0",
+    });
   });
 
   it("rejects a missing/invalid tag", () => {
@@ -45,6 +49,36 @@ describe("parseValidatePackageArgs", () => {
 });
 
 describe("validatePackageCompatibility", () => {
+  it("IT-OPA-06 IT-EDGE-OPA-02 IT-EDGE-OPA-04 validates zero-flow operational packages and refuses insufficient or unsupported floors", async () => {
+    const root = await mkdtemp(join(tmpdir(), "operational-package-"));
+    const packageRoot = join(root, "packages", "core");
+    try {
+      await mkdir(join(packageRoot, "maister-agents"), { recursive: true });
+      await writeFile(
+        join(packageRoot, "maister-agents", "scan.md"),
+        "---\nname: Scan\ndescription: Scan\nkind: operational\ncompletion: {contract: operational_v1}\nworkspace: worktree\nmode: session\ntriggers: [manual]\nrisk_tier: standard\n---\nScan only.\n",
+      );
+      for (const floor of [undefined, "3.8.0", "unknown", "99.0.0", "3.9.0"]) {
+        await writeFile(
+          join(packageRoot, "maister-package.yaml"),
+          `schemaVersion: 1\nname: core\nflows: []\n${floor ? `compat: {engine_min: ${floor}}\n` : ""}`,
+        );
+        const result = validatePackageCompatibility({
+          mode: "release",
+          source: root,
+          tag: "core/vNext",
+        });
+        if (floor === "3.9.0")
+          await expect(result).resolves.toMatchObject({
+            flowCount: 0,
+            agentCount: 1,
+          });
+        else await expect(result).rejects.toMatchObject({ code: "CONFIG" });
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
   it("passes the fixture core package with an sdd-quality method", async () => {
     const result = await validatePackageCompatibility({
       mode: "release",

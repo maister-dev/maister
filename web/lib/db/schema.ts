@@ -44,6 +44,13 @@ import type { FlowActionCompletion } from "@/lib/flows/graph/action-completion";
 import type { FlowFinishContinuation } from "@/lib/flows/graph/finish-continuation";
 import type { FlowActionResume } from "@/lib/flows/graph/action-resume";
 import type { LibrarianSubject } from "@/lib/librarian/types";
+import type { AgentKind, OperationalCompletion } from "@/lib/agents/kind";
+import type {
+  OperationalIntegrityBaseline,
+  OperationalTerminal,
+  OperationalCleanup,
+  OperationalAttentionReason,
+} from "@/lib/run-results/operational-types";
 
 import { sql } from "drizzle-orm";
 import {
@@ -933,6 +940,13 @@ export const agents = pgTable(
     runnerId: text("runner_id").references(() => platformAcpRunners.id, {
       onDelete: "set null",
     }),
+    kind: text("kind", { enum: ["code_delivery", "operational"] })
+      .$type<AgentKind>()
+      .notNull()
+      .default("code_delivery"),
+    completionContract: jsonb(
+      "completion_contract",
+    ).$type<OperationalCompletion>(),
     workspace: text("workspace", {
       enum: ["none", "repo_read", "worktree"],
     }).notNull(),
@@ -973,6 +987,10 @@ export const agents = pgTable(
   },
   (t) => ({
     idxPackageName: index("agents_package_name_idx").on(t.packageName),
+    kindCompletionCheck: check(
+      "agents_kind_completion_check",
+      sql`((${t.kind} = 'code_delivery' AND ${t.completionContract} IS NULL) OR (${t.kind} = 'operational' AND ${t.completionContract} = '{"contract":"operational_v1"}'::jsonb AND ${t.mode} = 'session' AND ${t.flowRef} IS NULL)) IS TRUE`,
+    ),
   }),
 );
 
@@ -1825,6 +1843,18 @@ export const runs = pgTable(
   {
     id: text("id").primaryKey(),
     runKind: text("run_kind", { enum: RUN_KINDS }).notNull().default("flow"),
+    agentKind: text("agent_kind", {
+      enum: ["code_delivery", "operational"],
+    }).$type<AgentKind>(),
+    operationalIntegrityBaseline: jsonb(
+      "operational_integrity_baseline",
+    ).$type<OperationalIntegrityBaseline>(),
+    operationalTerminal: jsonb(
+      "operational_terminal",
+    ).$type<OperationalTerminal>(),
+    operationalCleanup: jsonb(
+      "operational_cleanup",
+    ).$type<OperationalCleanup>(),
     // M34 (ADR-089): set iff runKind='agent'. SET NULL so run history
     // survives catalog deletes (deletes are usage-guarded for live runs).
     agentId: text("agent_id").references(() => agents.id, {
@@ -2129,6 +2159,27 @@ export const runs = pgTable(
       t.projectId,
       t.status,
     ),
+    operationalDueIndex: index("runs_operational_cleanup_due_idx")
+      .on(sql`(${t.operationalCleanup}->>'dueAt')`, t.id)
+      .where(
+        sql`${t.agentKind} = 'operational' AND ${t.operationalCleanup}->>'state' IN ('armed','retry','removed','preserving')`,
+      ),
+    operationalContractCheck: check(
+      "runs_operational_contract_check",
+      sql`((${t.agentKind} IS NULL OR ${t.agentKind} = 'code_delivery') AND coalesce(${t.resultContract}->>'kind', '') <> 'agent_operational' OR ${t.agentKind} = 'operational' AND ${t.runKind} = 'agent' AND ${t.persistent} = false AND coalesce(${t.workspaceMode}, 'own') = 'own' AND ${t.agentWorkspace} IN ('none','repo_read','worktree') AND ${t.resultContract}->>'kind' = 'agent_operational' AND ${t.resultContract}->'schemaVersion' = '1'::jsonb AND ${t.resultContract}->'semanticVersion' = '1'::jsonb AND ${t.resultContract}->'required' = 'true'::jsonb AND ${t.resultContract}->>'sha256' ~ '^[a-f0-9]{64}$' AND jsonb_typeof(${t.resultContract}->'schema') = 'object' AND jsonb_typeof(${t.resultContract}->'definition') = 'object' AND jsonb_typeof(${t.resultContract}->'provenance') = 'object') IS TRUE`,
+    ),
+    operationalTerminalCheck: check(
+      "runs_operational_terminal_check",
+      sql`(CASE WHEN ${t.agentKind} = 'operational' THEN ${t.status} <> 'Review' AND ${t.promotedHeadSha} IS NULL AND ${t.mergeCommitSha} IS NULL AND CASE WHEN ${t.status} IN ('Done','Failed','Crashed','Abandoned') THEN jsonb_typeof(${t.operationalTerminal}) = 'object' AND ${t.operationalTerminal}->'version' = '1'::jsonb AND ${t.operationalTerminal}->>'status' = ${t.status} AND ${t.operationalTerminal}->>'validation' IN ('valid','invalid','unchecked') AND ${t.operationalTerminal}->>'integrity' IN ('clean','changed','indeterminate','unchecked') AND jsonb_typeof(${t.operationalTerminal}->'reasonCodes') = 'array' AND jsonb_typeof(${t.operationalTerminal}->'evidenceIds') = 'array' AND (${t.operationalTerminal}->'successful' = 'false'::jsonb AND ${t.status} <> 'Done' AND ${t.operationalTerminal}->>'effectiveOutcome' IN ('partial','blocked','failed','cancelled','crashed') OR ${t.status} = 'Done' AND ${t.operationalTerminal}->'successful' = 'true'::jsonb AND ${t.operationalTerminal}->>'effectiveOutcome' = 'success' AND ${t.operationalTerminal}->>'validation' = 'valid' AND ${t.operationalTerminal}->>'integrity' = 'clean' AND jsonb_typeof(${t.operationalTerminal}->'resultRevision') = 'number') ELSE ${t.operationalTerminal} IS NULL END ELSE ${t.operationalTerminal} IS NULL END) IS TRUE`,
+    ),
+    operationalBaselineCheck: check(
+      "runs_operational_baseline_check",
+      sql`${t.operationalIntegrityBaseline} IS NULL OR (${t.agentKind} = 'operational' AND jsonb_typeof(${t.operationalIntegrityBaseline}) = 'object' AND ${t.operationalIntegrityBaseline}->'version' = '1'::jsonb AND jsonb_typeof(${t.operationalIntegrityBaseline}->'generation') = 'number' AND jsonb_typeof(${t.operationalIntegrityBaseline}->'source') = 'array' AND jsonb_typeof(${t.operationalIntegrityBaseline}->'platform') = 'array' AND pg_column_size(${t.operationalIntegrityBaseline}) <= 16777216) IS TRUE`,
+    ),
+    operationalCleanupCheck: check(
+      "runs_operational_cleanup_check",
+      sql`${t.operationalCleanup} IS NULL OR (${t.agentKind} = 'operational' AND jsonb_typeof(${t.operationalCleanup}) = 'object' AND ${t.operationalCleanup}->'version' = '1'::jsonb AND ${t.operationalCleanup}->>'state' IN ('retained','armed','preserving','removed','released','retry','exhausted') AND ${t.operationalCleanup}->>'resourceKind' IN ('worktree','ephemeral_checkout','plain_directory','shared_repository') AND ${t.operationalCleanup}->>'workspace' IN ('none','repo_read','worktree') AND ${t.operationalCleanup}->'attempts' IN ('0'::jsonb,'1'::jsonb,'2'::jsonb,'3'::jsonb,'4'::jsonb,'5'::jsonb) AND jsonb_typeof(${t.operationalCleanup}->'revision') = 'number' AND ${t.operationalCleanup}->>'revision' ~ '^[1-9][0-9]*$' AND jsonb_typeof(${t.operationalCleanup}->'evidenceIds') = 'array' AND (${t.operationalCleanup}->'lease' = 'null'::jsonb OR jsonb_typeof(${t.operationalCleanup}->'lease') = 'object' AND ${t.operationalCleanup}->'lease' ?& array['id','owner','expiresAt']) AND (${t.operationalCleanup}->>'state' <> 'released' OR jsonb_typeof(${t.operationalCleanup}->'releasedAt') = 'string') AND (${t.operationalCleanup}->>'state' NOT IN ('removed','released') OR jsonb_typeof(${t.operationalCleanup}->'removedAt') = 'string')) IS TRUE`,
+    ),
     flowDriverClaim: check(
       "runs_flow_driver_claim_check",
       sql`(${t.flowDriverToken} IS NULL AND ${t.flowDriverLeaseExpiresAt} IS NULL) OR (${t.runKind} = 'flow' AND ${t.flowDriverToken} IS NOT NULL AND ${t.flowDriverLeaseExpiresAt} IS NOT NULL)`,
@@ -2205,6 +2256,38 @@ export const runs = pgTable(
       .where(sql`ended_at is not null`),
     idxExecutionAssignment: index("runs_execution_assignment_idx").on(
       t.executionAssignmentId,
+    ),
+  }),
+);
+
+export const operationalRunAcknowledgements = pgTable(
+  "operational_run_acknowledgements",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    reason: text("reason", { enum: ["operation_failure", "cleanup_failure"] })
+      .$type<OperationalAttentionReason>()
+      .notNull(),
+    revision: integer("revision").notNull(),
+    acknowledgedAt: timestamp("acknowledged_at", {
+      withTimezone: true,
+      mode: "date",
+    })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.userId, table.runId, table.reason, table.revision],
+    }),
+    runIndex: index("operational_ack_run_idx").on(table.runId),
+    reasonRevisionCheck: check(
+      "operational_ack_reason_revision_check",
+      sql`${table.reason} IN ('operation_failure','cleanup_failure') AND ${table.revision} > 0`,
     ),
   }),
 );

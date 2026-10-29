@@ -61,6 +61,11 @@ import {
 } from "./workspace-paths";
 
 import { isHostPressuredError } from "@/lib/execution-host/host-pressure";
+import {
+  buildOperationalContract,
+  frozenOperationalDefinition,
+  operationalCompletionPrompt,
+} from "@/lib/agents/launch-contract";
 import { ADMISSIBLE_PROMPT_INCARNATION_STATES } from "@/lib/execution-host/session-binding";
 import { createHitlRequest } from "@/lib/runs/hitl-create";
 import {
@@ -448,6 +453,21 @@ async function loadAgentContext(
     { agentId: input.agentId, projectId: input.projectId },
     _db,
   );
+
+  if (
+    effective.parsed.kind === "operational" &&
+    (input.persistent ||
+      (input.workspaceMode === "shared" &&
+        (input.workspace ?? effective.parsed.workspace) === "worktree") ||
+      input.resultContract ||
+      input.trigger.payload?.kind === "consensus_draft")
+  ) {
+    throw new MaisterError(
+      "CONFIG",
+      "operational agents require finite standalone sessions without shared writable workspaces or delegated result profiles",
+      { details: { reason: "operational_combination_unsupported" } },
+    );
+  }
 
   if (effective.parsed.riskTier === "destructive") {
     throw new AgentLaunchError(
@@ -1388,6 +1408,7 @@ export async function launchAgentRun(
     const runRow = {
       id: runId,
       runKind: "agent" as const,
+      agentKind: ctx.effective.parsed.kind,
       executionDataPlaneMode,
       agentChainDepth: chain.depth,
       agentId: input.agentId,
@@ -1421,7 +1442,10 @@ export async function launchAgentRun(
         : null,
       // ADR-165: the launch-time public-result contract, written in the SAME
       // insert as the run it binds. NULL when the delegation named no profile.
-      resultContract: input.resultContract ?? null,
+      resultContract:
+        ctx.effective.parsed.kind === "operational"
+          ? buildOperationalContract(ctx.effective)
+          : (input.resultContract ?? null),
       // M37 Phase 8 (ADR-099): persistent swarm-member flags.
       persistent: input.persistent ?? false,
       addressableKey: input.addressableKey ?? null,
@@ -3375,10 +3399,12 @@ async function driveAgentSession(
   let effective: EffectiveAgentDefinition;
 
   try {
-    effective = await resolveEffectiveAgentDefinition(
-      { agentId: run.agentId as string, projectId: run.projectId as string },
-      _db,
-    );
+    effective =
+      frozenOperationalDefinition(run) ??
+      (await resolveEffectiveAgentDefinition(
+        { agentId: run.agentId as string, projectId: run.projectId as string },
+        _db,
+      ));
   } catch (err) {
     log.error(
       { runId, err: err instanceof Error ? err.message : String(err) },
@@ -3507,11 +3533,13 @@ async function driveAgentSession(
       run,
       memoryText,
     );
-    const prompt =
+    const prompt = operationalCompletionPrompt(
+      run,
       overridePrompt ??
-      (draftPayload
-        ? consensusAgentDraftPrompt(basePrompt, draftPayload)
-        : basePrompt);
+        (draftPayload
+          ? consensusAgentDraftPrompt(basePrompt, draftPayload)
+          : basePrompt),
+    );
 
     const issuedToken = await issueAgentRunToken({
       agentId: agent.id,
