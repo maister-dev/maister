@@ -2,7 +2,7 @@
 
 ## Purpose
 
-**Designed.** Own operational integrity, permission concurrency, resource disposition,
+**Implemented.** Own operational integrity, permission concurrency, resource disposition,
 cleanup, retained evidence and actionable failure history. [Results](operational-agent-results.md)
 owns business terminal mapping. This domain adds no new run status or tool approval.
 
@@ -82,7 +82,10 @@ prove misconduct. Only attributable source-contract violation quarantines the ag
 Shared-parent unrelated changes are conflict, never authority to reset the parent.
 Use existing output/evidence caps; integrity traversal is capped at 100000 entries,
 256 MiB hashed source/materialization bytes and 30s per probe; exceeding a cap is
-indeterminate, not clean. Do not follow symlinks into foreign roots.
+indeterminate, not clean. Do not follow symlinks into foreign roots. A replaced root symlink, Git local or
+worktree configuration drift, or a new .git directory in a plain resource fails
+verification. Configuration bytes are hashed with bounded no-follow reads; raw
+configuration is never returned in the public projection.
 
 ### Cleanup protocol
 
@@ -114,7 +117,11 @@ settle another. Orphaned request persistence failure releases its deferred; ambi
 delivery/ACK loss reconciles the same durable intent without cancellation or a
 second answer. Checkpoint/reissue preserves original prompt provenance and SQL
 supersession constraints. Normal business-question HITL remains separate and a
-question answer never substitutes for required terminal output.
+question answer never substitutes for required terminal output. Independent
+operational questions are not superseded by a task-bound code successor. Sequential
+questions retain each confirmed answer in the resumed frozen prompt. If a checkpoint
+contains conflicting permission source generations, it becomes Crashed with retained
+evidence and a reconciliation reason instead of replaying either ambiguous choice.
 
 History distinguishes scheduler dispatch from business outcome. Terminal operational
 rows leave every active-working-copy projection immediately, even while cleanup is

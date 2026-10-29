@@ -3,7 +3,7 @@ info:
   title: Operational agent lifecycle facts
   version: 1.0.0
   description: >-
-    Designed — transactional domain-outbox facts for operational attention and
+    Implemented — transactional domain-outbox facts for operational attention and
     cleanup. No new transport, scheduler or run status. Existing terminal events
     remain authoritative for business completion. Payloads are content-free pointers.
 channels:

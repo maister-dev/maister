@@ -906,3 +906,7 @@ push cannot undo a local commit. Auth checks precede body diagnostics. Detailed
 operation IDs/paths/content are limited to the authorized principal/project;
 scalar viewer status contains no repository content. See the
 [persistence domain](system-analytics/project-config-persistence.md).
+
+## Operational agents
+
+Operational contract/combination failures use CONFIG or PRECONDITION before execution. Delivery refusals use PRECONDITION with `operational_delivery_forbidden`; stale attention/cleanup revisions use CONFLICT. Missing or malformed completion cannot become success; source integrity and cleanup failures retain typed reason codes in the operational result view.

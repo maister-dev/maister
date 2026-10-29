@@ -1480,3 +1480,7 @@ operator runbook: [`deployment.md`](deployment.md#14-stage-b-execution-data-cut-
 - [Architecture](../.ai-factory/ARCHITECTURE.md) — dependency rules; the supervisor↔web wire contract
 
 Supervisor boot requires Node >=24.15.0 <25. Runtime pressure and projection settings have their canonical defaults in [configuration](configuration.md#ab-stabilization-resource-budget-implemented). SIGTERM/SIGINT stops admission and waits for child exit, pipe drain and durable terminal evidence before closing SQLite. Unconfirmed drain exits nonzero and leaves durable receipts for recovery.
+
+## Operational agents
+
+Operational agents use the existing session/input/permission protocol and assignment fences. Multiple permission requests retain separate request IDs, choices and delivery receipts; checkpoint continuation does not grant unanswered requests. No operational-kind-specific supervisor wire field or automatic approval is introduced.

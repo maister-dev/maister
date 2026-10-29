@@ -2,7 +2,7 @@
 
 ## Purpose
 
-**Designed.** Own operational_v1 validation, reported versus effective outcome,
+**Implemented.** Own operational_v1 validation, reported versus effective outcome,
 terminal mapping and diagnostic collection. [Definitions](operational-agents.md)
 freeze the contract; [lifecycle](operational-agent-lifecycle.md) owns resource safety.
 
@@ -119,3 +119,7 @@ a failed code-delivery result usable. Live operations expose pending, not succes
 - [Lifecycle](operational-agent-lifecycle.md), [traceability](operational-agents-traceability.md), [persistence](../db/operational-agents-domain.md).
 - [Web OpenAPI](../api/web.openapi.yaml), [external operations](../api/external/operations.openapi.yaml).
 - Source seams: `web/lib/run-results/`, `web/lib/agents/finalization.ts`, `web/lib/agents/prompt-owner.ts`, `web/lib/runs/run-result-dto.ts`.
+
+Task reference links are resolved by the shared diagnostic projection only within
+the run's project. Unknown or foreign task IDs remain text; an agent-supplied task
+URL cannot override this boundary. Non-task references retain validated HTTP(S) URLs.

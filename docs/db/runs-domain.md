@@ -926,3 +926,7 @@ final idle decision returns a graph-owned run from `NeedsInputIdle` to
 the durable parent input. At capacity it remains idle with
 `resume_requested_at`. The parent/child HITL records make restart recovery
 deterministic without an ACP permission session.
+
+## Operational agents
+
+Operational runs freeze `agent_kind` and `result_contract`; integrity generations append exact platform materialization over immutable source witnesses. Effective terminal receipts refer to the exact run_results revision. Cleanup state progresses independently of business status. See [operational persistence](operational-agents-domain.md).

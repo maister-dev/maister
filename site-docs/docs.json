@@ -113,6 +113,7 @@
               "guides/message-a-running-agent",
               "guides/review-and-promote",
               "guides/run-git",
+              "guides/operational-agents",
               "guides/review-rework-and-takeover",
               "guides/studio-and-evaluation"
             ]
@@ -200,6 +201,7 @@
               "ru/guides/message-a-running-agent",
               "ru/guides/review-and-promote",
               "ru/guides/run-git",
+              "ru/guides/operational-agents",
               "ru/guides/review-rework-and-takeover",
               "ru/guides/studio-and-evaluation"
             ]

@@ -217,6 +217,14 @@ web/lib/supervisor-client ──HTTP──► supervisor/src/http-api  ──►
 ```
 
 - ✅ Route Handler (`app/api/.../route.ts`) imports from `lib/*`.
+- Operational agent routes delegate to `lib/runs/operational-attention.ts`;
+  run detail, collect and automation history share
+  `lib/run-results/operational-projection.ts`. The launcher freezes purpose and
+  completion in `lib/agents/launch-contract.ts`; terminal finalization arms
+  `lib/gc/operational-disposition.ts` after commit. These modules reuse the
+  existing result, domain-event, execution-host and workspace lifecycle ledgers.
+  [Operational contracts](../docs/system-analytics/operational-agents.md) own
+  their validated combinations and recovery semantics.
 - ✅ Server Action (`app/.../actions.ts`) imports from `lib/*`.
 - ✅ `lib/supervisor-client.ts` imports the wire error taxonomy plus a small set
   of client-safe pure modules (the execution-host lag predicate and default,

@@ -1,0 +1,8 @@
+schemaVersion: 1
+name: core
+compat:
+  engine_min: "3.9.0"
+flows: []
+capabilities:
+  - { id: core-bundle, path: capability }
+mcps: []

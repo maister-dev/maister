@@ -5548,3 +5548,7 @@ and per-reader operational_run_acknowledgements. Existing result_contract and
 workspaces lifecycle records remain authoritative. Historical rows receive no
 operational backfill. Named immutable/terminal constraints and seeded incremental
 upgrade tests must pass before these additions are marked Implemented.
+
+## Operational agents
+
+Operational agents add definition kind/completion, frozen run kind/result contract, immutable integrity baseline generations and terminal receipt, durable cleanup intent, per-user reason/revision acknowledgements and bounded cleanup progress. See [operational persistence](db/operational-agents-domain.md) and the generated ERD.

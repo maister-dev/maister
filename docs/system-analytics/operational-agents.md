@@ -2,7 +2,7 @@
 
 ## Purpose
 
-**Designed.** Define agents whose deliverable is an external or MAIster operation
+**Implemented.** Define agents whose deliverable is an external or MAIster operation
 and its evidence. This domain owns definition/compatibility/launch semantics;
 [results](operational-agent-results.md) and [lifecycle](operational-agent-lifecycle.md)
 own terminal decisions and resources. See [ADR-194](../decisions/adr-194.md).
@@ -63,7 +63,7 @@ make shell available in those modes. Both intake variants keep worktree/session.
 
 Package `compat.engine_min` must be >=3.9.0 for operational declarations. Optional
 engine_max is inclusive. Absent compat on legacy packages retains current behavior.
-An older strict package parser refuses the new package floor. Remote/local install,
+An older engine refuses the new package floor. Remote/local install,
 attach/update, Studio validation, registry projection, compatibility CLI and
 effective launch enforce the same operational declaration. Unknown contracts fail.
 

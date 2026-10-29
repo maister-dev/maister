@@ -93,3 +93,6 @@ it before removal. Verify publication succeeded before relying on a remote copy.
 - [Review and promote](/guides/review-and-promote)
 - [Review, rework, and human takeover](/guides/review-rework-and-takeover)
 - [Run history and Run workspace](/product-tour/run-history-and-workbench)
+
+
+Operational agents use a result and evidence view with automatic execution-workspace cleanup. Their Runs have no Git delivery actions; see [operational agents](/guides/operational-agents).

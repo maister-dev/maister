@@ -143,7 +143,7 @@ export function testIdPattern(prefixes) {
 // A test id mentioned in a header COMMENT is not a test — scan only the TITLES
 // of `describe` / `it` / `test`, which is what "resolves to a real test" means.
 const TEST_TITLE_RE =
-  /\b(?:describe|it|test)(?:\.\w+)?\s*\(\s*(["'`])((?:\\.|(?!\1)[\s\S])*?)\1/g;
+  /\b(?:describe|it|test)(?:\.(?!each\b)\w+)*(?:\.each\s*\(\s*\[[\s\S]*?\]\s*\))?\s*\(\s*(["'`])((?:\\.|(?!\1)[\s\S])*?)\1/g;
 
 export function testIdsInSource(src, prefixes) {
   const found = new Set();

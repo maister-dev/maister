@@ -227,3 +227,7 @@ under the new `package_name` key.
   [`../decisions.md`](../decisions.md).
 - Source (Implemented): `web/lib/db/schema.ts` (migration `0049_platform_agents.sql`);
   per-package reshape `web/lib/db/migrations/0068_m39_package_agents.sql` (Implemented — ADR-106).
+
+## Operational agents
+
+The `kind` and `completion_contract` definition columns default to code delivery and no operational contract. Registry SET/CLEAR/re-SET follows package bytes. Runs snapshot launch semantics; catalog resync never reclassifies historical attempts. See [operational persistence](operational-agents-domain.md).

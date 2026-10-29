@@ -87,6 +87,15 @@ test("only describe/it/test titles count as resolvable test ids", () => {
   assert.deepEqual([...ids].sort(), ["IT-EDGE-LCV-01", "IT-LCV-01"]);
 });
 
+test("resolves literal table-driven test titles without counting data as tests", () => {
+  const ids = testIdsInSource(
+    `it.each([0, 1])("IT-OPR-01 completes %i items", () => {});\n` +
+    `test.each([{ note: "IT-OPR-09", values: [1, 2] }])(\n"IT-OPR-02 validates a result", () => {});`,
+    ["OPR"],
+  );
+  assert.deepEqual([...ids].sort(), ["IT-OPR-01", "IT-OPR-02"]);
+});
+
 // Regression pin: every M51 requirement must name an enforcing plan task.
 test("M51 group has complete task and test coverage", () => {
   const { failures, ids, rows } = checkGroupCoverage(COVERAGE_GROUPS.m51);

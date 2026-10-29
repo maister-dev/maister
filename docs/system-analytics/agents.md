@@ -917,3 +917,7 @@ single-active-run guards.
   `web/lib/packages/attach.ts` (registration wiring, Implemented — ADR-106),
   `web/lib/runs/keepalive-sweeper.ts` (budget terminal),
   `web/lib/scheduler/handlers/agent-tick.ts`, `web/lib/domain-events/consumers.ts`.
+
+## Operational agents
+
+Operational definitions separate kind, execution mode, workspace access and approval policy. The immutable launch and compatibility rules are owned by [operational agents](operational-agents.md); code-delivery defaults are unchanged.

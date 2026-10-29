@@ -119,3 +119,7 @@ erDiagram
 - [`../system-analytics/notifications.md`](../system-analytics/notifications.md)
 - [`webhooks.md`](webhooks.md) — the widened ADR-077 tables
 - [`../database-schema.md`](../database-schema.md) — exact DDL
+
+## Operational agents
+
+Operational acknowledgements are keyed by user, run, reason and revision. New cleanup failures reopen attention; acknowledging one reader never hides another reader item. See [operational persistence](operational-agents-domain.md).

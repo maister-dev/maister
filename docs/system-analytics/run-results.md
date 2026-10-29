@@ -364,3 +364,7 @@ The result value reuses the ADR-162 limits through ONE validator
 - Source: `web/lib/run-results/` · `web/lib/orchestrator/bounds.ts` ·
   `web/lib/flows/runner-graph.ts` · `web/lib/agents/launch.ts` ·
   `web/app/api/v1/ext/runs/collect/route.ts`
+
+## Operational agents
+
+Operational contracts reuse this ledger. The exact terminal revision is also projected as diagnostic `operationalOutcome` on failed Runs; the ordinary failure result remains unavailable. See [operational results](operational-agent-results.md).

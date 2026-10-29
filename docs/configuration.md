@@ -1639,3 +1639,7 @@ uses the same root; moving or deleting it during an accepted operation requires
 operator repair. Terminal cleanup removes only verified owned material and exposes
 `retained` with an actionable reason when private content differs. The first commit uses private empty
 scaffolding and normal commit amend/hooks, so bookworm's Git need not be upgraded.
+
+## Operational agents
+
+Agent definitions may declare `kind: operational` and `completion: { contract: operational_v1 }` under a package engine floor of 3.9.0. Kind does not enable automatic approval or replace workspace/mode. The frozen structured completion and resource rules are specified in [operational agents](system-analytics/operational-agents.md).

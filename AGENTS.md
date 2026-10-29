@@ -148,6 +148,9 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | `web/lib/supervisor-client.ts` | The ONLY place `web/` talks to `supervisor/` (HTTP+SSE) |
 | `web/lib/errors.ts` | `MaisterError` discriminated union (11 codes) |
 | `web/lib/db/schema.ts` | Drizzle schema; `node_attempts` is the sole Flow execution ledger |
+| `web/lib/agents/launch-contract.ts` | Immutable agent kind, definition and operational completion snapshots |
+| `web/lib/run-results/operational-projection.ts` | Shared operational diagnostic projection for run details, collect and automation history |
+| `web/lib/gc/operational-disposition.ts` | Durable operational cleanup through existing workspace lifecycle claims |
 | `web/lib/execution-host/events/projection-runtime.ts` | Autonomous canonical projection registry and worker activation |
 | `web/lib/config.ts` | `maister.yaml` v2 loader (zod-validated) |
 | `web/lib/project-config-persistence/` | Reviewed configuration projection, commit/push intents, Git publication and recovery |
