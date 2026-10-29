@@ -2067,7 +2067,12 @@ paths:
                       resultStatus: valid
                       result:
                         schemaRef: "rah@1a2b3c4d5e6f:research-result.v1"
-                        value: { summary: "No dependency cycles found.", outcome: completed, payload: {} }
+                        value:
+                          {
+                            summary: "No dependency cycles found.",
+                            outcome: completed,
+                            payload: {},
+                          }
                       resultRevision: 1
                       resultFailure: null
                       artifacts:
@@ -2089,7 +2094,7 @@ paths:
                       resultRevision: null
                       resultFailure:
                         reason: schema_mismatch
-                        message: "field \"outcome\": expected one of completed|blocked|needs_input"
+                        message: 'field "outcome": expected one of completed|blocked|needs_input'
                       artifacts: []
                       diffRef: null
                       outputText: null
@@ -2250,7 +2255,8 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [childRunId, messageId, status, messageState, delivery]
+                required:
+                  [childRunId, messageId, status, messageState, delivery]
                 properties:
                   delivery:
                     type: string
@@ -2475,7 +2481,20 @@ paths:
                     format: uuid
                   status:
                     type: string
-                    enum: [Pending, Running, NeedsInput, NeedsInputIdle, HumanWorking, WaitingOnChildren, Review, Crashed, Done, Abandoned, Failed]
+                    enum:
+                      [
+                        Pending,
+                        Running,
+                        NeedsInput,
+                        NeedsInputIdle,
+                        HumanWorking,
+                        WaitingOnChildren,
+                        Review,
+                        Crashed,
+                        Done,
+                        Abandoned,
+                        Failed,
+                      ]
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
         "403":
@@ -3452,7 +3471,9 @@ paths:
                   items:
                     type: array
                     items:
-                      { $ref: "#/components/schemas/ExtNotificationSubscription" }
+                      {
+                        $ref: "#/components/schemas/ExtNotificationSubscription",
+                      }
                   count:
                     type: integer
                     minimum: 0
@@ -4373,7 +4394,8 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/ExtTaskClarificationRequestBody" }
+            schema:
+              { $ref: "#/components/schemas/ExtTaskClarificationRequestBody" }
       responses:
         "201":
           description: Clarification requested; the recipient is notified.
@@ -4384,7 +4406,8 @@ paths:
                 additionalProperties: false
                 required: [clarification]
                 properties:
-                  clarification: { $ref: "#/components/schemas/TaskClarification" }
+                  clarification:
+                    { $ref: "#/components/schemas/TaskClarification" }
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
         "403":
@@ -4447,7 +4470,8 @@ paths:
                 additionalProperties: false
                 required: [clarification]
                 properties:
-                  clarification: { $ref: "#/components/schemas/TaskClarification" }
+                  clarification:
+                    { $ref: "#/components/schemas/TaskClarification" }
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
         "403":
@@ -4523,7 +4547,8 @@ paths:
                 additionalProperties: false
                 required: [clarification]
                 properties:
-                  clarification: { $ref: "#/components/schemas/TaskClarification" }
+                  clarification:
+                    { $ref: "#/components/schemas/TaskClarification" }
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
         "403":
@@ -4804,7 +4829,8 @@ paths:
           description: Matching messages, at most 20.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/LibrarianHistorySearchResult" }
+              schema:
+                { $ref: "#/components/schemas/LibrarianHistorySearchResult" }
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
         "403":
@@ -5177,7 +5203,8 @@ components:
           maxItems: 100
           items:
             $ref: "#/components/schemas/OperationalDiagnostic"
-      description: Designed — fixed operational_v1 value. Existing output limits plus
+      description:
+        Designed — fixed operational_v1 value. Existing output limits plus
         operational count/coverage/outcome/link semantics apply; schema validity is
         distinct from business success.
     OperationalCompletionDeclaration:
@@ -5223,6 +5250,7 @@ components:
         - attempts
         - dueAt
         - errorCode
+        - evidenceIds
       properties:
         state:
           type: string
@@ -5248,6 +5276,10 @@ components:
         errorCode:
           type: string
           nullable: true
+        evidenceIds:
+          type: array
+          items: { type: string }
+          description: Opaque retained diagnostic object IDs, authorized through the run object-content endpoint.
     OperationalOutcome:
       type: object
       additionalProperties: false
@@ -5261,6 +5293,7 @@ components:
         - integrity
         - resultRevision
         - reportedResult
+        - referenceLinks
         - reasonCodes
         - cleanup
       properties:
@@ -5318,6 +5351,21 @@ components:
           allOf:
             - $ref: "#/components/schemas/OperationalResultV1"
           nullable: true
+        referenceLinks:
+          type: array
+          description: Safe declared external links and server-resolved task links within the Run project. The reported result remains unchanged.
+          items:
+            type: object
+            additionalProperties: false
+            required: [kind, id, href]
+            properties:
+              kind:
+                {
+                  type: string,
+                  enum: [task, external_issue, operation_receipt, other],
+                }
+              id: { type: string }
+              href: { type: string, maxLength: 2048 }
         reasonCodes:
           type: array
           items:
@@ -5328,7 +5376,8 @@ components:
           allOf:
             - $ref: "#/components/schemas/OperationalCleanupState"
           nullable: true
-      description: Designed — platform terminal receipt joined to the exact validated
+      description:
+        Designed — platform terminal receipt joined to the exact validated
         result revision. Failed ordinary result remains unavailable; this diagnostic
         projection never makes it a successful answer.
 
@@ -5377,7 +5426,23 @@ components:
 
     HitlRespondReason:
       type: string
-      enum: [permission_resume_in_flight, assignment_fenced, prompt_owner_deferred, prompt_owner_invariant, already_delivered, option_mismatch, not_awaiting_input, agent_session_ended, delivery_unavailable, permission_delivery_rejected, session_ended, permission_not_pending, edit_lock_not_held, event_outbox_backpressure]
+      enum:
+        [
+          permission_resume_in_flight,
+          assignment_fenced,
+          prompt_owner_deferred,
+          prompt_owner_invariant,
+          already_delivered,
+          option_mismatch,
+          not_awaiting_input,
+          agent_session_ended,
+          delivery_unavailable,
+          permission_delivery_rejected,
+          session_ended,
+          permission_not_pending,
+          edit_lock_not_held,
+          event_outbox_backpressure,
+        ]
       description: |
         `agent_session_ended` is deprecated: no producer since 2026-09-26 (a
         dead session answers 409 `session_ended`); it stays for clients that
@@ -5390,7 +5455,7 @@ components:
         reason: { $ref: "#/components/schemas/HitlRespondReason" }
         causeCode:
           type: string
-          pattern: '^[a-z][a-z0-9_]{0,63}$'
+          pattern: "^[a-z][a-z0-9_]{0,63}$"
     ExtHitlRespondErrorBody:
       allOf:
         - { $ref: "#/components/schemas/ExtErrorBody" }
@@ -5415,7 +5480,16 @@ components:
               required: [reason]
               additionalProperties: false
               properties:
-                reason: { type: string, enum: [permission_not_pending, permission_delivery_rejected, agent_session_ended] }
+                reason:
+                  {
+                    type: string,
+                    enum:
+                      [
+                        permission_not_pending,
+                        permission_delivery_rejected,
+                        agent_session_ended,
+                      ],
+                  }
     ExtHitlRespondSavedError:
       allOf:
         - { $ref: "#/components/schemas/ExtHitlRespondErrorBody" }
@@ -6130,7 +6204,7 @@ components:
             `toTaskKey`.
         toTaskKey:
           type: string
-          pattern: '^[A-Za-z][A-Za-z0-9]*-[0-9]+$'
+          pattern: "^[A-Za-z][A-Za-z0-9]*-[0-9]+$"
           description: |
             **(Implemented — ADR-155)** Platform-unique `KEY-N` address
             (`projects.task_key` + `tasks.number`), case-insensitive on the key
@@ -6483,7 +6557,7 @@ components:
               description: A `MaisterErrorCode`, or null when the cause has none (an abandon).
             reason:
               type: string
-              pattern: '^[a-z][a-z0-9_]{0,63}(/[a-z][a-z0-9_]{0,63})?$'
+              pattern: "^[a-z][a-z0-9_]{0,63}(/[a-z][a-z0-9_]{0,63})?$"
               description: The emitter's reason token (snake_case; the orchestrator cascade writes `cascade/<token>`).
             source:
               type: string
@@ -6786,7 +6860,15 @@ components:
         would accept those runs (its hold/lineage refusals are conditional on
         unattended attribution) and the pulse withholds them anyway.
       required:
-        [runId, taskId, taskKey, taskTitle, targetBranch, readiness, inReviewSince]
+        [
+          runId,
+          taskId,
+          taskKey,
+          taskTitle,
+          targetBranch,
+          readiness,
+          inReviewSince,
+        ]
       additionalProperties: false
       properties:
         runId:
@@ -7290,7 +7372,7 @@ components:
       properties:
         kind:
           type: string
-          enum: [hitl, promotable, crashed, flagged, clarification]
+          enum: [hitl, promotable, crashed, flagged, clarification, operational]
           description: |
             Which `decisions` population this entry came from.
             `decision_request` HITL rows are never surfaced (ADR-137).
@@ -7441,7 +7523,16 @@ components:
         crosses this boundary. NEVER includes `acp_session_id`, absolute
         worktree paths, token material, or supervisor-internal handles.
       required:
-        [projectId, projectSlug, runId, hitlRequestId, kind, title, createdAt, answerState]
+        [
+          projectId,
+          projectSlug,
+          runId,
+          hitlRequestId,
+          kind,
+          title,
+          createdAt,
+          answerState,
+        ]
       properties:
         projectId:
           type: string
@@ -7626,7 +7717,14 @@ components:
           description: Row state at response time.
         state:
           type: string
-          enum: [delivered, resume-in-progress, resume-queued, delivery-in-progress, rework-scheduled]
+          enum:
+            [
+              delivered,
+              resume-in-progress,
+              resume-queued,
+              delivery-in-progress,
+              rework-scheduled,
+            ]
           description: Present when the service reports a delivery or pending state.
 
     ExtHitlRespondAccepted:
@@ -7637,7 +7735,13 @@ components:
           properties:
             state:
               type: string
-              enum: [resume-in-progress, resume-queued, delivery-in-progress, rework-scheduled]
+              enum:
+                [
+                  resume-in-progress,
+                  resume-queued,
+                  delivery-in-progress,
+                  rework-scheduled,
+                ]
 
     FormSchemaV1:
       type: object
@@ -8111,7 +8215,8 @@ components:
           properties:
             schemaRef:
               type: string
-              description: "`<flowRefId>@<resolvedRevision[:12]>:<schemaStem>` — the contract
+              description:
+                "`<flowRefId>@<resolvedRevision[:12]>:<schemaStem>` — the contract
                 the value was validated against."
             value:
               description: |
@@ -8176,7 +8281,8 @@ components:
               nodeId:
                 type: string
                 nullable: true
-                description: (Implemented — ADR-165) Producing graph node id; null for a
+                description:
+                  (Implemented — ADR-165) Producing graph node id; null for a
                   non-graph producer.
               validity:
                 type: string
@@ -8211,7 +8317,8 @@ components:
           allOf:
             - $ref: "#/components/schemas/OperationalOutcome"
           nullable: true
-          description: Designed — validated diagnostic outcome for operational runs,
+          description:
+            Designed — validated diagnostic outcome for operational runs,
             including Failed; successful only from the committed platform receipt.
 
     ExtRunCancelBody:
@@ -8270,7 +8377,15 @@ components:
         needs the conversation.
       additionalProperties: false
       required:
-        [context, goal, acceptance, constraints, outOfScope, links, openQuestions]
+        [
+          context,
+          goal,
+          acceptance,
+          constraints,
+          outOfScope,
+          links,
+          openQuestions,
+        ]
       properties:
         context:
           type: string
@@ -8777,7 +8892,14 @@ components:
       properties:
         action:
           type: string
-          enum: [statement_accept, hitl_respond, run_promote, run_discard, memory_suggest]
+          enum:
+            [
+              statement_accept,
+              hitl_respond,
+              run_promote,
+              run_discard,
+              memory_suggest,
+            ]
         taskId: { type: string, format: uuid }
         expectedRevision: { type: integer, minimum: 0 }
         statement: { type: object }

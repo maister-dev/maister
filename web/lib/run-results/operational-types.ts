@@ -64,6 +64,7 @@ export type OperationalIntegrityBaseline = {
   indexContentDigest: string | null;
   historyDigest: string | null;
   gitIdentity: string | null;
+  gitConfigDigest?: string | null;
   refs: Array<{ ref: string; sha: string }>;
   source: OperationalIntegrityEntry[];
   platform: OperationalIntegrityEntry[];
@@ -123,6 +124,11 @@ export type OperationalOutcome = {
   integrity: "pending" | OperationalIntegrityVerdict;
   resultRevision: number | null;
   reportedResult: OperationalResultV1 | null;
+  referenceLinks: Array<{
+    kind: OperationalReference["kind"];
+    id: string;
+    href: string;
+  }>;
   reasonCodes: string[];
   cleanup: Pick<
     OperationalCleanup,

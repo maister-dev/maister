@@ -73,6 +73,8 @@ export type AttachedAgentRow = {
     id: string;
     name: string;
     packageName: string;
+    kind?: "code_delivery" | "operational";
+    completion?: { contract: "operational_v1" } | null;
     workspace: string;
     mode: string;
     triggers: string[];
@@ -313,7 +315,12 @@ export function AgentsAttachPanel({
                   ) : null}
                 </td>
                 <td className="px-4 py-3 text-ink-2">
-                  {row.agent.workspace} · {row.agent.mode}
+                  {row.agent.workspace} · {row.agent.mode} ·{" "}
+                  {t(
+                    row.agent.kind === "operational"
+                      ? "kindOperational"
+                      : "kindCodeDelivery",
+                  )}
                 </td>
                 <td className="px-4 py-3 font-mono text-ink-2">
                   {row.runnerOverrideId ?? "—"}

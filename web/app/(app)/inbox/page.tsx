@@ -84,6 +84,7 @@ export default async function InboxPage(): Promise<ReactElement> {
               crashedTitle: t("decisions.crashedTitle"),
               flaggedTitle: t("decisions.flaggedTitle"),
               clarificationTitle: t("decisions.clarificationTitle"),
+              operationalTitle: t("decisions.operationalTitle"),
               review: t("decisions.review"),
               openTask: t("decisions.openTask"),
               stage: stageLabels,

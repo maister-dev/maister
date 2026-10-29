@@ -49,6 +49,7 @@ const labels: RunPublicResultLabels = {
 
 function dto(over: Partial<RunPublicResultDto> = {}): RunPublicResultDto {
   return {
+    operationalOutcome: null,
     schemaRef: "core-rah@1a2b3c4d5e6f:research-result.v1",
     resultStatus: "valid",
     revision: 1,

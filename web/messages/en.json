@@ -576,7 +576,9 @@
       "resolveDone": "Sync completed.",
       "abortConfirmTitle": "Abort this sync?",
       "abortConfirm": "Abort the sync? The working tree resets to the last commit — upstream merge content is discarded."
-    }
+    },
+    "kindOperational": "Operational",
+    "kindCodeDelivery": "Code delivery"
   },
   "flows": {
     "eyebrow": "Platform package workbench",
@@ -838,7 +840,8 @@
       "flaggedTitle": "Held — flagged by triage · $count",
       "clarificationTitle": "Needs your answer · $count",
       "review": "Review and promote",
-      "openTask": "Open the task"
+      "openTask": "Open the task",
+      "operationalTitle": "Operations requiring attention · $count"
     }
   },
   "mcps": {
@@ -4743,7 +4746,9 @@
         "secretNotice": "Secrets are referenced by env:NAME only and resolved at run time.",
         "rawHeading": "Template (YAML)",
         "invalidNotice": "Template YAML does not parse."
-      }
+      },
+      "agentKind": "Deliverable kind",
+      "agentCompletion": "Completion contract"
     }
   },
   "apiErrors": {
@@ -5050,7 +5055,9 @@
     "loading": "Loading…",
     "loadError": "Could not load the agent definition.",
     "fieldId": "ID",
-    "fieldName": "Name"
+    "fieldName": "Name",
+    "kindOperational": "Operational",
+    "kindCodeDelivery": "Code delivery"
   },
   "agentsAttach": {
     "title": "Agents attached to this project",
@@ -5127,7 +5134,9 @@
     "crossProjectAdmits": "Admits only: read tasks · create tasks · read and post comments · create and delete task relations.",
     "crossProjectDenies": "Never admits: starting or controlling runs, triage, editing existing tasks, HITL requests, the flow and runner catalogs, Project Brain, or agent memory.",
     "crossProjectInert": "Applies only while this attachment is enabled — enable it above, or the grant stays inert.",
-    "crossProjectActive": "Grant is live for this project"
+    "crossProjectActive": "Grant is live for this project",
+    "kindOperational": "Operational",
+    "kindCodeDelivery": "Code delivery"
   },
   "autoPromotion": {
     "reason": {
@@ -5867,5 +5876,54 @@
     "memorySave": "Save",
     "memoryCancelEdit": "Cancel edit",
     "memoryError": "Memory could not be changed. Review its current state and try again."
+  },
+  "operationalAgents": {
+    "title": "Operation result",
+    "pending": "In progress",
+    "success": "Done",
+    "partial": "Partially completed",
+    "blocked": "Blocked",
+    "failed": "Failed",
+    "cancelled": "Cancelled",
+    "crashed": "Execution interrupted",
+    "zeroWork": "Scan completed successfully; no new work.",
+    "awaitingResult": "Waiting for the structured operation result.",
+    "invalidResult": "The required result is missing or invalid. Inspect execution evidence before starting a new attempt.",
+    "remediation": "Next step",
+    "reasons": "Diagnostic codes",
+    "integrity": "Source integrity",
+    "cleanup": "Workspace cleanup",
+    "evidence": "Execution evidence",
+    "confirmed": "Confirmed",
+    "unresolved": "Needs reconciliation",
+    "acknowledge": "Acknowledge operation failure",
+    "acknowledgeCleanup": "Acknowledge cleanup failure",
+    "retryCleanup": "Retry workspace cleanup",
+    "actionFailed": "Action failed (HTTP {status}). Refresh and review the current revision.",
+    "connectionFailed": "Connection failed. Refresh to reconcile the action before retrying.",
+    "counts": {
+      "scanned": "Scanned",
+      "attempted": "Attempted",
+      "completed": "Completed",
+      "failed": "Failed",
+      "skipped": "Skipped",
+      "created": "Created"
+    },
+    "integrityState": {
+      "pending": "Pending",
+      "clean": "Unchanged",
+      "changed": "Unexpected changes preserved",
+      "indeterminate": "Could not verify",
+      "unchecked": "Not checked"
+    },
+    "cleanupState": {
+      "retained": "Retained for diagnosis",
+      "armed": "Scheduled",
+      "preserving": "Preserving evidence",
+      "removed": "Local workspace removed",
+      "released": "Released",
+      "retry": "Retry scheduled",
+      "exhausted": "Needs operator action"
+    }
   }
 }

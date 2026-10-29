@@ -225,3 +225,7 @@ reviewable changes. Other scope controls remain forensic and explicitly named.
   [ADR-141](../../decisions.md#adr-141-branch-sync-with-ai-conflict-resolver-and-reopen).
 - Source: `web/components/workbench/lifecycle-actions.tsx`,
   `web/lib/workbench-lifecycle/policy.ts`, `web/lib/runs/promote.ts`.
+
+## Operational agents
+
+Operational Runs use the canonical operational outcome projection. Acknowledge exact failure revisions per reader or re-arm exhausted cleanup with the current revision; neither action repeats the external operation. Evidence links keep their repository-read authorization.

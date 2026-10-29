@@ -210,6 +210,7 @@ export interface RunDetail {
   agent: CapabilityAgent | null;
   // Run kind drives the Review surface: flow and worktree-agent runs use the
   // ReviewPanel; scratch runs keep their own promote affordance.
+  agentKind: "code_delivery" | "operational" | null;
   runKind: "flow" | "scratch" | "agent";
   // M18: the parent repo path + workspace branch/promotion ledger (nullable on
   // pre-M18 rows; the run-detail page derives safe fallbacks, see §3.6).
@@ -486,6 +487,7 @@ export const getRunDetail = cache(async function getRunDetail(
       status: runs.status,
       startedAt: runs.startedAt,
       runKind: runs.runKind,
+      agentKind: runs.agentKind,
       // ADR-160: eligibility terms the continuation block gates on. Without
       // them the derivation reads `null` and would offer a claim on an
       // orchestrator child or a shared-tree run.
@@ -831,6 +833,7 @@ export const getRunDetail = cache(async function getRunDetail(
       status: row.status,
       workspaceMode: row.workspaceMode,
       agentWorkspace: row.agentWorkspace,
+      agentKind: row.agentKind,
       rootRunId: row.rootRunId,
       parentRunId: row.parentRunId,
     },
@@ -893,6 +896,7 @@ export const getRunDetail = cache(async function getRunDetail(
     endedAt: row.endedAt,
     runKind: row.runKind,
     currentStepId: row.currentStepId,
+    agentKind: row.agentKind,
     branch,
     worktreePath,
     parentRepoPath,

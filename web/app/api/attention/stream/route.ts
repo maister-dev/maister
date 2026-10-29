@@ -285,6 +285,7 @@ export async function GET(req: NextRequest): Promise<Response> {
       // every comparison. A reader's baseline counts as sent (D7).
       let sentDecisions = baseline?.decisions ?? -1;
       let sentUpdates = baseline?.updates ?? -1;
+      let sentDecisionSignature: string | null = null;
       let lastCounterCheckAt = 0;
       let lastChangeAt = Date.now();
       let closed = false;
@@ -304,6 +305,7 @@ export async function GET(req: NextRequest): Promise<Response> {
       const counters = async (): Promise<{
         decisions: number;
         updates: number;
+        decisionSignature: string;
       }> => {
         // `computeDecisionsQueue`, NOT the React-cached `getDecisionsQueue`: a
         // request-scoped memo would freeze this loop's counter at the value it
@@ -315,13 +317,24 @@ export async function GET(req: NextRequest): Promise<Response> {
 
         lastCounterCheckAt = Date.now();
 
-        return { decisions: queue.count, updates };
+        return {
+          decisions: queue.count,
+          updates,
+          decisionSignature: queue.items
+            .map((item) => item.id)
+            .sort()
+            .join("|"),
+        };
       };
 
       const emitTick = (
         changed: AttentionRegion[],
         projectIds: string[],
-        current: { decisions: number; updates: number },
+        current: {
+          decisions: number;
+          updates: number;
+          decisionSignature: string;
+        },
       ): void => {
         const frame: AttentionTickEvent = {
           type: "attention.tick",
@@ -345,6 +358,7 @@ export async function GET(req: NextRequest): Promise<Response> {
             }),
           ),
         );
+        sentDecisionSignature = current.decisionSignature;
         sentDecisions = current.decisions;
         sentUpdates = current.updates;
       };
@@ -400,7 +414,9 @@ export async function GET(req: NextRequest): Promise<Response> {
             // A moved row changes what both cross-project surfaces render; the
             // decision queue only when its own count moved.
             emitTick(
-              current.decisions === sentDecisions
+              (sentDecisionSignature === null ||
+                current.decisionSignature === sentDecisionSignature) &&
+                current.decisions === sentDecisions
                 ? ["work", "activity"]
                 : ["decisions", "work", "activity"],
               changed.map((row) => row.projectId),
@@ -410,7 +426,11 @@ export async function GET(req: NextRequest): Promise<Response> {
           } else if (dueCounters) {
             const current = await counters();
 
+            if (sentDecisionSignature === null)
+              sentDecisionSignature = current.decisionSignature;
+
             if (
+              current.decisionSignature !== sentDecisionSignature ||
               current.decisions !== sentDecisions ||
               current.updates !== sentUpdates
             ) {
@@ -419,7 +439,11 @@ export async function GET(req: NextRequest): Promise<Response> {
               // written while the scan was in flight.
               const moved: AttentionRegion[] = [];
 
-              if (current.decisions !== sentDecisions) moved.push("decisions");
+              if (
+                current.decisions !== sentDecisions ||
+                current.decisionSignature !== sentDecisionSignature
+              )
+                moved.push("decisions");
               if (current.updates !== sentUpdates) moved.push("activity");
               emitTick(moved, [], current);
               lastChangeAt = Date.now();

@@ -24,6 +24,8 @@ const FRONTMATTER_LABELS = {
   bodyHeading: "Body",
   name: "Name",
   description: "Description",
+  agentKind: "Deliverable kind",
+  agentCompletion: "Completion contract",
   agentWorkspace: "Workspace",
   agentWorkspaceRef: "Workspace ref",
   agentMode: "Mode",

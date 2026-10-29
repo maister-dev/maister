@@ -31,6 +31,8 @@ import {
   vi,
 } from "vitest";
 
+import { emitDomainEvent } from "@/lib/domain-events/outbox";
+import { operationalContractFixture } from "@/test-support/operational-agent";
 import { MaisterError } from "@/lib/errors";
 import { platformAcpRunners, runSessions, runs } from "@/lib/db/schema";
 import { testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
@@ -814,3 +816,92 @@ describe("IT-ATN-16 work invalidation covers run transitions and node progress",
     ).toContain(fx.project);
   }, 30_000);
 });
+
+it("IT-EDGE-OPL-08 equal-count operational reason replacement invalidates decisions", async () => {
+  const runId = randomUUID();
+  const terminal = {
+    version: 1,
+    status: "Abandoned",
+    cause: "operational_cancelled",
+    effectiveOutcome: "cancelled",
+    successful: false,
+    validation: "unchecked",
+    integrity: "unchecked",
+    baselineGeneration: null,
+    resultRevision: null,
+    reasonCodes: [],
+    evidenceIds: [],
+  };
+  const cleanup = {
+    version: 1,
+    resourceKind: "plain_directory",
+    workspace: "none",
+    state: "exhausted",
+    revision: 6,
+    armedAt: new Date().toISOString(),
+    attempts: 5,
+    dueAt: null,
+    errorCode: "first_failure",
+    evidenceIds: [],
+    removedAt: null,
+    releasedAt: null,
+    lease: null,
+    rearmReceipt: null,
+  };
+
+  await pool.query(
+    `INSERT INTO runs (id,project_id,run_kind,agent_kind,agent_workspace,status,flow_version,result_contract,operational_terminal,operational_cleanup,ended_at) VALUES ($1,$2,'agent','operational','none','Abandoned','agent',$3::jsonb,$4::jsonb,$5::jsonb,now())`,
+    [
+      runId,
+      fx.project,
+      JSON.stringify(operationalContractFixture("none")),
+      JSON.stringify(terminal),
+      JSON.stringify(cleanup),
+    ],
+  );
+  const controller = new AbortController();
+
+  try {
+    const response = await GET(streamRequest(controller));
+    const reader = response.body!.getReader();
+    const first = await reader.read();
+    const initial = parseFrame(new TextDecoder().decode(first.value).trim());
+
+    reader.releaseLock();
+    await db.transaction(async (tx) => {
+      await tx
+        .update(runs)
+        .set({
+          operationalCleanup: {
+            ...cleanup,
+            state: "exhausted",
+            resourceKind: "plain_directory",
+            workspace: "none",
+            version: 1,
+            revision: 7,
+            errorCode: "replacement_failure",
+          },
+        })
+        .where(eq(runs.id, runId));
+      await emitDomainEvent({
+        db: tx,
+        kind: "run.operational_cleanup_changed",
+        projectId: fx.project,
+        runId,
+        payload: { runId, revision: 7, state: "exhausted" },
+      });
+    });
+    const changes = movedFrames(await collect(response, controller, 6000));
+
+    expect(
+      changes.some(
+        (frame) =>
+          frame.data?.decisions === initial.data?.decisions &&
+          (frame.data?.changed as string[]).includes("decisions"),
+      ),
+    ).toBe(true);
+  } finally {
+    controller.abort();
+    await pool.query("DELETE FROM runs WHERE id=$1", [runId]);
+  }
+}, 30_000);

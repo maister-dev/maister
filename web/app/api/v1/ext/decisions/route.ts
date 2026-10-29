@@ -21,6 +21,7 @@ function nextActionOf(
 ): "respond" | "promote" | "recover" | "discard" | "review" | "answer" {
   if (item.kind === "hitl") return "respond";
   if (item.kind === "promotable") return "promote";
+  if (item.kind === "operational") return "review";
   if (item.kind === "flagged") return "review";
   if (item.kind === "clarification") return "answer";
 
@@ -29,6 +30,7 @@ function nextActionOf(
 
 function extTitle(item: DecisionItem): string {
   if (item.kind === "hitl") return item.hitl.prompt;
+  if (item.kind === "operational") return item.operational.code;
 
   return item.taskTitle ?? item.taskKey ?? item.projectSlug;
 }

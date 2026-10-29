@@ -91,3 +91,7 @@ flowchart TD
 
 Behavior belongs in [`../../system-analytics/runs.md`](../../system-analytics/runs.md);
 this screen doc describes the surface.
+
+## Operational agents
+
+Operational history retains the actual terminal outcome after disposable workspace removal. Terminal operational Runs are historical even while diagnostic resources are retained; existing code-delivery review and retention semantics are unchanged.

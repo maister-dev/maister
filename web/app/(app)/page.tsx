@@ -267,6 +267,7 @@ export default async function DeskPage({
               crashedTitle: tInbox("decisions.crashedTitle"),
               flaggedTitle: tInbox("decisions.flaggedTitle"),
               clarificationTitle: tInbox("decisions.clarificationTitle"),
+              operationalTitle: tInbox("decisions.operationalTitle"),
               review: tInbox("decisions.review"),
               openTask: tInbox("decisions.openTask"),
               stage: workLabels.stage,

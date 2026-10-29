@@ -43,6 +43,10 @@ import {
   getActionableProjectIds,
 } from "@/lib/queries/visible-projects";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
+import {
+  listOperationalAttention,
+  type OperationalAttention,
+} from "@/lib/runs/operational-attention";
 
 const { projects } = schema;
 
@@ -57,6 +61,7 @@ export const DECISION_KINDS = [
   "promotable",
   "flagged",
   "clarification",
+  "operational",
 ] as const;
 
 export type DecisionKind = (typeof DECISION_KINDS)[number];
@@ -88,6 +93,7 @@ export interface DecisionBase extends DecisionOrderKey {
 }
 
 export type DecisionItem =
+  | (DecisionBase & { kind: "operational"; operational: OperationalAttention })
   | (DecisionBase & { kind: "hitl"; hitl: CrossProjectHitlItem })
   | (DecisionBase & { kind: "crashed"; crashed: CrashedDecisionItem })
   | (DecisionBase & { kind: "promotable"; promotable: ClassifiedPromotable })
@@ -129,6 +135,7 @@ const NON_HITL_RANK = {
   promotable: CRITICALITY_RANK.medium,
   flagged: CRITICALITY_RANK.low,
   clarification: CRITICALITY_RANK.medium,
+  operational: CRITICALITY_RANK.high,
 } as const satisfies Record<Exclude<DecisionKind, "hitl">, number>;
 
 export function decisionRank(
@@ -171,6 +178,7 @@ const STAGE_BY_KIND = {
   promotable: "Review",
   flagged: "Held",
   clarification: "WaitingOnHuman",
+  operational: "WaitingOnHuman",
 } as const satisfies Record<DecisionKind, WorkStage>;
 
 function isCriticality(value: string | null): value is DecisionCriticality {
@@ -208,26 +216,34 @@ export async function computeDecisionsQueue(
 
   if (projectIds.length === 0) return { items: [], count: 0 };
 
-  const [projectRows, hitlInbox, promotable, crashed, flagged, clarifications] =
-    await Promise.all([
-      client
-        .select({ id: projects.id, slug: projects.slug, name: projects.name })
-        .from(projects)
-        .where(inArray(projects.id, projectIds)),
-      // The resolved set goes to ALL FOUR sources. This one would otherwise
-      // resolve its own — wider — visibility set, which is what made a
-      // project-scoped count include every other project's HITL and a viewer's
-      // count include projects they cannot act in.
-      getCrossProjectHitlInbox(userId, globalRole, { projectIds }),
-      listPromotableForProjects(projectIds, { db: client }),
-      listCrashedForProjects(projectIds, { db: client }),
-      listFlaggedForProjects(projectIds, { db: client }),
-      listOpenClarificationsForRecipient(
-        userId,
-        projectIds,
-        client as ReturnType<typeof getDb>,
-      ),
-    ]);
+  const [
+    projectRows,
+    hitlInbox,
+    promotable,
+    crashed,
+    flagged,
+    clarifications,
+    operational,
+  ] = await Promise.all([
+    client
+      .select({ id: projects.id, slug: projects.slug, name: projects.name })
+      .from(projects)
+      .where(inArray(projects.id, projectIds)),
+    // The resolved set goes to ALL FOUR sources. This one would otherwise
+    // resolve its own — wider — visibility set, which is what made a
+    // project-scoped count include every other project's HITL and a viewer's
+    // count include projects they cannot act in.
+    getCrossProjectHitlInbox(userId, globalRole, { projectIds }),
+    listPromotableForProjects(projectIds, { db: client }),
+    listCrashedForProjects(projectIds, { db: client }),
+    listFlaggedForProjects(projectIds, { db: client }),
+    listOpenClarificationsForRecipient(
+      userId,
+      projectIds,
+      client as ReturnType<typeof getDb>,
+    ),
+    listOperationalAttention(client, userId, projectIds),
+  ]);
   const projectById = new Map(projectRows.map((row) => [row.id, row]));
 
   function project(projectId: string): { slug: string; name: string } {
@@ -235,6 +251,21 @@ export async function computeDecisionsQueue(
   }
 
   const unfiltered: DecisionItem[] = [
+    ...operational.map((item): DecisionItem => ({
+      kind: "operational",
+      stage: STAGE_BY_KIND.operational,
+      id: `operational:${item.runId}:${item.reason}:${item.revision}`,
+      projectId: item.projectId,
+      projectSlug: project(item.projectId).slug,
+      projectName: project(item.projectId).name,
+      taskId: item.taskId,
+      taskKey: null,
+      taskTitle: null,
+      runId: item.runId,
+      criticality: null,
+      since: item.since,
+      operational: item,
+    })),
     ...hitlInbox.items.map((item): DecisionItem => ({
       kind: "hitl",
       stage: STAGE_BY_KIND.hitl,
@@ -325,6 +356,7 @@ export async function computeDecisionsQueue(
     .filter(
       (item) =>
         item.kind === "clarification" ||
+        item.kind === "operational" ||
         item.taskId === null ||
         (blockersByTask.get(item.taskId)?.length ?? 0) === 0,
     )

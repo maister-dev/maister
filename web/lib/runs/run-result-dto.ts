@@ -1,9 +1,11 @@
 import "server-only";
 
+import type { OperationalOutcome } from "@/lib/run-results/operational-types";
 import type { ResultStatus } from "@/lib/run-results/types";
 
 import { eq } from "drizzle-orm";
 
+import { loadOperationalOutcome } from "@/lib/run-results/operational-projection";
 import * as schemaModule from "@/lib/db/schema";
 import { deriveResultStatus } from "@/lib/run-results/status";
 
@@ -18,6 +20,7 @@ type Db = any;
 // cannot leak into a client-visible payload by accident.
 
 export type RunPublicResultDto = {
+  operationalOutcome: OperationalOutcome | null;
   /** `<flowRefId>@<rev12>:<schemaStem>`; null when the run has no contract. */
   schemaRef: string | null;
   resultStatus: ResultStatus;
@@ -94,6 +97,7 @@ export async function loadRunPublicResult(
   const served = resultStatus === "valid" ? valid : null;
 
   return {
+    operationalOutcome: await loadOperationalOutcome(db, runId),
     schemaRef: run.resultContract?.schemaRef ?? newest?.schemaRef ?? null,
     resultStatus,
     revision: valid?.revision ?? newest?.revision ?? null,

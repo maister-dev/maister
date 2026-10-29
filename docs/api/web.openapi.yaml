@@ -3070,7 +3070,8 @@ paths:
                 additionalProperties: false
                 required: [clarification]
                 properties:
-                  clarification: { $ref: "#/components/schemas/TaskClarification" }
+                  clarification:
+                    { $ref: "#/components/schemas/TaskClarification" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -3113,7 +3114,8 @@ paths:
                 additionalProperties: false
                 required: [clarification]
                 properties:
-                  clarification: { $ref: "#/components/schemas/TaskClarification" }
+                  clarification:
+                    { $ref: "#/components/schemas/TaskClarification" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -5997,7 +5999,14 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [runId, dialogStatus, runStatus, supervisorStopped, workspaceActive]
+                required:
+                  [
+                    runId,
+                    dialogStatus,
+                    runStatus,
+                    supervisorStopped,
+                    workspaceActive,
+                  ]
                 properties:
                   runId: { type: string, format: uuid }
                   dialogStatus: { type: string }
@@ -6102,7 +6111,14 @@ paths:
                 oneOf:
                   - $ref: "#/components/schemas/WorkspaceLifecycleRemovalResponse"
                   - type: object
-                    required: [runId, dialogStatus, runStatus, supervisorStopped, workspaceRemoved]
+                    required:
+                      [
+                        runId,
+                        dialogStatus,
+                        runStatus,
+                        supervisorStopped,
+                        workspaceRemoved,
+                      ]
                     properties:
                       runId: { type: string, format: uuid }
                       dialogStatus: { type: string }
@@ -6291,7 +6307,12 @@ paths:
                   value:
                     code: CONFLICT
                     message: scratch run 3f1c9a52-7d4e-4b8a-9c21-6e0d5a8b7f10 is not recoverable (status NeedsInputIdle)
-                    details: { reason: scratch_not_recoverable, status: NeedsInputIdle, next: respond }
+                    details:
+                      {
+                        reason: scratch_not_recoverable,
+                        status: NeedsInputIdle,
+                        next: respond,
+                      }
         "503":
           description: |
             The execution host is unavailable retryably (`code:
@@ -7102,10 +7123,17 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "410": { description: The catalogue holds a tombstone (`runtime_object_deleted`) whose metadata remains while the bytes are gone. }
-        "422": { description: Runtime-object representation or actual response bytes fail integrity verification (`runtime_object_integrity_mismatch`). Missing host bytes are 404 (`runtime_object_missing`) with the catalogue retained. }
+        "410":
+          {
+            description: The catalogue holds a tombstone (`runtime_object_deleted`) whose metadata remains while the bytes are gone.,
+          }
+        "422":
+          {
+            description: Runtime-object representation or actual response bytes fail integrity verification (`runtime_object_integrity_mismatch`). Missing host bytes are 404 (`runtime_object_missing`) with the catalogue retained.,
+          }
         "416": { description: Range is malformed or unsatisfiable. }
-        "503": { description: The selected execution host transport is unavailable. }
+        "503":
+          { description: The selected execution host transport is unavailable. }
 
   /api/runs/{runId}/promote:
     post:
@@ -8400,10 +8428,20 @@ paths:
                 required: [ok, state]
                 properties:
                   ok: { type: boolean, enum: [true] }
-                  runStatus: { type: string, enum: ["NeedsInput", "NeedsInputIdle", "Running"] }
+                  runStatus:
+                    {
+                      type: string,
+                      enum: ["NeedsInput", "NeedsInputIdle", "Running"],
+                    }
                   state:
                     type: string
-                    enum: [resume-in-progress, rework-scheduled, resume-queued, delivery-in-progress]
+                    enum:
+                      [
+                        resume-in-progress,
+                        rework-scheduled,
+                        resume-queued,
+                        delivery-in-progress,
+                      ]
                   remainingDecisionCount:
                     type: integer
                     minimum: 0
@@ -10567,7 +10605,11 @@ paths:
                 reattachSources: { local: null, published: null, archive: null }
                 rescueRefs: []
                 actions:
-                  - { id: stop, enabled: false, disabledReason: unsupported-status }
+                  - {
+                      id: stop,
+                      enabled: false,
+                      disabledReason: unsupported-status,
+                    }
                   - { id: archive, enabled: true, disabledReason: null }
                   - { id: drop, enabled: true, disabledReason: null }
                   - { id: exportBranch, enabled: true, disabledReason: null }
@@ -10575,8 +10617,16 @@ paths:
                   - { id: discardChanges, enabled: true, disabledReason: null }
                   - { id: update, enabled: true, disabledReason: null }
                   - { id: openPr, enabled: true, disabledReason: null }
-                  - { id: finalizePr, enabled: false, disabledReason: pr-missing }
-                  - { id: reattach, enabled: false, disabledReason: worktree-present }
+                  - {
+                      id: finalizePr,
+                      enabled: false,
+                      disabledReason: pr-missing,
+                    }
+                  - {
+                      id: reattach,
+                      enabled: false,
+                      disabledReason: worktree-present,
+                    }
                 prDefaults:
                   title: "ABC-12: Fix login redirect"
                   body: |-
@@ -11169,7 +11219,12 @@ paths:
                     ownerUserId: "user_123"
                     ownerLabel: "Alex"
                     scopes:
-                      ["tasks:read", "flows:read", "runners:read", "hitl:respond:human"]
+                      [
+                        "tasks:read",
+                        "flows:read",
+                        "runners:read",
+                        "hitl:respond:human",
+                      ]
                     humanHitl: true
                     prefix: "mai_abcd1234"
                     createdAt: "2026-06-23T12:00:00.000Z"
@@ -11407,7 +11462,12 @@ paths:
                 summary: Add the scopes a token was issued without
                 value:
                   scopes:
-                    ["tasks:read", "flows:read", "runners:read", "hitl:respond:human"]
+                    [
+                      "tasks:read",
+                      "flows:read",
+                      "runners:read",
+                      "hitl:respond:human",
+                    ]
               clear-expiry:
                 summary: Make a token non-expiring
                 value:
@@ -11433,7 +11493,12 @@ paths:
                     ownerUserId: null
                     ownerLabel: null
                     scopes:
-                      ["tasks:read", "flows:read", "runners:read", "hitl:respond:human"]
+                      [
+                        "tasks:read",
+                        "flows:read",
+                        "runners:read",
+                        "hitl:respond:human",
+                      ]
                     prefix: "mai_abcd1234"
                     createdAt: "2026-06-23T12:00:00.000Z"
                     lastUsedAt: "2026-09-10T08:11:00.000Z"
@@ -17019,12 +17084,14 @@ paths:
           description: A repeat of an already stored `clientMessageId`; the stored message and its turn.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/LibrarianPostMessageResult" }
+              schema:
+                { $ref: "#/components/schemas/LibrarianPostMessageResult" }
         "202":
           description: Message stored; its turn is admitted or queued.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/LibrarianPostMessageResult" }
+              schema:
+                { $ref: "#/components/schemas/LibrarianPostMessageResult" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -17152,12 +17219,14 @@ paths:
           description: The decision result; accepted actions return their domain result.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/LibrarianCardDecisionResult" }
+              schema:
+                { $ref: "#/components/schemas/LibrarianCardDecisionResult" }
         "202":
           description: A human action may have applied, but its outcome is unknown; query the operation receipt and do not repeat with a new key.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/LibrarianCardDecisionResult" }
+              schema:
+                { $ref: "#/components/schemas/LibrarianCardDecisionResult" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -17294,7 +17363,6 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
 
-
   /api/librarian/history/clear-preview:
     get:
       tags: [librarian]
@@ -17310,7 +17378,8 @@ paths:
           description: The clear scope and its digest.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/LibrarianHistoryClearPreview" }
+              schema:
+                { $ref: "#/components/schemas/LibrarianHistoryClearPreview" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
@@ -17534,7 +17603,8 @@ paths:
     post:
       operationId: retryOperationalCleanup
       summary: Re-arm an exhausted operational cleanup intent
-      description: Designed — existing project discard/archive authority; 202 records
+      description:
+        Implemented — existing project recovery authority; 202 records
         intent, not removal. Latest identical expectedRevision retry returns the
         existing re-arm receipt without resetting attempts again. Stale/different
         revision conflicts. No filesystem path is body-controlled.
@@ -17552,7 +17622,8 @@ paths:
               $ref: "#/components/schemas/OperationalCleanupRetryBody"
       responses:
         "202":
-          description: Cleanup intent durably armed, or latest identical re-arm receipt
+          description:
+            Cleanup intent durably armed, or latest identical re-arm receipt
             returned.
           content:
             application/json:
@@ -17906,7 +17977,8 @@ components:
           maxItems: 100
           items:
             $ref: "#/components/schemas/OperationalDiagnostic"
-      description: Designed — fixed operational_v1 value. Existing output limits plus
+      description:
+        Designed — fixed operational_v1 value. Existing output limits plus
         operational count/coverage/outcome/link semantics apply; schema validity is
         distinct from business success.
     OperationalCompletionDeclaration:
@@ -17952,6 +18024,7 @@ components:
         - attempts
         - dueAt
         - errorCode
+        - evidenceIds
       properties:
         state:
           type: string
@@ -17977,6 +18050,10 @@ components:
         errorCode:
           type: string
           nullable: true
+        evidenceIds:
+          type: array
+          items: { type: string }
+          description: Opaque retained diagnostic object IDs, authorized through the run object-content endpoint.
     OperationalOutcome:
       type: object
       additionalProperties: false
@@ -17990,6 +18067,7 @@ components:
         - integrity
         - resultRevision
         - reportedResult
+        - referenceLinks
         - reasonCodes
         - cleanup
       properties:
@@ -18047,6 +18125,21 @@ components:
           allOf:
             - $ref: "#/components/schemas/OperationalResultV1"
           nullable: true
+        referenceLinks:
+          type: array
+          description: Safe declared external links and server-resolved task links within the Run project. The reported result remains unchanged.
+          items:
+            type: object
+            additionalProperties: false
+            required: [kind, id, href]
+            properties:
+              kind:
+                {
+                  type: string,
+                  enum: [task, external_issue, operation_receipt, other],
+                }
+              id: { type: string }
+              href: { type: string, maxLength: 2048 }
         reasonCodes:
           type: array
           items:
@@ -18057,7 +18150,8 @@ components:
           allOf:
             - $ref: "#/components/schemas/OperationalCleanupState"
           nullable: true
-      description: Designed — platform terminal receipt joined to the exact validated
+      description:
+        Designed — platform terminal receipt joined to the exact validated
         result revision. Failed ordinary result remains unavailable; this diagnostic
         projection never makes it a successful answer.
 
@@ -18511,7 +18605,8 @@ components:
         flowRef:
           type: string
           nullable: true
-          description: (ADR-106) Same-package flow the agent drives (a `flows[].id` of the
+          description:
+            (ADR-106) Same-package flow the agent drives (a `flows[].id` of the
             providing package manifest); `null` → standalone.
         branchBase:
           type: string
@@ -18568,25 +18663,29 @@ components:
         branchBase:
           type: string
           nullable: true
-          description: (ADR-106) Instance override of the branch base; `null` → fall back
+          description:
+            (ADR-106) Instance override of the branch base; `null` → fall back
             to the agent `recommended`/project main.
         executionPolicyOverride:
           type: object
           nullable: true
           allOf:
             - $ref: "#/components/schemas/AgentRunnerPolicy"
-          description: (ADR-106) Instance override of `{autoApply, onBudgetBreach}`;
+          description:
+            (ADR-106) Instance override of `{autoApply, onBudgetBreach}`;
             `null` → fall back to the agent `recommended`.
         canReadBrain:
           type: boolean
           description: (ADR-122) Per-link Brain read axis (default false).
         canWriteBrain:
           type: boolean
-          description: (ADR-122) Per-link Brain write axis (default false; read never
+          description:
+            (ADR-122) Per-link Brain write axis (default false; read never
             grants write).
         memoryEnabled:
           type: boolean
-          description: (ADR-152) Per-link agent-memory axis (default false). A SEPARATE
+          description:
+            (ADR-152) Per-link agent-memory axis (default false). A SEPARATE
             store from Brain — neither `canReadBrain` nor `canWriteBrain` implies
             it. Seeded server-side from the effective definition's `memory:` field
             on attach, effective thereafter.
@@ -20092,7 +20191,8 @@ components:
           allOf:
             - $ref: "#/components/schemas/OperationalOutcome"
           nullable: true
-          description: Designed — actual resulting run outcome, separate from scheduler
+          description:
+            Implemented — actual resulting run outcome, separate from scheduler
             dispatch success.
 
     OneTimeTaskLaunchAutomationRow:
@@ -21403,7 +21503,16 @@ components:
         defaultRunnerId: { type: string, nullable: true }
     ScratchPendingHitl:
       type: object
-      required: [hitlRequestId, kind, prompt, schema, options, answerState, storedResponse]
+      required:
+        [
+          hitlRequestId,
+          kind,
+          prompt,
+          schema,
+          options,
+          answerState,
+          storedResponse,
+        ]
       properties:
         hitlRequestId: { type: string, format: uuid }
         kind: { type: string, enum: [permission, form, human] }
@@ -21632,7 +21741,7 @@ components:
           description: A `MaisterErrorCode`, or null when the cause has none (an abandon).
         reason:
           type: string
-          pattern: '^[a-z][a-z0-9_]{0,63}(/[a-z][a-z0-9_]{0,63})?$'
+          pattern: "^[a-z][a-z0-9_]{0,63}(/[a-z][a-z0-9_]{0,63})?$"
           description: The emitter's reason token (snake_case; the orchestrator cascade writes `cascade/<token>`).
         source:
           type: string
@@ -23638,14 +23747,33 @@ components:
         objectId: { type: string, format: uuid }
         kind:
           type: string
-          enum: [session_log, raw_transcript, cost_diagnostic, checkpoint, attachment, capability_profile, capability_instructions, agent_memory_snapshot, node_result, evidence, generated_artifact, plan_review, diagnostic]
+          enum:
+            [
+              session_log,
+              raw_transcript,
+              cost_diagnostic,
+              checkpoint,
+              attachment,
+              capability_profile,
+              capability_instructions,
+              agent_memory_snapshot,
+              node_result,
+              evidence,
+              generated_artifact,
+              plan_review,
+              diagnostic,
+            ]
         logicalName: { type: string, maxLength: 255 }
         mimeType: { type: string, maxLength: 255 }
         sizeBytes: { type: string, nullable: true, pattern: "^[0-9]+$" }
         sha256: { type: string, nullable: true, pattern: "^[a-f0-9]{64}$" }
         generation: { type: integer, minimum: 1 }
         retentionClass: { type: string, enum: [run, delivery, ephemeral] }
-        state: { type: string, enum: [available, deleting, missing, deleted, expired, corrupt] }
+        state:
+          {
+            type: string,
+            enum: [available, deleting, missing, deleted, expired, corrupt],
+          }
         createdAt: { type: string, format: date-time }
         sealedAt: { type: string, format: date-time, nullable: true }
         expiresAt: { type: string, format: date-time, nullable: true }
@@ -23804,7 +23932,7 @@ components:
         reason: { $ref: "#/components/schemas/HitlRespondReason" }
         causeCode:
           type: string
-          pattern: '^[a-z][a-z0-9_]{0,63}$'
+          pattern: "^[a-z][a-z0-9_]{0,63}$"
     HitlRespondErrorBody:
       allOf:
         - { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -23829,7 +23957,16 @@ components:
               required: [reason]
               additionalProperties: false
               properties:
-                reason: { type: string, enum: [permission_not_pending, permission_delivery_rejected, agent_session_ended] }
+                reason:
+                  {
+                    type: string,
+                    enum:
+                      [
+                        permission_not_pending,
+                        permission_delivery_rejected,
+                        agent_session_ended,
+                      ],
+                  }
     HitlRespondSavedError:
       allOf:
         - { $ref: "#/components/schemas/HitlRespondErrorBody" }
@@ -26379,7 +26516,15 @@ components:
         deterministically (`renderStatementPrompt`, fixed section order).
       additionalProperties: false
       required:
-        [context, goal, acceptance, constraints, outOfScope, links, openQuestions]
+        [
+          context,
+          goal,
+          acceptance,
+          constraints,
+          outOfScope,
+          links,
+          openQuestions,
+        ]
       properties:
         context: { type: string, minLength: 1, maxLength: 8000 }
         goal: { type: string, minLength: 1, maxLength: 2000 }
@@ -26582,7 +26727,15 @@ components:
       type: object
       additionalProperties: false
       required:
-        [id, runId, resetState, readThroughSeq, lastSeq, memoryEnabledNextSegment, createdAt]
+        [
+          id,
+          runId,
+          resetState,
+          readThroughSeq,
+          lastSeq,
+          memoryEnabledNextSegment,
+          createdAt,
+        ]
       properties:
         id: { type: string, format: uuid }
         runId:
@@ -26639,7 +26792,8 @@ components:
         visibility-filtered read. When the task is gone or no longer visible to
         the owner, `available` is false and every other field but `taskId` is
         null — an explicit unavailable state, never a stale title.
-      required: [taskId, available, taskKey, title, projectSlug, status, workStage]
+      required:
+        [taskId, available, taskKey, title, projectSlug, status, workStage]
       properties:
         taskId: { type: string, format: uuid }
         available: { type: boolean }
@@ -26663,7 +26817,17 @@ components:
         one domain event on followed work, rendered without a model turn. Run
         status and stage are read live at render. A merged run never claims
         deployment: `promotedKind: merge` reads "merged · deployment unknown".
-      required: [updateId, eventKind, task, runId, runStatus, workStage, promotedKind, occurredAt]
+      required:
+        [
+          updateId,
+          eventKind,
+          task,
+          runId,
+          runStatus,
+          workStage,
+          promotedKind,
+          occurredAt,
+        ]
       properties:
         updateId: { type: string, format: uuid }
         eventKind:
@@ -26903,7 +27067,8 @@ components:
           enum: [owner_message, explain, summary]
         status:
           type: string
-          enum: [queued, admitted, running, completed, stopped, failed, withdrawn]
+          enum:
+            [queued, admitted, running, completed, stopped, failed, withdrawn]
           description: |
             `withdrawn` — the queued message was withdrawn by the owner or by a
             reset before its turn ran.
@@ -26939,7 +27104,8 @@ components:
         id: { type: string, format: uuid }
         status:
           type: string
-          enum: [queued, admitted, running, completed, stopped, failed, withdrawn]
+          enum:
+            [queued, admitted, running, completed, stopped, failed, withdrawn]
         queuePosition: { type: integer, minimum: 1, nullable: true }
 
     LibrarianMessage:

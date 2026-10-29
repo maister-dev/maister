@@ -7,6 +7,7 @@ import { getLocale, getTranslations } from "next-intl/server";
 import { notFound, redirect } from "next/navigation";
 import { ExclamationTriangleIcon } from "@heroicons/react/24/outline";
 
+import { OperationalRunResult } from "@/components/runs/operational-run-result";
 import {
   CRASH_RECOVER_DECISION,
   TURN_LOST_DECISION,
@@ -420,6 +421,7 @@ export default async function RunDetailLayout({
   // ADR-165 (T8.1/T8.2): the run's own public result, and the labels the panel
   // and the child glyphs share. `null` means "render no panel".
   const publicResult = await loadRunPublicResult(getDb(), runId);
+  const operational = publicResult?.operationalOutcome ?? null;
   const resultStatusLabels: Record<ResultStatus, string> = {
     pending: t("publicResultStatusPending"),
     valid: t("publicResultStatusValid"),
@@ -1254,7 +1256,9 @@ export default async function RunDetailLayout({
   const isCutoverHistory = detail.cutoverFailure !== null;
   // ADR-181 D2: the viewer's own set — the claim owner of an open rework claim
   // gets the git set; `detail.lifecycleActions` is the viewer-less projection.
-  const viewerLifecycleActions = lifecycleActionsForViewer(detail, user.id);
+  const viewerLifecycleActions = operational
+    ? []
+    : lifecycleActionsForViewer(detail, user.id);
   const policyActions = deriveInspectorActions({
     runId: detail.runId,
     runKind: detail.runKind,
@@ -1283,12 +1287,14 @@ export default async function RunDetailLayout({
     disabled: !action.enabled,
     disabledReason: action.enabled ? null : t("inspectorDisabled"),
   }));
-  const visiblePolicyActions = policyActions.filter((action) =>
-    isCutoverHistory
-      ? action.id === "archive" || action.id === "drop"
-      : !action.disabled ||
-        (detail.status === "Crashed" && action.id === "recover"),
-  );
+  const visiblePolicyActions = operational
+    ? []
+    : policyActions.filter((action) =>
+        isCutoverHistory
+          ? action.id === "archive" || action.id === "drop"
+          : !action.disabled ||
+            (detail.status === "Crashed" && action.id === "recover"),
+      );
   const headerPromotionPolicy = policyActions.find(
     (action) => action.id === "promote" || action.id === "promotePullRequest",
   );
@@ -1347,8 +1353,8 @@ export default async function RunDetailLayout({
       ]
     : [];
   const inspectorActions: RunInspectorAction[] = [
-    ...dirtyGateActions,
-    ...reviewGateActions,
+    ...(operational ? [] : dirtyGateActions),
+    ...(operational ? [] : reviewGateActions),
     ...pendingInputActions,
     ...gateChatActions,
     ...(showReview && !hasReviewGate
@@ -1456,10 +1462,18 @@ export default async function RunDetailLayout({
           />
         ) : (
           <>
-            <AgentRunCenter
-              labels={agentRunCenterLabels}
-              result={flowResultDto}
-            />
+            {operational ? (
+              <OperationalRunResult
+                canAct={canAct}
+                outcome={operational}
+                runId={detail.runId}
+              />
+            ) : (
+              <AgentRunCenter
+                labels={agentRunCenterLabels}
+                result={flowResultDto}
+              />
+            )}
             <AgentRunTranscript
               defaultOpen
               labels={flowRunCenterLabels.transcript}
@@ -1501,7 +1515,7 @@ export default async function RunDetailLayout({
                 result contract and no rows — most runs. */}
             <RunPublicResultPanel
               labels={publicResultLabels}
-              result={publicResult}
+              result={operational ? null : publicResult}
             />
             <LiveRunInspector
               actions={inspectorActions}
@@ -1976,7 +1990,7 @@ export default async function RunDetailLayout({
 
           {detail.pendingHitl && !isCutoverHistory ? primaryResult : null}
 
-          {!hasReviewGate ? (
+          {!hasReviewGate && !operational ? (
             <ReviewWorkspaceUnavailable
               message={t("reviewWorkspaceUnavailable")}
             />
@@ -2069,6 +2083,7 @@ export default async function RunDetailLayout({
                 }
                 runId={detail.runId}
                 tabLabels={flowGraphData?.tabLabels ?? workbenchTabLabels}
+                tabs={operational ? ["timeline", "evidence"] : undefined}
                 timeline={
                   <RunTimeline
                     assignmentEvents={timeline.assignmentEvents}

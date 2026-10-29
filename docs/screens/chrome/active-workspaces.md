@@ -231,3 +231,7 @@ both required.
   `web/components/workbench/lifecycle-actions.tsx`,
   `web/lib/queries/portfolio.ts`, `web/app/api/scratch-runs/[runId]/route.ts`
   (rename `PATCH`, new).
+
+## Operational agents
+
+Completed operational agents leave portfolio, project and rail active lists at the terminal transition, including retained diagnostic workspaces and pending/failed cleanup. Shared status sets are unchanged; default code-delivery workspaces retain their prior visibility.

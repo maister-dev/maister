@@ -35,6 +35,8 @@ export interface FrontmatterArtifactEditorLabels {
   description: string;
   // Platform-agent contract fields (ADR-089 rework): agents/*.md inside a
   // package IS the platform-agent definition.
+  agentKind: string;
+  agentCompletion: string;
   agentWorkspace: string;
   agentWorkspaceRef: string;
   agentMode: string;
@@ -494,6 +496,23 @@ export function FrontmatterArtifactEditor({
           />
         ) : (
           <SkillAgentFields
+            editAgentKind={(next) => {
+              const updated = applyFrontmatterFieldEdit(
+                content,
+                "kind",
+                next || undefined,
+              );
+
+              onChange(
+                applyFrontmatterFieldEdit(
+                  updated,
+                  "completion",
+                  next === "operational"
+                    ? { contract: "operational_v1" }
+                    : undefined,
+                ),
+              );
+            }}
             editField={editField}
             editTextKey={editTextKey}
             fm={fm}
@@ -525,6 +544,7 @@ interface SkillAgentFieldsProps {
   kind: "skill" | "agent_definition" | "subagent";
   readOnly: boolean;
   labels: FrontmatterArtifactEditorLabels;
+  editAgentKind: (next: string) => void;
   editField: (key: string, value: FieldValue) => void;
   editTextKey: (key: string) => (next: string) => void;
 }
@@ -535,6 +555,7 @@ function SkillAgentFields({
   readOnly,
   labels,
   editField,
+  editAgentKind,
   editTextKey,
 }: SkillAgentFieldsProps): ReactElement {
   // `recommended` is a nested mapping — edits rewrite the whole object and
@@ -588,6 +609,23 @@ function SkillAgentFields({
       />
       {kind === "agent_definition" ? (
         <>
+          <SelectField
+            label={labels.agentKind}
+            options={["code_delivery", "operational"]}
+            readOnly={readOnly}
+            value={asText(fm.kind)}
+            onValue={editAgentKind}
+          />
+          {asText(fm.kind) === "operational" ? (
+            <TextField
+              readOnly
+              label={labels.agentCompletion}
+              value={asText(
+                (fm.completion as { contract?: unknown } | undefined)?.contract,
+              )}
+              onValue={() => undefined}
+            />
+          ) : null}
           <SelectField
             label={labels.agentWorkspace}
             options={AGENT_WORKSPACE_KINDS}

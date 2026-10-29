@@ -271,3 +271,7 @@ recovery. A non-review or scratch URL state has an explicit unavailable state.
   `web/components/workbench/run-diff.tsx`,
   `web/components/workbench/diff-view.tsx`,
   `web/lib/diff/prepare.ts`, `web/lib/worktree.ts`.
+
+## Operational agents
+
+Operational agents show the structured operation result, actionable diagnostics, counts, references, source integrity and cleanup evidence. The workbench exposes Timeline and Evidence; Files/Diff and Git delivery actions are absent. Server-side frozen-kind guards independently refuse promotion, sync, merge, publication and reattachment.

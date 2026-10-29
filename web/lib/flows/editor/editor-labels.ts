@@ -111,6 +111,8 @@ export function frontmatterArtifactEditorLabels(
     bodyHeading: te("artifacts.bodyHeading"),
     name: te("artifacts.name"),
     description: te("artifacts.description"),
+    agentKind: te("artifacts.agentKind"),
+    agentCompletion: te("artifacts.agentCompletion"),
     agentWorkspace: te("artifacts.agentWorkspace"),
     agentWorkspaceRef: te("artifacts.agentWorkspaceRef"),
     agentMode: te("artifacts.agentMode"),

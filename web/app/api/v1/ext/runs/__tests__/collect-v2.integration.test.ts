@@ -1,3 +1,5 @@
+import type { OperationalOutcome } from "@/lib/run-results/operational-types";
+
 import { randomUUID } from "node:crypto";
 import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
@@ -16,6 +18,10 @@ import {
   vi,
 } from "vitest";
 
+import {
+  operationalContractFixture,
+  operationalBlockedFixture,
+} from "@/test-support/operational-agent";
 import {
   type DelegationSeedCtx,
   resetDelegationFixture,
@@ -147,6 +153,7 @@ async function orchestrator(): Promise<{ secret: string; runId: string }> {
 }
 
 type V2Item = {
+  operationalOutcome: OperationalOutcome | null;
   childRunId: string;
   status: string;
   settled: boolean;
@@ -170,6 +177,68 @@ type V2Item = {
 // coordinator gains a VALIDATED result plane instead of scavenged text.
 
 describe("run_collect v2 — resultStatus reachability (AC-31)", () => {
+  it("IT-OPA-06 preserves operational diagnostic parity on the authenticated collect wire", async () => {
+    const parent = await orchestrator();
+    const child = randomUUID();
+    const contract = operationalContractFixture("none");
+
+    await pool.query(
+      `INSERT INTO runs (id,project_id,run_kind,status,flow_version,agent_kind,agent_workspace,result_contract,parent_run_id,root_run_id) VALUES ($1,$2,'agent','Running','agent','operational','none',$3::jsonb,$4,$4)`,
+      [child, ctx.projectId, JSON.stringify(contract), parent.runId],
+    );
+    await insertResultRow({
+      runId: child,
+      revision: 1,
+      validity: "valid",
+      value: operationalBlockedFixture(),
+    });
+    await pool.query(
+      `UPDATE run_results SET schema_ref=$2, schema_sha256=$3 WHERE run_id=$1`,
+      [child, contract.schemaRef, contract.sha256],
+    );
+    await pool.query(
+      `UPDATE runs SET status='Failed', ended_at=now(), operational_terminal=$2::jsonb WHERE id=$1`,
+      [
+        child,
+        JSON.stringify({
+          version: 1,
+          status: "Failed",
+          cause: "agent_exit",
+          effectiveOutcome: "blocked",
+          successful: false,
+          validation: "valid",
+          integrity: "clean",
+          baselineGeneration: 1,
+          resultRevision: 1,
+          reasonCodes: ["reported_blocked"],
+          evidenceIds: [],
+        }),
+      ],
+    );
+    const response = await collectPost(
+      collectRequest(parent.secret, { childRunId: child }),
+      {},
+    );
+
+    expect(response.status).toBe(200);
+    const [item] = (await response.json()) as V2Item[];
+    const { loadRunPublicResult } = await import("@/lib/runs/run-result-dto");
+
+    expect(item.operationalOutcome).toEqual(
+      (await loadRunPublicResult(db, child))?.operationalOutcome,
+    );
+    expect(item).toMatchObject({
+      status: "Failed",
+      resultStatus: "unavailable",
+      result: null,
+      operationalOutcome: {
+        effectiveOutcome: "blocked",
+        successful: false,
+        reportedResult: { diagnostics: [{ httpStatus: 403 }] },
+      },
+    });
+  });
+
   it("pending: a live child reports pending with a null result", async () => {
     const parent = await orchestrator();
     const child = await seedChildRun(ctx, {

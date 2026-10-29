@@ -11,6 +11,7 @@ import {
   type FrontmatterArtifactEditorLabels,
 } from "@/components/flows/artifact-editors/frontmatter-artifact-editor";
 import { validateArtifactContent } from "@/lib/flows/artifact-validate";
+import { parseAgentDefinition } from "@/lib/agents/definition";
 
 (
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -28,6 +29,8 @@ const labels: FrontmatterArtifactEditorLabels = {
   bodyHeading: "Body",
   name: "Name",
   description: "Description",
+  agentKind: "Deliverable kind",
+  agentCompletion: "Completion contract",
   agentWorkspace: "Workspace",
   agentWorkspaceRef: "Workspace ref",
   agentMode: "Mode",
@@ -70,6 +73,29 @@ Review the change.
 `;
 
 describe("FrontmatterArtifactEditor capability profile", () => {
+  it("IT-OPA-06 changes kind and completion atomically while preserving workspace and body", () => {
+    const initial = content.replace("capability_profile:\n  mcps: [github]\n", "");
+    const drafts: string[] = [];
+    const node = document.createElement("div");
+    const root = createRoot(node);
+    roots.push(root);
+    document.body.append(node);
+    function Host() {
+      const [value, setValue] = useState(initial);
+      return createElement(FrontmatterArtifactEditor, {content: value, kind: "agent_definition", labels, onChange: (next: string) => { drafts.push(next); setValue(next); }});
+    }
+    act(() => root.render(createElement(Host)));
+    const field = [...node.querySelectorAll("label")].find((label) => label.querySelector("span")?.textContent === labels.agentKind)?.querySelector("select");
+    expect(field).toBeTruthy();
+    for (const kind of ["operational", "code_delivery"]) {
+      act(() => { field!.value = kind; field!.dispatchEvent(new Event("change", {bubbles: true})); });
+      const parsed = parseAgentDefinition("test:reviewer", drafts.at(-1)!);
+      expect(parsed.prompt).toBe(parseAgentDefinition("test:reviewer", initial).prompt);
+      expect(parsed).toMatchObject({kind, completion: kind === "operational" ? {contract: "operational_v1"} : null, workspace: "repo_read", workspaceRef: "trigger"});
+    }
+    expect(drafts).toHaveLength(2);
+  });
+
   it("projects invalid JSON into canonical draft content and recovers on valid input", () => {
     let latest = content;
     const node = document.createElement("div");

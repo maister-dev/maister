@@ -37,6 +37,7 @@ import {
   scratchActionForWorkspace,
 } from "@/lib/queries/portfolio";
 import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
+import { operationalActiveWorkspacePredicate } from "@/lib/run-results/operational-visibility";
 
 const {
   flowRevisions,
@@ -335,6 +336,7 @@ export async function getProjectPageData(
           runId: runs.id,
           status: runs.status,
           runKind: runs.runKind,
+          agentKind: runs.agentKind,
           agentId: runs.agentId,
           triggerSource: runs.triggerSource,
           acpSessionId: activeSessionAcpSessionId(runs.id),
@@ -361,6 +363,7 @@ export async function getProjectPageData(
           and(
             eq(runs.projectId, project.id),
             inArray(runs.status, [...ACTIVE_RUN_STATUSES]),
+            operationalActiveWorkspacePredicate(),
             // Live workspace rows as before — plus workspace-LESS rows only
             // for agent runs (none/repo_read have no worktree by design).
             // A bare IS NULL would also surface seeded/legacy kindless rows.
@@ -496,6 +499,7 @@ export async function getProjectPageData(
       acpSessionId: row.acpSessionId,
     }),
     lifecycleActions: lifecycleActionsForWorkspace({
+      agentKind: row.agentKind,
       runKind: row.runKind as RunKind,
       runStatus: row.status,
       dialogStatus: row.scratchDialogStatus as ScratchDialogStatus | null,

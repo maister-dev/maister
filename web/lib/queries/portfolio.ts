@@ -57,6 +57,7 @@ import {
   type WorkbenchLifecycleActionId,
   type WorkbenchRunStatus,
 } from "@/lib/workbench-lifecycle/policy";
+import { operationalActiveWorkspacePredicate } from "@/lib/run-results/operational-visibility";
 
 const {
   actorIdentities,
@@ -273,6 +274,7 @@ export function scratchActionForWorkspace(input: {
 }
 
 export function lifecycleActionsForWorkspace(input: {
+  agentKind?: "code_delivery" | "operational" | null;
   runKind: RunKind;
   runStatus: string;
   dialogStatus: ScratchDialogStatus | null;
@@ -292,6 +294,8 @@ export function lifecycleActionsForWorkspace(input: {
   prState?: "open" | "merged" | "closed" | null;
   promotionState?: string | null;
 }): WorkbenchLifecycleAction[] {
+  if (input.agentKind === "operational") return [];
+
   return deriveWorkbenchLifecycleActions({
     runKind: input.runKind,
     runStatus: input.runStatus as WorkbenchRunStatus,
@@ -414,6 +418,7 @@ export async function getPortfolio(
         projectId: runs.projectId,
         status: runs.status,
         runKind: runs.runKind,
+        agentKind: runs.agentKind,
         agentId: runs.agentId,
         triggerSource: runs.triggerSource,
         acpSessionId: activeSessionAcpSessionId(runs.id),
@@ -440,6 +445,7 @@ export async function getPortfolio(
         and(
           inArray(runs.projectId, projectIds),
           inArray(runs.status, [...ACTIVE_RUN_STATUSES]),
+          operationalActiveWorkspacePredicate(),
           // Live workspace rows as before — plus workspace-LESS rows only
           // for agent runs (none/repo_read have no worktree by design).
           // A bare IS NULL would also surface seeded/legacy kindless rows.
@@ -654,6 +660,7 @@ export async function getPortfolio(
         acpSessionId: row.acpSessionId,
       }),
       lifecycleActions: lifecycleActionsForWorkspace({
+        agentKind: row.agentKind,
         runKind: row.runKind as RunKind,
         runStatus: row.status,
         dialogStatus: row.scratchDialogStatus as ScratchDialogStatus | null,
@@ -969,6 +976,7 @@ export async function getRailWorkspaceGroups(
       runnerSnapshot: activeSessionRunnerSnapshot(runs.id),
       status: runs.status,
       runKind: runs.runKind,
+      agentKind: runs.agentKind,
       createdByUserId: runs.createdByUserId,
       startedAt: runs.startedAt,
       endedAt: runs.endedAt,
@@ -1005,6 +1013,7 @@ export async function getRailWorkspaceGroups(
   // disk that carry a GC removal deadline, so the TTL countdown badge surfaces
   // before the sweeper prunes them.
   const railFilter = and(
+    operationalActiveWorkspacePredicate(),
     or(
       inArray(runs.status, [...ACTIVE_RUN_STATUSES]),
       and(
@@ -1100,6 +1109,7 @@ export async function getRailWorkspaceGroups(
       archived: ttl.archived,
       pruned: ttl.pruned,
       lifecycleActions: lifecycleActionsForWorkspace({
+        agentKind: row.agentKind,
         runKind: row.runKind as RunKind,
         runStatus: row.status,
         dialogStatus: row.scratchDialogStatus as ScratchDialogStatus | null,
@@ -1271,6 +1281,7 @@ export async function getCrossProjectHitlInbox(
       flowRef: sql<string>`coalesce(${flows.flowRefId}, 'scratch')`,
       projectId: runs.projectId,
       runKind: runs.runKind,
+      agentKind: runs.agentKind,
       runStatus: runs.status,
       taskId: runs.taskId,
       agentId: runs.agentId,

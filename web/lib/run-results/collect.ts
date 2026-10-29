@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { OperationalOutcome } from "@/lib/run-results/operational-types";
 import type { ArtifactLocator } from "@/lib/db/schema";
 import type {
   PublicRunResult,
@@ -11,6 +12,7 @@ import type {
 import { and, desc, eq } from "drizzle-orm";
 import pino from "pino";
 
+import { loadOperationalOutcome } from "@/lib/run-results/operational-projection";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { SETTLED_RUN_STATUSES } from "@/lib/runs/run-status-sets";
@@ -48,6 +50,7 @@ export type CollectArtifact = {
 };
 
 export type CollectResult = {
+  operationalOutcome: OperationalOutcome | null;
   childRunId: string;
   status: string;
   settled: boolean;
@@ -216,6 +219,7 @@ export async function collectChild(
   return {
     servedResultId: servedRow?.id ?? null,
     result: {
+      operationalOutcome: await loadOperationalOutcome(db, args.childRunId),
       childRunId: args.childRunId,
       status: run.status,
       settled: SETTLED.has(run.status),
