@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { AgentKind } from "@/lib/agents/kind";
+import type { RunResultContract } from "@/lib/run-results/types";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { ZodType } from "zod";
 import type { Db as ExecutionDb } from "@/lib/execution-host/db";
@@ -15,6 +17,7 @@ import { access } from "node:fs/promises";
 import { and, eq, gt, inArray, isNull, notInArray } from "drizzle-orm";
 import pino from "pino";
 
+import { assertCodeDeliveryAllowed } from "@/lib/agents/operational-guard";
 import {
   RELEASED_LIFECYCLE_CLAIM,
   canReclaimLifecycle,
@@ -138,6 +141,8 @@ export type LifecycleProject = {
 };
 
 export type LifecycleRun = {
+  agentKind?: AgentKind | null;
+  resultContract?: RunResultContract | null;
   id: string;
   projectId: string;
   // M37 (ADR-098): the launching task (null for scratch / as-run children) —
@@ -480,6 +485,7 @@ export function depsFromOptions(
 function lifecyclePolicyInput(ctx: LifecycleContext): WorkbenchGitPolicyInput {
   return {
     runKind: ctx.run.runKind,
+    agentKind: ctx.run.agentKind,
     runStatus: ctx.run.status,
     scratchDialogStatus: null,
     hasWorkspace: ctx.workspace !== null,
@@ -507,6 +513,7 @@ export function requireActionAllowed(
   id: WorkbenchLifecycleActionId,
   options?: { allowPausedBudgetRun?: boolean },
 ): void {
+  if (id !== "stop") assertCodeDeliveryAllowed(ctx.run, id);
   const action = deriveWorkbenchGitActions(lifecyclePolicyInput(ctx)).find(
     (candidate) => candidate.id === id,
   );
@@ -2223,6 +2230,8 @@ async function loadLifecycleContext(runId: string): Promise<LifecycleContext> {
       projectId: runs.projectId,
       taskId: runs.taskId,
       runKind: runs.runKind,
+      agentKind: runs.agentKind,
+      resultContract: runs.resultContract,
       status: runs.status,
       currentStepId: runs.currentStepId,
       workspaceMode: runs.workspaceMode,
@@ -2373,7 +2382,12 @@ export async function recordDrop(args: RecordDropInput): Promise<void> {
 
   await client.transaction(async (tx) => {
     const runRows = await tx
-      .select({ status: runs.status })
+      .select({
+        id: runs.id,
+        status: runs.status,
+        agentKind: runs.agentKind,
+        resultContract: runs.resultContract,
+      })
       .from(runs)
       .where(eq(runs.id, args.runId))
       .for("update");
@@ -2651,11 +2665,23 @@ export async function claimLifecycleOperation(args: {
     // only once the slot is known free, workspace then run — the sync claim's
     // order — so it never waits on a holder's `recordDrop` (run, then workspace).
     const runRows = await tx
-      .select({ status: runs.status })
+      .select({
+        id: runs.id,
+        status: runs.status,
+        agentKind: runs.agentKind,
+        resultContract: runs.resultContract,
+      })
       .from(runs)
       .where(eq(runs.id, args.runId))
       .for("update");
     const runStatus = runRows[0]?.status ?? null;
+
+    if (
+      runRows[0] &&
+      args.operation !== "retention_gc" &&
+      args.operation !== "reconciliation"
+    )
+      assertCodeDeliveryAllowed(runRows[0], args.operation);
 
     if (runStatus !== args.expectedRunStatus) {
       log.warn(

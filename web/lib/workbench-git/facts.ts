@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { AgentKind } from "@/lib/agents/kind";
 import type { WorkbenchGitPolicyInput } from "@/lib/workbench-git/policy";
 
 import pino from "pino";
@@ -28,6 +29,7 @@ const log = pino({
 });
 
 export type WorkbenchGitFactsRun = {
+  agentKind?: AgentKind | null;
   id: string;
   runKind: "flow" | "scratch" | "agent";
   status: string;
@@ -211,6 +213,7 @@ export async function loadWorkbenchGitFacts(args: {
   const facts: WorkbenchGitFacts = {
     policy: {
       runKind: run.runKind,
+      agentKind: run.agentKind,
       runStatus: run.status,
       scratchDialogStatus:
         (run.scratchDialogStatus as WorkbenchGitPolicyInput["scratchDialogStatus"]) ??

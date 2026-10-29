@@ -4,7 +4,12 @@ import type { OperationalResultV1 } from "@/lib/run-results/operational-types";
 import { z } from "zod";
 
 const count = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
-const nonempty = (maximum: number) => z.string().trim().min(1).max(maximum);
+const nonempty = (maximum: number) =>
+  z
+    .string()
+    .min(1)
+    .max(maximum)
+    .refine((value) => value.trim().length > 0, "must not be blank");
 const referenceSchema = z
   .object({
     kind: z.enum(["task", "external_issue", "operation_receipt", "other"]),
@@ -134,12 +139,9 @@ export const operationalResultV1Schema = z
       fail("failed work requires an actionable error diagnostic");
     if (
       counts.created >
-      references.filter(
-        (reference) =>
-          reference.kind === "task" && reference.state === "confirmed",
-      ).length
+      references.filter((reference) => reference.state === "confirmed").length
     )
-      fail("every confirmed created task requires a confirmed task reference");
+      fail("confirmed creations require their confirmed references");
   });
 
 /** Structural safety stays in the existing FormSchema/output validator. */

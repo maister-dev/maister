@@ -26,3 +26,11 @@ export function agentReadOnlyWorkdirPath(
 ): string {
   return path.join(worktreesRoot(), projectSlug, `${runId}-ro`);
 }
+
+/** Mutable native adapter homes are outside the operational source checkout. */
+export function operationalAgentRuntimePath(
+  projectSlug: string,
+  runId: string,
+): string {
+  return path.join(worktreesRoot(), projectSlug, `${runId}-runtime`);
+}

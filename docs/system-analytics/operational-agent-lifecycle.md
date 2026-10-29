@@ -71,7 +71,7 @@ is different. Retry never rewrites old history or blindly replays external effec
 Before dispatch capture source HEAD/branch plus a protected baseline of exact
 materialization paths, types, hashes/targets and prior ownership. Platform writes
 append generation evidence under the existing ownership/run fences. Keep dynamic
-runtime roots separate from immutable source. Baselines live in manager-owned
+runtime roots separate from immutable source. Home-redirect adapters use the server-derived managed sibling `<runId>-runtime`; the same cleanup intent owns its removal after quiescence. Cwd-based adapter files remain exact-hash materialization witnesses. Baselines live in manager-owned
 metadata/opaque evidence, not agent-writable marker files.
 
 After execution quiesces inspect history/HEAD (including commit-plus-revert), index,

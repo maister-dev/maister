@@ -68,7 +68,7 @@ integers. attempted=completed+failed; attempted+skipped<=scanned; created<=attem
 Creation can be confirmed before end-to-end completion: task creation followed by
 receipt failure has scanned=1, attempted=1, completed=0, failed=1, skipped=0,
 created=1 and partial outcome, with task and unresolved operation references.
-Unknown writes are not confirmed creations. References preserve reconciliation
+Each counted creation requires a confirmed reference. Confirmed references can describe task creation or another external/platform object; the contract is not task-only. Unknown writes are not confirmed creations. References preserve reconciliation
 receipts and every confirmed task identity; no invented remaining-work counts.
 
 Coverage state is complete/incomplete/not_started; remainingKnown is null when

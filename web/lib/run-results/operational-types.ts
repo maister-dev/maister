@@ -48,7 +48,7 @@ export type OperationalResourceKind =
 /** Hashes and metadata only; source bodies stay in execution evidence. */
 export type OperationalIntegrityEntry = {
   path: string;
-  type: "file" | "directory" | "symlink";
+  type: "file" | "directory" | "symlink" | "absent";
   sha256: string;
   mode: number;
 };
@@ -61,6 +61,10 @@ export type OperationalIntegrityBaseline = {
   head: string | null;
   branch: string | null;
   indexDigest: string | null;
+  indexContentDigest: string | null;
+  historyDigest: string | null;
+  gitIdentity: string | null;
+  refs: Array<{ ref: string; sha: string }>;
   source: OperationalIntegrityEntry[];
   platform: OperationalIntegrityEntry[];
 };

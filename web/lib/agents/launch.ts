@@ -2,6 +2,7 @@ import "server-only";
 
 import type { ContextRepoDecl } from "@/lib/context-mounts/types";
 import type { RunResultContract } from "@/lib/run-results/types";
+import type { OperationalIntegrityBaseline } from "@/lib/run-results/operational-types";
 import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 import type { AgentTurn, Run, ExecutionAssignment } from "@/lib/db/schema";
 
@@ -58,9 +59,20 @@ import {
   agentWorkdirPath,
   sharedAgentWorktreePath,
   sharedAgentWorktreesDirectory,
+  operationalAgentRuntimePath,
 } from "./workspace-paths";
 
 import { isHostPressuredError } from "@/lib/execution-host/host-pressure";
+import {
+  assertOperationalDispatchIntegrity,
+  operationalResourceKind,
+  operationalReferenceEvidence,
+} from "@/lib/agents/operational-context";
+import {
+  captureOperationalBaseline,
+  captureOperationalGeneration,
+  verifyOperationalIntegrity,
+} from "@/lib/agents/operational-integrity";
 import {
   buildOperationalContract,
   frozenOperationalDefinition,
@@ -107,7 +119,10 @@ import {
 } from "@/lib/agents/effective";
 import { resolveFacadeLaunch } from "@/lib/agents/facade-launch";
 import { readAgentMemory } from "@/lib/agents/memory-store";
-import { withAgentMaterializationLock } from "@/lib/agents/materialization-manifest";
+import {
+  withAgentMaterializationLock,
+  agentMaterializationPathsForRun,
+} from "@/lib/agents/materialization-manifest";
 import { prepareContextMounts } from "@/lib/context-mounts/launch";
 import { atomicWriteText } from "@/lib/atomic";
 import { runDirPath } from "@/lib/flows/graph/mutation-check";
@@ -2936,6 +2951,7 @@ async function dispatchStoredAgentTurn(
 
   observeOwnedAgentSession(db, execution, turn, sessionId, signal);
   await waitForPromptIncarnation(db, execution.client, sessionId, signal);
+  await assertOperationalDispatchIntegrity(db, turn.runId);
   const handle = await execution.client.prompt(
     sessionId,
     { stepId: "agent", prompt: turn.prompt },
@@ -3433,30 +3449,34 @@ async function driveAgentSession(
     cwd = agentReadOnlyWorkdirPath(project.slug, runId);
 
     try {
-      const committish = await resolveWorkspaceRefCommittish(_db, {
-        agentId: run.agentId as string,
-        workspaceRef: effective.parsed.workspaceRef,
-        repoPath: project.repoPath as string,
-        trigger: {
-          source: run.triggerSource as AgentTriggerSource,
-          eventId: run.triggerEventId as number | bigint | null,
-          payload: run.triggerPayload as Record<string, unknown> | null,
-        },
-      });
+      if (!(
+        run.agentKind === "operational" && run.operationalIntegrityBaseline
+      )) {
+        const committish = await resolveWorkspaceRefCommittish(_db, {
+          agentId: run.agentId as string,
+          workspaceRef: effective.parsed.workspaceRef,
+          repoPath: project.repoPath as string,
+          trigger: {
+            source: run.triggerSource as AgentTriggerSource,
+            eventId: run.triggerEventId as number | bigint | null,
+            payload: run.triggerPayload as Record<string, unknown> | null,
+          },
+        });
 
-      // A leftover from a crashed prior spawn of the SAME run is stale —
-      // recreate at the freshly resolved ref (removeWorktree no-ops when
-      // missing).
-      await removeWorktree({
-        projectRepoPath: project.repoPath as string,
-        worktreePath: cwd,
-        force: true,
-      });
-      await addDetachedWorktree({
-        projectRepoPath: project.repoPath as string,
-        worktreePath: cwd,
-        committish,
-      });
+        // A leftover from a crashed prior spawn of the SAME run is stale —
+        // recreate at the freshly resolved ref (removeWorktree no-ops when
+        // missing).
+        await removeWorktree({
+          projectRepoPath: project.repoPath as string,
+          worktreePath: cwd,
+          force: true,
+        });
+        await addDetachedWorktree({
+          projectRepoPath: project.repoPath as string,
+          worktreePath: cwd,
+          committish,
+        });
+      }
     } catch (err) {
       log.error(
         { runId, err: err instanceof Error ? err.message : String(err) },
@@ -3503,6 +3523,56 @@ async function driveAgentSession(
   }
 
   try {
+    let integrityBaseline: OperationalIntegrityBaseline | null =
+      run.operationalIntegrityBaseline ?? null;
+
+    if (run.agentKind === "operational") {
+      if (integrityBaseline && integrityBaseline.generation > 0) {
+        const verdict = await verifyOperationalIntegrity(
+          cwd,
+          integrityBaseline,
+          await operationalReferenceEvidence(_db, run),
+        );
+
+        if (verdict.verdict !== "clean")
+          throw new MaisterError(
+            "PRECONDITION",
+            "operational workspace changed before continuation",
+            {
+              details: {
+                reason: "operational_integrity_refused",
+                reasons: verdict.reasonCodes,
+              },
+            },
+          );
+      } else if (!integrityBaseline) {
+        integrityBaseline = await captureOperationalBaseline(
+          cwd,
+          operationalResourceKind(run),
+        );
+        const written = await _db
+          .update(runs)
+          .set({ operationalIntegrityBaseline: integrityBaseline })
+          .where(
+            and(
+              eq(runs.id, runId),
+              eq(runs.status, "Running"),
+              isNull(runs.operationalIntegrityBaseline),
+              assignmentId
+                ? eq(runs.executionAssignmentId, assignmentId)
+                : isNull(runs.executionAssignmentId),
+            ),
+          )
+          .returning({ id: runs.id });
+
+        if (!written[0])
+          throw new MaisterError(
+            "CONFLICT",
+            "operational baseline generation was superseded",
+            { details: { reason: "assignment_fenced" } },
+          );
+      }
+    }
     // ADR-090 L2 (materialize-only): instructed deny rules in the session
     // cwd; manifest-tracked and restored at the terminal choke point.
     if (workspace !== "worktree") {
@@ -3511,6 +3581,7 @@ async function driveAgentSession(
         snapshot.adapter,
         runId,
       ).catch((err: unknown) => {
+        if (run.agentKind === "operational") throw err;
         log.warn(
           { runId, err: err instanceof Error ? err.message : String(err) },
           "L2 materialization failed — L1/L3 carry the contract",
@@ -3595,11 +3666,21 @@ async function driveAgentSession(
       },
       "standalone agent package capability inventory resolved",
     );
+    const redirectsHome =
+      run.agentKind === "operational" &&
+      getAdapterSupportById(snapshot.adapter as AdapterId)?.materialization
+        ?.mode === "home-redirect";
+    const capabilityRoot = redirectsHome
+      ? operationalAgentRuntimePath(project.slug, runId)
+      : cwd;
+
+    if (packageSkillRoots.length > 0 && redirectsHome)
+      await mkdir(capabilityRoot, { recursive: true });
     const packageSkillHome =
       packageSkillRoots.length > 0
         ? await materializeAdapterCapabilityHome({
             agent: snapshot.adapter as AdapterId,
-            worktreePath: cwd,
+            worktreePath: capabilityRoot,
             runId,
             installedPaths: packageSkillRoots,
           })
@@ -3646,6 +3727,40 @@ async function driveAgentSession(
       decls: contextRepoLinks[0]?.contextRepos as ContextRepoDecl[] | null,
       consent: { kind: "attach-time" },
     });
+
+    if (run.agentKind === "operational" && integrityBaseline) {
+      const ownedPaths = await agentMaterializationPathsForRun(cwd, runId);
+      const next = await captureOperationalGeneration(cwd, integrityBaseline, [
+        ...ownedPaths,
+        ".maister/agent-materialization/index.json",
+        `.maister/agent-materialization/runs/${runId}.json`,
+        ".maister/agent-materialization/mutex.sqlite",
+        ".maister/agent-materialization/mutex.sqlite-journal",
+        ".maister/agent-materialization/mutex.sqlite-shm",
+        ".maister/agent-materialization/mutex.sqlite-wal",
+      ]);
+      const written = await _db
+        .update(runs)
+        .set({ operationalIntegrityBaseline: next })
+        .where(
+          and(
+            eq(runs.id, runId),
+            eq(runs.status, "Running"),
+            sql`${runs.operationalIntegrityBaseline}->>'generation' = ${String(integrityBaseline.generation)}`,
+            assignmentId
+              ? eq(runs.executionAssignmentId, assignmentId)
+              : isNull(runs.executionAssignmentId),
+          ),
+        )
+        .returning({ id: runs.id });
+
+      if (!written[0])
+        throw new MaisterError(
+          "CONFLICT",
+          "operational materialization generation was superseded",
+          { details: { reason: "assignment_fenced" } },
+        );
+    }
 
     // ADR-166: the create is handle-form — the workspace (and its context
     // mounts, snapshotted on the run above) is adopted by the bound client.

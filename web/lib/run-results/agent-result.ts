@@ -7,6 +7,7 @@ import type {
 import { extractSentinelBlock } from "@/lib/flows/graph/node-output";
 import { nodeOutputMaxBytes } from "@/lib/instance-config";
 import { validateResultValue } from "@/lib/run-results/validate";
+import { operationalResultV1Schema } from "@/lib/run-results/operational-schema";
 
 // ADR-165 (T5.4 / D10): the agent-run publish decision, as a PURE function.
 //
@@ -84,6 +85,21 @@ export function decideAgentResultFromOutput(args: {
       reason: verdict.reason,
       message: verdict.message,
     };
+  }
+
+  if (args.contract.kind === "agent_operational") {
+    const operational = operationalResultV1Schema.safeParse(verdict.value);
+
+    if (args.contract.semanticVersion !== 1 || !operational.success)
+      return {
+        kind: "invalid",
+        reason: "schema_mismatch",
+        message: operational.success
+          ? "unsupported operational semantic version"
+          : operational.error.issues
+              .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+              .join("; "),
+      };
   }
 
   return {

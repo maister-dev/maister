@@ -93,16 +93,55 @@ function wrappers(
 
 export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
   [
-    ...classified("lib/agents/package-contract.ts", "repository-worktree", "Inert validation of package-owned agent sources before operational admission", [
-      ["readPackageAgentSources", "node:fs/promises.readdir", "list"],
-      ["readPackageAgentSources", "node:fs/promises.readFile", "read"],
-    ]),
-    ...classified("lib/packages/manifest.ts", "repository-worktree", "Package-root operational contract validation; no execution", [
-      ["loadMaisterPackageManifest", "lib/agents/package-contract.ts#assertPackageOperationalContracts", "wrapper"],
-    ]),
-    ...classified("scripts/validate-package-compatibility.ts", "build-tooling", "Release gate reads inert agent definitions from the candidate package", [
-      ["validatePackageCompatibility", "lib/agents/package-contract.ts#readPackageAgentSources", "wrapper"],
-    ]),
+    ...classified(
+      "lib/agents/operational-integrity.ts",
+      "repository-worktree",
+      "Bounded integrity hashes over server-resolved repository/worktree material; no host runtime paths",
+      [
+        ["captureTree", "node:fs/promises.realpath", "stat"],
+        ["visit", "node:fs/promises.lstat", "stat"],
+        ["visit", "node:fs/promises.readlink", "read"],
+        ["visit", "node:fs/promises.realpath", "stat"],
+        ["visit", "node:fs/promises.readdir", "list"],
+        ["visit", "node:fs.constants", "unresolved"],
+        ["visit", "node:fs/promises.open", "open"],
+        ["captureTree", "node:fs/promises.readdir", "list"],
+        ["git", "node:child_process.execFile", "spawn", "git"],
+      ],
+    ),
+    ...classified(
+      "lib/agents/package-contract.ts",
+      "repository-worktree",
+      "Inert validation of package-owned agent sources before operational admission",
+      [
+        ["readPackageAgentSources", "node:fs/promises.readdir", "list"],
+        ["readPackageAgentSources", "node:fs/promises.readFile", "read"],
+      ],
+    ),
+    ...classified(
+      "lib/packages/manifest.ts",
+      "repository-worktree",
+      "Package-root operational contract validation; no execution",
+      [
+        [
+          "loadMaisterPackageManifest",
+          "lib/agents/package-contract.ts#assertPackageOperationalContracts",
+          "wrapper",
+        ],
+      ],
+    ),
+    ...classified(
+      "scripts/validate-package-compatibility.ts",
+      "build-tooling",
+      "Release gate reads inert agent definitions from the candidate package",
+      [
+        [
+          "validatePackageCompatibility",
+          "lib/agents/package-contract.ts#readPackageAgentSources",
+          "wrapper",
+        ],
+      ],
+    ),
     ...classified(
       "lib/project-config-persistence/git-conversation.ts",
       "repository-worktree",
@@ -2170,6 +2209,11 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
   ];
 
 export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
+  ...wrappers("lib/agents/operational-integrity.ts", "repository-worktree", [
+    ["captureOperationalBaseline", false],
+    ["captureOperationalGeneration", false],
+    ["verifyOperationalIntegrity", false],
+  ]),
   ...wrappers("lib/agents/package-contract.ts", "repository-worktree", [
     ["readPackageAgentSources", true],
     ["assertPackageOperationalContracts", true],
