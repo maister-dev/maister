@@ -100,3 +100,5 @@ One row per file — this table is the **canonical index** of the folder
 | Execution prompt lifecycle | [`execution-prompt-lifecycle.md`](execution-prompt-lifecycle.md) | Accepted-command async prompt lifecycle, receipt/event reconciliation, serializable prompt handles, typed owners, and restart safety (ADR-167, Implemented). |
 | Execution runtime objects | [`execution-runtime-objects.md`](execution-runtime-objects.md) | Path-free opaque runtime-object catalog, fenced transfer/range/delete contracts, host byte ownership, and retention (ADR-167, Implemented). |
 | Execution data-plane cutover | [`execution-data-cutover.md`](execution-data-cutover.md) | Immutable per-run data-plane modes, rolling upgrade compatibility, legacy import/drain, and bounded B4 removal (ADR-167, Implemented). |
+| Project configuration persistence | [project-config-persistence.md](project-config-persistence.md) | Designed: explicit export, review, commit, recovery and optional push. |
+| Project configuration traceability | [project-config-persistence-traceability.md](project-config-persistence-traceability.md) | Requirement, edge, task and primary-test coverage. |

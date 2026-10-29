@@ -1,5 +1,8 @@
 # Projects domain
 
+> Designed configuration-persistence changes and registration cutover are specified in [project configuration persistence](project-config-persistence.md); current implementation descriptions below remain until cutover.
+
+
 ## Purpose
 
 A **project** is a single registered git repository that MAIster

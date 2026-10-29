@@ -103,3 +103,14 @@ parity required.
   `web/app/api/projects/[slug]/remotes/route.ts`,
   `web/app/api/projects/[slug]/persist-config/route.ts`,
   `web/components/projects/config-persist-banner.tsx`.
+
+## Explicit persistence revision (Designed — ADR-194)
+
+The durable action stays visible for new and existing manifests. It loads the
+complete diff/branch/message before confirmation, distinguishes applied runtime
+settings from committed exportable values, and shows no-op/stale/blocked states.
+Push is a separate default-off review/action after the local commit receipt.
+Cancel before confirm has no effect; an interrupted confirmation reopens its
+specific receipt instead of issuing a duplicate commit. EN/RU copy and focus,
+busy/cancel and error-feedback behavior follow existing shared UI conventions.
+Detailed behavior: [persistence contract](../../system-analytics/project-config-persistence.md).

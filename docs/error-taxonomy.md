@@ -894,3 +894,15 @@ statement accept on a task off `Backlog` → `PRECONDITION` (the existing
 `BACKLOG_GATED_FIELDS` gate). See
 [`system-analytics/librarian-operations.md`](system-analytics/librarian-operations.md)
 and [`system-analytics/librarian-conversation.md`](system-analytics/librarian-conversation.md).
+
+## Project configuration persistence reasons (Designed — ADR-194)
+
+Existing CONFIG/PRECONDITION/CONFLICT/EXECUTOR_UNAVAILABLE codes carry safe
+`details.reason` values defined by the [OpenAPI contract](api/web.openapi.yaml).
+Known dirty/stale/expired/unsupported states refuse without user-file/index
+changes; inaccessible Git/DB/filesystem evidence is unavailable, never missing
+or terminal-success. Commit and push receipts keep separate outcomes; a failed
+push cannot undo a local commit. Auth checks precede body diagnostics. Detailed
+operation IDs/paths/content are limited to the authorized principal/project;
+scalar viewer status contains no repository content. See the
+[persistence domain](system-analytics/project-config-persistence.md).

@@ -5469,3 +5469,58 @@ order.
   registration writes rows here
 - [Architecture](../.ai-factory/ARCHITECTURE.md) — module boundaries
   enforced around `lib/db/`
+
+## Project configuration persistence (Designed — ADR-194)
+
+`projects.config_export_revision` is bigint NOT NULL DEFAULT 0 with a nonnegative
+CHECK. It is an optimistic content revision, never a persistence-status flag.
+Wire values are decimal strings. A BEFORE UPDATE trigger advances it for
+semantic changes in name/main_branch/branch_prefix/public_branch_template/
+default_runner_id/promotion_mode and refuses decreases. An attachment trigger
+advances the owning project for insert/delete/changed install identity. No-op,
+DB-only and manifest-locator receipt updates do not advance it; transaction
+rollback rolls back the bump. Existing project/attachment data is preserved.
+
+| New entity / field | Type and invariant |
+| --- | --- |
+| project_config_persist_operations.id | text UUID primary key, server-generated review/operation identity |
+| project_id, actor_user_id | text FK, ON DELETE RESTRICT; retained evidence is never cascaded away |
+| repository_key | text canonical common Git directory; server-derived, host-private |
+| state | previewed/preparing/prepared/publishing/committed/noop/stale/failed/recovery_required |
+| snapshot | typed jsonb immutable reviewed inputs, original/proposed bytes, index/tree fingerprints, export projection/revision, message and author policy; no credentials |
+| snapshot_digest | text SHA-256, immutable; changed content under a used identity conflicts |
+| expires_at, created_at | timestamptz NOT NULL; 10-minute review expiry |
+| accepted_at | nullable timestamptz; required before preparing/effects |
+| owner_token, owner_process_id | nullable text UUID / integer; claim fence and diagnostic process identity; PID alone grants no signal/cleanup authority |
+| prepared_sha, committed_sha | nullable text; prepared requires verified private commit, committed requires observed target publication |
+| completed_at | nullable timestamptz; required for terminal states |
+| error_reason | nullable bounded reason enum text; required for stale/failed/recovery_required |
+| used_default_author | boolean NOT NULL DEFAULT false; author-default receipt only |
+| updated_at | timestamptz NOT NULL; state/receipt update time |
+| project_config_push_intents.id | text UUID primary key, server-generated independent push review identity |
+| operation_id, project_id, actor_user_id | composite FK to the commit operation's unique identity tuple, ON DELETE RESTRICT |
+| state | previewed/pending/succeeded/failed/unknown/stale |
+| snapshot, snapshot_digest | immutable typed jsonb + SHA-256: exact commit, reviewed secret-safe destination/address fingerprint/ref, remote baseline/outgoing ancestry |
+| expires_at, created_at, accepted_at, completed_at, updated_at | timestamptz; same intent-before-effect/receipt-after-observation rule |
+| error_reason | nullable bounded push/review reason; required for failed/unknown/stale |
+
+Named CHECKs enforce state/receipt consistency, accepted intent before effects,
+valid digests and nonnegative revision. Immutable snapshot/identity triggers
+refuse updates and terminal state reopening; allowed transitions are enumerated
+in [persistence analytics](system-analytics/project-config-persistence.md).
+Partial UNIQUE `project_config_persist_active_repo_uq(repository_key)` covers
+preparing/prepared/publishing/recovery_required only. Multiple unaccepted reviews
+are allowed. Partial UNIQUE `project_config_push_active_destination_uq` covers
+pending/unknown per operation/destination fingerprint; failed push never occupies
+the local-commit slot. Index project/created_at for receipts and state/id for
+bounded keyset recovery. Composite operation identity is UNIQUE for push binding.
+
+The new main migration is additive: schema, SQL, journal, snapshot and generated
+ERD move together after causal RED preparation. Hand-written functions/triggers
+are checked against actual PostgreSQL catalog/behavior; no-drift generation
+alone cannot verify them. Main and Brain boot compatibility checks precede
+recovery; this feature does not modify Brain. Supported upgrade drains old web
+writers before migration and binary restart. No down migration deletes receipts.
+Unused expired previews can be pruned if unaccepted and unreferenced; committed
+receipts remain with the project. Active/private recovery evidence is retained;
+cleanup removes only verified owned private material after durable settlement.

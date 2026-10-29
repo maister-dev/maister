@@ -1607,3 +1607,33 @@ The enforced application runtime range is **Node >=24.15.0 <25** for this releas
   projects and Flow attachments to platform runner ids
 - [Architecture](../.ai-factory/ARCHITECTURE.md) — dependency rules
   enforced around `lib/config.ts`
+
+## Explicit configuration persistence (Designed — ADR-194)
+
+The manifest locator is independent of export status. Runtime package/default
+runner changes update DB configuration without modifying repository files.
+A fresh status compares owned DB values to the configured branch's committed
+manifest; cached portfolio status is explicitly last-observed/unverified.
+
+| Ownership | Fields |
+| --- | --- |
+| Export from DB | project name, main_branch, branch_prefix, public_branch_template, default_runner, promotion.mode; attached packages id/source/version/path |
+| Preserve source | promotion.remote, standalone flows/runner, capabilities, imports/trust, flow roles, comments and unrelated keys |
+| DB/platform only | delivery/execution policy, queue, auto-promotion, sync defaults, Brain, membership/task metadata, runner definitions/readiness, secrets and capability overlays |
+
+Default runner and promotion mode clear symmetrically when their DB value is
+null. Export never reimports source or changes runtime pins. Absent-manifest
+registration uses validated in-memory defaults and leaves the file absent until
+explicit persistence; present-invalid source still refuses. Existing untracked
+bootstrap files remain user-owned and must be reviewed/committed or moved by
+the operator. Local Studio-cut deleted source paths refuse export instead of
+being emitted as reproducible coordinates.
+
+The [owning persistence contract](system-analytics/project-config-persistence.md)
+defines complete preview, dedicated commit, staged/dirty protection, concurrency,
+crash recovery and separate push. The supported deployment drains old web
+writers before the new main migration/binary; mixed-version writes are unsupported.
+No new env variable, binary, port, supervisor runtime mount or configuration
+source is required. Private operation worktrees use the existing worktrees root
+and are excluded from ordinary run GC. The first commit uses private empty
+scaffolding and normal commit amend/hooks, so bookworm's Git need not be upgraded.

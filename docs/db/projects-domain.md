@@ -308,3 +308,57 @@ NULL` is NOT used — group removal happens through the detach transaction;
   [`../system-analytics/packages.md`](../system-analytics/packages.md) (Implemented, ADR-088).
 - Config: [`../configuration.md`](../configuration.md) §`maister.yaml v2`.
 - Source: `web/lib/db/schema.ts`.
+
+## Explicit configuration commit entities (Designed — ADR-194)
+
+The additive main migration owns these entities; generated consolidated DBML
+remains unchanged until executable schema lands.
+
+```mermaid
+erDiagram
+    PROJECTS ||--o{ PROJECT_CONFIG_PERSIST_OPERATIONS : owns
+    USERS ||--o{ PROJECT_CONFIG_PERSIST_OPERATIONS : reviews
+    PROJECT_CONFIG_PERSIST_OPERATIONS ||--o{ PROJECT_CONFIG_PUSH_INTENTS : publishes
+    PROJECT_CONFIG_PERSIST_OPERATIONS {
+        text id PK
+        text project_id FK
+        text actor_user_id FK
+        text repository_key
+        text state
+        jsonb snapshot
+        text snapshot_digest
+        timestamp expires_at
+        timestamp accepted_at
+        text owner_token
+        integer owner_process_id
+        text prepared_sha
+        text committed_sha
+        timestamp completed_at
+        text error_reason
+        boolean used_default_author
+        timestamp created_at
+        timestamp updated_at
+    }
+    PROJECT_CONFIG_PUSH_INTENTS {
+        text id PK
+        text operation_id FK
+        text project_id FK
+        text actor_user_id FK
+        text state
+        jsonb snapshot
+        text snapshot_digest
+        timestamp expires_at
+        timestamp accepted_at
+        timestamp completed_at
+        text error_reason
+        timestamp created_at
+        timestamp updated_at
+    }
+```
+
+`projects.config_export_revision` is a monotonic nonnegative bigint, default 0,
+not persistence provenance. All new evidence FKs restrict deletion. Active-state
+partial uniqueness, immutable snapshot guards and lifecycle CHECKs are specified
+in the [schema narrative](../database-schema.md#project-configuration-persistence-designed--adr-194).
+The [domain contract](../system-analytics/project-config-persistence.md) owns the
+state machine and crash-window outcomes. Existing source/locator data is preserved.

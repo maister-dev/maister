@@ -1374,102 +1374,437 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
   /api/projects/{slug}/persist-config:
-    post:
-      tags: [git]
-      summary: (Implemented, ADR-093) Persist DB config to maister.yaml
-      description: |
-        **(Implemented,
-        [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons).)**
-        Legacy-only opt-in: serialize a DB-only project's configuration into a
-        complete, schema-valid `maister.yaml` v2 and **commit it on the main
-        branch**, then set `projects.maister_yaml_path`. New registrations
-        already bootstrap the file. The durable home for this action is
-        **Project Settings → Git**; the dismissible banner is the nudge.
-        `requireProjectAction(projectId, "editSettings")` — `slug` is a
-        `url-param`, `projectId`/`repo_path` come from `server-state` (never the
-        body).
-
-        Order (multi-store; see ADR-093 crash-window recovery):
-        (1) `atomicWriteText(maister.yaml)` → (2) commit (default identity
-        `maister <noreply@maister.local>` only when the host author is unset →
-        `usedDefaultAuthor: true`; a configured host author is never
-        overridden) → (3) `UPDATE projects SET maister_yaml_path` →
-        (4) optional `git push` when `push: true`. Idempotent-completing: if the
-        file already exists at HEAD with identical content but the DB column is
-        still null (a prior crash after commit), the route reconciles by
-        flipping only. A push failure after the flip returns `200` with a
-        `pushWarning` (persist already succeeded — never rolled back).
-
-        Behavior contract:
-        [`../system-analytics/projects.md`](../system-analytics/projects.md).
-      operationId: postProjectPersistConfig
+    get:
+      tags:
+        - git
+      operationId: getProjectConfigPersistenceStatus
+      summary: (Designed, ADR-194) Read export and checkout status
+      description: Project paths, target branch and configuration are server-derived. Detailed repository
+        content requires editSettings and readRepoFiles; scalar status requires readBoard. Responses
+        are no-store. Immutable actor/project-bound intents guard retries. See
+        ../system-analytics/project-config-persistence.md.
       parameters:
         - name: slug
           in: path
           required: true
-          schema: { type: string, minLength: 1 }
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/PersistConfigBody" }
-            examples:
-              commit-only:
-                summary: Commit the manifest, do not push
-                value:
-                  push: false
-              commit-and-push:
-                summary: Commit the manifest and push to the remote
-                value:
-                  push: true
+          schema:
+            type: string
+            minLength: 1
       responses:
         "200":
-          description: |
-            Config persisted (file written + committed + DB flipped), or
-            reconciled from a prior crash. `pushWarning` is present only when an
-            opt-in push was requested and failed (persist still succeeded).
+          description: Observed status/review or durable operation outcome. Known push failure preserves the
+            local committed receipt.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/PersistConfigResponse" }
-              examples:
-                ok:
-                  summary: Persisted, host author used, no push
-                  value:
-                    ok: true
-                ok-default-author:
-                  summary: Persisted with the default identity (host author unset)
-                  value:
-                    ok: true
-                    usedDefaultAuthor: true
-                ok-push-warning:
-                  summary: Persisted, but the opt-in push failed
-                  value:
-                    ok: true
-                    pushWarning: "push rejected (non-fast-forward); pull and retry"
-        "401": { $ref: "#/components/responses/Unauthenticated" }
-        "403": { $ref: "#/components/responses/Forbidden" }
+              schema:
+                $ref: "#/components/schemas/ConfigPersistenceStatus"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Operation is absent or belongs to another project/principal after project authorization.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
         "409":
-          description: |
-            Either already persisted (`maister_yaml_path` is non-null →
-            `CONFLICT`), or a precondition failed (`PRECONDITION`): the worktree
-            is not a git repo, HEAD is not on the project's main branch, the
-            tree is dirty, HEAD is detached, an unrelated `maister.yaml` already
-            exists on disk, or the commit failed for a reason other than an
-            unset author (e.g. hooks).
+          description: Precondition, stale/expired review, active operation, unsupported repository state, or
+            explicit recovery is required. Structured details.reason identifies remediation.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
-              examples:
-                already-persisted:
-                  summary: maister.yaml already tracked
-                  value:
-                    code: CONFLICT
-                    message: Project config is already persisted to maister.yaml.
-                wrong-branch:
-                  summary: HEAD is not on the main branch
-                  value:
-                    code: PRECONDITION
-                    message: Persist requires HEAD on the project main branch.
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "422":
+          description: "CONFIG: strict body, manifest, source-coordinate or complete-diff bound violation."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "503":
+          description: "EXECUTOR_UNAVAILABLE: repository/database/remote evidence unavailable. No
+            missing/success/terminal result is fabricated."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+    post:
+      tags:
+        - git
+      operationId: postProjectPersistConfig
+      summary: (Designed, ADR-194) Confirm the exact reviewed local commit
+      description: Project paths, target branch and configuration are server-derived. Detailed repository
+        content requires editSettings and readRepoFiles; scalar status requires readBoard. Responses
+        are no-store. Immutable actor/project-bound intents guard retries. See
+        ../system-analytics/project-config-persistence.md.
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: Observed status/review or durable operation outcome. Known push failure preserves the
+            local committed receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersistConfigResponse"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Operation is absent or belongs to another project/principal after project authorization.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "409":
+          description: Precondition, stale/expired review, active operation, unsupported repository state, or
+            explicit recovery is required. Structured details.reason identifies remediation.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "422":
+          description: "CONFIG: strict body, manifest, source-coordinate or complete-diff bound violation."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "503":
+          description: "EXECUTOR_UNAVAILABLE: repository/database/remote evidence unavailable. No
+            missing/success/terminal result is fabricated."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PersistConfigBody"
+  /api/projects/{slug}/persist-config/preview:
+    post:
+      tags:
+        - git
+      operationId: previewProjectPersistConfig
+      summary: (Designed, ADR-194) Preview complete manifest diff without repository writes
+      description: Project paths, target branch and configuration are server-derived. Detailed repository
+        content requires editSettings and readRepoFiles; scalar status requires readBoard. Responses
+        are no-store. Immutable actor/project-bound intents guard retries. See
+        ../system-analytics/project-config-persistence.md.
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: Observed status/review or durable operation outcome. Known push failure preserves the
+            local committed receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigPersistencePreview"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Operation is absent or belongs to another project/principal after project authorization.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "409":
+          description: Precondition, stale/expired review, active operation, unsupported repository state, or
+            explicit recovery is required. Structured details.reason identifies remediation.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "422":
+          description: "CONFIG: strict body, manifest, source-coordinate or complete-diff bound violation."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "503":
+          description: "EXECUTOR_UNAVAILABLE: repository/database/remote evidence unavailable. No
+            missing/success/terminal result is fabricated."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfigPersistenceEmptyBody"
+  /api/projects/{slug}/persist-config/{operationId}:
+    get:
+      tags:
+        - git
+      operationId: getProjectConfigPersistenceReceipt
+      summary: (Designed, ADR-194) Read a specific receipt without recovery writes
+      description: Project paths, target branch and configuration are server-derived. Detailed repository
+        content requires editSettings and readRepoFiles; scalar status requires readBoard. Responses
+        are no-store. Immutable actor/project-bound intents guard retries. See
+        ../system-analytics/project-config-persistence.md.
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: operationId
+          in: path
+          required: true
+          schema: &a1
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Observed status/review or durable operation outcome. Known push failure preserves the
+            local committed receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersistConfigResponse"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Operation is absent or belongs to another project/principal after project authorization.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "409":
+          description: Precondition, stale/expired review, active operation, unsupported repository state, or
+            explicit recovery is required. Structured details.reason identifies remediation.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "422":
+          description: "CONFIG: strict body, manifest, source-coordinate or complete-diff bound violation."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "503":
+          description: "EXECUTOR_UNAVAILABLE: repository/database/remote evidence unavailable. No
+            missing/success/terminal result is fabricated."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+  /api/projects/{slug}/persist-config/{operationId}/recover:
+    post:
+      tags:
+        - git
+      operationId: recoverProjectConfigPersistence
+      summary: (Designed, ADR-194) Reconcile an already accepted local intent
+      description: Project paths, target branch and configuration are server-derived. Detailed repository
+        content requires editSettings and readRepoFiles; scalar status requires readBoard. Responses
+        are no-store. Immutable actor/project-bound intents guard retries. See
+        ../system-analytics/project-config-persistence.md.
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: operationId
+          in: path
+          required: true
+          schema: *a1
+      responses:
+        "200":
+          description: Observed status/review or durable operation outcome. Known push failure preserves the
+            local committed receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersistConfigResponse"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Operation is absent or belongs to another project/principal after project authorization.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "409":
+          description: Precondition, stale/expired review, active operation, unsupported repository state, or
+            explicit recovery is required. Structured details.reason identifies remediation.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "422":
+          description: "CONFIG: strict body, manifest, source-coordinate or complete-diff bound violation."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "503":
+          description: "EXECUTOR_UNAVAILABLE: repository/database/remote evidence unavailable. No
+            missing/success/terminal result is fabricated."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfigPersistenceEmptyBody"
+  /api/projects/{slug}/persist-config/{operationId}/push/preview:
+    post:
+      tags:
+        - git
+      operationId: previewProjectConfigPush
+      summary: (Designed, ADR-194) Review the exact outgoing SHA, destination and ancestry
+      description: Project paths, target branch and configuration are server-derived. Detailed repository
+        content requires editSettings and readRepoFiles; scalar status requires readBoard. Responses
+        are no-store. Immutable actor/project-bound intents guard retries. See
+        ../system-analytics/project-config-persistence.md.
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: operationId
+          in: path
+          required: true
+          schema: *a1
+      responses:
+        "200":
+          description: Observed status/review or durable operation outcome. Known push failure preserves the
+            local committed receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigPersistencePushPreview"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Operation is absent or belongs to another project/principal after project authorization.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "409":
+          description: Precondition, stale/expired review, active operation, unsupported repository state, or
+            explicit recovery is required. Structured details.reason identifies remediation.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "422":
+          description: "CONFIG: strict body, manifest, source-coordinate or complete-diff bound violation."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "503":
+          description: "EXECUTOR_UNAVAILABLE: repository/database/remote evidence unavailable. No
+            missing/success/terminal result is fabricated."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfigPersistenceEmptyBody"
+  /api/projects/{slug}/persist-config/{operationId}/push:
+    post:
+      tags:
+        - git
+      operationId: pushProjectPersistConfig
+      summary: (Designed, ADR-194) Confirm a separate immutable push intent
+      description: Project paths, target branch and configuration are server-derived. Detailed repository
+        content requires editSettings and readRepoFiles; scalar status requires readBoard. Responses
+        are no-store. Immutable actor/project-bound intents guard retries. See
+        ../system-analytics/project-config-persistence.md.
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: operationId
+          in: path
+          required: true
+          schema: *a1
+      responses:
+        "200":
+          description: Observed status/review or durable operation outcome. Known push failure preserves the
+            local committed receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigPersistencePushResult"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Operation is absent or belongs to another project/principal after project authorization.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "409":
+          description: Precondition, stale/expired review, active operation, unsupported repository state, or
+            explicit recovery is required. Structured details.reason identifies remediation.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "422":
+          description: "CONFIG: strict body, manifest, source-coordinate or complete-diff bound violation."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "503":
+          description: "EXECUTOR_UNAVAILABLE: repository/database/remote evidence unavailable. No
+            missing/success/terminal result is fabricated."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfigPersistencePushBody"
   /api/projects/{slug}/remotes:
     get:
       tags: [git]
@@ -23071,43 +23406,6 @@ components:
               description: |
                 Redacted git stderr (credentials stripped via `redactUrl`,
                 truncated). Never contains a token or `://user:pass@`.
-    PersistConfigBody:
-      type: object
-      description: |
-        **(Implemented,
-        [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons))**
-        Body for persist-config. All fields optional; an empty body commits
-        without pushing.
-      additionalProperties: false
-      properties:
-        push:
-          type: boolean
-          default: false
-          description: |
-            When `true`, push the persist commit to the remote after the DB
-            flip (host-ambient auth). A push failure is non-fatal — the response
-            is still `200` with a `pushWarning`.
-    PersistConfigResponse:
-      type: object
-      description: |
-        **(Implemented,
-        [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons))**
-        Success body for persist-config.
-      additionalProperties: false
-      required: [ok]
-      properties:
-        ok: { type: boolean, enum: [true] }
-        usedDefaultAuthor:
-          type: boolean
-          description: |
-            `true` when the host git author was unset and the commit used the
-            default identity `maister <noreply@maister.local>`. Surfaced to the
-            user (toast) so they can configure a real author.
-        pushWarning:
-          type: string
-          description: |
-            Present only when an opt-in `push` was requested and failed; the
-            local commit + DB flip already succeeded and are never rolled back.
     RemoteItem:
       type: object
       description: |
@@ -26505,3 +26803,288 @@ components:
             enabled: { type: boolean }
             runnerId: { type: string, nullable: true }
         readiness: { $ref: "#/components/schemas/LibrarianAvailability" }
+
+    ConfigPersistenceReason:
+      type: string
+      enum:
+        - stale_preview
+        - preview_expired
+        - wrong_branch
+        - detached_head
+        - dirty_checkout
+        - operation_in_progress
+        - unsupported_checkout
+        - manifest_invalid
+        - manifest_too_large
+        - diff_too_large
+        - package_source_unexportable
+        - package_revision_mismatch
+        - missing_package_install
+        - repository_unavailable
+        - operation_busy
+        - recovery_required
+        - commit_failed
+        - push_failed
+        - push_review_stale
+        - not_committed
+        - authority_changed
+    ConfigPersistenceStatus:
+      type: object
+      additionalProperties: false
+      required:
+        - exportState
+        - repositoryState
+        - observedAt
+        - exportRevision
+      properties:
+        exportState:
+          type: string
+          enum:
+            - unverified
+            - missing
+            - in_sync
+            - pending
+            - blocked
+        repositoryState:
+          type: string
+          enum:
+            - ready
+            - dirty
+            - wrong_branch
+            - detached
+            - operation_in_progress
+            - unavailable
+        observedAt:
+          type: string
+          format: date-time
+          nullable: true
+        exportRevision:
+          type: string
+          pattern: ^[0-9]+$
+        reason:
+          $ref: "#/components/schemas/ConfigPersistenceReason"
+        lastObservedExportState:
+          type: string
+          enum:
+            - missing
+            - in_sync
+            - pending
+            - blocked
+    ConfigPersistenceEmptyBody:
+      type: object
+      additionalProperties: false
+      properties: {}
+    PersistConfigBody:
+      type: object
+      additionalProperties: false
+      required:
+        - previewId
+      properties:
+        previewId: &a1
+          type: string
+          format: uuid
+    ConfigPersistenceReady:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - previewId
+        - digest
+        - expiresAt
+        - targetBranch
+        - filename
+        - message
+        - diff
+        - baseSha
+        - exportRevision
+        - usedDefaultAuthor
+      properties:
+        kind:
+          type: string
+          enum:
+            - ready
+        previewId: *a1
+        digest:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        expiresAt:
+          type: string
+          format: date-time
+        targetBranch: &a2
+          type: string
+        filename:
+          type: string
+          enum:
+            - maister.yaml
+        message:
+          type: string
+          enum:
+            - "chore(maister): persist project config"
+        diff:
+          type: string
+          maxLength: 2097152
+        baseSha: &a3
+          type: string
+          nullable: true
+        exportRevision:
+          type: string
+          pattern: ^[0-9]+$
+        usedDefaultAuthor:
+          type: boolean
+    ConfigPersistenceNoop:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - operationId
+        - status
+      properties:
+        kind:
+          type: string
+          enum:
+            - noop
+        operationId: *a1
+        status:
+          $ref: "#/components/schemas/ConfigPersistenceStatus"
+    ConfigPersistenceBlocked:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - status
+        - reason
+        - paths
+      properties:
+        kind:
+          type: string
+          enum:
+            - blocked
+        status:
+          $ref: "#/components/schemas/ConfigPersistenceStatus"
+        reason:
+          $ref: "#/components/schemas/ConfigPersistenceReason"
+        paths:
+          type: array
+          items: *a2
+    ConfigPersistencePreview:
+      oneOf:
+        - $ref: "#/components/schemas/ConfigPersistenceReady"
+        - $ref: "#/components/schemas/ConfigPersistenceNoop"
+        - $ref: "#/components/schemas/ConfigPersistenceBlocked"
+      discriminator:
+        propertyName: kind
+        mapping:
+          ready: "#/components/schemas/ConfigPersistenceReady"
+          noop: "#/components/schemas/ConfigPersistenceNoop"
+          blocked: "#/components/schemas/ConfigPersistenceBlocked"
+    PersistConfigResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - operationId
+        - state
+        - baseSha
+        - commitSha
+        - targetBranch
+        - usedDefaultAuthor
+        - pushState
+      properties:
+        operationId: *a1
+        state:
+          type: string
+          enum:
+            - previewed
+            - preparing
+            - prepared
+            - publishing
+            - committed
+            - noop
+            - stale
+            - failed
+            - recovery_required
+        baseSha: *a3
+        commitSha: *a3
+        targetBranch: *a2
+        usedDefaultAuthor:
+          type: boolean
+        pushState:
+          type: string
+          enum:
+            - not_requested
+            - previewed
+            - pending
+            - succeeded
+            - failed
+            - unknown
+            - stale
+        reason:
+          $ref: "#/components/schemas/ConfigPersistenceReason"
+    ConfigPersistencePushPreview:
+      type: object
+      additionalProperties: false
+      required:
+        - pushPreviewId
+        - digest
+        - expiresAt
+        - remote
+        - destination
+        - url
+        - commitSha
+        - remoteBase
+        - outgoingShas
+      properties:
+        pushPreviewId: *a1
+        digest:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        expiresAt:
+          type: string
+          format: date-time
+        remote:
+          type: string
+          enum:
+            - origin
+        destination: *a2
+        url:
+          type: string
+          description: Credential-redacted destination; the immutable server-held address is used at issuance.
+        commitSha: *a2
+        remoteBase: *a3
+        outgoingShas:
+          type: array
+          items: *a2
+    ConfigPersistencePushBody:
+      type: object
+      additionalProperties: false
+      required:
+        - pushPreviewId
+      properties:
+        pushPreviewId: *a1
+    ConfigPersistencePushResult:
+      type: object
+      additionalProperties: false
+      required:
+        - operationId
+        - pushIntentId
+        - state
+        - commitSha
+        - localCommitPreserved
+      properties:
+        operationId: *a1
+        pushIntentId: *a1
+        state:
+          type: string
+          enum:
+            - previewed
+            - pending
+            - succeeded
+            - failed
+            - unknown
+            - stale
+        commitSha: *a2
+        localCommitPreserved:
+          type: boolean
+          enum:
+            - true
+        reason:
+          $ref: "#/components/schemas/ConfigPersistenceReason"

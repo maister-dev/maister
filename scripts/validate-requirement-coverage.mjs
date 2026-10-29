@@ -29,6 +29,15 @@ export const repoRoot = resolve(here, "..");
 const analyticsRoot = join(repoRoot, "docs", "system-analytics");
 
 export const COVERAGE_GROUPS = {
+  "project-config": {
+    label: "Project configuration persistence",
+    planPath: ".ai-factory/plans/project-config-git-workflow.md",
+    documents: ["project-config-persistence.md"],
+    prefixes: ["CPC"],
+    matrixPath: "docs/system-analytics/project-config-persistence-traceability.md",
+    implementationPhases: /^T(?:[2-9]|14)\./,
+    testRoots: ["web"],
+  },
   m51: {
     label: "M51",
     planPath: ".ai-factory/plans/feature-m51-see-everything.md",
