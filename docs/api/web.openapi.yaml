@@ -26870,6 +26870,13 @@ components:
             - in_sync
             - pending
             - blocked
+        lastObservedAt:
+          type: string
+          format: date-time
+        operationId:
+          type: string
+          format: uuid
+          description: Latest accepted or no-op operation owned by the current actor; an active own operation takes precedence. A locator only; receipt access rechecks the stronger permissions. Omitted for other actors.
     ConfigPersistenceEmptyBody:
       type: object
       additionalProperties: false

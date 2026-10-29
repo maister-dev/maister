@@ -1331,6 +1331,20 @@
       "when": 1792238999145,
       "tag": "0193_numerous_spectrum",
       "breakpoints": true
+    },
+    {
+      "idx": 194,
+      "version": "7",
+      "when": 1793284056809,
+      "tag": "0194_project_config_persistence",
+      "breakpoints": true
+    },
+    {
+      "idx": 195,
+      "version": "7",
+      "when": 1793284759150,
+      "tag": "0195_project_config_publication_guard",
+      "breakpoints": true
     }
   ]
 }

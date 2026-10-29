@@ -1,3 +1,7 @@
+import type {
+  ConfigPersistSnapshot,
+  ConfigPushSnapshot,
+} from "@/lib/project-config-persistence/types";
 import type { GatePermissionResume } from "@/lib/flows/graph/gate-permission-resume";
 import type {
   DeliveryPolicy,
@@ -63,6 +67,10 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 
+import {
+  CONFIG_PERSIST_STATES,
+  CONFIG_PUSH_STATES,
+} from "@/lib/project-config-persistence/types";
 import { ADAPTER_IDS, type AdapterId } from "@/lib/acp-runners/adapter-support";
 import { DOMAIN_EVENT_KINDS } from "@/lib/domain-events/taxonomy";
 import { PROMPT_OWNER_SHAPES } from "@/lib/execution-host/prompt-owner-contract";
@@ -185,64 +193,79 @@ function inLiteralList(
   return sql`${column} in (${sql.raw(values.map((v) => `'${v}'`).join(", "))})`;
 }
 
-export const projects = pgTable("projects", {
-  id: text("id").primaryKey(),
-  slug: text("slug").notNull().unique(),
-  name: text("name").notNull(),
-  repoPath: text("repo_path").notNull().unique(),
-  repoUrl: text("repo_url"),
-  provider: text("provider"),
-  mainBranch: text("main_branch").notNull().default("main"),
-  branchPrefix: text("branch_prefix").notNull().default("maister/"),
-  // ADR-181 (migration 0179): the template for the PUBLIC name a run branch is
-  // published under (`{task_key}`, `{slug}`, `{attempt}`); the internal branch
-  // stays the run's identity. Mirrored as `project.public_branch_template`.
-  publicBranchTemplate: text("public_branch_template")
-    .notNull()
-    .default("feature/{task_key}-{slug}"),
-  // ADR-093: nullable — NULL = config lives only in the DB (registered with no
-  // maister.yaml on disk; the manifest is optional at manual registration).
-  maisterYamlPath: text("maister_yaml_path"),
-  defaultRunnerId: text("default_runner_id"),
-  // ADR-141 (migration 0106): branch-sync defaults. `sync_strategy_default` is
-  // the project's default rebase|merge strategy; `sync_runner_id` is the resolver
-  // runner (nullable FK, SET NULL on runner delete — mirrors
-  // flowRevisions.defaultRunnerId, NOT the plain-text projects.default_runner_id).
-  syncStrategyDefault: text("sync_strategy_default", {
-    enum: ["rebase", "merge"],
-  })
-    .notNull()
-    .default("rebase"),
-  syncRunnerId: text("sync_runner_id").references(() => platformAcpRunners.id, {
-    onDelete: "set null",
-  }),
-  promotionMode: text("promotion_mode"),
-  deliveryPolicyDefault: jsonb(
-    "delivery_policy_default",
-  ).$type<StoredDeliveryPolicy | null>(),
-  executionPolicyDefault: jsonb(
-    "execution_policy_default",
-  ).$type<ExecutionPolicy | null>(),
-  // ADR-121: per-project queue settings (`{ edgeDrain?, maxInFlightAuto? }`).
-  // NULL ⇒ env defaults apply (resolved live at admission, never snapshotted).
-  taskQueueSettings: jsonb(
-    "task_queue_settings",
-  ).$type<TaskQueueSettings | null>(),
-  // ADR-126: auto-promotion lane config. NULL ⇒ shipped defaults with master OFF
-  // (resolved live via resolveAutoPromotionConfig, never snapshotted — the sweep
-  // enforces current operator intent, D-8).
-  autoPromotion: jsonb("auto_promotion").$type<AutoPromotionConfig | null>(),
-  // ADR-122 (Project Brain): Brain on for this repo. Enable-gate refuses CONFIG
-  // unless platform embedding + distill config are set (a project can never be
-  // enabled into an unharvest-able state).
-  brainEnabled: boolean("brain_enabled").notNull().default(false),
-  taskKey: text("task_key").notNull().unique(),
-  nextTaskNumber: integer("next_task_number").notNull().default(1),
-  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
-    .notNull()
-    .defaultNow(),
-  archivedAt: timestamp("archived_at", { withTimezone: true, mode: "date" }),
-});
+export const projects = pgTable(
+  "projects",
+  {
+    configExportRevision: bigint("config_export_revision", { mode: "bigint" })
+      .notNull()
+      .default(sql`0`),
+    id: text("id").primaryKey(),
+    slug: text("slug").notNull().unique(),
+    name: text("name").notNull(),
+    repoPath: text("repo_path").notNull().unique(),
+    repoUrl: text("repo_url"),
+    provider: text("provider"),
+    mainBranch: text("main_branch").notNull().default("main"),
+    branchPrefix: text("branch_prefix").notNull().default("maister/"),
+    // ADR-181 (migration 0179): the template for the PUBLIC name a run branch is
+    // published under (`{task_key}`, `{slug}`, `{attempt}`); the internal branch
+    // stays the run's identity. Mirrored as `project.public_branch_template`.
+    publicBranchTemplate: text("public_branch_template")
+      .notNull()
+      .default("feature/{task_key}-{slug}"),
+    // ADR-093: nullable — NULL = config lives only in the DB (registered with no
+    // maister.yaml on disk; the manifest is optional at manual registration).
+    maisterYamlPath: text("maister_yaml_path"),
+    defaultRunnerId: text("default_runner_id"),
+    // ADR-141 (migration 0106): branch-sync defaults. `sync_strategy_default` is
+    // the project's default rebase|merge strategy; `sync_runner_id` is the resolver
+    // runner (nullable FK, SET NULL on runner delete — mirrors
+    // flowRevisions.defaultRunnerId, NOT the plain-text projects.default_runner_id).
+    syncStrategyDefault: text("sync_strategy_default", {
+      enum: ["rebase", "merge"],
+    })
+      .notNull()
+      .default("rebase"),
+    syncRunnerId: text("sync_runner_id").references(
+      () => platformAcpRunners.id,
+      {
+        onDelete: "set null",
+      },
+    ),
+    promotionMode: text("promotion_mode"),
+    deliveryPolicyDefault: jsonb(
+      "delivery_policy_default",
+    ).$type<StoredDeliveryPolicy | null>(),
+    executionPolicyDefault: jsonb(
+      "execution_policy_default",
+    ).$type<ExecutionPolicy | null>(),
+    // ADR-121: per-project queue settings (`{ edgeDrain?, maxInFlightAuto? }`).
+    // NULL ⇒ env defaults apply (resolved live at admission, never snapshotted).
+    taskQueueSettings: jsonb(
+      "task_queue_settings",
+    ).$type<TaskQueueSettings | null>(),
+    // ADR-126: auto-promotion lane config. NULL ⇒ shipped defaults with master OFF
+    // (resolved live via resolveAutoPromotionConfig, never snapshotted — the sweep
+    // enforces current operator intent, D-8).
+    autoPromotion: jsonb("auto_promotion").$type<AutoPromotionConfig | null>(),
+    // ADR-122 (Project Brain): Brain on for this repo. Enable-gate refuses CONFIG
+    // unless platform embedding + distill config are set (a project can never be
+    // enabled into an unharvest-able state).
+    brainEnabled: boolean("brain_enabled").notNull().default(false),
+    taskKey: text("task_key").notNull().unique(),
+    nextTaskNumber: integer("next_task_number").notNull().default(1),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    archivedAt: timestamp("archived_at", { withTimezone: true, mode: "date" }),
+  },
+  (t) => [
+    check(
+      "projects_config_export_revision_check",
+      sql`${t.configExportRevision} >= 0`,
+    ),
+  ],
+);
 
 export type PlatformRunnerProvider =
   | { kind: "anthropic" }
@@ -8793,3 +8816,129 @@ export const librarianSegmentSummaries = pgTable(
 );
 export type LibrarianSegmentSummaryRow =
   typeof librarianSegmentSummaries.$inferSelect;
+
+export const projectConfigPersistOperations = pgTable(
+  "project_config_persist_operations",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "restrict" }),
+    actorUserId: text("actor_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    repositoryKey: text("repository_key").notNull(),
+    state: text("state", { enum: CONFIG_PERSIST_STATES })
+      .notNull()
+      .default("previewed"),
+    snapshot: jsonb("snapshot").$type<ConfigPersistSnapshot>().notNull(),
+    snapshotDigest: text("snapshot_digest").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    ownerToken: text("owner_token"),
+    ownerProcessId: integer("owner_process_id"),
+    preparedSha: text("prepared_sha"),
+    committedSha: text("committed_sha"),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    errorReason: text("error_reason"),
+    usedDefaultAuthor: boolean("used_default_author").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    unique("project_config_persist_identity_uq").on(
+      t.id,
+      t.projectId,
+      t.actorUserId,
+    ),
+    uniqueIndex("project_config_persist_active_repo_uq")
+      .on(t.repositoryKey)
+      .where(
+        sql`${t.state} IN ('preparing', 'prepared', 'publishing', 'recovery_required')`,
+      ),
+    index("project_config_persist_project_created_idx").on(
+      t.projectId,
+      t.createdAt,
+    ),
+    index("project_config_persist_recovery_idx").on(t.state, t.id),
+    check(
+      "project_config_persist_state_check",
+      sql`${t.state} IN ('previewed','preparing','prepared','publishing','committed','noop','stale','failed','recovery_required')`,
+    ),
+    check(
+      "project_config_persist_digest_check",
+      sql`${t.snapshotDigest} ~ '^[0-9a-f]{64}$'`,
+    ),
+    check(
+      "project_config_persist_receipt_check",
+      sql`
+      (${t.state} NOT IN ('preparing','prepared','publishing','committed','recovery_required') OR ${t.acceptedAt} IS NOT NULL)
+      AND (${t.state} NOT IN ('prepared','publishing','committed') OR ${t.preparedSha} IS NOT NULL)
+      AND (${t.state} <> 'committed' OR (${t.committedSha} IS NOT NULL AND ${t.completedAt} IS NOT NULL))
+      AND (${t.state} NOT IN ('noop','stale','failed') OR ${t.completedAt} IS NOT NULL)
+      AND (${t.state} NOT IN ('stale','failed','recovery_required') OR ${t.errorReason} IS NOT NULL)`,
+    ),
+  ],
+);
+
+export const projectConfigPushIntents = pgTable(
+  "project_config_push_intents",
+  {
+    id: text("id").primaryKey(),
+    operationId: text("operation_id").notNull(),
+    projectId: text("project_id").notNull(),
+    actorUserId: text("actor_user_id").notNull(),
+    state: text("state", { enum: CONFIG_PUSH_STATES })
+      .notNull()
+      .default("previewed"),
+    snapshot: jsonb("snapshot").$type<ConfigPushSnapshot>().notNull(),
+    snapshotDigest: text("snapshot_digest").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    errorReason: text("error_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    foreignKey({
+      name: "project_config_push_operation_identity_fk",
+      columns: [t.operationId, t.projectId, t.actorUserId],
+      foreignColumns: [
+        projectConfigPersistOperations.id,
+        projectConfigPersistOperations.projectId,
+        projectConfigPersistOperations.actorUserId,
+      ],
+    }).onDelete("restrict"),
+    uniqueIndex("project_config_push_active_destination_uq")
+      .on(t.operationId, sql`(${t.snapshot}->>'destinationFingerprint')`)
+      .where(sql`${t.state} IN ('pending', 'unknown')`),
+    index("project_config_push_operation_created_idx").on(
+      t.operationId,
+      t.createdAt,
+    ),
+    check(
+      "project_config_push_state_check",
+      sql`${t.state} IN ('previewed','pending','succeeded','failed','unknown','stale')`,
+    ),
+    check(
+      "project_config_push_digest_check",
+      sql`${t.snapshotDigest} ~ '^[0-9a-f]{64}$'`,
+    ),
+    check(
+      "project_config_push_receipt_check",
+      sql`
+      (${t.state} NOT IN ('pending','succeeded','failed','unknown') OR ${t.acceptedAt} IS NOT NULL)
+      AND (${t.state} NOT IN ('succeeded','failed','stale') OR ${t.completedAt} IS NOT NULL)
+      AND (${t.state} NOT IN ('failed','unknown','stale') OR ${t.errorReason} IS NOT NULL)`,
+    ),
+  ],
+);

@@ -3,8 +3,9 @@ import "server-only";
 import { readFile } from "node:fs/promises";
 
 import pino from "pino";
-import { isSeq, parseDocument, stringify } from "yaml";
+import { parseDocument, stringify } from "yaml";
 
+import { patchPackageEntries } from "@/lib/project-config-persistence/manifest";
 import { atomicWriteText } from "@/lib/atomic";
 import { maisterYamlV2Schema } from "@/lib/config.schema";
 import { DEFAULT_PUBLIC_BRANCH_TEMPLATE } from "@/lib/workbench-git/public-branch-name";
@@ -56,45 +57,21 @@ export async function writeBackPackagesPin(opts: {
       throw new Error(`yaml parse: ${doc.errors[0]!.message}`);
     }
 
-    if (opts.change.op === "upsert") {
-      const entry = opts.change.entry;
-      const node: Record<string, string> = {
-        id: entry.id,
-        source: entry.source,
-        version: entry.version,
-      };
+    const pins = maisterYamlV2Schema.shape.packages.parse(
+      (doc.toJS() as Record<string, unknown>).packages ?? [],
+    );
+    const change = opts.change;
+    const retained = pins.filter(
+      (pin) =>
+        pin.id !== (change.op === "upsert" ? change.entry.id : change.id),
+    );
+    const desired =
+      change.op === "upsert" ? [...retained, change.entry] : retained;
 
-      if (entry.path !== undefined) node.path = entry.path;
-
-      const seq = doc.get("packages", true);
-
-      if (!isSeq(seq)) {
-        doc.set("packages", doc.createNode([node]));
-      } else {
-        const existing = seq.items.findIndex(
-          (item: any) =>
-            typeof item?.get === "function" && item.get("id") === entry.id,
-        );
-
-        if (existing >= 0) {
-          seq.items.splice(existing, 1, doc.createNode(node) as never);
-        } else {
-          seq.items.push(doc.createNode(node) as never);
-        }
-      }
-    } else {
-      const removeId = opts.change.id;
-      const seq = doc.get("packages", true);
-
-      if (isSeq(seq)) {
-        seq.items = seq.items.filter(
-          (item: any) =>
-            !(typeof item?.get === "function" && item.get("id") === removeId),
-        );
-      }
-    }
-
-    await atomicWriteText(opts.maisterYamlPath, doc.toString());
+    await atomicWriteText(
+      opts.maisterYamlPath,
+      patchPackageEntries(raw, desired),
+    );
     log.info(
       { path: opts.maisterYamlPath, op: opts.change.op },
       "packages[] pin written back",

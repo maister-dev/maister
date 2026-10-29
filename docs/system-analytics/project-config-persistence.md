@@ -114,12 +114,24 @@ on newer `git worktree add --orphan`; no deployment Git upgrade is required.
 
 ## Lock and recovery contract (Designed)
 
-Lock order is repository, project, operation. A pinned declared Postgres
-connection holds the advisory repository lock; the durable active-operation
-constraint remains after connection loss. Other managed repository mutators
-must inspect it. A disconnected owner stops issuing Git commands, aborts the
-prepared transaction and observes child exit. Lock release alone never proves
-child death. Unknown locks/process outcomes require explicit recovery.
+Lock order is repository, project, operation. An exclusive ownership directory
+under the canonical common Git directory fences all managed parent-repository
+mutators without introducing database access into standalone Git helpers. A
+short transaction locks the project row, rechecks the export revision and accepts
+the durable active intent. Its trigger refuses concurrent export mutations until
+completion or recovery. Git runs outside database transactions. The ownership
+directory and active intent survive connection/process loss; neither expires.
+Recovery may adopt only its own fence after proving the recorded process dead.
+Unknown ownership or a still-live process requires explicit recovery guidance.
+
+Each Git mutation starts behind an IPC gate. The host records its detached
+process group in the fence before permitting Git to start. Owner death before
+permission starts no Git command; owner death afterwards retains the group as
+recovery evidence. Recovery refuses while any recorded group has a live member,
+including orphaned hooks. Exited zombie members cannot issue effects. The
+supported Linux/macOS process-table inspection uses `ps`; the container already
+ships `procps`. Unreadable process evidence fails closed. Commands have bounded
+execution and terminate their owned group on timeout.
 
 GET status/receipt and new preview never advance earlier operations. Explicit
 recover and a one-shot post-migration startup pass inspect accepted intents;
@@ -149,6 +161,17 @@ The operation and push-intent snapshots are immutable and content-digest guarded
 FKs restrict destruction of retained evidence. Empty expired previews can be
 pruned; nonterminal operations cannot. Committed receipts are retained with the
 project; cleanup removes only proven operation-owned private material.
+
+Scalar status may include the current actor's operation locator so an interrupted
+save remains discoverable after reload. It never includes another actor's locator
+or source content; the receipt route rechecks both stronger permissions. An active
+own intent takes precedence over the latest own terminal receipt.
+
+A no-op review records a terminal no-op and may repair a null manifest locator to
+the proven committed root manifest under a short revision-checked transaction.
+It changes no exportable/runtime setting, file, index, ref or commit. This keeps
+legacy null-path readers usable when an operator already committed matching YAML
+outside MAIster; path repair never becomes persistence-status authority.
 
 ## Expectations
 

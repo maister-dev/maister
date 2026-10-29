@@ -80,6 +80,20 @@ async function seedTwoFileConflict(): Promise<{ wt: string; before: string }> {
 }
 
 describe("branch-sync worktree helpers", () => {
+  it("IT-CPC-10: a retained publication ownership fence blocks managed parent fast-forward", async () => {
+    const before = await headSha(repo);
+    const fence = join(repo, ".git", "maister-config-mutation.lock");
+
+    await mkdir(fence);
+    await writeFile(
+      join(fence, "owner.json"),
+      JSON.stringify({ operationId: randomUUID(), processId: process.pid }),
+    );
+    await expect(
+      ffUpdateLocalBranch(repo, "main", before),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(await headSha(repo)).toBe(before);
+  });
   it("aheadBehindCounts reports exact ahead/behind on a diverged history", async () => {
     await git(repo, ["checkout", "-b", "feature"]);
     await writeFile(join(repo, "f1.txt"), "f1\n");
