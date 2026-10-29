@@ -578,6 +578,13 @@ export function buildAgentTriggersConsumer(
         // deliberately prevents any other event subscriber from observing the
         // answer payload.
         if (event.kind === "task.clarification_answered") {
+          if (
+            event.payload &&
+            typeof event.payload === "object" &&
+            "continuesSourceRun" in event.payload &&
+            event.payload.continuesSourceRun === true
+          )
+            continue;
           const target = clarificationAnswerTarget(event);
 
           if (!target) {

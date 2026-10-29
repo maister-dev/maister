@@ -64,6 +64,7 @@ import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
 import { runSyncRecoverySweep } from "@/lib/runs/sync-recovery";
 import { configuredEventStreamLagAgeMs } from "@/lib/instance-config";
 import { durableWorkersHealth } from "@/lib/workers/health";
+import { sweepOperationalDispositions } from "@/lib/gc/operational-disposition";
 
 export type GcCompatibilitySummary = {
   worktreesPreserved: number;
@@ -192,6 +193,12 @@ async function runGcBundle(): Promise<GcBundleResult> {
   let plainAgentDirectory: PlainAgentDirectoryGcSummary | null = null;
 
   try {
+    const operational = await sweepOperationalDispositions();
+
+    if (operational.deferred > 0)
+      errors.push(
+        `${operational.deferred} operational workspace cleanup(s) deferred`,
+      );
     workspace = await runWorkspaceGcSweep();
   } catch (err) {
     const message = errorMessage(err);

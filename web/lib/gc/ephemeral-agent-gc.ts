@@ -92,21 +92,37 @@ export async function runEphemeralAgentGcSweep(
 
     // The run id is the dir name with the `-ro` suffix stripped.
     const runIds = roDirs.map((d) => d.slice(0, -RO_SUFFIX.length));
-    const liveRows: Array<{ id: string }> = await db
-      .select({ id: runs.id })
+    const ownerRows: Array<{
+      id: string;
+      status: string;
+      agentKind: string | null;
+    }> = await db
+      .select({ id: runs.id, status: runs.status, agentKind: runs.agentKind })
       .from(runs)
-      .where(
-        and(
-          inArray(runs.id, runIds),
-          inArray(runs.status, LIVE_AGENT_STATUSES),
-        ),
-      );
-    const liveIds = new Set(liveRows.map((r) => r.id));
+      .where(and(inArray(runs.id, runIds)));
+    const liveIds = new Set(
+      ownerRows
+        .filter(
+          (row) =>
+            row.agentKind === "operational" ||
+            LIVE_AGENT_STATUSES.includes(row.status),
+        )
+        .map((row) => row.id),
+    );
+    const knownIds = new Set(ownerRows.map((row) => row.id));
 
     for (const dir of roDirs) {
       scanned += 1;
       const runId = dir.slice(0, -RO_SUFFIX.length);
 
+      if (!knownIds.has(runId)) {
+        failed += 1;
+        log.error(
+          { runId, slug: project.slug, reason: "agent_kind_unknown" },
+          "ephemeral orphan retained for operator diagnosis",
+        );
+        continue;
+      }
       if (liveIds.has(runId)) {
         live += 1;
         continue;

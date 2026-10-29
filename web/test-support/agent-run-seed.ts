@@ -5,6 +5,8 @@ import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+import { buildOperationalContract } from "@/lib/agents/launch-contract";
+import { parseAgentDefinition } from "@/lib/agents/definition";
 import { testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 import { agentWorkdirPath } from "@/lib/agents/workspace-paths";
 import {
@@ -29,9 +31,10 @@ export type SeedAgentRunInput = Readonly<{
   runtimeRoot: string;
   /** The full `<stem>.md` definition — frontmatter and prompt. */
   definition: string;
-  workspace: "none" | "worktree";
+  workspace: "none" | "repo_read" | "worktree";
   resultContract: RunResultContract | null;
   persistent?: boolean;
+  operational?: boolean;
 }>;
 
 /** A platform agent run the production launcher can start: package, project,
@@ -76,7 +79,18 @@ export async function seedAgentRun(
     name: packageName,
     versionLabel: "v1.0.0",
     resolvedRevision: "rev-1",
-    manifest: {},
+    manifest: input.operational
+      ? {
+          spec: {
+            schemaVersion: 1,
+            name: packageName,
+            flows: [],
+            capabilities: [],
+            compat: { engine_min: "3.9.0" },
+          },
+          inventory: { skills: [], agents: [], platformAgents: ["researcher"] },
+        }
+      : {},
     manifestDigest: "digest",
     installedPath,
     packageStatus: "Installed",
@@ -96,6 +110,10 @@ export async function seedAgentRun(
     name: "Researcher",
     description: "d",
     workspace: input.workspace,
+    kind: input.operational ? "operational" : "code_delivery",
+    completionContract: input.operational
+      ? { contract: "operational_v1" }
+      : null,
     mode: "session",
     triggers: ["manual"],
     riskTier: "read_only",
@@ -123,11 +141,24 @@ export async function seedAgentRun(
     projectId,
     runKind: "agent",
     agentId,
+    agentKind: input.operational ? "operational" : null,
     agentWorkspace: input.workspace,
     status: "Running",
     flowVersion: "agent",
     flowRevision: "manual",
-    resultContract: input.resultContract,
+    resultContract: input.operational
+      ? buildOperationalContract({
+          parsed: parseAgentDefinition(agentId, input.definition),
+          sourcePath,
+          installedPath,
+          packageName,
+          packageInstallId: packageId,
+          versionLabel: "v1.0.0",
+          resolvedRevision: "rev-1",
+          manifest: null,
+          execTrust: "trusted",
+        })
+      : input.resultContract,
     triggerSource: "manual",
     persistent: input.persistent ?? false,
     addressableKey: input.persistent ? "researcher" : null,

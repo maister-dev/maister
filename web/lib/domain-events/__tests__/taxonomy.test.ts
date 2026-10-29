@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   ATTENTION_EVENT_KINDS,
+  OPERATIONAL_ATTENTION_EVENT_KINDS,
   causeReason,
   parseTerminalCause,
   terminalCauseReason,
@@ -135,7 +136,7 @@ describe("run.review cause", () => {
 });
 
 describe("domain-event taxonomy", () => {
-  it("contains the 17 registered domain kinds, including user clarifications", () => {
+  it("contains registered domain kinds including operational disposition", () => {
     expect([...DOMAIN_EVENT_KINDS]).toEqual([
       "task.created",
       "task.comment_added",
@@ -154,6 +155,8 @@ describe("domain-event taxonomy", () => {
       "run.rework_claimed",
       "run.rework_returned",
       "gate.failed",
+      "run.operational_attention_acknowledged",
+      "run.operational_cleanup_changed",
     ]);
   });
 
@@ -217,6 +220,7 @@ describe("domain-event taxonomy", () => {
 describe("UT-ATN-09 attention/twinned partition of the taxonomy", () => {
   it("partitions every taxonomy kind exactly once", () => {
     const union = [
+      ...OPERATIONAL_ATTENTION_EVENT_KINDS,
       ...TASK_ACTIVITY_TWINNED_EVENT_KINDS,
       ...ATTENTION_EVENT_KINDS,
       ...DECISION_OPENING_EVENT_KINDS,
@@ -263,6 +267,7 @@ describe("UT-ATN-09 attention/twinned partition of the taxonomy", () => {
     // therefore already counted by `decisions` — the decision-opening list.
     // Landing in neither is the silent case this guards.
     const visible = new Set<string>([
+      ...OPERATIONAL_ATTENTION_EVENT_KINDS,
       ...ATTENTION_EVENT_KINDS,
       ...DECISION_OPENING_EVENT_KINDS,
     ]);

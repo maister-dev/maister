@@ -70,6 +70,8 @@ import {
   inspectOperationalRun,
   operationalResourceKind,
 } from "@/lib/agents/operational-context";
+import { createExecutionHosts } from "@/lib/execution-host/client";
+import { disposeOperationalRun } from "@/lib/gc/operational-disposition";
 
 const log = pino({
   name: "agent-finalization",
@@ -409,25 +411,53 @@ async function prepareAgentFinalization(
             finalText: opts.finalText,
           })
       : { kind: "none" as const };
+  let operationalQuiescent = true;
+
+  if (
+    preparedRun.agentKind === "operational" &&
+    preparedRun.executionAssignmentId
+  ) {
+    try {
+      const client = await createExecutionHosts({ db: _db }).forAssignment({
+        id: preparedRun.executionAssignmentId,
+      });
+
+      operationalQuiescent = !(await client.sessionsForRun()).some(
+        (session) => session.status === "live",
+      );
+    } catch (error) {
+      operationalQuiescent = false;
+      log.error(
+        { runId, errorType: error instanceof Error ? error.name : "unknown" },
+        "operational-execution-quiescence-unproven",
+      );
+    }
+  }
   const operationalIntegrity =
     preparedRun.agentKind === "operational"
-      ? await inspectOperationalRun(_db, preparedRun).catch(
-          (error: unknown) => {
-            log.warn(
-              {
-                runId,
-                errorType: error instanceof Error ? error.name : "unknown",
-              },
-              "operational-final-integrity-unavailable",
-            );
+      ? !operationalQuiescent
+        ? {
+            verdict: "indeterminate" as const,
+            reasonCodes: ["operational_execution_not_quiescent"],
+            changedPaths: [],
+          }
+        : await inspectOperationalRun(_db, preparedRun).catch(
+            (error: unknown) => {
+              log.warn(
+                {
+                  runId,
+                  errorType: error instanceof Error ? error.name : "unknown",
+                },
+                "operational-final-integrity-unavailable",
+              );
 
-            return {
-              verdict: "indeterminate" as const,
-              reasonCodes: ["operational_integrity_probe_failed"],
-              changedPaths: [],
-            };
-          },
-        )
+              return {
+                verdict: "indeterminate" as const,
+                reasonCodes: ["operational_integrity_probe_failed"],
+                changedPaths: [],
+              };
+            },
+          )
       : null;
   const operationalDecision = operationalIntegrity
     ? operationalTerminalDecision({
@@ -902,6 +932,12 @@ async function prepareAgentFinalization(
         { runId, status: result.status },
         "operational-terminal-cleanup-armed",
       );
+      await disposeOperationalRun(runId, { db: _db }).catch((error: unknown) =>
+        log.error(
+          { runId, errorType: error instanceof Error ? error.name : "unknown" },
+          "operational-cleanup-dispatch-deferred",
+        ),
+      );
       await promoteNextPending({ db: _db, pool: "agent" }).catch(
         (error: unknown) =>
           log.error(
@@ -1031,6 +1067,30 @@ export async function finalizeAgentRun(
   opts: AgentFinalizeOptions = {},
 ): Promise<{ finalized: boolean; status?: AgentFinalStatus }> {
   const db = opts.db ?? getDb();
+  const [run] = await db
+    .select({
+      agentKind: runs.agentKind,
+      executionAssignmentId: runs.executionAssignmentId,
+    })
+    .from(runs)
+    .where(eq(runs.id, runId));
+
+  if (run?.agentKind === "operational" && run.executionAssignmentId) {
+    try {
+      const client = await createExecutionHosts({ db }).forAssignment({
+        id: run.executionAssignmentId,
+      });
+
+      for (const session of await client.sessionsForRun())
+        if (session.status === "live")
+          await client.deleteSession(session.sessionId);
+    } catch (error) {
+      log.error(
+        { runId, errorType: error instanceof Error ? error.name : "unknown" },
+        "operational-terminal-teardown-unconfirmed",
+      );
+    }
+  }
   const prepared = await prepareAgentRunFinalization(runId, outcome, {
     ...opts,
     db,

@@ -67,6 +67,7 @@ export type OperationalIntegrityBaseline = {
   refs: Array<{ ref: string; sha: string }>;
   source: OperationalIntegrityEntry[];
   platform: OperationalIntegrityEntry[];
+  owner?: { cwd: string; repoPath: string; projectSlug: string };
 };
 
 export type OperationalTerminal = {
@@ -125,6 +126,6 @@ export type OperationalOutcome = {
   reasonCodes: string[];
   cleanup: Pick<
     OperationalCleanup,
-    "state" | "revision" | "attempts" | "dueAt" | "errorCode"
+    "state" | "revision" | "attempts" | "dueAt" | "errorCode" | "evidenceIds"
   > | null;
 };

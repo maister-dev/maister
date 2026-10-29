@@ -94,6 +94,31 @@ function wrappers(
 export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
   [
     ...classified(
+      "lib/gc/operational-disposition.ts",
+      "repository-worktree",
+      "Lifecycle-claimed server-resolved disposal of operational repository resources",
+      [
+        ["exists", "node:fs/promises.lstat", "stat"],
+        [
+          "disposeOperationalRun",
+          "lib/gc/plain-agent-directory-gc.ts#removeOwnedPlainAgentDirectory",
+          "wrapper",
+        ],
+      ],
+    ),
+    ...classified(
+      "lib/gc/operational-evidence.ts",
+      "repository-worktree",
+      "Bounded source preservation into opaque evidence before destructive worktree cleanup",
+      [
+        ["preserveOperationalEvidence", "node:fs/promises.realpath", "stat"],
+        ["preserveOperationalEvidence", "node:fs/promises.readlink", "read"],
+        ["preserveOperationalEvidence", "node:fs.constants", "unresolved"],
+        ["preserveOperationalEvidence", "node:fs/promises.open", "open"],
+        ["git", "node:child_process.execFile", "spawn", "git"],
+      ],
+    ),
+    ...classified(
       "lib/agents/operational-integrity.ts",
       "repository-worktree",
       "Bounded integrity hashes over server-resolved repository/worktree material; no host runtime paths",
@@ -2209,6 +2234,13 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
   ];
 
 export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
+  ...wrappers("lib/gc/operational-disposition.ts", "repository-worktree", [
+    ["disposeOperationalRun", false],
+    ["sweepOperationalDispositions", false],
+  ]),
+  ...wrappers("lib/gc/operational-evidence.ts", "repository-worktree", [
+    ["preserveOperationalEvidence", false],
+  ]),
   ...wrappers("lib/agents/operational-integrity.ts", "repository-worktree", [
     ["captureOperationalBaseline", false],
     ["captureOperationalGeneration", false],

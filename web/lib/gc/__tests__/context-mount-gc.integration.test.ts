@@ -131,7 +131,7 @@ async function seedProject(slug: string, repoPath: string): Promise<string> {
 async function createMountFixture(
   opts: {
     runStatus?: string;
-  } = {},
+  } = { runStatus: "Done" },
 ): Promise<Fixture> {
   const root = await mkdtemp(join(tmpdir(), "maister-ctxgc-root-"));
   const siblingRepo = await mkdtemp(join(tmpdir(), "maister-ctxgc-sib-"));
@@ -238,15 +238,22 @@ async function readMarker(p: string): Promise<ContextMountGcMarker> {
 }
 
 describe("context mount GC backstop", () => {
-  it("reaps an orphan whose owning run row never existed (the residual crash window)", async () => {
-    const fx = await createMountFixture();
-
+  it("preserves an unclassified context orphan whose owning run row never existed", async () => {
+    const fx = await createMountFixture({});
     const summary = await runContextMountGcSweep({ db, root: fx.root });
 
-    expect(summary).toMatchObject({ scanned: 1, removed: 1, live: 0 });
-    expect(await pathExists(fx.mountPath)).toBe(false);
-    expect(await siblingRegistrations(fx.siblingRepo)).not.toContain(
-      await realOf(fx.mountPath),
+    expect(summary).toMatchObject({ scanned: 1, removed: 0, poisoned: 1 });
+    expect(await pathExists(fx.mountPath)).toBe(true);
+    const marker = JSON.parse(
+      await readFile(fx.markerPath, "utf8"),
+    ) as ContextMountGcMarker;
+
+    expect(marker).toMatchObject({
+      state: "failed",
+      lastErrorCode: "agent_kind_unknown",
+    });
+    expect((await runContextMountGcSweep({ db, root: fx.root })).skipped).toBe(
+      1,
     );
   }, 120_000);
 
@@ -324,12 +331,19 @@ describe("context mount GC backstop", () => {
 
   it("poison policy: a dir that is not a registered worktree of its sibling is permanently failed", async () => {
     const fx = await createMountFixture();
+    const strayRunId = randomUUID();
+    const [owner] = await db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.id, fx.runId));
+
+    await db.insert(schema.runs).values({ ...owner!, id: strayRunId });
     const strayContext = join(
       fx.root,
       ".maister",
       fx.consumingSlug,
       "runs",
-      randomUUID(),
+      strayRunId,
       "context",
     );
 

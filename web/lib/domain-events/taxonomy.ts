@@ -49,6 +49,8 @@ export const DOMAIN_EVENT_KINDS = [
   "run.rework_claimed",
   "run.rework_returned",
   "gate.failed",
+  "run.operational_attention_acknowledged",
+  "run.operational_cleanup_changed",
 ] as const;
 
 export type DomainEventKind = (typeof DOMAIN_EVENT_KINDS)[number];
@@ -364,7 +366,13 @@ export type DecisionOpeningEventKind =
  * Over-invalidating costs one refetch; under-invalidating costs a page that
  * silently lies. So the scan reads the union and the counter keeps the split.
  */
+export const OPERATIONAL_ATTENTION_EVENT_KINDS = [
+  "run.operational_attention_acknowledged",
+  "run.operational_cleanup_changed",
+] as const satisfies readonly DomainEventKind[];
+
 export const ATTENTION_PLANE_EVENT_KINDS = [
+  ...OPERATIONAL_ATTENTION_EVENT_KINDS,
   ...ATTENTION_EVENT_KINDS,
   ...DECISION_OPENING_EVENT_KINDS,
 ] as const satisfies readonly DomainEventKind[];

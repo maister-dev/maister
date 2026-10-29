@@ -63,6 +63,13 @@ vi.mock("@/lib/runs/cost-reconcile-sweep", () => ({
 vi.mock("@/lib/gc/workspace-gc", () => ({
   runWorkspaceGcSweep: runWorkspaceGcSweepMock,
 }));
+vi.mock("@/lib/gc/operational-disposition", () => ({
+  sweepOperationalDispositions: vi.fn(async () => ({
+    scanned: 0,
+    released: 0,
+    deferred: 0,
+  })),
+}));
 vi.mock("@/lib/gc/workspace-reconciler", () => ({
   runWorkspaceReconciliationSweep: runWorkspaceReconciliationSweepMock,
 }));

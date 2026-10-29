@@ -1809,6 +1809,12 @@ table notification_subscriptions {
   }
 }
 
+table operational_cleanup_progress {
+  id text [pk, not null]
+  cursor_id text
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+}
+
 table operational_run_acknowledgements {
   user_id text [not null]
   run_id text [not null]

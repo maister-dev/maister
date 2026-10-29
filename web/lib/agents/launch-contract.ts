@@ -21,7 +21,7 @@ type OperationalContract = Extract<
 >;
 
 const APPENDIX = `Operational completion contract: operational_v1 (semantic version 1).
-Perform the requested operation with the existing permission and isolation policy. Explicit human decisions use normal HITL. Do not modify source code, commit, merge, promote or publish a branch. Required tools still need their normal approvals.
+Perform the requested operation with the existing permission and isolation policy. Explicit human decisions use normal HITL. After resume, read the task's confirmed human clarifications before continuing pending work. Do not modify source code, commit, merge, promote or publish a branch. Required tools still need their normal approvals.
 End the completing turn with exactly one fenced json maister:output object:
 {"schemaVersion":1,"outcome":"success","summary":"Complete scan; no new work.","coverage":{"state":"complete","remainingKnown":0},"counts":{"scanned":0,"attempted":0,"completed":0,"failed":0,"skipped":0,"created":0},"references":[],"diagnostics":[]}
 Allowed outcomes: success, partial, blocked, failed. Counts are nonnegative safe integers counting distinct work items: attempted=completed+failed; attempted+skipped<=scanned; created<=attempted. A confirmed creation followed by failed receipt may have created=1,completed=0,failed=1. Include each confirmed task ID. Unknown writes require reconciliation before retry, never claim them as creations.
@@ -130,4 +130,37 @@ export function operationalCompletionPrompt(
   return prompt.endsWith(contract.promptAppendix)
     ? prompt
     : `${prompt}\n\n${contract.promptAppendix}`;
+}
+
+/** A confirmed business response is new input; completion instructions stay frozen. */
+export function operationalHumanAnswerPrompt(
+  run: FrozenRun,
+  original: string,
+  response: unknown,
+): string {
+  frozenOperationalDefinition(run);
+  const contract = run.resultContract;
+
+  if (
+    contract?.kind !== "agent_operational" ||
+    !response ||
+    typeof response !== "object"
+  )
+    throw new MaisterError(
+      "CONFIG",
+      "operational human continuation requires its frozen contract and confirmed response",
+    );
+  const answer = Object.fromEntries(
+    Object.entries(response).filter(
+      ([key]) => key !== "_agentResume" && key !== "_audit",
+    ),
+  );
+  const base = original.endsWith(contract.promptAppendix)
+    ? original.slice(0, -contract.promptAppendix.length).trimEnd()
+    : original;
+
+  return operationalCompletionPrompt(
+    run,
+    `${base}\n\nConfirmed human response:\n\`\`\`json\n${canonicalCommandJson(answer)}\n\`\`\``,
+  );
 }

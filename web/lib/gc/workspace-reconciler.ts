@@ -9,7 +9,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { lstat, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
 
-import { eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { CONFIG_PERSISTENCE_DIRECTORY } from "@/lib/project-config-persistence/review-files";
@@ -366,7 +366,8 @@ async function listMissingWorkspaceCandidates(args: {
       runStatus: runs.status,
     })
     .from(workspaces)
-    .innerJoin(runs, eq(workspaces.runId, runs.id));
+    .innerJoin(runs, eq(workspaces.runId, runs.id))
+    .where(sql`coalesce(${runs.agentKind}, 'code_delivery') <> 'operational'`);
   const candidates: ReconciliationCandidate[] = [];
 
   for (const row of rows) {
@@ -562,6 +563,28 @@ async function processTrustedCandidate(args: {
     return;
   }
 
+  const [operationalOwner] = await args.database
+    .select({
+      agentKind: runs.agentKind,
+      status: runs.status,
+      cleanup: runs.operationalCleanup,
+    })
+    .from(runs)
+    .where(eq(runs.id, provenance.runId));
+
+  if (!operationalOwner && provenance.workspaceKind === "agent") {
+    await quarantineReconciliationFinding({
+      database: args.database,
+      claim: args.claim,
+      errorCode: "agent_kind_unknown",
+      errorMessage:
+        "Agent execution kind cannot be established from an orphan marker; preserve its bytes for operator diagnosis",
+      now: args.now(),
+    });
+    args.summary.quarantined += 1;
+
+    return;
+  }
   const workspaceRows = await args.database
     .select({
       id: workspaces.id,
@@ -580,6 +603,43 @@ async function processTrustedCandidate(args: {
     .from(workspaces)
     .where(eq(workspaces.runId, provenance.runId));
   const workspace = workspaceRows[0] ?? null;
+
+  if (
+    operationalOwner?.agentKind === "operational" &&
+    (!workspace || workspace.removedAt !== null)
+  ) {
+    const cleanup = operationalOwner.cleanup;
+
+    if (cleanup && cleanup.state === "released")
+      await args.database
+        .update(runs)
+        .set({
+          operationalCleanup: {
+            ...cleanup,
+            state: "exhausted",
+            revision: cleanup.revision + 1,
+            dueAt: null,
+            errorCode: "operational_resource_reappeared",
+          },
+        })
+        .where(
+          and(
+            eq(runs.id, provenance.runId),
+            sql`${runs.operationalCleanup}->>'revision' = ${String(cleanup.revision)}`,
+          ),
+        );
+    await quarantineReconciliationFinding({
+      database: args.database,
+      claim: args.claim,
+      errorCode: "operational_disposition_required",
+      errorMessage:
+        "Operational resources require their original cleanup intent and workspace ownership; automatic reattachment and legacy orphan removal are refused",
+      now: args.now(),
+    });
+    args.summary.quarantined += 1;
+
+    return;
+  }
 
   if (workspace !== null) {
     const matchesWorkspace =

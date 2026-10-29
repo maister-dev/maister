@@ -82,13 +82,17 @@ export async function operationalReferenceEvidence(
 
 export async function operationalWorkspace(
   db: Db,
-  run: Pick<Run, "id" | "projectId" | "agentWorkspace" | "resultContract">,
+  run: Pick<Run, "id" | "projectId" | "agentWorkspace" | "resultContract"> &
+    Partial<Pick<Run, "operationalIntegrityBaseline">>,
 ): Promise<{
   cwd: string;
   resourceKind: OperationalResourceKind;
   projectSlug: string;
   repoPath: string;
 }> {
+  const owner = run.operationalIntegrityBaseline?.owner;
+
+  if (owner) return { ...owner, resourceKind: operationalResourceKind(run) };
   const [project] = await db
     .select({ slug: projects.slug, repoPath: projects.repoPath })
     .from(projects)
@@ -103,7 +107,10 @@ export async function operationalWorkspace(
   const [workspace] =
     resourceKind === "worktree"
       ? await db
-          .select({ path: workspaces.worktreePath })
+          .select({
+            path: workspaces.worktreePath,
+            parentRepoPath: workspaces.parentRepoPath,
+          })
           .from(workspaces)
           .where(eq(workspaces.runId, run.id))
       : [];
@@ -118,7 +125,7 @@ export async function operationalWorkspace(
     cwd,
     resourceKind,
     projectSlug: project.slug,
-    repoPath: project.repoPath,
+    repoPath: workspace?.parentRepoPath ?? project.repoPath,
   };
 }
 

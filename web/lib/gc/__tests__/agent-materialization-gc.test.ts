@@ -68,7 +68,7 @@ describe("agent materialization cleanup sweep", () => {
     ).resolves.toEqual([localPackageRoot, projectRoot, workspaceRoot]);
   });
 
-  it("retries terminal, missing, and unresumable crashed runs while preserving reopenable worktrees", async () => {
+  it("retries known terminal runs while preserving reopenable worktrees and unclassified leases", async () => {
     await Promise.all([
       seedRecord("terminal"),
       seedRecord("missing"),
@@ -98,11 +98,10 @@ describe("agent materialization cleanup sweep", () => {
           ]),
         restore,
       }),
-    ).resolves.toEqual({ scanned: 6, restored: 4, live: 2, failed: 0 });
+    ).resolves.toEqual({ scanned: 6, restored: 3, live: 2, failed: 1 });
     expect(restore.mock.calls).toEqual([
       [root, "crashed-none"],
       [root, "crashed-repo-read"],
-      [root, "missing"],
       [root, "terminal"],
     ]);
   });
@@ -116,14 +115,18 @@ describe("agent materialization cleanup sweep", () => {
     await expect(
       runAgentMaterializationCleanupSweep({
         candidateRoots: [root],
-        loadStatuses: async () => new Map(),
+        loadStatuses: async () =>
+          new Map([
+            ["a", { status: "Done", agentWorkspace: "none" }],
+            ["b", { status: "Failed", agentWorkspace: "none" }],
+          ]),
         restore,
       }),
     ).resolves.toEqual({ scanned: 2, restored: 1, live: 0, failed: 1 });
     expect(restore).toHaveBeenCalledTimes(2);
   });
 
-  it("reclaims a pre-insert local capability profile from its missing-run lease", async () => {
+  it("retains a pre-insert local capability profile while its execution ownership is unknown", async () => {
     const runId = "orphan-profile";
     const capabilityRoot = capabilityMaterializationRootPath(root, runId);
 
@@ -148,14 +151,10 @@ describe("agent materialization cleanup sweep", () => {
         candidateRoots: [root],
         loadStatuses: async () => new Map(),
       }),
-    ).resolves.toEqual({ scanned: 1, restored: 1, live: 0, failed: 0 });
-    await expect(stat(capabilityRoot)).rejects.toMatchObject({
-      code: "ENOENT",
-    });
-    await expect(
-      stat(path.join(root, SETTINGS_RELATIVE)),
-    ).rejects.toMatchObject({
-      code: "ENOENT",
-    });
+    ).resolves.toEqual({ scanned: 1, restored: 0, live: 0, failed: 1 });
+    expect((await stat(capabilityRoot)).isDirectory()).toBe(true);
+    expect((await stat(path.join(root, SETTINGS_RELATIVE))).isFile()).toBe(
+      true,
+    );
   });
 });

@@ -220,6 +220,7 @@ import {
   admitConsensusDraftPrompt,
   waitForConsensusDraftPrompt,
 } from "@/lib/flows/graph/consensus/draft-prompt-owner";
+import { pgErrorOf } from "@/lib/db/pg-error";
 
 export {
   agentReadOnlyWorkdirPath,
@@ -3522,6 +3523,8 @@ async function driveAgentSession(
     return;
   }
 
+  let operationalSpawnStage = "baseline";
+
   try {
     let integrityBaseline: OperationalIntegrityBaseline | null =
       run.operationalIntegrityBaseline ?? null;
@@ -3550,6 +3553,10 @@ async function driveAgentSession(
           cwd,
           operationalResourceKind(run),
         );
+        integrityBaseline = {
+          ...integrityBaseline,
+          owner: { cwd, repoPath: project.repoPath, projectSlug: project.slug },
+        };
         const written = await _db
           .update(runs)
           .set({ operationalIntegrityBaseline: integrityBaseline })
@@ -3592,6 +3599,7 @@ async function driveAgentSession(
     // ADR-152: resolve + snapshot + stamp in one step, skipped wholesale on the
     // override branch below (which discards `basePrompt` and would otherwise
     // record provenance for a prompt that carried no memory).
+    operationalSpawnStage = "prompt";
     const memoryText = await applyAgentMemoryForLaunch(
       _db,
       run,
@@ -3650,6 +3658,7 @@ async function driveAgentSession(
       );
     }
 
+    operationalSpawnStage = "capability_materialization";
     const packageSkillRoots = await packageSkillMaterializationRoots(effective);
 
     log.debug(
@@ -3728,6 +3737,7 @@ async function driveAgentSession(
       consent: { kind: "attach-time" },
     });
 
+    operationalSpawnStage = "materialization_witness";
     if (run.agentKind === "operational" && integrityBaseline) {
       const ownedPaths = await agentMaterializationPathsForRun(cwd, runId);
       const next = await captureOperationalGeneration(cwd, integrityBaseline, [
@@ -3888,6 +3898,27 @@ async function driveAgentSession(
     log.error(
       {
         runId,
+        ...(run.agentKind === "operational"
+          ? {
+              operationalSpawnStage,
+              sqlState: pgErrorOf(err)?.code,
+              constraint: pgErrorOf(err)?.constraint,
+              systemCode:
+                err &&
+                typeof err === "object" &&
+                "code" in err &&
+                typeof err.code === "string"
+                  ? err.code
+                  : undefined,
+              errorFrames:
+                err instanceof Error
+                  ? err.stack
+                      ?.split("\n")
+                      .filter((line) => line.trim().startsWith("at "))
+                      .slice(0, 4)
+                  : undefined,
+            }
+          : {}),
         errorType: err instanceof Error ? err.name : "unknown",
         code: err instanceof MaisterError ? err.code : undefined,
         causeCode:

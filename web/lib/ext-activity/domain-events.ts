@@ -98,6 +98,26 @@ function mapDomainEvent(row: DomainEventActivityRow): DomainEventMapping {
         },
         summary: `cancelled a clarification for ${taskLabel(row)}`,
       };
+    case "run.operational_attention_acknowledged":
+      return {
+        salience: "low",
+        action: {
+          verb: "acknowledge",
+          object: "operation",
+          outcome: "acknowledged",
+        },
+        summary: "operational attention acknowledged",
+      };
+    case "run.operational_cleanup_changed":
+      return {
+        salience: "low",
+        action: {
+          verb: "clean",
+          object: "operational workspace",
+          outcome: stringField(row.payload, "state") ?? "changed",
+        },
+        summary: "operational workspace disposition changed",
+      };
     case "run.done":
       return {
         salience: "high",

@@ -72,3 +72,13 @@ are mandatory. Never rewrite already applied migration bytes.
 See [lifecycle](../system-analytics/operational-agent-lifecycle.md),
 [results](../system-analytics/operational-agent-results.md), and
 [database schema](../database-schema.md).
+
+### Cleanup progress and forward migrations
+
+`operational_cleanup_progress` stores the sweep's server-owned rotating run-ID
+cursor and update time. It grants no deletion authority: workspace or rowless
+leases still fence every effect. Migration 0196 adds this table and aligns the
+shared-read combination check with launch validation; 0197 protects exact
+ordered platform-generation prefixes and corrects the JSON operator grouping.
+Migrations 0194/0195 remain unchanged. These new migrations have only been
+applied to owned ephemeral integration databases during implementation.

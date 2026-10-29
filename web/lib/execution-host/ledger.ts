@@ -15,7 +15,7 @@ import type { SendPromptInput } from "@/lib/supervisor-client";
 
 import { randomUUID } from "node:crypto";
 
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import pino, { type Logger } from "pino";
 
 import { canonicalCommandJson } from "../../../runtime/command-json";
@@ -33,6 +33,7 @@ import { assertUpgradeMaintenanceAllows } from "@/lib/maintenance/upgrade-fence"
 import {
   executionAssignments,
   executionCommands,
+  executionRuntimeObjects,
   runs,
   runSessions,
   runSessionIncarnations,
@@ -183,7 +184,80 @@ export async function issueCommand<TPayload>(
       "command-issued-on-stale-assignment-snapshot",
     );
 
+  // A terminal operational cleanup can seal bounded diagnosis under its
+  // original released generation. This exception grants no execution tools.
+  const payload = input.payload as {
+    kind?: unknown;
+    logicalName?: unknown;
+    retentionClass?: unknown;
+    sizeBytes?: unknown;
+    objectId?: unknown;
+    generation?: unknown;
+    sha256?: unknown;
+  };
+  let operationalEvidence = false;
+
   if (
+    (input.kind === "runtime_object.reserve" ||
+      input.kind === "runtime_object.upload") &&
+    input.assignment.state === "released" &&
+    live?.state === "released" &&
+    typeof payload.sizeBytes === "number" &&
+    payload.sizeBytes >= 0 &&
+    payload.sizeBytes <= 25 * 1024 * 1024
+  ) {
+    const [owner] = await db
+      .select({ id: runs.id })
+      .from(runs)
+      .where(
+        and(
+          eq(runs.id, input.assignment.runId),
+          eq(runs.agentKind, "operational"),
+          eq(runs.executionAssignmentId, input.assignment.id),
+          inArray(runs.status, ["Done", "Failed", "Crashed", "Abandoned"]),
+          sql`${runs.operationalCleanup}->>'state' = 'preserving'`,
+        ),
+      );
+
+    if (owner && input.kind === "runtime_object.reserve")
+      operationalEvidence =
+        payload.kind === "diagnostic" &&
+        payload.retentionClass === "run" &&
+        typeof payload.logicalName === "string" &&
+        payload.logicalName.startsWith("operational-diagnosis-");
+    if (
+      owner &&
+      input.kind === "runtime_object.upload" &&
+      typeof payload.objectId === "string"
+    ) {
+      const [object] = await db
+        .select()
+        .from(executionRuntimeObjects)
+        .where(
+          and(
+            eq(executionRuntimeObjects.id, payload.objectId),
+            eq(executionRuntimeObjects.runId, input.assignment.runId),
+            eq(
+              executionRuntimeObjects.executionAssignmentId,
+              input.assignment.id,
+            ),
+            eq(executionRuntimeObjects.assignmentEpoch, input.assignment.epoch),
+          ),
+        );
+
+      operationalEvidence = Boolean(
+        object &&
+        object.kind === "diagnostic" &&
+        object.retentionClass === "run" &&
+        object.logicalName.startsWith("operational-diagnosis-") &&
+        object.generation === payload.generation &&
+        object.declaredSha256 === payload.sha256 &&
+        object.declaredSizeBytes === BigInt(payload.sizeBytes),
+      );
+    }
+  }
+  if (
+    !operationalEvidence &&
     !isAdmissible(input.kind, input.assignment.state, {
       inputAction: inputAction(input.payload),
     })

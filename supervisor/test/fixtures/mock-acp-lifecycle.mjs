@@ -90,12 +90,25 @@ for (let i = 0; i < args.length; i += 1) {
   } else if (arg === "--write-env") {
     outputWrites.push({ envName: args[++i], content: args[++i] });
   } else if (arg === "--write-env-bytes") {
-    sizedOutputWrites.push({ envName: args[++i], sizeBytes: Number(args[++i]) });
+    sizedOutputWrites.push({
+      envName: args[++i],
+      sizeBytes: Number(args[++i]),
+    });
   } else if (arg === "--steering") {
     steering = true;
   } else if (arg === "--steer-outcome") {
     steerOutcome = args[++i];
-    if (!["auto", "injected", "promptRequired", "startedNewTurn", "failed", "error", "hang"].includes(steerOutcome))
+    if (
+      ![
+        "auto",
+        "injected",
+        "promptRequired",
+        "startedNewTurn",
+        "failed",
+        "error",
+        "hang",
+      ].includes(steerOutcome)
+    )
       throw new Error(`unknown --steer-outcome ${steerOutcome}`);
   } else if (arg === "--steer-delay-ms") {
     steerDelayMs = Number.parseInt(args[++i], 10);
@@ -105,18 +118,24 @@ for (let i = 0; i < args.length; i += 1) {
     steerHoldFile = args[++i];
   } else if (arg === "--pre-hold-text") {
     preHoldText = args[++i];
-    if (preHoldText === undefined) throw new Error("--pre-hold-text requires a value");
+    if (preHoldText === undefined)
+      throw new Error("--pre-hold-text requires a value");
   }
 }
 
 if (controlledPrompt && controlledTerminal)
-  throw new Error("controlled prompt and controlled terminal require separate adapters");
+  throw new Error(
+    "controlled prompt and controlled terminal require separate adapters",
+  );
 if (controlledTerminal && !invocationLog)
   throw new Error("--controlled-terminal requires --invocation-log");
 
 async function logInvocation(entry) {
   if (!invocationLog) return;
-  await appendFile(invocationLog, `${JSON.stringify({ pid: process.pid, ...entry })}\n`);
+  await appendFile(
+    invocationLog,
+    `${JSON.stringify({ pid: process.pid, ...entry })}\n`,
+  );
 }
 
 function steerText(prompt) {
@@ -142,7 +161,8 @@ class LifecycleAgent {
     this.resumed = false;
     // Registered only when advertised: the SDK wires an extension handler iff
     // the agent object defines `extMethod`.
-    if (steering) this.extMethod = (method, params) => this.steer(method, params);
+    if (steering)
+      this.extMethod = (method, params) => this.steer(method, params);
   }
 
   async steer(method, params) {
@@ -159,21 +179,29 @@ class LifecycleAgent {
     });
     if (steerHoldFile) {
       steersHeld += 1;
-      while (!existsSync(steerHoldFile)) await new Promise((resolve) => setTimeout(resolve, 20));
+      while (!existsSync(steerHoldFile))
+        await new Promise((resolve) => setTimeout(resolve, 20));
       steersHeld -= 1;
     }
-    if (steerDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, steerDelayMs));
+    if (steerDelayMs > 0)
+      await new Promise((resolve) => setTimeout(resolve, steerDelayMs));
     if (steerOutcome === "hang") return never();
-    if (steerOutcome === "error") throw acp.RequestError.internalError({ reason: "scripted" });
+    if (steerOutcome === "error")
+      throw acp.RequestError.internalError({ reason: "scripted" });
     if (steerEcho) {
       await this.connection.sessionUpdate({
         sessionId: params.sessionId,
-        update: { sessionUpdate: "user_message_chunk", content: { type: "text", text } },
+        update: {
+          sessionUpdate: "user_message_chunk",
+          content: { type: "text", text },
+        },
       });
     }
     const outcome =
       steerOutcome === "auto"
-        ? promptInFlight ? "injected" : "promptRequired"
+        ? promptInFlight
+          ? "injected"
+          : "promptRequired"
         : steerOutcome;
 
     if (outcome === "injected") steerQueue.push(text);
@@ -181,7 +209,9 @@ class LifecycleAgent {
     await logInvocation({
       sessionId: params.sessionId,
       method: "_session/steering",
-      requestSha256: createHash("sha256").update(JSON.stringify(params)).digest("hex"),
+      requestSha256: createHash("sha256")
+        .update(JSON.stringify(params))
+        .digest("hex"),
       idleBehavior,
       outcome,
     });
@@ -202,7 +232,10 @@ class LifecycleAgent {
       count += 1;
       void this.connection.sessionUpdate({
         sessionId,
-        update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: `unowned:${count}` } },
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: `unowned:${count}` },
+        },
       });
     }, 50);
 
@@ -217,13 +250,24 @@ class LifecycleAgent {
       void this.connection
         .requestPermission({
           sessionId,
-          toolCall: { toolCallId: "unowned-permission", title: "unowned write", kind: "edit", status: "pending" },
+          toolCall: {
+            toolCallId: "unowned-permission",
+            title: "unowned write",
+            kind: "edit",
+            status: "pending",
+          },
           options: [
             { optionId: "allow", kind: "allow_once", name: "Allow" },
             { optionId: "deny", kind: "reject_once", name: "Deny" },
           ],
         })
-        .then((decision) => logInvocation({ sessionId, method: "unowned/permission", outcome: decision.outcome.outcome }))
+        .then((decision) =>
+          logInvocation({
+            sessionId,
+            method: "unowned/permission",
+            outcome: decision.outcome.outcome,
+          }),
+        )
         .catch(() => undefined);
     }
   }
@@ -284,16 +328,24 @@ class LifecycleAgent {
 
   async cancel(params) {
     if (steering) {
-      await logInvocation({ sessionId: params?.sessionId, method: "session/cancel", unowned: Boolean(unownedTurn) });
+      await logInvocation({
+        sessionId: params?.sessionId,
+        method: "session/cancel",
+        unowned: Boolean(unownedTurn),
+      });
       if (unownedTurn) {
         unownedTurn();
 
         return;
       }
     }
-    if ((controlledPrompt || controlledTerminal) && releasePrompt) releasePrompt("cancelled");
+    if ((controlledPrompt || controlledTerminal) && releasePrompt)
+      releasePrompt("cancelled");
     if (controlledTerminal)
-      await logInvocation({ sessionId: params?.sessionId, method: "session/cancel/processed" });
+      await logInvocation({
+        sessionId: params?.sessionId,
+        method: "session/cancel/processed",
+      });
   }
 
   async prompt(params) {
@@ -313,25 +365,42 @@ class LifecycleAgent {
 
       await this.connection.sessionUpdate({
         sessionId,
-        update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: `steered:${text}` } },
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: `steered:${text}` },
+        },
       });
     }
   }
 
   async runPrompt(params) {
-    const terminalLine = controlledTerminal ? fixtureOutputLine(params) : undefined;
-    const terminalBarrier = terminalLine
-      ? JSON.parse(terminalLine.slice("fixture-output:".length))?.terminalBarrier
+    const terminalLine = controlledTerminal
+      ? fixtureOutputLine(params)
       : undefined;
-    if (terminalBarrier !== undefined &&
-        (typeof terminalBarrier !== "string" || !/^[a-zA-Z0-9_-]{1,160}$/u.test(terminalBarrier)))
-      throw new Error("controlled terminal requires one safe nonempty barrier token");
+    const terminalBarrier = terminalLine
+      ? JSON.parse(terminalLine.slice("fixture-output:".length))
+          ?.terminalBarrier
+      : undefined;
+    if (
+      terminalBarrier !== undefined &&
+      (typeof terminalBarrier !== "string" ||
+        !/^[a-zA-Z0-9_-]{1,160}$/u.test(terminalBarrier))
+    )
+      throw new Error(
+        "controlled terminal requires one safe nonempty barrier token",
+      );
     if ((controlledPrompt || terminalBarrier !== undefined) && releasePrompt)
       throw new Error("controlled prompt already owns the adapter");
     // Latch cancellation during output before publishing the terminal witness.
-    const held = controlledPrompt || terminalBarrier !== undefined ? new Promise((resolve) => {
-      releasePrompt = (value) => { releasePrompt = undefined; resolve(value); };
-    }) : undefined;
+    const held =
+      controlledPrompt || terminalBarrier !== undefined
+        ? new Promise((resolve) => {
+            releasePrompt = (value) => {
+              releasePrompt = undefined;
+              resolve(value);
+            };
+          })
+        : undefined;
     const ownedRelease = releasePrompt;
 
     try {
@@ -344,20 +413,28 @@ class LifecycleAgent {
 
   async runPromptOutput(params, terminalBarrier, held) {
     if (invocationLog) {
-      await appendFile(invocationLog, `${JSON.stringify({
-        pid: process.pid,
-        sessionId: params.sessionId,
-        method: "session/prompt",
-        requestSha256: createHash("sha256").update(JSON.stringify(params)).digest("hex"),
-        ...(terminalBarrier !== undefined ? { terminalBarrier } : {}),
-        ...(steerHoldFile ? { duringSteer: steersHeld > 0 } : {}),
-      })}\n`);
+      await appendFile(
+        invocationLog,
+        `${JSON.stringify({
+          pid: process.pid,
+          sessionId: params.sessionId,
+          method: "session/prompt",
+          requestSha256: createHash("sha256")
+            .update(JSON.stringify(params))
+            .digest("hex"),
+          ...(terminalBarrier !== undefined ? { terminalBarrier } : {}),
+          ...(steerHoldFile ? { duringSteer: steersHeld > 0 } : {}),
+        })}\n`,
+      );
     }
     if (controlledPrompt) {
       if (preHoldText !== undefined) {
         await this.connection.sessionUpdate({
           sessionId: params.sessionId,
-          update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: preHoldText } },
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: preHoldText },
+          },
         });
       }
       const outcome = await held;
@@ -369,7 +446,8 @@ class LifecycleAgent {
     if (fixtureLine) {
       // Flow nodes may surround the fixture line with resume and run context.
       const spec = JSON.parse(fixtureLine.slice("fixture-output:".length));
-      if (spec.failMessage) throw new acp.RequestError(-32603, spec.failMessage);
+      if (spec.failMessage)
+        throw new acp.RequestError(-32603, spec.failMessage);
       if (spec.usageTokens) {
         await this.connection.sessionUpdate({
           sessionId: params.sessionId,
@@ -381,17 +459,46 @@ class LifecycleAgent {
           },
         });
       }
-      if (spec.permission && (!spec.hookTrip || !this.resumed || spec.permissionOnResume)) {
-        const decisions = await Promise.all(Array.from({ length: spec.parallelPermission && !this.resumed ? 2 : 1 }, (_, index) => this.connection.requestPermission({
-          sessionId: params.sessionId,
-          toolCall: { toolCallId: `owned-permission-${index}`, title: "fixture write", kind: "edit", status: "pending" },
-          options: [
-            { optionId: "allow", kind: "allow_once", name: "Allow" },
-            { optionId: "deny", kind: "reject_once", name: "Deny" },
-          ],
-        })));
-        if (decisions.some((decision) => decision.outcome.outcome !== "selected" || decision.outcome.optionId !== "allow"))
-          throw new acp.RequestError(-32603, "fixture permission was not allowed");
+      if (
+        spec.permission &&
+        (!spec.hookTrip || !this.resumed || spec.permissionOnResume)
+      ) {
+        const decisions = await Promise.all(
+          Array.from(
+            {
+              length:
+                spec.parallelPermission &&
+                (!this.resumed || spec.parallelPermissionOnResume)
+                  ? 2
+                  : 1,
+            },
+            (_, index) =>
+              this.connection.requestPermission({
+                sessionId: params.sessionId,
+                toolCall: {
+                  toolCallId: `owned-permission-${index}`,
+                  title: "fixture write",
+                  kind: "edit",
+                  status: "pending",
+                },
+                options: [
+                  { optionId: "allow", kind: "allow_once", name: "Allow" },
+                  { optionId: "deny", kind: "reject_once", name: "Deny" },
+                ],
+              }),
+          ),
+        );
+        if (
+          decisions.some(
+            (decision) =>
+              decision.outcome.outcome !== "selected" ||
+              decision.outcome.optionId !== "allow",
+          )
+        )
+          throw new acp.RequestError(
+            -32603,
+            "fixture permission was not allowed",
+          );
       }
       if (spec.frameBytes) {
         const notification = {
@@ -408,16 +515,23 @@ class LifecycleAgent {
         const overhead = Buffer.byteLength(JSON.stringify(notification) + "\n");
         const available = spec.frameBytes - overhead;
         notification.params.update.content.text = spec.escaped
-          ? "é" + "\\".repeat(Math.floor((available - 2) / 2)) + "x".repeat((available - 2) % 2)
+          ? "é" +
+            "\\".repeat(Math.floor((available - 2) / 2)) +
+            "x".repeat((available - 2) % 2)
           : "x".repeat(available);
         for (let index = 0; index < (spec.frames ?? 1); index += 1) {
           await new Promise((resolve, reject) =>
-            process.stdout.write(JSON.stringify(notification) + "\n", (error) =>
-              error ? reject(error) : resolve(),
+            process.stdout.write(
+              JSON.stringify(notification) + "\n",
+              (error) => (error ? reject(error) : resolve()),
             ),
           );
         }
-        if (terminalBarrier !== undefined && await this.holdTerminal(params, terminalBarrier, held) === "cancelled")
+        if (
+          terminalBarrier !== undefined &&
+          (await this.holdTerminal(params, terminalBarrier, held)) ===
+            "cancelled"
+        )
           return { stopReason: "cancelled" };
         return { stopReason: "end_turn" };
       }
@@ -430,7 +544,11 @@ class LifecycleAgent {
         spec.chunkSize && !spec.tool
           ? Array.from(
               { length: Math.ceil(text.length / spec.chunkSize) },
-              (_, index) => text.slice(index * spec.chunkSize, (index + 1) * spec.chunkSize),
+              (_, index) =>
+                text.slice(
+                  index * spec.chunkSize,
+                  (index + 1) * spec.chunkSize,
+                ),
             )
           : [text];
       for (const chunk of chunks) {
@@ -443,7 +561,9 @@ class LifecycleAgent {
                 title: "fixture output",
                 kind: "read",
                 status: "completed",
-                content: [{ type: "content", content: { type: "text", text: chunk } }],
+                content: [
+                  { type: "content", content: { type: "text", text: chunk } },
+                ],
               }
             : {
                 sessionUpdate: "agent_message_chunk",
@@ -451,13 +571,21 @@ class LifecycleAgent {
               },
         });
       }
-      if (terminalBarrier !== undefined && await this.holdTerminal(params, terminalBarrier, held) === "cancelled")
+      if (
+        terminalBarrier !== undefined &&
+        (await this.holdTerminal(params, terminalBarrier, held)) === "cancelled"
+      )
         return { stopReason: "cancelled" };
-      if (spec.terminalDelayMs) await new Promise((resolve) => setTimeout(resolve, spec.terminalDelayMs));
+      if (spec.terminalDelayMs)
+        await new Promise((resolve) =>
+          setTimeout(resolve, spec.terminalDelayMs),
+        );
       await this.drainSteers(params.sessionId);
       return {
         stopReason: spec.stopReason ?? "end_turn",
-        ...(spec.usageTokens ? { usage: { input_tokens: spec.usageTokens, output_tokens: 0 } } : {}),
+        ...(spec.usageTokens
+          ? { usage: { input_tokens: spec.usageTokens, output_tokens: 0 } }
+          : {}),
         ...(spec.responseMeta ? { _meta: spec.responseMeta } : {}),
       };
     }
@@ -478,16 +606,25 @@ class LifecycleAgent {
     for (const output of sizedOutputWrites) {
       const outputPath = process.env[output.envName];
 
-      if (!outputPath || !Number.isSafeInteger(output.sizeBytes) || output.sizeBytes < 0)
+      if (
+        !outputPath ||
+        !Number.isSafeInteger(output.sizeBytes) ||
+        output.sizeBytes < 0
+      )
         throw new Error("invalid bounded output fixture configuration");
       const handle = await open(outputPath, "w", 0o600);
       const bytes = Buffer.alloc(65536, 120);
 
       try {
         for (let offset = 0; offset < output.sizeBytes;) {
-          const result = await handle.write(bytes, 0, Math.min(bytes.length, output.sizeBytes - offset));
+          const result = await handle.write(
+            bytes,
+            0,
+            Math.min(bytes.length, output.sizeBytes - offset),
+          );
 
-          if (result.bytesWritten === 0) throw new Error("fixture output write made no progress");
+          if (result.bytesWritten === 0)
+            throw new Error("fixture output write made no progress");
           offset += result.bytesWritten;
         }
       } finally {
@@ -507,7 +644,8 @@ class LifecycleAgent {
           sessionUpdate: "agent_message_chunk",
           content: {
             type: "text",
-            text: lineBytes > label.length ? label.padEnd(lineBytes, "x") : label,
+            text:
+              lineBytes > label.length ? label.padEnd(lineBytes, "x") : label,
           },
           ...(isLast && emitUsage
             ? {
@@ -558,14 +696,25 @@ class LifecycleAgent {
   async holdTerminal(params, terminalBarrier, held) {
     const identity = {
       sessionId: params.sessionId,
-      requestSha256: createHash("sha256").update(JSON.stringify(params)).digest("hex"),
+      requestSha256: createHash("sha256")
+        .update(JSON.stringify(params))
+        .digest("hex"),
       terminalBarrier,
     };
 
-    await logInvocation({ ...identity, method: "session/prompt/terminal-held", at: Date.now() });
+    await logInvocation({
+      ...identity,
+      method: "session/prompt/terminal-held",
+      at: Date.now(),
+    });
     const outcome = await held;
 
-    await logInvocation({ ...identity, method: "session/prompt/terminal-released", at: Date.now(), outcome });
+    await logInvocation({
+      ...identity,
+      method: "session/prompt/terminal-released",
+      at: Date.now(),
+      outcome,
+    });
 
     return outcome;
   }
@@ -576,10 +725,7 @@ const stream = acp.ndJsonStream(
   Readable.toWeb(process.stdin),
 );
 
-serveAgent(
-  (connToAgent) => new LifecycleAgent(connToAgent),
-  stream,
-);
+serveAgent((connToAgent) => new LifecycleAgent(connToAgent), stream);
 
 // --exit-delay-ms: hold the process open after SIGTERM so a test can prove an
 // eviction is awaited (nothing spawns beside a dying lower-epoch session).
@@ -588,6 +734,7 @@ process.on("SIGINT", () => process.exit(130));
 // Lifecycle tests release this barrier only after prompt receipt completion.
 if (controlledExit) process.on("SIGUSR2", () => process.exit(exitCode));
 // A test-owned adapter barrier. No elapsed delay opens the completion window.
-if (controlledPrompt || controlledTerminal) process.on("SIGUSR1", () => releasePrompt?.("complete"));
+if (controlledPrompt || controlledTerminal)
+  process.on("SIGUSR1", () => releasePrompt?.("complete"));
 
 setInterval(() => {}, 1 << 30);

@@ -52,15 +52,15 @@ flowchart TD
 
 ### Recovery and resource matrix
 
-| Run state | Owned resource | Continuation / disposal |
-| --- | --- | --- |
-| Pending | allocation/preparation only | no cleanup while launch claim may win; failed allocation compensates its own resources |
-| Running/NeedsInput | live session or business question | normal permission/question handling; no destructive cleanup |
-| NeedsInputIdle or nonterminal host-pressure park | checkpoint and original contract | retain; request-bound continuation under existing admission cap |
-| Done/Failed/Abandoned | owned worktree/plain/detached resource | verify quiescence, preserve unexpected bytes, dispose promptly |
-| Crashed | owned resource | diagnostic hold until endedAt + gcAgeDays; then preserve/dispose unless command/recovery evidence holds remain |
-| Any terminal | shared-parent repo_read | release only this run's leases/materialization/host handle; never reset/delete parent |
-| Removed resource, release ACK missing | host handle only | retry original fenced teardown command; do not recreate cwd |
+| Run state                                        | Owned resource                         | Continuation / disposal                                                                                        |
+| ------------------------------------------------ | -------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Pending                                          | allocation/preparation only            | no cleanup while launch claim may win; failed allocation compensates its own resources                         |
+| Running/NeedsInput                               | live session or business question      | normal permission/question handling; no destructive cleanup                                                    |
+| NeedsInputIdle or nonterminal host-pressure park | checkpoint and original contract       | retain; request-bound continuation under existing admission cap                                                |
+| Done/Failed/Abandoned                            | owned worktree/plain/detached resource | verify quiescence, preserve unexpected bytes, dispose promptly                                                 |
+| Crashed                                          | owned resource                         | diagnostic hold until endedAt + gcAgeDays; then preserve/dispose unless command/recovery evidence holds remain |
+| Any terminal                                     | shared-parent repo_read                | release only this run's leases/materialization/host handle; never reset/delete parent                          |
+| Removed resource, release ACK missing            | host handle only                       | retry original fenced teardown command; do not recreate cwd                                                    |
 
 Terminal standalone Crashed has no graph Recover action. Diagnose and reconcile
 receipts before an explicit new attempt; live re-observation/checkpoint continuation
@@ -155,3 +155,20 @@ policy is unchanged. Acknowledgement is not general unseen activity.
 - [Definitions](operational-agents.md), [results](operational-agent-results.md), [traceability](operational-agents-traceability.md), [persistence](../db/operational-agents-domain.md).
 - [Workspaces](workspaces.md), [reconciliation/GC](reconciliation-gc.md), [attention](attention.md), [execution runtime objects](execution-runtime-objects.md).
 - Source seams: `web/lib/agents/`, `web/lib/gc/`, `web/lib/queries/`, `web/lib/execution-host/`.
+
+### Operational business-question continuation
+
+The legacy agent-question service finalizes its source as Done and re-triggers a
+new run. Operational questions instead capture the existing owned prompt proof
+in the pending question transaction, enter NeedsInput, checkpoint the same ACP
+session, and activate in NeedsInputIdle. The human answer retains the existing
+form, clarification, assignment, grants and idempotency. It queues the original
+run through the agent resume cap; it cannot finalize that run or launch a second
+operational attempt. The answer fact carries continuesSourceRun=true so the
+legacy targeted re-trigger consumer yields. No tool permission is granted by a
+business answer. A question pause uses the existing checkpoint proof/digest
+handoff with a distinct agent_question discriminator; its internal answered
+marker is never an ACP permission option. The resumed prompt retains the frozen original instructions and appends the confirmed form response. Its input is recomputed from the existing pause digest at every dispatch; no extra tool grant is required to read the answer.
+A supported operational result and clean final integrity are still required.
+Lost activation/answer delivery is reconciled from the same durable question and
+checkpoint, without repeating external business actions.

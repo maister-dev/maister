@@ -11,12 +11,15 @@ import path from "node:path";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
+import { operationalSuccessFixture } from "@/test-support/operational-agent";
 import {
   agents,
+  tasks,
   runs,
   runSessions,
   runResults,
   executionCommands,
+  executionEvents,
   domainEvents,
   executionAssignments,
   agentTurns,
@@ -153,6 +156,7 @@ afterEach(async () => {
 
 async function seedAgent(input: {
   bytes: number;
+  operational?: boolean;
   workspace?: "none" | "worktree";
   terminalDelayMs?: number;
   stopReason?: string;
@@ -162,18 +166,29 @@ async function seedAgent(input: {
   hookTrip?: boolean;
   usageTokens?: number;
   parallelPermission?: boolean;
+  parallelPermissionOnResume?: boolean;
   permissionOnResume?: boolean;
 }): Promise<string> {
-  const { workspace: requestedWorkspace, ...fixtureOutput } = input;
+  const {
+    workspace: requestedWorkspace,
+    operational,
+    ...fixtureOutput
+  } = input;
   const workspace =
-    requestedWorkspace ?? (input.permission ? "worktree" : "none");
-  const prompt = `fixture-output:${JSON.stringify({ ...fixtureOutput, chunkSize: 400_000, text: '\n```json maister:output\n{"summary":"original answer"}\n```' })}`;
+    requestedWorkspace ??
+    (input.permission || operational ? "worktree" : "none");
+  const result = operational
+    ? operationalSuccessFixture()
+    : { summary: "original answer" };
+  const text = `\n\`\`\`json maister:output\n${JSON.stringify(result)}\n\`\`\``;
+  const prompt = `fixture-output:${JSON.stringify({ ...fixtureOutput, chunkSize: 400_000, text })}`;
 
   return seedAgentRun(db, {
     runtimeRoot: supervisor.runtimeRoot,
-    definition: `---\nname: Researcher\ndescription: d\nworkspace: ${workspace}\nmode: session\nplatform_mcp: false\ntriggers:\n  - manual\nrisk_tier: read_only\n${input.hookTrip ? `hooks:\n  repetition:\n    max: ${input.parallelPermission ? 2 : 1}\n` : ""}---\n${prompt}\n`,
+    definition: `---\nname: Researcher\ndescription: d\n${operational ? "kind: operational\ncompletion: {contract: operational_v1}\n" : ""}workspace: ${workspace}\nmode: session\nplatform_mcp: false\ntriggers:\n  - manual\nrisk_tier: read_only\n${input.hookTrip ? `hooks:\n  repetition:\n    max: ${input.parallelPermission ? 2 : 1}\n` : ""}---\n${prompt}\n`,
     workspace,
-    resultContract: contract,
+    resultContract: operational ? null : contract,
+    operational,
     persistent: input.persistent,
   });
 }
@@ -905,6 +920,417 @@ describe("Agent owned prompts through the production launcher", () => {
     120_000 + KILLED_CLAIM_WAIT_MS * 2,
   );
 
+  it("IT-OPL-01 an operational business question checkpoints and resumes the same run before structured completion", async () => {
+    const runId = await seedAgent({
+      bytes: 0,
+      operational: true,
+      terminalDelayMs: 5000,
+    });
+    const [initial] = await db.select().from(runs).where(eq(runs.id, runId));
+    const taskId = randomUUID();
+
+    await db.insert(tasks).values({
+      id: taskId,
+      projectId: initial.projectId!,
+      number: 1,
+      title: "Operational decision",
+      prompt: "Perform the scan after the human decision",
+    });
+    await db.update(runs).set({ taskId }).where(eq(runs.id, runId));
+    startDriver(runId);
+    await expect
+      .poll(
+        async () =>
+          (
+            await db
+              .select()
+              .from(executionCommands)
+              .where(
+                and(
+                  eq(executionCommands.runId, runId),
+                  eq(executionCommands.kind, "session.prompt"),
+                ),
+              )
+          )[0]?.state,
+        { timeout: 30_000, interval: 50 },
+      )
+      .toBe("accepted");
+    await expect
+      .poll(
+        async () =>
+          (
+            await db
+              .select({ id: executionEvents.id })
+              .from(executionEvents)
+              .where(
+                and(
+                  eq(executionEvents.runId, runId),
+                  eq(executionEvents.eventType, "session.update"),
+                ),
+              )
+          ).length,
+        { timeout: 30_000, interval: 50 },
+      )
+      .toBeGreaterThan(0);
+    const { createOrActivateAgentQuestion } =
+      await import("@/lib/services/agent-question");
+    const question = await createOrActivateAgentQuestion(
+      {
+        projectId: initial.projectId!,
+        taskId,
+        sourceRunId: runId,
+        sourceAgentId: initial.agentId!,
+        question: "Which scope should be scanned?",
+        schema: {
+          schemaVersion: 1,
+          fields: [
+            {
+              name: "scope",
+              type: "enum",
+              required: true,
+              options: ["all", "recent"],
+            },
+          ],
+        },
+        reTriggerMode: "agent",
+      },
+      { db, executionHosts: createExecutionHosts({ db }) },
+    );
+
+    expect(question.activationState).toBe("active");
+    expect(
+      (await db.select().from(runs).where(eq(runs.id, runId)))[0],
+    ).toMatchObject({ status: "NeedsInputIdle", operationalTerminal: null });
+    const response = await respondToHitl(
+      {
+        runId,
+        hitlRequestId: question.hitlRequestId,
+        body: { response: { scope: "recent" } },
+      },
+      {
+        kind: "user",
+        userId: "agent-permission-user",
+        label: "Operational business decision",
+        preauthorizedProjectId: initial.projectId!,
+      },
+      { db },
+    );
+
+    expect(response.status).toBe(202);
+    const continuation = startAgentContinuationWorker({ db });
+
+    try {
+      await expect
+        .poll(
+          async () =>
+            (await db.select().from(runs).where(eq(runs.id, runId)))[0].status,
+          { timeout: 60_000, interval: 100 },
+        )
+        .toBe("Done");
+      const turns = await db
+        .select()
+        .from(agentTurns)
+        .where(eq(agentTurns.runId, runId))
+        .orderBy(asc(agentTurns.ordinal));
+
+      expect(turns).toHaveLength(2);
+      expect(turns[1]).toMatchObject({ variant: "resume", state: "applied" });
+      expect(turns[1].prompt).toContain('"scope":"recent"');
+      expect(
+        (
+          await db.select().from(runResults).where(eq(runResults.runId, runId))
+        )[0].value,
+      ).toEqual(operationalSuccessFixture());
+      const [answer] = await db
+        .select()
+        .from(hitlRequests)
+        .where(eq(hitlRequests.id, question.hitlRequestId));
+
+      expect(answer.response).toMatchObject({
+        scope: "recent",
+        _agentResume: { pause: { kind: "agent_question" } },
+      });
+    } finally {
+      await continuation.stop();
+    }
+  }, 120_000);
+
+  it("IT-OPA-03 IT-OPL-01 launches independent operations with parallel human permissions, frozen source witnesses and disposal", async () => {
+    const ids = await Promise.all([
+      seedAgent({
+        bytes: 0,
+        operational: true,
+        permission: true,
+        parallelPermission: true,
+      }),
+      seedAgent({
+        bytes: 0,
+        operational: true,
+        permission: true,
+        parallelPermission: true,
+      }),
+    ]);
+    const operationalDrivers = ids.map((id) => startDriver(id));
+
+    for (const runId of ids) {
+      await expect
+        .poll(
+          async () => {
+            const driver = operationalDrivers[ids.indexOf(runId)];
+
+            if (driver.child.exitCode !== null || driver.returned()) {
+              const [state] = await db
+                .select()
+                .from(runs)
+                .where(eq(runs.id, runId));
+
+              throw new Error(`${driver.output()}\n${JSON.stringify(state)}`);
+            }
+
+            return (
+              await db
+                .select()
+                .from(hitlRequests)
+                .where(eq(hitlRequests.runId, runId))
+            ).length;
+          },
+          { timeout: 30_000, interval: 50 },
+        )
+        .toBe(2)
+        .catch(async (cause: unknown) => {
+          const state = await db.select().from(runs).where(eq(runs.id, runId));
+          const commands = await db
+            .select()
+            .from(executionCommands)
+            .where(eq(executionCommands.runId, runId));
+
+          throw new Error(
+            `${operationalDrivers.map((driver) => driver.output()).join("\n")}\n${JSON.stringify({ state, commands }, (_key: string, value: unknown) => (typeof value === "bigint" ? value.toString() : value))}`,
+            { cause },
+          );
+        });
+      const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+
+      expect(run.agentKind).toBe("operational");
+      expect(run.operationalIntegrityBaseline!.generation).toBeGreaterThan(0);
+      const requests = await db
+        .select()
+        .from(hitlRequests)
+        .where(eq(hitlRequests.runId, runId));
+      const responses = await Promise.all(
+        requests.map((request) =>
+          respondToHitl(
+            { runId, hitlRequestId: request.id, body: { optionId: "allow" } },
+            {
+              kind: "user",
+              userId: "agent-permission-user",
+              label: "Independent operational decision",
+              preauthorizedProjectId: run.projectId!,
+            },
+            { db },
+          ),
+        ),
+      );
+
+      expect(responses.every((response) => response.status === 200)).toBe(true);
+    }
+    for (const runId of ids) {
+      await expect
+        .poll(
+          async () =>
+            (await db.select().from(runs).where(eq(runs.id, runId)))[0]
+              .operationalCleanup?.state,
+          { timeout: 60_000, interval: 100 },
+        )
+        .toBe("released");
+      const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+
+      expect(run).toMatchObject({
+        status: "Done",
+        promotedHeadSha: null,
+        mergeCommitSha: null,
+        operationalTerminal: {
+          successful: true,
+          integrity: "clean",
+          validation: "valid",
+        },
+      });
+    }
+  }, 120_000);
+
+  it("IT-OPL-01 parallel permission answers retain NeedsInput until every request is delivered", async () => {
+    const runId = await seedAgent({
+      bytes: 0,
+      permission: true,
+      parallelPermission: true,
+    });
+    const driver = startDriver(runId);
+
+    await expect
+      .poll(
+        async () =>
+          (
+            await db
+              .select()
+              .from(hitlRequests)
+              .where(eq(hitlRequests.runId, runId))
+          ).length,
+        { timeout: 30_000, interval: 50 },
+      )
+      .toBe(2);
+    const requests = await db
+      .select()
+      .from(hitlRequests)
+      .where(eq(hitlRequests.runId, runId));
+    const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+    const answer = (id: string) =>
+      respondToHitl(
+        { runId, hitlRequestId: id, body: { optionId: "allow" } },
+        {
+          kind: "user",
+          userId: "agent-permission-user",
+          label: "Parallel permission",
+          preauthorizedProjectId: run.projectId!,
+        },
+        { db },
+      );
+
+    expect((await answer(requests[0].id)).status).toBe(200);
+    expect(
+      (await db.select().from(runs).where(eq(runs.id, runId)))[0].status,
+    ).toBe("NeedsInput");
+    expect(
+      (
+        await db
+          .select()
+          .from(hitlRequests)
+          .where(eq(hitlRequests.id, requests[1].id))
+      )[0].respondedAt,
+    ).toBeNull();
+    expect((await answer(requests[1].id)).status).toBe(200);
+    await expect
+      .poll(
+        async () =>
+          (await db.select().from(runs).where(eq(runs.id, runId)))[0].status,
+        { timeout: 30_000, interval: 50 },
+      )
+      .toBe("Review");
+    expect(
+      (
+        await db
+          .select()
+          .from(hitlRequests)
+          .where(eq(hitlRequests.runId, runId))
+      ).every((request) => request.respondedAt !== null),
+    ).toBe(true);
+    expect(driver.output()).not.toContain(
+      "agent_permission_resume_source_count",
+    );
+  }, 60_000);
+
+  it("IT-EDGE-OPL-02 checkpointed parallel permissions keep both choices and one resumed turn", async () => {
+    const runId = await seedAgent({
+      bytes: 0,
+      permission: true,
+      parallelPermission: true,
+      parallelPermissionOnResume: true,
+    });
+    const driver = startDriver(runId);
+
+    await expect
+      .poll(
+        async () =>
+          (
+            await db
+              .select()
+              .from(hitlRequests)
+              .where(eq(hitlRequests.runId, runId))
+          ).length,
+        { timeout: 30_000, interval: 50 },
+      )
+      .toBe(2);
+    const requests = await db
+      .select()
+      .from(hitlRequests)
+      .where(eq(hitlRequests.runId, runId));
+    const [source] = await db
+      .select()
+      .from(agentTurns)
+      .where(eq(agentTurns.runId, runId));
+    const hosts = createExecutionHosts({ db });
+    const client = await hosts.forRun(runId);
+    const [session] = await db
+      .select()
+      .from(runSessions)
+      .where(eq(runSessions.runId, runId));
+
+    driver.child.kill("SIGKILL");
+    await driver.exited;
+    await client.checkpoint(session.hostSessionId!);
+    expect((await markCheckpointed(runId, { db })).ok).toBe(true);
+    const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+
+    for (const request of requests) {
+      expect(
+        (
+          await respondToHitl(
+            { runId, hitlRequestId: request.id, body: { optionId: "allow" } },
+            {
+              kind: "user",
+              userId: "agent-permission-user",
+              label: "Parallel checkpoint decision",
+              preauthorizedProjectId: run.projectId!,
+            },
+            { db },
+          )
+        ).status,
+      ).toBe(202);
+    }
+    const continuation = startAgentContinuationWorker({ db });
+
+    try {
+      await expect
+        .poll(
+          async () =>
+            (await db.select().from(runs).where(eq(runs.id, runId)))[0].status,
+          { timeout: 60_000 + KILLED_CLAIM_WAIT_MS, interval: 100 },
+        )
+        .toBe("Review");
+      const turns = await db
+        .select()
+        .from(agentTurns)
+        .where(eq(agentTurns.runId, runId))
+        .orderBy(asc(agentTurns.ordinal));
+
+      expect(turns).toHaveLength(2);
+      expect(turns[1]).toMatchObject({
+        variant: "resume",
+        state: "applied",
+        prompt: source.prompt,
+      });
+      const retained = await db
+        .select()
+        .from(hitlRequests)
+        .where(eq(hitlRequests.runId, runId));
+
+      expect(retained).toHaveLength(4);
+      expect(retained.every((request) => request.respondedAt !== null)).toBe(
+        true,
+      );
+      expect(
+        retained
+          .filter((request) =>
+            requests.some((original) => original.id === request.id),
+          )
+          .map(
+            (request) => (request.response as Record<string, unknown>).optionId,
+          ),
+      ).toEqual(["allow", "allow"]);
+    } finally {
+      await continuation.stop();
+    }
+  }, 120_000);
+
   it("owner-agent-worker starts an admitted run before its first turn exists", async () => {
     const runId = await seedAgent({ bytes: 0 });
 
@@ -1254,143 +1680,155 @@ describe("Agent owned prompts through the production launcher", () => {
     },
     180_000,
   );
-  it("owner-agent-checkpoint resumes an unanswered original permission under an explicit grant", async () => {
-    const runId = await seedAgent({ bytes: 0, permission: true });
-    const driver = startDriver(runId);
-
-    await expect
-      .poll(
-        async () => {
-          const rows = await db
-            .select()
-            .from(hitlRequests)
-            .where(eq(hitlRequests.runId, runId));
-
-          return rows.length;
-        },
-        { timeout: 30_000, interval: 25 },
-      )
-      .toBe(1);
-    const [hitl] = await db
-      .select()
-      .from(hitlRequests)
-      .where(eq(hitlRequests.runId, runId));
-    const [source] = await db
-      .select()
-      .from(agentTurns)
-      .where(eq(agentTurns.runId, runId));
-
-    driver.child.kill("SIGKILL");
-    await driver.exited;
-    const hosts = createExecutionHosts({ db });
-    const client = await hosts.forRun(runId);
-    const [session] = await db
-      .select()
-      .from(runSessions)
-      .where(eq(runSessions.runId, runId));
-
-    await client.checkpoint(session.hostSessionId!);
-    expect((await markCheckpointed(runId, { db })).ok).toBe(true);
-    const [run] = await db.select().from(runs).where(eq(runs.id, runId));
-    const response = await respondToHitl(
-      { runId, hitlRequestId: hitl.id, body: { optionId: "allow" } },
-      {
-        kind: "user",
-        userId: "agent-permission-user",
-        label: "Agent checkpoint qualification",
-        preauthorizedProjectId: run.projectId!,
-      },
-      { db },
-    );
-
-    expect(response.status).toBe(202);
-    const [beforeWorker] = await db
-      .select()
-      .from(hitlRequests)
-      .where(eq(hitlRequests.id, hitl.id));
-
-    if (
-      !(beforeWorker.response as Record<string, unknown> | null)?._agentResume
-    )
-      expect(await response.json()).toMatchObject({
-        runStatus: "NeedsInputIdle",
+  it.each([false, true])(
+    "owner-agent-checkpoint resumes an unanswered original permission under an explicit grant (operational=%s)",
+    async (operational) => {
+      const runId = await seedAgent({
+        bytes: 0,
+        permission: true,
+        operational,
       });
-    const continuation = startAgentContinuationWorker({ db });
+      const driver = startDriver(runId);
 
-    try {
       await expect
         .poll(
           async () => {
-            const [row] = await db
+            const rows = await db
               .select()
               .from(hitlRequests)
-              .where(eq(hitlRequests.id, hitl.id));
+              .where(eq(hitlRequests.runId, runId));
 
-            return (row.response as Record<string, unknown> | null)
-              ?._agentResume;
+            return rows.length;
           },
-          { timeout: 60_000 + KILLED_CLAIM_WAIT_MS, interval: 100 },
+          { timeout: 30_000, interval: 25 },
         )
-        .toBeDefined();
-      const [claimed] = await db
+        .toBe(1);
+      const [hitl] = await db
+        .select()
+        .from(hitlRequests)
+        .where(eq(hitlRequests.runId, runId));
+      const [source] = await db
+        .select()
+        .from(agentTurns)
+        .where(eq(agentTurns.runId, runId));
+
+      driver.child.kill("SIGKILL");
+      await driver.exited;
+      const hosts = createExecutionHosts({ db });
+      const client = await hosts.forRun(runId);
+      const [session] = await db
+        .select()
+        .from(runSessions)
+        .where(eq(runSessions.runId, runId));
+
+      await client.checkpoint(session.hostSessionId!);
+      expect((await markCheckpointed(runId, { db })).ok).toBe(true);
+      const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+      const response = await respondToHitl(
+        { runId, hitlRequestId: hitl.id, body: { optionId: "allow" } },
+        {
+          kind: "user",
+          userId: "agent-permission-user",
+          label: "Agent checkpoint qualification",
+          preauthorizedProjectId: run.projectId!,
+        },
+        { db },
+      );
+
+      expect(response.status).toBe(202);
+      const [beforeWorker] = await db
         .select()
         .from(hitlRequests)
         .where(eq(hitlRequests.id, hitl.id));
 
-      expect(claimed.response).toMatchObject({
-        _agentResume: {
-          version: 1,
-          kind: "continue",
-          sourceCommandId: source.commandId,
-          assignmentId: expect.any(String),
-          turnId: expect.any(String),
-        },
-      });
-      await expect
-        .poll(
-          async () => {
-            const [current] = await db
-              .select()
-              .from(runs)
-              .where(eq(runs.id, runId));
+      if (
+        !(beforeWorker.response as Record<string, unknown> | null)?._agentResume
+      )
+        expect(await response.json()).toMatchObject({
+          runStatus: "NeedsInputIdle",
+        });
+      const continuation = startAgentContinuationWorker({ db });
 
-            return current.status;
+      try {
+        await expect
+          .poll(
+            async () => {
+              const [row] = await db
+                .select()
+                .from(hitlRequests)
+                .where(eq(hitlRequests.id, hitl.id));
+
+              return (row.response as Record<string, unknown> | null)
+                ?._agentResume;
+            },
+            { timeout: 60_000 + KILLED_CLAIM_WAIT_MS, interval: 100 },
+          )
+          .toBeDefined();
+        const [claimed] = await db
+          .select()
+          .from(hitlRequests)
+          .where(eq(hitlRequests.id, hitl.id));
+
+        expect(claimed.response).toMatchObject({
+          _agentResume: {
+            version: 1,
+            kind: "continue",
+            sourceCommandId: source.commandId,
+            assignmentId: expect.any(String),
+            turnId: expect.any(String),
           },
-          { timeout: 45_000, interval: 50 },
-        )
-        .toBe("Review");
-      const turns = await db
-        .select()
-        .from(agentTurns)
-        .where(eq(agentTurns.runId, runId))
-        .orderBy(asc(agentTurns.ordinal));
+        });
+        await expect
+          .poll(
+            async () => {
+              const [current] = await db
+                .select()
+                .from(runs)
+                .where(eq(runs.id, runId));
 
-      expect(turns).toHaveLength(2);
-      expect(turns[0].state).toBe("superseded");
-      expect(turns[1]).toMatchObject({
-        variant: "resume",
-        state: "applied",
-        prompt: source.prompt,
-      });
-      const requests = await db
-        .select()
-        .from(hitlRequests)
-        .where(eq(hitlRequests.runId, runId));
+              return current.status;
+            },
+            { timeout: 45_000, interval: 50 },
+          )
+          .toBe(operational ? "Done" : "Review");
+        const turns = await db
+          .select()
+          .from(agentTurns)
+          .where(eq(agentTurns.runId, runId))
+          .orderBy(asc(agentTurns.ordinal));
 
-      expect(requests).toHaveLength(2);
-      expect(requests.every((request) => request.respondedAt !== null)).toBe(
-        true,
-      );
-      const [result] = await db
-        .select()
-        .from(runResults)
-        .where(eq(runResults.runId, runId));
+        expect(turns).toHaveLength(2);
+        expect(turns[0].state).toBe("superseded");
+        expect(turns[1]).toMatchObject({
+          variant: "resume",
+          state: "applied",
+          prompt: source.prompt,
+        });
+        const requests = await db
+          .select()
+          .from(hitlRequests)
+          .where(eq(hitlRequests.runId, runId));
 
-      expect(result.value).toEqual({ summary: "original answer" });
-    } finally {
-      await continuation.stop();
-    }
-  }, 90_000);
+        expect(requests).toHaveLength(2);
+        expect(requests.every((request) => request.respondedAt !== null)).toBe(
+          true,
+        );
+        const [result] = await db
+          .select()
+          .from(runResults)
+          .where(eq(runResults.runId, runId));
+
+        expect(result.value).toEqual(
+          operational
+            ? operationalSuccessFixture()
+            : { summary: "original answer" },
+        );
+      } finally {
+        await continuation.stop();
+      }
+    },
+    90_000,
+  );
 
   it.each(["live", "launcher_restart", "input_ack_restart"] as const)(
     "owner-agent-permission retains its exact source through %s",

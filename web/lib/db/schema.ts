@@ -2166,7 +2166,7 @@ export const runs = pgTable(
       ),
     operationalContractCheck: check(
       "runs_operational_contract_check",
-      sql`((${t.agentKind} IS NULL OR ${t.agentKind} = 'code_delivery') AND coalesce(${t.resultContract}->>'kind', '') <> 'agent_operational' OR ${t.agentKind} = 'operational' AND ${t.runKind} = 'agent' AND ${t.persistent} = false AND coalesce(${t.workspaceMode}, 'own') = 'own' AND ${t.agentWorkspace} IN ('none','repo_read','worktree') AND ${t.resultContract}->>'kind' = 'agent_operational' AND ${t.resultContract}->'schemaVersion' = '1'::jsonb AND ${t.resultContract}->'semanticVersion' = '1'::jsonb AND ${t.resultContract}->'required' = 'true'::jsonb AND ${t.resultContract}->>'sha256' ~ '^[a-f0-9]{64}$' AND jsonb_typeof(${t.resultContract}->'schema') = 'object' AND jsonb_typeof(${t.resultContract}->'definition') = 'object' AND jsonb_typeof(${t.resultContract}->'provenance') = 'object') IS TRUE`,
+      sql`((${t.agentKind} IS NULL OR ${t.agentKind} = 'code_delivery') AND coalesce(${t.resultContract}->>'kind', '') <> 'agent_operational' OR ${t.agentKind} = 'operational' AND ${t.runKind} = 'agent' AND ${t.persistent} = false AND NOT (coalesce(${t.workspaceMode}, 'own') = 'shared' AND ${t.agentWorkspace} = 'worktree') AND ${t.agentWorkspace} IN ('none','repo_read','worktree') AND ${t.resultContract}->>'kind' = 'agent_operational' AND ${t.resultContract}->'schemaVersion' = '1'::jsonb AND ${t.resultContract}->'semanticVersion' = '1'::jsonb AND ${t.resultContract}->'required' = 'true'::jsonb AND ${t.resultContract}->>'sha256' ~ '^[a-f0-9]{64}$' AND jsonb_typeof(${t.resultContract}->'schema') = 'object' AND jsonb_typeof(${t.resultContract}->'definition') = 'object' AND jsonb_typeof(${t.resultContract}->'provenance') = 'object') IS TRUE`,
     ),
     operationalTerminalCheck: check(
       "runs_operational_terminal_check",
@@ -8044,7 +8044,7 @@ export const domainEvents = pgTable(
   (t) => ({
     kindCheck: check(
       "domain_events_kind_check",
-      sql`${t.kind} in ('task.created', 'task.comment_added', 'task.triage_requeued', 'task.clarification_requested', 'task.clarification_answered', 'task.clarification_cancelled', 'run.done', 'run.failed', 'run.crashed', 'run.abandoned', 'run.review', 'run.review_opened', 'run.needs_input', 'run.escalated', 'run.rework_claimed', 'run.rework_returned', 'gate.failed')`,
+      sql`${t.kind} in ('task.created', 'task.comment_added', 'task.triage_requeued', 'task.clarification_requested', 'task.clarification_answered', 'task.clarification_cancelled', 'run.done', 'run.failed', 'run.crashed', 'run.abandoned', 'run.review', 'run.review_opened', 'run.needs_input', 'run.escalated', 'run.rework_claimed', 'run.rework_returned', 'gate.failed', 'run.operational_attention_acknowledged', 'run.operational_cleanup_changed')`,
     ),
     actorTypeCheck: check(
       "domain_events_actor_type_check",
@@ -9079,4 +9079,16 @@ export const projectConfigPushIntents = pgTable(
       AND (${t.state} NOT IN ('failed','unknown','stale') OR ${t.errorReason} IS NOT NULL)`,
     ),
   ],
+);
+
+// Fair progress is independent of cleanup leases and execution ownership.
+export const operationalCleanupProgress = pgTable(
+  "operational_cleanup_progress",
+  {
+    id: text("id").primaryKey(),
+    cursorId: text("cursor_id"),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
 );

@@ -3,7 +3,7 @@ import "server-only";
 import { lstat, realpath, rm } from "node:fs/promises";
 import path from "node:path";
 
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { restoreAgentMaterialization } from "@/lib/agents/dirty-watchdog";
@@ -136,6 +136,7 @@ async function loadPlainAgentDirectoryCandidates(): Promise<
     .where(
       and(
         eq(runs.runKind, "agent"),
+        sql`coalesce(${runs.agentKind}, 'code_delivery') <> 'operational'`,
         eq(runs.agentWorkspace, "none"),
         inArray(runs.status, [...PLAIN_AGENT_DIRECTORY_TERMINAL_STATUSES]),
       ),
