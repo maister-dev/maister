@@ -61,7 +61,7 @@ export function OperationalRunResult({
       {reported ? (
         <>
           <p>{reported.summary}</p>
-          {outcome.successful && reported.counts.created === 0 ? (
+          {outcome.successful && reported.counts.attempted === 0 ? (
             <p>{t("zeroWork")}</p>
           ) : null}
           <dl className="flex flex-wrap gap-4">

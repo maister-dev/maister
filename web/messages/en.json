@@ -5886,7 +5886,7 @@
     "failed": "Failed",
     "cancelled": "Cancelled",
     "crashed": "Execution interrupted",
-    "zeroWork": "Scan completed successfully; no new work.",
+    "zeroWork": "Operation completed successfully; no new work.",
     "awaitingResult": "Waiting for the structured operation result.",
     "invalidResult": "The required result is missing or invalid. Inspect execution evidence before starting a new attempt.",
     "remediation": "Next step",

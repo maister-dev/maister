@@ -11,6 +11,7 @@ const projectId = randomUUID();
 const slug = `operational-ui-${projectId.slice(0, 8)}`;
 const agentId = `fixture:operational-${projectId.slice(0, 8)}`;
 const successId = randomUUID();
+const performedId = randomUUID();
 const failedId = randomUUID();
 const codeId = randomUUID();
 
@@ -37,24 +38,28 @@ test.describe("operational results, history and attention", () => {
       );
       for (const [id, status, operational] of [
         [successId, "Done", true],
+        [performedId, "Done", true],
         [failedId, "Failed", true],
         [codeId, "Review", false],
       ] as const) {
         const success = status === "Done";
+        const performed = id === performedId;
         const value = {
           schemaVersion: 1,
           outcome: success ? "success" : "blocked",
-          summary: success
-            ? "Complete scan; no new work."
-            : "GitHub denied the scan.",
+          summary: performed
+            ? "External operation completed."
+            : success
+              ? "Complete scan; no new work."
+              : "GitHub denied the scan.",
           coverage: {
             state: success ? "complete" : "not_started",
             remainingKnown: success ? 0 : null,
           },
           counts: {
-            scanned: 0,
-            attempted: 0,
-            completed: 0,
+            scanned: performed ? 1 : 0,
+            attempted: performed ? 1 : 0,
+            completed: performed ? 1 : 0,
             failed: 0,
             skipped: 0,
             created: 0,
@@ -200,6 +205,13 @@ test.describe("operational results, history and attention", () => {
       await expect(
         page.locator('[data-testid="agent-run-review-cta"]:visible'),
       ).toHaveCount(0);
+      await page.goto(`/runs/${performedId}`);
+      await expect(
+        page.locator('[data-testid="operational-result"]:visible'),
+      ).toContainText("External operation completed.");
+      await expect(
+        page.locator('[data-testid="operational-result"]:visible'),
+      ).not.toContainText(locale === "en" ? "no new work" : "новой работы нет");
       await page.goto(`/runs/${failedId}`);
       await expect(
         page.locator('[data-testid="operational-result"]:visible'),
@@ -231,4 +243,75 @@ test.describe("operational results, history and attention", () => {
       ).toBeVisible();
     });
   }
+
+  test("IT-OPL-02 browser actions acknowledge a failure and rearm only workspace cleanup", async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await context.addCookies([
+      { name: "NEXT_LOCALE", value: "en", url: baseURL! },
+    ]);
+    await page.goto(`/runs/${failedId}`);
+    const [retry] = await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          response.request().method() === "POST" &&
+          response
+            .url()
+            .endsWith(`/api/runs/${failedId}/operational/cleanup/retry`),
+      ),
+      page
+        .getByRole("button", { name: "Retry workspace cleanup", exact: true })
+        .click(),
+    ]);
+
+    expect(retry.status()).toBe(202);
+    expect(await retry.json()).toMatchObject({
+      state: "armed",
+      revision: 7,
+      attempts: 0,
+      errorCode: null,
+    });
+    await expect(
+      page.getByRole("button", {
+        name: "Retry workspace cleanup",
+        exact: true,
+      }),
+    ).toHaveCount(0);
+    const [ack] = await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          response.request().method() === "POST" &&
+          response
+            .url()
+            .endsWith(`/api/runs/${failedId}/operational/acknowledge`),
+      ),
+      page
+        .getByRole("button", {
+          name: "Acknowledge operation failure",
+          exact: true,
+        })
+        .click(),
+    ]);
+
+    expect(ack.status()).toBe(200);
+    expect(await ack.json()).toMatchObject({ acknowledged: true, revision: 1 });
+    await withE2EDb(async (pool) => {
+      const result = await pool.query(
+        "SELECT status, operational_terminal->>'effectiveOutcome' AS outcome FROM runs WHERE id=$1",
+        [failedId],
+      );
+
+      expect(result.rows).toEqual([{ status: "Failed", outcome: "blocked" }]);
+      const acknowledgement = await pool.query(
+        "SELECT reason, revision FROM operational_run_acknowledgements WHERE run_id=$1",
+        [failedId],
+      );
+
+      expect(acknowledgement.rows).toEqual([
+        { reason: "operation_failure", revision: 1 },
+      ]);
+    });
+  });
 });
