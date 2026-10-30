@@ -1,9 +1,23 @@
 # Implementation Plan: Explicit, repeatable project configuration commits
 
 Created: 2026-10-29
-Status: Complete — all 14 tasks and 32 requirement/edge rows qualified locally on 2026-10-30; phase commits retained.
+Status: Complete — original 14 tasks and all five review findings are addressed.
+Review-fix qualification is recorded below; earlier full-suite receipts retain
+their original source boundaries.
 Branch: `codex/project-config-git-workflow`; implementation base `4a0b41b2e1911b9ad5adda250f1b8a937b0daf46`.
 Implementation branch is active. Phase-local commits are authorized; migrations and execution probes use disposable test resources. No remote push, PR creation or merge is authorized.
+
+
+## Review remediation
+
+- [x] R1: Serialize shared-install metadata writes with concurrent attachment creation, removal and pin switching; additive migration0198, real PostgreSQL causal barriers, rollback/retry and accepted-publication proof.
+- [x] R2: Give ordinary repository mutations a recoverable identity while preserving exact configuration-intent ownership; exercise the production fast-forward entry point after process death.
+- [x] R3: Replace the anonymous recovery claim with process-death-safe kernel exclusion; prove competing recovery, death during adoption, interrupted owner replacement and preservation of unknown lock evidence.
+- [x] R4: Keep banner receipt/push review and opener mounted across status refresh/failure; retain busy/focus behavior and use project UI/diff primitives.
+- [x] R5: Reconcile current SDD, API/DB/screen analytics, traceability and receipts; finish scoped gates and local phase commits.
+
+The review-fix scope adds no manifest fields, configuration source or remote action.
+The SQLite file is an empty kernel mutex only, not a second application database.
 
 ## Settings
 
@@ -496,3 +510,19 @@ All other defaults are explicit above: checked-out main branch only, fixed previ
 - Final assertion-only acceptance refinement passed in the actual checkout: 2 files / 17 integration tests (3.90s), changed-file ESLint and typecheck. Existing CLI refusal now compares flows, revisions and capability-import rows as well as attachments/installs; existing launch-pin admission proves selected DB runner changes, immutable prior session snapshots and absent YAML before first persistence. This is admission-ledger evidence, not a claim of a live ACP agent run. No production runtime changed after the complete full-suite/browser gates. All 12 requirements and 20 edges now resolve to executed primary owners in the Implemented matrix; final documentation/coverage checks follow.
 
 - T11.1/T12.1 completed: final API parser and 9 control tests plus 5 adapter mirrors passed; full documentation/ADR/link/index/coverage controls and the generated 142-table ERD passed; final EN/RU Mintlify build validation and anchor-aware links passed. Requirement coverage resolves all 12 expectations and 20 edges to the actual primary titles. Focused read-only audits resolved the two recovery-feedback UI defects and strengthened the CLI/admission assertions; no additional runtime changes followed qualification. Final source fingerprint excluding this plan is `3b6ca3326fff771e3a7eb87391fdce55a270a46c7926d3ea1816902d195953e8` across 134 feature paths, relative to base `4a0b41b2e1911b9ad5adda250f1b8a937b0daf46`. The complete integration gate and subsequent assertion-only owners are reported separately above; no skipped load test or hosted/live-agent execution is claimed. All 14 tasks are complete. No push, PR, merge or deployment was performed.
+
+
+## Review-fix qualification (2026-10-30)
+
+- R1 RED reproduced both missing binding serialization orders. GREEN: 7 real PostgreSQL tests, including migration upgrade, installation-first insert/pin/delete refusal, binding-first wait and fresh invalidation, and publication acceptance while an earlier install writer waits. The barriers assert `pg_blocking_pids`, not elapsed time. All 5 package consumer files / 32 tests passed. Drizzle generation reports no schema drift. Local phase commit: `ad4ea3c57`.
+- R2/R3 RED reproduced ordinary retry refusal and a recovery claim stranded by SIGKILL. Adversarial review reproduced interrupted owner-file replacement as a third RED. GREEN: final repository ownership suite 13/13, including unknown/legacy mutex preservation, live child groups, one winning recovery owner, production FF retry without reading the old ID, and real process death immediately before owner rename. Ordinary Git-helper consumers: 2 files / 37 tests. The new mutex file is classified by the D10 ownership inventory (9/9). Local phase commit: `0c9ede3b3`.
+- Combined affected persistence/API/DB/Git suites: 8 files / 70 tests passed. The subsequent equivalent mutex-open flag simplification and inventory declaration were followed by the final 13-test ownership run and 9-test inventory run. This is scoped regression evidence; the prior complete project suites above were not rerun or relabeled as current-source full-suite evidence.
+- R4 RED reproduced banner receipt removal after a successful local save; a second RED reproduced the missing opener on close. The normal authenticated Playwright harness passed CPC-02/03/04 plus setup (4/4, retries disabled), then the final banner-focus refinement passed CPC-04 plus setup (2/2). Tests use actual local Git and PostgreSQL, a disposable bare remote, real focus refreshes, held response delivery for busy-state proof, and exact remote SHA. Existing settings UI tests passed 4/4. HeroUI controls and the standard unified diff renderer retain an exact reviewed-text disclosure. Local phase commit: `3b752a68c`.
+- R5 reconciles the current SDD status, deleted service reference, migration ownership, DB concurrency/retry contract, API reason semantics, EN/RU guidance, screen lifecycle and acceptance mapping. Final `validate:docs:all`, `validate:contracts` (9 controls and 5 adapter mirrors), web/supervisor/MCP typechecks, MCP build, scoped lint, D10 inventory, local-state tooling tests, diff check and 32-row requirement gate pass; the patch learning artifact accompanies the documentation phase. No PR, push, merge or deployment is performed.
+
+Detailed local logs: `/tmp/maister-config-db-fix-{red,green,package-consumers}.log`,
+`/tmp/config-fence-red.log`, `/tmp/config-owner-write-red.log`,
+`/tmp/config-fixes-{integration,fence-final,worktree,inventory}.log`,
+`/tmp/config-ui-{red,renderer-green-final,focus-red,focus-green}.log`.
+These ephemeral logs supplement the checked-in regression assertions; they are
+not portable hosted qualification receipts.

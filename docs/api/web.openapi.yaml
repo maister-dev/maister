@@ -13832,8 +13832,10 @@ paths:
         Successful attach, detach, upgrade and downgrade apply runtime configuration
         and advance its export revision without modifying repository files, index
         or HEAD. Saving package pins requires the separate reviewed persistence action.
-        An active publication refuses exportable changes with 409 CONFLICT and
-        `details.reason: operation_busy`.
+        An active publication or concurrent shared-install metadata update refuses
+        conflicting attachment changes with 409 CONFLICT and
+        `details.reason: operation_busy`, without partial writes. Retry after the
+        package update finishes, or complete/recover the active configuration save.
       operationId: attachProjectPackage
       parameters:
         - {
@@ -26806,6 +26808,11 @@ components:
         readiness: { $ref: "#/components/schemas/LibrarianAvailability" }
 
     ConfigPersistenceReason:
+      description: >-
+        Stable refusal reason. operation_busy includes active package metadata
+        changes, repository mutations and fence recovery. Retry after the current
+        owner finishes; inspect or recover an accepted configuration save if present.
+        Unknown filesystem ownership requires operator inspection.
       type: string
       enum:
         - stale_preview

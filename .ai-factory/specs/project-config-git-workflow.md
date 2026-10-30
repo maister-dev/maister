@@ -1,6 +1,7 @@
 # Explicit project configuration Git workflow
 
-Status: Designed. Implementation is not yet qualified.
+Status: Implemented. Local qualification and review-fix receipts are recorded in
+the implementation plan; they do not claim hosted or live-agent qualification.
 
 ## Goal and scope
 

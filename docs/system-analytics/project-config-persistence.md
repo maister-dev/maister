@@ -121,8 +121,24 @@ short transaction locks the project row, rechecks the export revision and accept
 the durable active intent. Its trigger refuses concurrent export mutations until
 completion or recovery. Git runs outside database transactions. The ownership
 directory and active intent survive connection/process loss; neither expires.
-Recovery may adopt only its own fence after proving the recorded process dead.
+Configuration recovery may adopt only its exact operation fence after proving
+the recorded process dead. Ordinary pull/promotion/fast-forward actions use a
+reserved repository-mutation identity: retry retires only a proven dead ordinary
+owner, then rechecks the new action's normal preconditions. It never replays an
+unknown prior callback or adopts a configuration intent.
 Unknown ownership or a still-live process requires explicit recovery guidance.
+
+Fence adoption uses a short kernel-backed SQLite transaction mutex in the common
+Git directory. This permanent mutex file stores no configuration or operation
+state; it is never unlinked, and process death releases its kernel exclusion.
+The transaction covers retired-owner/group/index proof and owner replacement.
+Concurrent recovery refuses immediately with `operation_busy`. Owner replacements
+are staged outside the active fence directory and atomically renamed: death before
+rename preserves the prior owner. Incomplete staging files remain inert evidence;
+unknown contents inside the active directory still refuse adoption. Existing anonymous
+legacy recovery directories remain unknown evidence and require operator
+inspection; upgrades must drain old binaries. Normal Git execution remains outside
+this short mutex, and durable owner/group evidence remains authoritative.
 
 Each Git mutation starts behind an IPC gate. The host records its detached
 process group in the fence before permitting Git to start. Owner death before
@@ -209,7 +225,7 @@ outside MAIster; path repair never becomes persistence-status authority.
 - **EDGE-CPC-17:** Launch with runtime settings before first save and after each version/runner change; actual resolved runner/pin provenance; existing in-flight snapshot unchanged; persistence performs no install/trust/setup/import. Owner: IT-CPC-11 plus existing launch/pin owners; T7.1/T8.1. Refusal uses CONFIG/PRECONDITION/CONFLICT or explicit EXECUTOR_UNAVAILABLE; exact wire outcomes are in [OpenAPI](../api/web.openapi.yaml).
 - **EDGE-CPC-18:** Real Studio cut's deleted temporary source, mutable local directory changed since attachment, unsupported coordinate, supported source's attached revision match; no guessed/omitted source. Owner: IT-CPC-07 local-coordinate portion; T3.1. Refusal uses CONFIG/PRECONDITION/CONFLICT or explicit EXECUTOR_UNAVAILABLE; exact wire outcomes are in [OpenAPI](../api/web.openapi.yaml).
 - **EDGE-CPC-19:** Exact full-diff byte/size boundaries; UTF-8/newline/mode preservation; empty or malformed bodies; broken filesystem/Git/DB/remote reads produce explicit unavailable/refusal rather than absence/no-op. Owner: IT-CPC-04/07 plus actual-response schema samples; T3.1/T6.1. Refusal uses CONFIG/PRECONDITION/CONFLICT or explicit EXECUTOR_UNAVAILABLE; exact wire outcomes are in [OpenAPI](../api/web.openapi.yaml).
-- **EDGE-CPC-20:** EN/RU parity; cancel before confirm; busy double-submit/Escape/backdrop; timeout then reopen same receipt; focus restore; no-op; banner dismissal; repeated durable action; separate push review and local-success/push-failure feedback. Owner: E2E-CPC-02; E2E-CPC-03; T9.1. Refusal uses CONFIG/PRECONDITION/CONFLICT or explicit EXECUTOR_UNAVAILABLE; exact wire outcomes are in [OpenAPI](../api/web.openapi.yaml).
+- **EDGE-CPC-20:** EN/RU parity; cancel before confirm; busy double-submit/Escape/backdrop; focus/status failure while the banner dialog is open; timeout then reopen same receipt; focus restore; no-op; banner dismissal; repeated durable action; separate push review and local-success/push-failure feedback. Owner: E2E-CPC-02; E2E-CPC-03; E2E-CPC-04; T9.1. Refusal uses CONFIG/PRECONDITION/CONFLICT or explicit EXECUTOR_UNAVAILABLE; exact wire outcomes are in [OpenAPI](../api/web.openapi.yaml).
 
 ## Private publication cleanup and independent push ownership
 
@@ -223,7 +239,21 @@ At issuance, use the immutable commit SHA and captured effective URL plus destin
 
 API receipts expose `cleanupState` and optional `cleanupReason` (stable allow-listed reason keys); push results expose the equivalent push cleanup status. These are required fields in the deployed new API family. Current runtime settings and the manifest schema do not gain any of these operational fields.
 
-Package installation retry is an additional export writer: `installPackageRevision` can update an existing install's status and manifest metadata, including `sourceSubpath`. Add an install-update trigger covering source URL, name, version label, resolved revision, exported sourceSubpath and package status. For each currently attached project, lock/update projects in deterministic ID order and advance export revision. The accepted-publication project guard refuses these mutations while an intent is active. Trust/readiness/timestamp-only changes remain DB-only and do not advance export revision. Verify a real reinstall-style update both before and during acceptance; otherwise attachment-only invalidation leaves a race around a shared install.
+Package installation retry is an additional export writer: `installPackageRevision`
+can update an existing install's status and manifest metadata, including
+`sourceSubpath`. The install-update trigger advances attached projects in
+sorted ID order for exported coordinates/status; the accepted-publication guard
+refuses changes while an intent is active. Trust/timestamp-only updates stay
+DB-only. Migration 0198 closes concurrent binding changes: before attachment
+insert/delete or semantic binding update, lock the referenced old/new install
+rows in sorted order with `FOR SHARE NOWAIT`. These locks conflict with metadata
+updates, unlike the foreign key's key-share lock. Contention returns
+`CONFLICT/operation_busy` without partial writes; retry after the other operation
+finishes. An update already waiting on a binding transaction observes the newly
+committed attachment before advancing revisions (READ COMMITTED trigger queries).
+No dependency on a pre-existing attachment or application-only locking remains.
+Real two/three-connection tests own both orders, pin switches, retry and accepted
+publication while the installation writer waits.
 
 The immutable repository snapshot encodes canonical Git-quoted ASCII index entries as base64. `core.quotePath=true` keeps arbitrary path bytes, control characters and non-ASCII names lossless across the text/JSON boundary. Expected published index entries are derived from the immutable prepared commit tree, never a mutable private index. PostgreSQL JSONB cannot represent U+0000; the lossless encoded value remains part of the reviewed-state digest. Do not strip delimiters or normalize path text. Repeated persistence against a non-empty index is a real-Git/real-Postgres acceptance case.
 
@@ -244,8 +274,8 @@ boundary of this workflow.
 - [Feature SDD](../../.ai-factory/specs/project-config-git-workflow.md)
 - [Traceability](project-config-persistence-traceability.md)
 - [Configuration](../configuration.md), [projects](projects.md), [Git](git-integration.md)
-- Existing service: `web/lib/persist-config.ts`; proposed internals:
-  `web/lib/project-config-persistence/`.
+- Implemented services: `web/lib/project-config-persistence/`; the compatibility
+  endpoint family delegates to these reviewed-operation services.
 
 ## Final caller-index reservation
 
