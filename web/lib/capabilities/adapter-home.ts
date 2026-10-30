@@ -21,6 +21,7 @@ import {
 } from "@/lib/acp-runners/adapter-support";
 import { assertAgentId, assertAgentStem } from "@/lib/agents/definition";
 import { capabilityMaterializationRootPath } from "@/lib/capabilities/materialize";
+import { ensureWorktreeGitignore } from "@/lib/capabilities/materialize-bundle";
 import {
   FLOW_AUTHORING_SKILL_FILES,
   FLOW_AUTHORING_SKILL_ID,
@@ -122,7 +123,7 @@ export async function materializeSubagentDefinition(args: {
   const targetPath = path.join(targetDir, `${stem}.md`);
   const targetRelativePath = `.claude/agents/${stem}.md`;
 
-  await materializeWithAgentLease({
+  const materialized = await materializeWithAgentLease({
     cwd: worktreePath,
     runId: args.runId,
     materialize: async (ownedPaths, recordIntent, ownedByRunPaths) => {
@@ -160,6 +161,8 @@ export async function materializeSubagentDefinition(args: {
       return [targetPath];
     },
   });
+
+  await ensureWorktreeGitignore(worktreePath, materialized);
 
   return targetPath;
 }
@@ -260,6 +263,8 @@ export async function materializeAdapterCapabilityHome(args: {
         return [...copiedSkills, ...copiedAgents];
       },
     });
+
+    await ensureWorktreeGitignore(worktreePath, copied);
 
     log.debug(
       {
