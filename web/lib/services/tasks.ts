@@ -10,6 +10,7 @@ import { and, desc, eq, inArray, notExists, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
+import { pgErrorOf } from "@/lib/db/pg-error";
 import * as schemaModule from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { MaisterError } from "@/lib/errors";
@@ -54,7 +55,7 @@ export type CreateTaskInput = {
   // M39 (ADR-106): set ONLY for a task auto-created by an agent trigger. The
   // pair is the (agent_id, trigger_event_id) idempotency claim — a concurrent
   // at-least-once redelivery converges to ONE auto-task. Absent for a board
-  // task (which carries no trigger and never conflicts).
+  // task (which carries no trigger claim).
   agentId?: string | null;
   triggerEventId?: number | null;
 };
@@ -115,26 +116,51 @@ export async function createTask(
   const taskId = randomUUID();
 
   // ADR-078 D1: number allocation + task insert in ONE transaction. The
-  // projects-row lock (UPDATE … RETURNING) serializes concurrent creates;
+  // projects-row lock serializes concurrent creates; NO KEY UPDATE also lets
+  // concurrent writers hold a project FK reference without lock upgrades.
   // UNIQUE(project_id, number) is the backstop.
   const created = await _db.transaction(async (tx: any) => {
-    const allocated = await tx
-      .update(projects)
-      .set({ nextTaskNumber: sql`${projects.nextTaskNumber} + 1` })
+    const locked = await tx
+      .select({ nextTaskNumber: projects.nextTaskNumber })
+      .from(projects)
       .where(eq(projects.id, ctx.projectId))
-      .returning({
-        allocated: projects.nextTaskNumber,
-        taskKey: projects.taskKey,
-      });
+      .for("no key update");
 
-    if (allocated.length === 0) {
+    if (locked.length === 0) {
       throw new MaisterError(
         "PRECONDITION",
         `project ${ctx.projectId} not found`,
       );
     }
 
+    // Read MAX after acquiring the lock, on a fresh READ COMMITTED snapshot.
+    // Never lower the high-water mark, including after tasks are deleted.
+    const allocated = await tx
+      .update(projects)
+      .set({
+        nextTaskNumber: sql`GREATEST(${projects.nextTaskNumber}, COALESCE(
+          (SELECT MAX(${tasks.number}) + 1 FROM ${tasks}
+           WHERE ${tasks.projectId} = ${ctx.projectId}), 1
+        )) + 1`,
+      })
+      .where(eq(projects.id, ctx.projectId))
+      .returning({
+        allocated: projects.nextTaskNumber,
+        taskKey: projects.taskKey,
+      });
+
     const allocatedNumber = (allocated[0].allocated as number) - 1;
+
+    if (allocatedNumber > locked[0].nextTaskNumber) {
+      log.warn(
+        {
+          projectId: ctx.projectId,
+          previousNextTaskNumber: locked[0].nextTaskNumber,
+          allocated: allocatedNumber,
+        },
+        "[FIX] allocating task above lagging project counter",
+      );
+    }
 
     log.debug(
       { projectId: ctx.projectId, allocated: allocatedNumber },
@@ -143,7 +169,7 @@ export async function createTask(
 
     // M39 (ADR-106): onConflictDoNothing on the (agent_id, trigger_event_id)
     // partial-unique converges a CONCURRENT trigger redelivery to one auto-task.
-    // A board task carries no trigger ⇒ never conflicts ⇒ always inserts. (The
+    // Other unique violations must surface with their actual constraint. (The
     // SEQUENTIAL redelivery is already short-circuited by launchAgentRun's run
     // pre-check before createTask is reached.)
     const inserted = await tx
@@ -169,10 +195,39 @@ export async function createTask(
         // must start at zero regardless of the legacy database default.
         attemptNumber: 0,
       })
-      .onConflictDoNothing()
-      .returning({ id: tasks.id });
+      .onConflictDoNothing({
+        target: [tasks.agentId, tasks.triggerEventId],
+        where: sql`${tasks.triggerEventId} IS NOT NULL`,
+      })
+      .returning({ id: tasks.id })
+      .catch((error: unknown) => {
+        const pg = pgErrorOf(error);
+
+        if (pg?.code !== "23505") throw error;
+
+        const details = {
+          projectId: ctx.projectId,
+          number: allocatedNumber,
+          constraint: pg.constraint,
+          sqlState: pg.code,
+        };
+
+        log.error(details, "[FIX] task insert violated a unique constraint");
+        throw new MaisterError(
+          "CONFLICT",
+          `task insert violates unique constraint ${pg.constraint} for project ${ctx.projectId}, number ${allocatedNumber}`,
+          { cause: error, details },
+        );
+      });
 
     if (inserted.length === 0) {
+      if (input.agentId == null || input.triggerEventId == null) {
+        throw new MaisterError(
+          "CONFLICT",
+          "task trigger claim conflict without agent/trigger context",
+          { details: { projectId: ctx.projectId, number: allocatedNumber } },
+        );
+      }
       // Lost the (agent_id, trigger_event_id) claim to a concurrent redelivery —
       // the winner already created the auto-task AND emitted task.created. Reuse
       // it; do NOT re-emit activity/event/subscribe. (The allocated number is
@@ -182,8 +237,8 @@ export async function createTask(
         .from(tasks)
         .where(
           and(
-            eq(tasks.agentId, input.agentId ?? null),
-            eq(tasks.triggerEventId, input.triggerEventId ?? null),
+            eq(tasks.agentId, input.agentId),
+            eq(tasks.triggerEventId, input.triggerEventId),
           ),
         );
 

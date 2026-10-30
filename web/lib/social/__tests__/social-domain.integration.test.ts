@@ -15,6 +15,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches schema.integration.test.ts).
 import * as fullSchema from "@/lib/db/schema";
+import { pgErrorOf } from "@/lib/db/pg-error";
 import { createTask } from "@/lib/services/tasks";
 import { addTaskComment, listTaskComments } from "@/lib/social/comments";
 import {
@@ -188,6 +189,165 @@ describe("createTask numbering (ADR-078 D1)", () => {
     const numbers = results.map((r) => r.number).sort((a, b) => a - b);
 
     expect(numbers).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+  });
+
+  it("advances a lagging counter above existing numbers without renumbering tasks", async () => {
+    const { projectId } = await seedProject("DRIFT");
+    const existingIds = [newId(), newId()];
+
+    await pool.query(
+      `INSERT INTO tasks (id, project_id, number, title, prompt)
+       VALUES ($1, $3, 6, 'Six', 'p'), ($2, $3, 7, 'Seven', 'p')`,
+      [...existingIds, projectId],
+    );
+    await pool.query("UPDATE projects SET next_task_number = 6 WHERE id = $1", [
+      projectId,
+    ]);
+
+    const created = await createTask(
+      { title: "Imported", prompt: "p" },
+      { projectId },
+      db,
+    );
+    const rows = await pool.query(
+      "SELECT id, number FROM tasks WHERE project_id = $1 ORDER BY number",
+      [projectId],
+    );
+    const project = await pool.query(
+      "SELECT next_task_number FROM projects WHERE id = $1",
+      [projectId],
+    );
+
+    expect(created).toMatchObject({ number: 8, deduped: false });
+    expect(rows.rows).toEqual([
+      { id: existingIds[0], number: 6 },
+      { id: existingIds[1], number: 7 },
+      { id: created.taskId, number: 8 },
+    ]);
+    expect(project.rows[0].next_task_number).toBe(9);
+  });
+
+  it("serializes concurrent creates while repairing a lagging counter", async () => {
+    const { projectId } = await seedProject("DRIFTPAR");
+
+    await pool.query(
+      `INSERT INTO tasks (id, project_id, number, title, prompt)
+       VALUES ($1, $3, 6, 'Six', 'p'), ($2, $3, 7, 'Seven', 'p')`,
+      [newId(), newId(), projectId],
+    );
+    await pool.query("UPDATE projects SET next_task_number = 6 WHERE id = $1", [
+      projectId,
+    ]);
+
+    const results = await Promise.all(
+      Array.from({ length: 8 }, (_, i) =>
+        createTask({ title: `parallel ${i}`, prompt: "p" }, { projectId }, db),
+      ),
+    );
+    const project = await pool.query(
+      "SELECT next_task_number FROM projects WHERE id = $1",
+      [projectId],
+    );
+
+    expect(
+      results.map((result) => result.number).sort((a, b) => a - b),
+    ).toEqual([8, 9, 10, 11, 12, 13, 14, 15]);
+    expect(project.rows[0].next_task_number).toBe(16);
+  });
+
+  it("never lowers the counter when it is ahead of existing tasks", async () => {
+    const { projectId } = await seedProject("HIGH");
+
+    await pool.query(
+      "UPDATE projects SET next_task_number = 100 WHERE id = $1",
+      [projectId],
+    );
+    const created = await createTask(
+      { title: "After deleted tasks", prompt: "p" },
+      { projectId },
+      db,
+    );
+
+    expect(created.number).toBe(100);
+  });
+
+  it("dedupes parallel and sequential auto-task redeliveries with one event and activity", async () => {
+    const { projectId } = await seedProject("CLAIM");
+    const agentId = await seedSummonableAgent(
+      projectId,
+      "test",
+      "counter-claim",
+      {
+        mentionBinding: false,
+      },
+    );
+    const input = {
+      title: "Auto-task",
+      prompt: "p",
+      agentId,
+      triggerEventId: 42,
+    };
+    const results = await Promise.all(
+      Array.from({ length: 8 }, () => createTask(input, { projectId }, db)),
+    );
+    const repeated = await createTask(input, { projectId }, db);
+    const winner = results.find((result) => !result.deduped)!;
+    const events = await pool.query(
+      "SELECT id FROM domain_events WHERE task_id = $1 AND kind = 'task.created'",
+      [winner.taskId],
+    );
+    const activity = await pool.query(
+      "SELECT id FROM task_activity WHERE task_id = $1 AND event_kind = 'task_created'",
+      [winner.taskId],
+    );
+    const tasks = await pool.query(
+      "SELECT id FROM tasks WHERE project_id = $1",
+      [projectId],
+    );
+
+    expect(results.filter((result) => !result.deduped)).toHaveLength(1);
+    expect(new Set(results.map((result) => result.taskId))).toEqual(
+      new Set([winner.taskId]),
+    );
+    expect(repeated).toEqual({ ...winner, deduped: true });
+    expect(events.rows).toHaveLength(1);
+    expect(activity.rows).toHaveLength(1);
+    expect(tasks.rows).toHaveLength(1);
+  });
+
+  it("reports an unrelated unique constraint and rolls back allocation", async () => {
+    const { projectId } = await seedProject("UNIQUE");
+    const ctx = { projectId, librarianOperationId: newId() };
+    const input = { title: "Operation task", prompt: "p" };
+
+    await createTask(input, ctx, db);
+    const failed = createTask(input, ctx, db);
+
+    await expect(failed).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: expect.stringContaining("tasks_created_via_operation_uq"),
+      details: {
+        projectId,
+        number: 2,
+        constraint: "tasks_created_via_operation_uq",
+        sqlState: "23505",
+      },
+    });
+    await expect(failed).rejects.toSatisfy(
+      (error: unknown) =>
+        pgErrorOf(error)?.constraint === "tasks_created_via_operation_uq",
+    );
+    const project = await pool.query(
+      "SELECT next_task_number FROM projects WHERE id = $1",
+      [projectId],
+    );
+    const events = await pool.query(
+      "SELECT id FROM domain_events WHERE project_id = $1 AND kind = 'task.created'",
+      [projectId],
+    );
+
+    expect(project.rows[0].next_task_number).toBe(2);
+    expect(events.rows).toHaveLength(1);
   });
 
   it("writes task_created activity and the creator subscription in the same operation", async () => {
