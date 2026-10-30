@@ -85,14 +85,14 @@ export async function getAgentActivitySummaries(
     FROM requested LEFT JOIN totals ON totals.source_agent_id=requested.agent_id
     LEFT JOIN attempts ON attempts.source_agent_id=requested.agent_id
     LEFT JOIN LATERAL (
-      SELECT json_build_object('runId',r.id,'status',r.status,'at',r.activity_sort_at,
+      SELECT json_build_object('runId',r.id,'status',r.status,'at',${utcTimestamp(sql`r.activity_sort_at`)},
         'estimated',r.activity_timestamp_provenance NOT IN ('launch','verified_creation'),
         'outcome',r.operational_terminal->>'effectiveOutcome') AS value
       FROM runs r WHERE r.project_id=${projectId} AND r.source_agent_id=requested.agent_id
       ORDER BY r.activity_sort_at DESC,r.id DESC LIMIT 1
     ) latest ON true
     LEFT JOIN LATERAL (
-      SELECT json_build_object('runId',r.id,'status',r.status,'at',r.ended_at,
+      SELECT json_build_object('runId',r.id,'status',r.status,'at',${utcTimestamp(sql`r.ended_at`)},
         'outcome',r.operational_terminal->>'effectiveOutcome') AS value
       FROM runs r WHERE r.project_id=${projectId} AND r.source_agent_id=requested.agent_id
         AND r.status IN ${[...TERMINAL_RUN_STATUSES]} AND r.ended_at IS NOT NULL

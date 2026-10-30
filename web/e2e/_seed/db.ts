@@ -3,7 +3,10 @@ import { Pool } from "pg";
 import { resolvePostgresDbUrl } from "@/lib/db/postgres-url";
 
 export async function withE2EDb<T>(fn: (pool: Pool) => Promise<T>): Promise<T> {
-  const pool = new Pool({ connectionString: resolvePostgresDbUrl() });
+  const pool = new Pool({
+    connectionString: resolvePostgresDbUrl(),
+    options: "-c maister.task_qualification_writer=v1",
+  });
 
   try {
     return await fn(pool);

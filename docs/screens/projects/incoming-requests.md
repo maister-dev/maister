@@ -1,12 +1,12 @@
 # Incoming requests
 
 - **Type:** screen.
-- **Status:** Designed — ADR-196–198.
+- **Status:** Implemented — ADR-196–198.
 - **Route:** `/projects/{slug}?tab=incoming`.
 
 ## JTBD
 
-Find execution history or fix the specific blocker without confusing an agent infrastructure failure with the disposition of a request.
+Assess captured requests before accepting them for implementation; distinguish a held request from an agent execution failure.
 
 ## Roles & capabilities
 
@@ -14,11 +14,11 @@ Project viewers see safe metadata/statuses. Members need `readRepoFiles` for pro
 
 ## Navigation
 
-Enter from the project Agents summary or project tabs; history rows link to run details, request rows to task details and source. URL tab/filter/cursor survives refresh/back/forward. Detached agent history remains read-only. Foreign-project evidence is redacted.
+Enter from the project Incoming tab. Request rows link to task details, where the original source prompt, assessment evidence and local clarification are separate. URL incoming_state/page survives navigation and reload. Assessment bodies require editTask plus readRepoFiles.
 
 ## Layout & regions
 
-Incoming is separate from accepted Backlog and personal Inbox. URL filters: unassessed, needs_information, needs_review, not_actionable. Rows show source, qualification state/freshness, next action and task link. Details show immutable assessment history, evidence SHA, targeted question and qualified routing separately. One aggregate human assessment dialog; no inline row mutation.
+Incoming is separate from accepted Backlog and personal Inbox. URL incoming_state filters: unassessed, needs_information, needs_review, not_actionable; page contains 25 rows, bounded to 1,000 pages. Rows show source, qualification state/freshness, next action and task link. Details show immutable assessment history, evidence SHA, targeted question and qualified routing separately. One aggregate focus-trapped human assessment dialog; no inline row mutation. A stale accepted assessment remains in immutable history; clearing its current pointer does not fabricate a never-assessed state.
 
 ## States & interactions
 

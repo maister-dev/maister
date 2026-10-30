@@ -4,6 +4,9 @@ import type { ReactElement, ReactNode } from "react";
 import { getTranslations } from "next-intl/server";
 import { redirect } from "next/navigation";
 
+import { getVisibleProjectIds } from "@/lib/queries/visible-projects";
+import { getActiveAgentExecutions } from "@/lib/agents/activity-queries";
+import { ActiveAgentExecutions } from "@/components/agents/active-agent-executions";
 import { AttentionLiveRefresh } from "@/components/attention/attention-live-refresh";
 import { LibrarianPanel } from "@/components/librarian/librarian-panel";
 import { LibrarianProvider } from "@/components/librarian/librarian-provider";
@@ -61,6 +64,7 @@ export default async function AppLayout({
   // down. No surface recomputes its own number, and no badge derives one from
   // the other — they are separate populations.
   const [
+    activeExecutions,
     railWorkspaceGroups,
     platformStatus,
     diagnostics,
@@ -69,6 +73,11 @@ export default async function AppLayout({
     updates,
     librarianIndicator,
   ] = await Promise.all([
+    sessionUser
+      ? getVisibleProjectIds(sessionUser.id, sessionUser.role).then(
+          (projectIds) => getActiveAgentExecutions(getDb(), projectIds),
+        )
+      : [],
     sessionUser ? getRailWorkspaceGroups(sessionUser.id, sessionUser.role) : [],
     getPlatformStatus(),
     getPlatformDiagnostics(),
@@ -123,6 +132,7 @@ export default async function AppLayout({
   const shell = (
     <div className="flex min-h-screen flex-col bg-paper-warm pb-9">
       <TopNav
+        agentExecutions={<ActiveAgentExecutions items={activeExecutions} />}
         badges={railBadges}
         crumb={
           <NavCrumb
@@ -143,6 +153,8 @@ export default async function AppLayout({
         data-density="comfy"
       >
         <LeftRail
+          agentExecutionCount={activeExecutions.length}
+          agentExecutions={<ActiveAgentExecutions items={activeExecutions} />}
           badges={railBadges}
           platformStatus={platformStatus}
           runnersReadiness={runnersReadiness}

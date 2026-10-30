@@ -1,7 +1,7 @@
 # Project agent details
 
 - **Type:** screen.
-- **Status:** Designed — ADR-196–198.
+- **Status:** Implemented — ADR-196–198.
 - **Route:** `/projects/{slug}/agents/{agentId}`.
 
 ## JTBD

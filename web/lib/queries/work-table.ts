@@ -20,9 +20,10 @@ import type { ReadinessState } from "@/lib/flows/graph/readiness-core";
 import type { PromotedKind, WorkProgress, WorkStage } from "@/lib/work/stage";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
-import { and, asc, desc, eq, inArray, isNull, or } from "drizzle-orm";
+import { sql, and, asc, desc, eq, inArray, isNull, or } from "drizzle-orm";
 import pino from "pino";
 
+import { incomingWorkPredicate } from "@/lib/tasks/qualification-predicates";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import {
@@ -155,7 +156,12 @@ export async function getWorkTable(
     })
     .from(tasks)
     .leftJoin(flows, eq(flows.id, tasks.flowId))
-    .where(inArray(tasks.projectId, projectIds));
+    .where(
+      and(
+        inArray(tasks.projectId, projectIds),
+        sql`NOT ${incomingWorkPredicate()}`,
+      ),
+    );
 
   if (taskRows.length === 0) {
     return { rows: [], projectCount: projectIds.length };

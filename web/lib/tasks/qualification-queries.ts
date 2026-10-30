@@ -47,10 +47,12 @@ export async function getTaskQualificationSummaries(
     assessment_input_revision: number | null;
     next_actions: string[] | null;
     candidate: TaskQualificationReceipt | null;
+    previously_accepted: boolean;
   }>(sql`
     SELECT t.id,t.qualification_mode mode,t.qualification_input_revision input_revision,
       q.id qualification_id,q.revision qualification_revision,q.value->>'decision' decision,
       q.publication_state state,q.input_revision assessment_input_revision,q.value->'nextActions' next_actions,
+      EXISTS(SELECT 1 FROM task_qualifications prior WHERE prior.task_id=t.id AND prior.project_id=t.project_id AND prior.publication_state='accepted') previously_accepted,
       (SELECT jsonb_build_object('qualificationId',c.id,'inputRevision',c.input_revision,
         'qualificationRevision',c.revision,'publicationState',c.publication_state,
         'decision',c.value->>'decision','publicationReason',c.publication_reason)
@@ -82,7 +84,7 @@ export async function getTaskQualificationSummaries(
           freshness:
             current || row.mode === "execution_child"
               ? "current"
-              : row.qualification_id
+              : row.qualification_id || row.previously_accepted
                 ? "stale"
                 : "unassessed",
           blockedReason:

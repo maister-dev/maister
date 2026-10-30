@@ -186,6 +186,9 @@ function isPlanReviewParentHitl(hitl: RunPendingHitl): boolean {
 }
 
 export interface RunDetail {
+  sourceAgentId: string | null;
+  retryOfRunId: string | null;
+  agentWorkspace: "none" | "repo_read" | "worktree" | null;
   runId: string;
   projectId: string;
   projectSlug: string;
@@ -532,6 +535,8 @@ export const getRunDetail = cache(async function getRunDetail(
       removedAt: workspaces.removedAt,
       // ADR-181 D1a: the git fact loader's workspace inputs.
       agentWorkspace: runs.agentWorkspace,
+      sourceAgentId: runs.sourceAgentId,
+      retryOfRunId: runs.retryOfRunId,
       rootRunId: runs.rootRunId,
       publishedBranch: workspaces.publishedBranch,
       publishedRemote: workspaces.publishedRemote,
@@ -877,6 +882,9 @@ export const getRunDetail = cache(async function getRunDetail(
 
   return {
     runId: row.runId,
+    sourceAgentId: row.sourceAgentId,
+    retryOfRunId: row.retryOfRunId,
+    agentWorkspace: row.agentWorkspace,
     // The inner join on projects guarantees a project here; a project-less
     // local-package run (ADR-097) matches zero rows and getRunDetail returns
     // null above, so this narrowing never throws on a real row.

@@ -5,6 +5,7 @@ import { getTranslations } from "next-intl/server";
 import { Tabs, type TabItem } from "@/components/navigation/tabs";
 
 export type ProjectTab =
+  | "incoming"
   | "board"
   | "activity"
   | "observatory"
@@ -29,6 +30,7 @@ export interface ProjectTabsProps {
 
 const TABS: readonly ProjectTab[] = [
   "board",
+  "incoming",
   "activity",
   "observatory",
   "brain",
@@ -54,6 +56,7 @@ export async function ProjectTabs({
 
   const label: Record<ProjectTab, string> = {
     board: t("board"),
+    incoming: t("incoming"),
     activity: t("activity"),
     observatory: t("observatory"),
     brain: t("brain"),

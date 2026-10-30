@@ -129,7 +129,7 @@ describe("Retained agent activity", () => {
     );
   });
 
-  it("IT-UX-07 exposes each active none/repo_read/flow launch without a workspace prerequisite and scopes every result to its supplied projects", async () => {
+  it("IT-UX-07 IT-UX-10 exposes each active none/repo_read/flow launch without a workspace prerequisite and scopes every result to its supplied projects", async () => {
     const projectId = randomUUID();
     const foreignId = randomUUID();
 

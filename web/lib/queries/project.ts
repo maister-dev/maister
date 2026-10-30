@@ -5,17 +5,12 @@ import type { FlowYamlV1 } from "@/lib/config.schema";
 import type { Project, RunKind, ScratchDialogStatus } from "@/lib/db/schema";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
-import {
-  and,
-  asc,
-  desc,
-  eq,
-  inArray,
-  isNotNull,
-  isNull,
-  or,
-} from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 
+import {
+  getActiveAgentExecutions,
+  type ActiveAgentExecution,
+} from "@/lib/agents/activity-queries";
 import { hasReadyPlatformRunner } from "@/lib/acp-runners/ready-runner";
 import { enumerateRunnerSlots } from "@/lib/acp-runners/runner-slots";
 import { getDb } from "@/lib/db/client";
@@ -123,6 +118,7 @@ export interface ProjectPageData {
   flowRunnerRemaps: ProjectFlowRunnerRemap[];
   members: ProjectMemberView[];
   activeWorkspaces: PortfolioWorkspace[];
+  activeExecutions: ActiveAgentExecution[];
   defaultRunnerId: string | null;
   effectiveDefaultRunnerId: string | null;
   defaultRunnerSource: "project" | "platform" | null;
@@ -289,92 +285,92 @@ export async function getProjectPageData(
   const client = db();
 
   const now = new Date();
-  const [flowRows, runnerRows, platformRuntimeRows, memberRows, activeRunRows] =
-    await Promise.all([
-      client
-        .select({
-          id: flows.id,
-          ref: flows.flowRefId,
-          source: flows.source,
-          version: flows.version,
-          manifest: flows.manifest,
-          enabledRevisionId: flows.enabledRevisionId,
-          enablementState: flows.enablementState,
-          trustStatus: flows.trustStatus,
-        })
-        .from(flows)
-        .where(eq(flows.projectId, project.id))
-        .orderBy(asc(flows.createdAt)),
-      client
-        .select({
-          id: platformAcpRunners.id,
-          agent: platformAcpRunners.capabilityAgent,
-          adapter: platformAcpRunners.adapter,
-          model: platformAcpRunners.model,
-          readinessStatus: platformAcpRunners.readinessStatus,
-          enabled: platformAcpRunners.enabled,
-        })
-        .from(platformAcpRunners)
-        .orderBy(asc(platformAcpRunners.createdAt)),
+  const [
+    activeExecutions,
+    flowRows,
+    runnerRows,
+    platformRuntimeRows,
+    memberRows,
+    activeRunRows,
+  ] = await Promise.all([
+    getActiveAgentExecutions(client, [project.id]),
+    client
+      .select({
+        id: flows.id,
+        ref: flows.flowRefId,
+        source: flows.source,
+        version: flows.version,
+        manifest: flows.manifest,
+        enabledRevisionId: flows.enabledRevisionId,
+        enablementState: flows.enablementState,
+        trustStatus: flows.trustStatus,
+      })
+      .from(flows)
+      .where(eq(flows.projectId, project.id))
+      .orderBy(asc(flows.createdAt)),
+    client
+      .select({
+        id: platformAcpRunners.id,
+        agent: platformAcpRunners.capabilityAgent,
+        adapter: platformAcpRunners.adapter,
+        model: platformAcpRunners.model,
+        readinessStatus: platformAcpRunners.readinessStatus,
+        enabled: platformAcpRunners.enabled,
+      })
+      .from(platformAcpRunners)
+      .orderBy(asc(platformAcpRunners.createdAt)),
 
-      client.select().from(platformRuntimeSettings),
+    client.select().from(platformRuntimeSettings),
 
-      client
-        .select({
-          name: users.name,
-          email: users.email,
-          role: projectMembers.role,
-        })
-        .from(projectMembers)
-        .innerJoin(users, eq(users.id, projectMembers.userId))
-        .where(eq(projectMembers.projectId, project.id)),
+    client
+      .select({
+        name: users.name,
+        email: users.email,
+        role: projectMembers.role,
+      })
+      .from(projectMembers)
+      .innerJoin(users, eq(users.id, projectMembers.userId))
+      .where(eq(projectMembers.projectId, project.id)),
 
-      // M34: leftJoin — none/repo_read agent runs have no workspaces row but
-      // still belong in the active strip.
-      client
-        .select({
-          runId: runs.id,
-          status: runs.status,
-          runKind: runs.runKind,
-          agentKind: runs.agentKind,
-          agentId: runs.agentId,
-          triggerSource: runs.triggerSource,
-          acpSessionId: activeSessionAcpSessionId(runs.id),
-          capabilityAgent: activeSessionCapabilityAgent(runs.id),
-          runnerSnapshot: activeSessionRunnerSnapshot(runs.id),
-          workspaceId: workspaces.id,
-          branch: workspaces.branch,
-          worktreePath: workspaces.worktreePath,
-          archivedBranch: workspaces.archivedBranch,
-          removedAt: workspaces.removedAt,
-          publishedBranch: workspaces.publishedBranch,
-          prUrl: workspaces.prUrl,
-          promotionState: workspaces.promotionState,
-          promotionLane: workspaces.promotionLane,
-          prState: workspaces.prState,
-          prHasConflicts: workspaces.prHasConflicts,
-          startedAt: runs.startedAt,
-          scratchDialogStatus: scratchRuns.dialogStatus,
-        })
-        .from(runs)
-        .leftJoin(workspaces, eq(workspaces.runId, runs.id))
-        .leftJoin(scratchRuns, eq(scratchRuns.runId, runs.id))
-        .where(
-          and(
-            eq(runs.projectId, project.id),
-            inArray(runs.status, [...ACTIVE_RUN_STATUSES]),
-            operationalActiveWorkspacePredicate(),
-            // Live workspace rows as before — plus workspace-LESS rows only
-            // for agent runs (none/repo_read have no worktree by design).
-            // A bare IS NULL would also surface seeded/legacy kindless rows.
-            or(
-              and(isNotNull(workspaces.id), isNull(workspaces.removedAt)),
-              and(eq(runs.runKind, "agent"), isNull(workspaces.id)),
-            ),
-          ),
-        )
-        .orderBy(desc(runs.startedAt)),
-    ]);
+    // Physical working copies require their retained workspace row.
+    client
+      .select({
+        runId: runs.id,
+        status: runs.status,
+        runKind: runs.runKind,
+        agentKind: runs.agentKind,
+        agentId: runs.agentId,
+        triggerSource: runs.triggerSource,
+        acpSessionId: activeSessionAcpSessionId(runs.id),
+        capabilityAgent: activeSessionCapabilityAgent(runs.id),
+        runnerSnapshot: activeSessionRunnerSnapshot(runs.id),
+        workspaceId: workspaces.id,
+        branch: workspaces.branch,
+        worktreePath: workspaces.worktreePath,
+        archivedBranch: workspaces.archivedBranch,
+        removedAt: workspaces.removedAt,
+        publishedBranch: workspaces.publishedBranch,
+        prUrl: workspaces.prUrl,
+        promotionState: workspaces.promotionState,
+        promotionLane: workspaces.promotionLane,
+        prState: workspaces.prState,
+        prHasConflicts: workspaces.prHasConflicts,
+        startedAt: runs.startedAt,
+        scratchDialogStatus: scratchRuns.dialogStatus,
+      })
+      .from(runs)
+      .innerJoin(workspaces, eq(workspaces.runId, runs.id))
+      .leftJoin(scratchRuns, eq(scratchRuns.runId, runs.id))
+      .where(
+        and(
+          eq(runs.projectId, project.id),
+          inArray(runs.status, [...ACTIVE_RUN_STATUSES]),
+          operationalActiveWorkspacePredicate(),
+          isNull(workspaces.removedAt),
+        ),
+      )
+      .orderBy(desc(runs.startedAt)),
+  ]);
 
   const enabledRevisionIds = flowRows.flatMap((flow) =>
     flow.enabledRevisionId ? [flow.enabledRevisionId] : [],
@@ -543,6 +539,7 @@ export async function getProjectPageData(
     flowRunnerRemaps: projectFlowRunnerRemaps,
     members,
     activeWorkspaces,
+    activeExecutions,
     defaultRunnerId: project.defaultRunnerId,
     effectiveDefaultRunnerId,
     defaultRunnerSource,

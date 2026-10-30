@@ -24,3 +24,10 @@ export function acceptedBacklogPredicate(): SQL {
 export function taskTriageAutoEnqueuePredicate(): ReturnType<typeof sql> {
   return sql`(${tasks.launchIntent} IS NULL OR ${tasks.launchIntent}='triage_then_launch')`;
 }
+
+/** Keep already delivered work visible while held pre-delivery requests use Incoming. */
+export function incomingWorkPredicate(): SQL {
+  return sql`(${tasks.status}='Backlog' AND ${incomingRequestPredicate()} AND NOT EXISTS(
+ SELECT 1 FROM runs delivery_run WHERE delivery_run.task_id=${tasks.id}
+ AND delivery_run.run_kind='flow' AND delivery_run.status NOT IN ('Failed','Abandoned')))`;
+}

@@ -220,6 +220,34 @@ export async function prepareAgentRetry(
       current: context.effective.parsed.kind,
     });
 
+  const currentPolicy = resolveAgentContextExecutionPolicy(context);
+
+  for (const [field, previous, current] of [
+    ["configuration", source.agentConfig, configuration],
+    ["executionPolicy", source.executionPolicy, currentPolicy],
+    [
+      "taskRevision",
+      source.taskAdmissionSnapshot?.inputRevision ?? null,
+      taskRevision,
+    ],
+  ] as const) {
+    const sourceValue =
+      previous === null
+        ? null
+        : field === "taskRevision"
+          ? String(previous)
+          : retryDigest(previous);
+    const currentValue =
+      current === null
+        ? null
+        : field === "taskRevision"
+          ? String(current)
+          : retryDigest(current);
+
+    if (sourceValue !== currentValue)
+      differences.push({ field, source: sourceValue, current: currentValue });
+  }
+
   return {
     source: qualifiedSource,
     context,

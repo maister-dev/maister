@@ -174,7 +174,7 @@ it("IT-UX-19 uses current grants and exact receipt/history contracts, preserves 
   contract("TaskQualificationSummary", stale!.qualification);
   expect(stale!.qualification).toMatchObject({
     decision: null,
-    freshness: "unassessed",
+    freshness: "stale",
     blockedReason: "qualification_required",
   });
   await database.pool.query("DELETE FROM project_members WHERE user_id=$1", [

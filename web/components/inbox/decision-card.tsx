@@ -5,6 +5,7 @@ import type { ReactElement } from "react";
 import Link from "next/link";
 import clsx from "clsx";
 
+import { AgentIncidentCard } from "@/components/agents/agent-incident-card";
 import { RunRecoverActions } from "@/components/runs/run-recover-actions";
 import { WorkStageChip } from "@/components/work/work-stage-chip";
 
@@ -31,6 +32,8 @@ export function DecisionCard({
   >;
   labels: DecisionCardLabels;
 }): ReactElement {
+  if (item.kind === "operational" && "aggregation" in item.operational)
+    return <AgentIncidentCard group={item.operational} />;
   const taskHref =
     item.taskId !== null && item.taskKey !== null
       ? `/projects/${item.projectSlug}/tasks/${item.taskKey.split("-").pop()}`

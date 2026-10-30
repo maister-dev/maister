@@ -72,3 +72,53 @@ Cleanup retries are bounded. After correcting an exhausted cleanup failure, use
 operation. Starting an operation again is a separate attempt. A package update
 changes future launches; existing Runs keep their original kind, contract and
 instructions. Historical code-delivery Runs retain their original review rules.
+
+
+## Find activity and retry a failed runner
+
+The rail shows each active agent execution, including queued and parked runs,
+in its own section. Completion removes that row. Project **Agents** shows retained
+run counts and the latest status; open an agent for paginated run and trigger-attempt
+history, its pinned definition, memory and attachment settings. History remains
+read-only after detaching the agent. Retained history counts are not lifetime totals.
+Definition and memory require repository-read permission; memory edits use version
+checks. Edit a prompt through its package and explicitly upgrade the attachment pin.
+
+Inbox groups problems by project and agent. A repeated cause increases its occurrence
+count without creating another card or notifying you again after acknowledgement.
+A new cause can require attention. Human decisions remain separate requests.
+
+**Run again…** previews a new attempt with a runner selected for that attempt.
+It is available only when durable evidence proves the previous execution did no work.
+Review changes in current inputs, choose a ready runner and accept the attempt.
+A lost response can be recovered with the same request; it never authorizes a second
+successor. The original run, delivery runner and future defaults remain unchanged.
+Unknown effects require reconciliation. Cleanup retry disposes resources only.
+
+## Qualify incoming requests
+
+The updated core intake/triager package requires engine **3.10.0 or later** and
+project qualification policy **Required**, configured in project Settings before
+activating the package. New projects use Required; existing projects keep their
+creation baseline until explicitly changed. Clearing an override restores that
+baseline. Turning the policy off does not waive already-governed task holds.
+
+Both GitHub transports preserve original issue content and capture a task in
+**Incoming requests**, without accepting it for implementation. The project triager
+uses one shared assessment procedure against a read-only checkout of the task's
+server-resolved target SHA. It checks scope, acceptance criteria, consistency,
+constraints/dependencies, duplicates, current relevance and bug evidence.
+Read-only inspection is not a reproduced bug; missing runtime evidence needs review.
+
+An accepted **Ready** assessment moves the task to accepted backlog. **Needs
+information**, **Needs review** and **Not actionable** remain in Incoming with
+specific next actions. These can be successful operational outcomes. Runner/API
+failure is an execution problem and does not establish that a request is invalid.
+Human questions resume the same agent run; explicit requeue is a separate action.
+
+Open a task to inspect assessment evidence or record a reviewed human assessment.
+Every check requires a rationale; Ready also requires repository evidence for
+relevance. Input edits and confirmed clarifications invalidate old acceptance.
+The platform rechecks revisions and the checked SHA at delivery admission, including
+manual and forced launches. An agent candidate remains held until its clean validated
+terminal result publishes it. Failed, partial, cancelled or dirty runs cannot publish.

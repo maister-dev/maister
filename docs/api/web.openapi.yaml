@@ -182,7 +182,7 @@ paths:
   /api/projects/{slug}/agents/{agentId}/runs:
     get:
       operationId: getProjectAgentHistory
-      summary: (Designed — ADR-196–198) getProjectAgentHistory
+      summary: (Implemented — ADR-196–198) getProjectAgentHistory
       description:
         Identifiers are URL parameters; actor/project/source context is derived from
         authenticated server state. Existing data grants apply before aggregation and nested evidence
@@ -254,7 +254,7 @@ paths:
             nullable: true
       responses:
         "200":
-          description: Designed — typed authorized response
+          description: Implemented — typed authorized response
           content:
             application/json:
               schema:
@@ -293,7 +293,7 @@ paths:
   /api/projects/{slug}/agents/{agentId}/attempts:
     get:
       operationId: getProjectAgentAttempts
-      summary: (Designed — ADR-196–198) getProjectAgentAttempts
+      summary: (Implemented — ADR-196–198) getProjectAgentAttempts
       description:
         Identifiers are URL parameters; actor/project/source context is derived from
         authenticated server state. Existing data grants apply before aggregation and nested evidence
@@ -305,7 +305,7 @@ paths:
         - *a5
       responses:
         "200":
-          description: Designed — typed authorized response
+          description: Implemented — typed authorized response
           content:
             application/json:
               schema:
@@ -336,7 +336,7 @@ paths:
   /api/projects/{slug}/agents/{agentId}/definition:
     get:
       operationId: getProjectPinnedAgentDefinition
-      summary: (Designed — ADR-196–198) getProjectPinnedAgentDefinition
+      summary: (Implemented — ADR-196–198) getProjectPinnedAgentDefinition
       description:
         Designed. Require readRepoFiles. Resolve the exact attached pin; unavailable/untrusted
         definition is explicit, never newest-install fallback. Protected current config is redacted by
@@ -346,7 +346,7 @@ paths:
         - *a3
       responses:
         "200":
-          description: Designed — typed authorized response
+          description: Implemented — typed authorized response
           content:
             application/json:
               schema:
@@ -360,7 +360,7 @@ paths:
   /api/projects/{slug}/agents/{agentId}/incidents:
     get:
       operationId: getProjectAgentIncidents
-      summary: (Designed — ADR-196–198) getProjectAgentIncidents
+      summary: (Implemented — ADR-196–198) getProjectAgentIncidents
       description:
         Identifiers are URL parameters; actor/project/source context is derived from
         authenticated server state. Existing data grants apply before aggregation and nested evidence
@@ -378,7 +378,7 @@ paths:
           schema: { type: boolean }
       responses:
         "200":
-          description: Designed — typed authorized response
+          description: Implemented — typed authorized response
           content:
             application/json:
               schema:
@@ -409,7 +409,7 @@ paths:
   /api/projects/{slug}/agents/{agentId}/incidents/acknowledge:
     post:
       operationId: acknowledgeProjectAgentEpisodes
-      summary: (Designed — ADR-196–198) acknowledgeProjectAgentEpisodes
+      summary: (Implemented — ADR-196–198) acknowledgeProjectAgentEpisodes
       description:
         Designed. answerHitl required. Atomically validate every episode against addressed
         agent/project and observed attentionRevision. Same episode repeats do not invalidate
@@ -418,7 +418,7 @@ paths:
       parameters: *a13
       responses:
         "200":
-          description: Designed — typed authorized response
+          description: Implemented — typed authorized response
           content:
             application/json:
               schema:
@@ -445,7 +445,7 @@ paths:
   /api/runs/{runId}/retry-options:
     get:
       operationId: getAgentRetryOptions
-      summary: (Designed — ADR-196–198) getAgentRetryOptions
+      summary: (Implemented — ADR-196–198) getAgentRetryOptions
       description:
         Designed. launchRun required. Prove source terminal quiescence and no dispatched work.
         Partial/unknown effects return eligible=false and typed reason. The expiring preview binds
@@ -457,7 +457,7 @@ paths:
           schema: *a1
       responses:
         "200":
-          description: Designed — typed authorized response
+          description: Implemented — typed authorized response
           content:
             application/json:
               schema:
@@ -471,7 +471,7 @@ paths:
   /api/runs/{runId}/retry:
     post:
       operationId: retryAgentRun
-      summary: (Designed — ADR-196–198) retryAgentRun
+      summary: (Implemented — ADR-196–198) retryAgentRun
       description:
         Identifiers are URL parameters; actor/project/source context is derived from
         authenticated server state. Existing data grants apply before aggregation and nested evidence
@@ -509,7 +509,7 @@ paths:
   /api/runs/{runId}/retry/{intentId}:
     get:
       operationId: getAgentRetryIntent
-      summary: (Designed — ADR-196–198) getAgentRetryIntent
+      summary: (Implemented — ADR-196–198) getAgentRetryIntent
       description:
         Identifiers are URL parameters; actor/project/source context is derived from
         authenticated server state. Existing data grants apply before aggregation and nested evidence
@@ -525,7 +525,7 @@ paths:
           schema: *a1
       responses:
         "200":
-          description: Designed — typed authorized response
+          description: Implemented — typed authorized response
           content:
             application/json:
               schema:
@@ -539,7 +539,7 @@ paths:
   /api/runs/{runId}/retry/{intentId}/cleanup:
     post:
       operationId: rearmAgentRetryCleanup
-      summary: (Designed — ADR-196–198) rearmAgentRetryCleanup
+      summary: (Implemented — ADR-196–198) rearmAgentRetryCleanup
       description:
         Identifiers are URL parameters; actor/project/source context is derived from
         authenticated server state. Existing data grants apply before aggregation and nested evidence
@@ -581,7 +581,7 @@ paths:
   /api/projects/{slug}/tasks/{taskId}/qualification:
     post:
       operationId: assessProjectTask
-      summary: (Designed — ADR-196–198) assessProjectTask
+      summary: (Implemented — ADR-196–198) assessProjectTask
       description:
         Designed. editTask required; code-bearing evidence reads additionally require
         readRepoFiles. Human assessment, routing and enqueue are one application transaction. Expected
@@ -598,7 +598,7 @@ paths:
           schema: *a1
       responses:
         "200":
-          description: Designed — typed authorized response
+          description: Implemented — typed authorized response
           content:
             application/json:
               schema:
@@ -618,7 +618,7 @@ paths:
   /api/projects/{slug}/tasks/{taskId}/qualifications:
     get:
       operationId: getProjectTaskQualificationHistory
-      summary: (Designed — ADR-196–198) getProjectTaskQualificationHistory
+      summary: (Implemented — ADR-196–198) getProjectTaskQualificationHistory
       description:
         Identifiers are URL parameters; actor/project/source context is derived from
         authenticated server state. Existing data grants apply before aggregation and nested evidence
@@ -636,7 +636,7 @@ paths:
         - *a5
       responses:
         "200":
-          description: Designed — typed authorized response
+          description: Implemented — typed authorized response
           content:
             application/json:
               schema:
@@ -2639,7 +2639,7 @@ paths:
   /api/projects/{slug}/agents/{agentId}:
     get:
       operationId: getProjectAgentActivity
-      summary: (Designed — ADR-196–198) getProjectAgentActivity
+      summary: (Implemented — ADR-196–198) getProjectAgentActivity
       description:
         Identifiers are URL parameters; actor/project/source context is derived from
         authenticated server state. Existing data grants apply before aggregation and nested evidence
@@ -2658,7 +2658,7 @@ paths:
           schema: *a1
       responses:
         "200":
-          description: Designed — typed authorized response
+          description: Implemented — typed authorized response
           content:
             application/json:
               schema:
@@ -19923,10 +19923,19 @@ components:
         - enabled
         - kind
         - completion
+        - taskQualification
       properties:
+        taskQualification:
+          type: object
+          nullable: true
+          additionalProperties: false
+          required: [contract, role]
+          properties:
+            contract: { type: string, enum: [v1] }
+            role: { type: string, enum: [intake, qualifier] }
         activity:
           $ref: "#/components/schemas/AgentActivitySummary"
-          description: Designed — safe batched retained history summary
+          description: Implemented — safe batched retained history summary
         id:
           type: string
         packageName:
@@ -19955,7 +19964,7 @@ components:
         workspaceRef:
           type: string
           nullable: true
-          description: "`trigger` or a literal branch; repo_read only (ADR-090 amendment)."
+          description: "`task_target` for a bound operational qualifier, `trigger`, or a literal branch; repo_read only."
         mode:
           type: string
           enum:

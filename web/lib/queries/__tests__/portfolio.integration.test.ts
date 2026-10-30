@@ -1,3 +1,5 @@
+import type { Db } from "@/lib/execution-host/db";
+
 import { randomUUID } from "node:crypto";
 
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
@@ -1481,7 +1483,7 @@ describe("portfolio queries (integration)", () => {
       expect(row?.flowVersion).toBeNull();
     });
 
-    it("agent run with no task and no flow leaves every chip field null and falls back to the branch", async () => {
+    it("active agent execution leaves the workspace rail and remains available through the execution population", async () => {
       const user = await createUser(
         `rail-agent-${randomUUID().slice(0, 8)}@test.com`,
       );
@@ -1517,16 +1519,23 @@ describe("portfolio queries (integration)", () => {
         parentRepoPath: `/repos/${project}`,
       });
 
-      const row = await railRow(user, project, runId);
+      expect(await railRow(user, project, runId)).toBeUndefined();
+      const { getActiveAgentExecutions } =
+        await import("@/lib/agents/activity-queries");
 
-      expect(row).toBeDefined();
-      expect(row?.flowRefLabel).toBeNull();
-      expect(row?.flowVersion).toBeNull();
-      expect(row?.taskKey).toBeNull();
-      expect(row?.taskNumber).toBeNull();
-      expect(row?.issueHref).toBeNull();
-      expect(row?.name).toBe("maister/agent-branch");
-      expect(row?.runnerDetail).not.toBeNull();
+      expect(
+        await getActiveAgentExecutions(testDatabase.db as unknown as Db, [
+          project,
+        ]),
+      ).toContainEqual(
+        expect.objectContaining({
+          runId,
+          status: "Running",
+          runKind: "agent",
+          workspaceAvailable: true,
+          agentId: null,
+        }),
+      );
     });
   });
 });

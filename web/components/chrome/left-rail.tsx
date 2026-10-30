@@ -13,7 +13,11 @@ import type { RailWorkspaceGroup } from "@/lib/queries/portfolio";
 import type { PlatformStatus } from "@/types/platform-status";
 import type { ComponentType, ReactElement, ReactNode, SVGProps } from "react";
 
-import { CpuChipIcon, WindowIcon } from "@heroicons/react/24/outline";
+import {
+  CpuChipIcon,
+  WindowIcon,
+  UserGroupIcon,
+} from "@heroicons/react/24/outline";
 import { getLocale, getTranslations } from "next-intl/server";
 import Link from "next/link";
 import clsx from "clsx";
@@ -67,6 +71,8 @@ export interface RailWorkspace {
 }
 
 export interface LeftRailProps {
+  agentExecutions?: ReactNode;
+  agentExecutionCount?: number;
   activeSection?: RailSectionId | null;
   workspaces?: RailWorkspace[];
   workspaceGroups?: RailWorkspaceGroup[];
@@ -159,6 +165,8 @@ const ATTENTION_LABELS = new Set([
 ]);
 
 export async function LeftRail({
+  agentExecutions,
+  agentExecutionCount = 0,
   activeSection = "projects",
   workspaces = [],
   workspaceGroups = [],
@@ -168,6 +176,7 @@ export async function LeftRail({
   sections: providedSections,
   userRole,
 }: LeftRailProps): Promise<ReactElement> {
+  const tAgent = await getTranslations("agentActivity");
   const tNav = await getTranslations("nav");
   const tPortfolio = await getTranslations("portfolio");
   const tGc = await getTranslations("gc");
@@ -261,6 +270,14 @@ export async function LeftRail({
       />
 
       <div className="flex shrink-0 flex-col items-center gap-1 border-b border-line pb-2">
+        <CollapsedRailFlyout
+          badge={agentExecutionCount}
+          icon={UserGroupIcon}
+          iconTestId="rail-flyout-icon-agents"
+          label={tAgent("activeTitle")}
+        >
+          {agentExecutions}
+        </CollapsedRailFlyout>
         <CollapsedRailFlyout
           badge={activeCount}
           icon={flyoutIcons.workspaces}
@@ -453,6 +470,8 @@ export async function LeftRail({
         sections={sections}
         variant="expanded"
       />
+
+      {agentExecutions}
 
       <section className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto overflow-x-hidden">
         <div className="flex items-center justify-between px-1 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-mute">

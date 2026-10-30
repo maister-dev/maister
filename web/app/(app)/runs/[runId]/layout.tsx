@@ -3,10 +3,12 @@ import type { FlowResultDegradationCode } from "@/lib/runs/flow-result-dto";
 import type { ResultStatus } from "@/lib/run-results/types";
 import type { ReactElement, ReactNode } from "react";
 
+import Link from "next/link";
 import { getLocale, getTranslations } from "next-intl/server";
 import { notFound, redirect } from "next/navigation";
 import { ExclamationTriangleIcon } from "@heroicons/react/24/outline";
 
+import { AgentRetryControl } from "@/components/agents/agent-retry-control";
 import { OperationalRunResult } from "@/components/runs/operational-run-result";
 import {
   CRASH_RECOVER_DECISION,
@@ -420,6 +422,7 @@ export default async function RunDetailLayout({
   }));
   // ADR-165 (T8.1/T8.2): the run's own public result, and the labels the panel
   // and the child glyphs share. `null` means "render no panel".
+  const tActivity = await getTranslations("agentActivity");
   const publicResult = await loadRunPublicResult(getDb(), runId);
   const operational = publicResult?.operationalOutcome ?? null;
   const resultStatusLabels: Record<ResultStatus, string> = {
@@ -1460,6 +1463,33 @@ export default async function RunDetailLayout({
           />
         ) : (
           <>
+            {detail.sourceAgentId ? (
+              <Link
+                className="inline-flex text-sm text-mute underline"
+                href={`/projects/${detail.projectSlug}/agents/${encodeURIComponent(detail.sourceAgentId)}`}
+              >
+                {tActivity("history")}
+              </Link>
+            ) : null}
+            {detail.retryOfRunId ? (
+              <p className="text-xs text-mute">
+                {tActivity("retryOf")}{" "}
+                <Link
+                  className="underline"
+                  href={`/runs/${detail.retryOfRunId}`}
+                >
+                  {detail.retryOfRunId.slice(0, 8)}
+                </Link>
+              </p>
+            ) : null}
+            {canAct &&
+            detail.runKind === "agent" &&
+            ["Failed", "Crashed"].includes(detail.status) &&
+            (detail.agentKind === "operational" ||
+              detail.agentWorkspace === "none" ||
+              detail.agentWorkspace === "repo_read") ? (
+              <AgentRetryControl runId={detail.runId} />
+            ) : null}
             {operational ? (
               <OperationalRunResult
                 canAct={canAct}

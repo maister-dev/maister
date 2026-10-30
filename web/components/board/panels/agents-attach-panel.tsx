@@ -1,11 +1,13 @@
 "use client";
 
+import type { AgentActivitySummary } from "@/lib/agents/activity-queries";
 import type { ReactElement } from "react";
 import type { AgentConfigParam } from "@/lib/agents/definition";
 
 import { useState, useTransition } from "react";
 import { DocumentTextIcon } from "@heroicons/react/24/outline";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useTranslations } from "next-intl";
 
 import { AgentMemoryDrawer } from "@/components/board/panels/agent-memory-drawer";
@@ -48,6 +50,7 @@ export type AgentRecommendedView = {
 };
 
 export type AttachedAgentRow = {
+  activity?: AgentActivitySummary;
   linkId: string;
   enabled: boolean;
   runnerOverrideId: string | null;
@@ -207,6 +210,7 @@ export function AgentsAttachPanel({
   runners,
   eventKinds,
 }: Props): ReactElement {
+  const activityLabels = useTranslations("agentActivity");
   const t = useTranslations("agentsAttach");
   const router = useRouter();
   const [, startTransition] = useTransition();
@@ -305,9 +309,38 @@ export function AgentsAttachPanel({
                 className="border-b border-line align-middle text-[12px] last:border-b-0"
               >
                 <td className="px-4 py-3">
-                  <span className="font-mono font-semibold text-ink">
+                  <Link
+                    className="font-mono font-semibold text-ink underline underline-offset-2"
+                    href={`/projects/${slug}/agents/${encodeURIComponent(row.agent.id)}`}
+                  >
                     {row.agent.id}
+                  </Link>
+                  <span className="mt-1 block text-[11px] text-mute">
+                    {row.activity
+                      ? activityLabels("summaryCounts", {
+                          count: row.activity.retainedRunCount,
+                          active: row.activity.activeRunCount,
+                        })
+                      : activityLabels("unavailable")}
                   </span>
+                  {row.activity?.lastLaunched ? (
+                    <Link
+                      className="mt-1 block text-[11px] text-mute hover:underline"
+                      href={`/runs/${row.activity.lastLaunched.runId}`}
+                    >
+                      {activityLabels("lastLaunched")}:{" "}
+                      {activityLabels(
+                        `status.${row.activity.lastLaunched.status}`,
+                      )}{" "}
+                      ·{" "}
+                      <time dateTime={row.activity.lastLaunched.at}>
+                        {row.activity.lastLaunched.at
+                          .slice(0, 16)
+                          .replace("T", " ")}{" "}
+                        UTC
+                      </time>
+                    </Link>
+                  ) : null}
                   {row.agent.quarantinedAt ? (
                     <span className="ml-2 rounded-full border border-red-500/30 px-2 py-0.5 text-[10.5px] font-semibold text-red-700">
                       {t("quarantined")}

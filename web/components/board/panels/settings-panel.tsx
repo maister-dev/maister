@@ -6,6 +6,7 @@ import type { BrainIndexingProfile } from "@/lib/brain/indexing-profiles";
 import { getTranslations } from "next-intl/server";
 import clsx from "clsx";
 
+import { TaskQualificationSettingsControl } from "@/components/board/panels/task-qualification-settings-control";
 import { DeliveryPolicySettingsControl } from "@/components/board/panels/delivery-policy-settings-control";
 import { FlowRunnerReconfigurationControl } from "@/components/board/panels/flow-runner-reconfiguration-control";
 import {
@@ -169,11 +170,18 @@ export async function SettingsPanel({
         />
       ) : null}
       {isAdmin ? (
-        <QueueSettingsControl
-          envEdgeDrainDefault={resolveEdgeDrain({ taskQueueSettings: null })}
-          projectSlug={project.slug}
-          taskQueueSettings={project.taskQueueSettings ?? null}
-        />
+        <>
+          <TaskQualificationSettingsControl
+            baseline={project.taskQualificationBaseline}
+            override={project.taskQualificationOverride}
+            slug={project.slug}
+          />
+          <QueueSettingsControl
+            envEdgeDrainDefault={resolveEdgeDrain({ taskQueueSettings: null })}
+            projectSlug={project.slug}
+            taskQueueSettings={project.taskQueueSettings ?? null}
+          />
+        </>
       ) : null}
       {isAdmin ? (
         <AutoPromotionSettingsControl

@@ -24,7 +24,13 @@ import {
   sql,
 } from "drizzle-orm";
 
+import {
+  getActiveAgentExecutions,
+  type ActiveAgentExecution,
+} from "@/lib/agents/activity-queries";
+import { ACTIVE_AGENT_RUN_STATUSES } from "@/lib/agents/activity-status";
 import { hasReadyPlatformRunner } from "@/lib/acp-runners/ready-runner";
+import { acceptedBacklogPredicate } from "@/lib/tasks/qualification-predicates";
 import { getDb } from "@/lib/db/client";
 import { getVisibleProjectIds } from "@/lib/queries/visible-projects";
 import { isProjectFlowLaunchable } from "@/lib/flows/project-flow-launchability";
@@ -185,6 +191,7 @@ export interface PortfolioProject {
   members: PortfolioMember[];
   agents: AgentRole[];
   activeWorkspaces: PortfolioWorkspace[];
+  activeExecutions: ActiveAgentExecution[];
   recentMerges: PortfolioRecentMerge[];
   need: PortfolioNeed | null;
   // Portfolio reads no repositories; detail status supplies fresh evidence on demand.
@@ -364,6 +371,7 @@ export async function getPortfolio(
   const projectIds = visibleProjects.map((p) => p.id);
 
   const [
+    activeExecutions,
     memberRows,
     flowCountRows,
     taskFlowRunRows,
@@ -373,6 +381,7 @@ export async function getPortfolio(
     needRows,
     legacyNeedRows,
   ] = await Promise.all([
+    getActiveAgentExecutions(client, projectIds),
     client
       .select({
         projectId: projectMembers.projectId,
@@ -405,13 +414,15 @@ export async function getPortfolio(
       .select({ projectId: tasks.projectId, value: count() })
       .from(tasks)
       .where(
-        and(inArray(tasks.projectId, projectIds), eq(tasks.status, "Backlog")),
+        and(
+          inArray(tasks.projectId, projectIds),
+          eq(tasks.status, "Backlog"),
+          acceptedBacklogPredicate(),
+        ),
       )
       .groupBy(tasks.projectId),
 
-    // M34: leftJoin — none/repo_read agent runs have NO workspaces row but
-    // still belong in the active grid (the IS NULL filter passes on the
-    // absent row).
+    // Working copies require their retained workspace record.
     client
       .select({
         runId: runs.id,
@@ -439,20 +450,14 @@ export async function getPortfolio(
         scratchDialogStatus: scratchRuns.dialogStatus,
       })
       .from(runs)
-      .leftJoin(workspaces, eq(workspaces.runId, runs.id))
+      .innerJoin(workspaces, eq(workspaces.runId, runs.id))
       .leftJoin(scratchRuns, eq(scratchRuns.runId, runs.id))
       .where(
         and(
           inArray(runs.projectId, projectIds),
           inArray(runs.status, [...ACTIVE_RUN_STATUSES]),
           operationalActiveWorkspacePredicate(),
-          // Live workspace rows as before — plus workspace-LESS rows only
-          // for agent runs (none/repo_read have no worktree by design).
-          // A bare IS NULL would also surface seeded/legacy kindless rows.
-          or(
-            and(isNotNull(workspaces.id), isNull(workspaces.removedAt)),
-            and(eq(runs.runKind, "agent"), isNull(workspaces.id)),
-          ),
+          isNull(workspaces.removedAt),
         ),
       )
       .orderBy(desc(runs.startedAt)),
@@ -782,6 +787,9 @@ export async function getPortfolio(
       members,
       agents,
       activeWorkspaces,
+      activeExecutions: activeExecutions.filter(
+        (run) => run.projectId === p.id,
+      ),
       recentMerges: mergesByProject.get(p.id) ?? [],
       need: firstNeedByProject.get(p.id) ?? null,
       configPersistence: {
@@ -1013,6 +1021,7 @@ export async function getRailWorkspaceGroups(
   // disk that carry a GC removal deadline, so the TTL countdown badge surfaces
   // before the sweeper prunes them.
   const railFilter = and(
+    sql`NOT ((${runs.runKind}='agent' OR (${runs.runKind}='flow' AND ${runs.sourceAgentId} IS NOT NULL)) AND ${runs.status} IN ${ACTIVE_AGENT_RUN_STATUSES})`,
     operationalActiveWorkspacePredicate(),
     or(
       inArray(runs.status, [...ACTIVE_RUN_STATUSES]),
