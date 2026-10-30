@@ -1665,7 +1665,7 @@
         "package_revision_mismatch": "A package source no longer matches its attached revision. Restore or select the intended version before reviewing again.",
         "missing_package_install": "An attachment has no matching installed package. Repair the package attachment before saving.",
         "repository_unavailable": "Restore repository and storage access, then inspect the same operation before retrying.",
-        "operation_busy": "Another operation is active. Inspect its receipt before retrying this action.",
+        "operation_busy": "Another package or repository operation is active. Retry after it finishes; inspect or recover an active configuration save if present.",
         "recovery_required": "Preserve repository files and locks. Inspect and recover this same operation after resolving the reported conflict.",
         "commit_failed": "The commit was refused. Check Git hooks, author and signing policy, resolve the cause, then create a fresh review.",
         "push_failed": "Push failed; the local commit remains saved. Check the remote, credentials and hooks, then review push again.",

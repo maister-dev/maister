@@ -5531,7 +5531,10 @@ The immutable review binds the exact registered repository-path string and its
 canonical checkout. Canonical Git-quoted index entries are losslessly base64 encoded;
 no NUL is stored in JSONB. Shared install updates to exported coordinates,
 sourceSubpath or package status advance attached projects in deterministic ID order,
-and active publication guards refuse those updates. Trust/timestamp-only updates
+and active publication guards refuse those updates. Migration 0198 also locks
+old/new install rows with `FOR SHARE NOWAIT` before semantic attachment mutations,
+so a concurrent new binding cannot escape shared-install revision invalidation.
+Trust/timestamp-only updates
 remain DB-only. See the owning [persistence
 analytics](system-analytics/project-config-persistence.md) for independent push
 process ownership and cleanup recovery.

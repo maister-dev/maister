@@ -1359,6 +1359,13 @@
       "when": 1793310013043,
       "tag": "0197_project_config_cleanup_ownership",
       "breakpoints": true
+    },
+    {
+      "idx": 198,
+      "version": "7",
+      "when": 1793349207363,
+      "tag": "0198_project_config_attachment_binding_guard",
+      "breakpoints": true
     }
   ]
 }

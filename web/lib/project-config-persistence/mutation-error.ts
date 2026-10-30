@@ -7,7 +7,7 @@ export function configMutationError(error: unknown): unknown {
 
   return new MaisterError(
     "CONFLICT",
-    "Finish or recover the active configuration save before changing exportable settings.",
+    "Finish the package update or finish/recover the active configuration save, then retry changing exportable settings.",
     { details: { reason: "operation_busy" } },
   );
 }

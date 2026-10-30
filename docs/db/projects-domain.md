@@ -311,7 +311,7 @@ NULL` is NOT used — group removal happens through the detach transaction;
 
 ## Explicit configuration commit entities (Implemented — ADR-194)
 
-Main migrations 0194–0197 own these entities and guards; the Drizzle schema,
+Main migrations 0194–0198 own these entities and guards; the Drizzle schema,
 journal/snapshots and generated consolidated DBML describe the applied model.
 
 ```mermaid
@@ -371,3 +371,9 @@ partial uniqueness, immutable snapshot guards and lifecycle CHECKs are specified
 in the [schema narrative](../database-schema.md#project-configuration-persistence-implemented--adr-194).
 The [domain contract](../system-analytics/project-config-persistence.md) owns the
 state machine and crash-window outcomes. Existing source/locator data is preserved.
+
+Attachment binding changes acquire sorted install-row `FOR SHARE NOWAIT` locks
+before their revision trigger (migration 0198). This serializes concurrent
+install metadata changes with new/switched/deleted bindings; contention refuses
+without partial writes. The [owning concurrency contract](../system-analytics/project-config-persistence.md#lock-and-recovery-contract-implemented)
+and its PostgreSQL tests define retry and accepted-publication behavior.
