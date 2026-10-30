@@ -61,6 +61,7 @@ import {
 
 describe("shared Testcontainers database helper lifecycle", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     mocks.probeContainerRuntimeDaemon.mockResolvedValue({
       serverVersion: "lifecycle-control",
       strategy: "lifecycle-control",
@@ -84,5 +85,44 @@ describe("shared Testcontainers database helper lifecycle", () => {
       lane: "integration",
       safeCause: "Docker daemon stopped after probe",
     });
+  });
+  it("retries only a cleaned port-binding timeout and raises the last failure", async () => {
+    const last = new Error("Docker stopped on second allocation");
+
+    mocks.start
+      .mockRejectedValueOnce(
+        new Error(
+          "Timed out after 30000ms while waiting for container ports to be bound to the host",
+        ),
+      )
+      .mockRejectedValueOnce(last);
+    const error = await startBarePostgresTestDb({
+      databaseName: "port_retry_last_error",
+    }).catch((caught: unknown) => caught);
+
+    expect(mocks.start).toHaveBeenCalledTimes(2);
+    expect(error).toMatchObject({ cause: last, safeCause: last.message });
+  });
+
+  it("never retries an allocation whose removal cannot be proven", async () => {
+    mocks.start.mockRejectedValueOnce(
+      new Error(
+        "Timed out after 30000ms while waiting for container ports to be bound to the host",
+      ),
+    );
+    mocks.getContainerRuntimeClient.mockResolvedValue({
+      info: { containerRuntime: { serverVersion: "lifecycle-control" } },
+      container: {
+        dockerode: {
+          listContainers: async () => {
+            throw new Error("Docker allocation inventory denied");
+          },
+        },
+      },
+    });
+    await expect(
+      startBarePostgresTestDb({ databaseName: "cleanup_refusal" }),
+    ).rejects.toBeInstanceOf(AggregateError);
+    expect(mocks.start).toHaveBeenCalledTimes(1);
   });
 });

@@ -242,7 +242,7 @@ async function removeFailedPostgresAllocation(
     );
 }
 
-async function startPostgresContainer(
+async function allocatePostgresContainer(
   options: TestDatabaseOptions,
   lane: TestDatabaseLane,
   startedAt: number,
@@ -328,6 +328,38 @@ async function startPostgresContainer(
       );
     }
     throw operationError;
+  }
+}
+
+/** Retry only a proven reclaimed pre-SQL allocation; all other startup failures remain fatal. */
+async function startPostgresContainer(
+  options: TestDatabaseOptions,
+  lane: TestDatabaseLane,
+  startedAt: number,
+): Promise<StartedPostgreSqlContainer> {
+  try {
+    return await allocatePostgresContainer(options, lane, startedAt);
+  } catch (error) {
+    if (
+      !(error instanceof TestDatabaseDockerUnavailableError) ||
+      !(error.cause instanceof Error) ||
+      !/^Timed out after \d+ms while waiting for container ports to be bound to the host$/u.test(
+        error.cause.message,
+      )
+    )
+      throw error;
+    logger.warn(
+      {
+        lane,
+        phase: "container-start-retry",
+        attempt: 1,
+        maxAttempts: 2,
+        reason: "reclaimed_port_binding_timeout",
+      },
+      "retrying reclaimed PostgreSQL allocation before SQL",
+    );
+
+    return allocatePostgresContainer(options, lane, startedAt);
   }
 }
 
