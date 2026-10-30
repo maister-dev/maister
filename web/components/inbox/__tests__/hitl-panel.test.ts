@@ -113,6 +113,17 @@ describe("HitlPanel is a BODY, not a card", () => {
     expect(html).toContain("/runs/run-1");
   });
 
+  it("renders assignment claims as a full-size action", () => {
+    const html = render(false, {
+      assignmentId: "assignment-1",
+      assignmentStatus: "open",
+    });
+
+    expect(html).toContain('data-testid="assignment-action"');
+    expect(html).toContain("min-h-9");
+    expect(html).toContain("min-w-36");
+  });
+
   it("renders the context region only when the parent says expanded", () => {
     expect(render(false)).not.toContain('data-testid="hitl-panel-context"');
     expect(render(true)).toContain('data-testid="hitl-panel-context"');

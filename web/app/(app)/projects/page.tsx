@@ -18,7 +18,12 @@ import {
   getPortfolio,
 } from "@/lib/queries/portfolio";
 
-export default async function PortfolioPage(): Promise<ReactElement> {
+export default async function PortfolioPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ technical?: string }>;
+}): Promise<ReactElement> {
+  const params = await searchParams;
   const user = await requireSession();
   const t = await getTranslations("portfolio");
 
@@ -124,7 +129,11 @@ export default async function PortfolioPage(): Promise<ReactElement> {
             className="grid grid-cols-[repeat(auto-fit,minmax(300px,1fr))] gap-[18px] [[data-density=compact]_&]:grid-cols-[repeat(auto-fit,minmax(220px,1fr))] [[data-density=compact]_&]:gap-3 [[data-density=list]_&]:grid-cols-1 [[data-density=list]_&]:gap-2"
           >
             {portfolio.projects.map((project) => (
-              <ProjectCard key={project.id} project={project} />
+              <ProjectCard
+                key={project.id}
+                project={project}
+                technicalOpen={params.technical === project.slug}
+              />
             ))}
             <NewProjectTile canCreate={user.role === "admin"} />
           </section>

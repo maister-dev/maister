@@ -284,6 +284,8 @@ function scopeText(labels: TokenLabels, scope: UserTokenScope): string {
       return labels.scopeFlowsRead;
     case "runners:read":
       return labels.scopeRunnersRead;
+    case "packages:manage":
+      return labels.scopePackagesManage;
     case "agents:trigger":
       return labels.scopeAgentsTrigger;
     case "runs:delegate":

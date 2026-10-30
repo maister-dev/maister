@@ -948,6 +948,154 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ExtErrorBody" }
 
+  /api/v1/ext/projects/{slug}/packages:
+    get:
+      tags: [packages]
+      summary: List a project's package attachments and attachable installs
+      description: |
+        Scope `packages:manage`. Returns the project's current package
+        attachments together with platform package revisions that are already
+        installed. It never installs or trusts package code. The project is
+        derived from `slug`; cross-project access is existence-hidden as 404.
+
+        Writes a `token_audit_log` row with scope `packages:manage`.
+      operationId: extListProjectPackages
+      security:
+        - projectToken: ["packages:manage"]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+      responses:
+        "200":
+          description: Current attachments and installed package revisions.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [attachments, availableInstalls]
+                properties:
+                  attachments:
+                    type: array
+                    items: { $ref: "#/components/schemas/ExtProjectPackageAttachment" }
+                  availableInstalls:
+                    type: array
+                    items: { $ref: "#/components/schemas/ExtAvailablePackageInstall" }
+        "401": { $ref: "#/components/responses/TokenUnauthorized" }
+        "403": { $ref: "#/components/responses/HitlForbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [packages]
+      summary: Attach an installed package revision to a project
+      description: |
+        Scope `packages:manage`. Attaches one package revision that is already
+        in platform state `Installed`, wires its flows and capabilities into
+        the project, and writes the immutable package pin to `maister.yaml`.
+        This route cannot install or trust a package revision.
+
+        A duplicate package name or conflicting flow/capability id returns
+        409. Writes a `token_audit_log` row with scope `packages:manage`.
+      operationId: extAttachProjectPackage
+      security:
+        - projectToken: ["packages:manage"]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExtAttachPackageRequest" }
+      responses:
+        "201":
+          description: Package attached and project manifest write-back attempted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtPackageMutationResult" }
+        "401": { $ref: "#/components/responses/TokenUnauthorized" }
+        "403": { $ref: "#/components/responses/HitlForbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+
+  /api/v1/ext/projects/{slug}/packages/{attachmentId}:
+    patch:
+      tags: [packages]
+      summary: Switch a package attachment to another installed revision
+      description: |
+        Scope `packages:manage`. Atomically switches the attachment to an
+        already installed revision of the same package name. It never installs
+        or trusts code, and in-flight runs retain their pinned revisions.
+
+        `expectedPackageInstallId` is a compare-and-swap guard. If the
+        attachment changed after the caller read it, the route returns 409 with
+        `details.reason = stale_attachment_revision`. Unknown request fields
+        are rejected. Writes a `token_audit_log` row with scope
+        `packages:manage`.
+      operationId: extUpdateProjectPackage
+      security:
+        - projectToken: ["packages:manage"]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+        - name: attachmentId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExtUpdatePackageRequest" }
+      responses:
+        "200":
+          description: Attachment switched and project manifest write-back attempted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtPackageMutationResult" }
+        "401": { $ref: "#/components/responses/TokenUnauthorized" }
+        "403": { $ref: "#/components/responses/HitlForbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+    delete:
+      tags: [packages]
+      summary: Detach a package from a project
+      description: |
+        Scope `packages:manage`. Removes the attachment, its project flow and
+        capability wiring, and the package pin in `maister.yaml`. The operation
+        is refused with 409 while an active run is pinned to a member revision.
+        Cross-project attachment ids are existence-hidden as 404.
+
+        Writes a `token_audit_log` row with scope `packages:manage`.
+      operationId: extDetachProjectPackage
+      security:
+        - projectToken: ["packages:manage"]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+        - name: attachmentId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+      responses:
+        "200":
+          description: Package detached and project manifest write-back attempted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtPackageMutationResult" }
+        "401": { $ref: "#/components/responses/TokenUnauthorized" }
+        "403": { $ref: "#/components/responses/HitlForbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
   /api/v1/ext/projects/{slug}/flows:
     get:
       tags: [discovery]
@@ -5022,6 +5170,122 @@ components:
           schema: { $ref: "#/components/schemas/ExtErrorBody" }
 
   schemas:
+    ExtPackageVersionTarget:
+      type: object
+      additionalProperties: false
+      required: [installId, versionLabel, compatible, incompatibilityReason]
+      properties:
+        installId: { type: string }
+        versionLabel: { type: string }
+        compatible: { type: boolean }
+        incompatibilityReason: { type: string, nullable: true }
+        sourceKind:
+          type: string
+          enum: [git, local]
+
+    ExtProjectPackageAttachment:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - packageInstallId
+        - packageName
+        - versionLabel
+        - resolvedRevision
+        - trustStatus
+        - attachedAt
+        - updateAvailable
+        - upgradeTarget
+        - downgradeTargets
+        - sourceKind
+        - sourceTargets
+        - flows
+      properties:
+        id: { type: string }
+        packageInstallId: { type: string }
+        packageName: { type: string }
+        versionLabel: { type: string }
+        resolvedRevision: { type: string }
+        trustStatus: { type: string }
+        attachedAt: { type: string, format: date-time }
+        updateAvailable: { type: boolean }
+        upgradeTarget:
+          allOf:
+            - { $ref: "#/components/schemas/ExtPackageVersionTarget" }
+          nullable: true
+        downgradeTargets:
+          type: array
+          items: { $ref: "#/components/schemas/ExtPackageVersionTarget" }
+        sourceKind:
+          type: string
+          enum: [git, local]
+        sourceTargets:
+          type: array
+          items: { $ref: "#/components/schemas/ExtPackageVersionTarget" }
+        flows:
+          type: array
+          items: { type: string }
+
+    ExtAvailablePackageInstall:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - versionLabel
+        - resolvedRevision
+        - trustStatus
+        - flows
+        - compatible
+        - incompatibilityReason
+        - sourceLocalPackageId
+      properties:
+        id: { type: string }
+        name: { type: string }
+        versionLabel: { type: string }
+        resolvedRevision: { type: string }
+        trustStatus: { type: string }
+        flows:
+          type: array
+          items: { type: string }
+        compatible: { type: boolean }
+        incompatibilityReason: { type: string, nullable: true }
+        sourceLocalPackageId: { type: string, nullable: true }
+
+    ExtAttachPackageRequest:
+      type: object
+      additionalProperties: false
+      required: [packageInstallId]
+      properties:
+        packageInstallId:
+          type: string
+          minLength: 1
+
+    ExtUpdatePackageRequest:
+      type: object
+      additionalProperties: false
+      required: [packageInstallId, expectedPackageInstallId]
+      properties:
+        packageInstallId:
+          type: string
+          minLength: 1
+        expectedPackageInstallId:
+          type: string
+          minLength: 1
+
+    ExtPackageMutationResult:
+      type: object
+      additionalProperties: false
+      required: [ok, writeBack]
+      properties:
+        ok: { type: boolean }
+        attachmentId:
+          type: string
+          description: Present on attach.
+        writeBack:
+          type: string
+          enum: [ok, failed, skipped]
+
     ExtErrorBody:
       type: object
       required: [code, message]

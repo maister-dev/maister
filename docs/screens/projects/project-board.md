@@ -67,6 +67,22 @@ flowchart TD
 
 ## Layout & Regions
 
+The default project route opens directly onto the board, without a tab strip.
+A compact header contains the project name and repository path, the primary
+New task action, a Workspaces · N button, Project setup, and a more-actions
+menu containing Launch scratch. A compact statistics row above the board shows
+Needs you, In production, Backlog, and Merged in seven days.
+
+Workspaces opens a right-side modal panel with branch/status links to each
+workspace; its open state uses `?workspaces=open`. Lifecycle actions (including
+archive, delete, and publication) belong to the selected workspace detail,
+not the project workspace list. The panel supports Escape, backdrop dismissal,
+focus containment, and focus restoration through HeroUI.
+
+Project setup groups agents, packages/Flows, MCP, team, and the other existing
+project destinations in a menu. Existing tab-query deep links remain valid;
+secondary panels include a direct return link to the board.
+
 The board is a horizontally scrollable set of columns:
 
 - **Backlog cards** show a compact top metadata bar (`KEY-N`, flow tag, full

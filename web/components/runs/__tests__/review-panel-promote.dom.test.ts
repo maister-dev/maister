@@ -82,7 +82,7 @@ const UPDATE_HREF = "/runs/run-1?git=update";
 
 const roots: Root[] = [];
 
-function render(): void {
+function render(over: Partial<ReviewPanelProps> = {}): void {
   const container = document.createElement("div");
   const root = createRoot(container);
 
@@ -136,7 +136,7 @@ function render(): void {
   } as unknown as ReviewPanelProps;
 
   act(() => {
-    root.render(createElement(ReviewPanel, props));
+    root.render(createElement(ReviewPanel, { ...props, ...over }));
   });
 }
 
@@ -229,5 +229,56 @@ describe("ReviewPanel — a refused Promote", () => {
 
     expect(byTestId("review-conflict")).not.toBeNull();
     expect(byTestId("review-publication-diverged")).toBeNull();
+  });
+
+  it("starts the durable conflict resolver directly from the conflict card", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            attemptId: "sync-1",
+            outcome: "agent_launched",
+          }),
+          {
+            status: 202,
+            headers: { "content-type": "application/json" },
+          },
+        ),
+    );
+
+    vi.stubGlobal("fetch", fetchMock);
+    render({
+      conflict: {
+        parentRepoPath: "/repos/app",
+        targetBranch: "main",
+        runBranch: "maister/feature-x",
+        command: "git merge --no-ff maister/feature-x",
+      },
+      sync: { inProgress: null, defaultRunnerId: "runner-1" },
+    });
+
+    const button = byTestId("review-conflict-resolve-agent");
+
+    if (!button) throw new Error("missing conflict resolver button");
+
+    await act(async () => {
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [url, request] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+
+    expect(url).toBe("/api/runs/run-1/sync");
+    expect(request.method).toBe("POST");
+    expect(JSON.parse(String(request.body))).toEqual({
+      onto: "target",
+      strategy: "rebase",
+      agent: true,
+      push: false,
+      runnerId: "runner-1",
+    });
   });
 });

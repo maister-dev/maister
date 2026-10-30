@@ -2,6 +2,7 @@ import type { ReactElement } from "react";
 
 import { getTranslations } from "next-intl/server";
 
+import { ProjectMenu } from "@/components/board/project-controls";
 import { Tabs, type TabItem } from "@/components/navigation/tabs";
 
 export type ProjectTab =
@@ -25,6 +26,7 @@ export interface ProjectTabsProps {
   active: ProjectTab;
   boardCount: number;
   showBrain: boolean;
+  compact?: boolean;
 }
 
 const TABS: readonly ProjectTab[] = [
@@ -49,6 +51,7 @@ export async function ProjectTabs({
   active,
   boardCount,
   showBrain,
+  compact = false,
 }: ProjectTabsProps): Promise<ReactElement> {
   const t = await getTranslations("nav");
 
@@ -87,6 +90,19 @@ export async function ProjectTabs({
     scroll: false,
     count: tab === "board" ? boardCount : undefined,
   }));
+
+  if (compact) {
+    return (
+      <ProjectMenu
+        items={items.map((item) => ({
+          key: String(item.key),
+          label: item.label as string,
+          href: hrefFor(item.key as ProjectTab),
+        }))}
+        label={t("projectSetup")}
+      />
+    );
+  }
 
   return (
     <div className="overflow-x-auto">

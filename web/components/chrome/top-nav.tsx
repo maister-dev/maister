@@ -76,11 +76,12 @@ export async function TopNav({
           />
           {/* `min-w-0` + `truncate`: the crumb is the left group's only elastic
               member, so a long section label gives way here rather than pushing
-              the account controls off the right edge. */}
-          <span className="ml-[18px] hidden min-w-0 items-center gap-1.5 truncate border-l border-line pl-[18px] font-mono text-[11.5px] tracking-[0.04em] text-mute lg:inline-flex">
-            <span className="shrink-0">{t("crumbProjects")}</span>
+              the account controls off the right edge. The crumb owns its whole
+              path: a hard-coded `~/projects` prefix duplicated "Projects" on
+              every project route and was not navigable. */}
+          <div className="ml-[18px] hidden min-w-0 truncate border-l border-line pl-[18px] font-mono text-[11.5px] tracking-[0.04em] text-mute lg:block">
             {crumb}
-          </span>
+          </div>
         </div>
         <div className="flex min-w-0 items-center gap-2 lg:gap-2.5">
           {librarianEntry}

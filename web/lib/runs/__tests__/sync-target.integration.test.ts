@@ -20,6 +20,7 @@ import {
 } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
+import { createAssignment } from "@/lib/assignments/service";
 import { MaisterError } from "@/lib/errors";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import {
@@ -84,7 +85,7 @@ type LifecycleOperationName =
   import("@/lib/workbench-lifecycle/service").LifecycleOperationName;
 
 const schema = fullSchema as unknown as Record<string, any>;
-const { runs, workspaces, tasks, runSyncAttempts } = schema;
+const { assignments, runs, workspaces, tasks, runSyncAttempts } = schema;
 
 let testDatabase: StartedPostgresTestDb;
 let pool: Pool;
@@ -410,6 +411,51 @@ describe("assertSyncEligible", () => {
 });
 
 describe("syncRunTarget — mechanical outcomes", () => {
+  it("closes only the durable merge-conflict assignment after a successful sync", async () => {
+    const { remote, parent, baseSha } = await initRepoWithRemote();
+    const branch = "sync/close-conflict";
+    const wt = await addRunWorktree(parent, branch);
+
+    await advanceOriginMain(remote);
+    const { projectId, flowId } = await seedGraph(parent);
+    const { runId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch,
+      parentRepoPath: parent,
+      baseCommit: baseSha,
+    });
+
+    const conflict = await createAssignment({
+      db,
+      projectId,
+      runId,
+      actionKind: "merge_conflict",
+      title: "Resolve merge conflict into main",
+      branch,
+      ref: "main",
+    });
+    const unrelated = await createAssignment({
+      db,
+      projectId,
+      runId,
+      actionKind: "manual_takeover",
+      title: "Unrelated manual work",
+    });
+
+    await syncRunTarget({ runId, actor: actor(), db });
+
+    const rows = await db
+      .select()
+      .from(assignments)
+      .where(eq(assignments.runId, runId));
+    const byId = new Map(rows.map((row: any) => [row.id, row]));
+
+    expect(byId.get(conflict.id)?.status).toBe("cancelled");
+    expect(byId.get(unrelated.id)?.status).toBe("open");
+  });
+
   it("(a) clean rebase behind>0 → synced, base moved, drift cleared", async () => {
     const { remote, parent, baseSha } = await initRepoWithRemote();
     const wt = await addRunWorktree(parent, "sync/a");

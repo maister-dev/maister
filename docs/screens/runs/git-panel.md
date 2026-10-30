@@ -191,3 +191,8 @@ states — lives under `workbenchGit`. EN + RU parity required.
   [`../projects/project-board.md`](../projects/project-board.md).
 - Source: `web/components/workbench/git-panel{,-kit,-tree,-publish,-update,-pr,-commands,-reattach}.tsx`,
   `web/lib/workbench-git/{policy,facts,read-model,service,public-branch-name}.ts`.
+
+The visible panel title is **Workspace operations** (RU: «Операции с рабочей
+копией»). On a Review screen its entry is under **Advanced**. Deep links still
+use `?git=<section>` and open that disclosure automatically. Update parameters
+are collapsed by default; the update action remains visible within its section.
