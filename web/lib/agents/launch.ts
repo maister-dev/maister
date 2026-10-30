@@ -4050,6 +4050,7 @@ async function driveAgentSession(
       ],
       // ADR-090 L1: none/repo_read agents run the whole session read-only.
       readOnlySession: workspace !== "worktree",
+      agentKind: baseRun.agentKind ?? "code_delivery",
       // M34 lifecycle: a one-shot (non-persistent) agent has no driver that acts
       // on a bare end_turn — let the supervisor reap the session so the run
       // finalizes instead of leaking a slot. Persistent agents park + re-message.
@@ -4146,6 +4147,7 @@ async function driveAgentSession(
           : {}),
         errorType: err instanceof Error ? err.name : "unknown",
         code: err instanceof MaisterError ? err.code : undefined,
+        reason: err instanceof MaisterError ? err.details?.reason : undefined,
         causeCode:
           err instanceof MaisterError ? err.details?.causeCode : undefined,
       },

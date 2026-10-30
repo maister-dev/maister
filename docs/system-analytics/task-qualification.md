@@ -1,6 +1,6 @@
 # Incoming request qualification
 
-**Designed — ADR-196–198.**
+**Implemented — ADR-196–198.**
 
 ## Purpose
 
@@ -52,21 +52,14 @@ sequenceDiagram
 
 ### Contract 10
 
-Verified package owner: `/Users/kaa/Work/dev/github/maister-plugins`, main
-`0bab5fa5bd41ff825e160ed5a998412c2537c29e` during investigation. Original intake
-changes also exist on local branch `codex/operational-agent-kind` at
-`fc24713c00558bf2aa72195c22c8433c42d6e21c`; continue that authorized package work
-rather than overwriting main or dropping the intake changes. Reverify both before
-editing. Platform fixture is
-`web/lib/agents/__tests__/fixtures/core-package/maister-agents/triager.md`.
-
-`packages/core/maister-agents/triager.md` currently declares none/session/read_only
-and manual/domain-event triggers, without kind/completion/Flow. It performs MAIster
-operations: relation/comment/flag creation, clarification, triage verdict and
-enqueue intent; it forbids direct Flow launch. No separate triage skill is referenced.
-Use `kind: operational` + `completion.contract: operational_v1`, preserving permission governance, trigger bindings and downstream Flow dispatch.
-UX-D11 deliberately extends its workspace/configuration semantics for qualification;
-that extension requires its own engine capability floor, not an agent-ID exception.
+Canonical package owner is `maister-plugins`, local branch
+`codex/operational-agent-kind`, qualified candidate `13d9d4e` (unpublished).
+Platform mirrors the exact intake/triager definitions and both shared skills under
+`web/test-support/fixtures/operational-core`. The package requires engine 3.10.0.
+Triager declares operational/operational_v1, repo_read/task_target and the qualifier
+role; both GitHub variants declare the intake role. Project required policy is an
+explicit activation precondition. The delivery Flow runner remains independently
+selected from the catalog; operational execution grants no automatic tool approval.
 
 This is a prompt/protocol migration, not just frontmatter. Current prompt lines
 135–158 request `reTriggerMode: triage` and assume terminalization followed by a
@@ -98,16 +91,12 @@ implementation session without separate authorization.
 
 ### Contract 11
 
-**Verified gap:** `plugins:packages/core/maister-agents/triager.md:65-79,126-168`
-permits no repository access and asks mainly when routing is unclear;
-`triage_only` deliberately postpones detail. Neither contradictions nor current
-implementation/bug validity are mandatory checks. Both GitHub variants use
-`packages/core/capability/skills/github-issue-intake/SKILL.md:85-102,134-148`, which
-carries unanswered questions into `task_create`. `services/tasks.ts:170-192,270-275`
-creates Backlog before `task.created`; `work/stage.ts:90-123,200` calls untriaged
-work Triage but includes it in backlog. `services/triage.ts:187-225` stores routing,
-not a validated qualification; confidence is advisory. This is an explicitly
-requested expansion of intake scope, not a claim current prompts enforce it.
+The core triager uses the shared seven-check qualification skill at a pinned
+repository SHA. Both GitHub intake variants capture the original issue as Incoming;
+they do not route ambiguous or unverified requests directly to accepted backlog.
+Routing confidence alone cannot establish qualification. Structured assessment,
+current evidence, explicit launch intent and validated operational completion own
+that decision together.
 
 **Carrier and product boundary.** Reuse the task row, source identity, comments,
 clarifications and task activity as the durable intake carrier. Add **Incoming
@@ -364,6 +353,9 @@ older writer to launch them. Stop incompatible old writers at the maintenance ga
 - **EDGE-UX-22:** AC11/10: candidate cannot launch before clean terminal result; valid operational result without required qualification fails; dirty/malformed/cancelled/partial/failed run never publishes; finalizer rollback and recovery replay, same-input human decision wins, accepted queue wakes once, authority loss; no source-body leakage The owner returns typed `MaisterError` CONFIG/PRECONDITION/CONFLICT/UNAUTHORIZED or records a canonical operational failure; no silent fallback. Primary `IT-UX-22` (plan alias `UX-IT22`).
 - **EDGE-UX-26:** AC11: GitHub request→Incoming→specific local clarification→candidate still held→clean finalization→accepted Backlog→explicit enqueue; held/obsolete evidence view, stale edit, EN/RU/grants and counts; runner failure separate from request rejection The owner returns typed `MaisterError` CONFIG/PRECONDITION/CONFLICT/UNAUTHORIZED or records a canonical operational failure; no silent fallback. Primary `E2E-UX-04` (plan alias `UX-E2E04`).
 
+- **EDGE-UX-27:** AC11: the frozen operational kind permits only registered canonical MAIster MCP to request ordinary control-plane permission; shell, native paths and external/unregistered/ambiguous tools remain denied, including recovery. UX-T31. Primary `IT-UX-20` (plan alias `UX-IT20`).
+- **EDGE-UX-28:** AC11: a skills-only qualifier materializes only owned entry paths and reaches candidate publication; empty capability classes create no unowned directories. UX-T32. Primary `E2E-UX-04` (plan alias `UX-E2E04`).
+
 ## Linked artifacts
 
 - [Traceability](agent-activity-traceability.md)
@@ -407,3 +399,23 @@ qualification-governed task/run writes. Maintenance remains closed until every
 writer supports this capability. Application owners resolve Git before opening
 transactions and enforce run → task → credential lock order. Human assessment
 writers own only the task and credential locks.
+
+
+### Operational control-plane permission boundary
+
+An operational run snapshots its agent kind into session creation. For none/repo_read
+sessions, native file writes and shell remain denied. The actually registered
+built-in `maister` MCP can request ordinary tool permission when its canonical tool
+identity is present, exactly one stdio facade carries the platform credential and API base, and no native path/execute operation is asserted. This is a
+pass-through, not an allow decision: capability governance, existing execution
+policy and request-scoped HITL still own the decision, and the facade token still
+checks project/task/role scope. External, unregistered or ambiguous identities and
+omitted/code-delivery kind retain the existing read-only refusal. Changing packages
+cannot change a launched run's kind. Web and supervisor must deploy together with
+engine 3.10.0; no new permission policy or automatic approval is introduced.
+
+
+
+Capability materialization creates destination parents only for an owned copied entry.
+A skills-only package must not create an unowned empty agents directory. The strict
+source-generation verifier still refuses every unexplained path change (UX-T32).

@@ -135,8 +135,9 @@ export type CreateSessionInput = {
   mcpServers?: AgentMcpServer[];
   // M34 (ADR-090 L1): session-scoped read-only — the supervisor auto-denies
   // write-class tool permission requests for the whole session. Used for
-  // none/repo_read platform-agent runs.
+  // none/repo_read platform-agent runs; operational MAIster MCP retains HITL.
   readOnlySession?: boolean;
+  agentKind?: "code_delivery" | "operational";
   // B1 (execution-policy permissions=auto_approve): the supervisor auto-selects
   // the allow option for every permission request in this session (below the
   // read-only layers). Derived from the run's execution_policy snapshot.

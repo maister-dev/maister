@@ -394,7 +394,6 @@ async function copyBundleSkills(
     ownedPaths?: ReadonlySet<string>;
   } = {},
 ): Promise<string[]> {
-  await mkdir(destSkillsDir, { recursive: true });
   const copied: string[] = [];
 
   for (const installedPath of installedPaths) {
@@ -413,6 +412,7 @@ async function copyBundleSkills(
         await rm(dest, { recursive: true, force: true });
       }
 
+      await mkdir(path.dirname(dest), { recursive: true });
       await cp(path.join(src, entry), dest, {
         recursive: true,
         force: false,
@@ -456,7 +456,6 @@ async function copyBundleAgents(
   installedPaths: readonly string[],
   ownedPaths: ReadonlySet<string> = new Set(),
 ): Promise<string[]> {
-  await mkdir(destAgentsDir, { recursive: true });
   const copied: string[] = [];
 
   for (const installedPath of installedPaths) {
@@ -471,6 +470,7 @@ async function copyBundleAgents(
         continue;
       }
 
+      await mkdir(path.dirname(dest), { recursive: true });
       await cp(path.join(src, entry), dest, {
         recursive: true,
         force: false,

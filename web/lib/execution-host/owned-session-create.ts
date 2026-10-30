@@ -13,7 +13,7 @@ import type { SessionCreateOwner } from "./create-intent";
 import type { HostSessionId } from "./types";
 import type { Logger } from "pino";
 
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 
 import { assertAgentResumeCreateRequest } from "./agent-permission-handoff";
@@ -117,6 +117,80 @@ export async function createOwnedSession(input: {
 
     return latestOwnedCreate(tx, authority);
   });
+  const persistCreateRejection = async (
+    command: ExecutionCommand,
+  ): Promise<void> => {
+    if (command.receiptEvidence) return;
+    let receipt: CommandReceipt | null;
+
+    try {
+      receipt = await transport.getCommandReceipt(command.id);
+    } catch (error) {
+      if (!isMaisterError(error) || error.code !== "EXECUTOR_UNAVAILABLE")
+        throw error;
+      logger.warn(
+        { commandId: command.id, runId: command.runId, code: error.code },
+        "owned-create-rejection-receipt-unavailable",
+      );
+
+      return;
+    }
+    if (!receipt) {
+      logger.warn(
+        { commandId: command.id, runId: command.runId },
+        "owned-create-rejection-receipt-missing",
+      );
+
+      return;
+    }
+    if (
+      receipt.commandId !== command.id ||
+      receipt.runId !== command.runId ||
+      receipt.kind !== "session.create" ||
+      receipt.assignmentEpoch !== command.assignmentEpoch
+    )
+      throw createIntentError("create_receipt_identity");
+    if (
+      receipt.phase !== "rejected" ||
+      receipt.inflight ||
+      receipt.httpStatus < 400 ||
+      !receipt.completedAt
+    ) {
+      logger.warn(
+        {
+          commandId: command.id,
+          runId: command.runId,
+          phase: receipt.phase,
+          inflight: receipt.inflight,
+          httpStatus: receipt.httpStatus,
+        },
+        "owned-create-rejection-not-proven",
+      );
+
+      return;
+    }
+    await db.transaction(async (tx) => {
+      await assertOwner(tx);
+      await tx
+        .update(executionCommands)
+        .set({ receiptEvidence: receipt })
+        .where(
+          and(
+            eq(executionCommands.id, command.id),
+            eq(executionCommands.state, "failed"),
+            isNull(executionCommands.receiptEvidence),
+          ),
+        );
+    });
+    logger.info(
+      {
+        commandId: command.id,
+        runId: command.runId,
+        assignmentEpoch: command.assignmentEpoch,
+      },
+      "owned-create-rejection-recorded",
+    );
+  };
   let replacement: CreateSessionPayload | undefined;
   const failAndReload = async (
     commandId: string,
@@ -347,6 +421,7 @@ export async function createOwnedSession(input: {
             current.attempts,
             receipt.body,
           );
+          await persistCreateRejection(original);
           continue;
         }
         const result = ResultSchema.safeParse(receipt.body);
@@ -430,6 +505,7 @@ export async function createOwnedSession(input: {
         isMaisterError(error) &&
         !isUnknownOutcome(error)
       ) {
+        await persistCreateRejection(settled);
         original = settled;
         continue;
       }
