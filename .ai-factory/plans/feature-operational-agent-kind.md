@@ -1,4 +1,695 @@
-# Implementation Plan: Operational agents and explicit completion contracts
+# Implementation Plan: Agent activity, history and quiet operational attention
+
+Branch: `feature/operational-agent-kind` — keep this checkout and branch.
+
+Created: 2026-10-30. Status: **Planned; UX-T01–UX-T18 are not implemented.**
+
+This is the active follow-up plan for `/aif-implement`, `/aif-improve` and
+`/aif-verify`. The completed original operational-agent plan and qualification
+receipts are retained below under **Historical operational-agent delivery**;
+its checked tasks are not acceptance evidence for this follow-up. The short
+product-direction note at the end is historical input; the decisions here
+resolve its alternatives.
+
+## Settings and delivery boundary
+
+- Full plan; user explicitly requested the current branch. No branch creation,
+  checkout switch, pull, implementation, migration execution or remote mutation
+  during planning. Base inspected: branch HEAD `5c79ed10f`, local master
+  `420f432b2`; these are local observations, not a fresh remote receipt.
+- SDD first. Phase 0 produces complete canonical specifications before code.
+  Every behavior slice uses **RED → GREEN → REFACTOR** with real runner receipts.
+  Tests and EN/RU documentation are required; standard structured logging;
+  roadmap linkage remains `none`, following the user's confirmed defaults.
+- Commit by the phase checkpoints below. No push, tags, hosted dispatch, live
+  GitHub mutations or production deployment are authorized by this plan.
+- Platform repository owns this follow-up. `maister-plugins` needs **no new
+  change or release** for these presentation/history/attention semantics. The
+  original operational-kind platform-first/core-package release dependency
+  remains applicable and is not superseded.
+- Prompt **viewing** is required. Direct prompt editing and a new project
+  override/fork workflow are deliberately deferred: the user's suggestion was
+  optional, and current Studio routes select the newest install rather than
+  necessarily the project pin. Memory editing and existing project settings
+  remain available under their existing permissions.
+- No new agent kind, run status, scheduler pool, automatic approval, automatic
+  promotion, Task creation, retention duration, polling loop, service, env var,
+  dependency, port or host mount. Existing lifecycle and result contracts remain
+  authoritative. Operational attention grouping is not a change in run outcome.
+
+## Verified implementation anchors
+
+Line references describe the inspected HEAD; re-resolve after base integration.
+“New” paths in the task list are proposals, not assertions that files exist.
+
+| ID | Current code reference | Consequence for this plan |
+| --- | --- | --- |
+| UX-E01 | `web/lib/queries/portfolio.ts:82-110,823-864,954-1036`; `web/app/(app)/layout.tsx:64-82,145` | Rail is workspace-oriented, inner-joins workspaces, omits Pending and lacks agent identity. A second run-based population is necessary; a cosmetic filter cannot fix missing agents. |
+| UX-E02 | `web/components/chrome/left-rail.tsx:260-309,455-499`; `left-rail-sections.ts`; `mobile-rail-drawer.tsx` | Expanded, collapsed and mobile variants must use the same population and routing. |
+| UX-E03 | `web/lib/scheduler.ts:101-120,147-176,217-240`; `web/lib/runs/run-status-sets.ts:40-52` | Agent capacity defaults to 3, separate from flow/scratch. Slot holders are Running/NeedsInput/HumanWorking; visible runs also include queued and parked executions. |
+| UX-E04 | `web/lib/run-results/operational-visibility.ts:10`; `web/lib/queries/project.ts:366`; `portfolio.ts:446,1010` | Terminal operational runs already leave active copies. Preserve this and code-delivery retained-workspace behavior. |
+| UX-E05 | `web/lib/runs/operational-attention.ts:16-161`; `web/lib/db/schema.ts:2240-2274`; `web/lib/queries/decisions.ts:245-273,421-427` | Current attention and acknowledgements are per run/reason/revision. Group before canonical queue/count projection; retain legacy acknowledgement meaning. |
+| UX-E06 | `web/app/api/attention/stream/route.ts:175-215,323`; `web/components/attention/attention-live-refresh.tsx:33-40`; `web/lib/notifications/attention-consumer.ts:157-228,259-291` | Reuse attention SSE. Launch/start/queue invalidation is incomplete; ID-only signatures miss changed content under a stable group ID. |
+| UX-E07 | `web/lib/agents/project-links.ts:215-277,774-821`; `web/app/(app)/projects/[slug]/page.tsx:850-920`; `web/app/api/projects/[slug]/agents/route.ts:51-72` | Project rows lack history stats; page and HTTP DTO are separate consumers. Detach deletes links/schedules, not runs or memory. |
+| UX-E08 | `web/lib/agents/launch.ts:959-970,1411-1477`; `web/lib/db/schema.ts:1835-1851,1959-1962,2186-2214` | Agent-driven flow runs also have agent identity. Schedule FK and agent FK can become null. `startedAt` currently means launch/enqueue time even for Pending. |
+| UX-E09 | `web/lib/agents/launch-contract.ts:44-133`; `web/lib/run-results/types.ts:66-86`; `web/lib/run-results/operational-projection.ts:23-110`; `web/lib/run-results/operational-types.ts:80-92` | Reuse frozen definition/provenance and canonical successful/validation/integrity receipt. Do not derive success from status, prose or latest catalog definition. |
+| UX-E10 | `web/lib/agents/finalization.ts:609-705,757-875,1073-1109`; `web/lib/gc/operational-disposition.ts:131-219,558-610`; `web/lib/agents/create-failure.ts` | Terminal results, cleanup transitions and domain facts have transaction owners. Extend those owners rather than adding another eventual result finalizer. |
+| UX-E11 | `web/app/api/projects/[slug]/agents/[agentId]/memory/route.ts:66-117,120-162,185-237,256-274`; `web/components/board/panels/agent-memory-drawer.tsx` | Memory has attachment lookup, readRepoFiles/editSettings grants and hash CAS. Reuse, including concurrent agent/human writes. |
+| UX-E12 | `web/lib/agents/effective.ts:61-159`; `web/lib/studio/load.ts:68-88`; `web/lib/local-packages/fork.ts:96-188` | Effective prompt is pinned; Studio viewer/fork chooses newest install. Fork lacks a durable crash/idempotency protocol; do not expand this change into a new editing workflow. |
+| UX-E13 | `web/app/api/v1/ext/decisions/route.ts:19-34,70-96`; `docs/api/external/operations.openapi.yaml:7351`; `mcp/src/tools.ts`; `mcp/src/__tests__/tool-contract.test.ts` | External decision cardinality/action semantics and MCP projection must migrate with Inbox. |
+| UX-E14 | `web/lib/queries/visible-projects.ts:88`; `web/lib/queries/__tests__/decision-queue-grants.test.ts`; project agent/memory routes above | Counts, history, incident diagnostics and prompt/memory have different data grants; navigation hiding is not authorization. |
+| UX-E15 | `scripts/validate-requirement-coverage.mjs:32-37,177-183`; `web/vitest.config.ts`/runner configuration; existing operational E2E | Extend existing traceability/runner discovery. Existing parser recognizes T-number headers, not UX-T headers: add support and a non-vacuity test before claiming follow-up traceability green. |
+
+## Design decisions and acceptance contract
+
+### UX-D01 — Agent identity, history population and snapshots
+
+Add `runs.sourceAgentId` (nullable text, immutable, **no FK to catalog agents**)
+for every agent-origin launch, including `runKind=flow` launches. Identity is the
+existing package-qualified ID, scoped by `projectId`. Detach/reattach and package
+updates retain this identity; an explicit rename creates a distinct history.
+Deleting/recreating the same qualified ID resumes its identity, with historical
+name/version retained per run. Never group unrelated null agents by display name.
+
+Freeze a small versioned `agentActivitySnapshot` at launch: qualified ID, display
+name, definition digest, package install/version/revision, and the versioned
+operational comparison scope where applicable. Reuse existing frozen definition,
+config, trigger and result payloads rather than copying complete prompts/results
+into new tables. Historical code-delivery rows without a full prompt snapshot
+must say “Launch prompt unavailable”; current prompt is never substituted.
+
+Backfill source identity from `runs.agentId`, then verified operational definition
+snapshot, then an existing explicit delegation snapshot. Reconstruct a qualified
+ID only with proven package identity and stem; a bare stem is not globally unique.
+Conflicting candidates fail the backfill with a typed diagnostic. Rows with no
+proof remain historical run records, individually addressable, under a visible
+“Agent identity unavailable” diagnostic; no fabricated association. New launches
+must always provide identity, enforced at the launch seam and by a constrained
+schema relation for the new snapshot version. Existing runs keep frozen completion
+semantics when new metadata is backfilled.
+
+History includes manual, cron, event, webhook, delegated and flow-driving launches
+identified by this key. A Flow node merely using an agent persona is not another
+launch. Project/agent pages remain available in read-only historical mode after
+detach or catalog deletion when authorized retained history exists; current
+settings, effective definition and memory mutations require a current attachment.
+
+**UX-AC01:** a package update, schedule deletion, detach/reattach or catalog deletion
+does not reclassify or lose provably associated retained runs. An unresolved legacy
+identity is explicit and never merged into another agent's history.
+
+### UX-D02 — Active rail, workspace review and capacity
+
+Use a dedicated run query, with no workspace prerequisite. Agent-origin executions
+in `Pending | Running | NeedsInput | NeedsInputIdle | HumanWorking |
+WaitingOnChildren` appear individually in the **Agents / Агенты** section. Derive
+one exhaustive status classification from the canonical RunStatus union; new
+statuses must not enter implicitly. Include agent-driven flow launches, with a
+Flow badge and their actual pool classification. Two concurrent runs of one agent
+are two accessible rows. “Waiting for input” rows retain each request's own control.
+
+Rail workspace query excludes only runs currently represented in the agent
+section. At code-delivery Review/Failed/Crashed, existing review/recovery/retention
+workspace rows remain available. Terminal operational runs never appear in either
+rail population, regardless of success, retained diagnostic bytes or cleanup
+failure. Do not alter the project/portfolio workspace predicate globally to achieve
+rail deduplication; retain ordinary code-delivery promotion semantics.
+
+Rows show agent and project, status, launch time, run link and pending-input count;
+reuse authorized Stop/run navigation, not Git actions. Use semantic icon/text in
+addition to color. Expanded rail, collapsed flyout and mobile drawer share this
+population; long active lists scroll without hiding concurrent executions.
+
+Show visible active and queued counts, explicitly scoped to accessible projects.
+Do not introduce a global occupancy fraction for ordinary members: it would leak
+inaccessible activity and the agent-driven Flow entries use another pool. The
+existing scheduler/admin surface remains the capacity authority. No new capacity
+widget is required; the section label must not imply a new operational-only pool.
+
+**UX-AC02:** all listed active states are individually accessible for none,
+repo_read and worktree modes; no duplicate rail row. 1,000 completed operational
+successes or failures leave zero terminal rail rows. Code-delivery Review still
+opens normal review and promotion. Visibility count is not scheduler occupancy.
+
+### UX-D03 — Project summary and agent page
+
+Project Agents rows link to `/projects/[slug]/agents/[agentId]` and show retained
+run count, active count, and the last launched run's status/time/outcome. In the
+page header also show last completed run, so a new Pending run does not conceal
+last failure. Label counts **Runs in retained history / Запуски в истории**;
+these are not lifetime counters independent of retention. Zero runs means “Not
+run yet / Ещё не запускался”. Use one batched aggregate/latest query, not N+1.
+
+The full-width page has URL-addressable tabs: History, Memory, Definition and
+Settings. History is default and uses keyset pagination, default 25/max 100,
+newest `(startedAt,id)` first. Call this timestamp `launchedAt` in the new DTO to
+clarify its existing enqueue-time semantics; do not rewrite `startedAt`. Filters
+are URL-synchronized allow-listed status, trigger source and operational outcome;
+reset cursor on filter change. Cursor binds project, agent, filters and upper
+launch boundary. Tampered/mismatched cursors return 400; all queries still enforce
+authorization independently. New launches do not displace rows between existing
+pages; live updates display “New runs available” with an explicit first-page
+refresh. Dynamic status/outcome filters reflect current canonical state, not a
+historical database snapshot; do not promise frozen membership across transitions.
+
+Each history row uses `loadOperationalOutcomes` and normal run details for evidence,
+counts, diagnostics, cancellation/crash, cleanup and confirmed task links. Only
+links belonging to this authorized project are exposed. No diff/promotion controls
+for operational rows. History and summary use the same identity/filter foundation;
+summary is unfiltered and labeled accordingly.
+
+Memory reuses current persistence, grants and hash CAS. Definition shows the pinned
+current prompt and safe resolved configuration/provenance, not token-expanded
+runtime text. Apply `readRepoFiles` to prompt/memory/config values; membership may
+see safe metadata and history statuses without protected text. Missing/untrusted/
+incompatible package yields a localized section error while history remains usable.
+Never fall back to the newest catalog definition. Studio “View package” link is
+shown only when the resolver selects exactly this authorized pinned install.
+Project settings reuse the existing editSettings-protected modal/endpoint. No new
+prompt write endpoint; installed files remain immutable.
+
+**UX-AC03:** summary → page → next history page → run works for EN/RU, keyboard and
+mobile; counts/latest are deterministic, safe and scoped. Memory conflicts are
+visible; unauthorized users cannot retrieve protected data by calling the API.
+
+### UX-D04 — One Inbox item, distinct causes and quiet repetitions
+
+For operational terminal problems, group **before** the canonical decision queue
+by `(projectId,sourceAgentId)`. ID is stable for this pair and independent of a
+representative run. One card summarizes all unresolved, unacknowledged cause
+**episodes**; no automatic Task, no terminal rail card and no per-run notification
+storm. Individual HITL decisions retain original request IDs and are never grouped.
+
+A cause fingerprint is versioned canonical structured data: platform reason,
+normalized diagnostic code/operation/service/httpStatus where applicable, and
+comparison scope. Never hash prose, remediation text, raw response bodies, dynamic
+URLs, run IDs or timestamps. Platform validation/integrity/crash/missing-result
+reasons take precedence over agent-authored diagnosis. A run with several distinct
+causes contributes one occurrence to each cause but only one distinct failed-run
+count to the card. Cap displayed causes at 10 with a paginated detail expansion;
+the summary reports total causes and never silently drops the remainder.
+
+Scope is a frozen hash of definition digest, effective declared instance config,
+completion-contract version and semantic trigger input. Implement explicit trigger
+normalizers: cron/manual scan with identical declared scope can match; event,
+webhook or delegated inputs retain target identifiers/payload semantics while
+excluding delivery IDs/timestamps only where the existing trigger contract proves
+them nonsemantic. Unknown/legacy scope is **not comparable for automatic recovery**.
+No secret-bearing scope inputs/hash preimages are exposed or logged. Changed scope
+starts a distinct cause episode inside the same agent/project card.
+
+Repeated observations in an open episode increment exact occurrence counts and
+first/last timestamps, update latest-run evidence and content revision, but do not
+raise actionable revision or undo a user's episode acknowledgement. A new cause,
+escalation to a different fingerprint, or a recurrence after confirmed recovery
+creates a new episode and re-arms attention. Acknowledgement is per user and means
+“seen”, not “fixed”; acknowledged ongoing problems remain on the agent page.
+No wall-clock cooldown and no automatic repeat reminder in this scope.
+
+New episode acknowledgement accepts the exact observed episode IDs and immutable
+attention revisions. An unknown/cross-agent ID fails atomically; a concurrently
+created different episode remains unacknowledged. Repeated occurrences within the
+same episode need not cause a 409 or force the user to chase a minute-by-minute
+moving revision. A closed observed episode is an idempotent no-op. Another user's
+attention does not change.
+
+**UX-AC04:** 1,000 identical failures produce one card with correct distinct-run
+count; after acknowledgement they produce no new unread/actionable item until a
+new cause/episode. Two independent causes remain distinguishable inside one card;
+other agents/projects and both readers remain isolated. No Task rows are inserted.
+
+### UX-D05 — Recovery, concurrency, cleanup and retention
+
+Normal business/API episodes, including authorization failures, can close only on a canonical validated,
+source-clean **complete successful** result in the **same comparable scope**, whose
+launch timestamp is strictly later than every occurrence's terminal timestamp.
+A success launched before or during a failing run cannot establish recovery.
+Use database-owned timestamps; UUID tie-breaks order pages, not causal proof. A
+zero-new-work complete scan is eligible. Recovery eligibility is a platform cause
+classification, independent of the diagnostic retryable flag: a 403 may be
+non-retryable until access is repaired yet recover after an eligible successful scan.
+Partial, missing, malformed, cancelled or
+prose-only outcomes are not. A changed definition/config is a different scope and
+does not falsely resolve the old problem; the UI permits acknowledging it as seen.
+
+Integrity violations, unresolved external effects and unavailable evidence are
+safety episodes: a later clean scan never closes them. Keep their diagnostic links
+and existing remediation; acknowledgement can quiet the reader without asserting
+repair. Cleanup episodes close only when their original resource's canonical
+cleanup state proves removal/release; a different run's success cannot close them.
+Rearming cleanup is not successful cleanup. Another exhaustion of the same open
+cause updates occurrence evidence without revoking acknowledgement; exhaustion
+after verified recovery creates a new episode. A cleanup episode shared by several
+runs resolves only after every unresolved source occurrence has verified disposal.
+Partial removal,
+lease recovery and source evidence preservation keep their existing owners.
+
+Serialize episode changes per project/agent with transaction-scoped advisory lock,
+then episode/occurrence row locks and uniqueness constraints. Integrate with
+existing terminal CAS and cleanup transactions. Inventory actual run-row locking
+first and use one consistent lock order across finalization, failure, reconciliation,
+cleanup and acknowledgement; never add a reverse acquisition order. No Git,
+filesystem inspection, supervisor call or await on an external service inside this
+transaction. Persist terminal/cleanup fact + incident projection + invalidation
+fact atomically. On rollback, none becomes visible; on replay, unique source keys
+prevent double counting. Applying a delayed/backfilled failure first checks for a
+canonical success satisfying the same strict recovery witness; already-recovered
+failures remain historical instead of reopening attention due to processing order.
+Stop/cancellation without another failure creates no
+operation episode; exhausted cleanup after cancellation still requires attention.
+Recovery/resume of a crashed run preserves the original occurrence. A later status
+change cannot erase it or pretend the failed attempt never happened; terminal
+revision/source identity, not mutable run status alone, keys the incident fact.
+Use the stable terminal-transition event/generation identity minted in the source
+transaction; multiple terminal attempts of a recovered run must not share a boolean
+“already applied” marker. Audit timestamp writers before using startedAt causally;
+if any writer changes it on resume, persist a dedicated immutable launch timestamp.
+Acquire the source run lock first, then the project/agent advisory lock and episode
+rows; acknowledgements lock only episode rows and never acquire source-run locks.
+
+Hard deletion of run history must not cascade away an unresolved episode. Retain a
+small safe occurrence tombstone with timestamps and source fact key (`run_id` FK
+SET NULL) and show “Execution evidence expired” when normal retention removes the
+link. Aggregate counts are exact for ingested occurrences, distinct from the
+retained-history summary. This first release performs no automatic episode/occurrence pruning: these small
+ledger records persist with the project. Any later pruning policy needs an explicit
+contract and owner. Evidence expiry alone creates no new incident. Project hard delete
+may cascade its own groups after existing authorization; catalog detach/delete may
+not. User delete cascades only that user's acknowledgement rows.
+
+**UX-AC05:** reversed completion order, duplicate finalization, crash/restart,
+acknowledgement races and cleanup retries neither double-count nor lose attention.
+Old/overlapping successes do not resolve new failures. Cleanup/evidence loss cannot
+silently erase an open problem or create review/promotion affordances.
+
+### UX-D06 — Minimal persistence, migration and rollout
+
+Proposed additive schema, finalized in Phase 0:
+
+| Object | Fields/invariants and access path |
+| --- | --- |
+| `runs` | Immutable `source_agent_id`, versioned `agent_activity_snapshot`; history index `(project_id,source_agent_id,started_at DESC,id DESC)` with nonnull predicate. No persisted mutable run-count columns. |
+| `operational_incident_episodes` (new) | UUID ID, project FK, immutable agent key, scope digest/version or explicitly unknown, reason/fingerprint, state open/resolved, attention revision, first/last terminal timestamps, resolvedAt/recovery evidence. Unique open episode per `(project,agent,scope,fingerprint)`; unknown scope uses an explicit key, not SQL NULL uniqueness. Index open episodes by authorized project/agent. |
+| `operational_incident_occurrences` (new) | Episode FK, immutable source fact key, nullable run FK SET NULL, original run ID for dedup/distinct count, result/terminal or cleanup revision, observed terminal timestamp, per-occurrence verified cleanup resolution and minimal safe reason. Unique `(source fact key,cause fingerprint)`; no copied result bodies or prompts. Source key survives run deletion. Index episode/time and run/revision lookup. |
+| `operational_incident_reader_states` (new) | User/episode/attention-revision PK; nullable acknowledgedAt; independent notificationRecordedAt, notificationMode (published/baseline), nullable notificationEventId. A notification receipt never implies acknowledgement. CHECKs enforce valid null/mode combinations. User FK cascade; publication receipt survives outbox retention. Old per-run acknowledgement table remains for compatibility. |
+
+Do not add a group table, general notification engine, lifetime counter or new
+consumer clock. Content revisions can be hashes over bounded canonical summary
+fields; actionable revisions depend on episode identity, not occurrence counts.
+Use a bounded keyset backfill under the existing maintenance/upgrade fence before
+opening new readers. Persist progress through the existing upgrade mechanism if
+available; otherwise add one explicit upgrade progress record, not process-memory
+state. Each page is committed with its cursor; retries are idempotent. Backfill
+identity before episodes; process terminal facts deterministically and use the
+same transition function as live writers. Surface corrupt/unclassifiable rows,
+with exact counts and a deploy refusal, instead of silently skipping them.
+
+Legacy per-run acknowledgements suppress only their corresponding existing
+occurrences. Backfill creates **no explicit episode acknowledgement** from legacy
+rows. Visibility derives from all current historical tuples being acknowledged;
+only the new explicit action writes reader-state acknowledgedAt. Legacy acknowledgement
+endpoints continue their exact run/reason/revision behavior; they must never grant
+an episode-wide acknowledgement of future repeats. Define effective visibility as
+explicit episode ack OR all current occurrence tuples individually acknowledged;
+a later new tuple becomes visible without an explicit episode ack. New UI uses
+explicit episode acknowledgement. The legacy read projection also honors an
+explicit episode acknowledgement for its covered tuples, while retaining the old
+per-run response shape. This preserves old clients without silently widening a
+legacy write decision.
+
+**Migration collision found now:** local master already uses ADR-194 and migrations
+0194–0198 for project configuration; this branch uses those identifiers for
+operational agents. Previous “conflict-free” receipts below are historical.
+UX-T01 must reconcile this before allocating follow-up schema. If branch migrations
+are confirmed applied only to disposable qualification DBs, integrate the current
+base and regenerate/renumber the branch operational sequence provisionally to
+0199–0203, its unpublished ADR to 195, then reserve follow-up migration 0204 and ADR
+196. These numbers are a **planning reservation**, not a claim of reservation in
+master or permission to rewrite applied history. Recompute from both tips at the
+actual integration checkpoint. Write ADR stub+record before citing its anchor.
+If any durable installation has applied the branch ledger, stop that rewrite and
+specify/qualify an explicit supported ledger reconciliation upgrade; never alter
+an applied checksum or drop data to make the journals match.
+
+Migration deliverables are SQL + journal + snapshot + Drizzle schema, generated
+DBML, domain Mermaid ERD and column/cascade narrative. Qualify fresh install and
+incremental upgrade from canonical master, as well as an already-operational
+branch database if one is supported. `db:generate` must report no residual schema
+change. A single quiet maintenance cutover drains old writers, migrates/backfills,
+deploys all new writers/readers, validates projection, then reopens admission.
+Do not support mixed old/new incident writers during the cutover. Rollback fences
+admission, retains additive data, rolls back compatible binaries/readers together;
+old per-run attention may be noisier, but history/results are not removed.
+
+**UX-AC06:** migration resumes after interrupted pages without duplicates; old
+acknowledgements retain meaning; source identity survives FK deletion; constraints
+and generated schema match. New code is not enabled on partial backfill.
+
+### UX-D07 — HTTP, external contracts, authorization and live updates
+
+All responses use explicit typed/Zod DTOs and shared projections. API specs and
+examples are written before handlers. Typed 400/401/403/404/409/503 errors use the
+project taxonomy and localized UI mapping; never string-match server messages.
+GETs are side-effect-free. New acknowledgement is DB-only (no downstream delivery
+acknowledgement gap). Existing memory/settings/cleanup actions retain their own
+transaction, CAS and external-effect protocols; no new hidden side effect.
+
+| Surface | Planned contract and identifiers | Specification owner |
+| --- | --- | --- |
+| `GET /api/projects/{slug}/agents` | Add safe batched `activity` summary to attached agent DTO; slug=url-param, reader=auth-context, project/agent rows=server-state. Existing grants remain. | `docs/api/web.openapi.yaml`, agents analytics |
+| `GET /api/projects/{slug}/agents/{agentId}` (new method) | Safe metadata/activity + attachment/historical state; definition capability flags, not protected prompt by default. slug/agentId=url-param; resolved project/source key=server-state; reader=auth-context. 404 only when neither visible attachment nor proven history exists. | Same |
+| `GET .../{agentId}/runs` (new) | `{items,nextCursor,asOf}`; cursor/limit/filter=query-controlled and validated, with server-derived project scope. Invalid cursor 400; inaccessible project follows existing 403/404 policy. | Same |
+| `GET .../{agentId}/definition` (new) | readRepoFiles gate; current pinned safe prompt/config/provenance or typed unavailable state. Missing current attachment is 404; valid historical page still works. No runtime secrets/private paths. | Same |
+| `GET .../{agentId}/incidents` (new) | Bounded episode/cause details and acknowledgement state, separate cursor; member gets safe metadata, protected evidence/diagnostics use existing run-data grants. Derive group via project/source key, not an arbitrary representative run. | Same, attention analytics |
+| `POST .../{agentId}/incidents/acknowledge` (new) | body-controlled nonempty bounded array of `{episodeId,attentionRevision}`; compare every ID to server-state project/agent, derive user from auth and require the existing `answerHitl` project action. 200 accepted/replayed/closed no-op; 409 stale invalid revision; 400 malformed; 403/404 unauthorized. All-or-none, no run/source IDs supplied in body. | Same, operational lifecycle AsyncAPI |
+| Existing `POST /api/runs/{runId}/operational/acknowledge`, cleanup retry, project memory/settings | Preserve existing body/status/grants. Run/project/path locators=url-param; scope/user/cleanup owner=server-state/auth-context. Old per-run acknowledgement never means new episode acknowledgement. Document cutover compatibility. | Existing web OpenAPI paths |
+| `GET /api/v1/ext/decisions` and MCP decisions tool | Opt-in query `operationalGrouping=agent` selects the grouped DTO with `aggregation: agent`, stable group/agent identity, episode/reason summary and counts; representative run is nullable navigation only. Omitted query preserves legacy per-run wire semantics; bundled MCP explicitly opts in. Validate the query allow-list, retain old safe fields and forbid representative-run group mutation. Read grants still govern nested fields. No new external mutation tool or prompt/history API required. | `docs/api/external/operations.openapi.yaml`, `mcp/src/tools.ts`/contract tests |
+| Attention SSE | Reuse `attention.tick` invalidation regions; add durable launch/queue/start/park/resume/terminal/incident-ack changes to scanned sources. Include content fingerprint in change signature. One subscription, reconnect/catch-up via existing cursor. | `docs/api/async/attention-stream.asyncapi.yaml`, domain taxonomy and attention analytics |
+| Internal domain facts | Versioned activity/incident changed payloads contain IDs/revisions only, no prompt/diagnostic bodies. Emit in the owning transaction; notify-after-commit is only a wake optimization. Terminal and cleanup facts stay canonical. | `docs/api/async/operational-lifecycle.asyncapi.yaml`; outbound webhook spec only if a public webhook actually changes |
+
+A grouped read response cannot expose secrets merely because a user can see
+counts. Restrict prompt/memory/config and evidence payloads independently; redact
+nested diagnostic/reference data before serialization. Project visibility applies
+before SQL aggregation, cursor construction and notification generation. Tokens
+must never acknowledge as a human by taking a userId from the request. Existing
+HITL routes, permission IDs and resume behavior remain unchanged.
+
+The Inbox badge counts groups plus independent existing decisions. Activity and
+cause content changes refresh UI even when count/ID stays constant. Notification
+creation uses newly actionable episode IDs, not count increase alone: a second
+cause in one existing card must notify once; another identical occurrence must
+not. Under the existing per-user notification lock, atomically insert the existing
+outbox event and record each `(reader,episode,attentionRevision)` publication in
+reader state. A failure before commit leaves both retryable; committed publication
+uses the existing delivery retries. Outbox retention must not erase the receipt.
+Both the event consumer and existing system_sweep backstop (`notifications/digest-trigger.ts`)
+call this same publisher, including unchanged-count cases; preserve count-delta
+semantics for other decision kinds. Bound each page of new episodes and make the
+receipt the durable progress marker; do not advance past failed publication. New
+activity facts must not feed an unintended agent-trigger/self-trigger loop.
+On initial/backfill activation, mark the consumer baseline without generating
+one historical notification per old failure. Bound summary queries and avoid
+loading all historical operational runs on every badge render. The agent page
+uses the same attention refresh mechanism; no timer/poll-based data fetching.
+
+**UX-AC07:** browser and opt-in REST/bundled MCP agree on grouped cardinality; stale representative
+runs do not control mutations. Same-count changes update live UI, repeated failures
+do not create notifications, a new cause does, inaccessible-project activity leaks
+neither counts nor events, and reconnect converges without a reload/poll loop.
+
+## Phase tasks and commit checkpoints
+
+Every task lists its primary boundary test in the acceptance matrix below. Complete
+checkboxes only after its expectations and relevant owning suites are green.
+Task-local logging below uses the existing pino boundary: IDs/revisions/counts only;
+INFO transitions, WARN retry/refusal, ERROR failed migration/projection, no payloads.
+Pure selectors, docs and render-only components add no artificial log noise.
+
+### Phase 0 — Base reconciliation and complete specifications
+
+- [ ] **UX-T01. Establish the integration and migration baseline.** Dependencies: none.
+  Read both current tips/journals/ADR registries, review incoming project-config
+  attachment changes, and record applied-ledger provenance. Reconcile the same
+  branch with master before building on overlapping identifiers; reserve numbers
+  as UX-D06 specifies. Paths: `web/lib/db/migrations/**`, `schema.ts`,
+  `docs/decisions.md`, `docs/decisions/`, references/fixtures containing old numbers,
+  this plan. Do not rewrite an applied durable migration. Deliver a precise fresh/
+  incremental support matrix and recorded unresolved deployment premise. Logging:
+  existing migration logs only. Gate: no duplicate numbers/anchors, no lost original
+  operational or incoming attachment behavior. This is integration work in the
+  future implementation, not an action performed while writing this plan.
+- [ ] **UX-T02. Specify activity, identity, history and screen contracts.** Depends: UX-T01.
+  Paths: `docs/system-analytics/agents.md`, new
+  `docs/system-analytics/agent-activity-history.md`, `docs/screens/chrome/left-rail.md`,
+  `active-workspaces.md`, `docs/screens/projects/` agent-page reference (new),
+  `docs/screens/inbox.md`, respective indexes. Use R5 structure, exact status table,
+  detached/legacy states, permissions, wirefields, query/cursor bounds and EN/RU
+  copy table. Specify prompt-edit deferral explicitly. Logging: none.
+- [ ] **UX-T03. Specify incidents, persistence, APIs and migration safety.** Depends: UX-T01, UX-T02.
+  Paths: `docs/system-analytics/attention.md`, operational lifecycle/results docs,
+  new `docs/system-analytics/operational-incidents.md`,
+  `docs/db/attention-domain.md`, `agents-domain.md`, `operational-agents-domain.md`,
+  `docs/database-schema.md`, the OpenAPI/AsyncAPI files in UX-D07, new ADR record
+  and stub. Deliver state/refusal tables for every occurrence/ack/recovery/retry/
+  deletion/backfill path, causal recovery proof, locks and writer ownership, legacy
+  endpoint compatibility and rollback matrix. Logging: none.
+- [ ] **UX-T04. Freeze executable acceptance traceability.** Depends: UX-T02, UX-T03.
+  Paths: new `docs/system-analytics/agent-activity-traceability.md`,
+  `scripts/validate-requirement-coverage.mjs` and its existing tests, `package.json`
+  only if adding the follow-up validation alias; actual Vitest/Playwright config.
+  Map UX-AC01–07 and UX-IT01–12/UX-E2E01–02 to requirements, tasks and one primary
+  test each; add group-scoped UX-T parser support without weakening the original operational group.
+  Prove nonempty runner discovery and negative coverage validator fixture. Gate:
+  all design questions below resolved or bounded as stated; no contradictory tables
+  or unowned migration writer. Future behavior stays Designed. Logging: none.
+
+**Checkpoint P0:** `docs(agents): specify activity history and grouped incidents`.
+All canonical specs complete and internally consistent; docs/contracts/traceability
+validators green. No feature implementation before this gate. Migration-number
+integration, if needed, is a distinct preparatory commit with its own evidence.
+
+### Phase 1 — Durable identity and incident lifecycle
+
+- [ ] **UX-T05. Add frozen identity and additive persistence.** Depends: UX-T04.
+  Paths: `web/lib/db/schema.ts`, generated migration SQL/journal/snapshot,
+  `web/lib/agents/launch.ts`, `launch-contract.ts`, new
+  `web/lib/agents/activity-snapshot.ts`, generated `docs/db/erd.dbml`.
+  Freeze both standalone and flow-driving launches; do not mutate completion
+  contracts on existing runs. Implement constrained indexes/FKs and nullable legacy
+  boundary. Primary: UX-IT01. Logging: snapshot/backfill versions and row counts,
+  never config values. Gate: fresh/incremental schema and source identity invariants.
+- [ ] **UX-T06. Implement incident transitions in lifecycle owners.** Depends: UX-T05.
+  Paths: new `web/lib/runs/operational-incidents.ts` (pure classification separated
+  from transaction application), existing `operational-attention.ts`,
+  `web/lib/agents/finalization.ts`, `create-failure.ts`, reconcile/terminal owners
+  discovered by the Phase-0 writer inventory, `web/lib/gc/operational-disposition.ts`,
+  `web/lib/domain-events/taxonomy.ts`. Scope normalizers must reuse existing trigger
+  and config contracts. Primary: UX-IT02–04. Atomic CAS+occurrences+event, replay
+  uniqueness, consistent lock order, zero filesystem work in tx. Logging: episode
+  created/recovered, source fact/reason/count; duplicates DEBUG only.
+- [ ] **UX-T07. Implement cutover backfill and compatibility.** Depends: UX-T05, UX-T06.
+  Paths: existing maintenance/upgrade infrastructure, new bounded backfill module
+  alongside incident service, legacy acknowledgement route/service, migration tests.
+  Preserve exact legacy ack meaning, backfill identity then deterministic episodes,
+  seed notification baseline, persist page progress, verify facts/counts before
+  cutover. Primary: UX-IT05. Exercise crash between page commit and next invocation,
+  poison row, missing evidence, old reader behavior and catalog/run deletion.
+  Logging: processed cursor/count/version, refusal context; no historical message
+  dumps. Gate: no unchecked/unprocessed actionable facts hidden by new readers.
+
+**Checkpoint P1:** `feat(agents): persist activity identity and incident episodes`.
+RED/GREEN/refactor receipts, full web unit and integration suites green, migration
+journal/snapshot parity, no residual generation delta, docs/ERD synchronized.
+
+### Phase 2 — Queries, APIs and live projection
+
+- [ ] **UX-T08. Build bounded project-agent summary/history/detail queries.** Depends: UX-T05, UX-T07.
+  Paths: new `web/lib/agents/activity-queries.ts`, `project-links.ts`,
+  `web/lib/run-results/operational-projection.ts`, project agent route GETs and
+  new `runs/route.ts`, `definition/route.ts`, `incidents/route.ts` under
+  `web/app/api/projects/[slug]/agents/[agentId]/`. Reuse auth/attachment helpers;
+  history survives missing current definition. Primary: UX-IT06, UX-IT07. One batched
+  summary, keyset history, independent grants and safe DTOs. Logging: typed refusal
+  context via existing HTTP boundary, no per-row logs. Record EXPLAIN evidence for
+  the index-backed path with 10,000 retained runs, bounded page results and no N+1.
+- [ ] **UX-T09. Project one canonical decision and add episode acknowledgement.** Depends: UX-T06, UX-T07, UX-T08.
+  Paths: `web/lib/runs/operational-attention.ts`, `web/lib/queries/decisions.ts`,
+  new project-scoped incidents/acknowledge route, external decisions route,
+  `mcp/src/tools.ts` and DTO consumers. Primary: UX-IT08. Group before sorting/count;
+  route body schema/grants/CAS, per-reader seen semantics, legacy endpoint remains
+  exact, representative run not mutation authority. Logging: reader/episode/revision
+  accepted/refused, no diagnostic body. Reuse existing decision grants for read;
+  preserve the existing `answerHitl` capability for authenticated human self-ack;
+  cleanup retry retains `recoverRun` and memory/settings retain `editSettings`.
+- [ ] **UX-T10. Complete durable activity invalidation and quiet notifications.** Depends: UX-T08, UX-T09.
+  Paths: launch/scheduler/park/resume writers (only invalidation seams),
+  `web/app/api/attention/stream/route.ts`, `web/lib/notifications/attention-consumer.ts`,
+  `web/lib/notifications/digest-trigger.ts`, existing webhook outbox, reader-state
+  schema, taxonomy and shared attention refresh. Primary: UX-IT09. Scan durable activity
+  facts with existing cursor, detect content change under same count/group ID,
+  notify only newly actionable episodes and preserve user-specific acks. Persist
+  per-user publication receipts separately from acknowledgedAt and qualify the
+  shared system_sweep retry at count 1→1. Audit all
+  Pending/start/park/resume/stop/crash paths. Logging: existing structured cursor/
+  lag/refusal diagnostics; no new poller or notify-on-every-repeat event stream.
+
+**Checkpoint P2:** `feat(agents): expose scoped history and grouped attention`.
+Full web unit/integration suites green; API contracts and affected MCP tests/build
+green; SSE catch-up and negative grant cases executed, not merely mocked selectors.
+
+### Phase 3 — User surfaces and localization
+
+- [ ] **UX-T11. Render all active agent executions in the rail.** Depends: UX-T08, UX-T10.
+  Paths: `web/lib/queries/portfolio.ts`, new agent activity read model/DTO as needed,
+  `web/app/(app)/layout.tsx`, `web/components/chrome/left-rail.tsx`, shared rail
+  sections/nav/mobile components and EN/RU catalogs. Primary: UX-IT10, UX-E2E01.
+  Separate explicit active set from slot/retention sets; eliminate duplicate rail
+  rows only, preserve review workspaces, no global inaccessible occupancy. Keyboard,
+  collapsed/mobile parity, text/icon state, authorized Stop/run links. Logging: none.
+- [ ] **UX-T12. Add project summary and dedicated agent page.** Depends: UX-T08, UX-T10.
+  Paths: project page DTO mapping, `agents-attach-panel.tsx`, new
+  `web/app/(app)/projects/[slug]/agents/[agentId]/page.tsx`, loading/error boundaries,
+  new `web/components/agents/` page components, existing memory drawer/editor and
+  settings modal, EN/RU catalogs. Primary: UX-E2E02. URL tabs/filters/cursors, prompt
+  read grant, read-only historical mode, typed unavailable/error/reconnect/empty
+  states, focus restoration and accessible update feedback. Reuse memory CAS;
+  never expose a wrong-pin Studio link. Logging: none beyond shared HTTP errors.
+- [ ] **UX-T13. Render grouped Inbox incidents and remediation.** Depends: UX-T09, UX-T10, UX-T12.
+  Paths: `web/components/inbox/decision-card.tsx`, `decision-sections.tsx`,
+  `web/app/(app)/inbox/page.tsx`, new focused incident details/ack component,
+  EN/RU catalogs. Primary: UX-E2E01 plus service coverage UX-IT08.
+  Show agent/project, count/first/last, distinct causes and page link; bounded
+  cause expansion, per-user acknowledgement, individually targeted cleanup retry.
+  Localize reason/status/remediation headings; never dump raw reason codes as main
+  text. Preserve separate HITL cards and request-scoped response controls. Logging:
+  no render logs; mutations use UX-T09 owner.
+
+**Checkpoint P3:** `feat(ui): add agent activity history and quiet Inbox`.
+Full owning web suites and focused Playwright EN/RU scenarios green with zero
+retries/leaks; collapsed/mobile/keyboard cases executed; no terminal operational
+rows, no hidden active executions or review regressions.
+
+### Phase 4 — Conformance, integration and release qualification
+
+- [ ] **UX-T14. Close lifecycle and permission regressions across surfaces.** Depends: UX-T11–UX-T13.
+  Paths: existing operational integration suites, memory/launch/scheduler/decisions
+  suites and `web/e2e/platform-agents-operational.spec.ts`; new project-agent-page
+  browser spec if the existing suite would become unfocused. Primary: UX-IT11,
+  UX-IT12 and complete UX-E2E01–02. Test cancellation, checkpoint/resume, independent
+  concurrent permission requests, crash/recovery, cleanup exhaustion/release and
+  code-delivery review/promotion using existing controlled runtime. Do not duplicate
+  all original source-integrity tests; retain them as regressions. Logging: harness
+  evidence only. Repair any gap through its owning spec/test/code slice.
+- [ ] **UX-T15. Reconcile current docs and API/MCP compatibility.** Depends: UX-T14.
+  Paths: all Phase-0 docs, `docs/screens/README.md` and domain indexes,
+  `site-docs/concepts/`/`guides/` affected agent/operations pages and RU counterparts,
+  API schemas, mcp explicit DTO/tool documentation, traceability matrix, this plan.
+  Mark only qualified pieces Implemented. Publish opt-in grouped external API and
+  legacy projection compatibility; there is no silent v1 nullability/action-semantic
+  change. Publish retained-history vs incident
+  occurrence-count semantics, prompt edit boundary, detach/unknown identity behavior,
+  notification and ack semantics. Logging: none. No maister-plugins schema change.
+- [ ] **UX-T16. Qualify migration/release compatibility against current base.** Depends: UX-T14, UX-T15.
+  Recheck base/journal/ADR allocation and budgets for renumbering at integration;
+  do not reuse the old original-plan conflict-free receipt. Run fresh+incremental+
+  interrupted backfill proof, authorized role probes, frozen snapshot stability and
+  additive rollback drill on disposable DBs. Paths: migration tests, deployment/
+  upgrade documentation, qualification receipts. Logging: existing maintenance
+  progress and refusal logs. Confirm no new env/compose/Docker/runtime dependency
+  needed. If wiring changes emerge, add an explicit wiring task before release.
+- [ ] **UX-T17. Verify the complete acceptance matrix and review the final diff.** Depends: UX-T16.
+  Read final diff against the integrated base for spec/code/schema parity, safety,
+  source preservation, role leakage, query bounds, lifecycle writer coverage and
+  SOLID/KISS/DRY. Record exact runner discovery and source identity for every primary
+  test. Run full required suites/contracts/docs/ERD/MCP/browser gates; all required
+  tests pass without skips/retries/relaxed invariants. No aggregated old failed run
+  receipt is described as a fresh fully green invocation. Logging: evidence only.
+- [ ] **UX-T18. Commit qualified delivery and hand off release order.** Depends: UX-T17.
+  Mark completed tasks/criteria only with receipts; record phase commits, limits,
+  deployment ledger premise and owner steps. Keep branch clean. Release order:
+  reconcile base → maintenance/drain → additive schema and resumable backfill →
+  compatible platform/MCP → scoped smoke → reopen admission. Original core-package
+  publication remains a separate downstream action if not already released. No
+  push/deploy/tag execution. Logging: none.
+
+**Checkpoint P4:** `test(agents): qualify activity history and incident lifecycle`,
+then a small documentation/handoff commit only if needed. Do not squash away RED
+and migration evidence; never mark unchecked deployment premises as executed.
+
+## Minimum meaningful coverage and acceptance evidence
+
+Tests are added to the **owning phase**, not delayed to Phase 4. Extend current
+suites rather than mirror implementation with dozens of helper tests. Pure unit
+coverage is justified only for fingerprint/cursor/status transformations; primary
+acceptance uses real Postgres and actual route/runtime boundaries. Controlled ACP
+fixtures are appropriate; no paid GitHub mutation is needed to exercise these UI
+and ledger contracts. Each test ID has one primary owner, with a small browser
+composition proving wiring, not re-running the whole matrix.
+
+| Primary ID | Requirement / behavior and edge cases | Actual test owner / runner |
+| --- | --- | --- |
+| UX-IT01 | AC01/06: both launch seams snapshot ID; update/detach/delete/reattach; legacy proven/unknown/conflicting identity; fresh/incremental index/constraint parity | Existing `web/lib/agents/__tests__/launch-config-snapshot.integration.test.ts`, `agent-driven-flow.integration.test.ts` and migration integration fixture; Vitest integration, task T05 |
+| UX-IT02 | AC04: 1,000 repeats, multiple causes/scopes/projects, partial/403/missing/malformed result, distinct-run vs cause counts, no Task creation | Extend `web/lib/runs/__tests__/operational-attention.integration.test.ts`; Vitest integration, T06 |
+| UX-IT03 | AC05: simultaneous finalizers, replay, transaction rollback/process restart, overlapping/late success, zero-work recovery, reopened episode, safety reasons never auto-clear | New focused `operational-incidents.integration.test.ts` beside existing run suites; real DB separate connections, T06 |
+| UX-IT04 | AC05: exhausted/rearmed/re-exhausted/released cleanup with two resources sharing one cause (one release cannot close both), partial disposal, cancellation and crash retained evidence; terminal/resource state and occurrence commit atomically | Extend `web/lib/gc/__tests__/operational-disposition.integration.test.ts` and actual finalizer owner; Vitest integration, T06 |
+| UX-IT05 | AC01/06: interrupted/backfilled pages, no duplicate occurrence, existing per-run acks, unknown scope, catalog/run/user deletion, archived project, no historical notification storm | Migration/backfill integration suite using repository migration harness; T07 |
+| UX-IT06 | AC03: batched summary, retained total/active/last-launched/last-completed, flow-driving/manual/scheduled/delegated population, equal timestamps, bounded keyset/filter cursor, no N+1 | Existing `project-links.integration.test.ts` + new activity-queries integration owner; T08 |
+| UX-IT07 | AC03/07: real GET/grants contract, cross-project/cursor forgery, readRepoFiles vs membership, deleted/untrusted pinned definition, no latest-pin fallback, memory CAS regression | Existing route integration folders + memory route owner; T08 |
+| UX-IT08 | AC04/07: group/badge/opt-in REST/MCP parity plus legacy default DTO; per-user ack repeat/replay; new cause racing ack; old per-run ack does not suppress future repeat; scoped cleanup action | Existing decisions, external decisions and operational attention route integration; MCP contract tests; T09 |
+| UX-IT09 | AC07: taskless Pending→Running→park/resume→terminal, equal-count updated group, reconnect/cursor replay, access loss, new-cause one notification vs repeat zero, publication rollback and backstop replay at count 1→1 | Existing attention stream + notification consumer integration suites; T10 |
+| UX-IT10 | AC02: all active statuses/modes and flow-driving pool distinction, simultaneous runs, terminal exclusion, workspace dedup and code Review/retained-workspace parity | Existing portfolio/project query integration suites plus focused rail DOM tests; T11 |
+| UX-IT11 | AC02/05: two real independent permission requests, parked checkpoint/resume, stop/crash recovery free slots and update visibility; no autoapproval, no grouped HITL | Existing permission/queue/supervisor operational integration owners; T14 |
+| UX-IT12 | AC01/02/05: run snapshot stable through pin update; original source materialization/integrity and cleanup guards stay green; code-delivery Review/promotion unaffected | Existing launch/result/integrity/finalization/promotion suites; T14, reuse not duplicate |
+| UX-E2E01 | AC02/04/07: EN/RU active rail in expanded/collapsed/mobile, Pending and no-worktree row, SSE disappearance, one live failure card, ack then quiet repeat/new cause, separate HITL controls | Extend `web/e2e/platform-agents-operational.spec.ts`; Playwright repo runner, T11/T13/T14 |
+| UX-E2E02 | AC01/03: summary→page→second page→run, URL tabs/back/forward, new-run refresh, role gates, memory CAS error/success, unavailable definition and detached read-only state | New `web/e2e/project-agent-history.spec.ts`; Playwright repo runner, T12/T14 |
+
+Runner gate: confirm actual discovery via Vitest list and Playwright `--list` with
+repository configs; the `--passWithNoTests` script flag is not evidence. Every
+behavior phase exits with `pnpm --filter maister-web test:unit` and
+`pnpm --filter maister-web test:integration` fully green. Run affected suites
+while iterating; repeat broad gates at the named phase checkpoints, not after each
+formatting edit. A harness failure is not valid RED. Existing source assertions
+expecting one item per run, workspace-only rail or raw reason text must migrate in
+their owning phase (`operational-attention`, `decisions`, external route, rail and
+Inbox suites), never be deleted/skipped to hide defects. User-required functionality
+cannot be quarantined. Record unrelated blockers accurately and resolve before
+claiming all acceptance green.
+
+Final gates include web TypeScript and changed-file lint without unsolicited
+`--fix`, affected supervisor suites if writer seams change, MCP typecheck/tests/build,
+`pnpm validate:contracts`, `pnpm validate:docs:all`, public EN/RU doc links/build,
+requirement coverage including the original operational group, migration integrity,
+generated ERD check and no-delta Drizzle generation. Record commands, exact SHA/diff,
+platform, discovered test titles, RED assertion, GREEN totals, refactor reruns and
+limits. Hosted CI and production acceptance require their own receipts later.
+
+## Open questions and explicit defaults
+
+No unresolved product decision blocks implementation under this plan. The defaults
+above choose separate active rail, one Inbox group, per-reader episode acknowledgement,
+conservative same-scope recovery and read-only current prompt. They are deliberate
+choices, not claims the user requested every storage detail.
+
+Two evidence questions are gating implementation/release, not questions to invent
+answers to while planning:
+
+1. **Applied migration inventory:** have the branch's current 0194–0198 migrations
+   reached any non-disposable database? UX-T01 obtains actual deployment/ledger
+   evidence. Until proved otherwise, do not rewrite applied migrations. A supported
+   upgrade from such an installation needs an explicit reconciliation fixture.
+2. **Moving base:** local master already collides with this branch. UX-T01/UX-T16
+   recheck the authoritative integration base before reserving final identifiers;
+   today's local numbers are provisional. The user owns remote integration/release.
+
+Bounded limitations: no automatic resolution across incomparable configuration or
+unknown legacy scope; no reconstruction of missing historical prompts/identity;
+no new prompt editing/fork flow, no external history mutation tool, no lifetime
+metrics independent of retention, and no attempt to make concurrent GitHub imports
+exactly-once. These do not weaken the active visibility, grouped attention or
+history requirements of this follow-up.
+
+## Planning verification
+
+Two bounded read-only reviews checked the active plan for lifecycle/concurrency
+and UI/API/attention consistency. Their findings were incorporated: legacy
+acknowledgement inheritance, durable same-count notification recovery, repaired
+403 recovery independent of retryability, and cleanup shared by multiple resources.
+Both reviewers reported no remaining blocker within their reviewed scope.
+
+Planning checks confirm 18 unique unchecked tasks, seven acceptance contracts,
+primary integration/browser owners, valid table rows and a clean diff-whitespace
+check. Original completed plan content is preserved except its historical title.
+Only this plan file changed; no application tests or migrations were executed in
+this planning turn. Their future execution is required by the phase gates above.
+
+---
+
+## Historical operational-agent delivery
+
+The following original plan is retained as completed historical evidence. Its
+settings, numbering and base checks apply to that delivery, not UX-T01–UX-T18.
+
+# Original Implementation Plan: Operational agents and explicit completion contracts
 
 Branch: `feature/operational-agent-kind`
 
