@@ -448,3 +448,7 @@ triage activity. Other agents retain the target-only clarification event.
   `getOpenRelationBlockers`), `web/lib/scheduler/handlers/auto-launch-triaged.ts`
   (the tick), `mcp/src/tools.ts` (`flow_list`/`runner_list`), and the new ext
   routes under `web/app/api/v1/ext/projects/[slug]/flows`/`runners`.
+
+## Designed extension
+
+The [agent activity and qualification contract](task-qualification.md) defines the accepted follow-up; current behavior above remains Implemented until its owning phase is qualified.

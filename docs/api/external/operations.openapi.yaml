@@ -595,6 +595,10 @@ paths:
     post:
       summary: (M34 — Implemented; ADR-112 flag/enqueue — Implemented) Submit a triage verdict
       description: |
+        Designed extension: qualification-aware writes CAS input and assessment pointer;
+        bound agents receive 202 candidate. Human authority may publish 200. Legacy
+        shape/status remains unchanged; required tasks cannot bypass qualification.
+        Existing malformed body validation remains 422 CONFIG.
         Scope `tasks:triage`. The triager's verdict op — ONE transactional
         update of the task's launch-verdict fields plus the triage-status
         stamp. At least one body field is required; every provided field is
@@ -667,6 +671,12 @@ paths:
                   runnerId: "claude-code"
                   enqueue: true
       responses:
+        "202":
+          description: Designed — bound-agent candidate, no enqueue until validated finalization
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskQualificationReceipt"
         "200":
           description: |
             Triage applied. `triageStatus` is `triaged` for a verdict body or
@@ -3350,9 +3360,13 @@ paths:
 
   /api/v1/ext/decisions:
     get:
-      tags: [hitl]
+      tags:
+        - hitl
       summary: (ADR-169, Implemented) List everything blocked on the token owner
       description: |
+        Designed opt-in operationalGrouping=agent groups eligible failures by
+        project/agent with AgentIncidentGroup; omitted preserves the legacy DTO.
+        Representative run is nullable navigation, never a group mutation target.
         Scope `decisions:read`. Returns the owner's cross-project **decision
         queue** — the four kinds summed by the canonical `decisions` counter:
         respondable HITL, mechanically promotable runs, `Crashed` runs owing
@@ -3409,11 +3423,16 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [items, count]
+                required:
+                  - items
+                  - count
                 properties:
                   items:
                     type: array
-                    items: { $ref: "#/components/schemas/ExtDecisionItem" }
+                    items:
+                      oneOf:
+                        - $ref: "#/components/schemas/ExtDecisionItem"
+                        - $ref: "#/components/schemas/AgentIncidentGroup"
                   count:
                     type: integer
                     minimum: 0
@@ -3423,26 +3442,26 @@ paths:
                   value:
                     count: 2
                     items:
-                      - kind: "hitl"
-                        projectId: "3f2504e0-4f89-41d3-9a0c-0305e82c3301"
-                        projectSlug: "demo"
-                        taskKey: "DEMO-14"
-                        runId: "6ba7b810-9dad-41d1-80b4-00c04fd430c8"
-                        hitlRequestId: "7c9e6679-7425-40de-944b-e07fc1f90ae7"
-                        title: "Review deployment plan"
-                        criticality: "high"
-                        nextAction: "respond"
-                        createdAt: "2026-09-10T12:00:00.000Z"
-                      - kind: "crashed"
-                        projectId: "3f2504e0-4f89-41d3-9a0c-0305e82c3301"
-                        projectSlug: "demo"
-                        taskKey: "DEMO-9"
-                        runId: "1c4a9f22-5f0e-4c31-9f4a-2c7d1b6e8a03"
+                      - kind: hitl
+                        projectId: 3f2504e0-4f89-41d3-9a0c-0305e82c3301
+                        projectSlug: demo
+                        taskKey: DEMO-14
+                        runId: 6ba7b810-9dad-41d1-80b4-00c04fd430c8
+                        hitlRequestId: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+                        title: Review deployment plan
+                        criticality: high
+                        nextAction: respond
+                        createdAt: 2026-09-10T12:00:00.000Z
+                      - kind: crashed
+                        projectId: 3f2504e0-4f89-41d3-9a0c-0305e82c3301
+                        projectSlug: demo
+                        taskKey: DEMO-9
+                        runId: 1c4a9f22-5f0e-4c31-9f4a-2c7d1b6e8a03
                         hitlRequestId: null
-                        title: "Backfill the pricing table"
+                        title: Backfill the pricing table
                         criticality: null
-                        nextAction: "recover"
-                        createdAt: "2026-09-10T08:41:00.000Z"
+                        nextAction: recover
+                        createdAt: 2026-09-10T08:41:00.000Z
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
         "403":
@@ -5049,6 +5068,299 @@ components:
           schema: { $ref: "#/components/schemas/ExtErrorBody" }
 
   schemas:
+    TaskQualificationValue:
+      type: object
+      additionalProperties: false
+      required:
+        - schemaVersion
+        - decision
+        - checks
+        - reasonCodes
+        - nextActions
+        - evidenceRefs
+      properties:
+        schemaVersion:
+          type: integer
+          enum:
+            - 1
+        decision:
+          type: string
+          enum:
+            - ready
+            - needs_information
+            - needs_review
+            - not_actionable
+        checks:
+          type: array
+          maxItems: 16
+          items:
+            $ref: "#/components/schemas/TaskQualificationCheck"
+          minItems: 1
+        reasonCodes:
+          type: array
+          maxItems: 16
+          items: &a1
+            type: string
+            minLength: 1
+            maxLength: 256
+        nextActions:
+          type: array
+          maxItems: 16
+          items:
+            type: string
+            minLength: 1
+            maxLength: 2000
+        evidenceRefs:
+          type: array
+          maxItems: 32
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - id
+              - kind
+              - reference
+            properties:
+              id: *a1
+              kind:
+                type: string
+                enum:
+                  - repository
+                  - task
+                  - run
+                  - source
+                  - human_attestation
+              reference: *a1
+    TaskQualificationCheck:
+      type: object
+      additionalProperties: false
+      required:
+        - dimension
+        - state
+        - rationale
+        - evidenceIds
+      properties:
+        dimension:
+          type: string
+          enum:
+            - goal_scope
+            - acceptance
+            - consistency
+            - constraints_dependencies
+            - duplicates
+            - relevance
+            - bug_evidence
+        state:
+          type: string
+          enum:
+            - pass
+            - fail
+            - unknown
+            - not_applicable
+        rationale:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        evidenceIds:
+          type: array
+          maxItems: 32
+          items: *a1
+    TaskQualificationReceipt:
+      type: object
+      additionalProperties: false
+      required:
+        - qualificationId
+        - inputRevision
+        - qualificationRevision
+        - publicationState
+        - decision
+        - publicationReason
+      properties:
+        qualificationId: &a3
+          type: string
+          format: uuid
+        inputRevision: &a2
+          type: integer
+          minimum: 1
+        qualificationRevision: *a2
+        publicationState:
+          type: string
+          enum:
+            - candidate
+            - accepted
+            - rejected
+        decision:
+          type: string
+          enum:
+            - ready
+            - needs_information
+            - needs_review
+            - not_actionable
+        publicationReason:
+          type: string
+          minLength: 1
+          maxLength: 256
+          nullable: true
+    TaskQualificationSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - required
+        - mode
+        - inputRevision
+        - qualificationRevision
+        - qualificationId
+        - decision
+        - publicationState
+        - freshness
+        - blockedReason
+        - nextActions
+      properties:
+        candidate:
+          type: object
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/TaskQualificationReceipt"
+        required:
+          type: boolean
+        mode:
+          type: string
+          enum:
+            - legacy
+            - required
+            - execution_child
+        inputRevision: *a2
+        qualificationRevision:
+          type: integer
+          minimum: 1
+          nullable: true
+        qualificationId:
+          type: string
+          format: uuid
+          nullable: true
+        decision:
+          type: string
+          enum:
+            - ready
+            - needs_information
+            - needs_review
+            - not_actionable
+          nullable: true
+        publicationState:
+          type: string
+          enum:
+            - candidate
+            - accepted
+            - rejected
+          nullable: true
+        freshness:
+          type: string
+          enum:
+            - current
+            - stale
+            - unassessed
+        blockedReason:
+          type: string
+          minLength: 1
+          maxLength: 256
+          nullable: true
+        nextActions:
+          type: array
+          maxItems: 16
+          items: *a1
+    AgentIncidentEpisode:
+      type: object
+      additionalProperties: false
+      required:
+        - episodeId
+        - attentionRevision
+        - reasonCode
+        - scopeKind
+        - state
+        - firstAt
+        - lastAt
+        - occurrenceCount
+        - acknowledged
+        - representativeRunId
+        - remediationCode
+      properties:
+        episodeId: *a3
+        attentionRevision: *a2
+        reasonCode: *a1
+        scopeKind:
+          type: string
+          enum:
+            - business
+            - infrastructure
+            - unknown
+        state:
+          type: string
+          enum:
+            - open
+            - resolved
+        firstAt: &a4
+          type: string
+          format: date-time
+        lastAt: *a4
+        occurrenceCount: &a5
+          type: integer
+          minimum: 0
+        acknowledged:
+          type: boolean
+        representativeRunId:
+          type: string
+          format: uuid
+          nullable: true
+        remediationCode:
+          type: string
+          minLength: 1
+          maxLength: 256
+          nullable: true
+    AgentIncidentGroup:
+      type: object
+      additionalProperties: false
+      required:
+        - aggregation
+        - groupId
+        - projectId
+        - projectSlug
+        - agentId
+        - title
+        - unreadEpisodeCount
+        - totalCauseCount
+        - failedRunCount
+        - attemptCount
+        - representativeRunId
+        - episodes
+        - nextCursor
+      properties:
+        aggregation:
+          type: string
+          enum:
+            - agent
+        groupId: *a1
+        projectId: *a3
+        projectSlug: *a1
+        agentId: *a1
+        title: *a1
+        unreadEpisodeCount: *a5
+        totalCauseCount: *a5
+        failedRunCount: *a5
+        attemptCount: *a5
+        representativeRunId:
+          type: string
+          format: uuid
+          nullable: true
+        episodes:
+          type: array
+          maxItems: 10
+          items:
+            $ref: "#/components/schemas/AgentIncidentEpisode"
+        nextCursor:
+          type: string
+          minLength: 1
+          maxLength: 256
+          nullable: true
     # Operational components mirror web.openapi.yaml; runtime parity is required.
     OperationalReference:
       type: object
@@ -6028,6 +6340,18 @@ components:
       minProperties: 1
       additionalProperties: false
       properties:
+        requestKey:
+          type: string
+          format: uuid
+        expectedInputRevision:
+          type: integer
+          minimum: 1
+        expectedQualificationRevision:
+          type: integer
+          minimum: 1
+          nullable: true
+        qualification:
+          $ref: "#/components/schemas/TaskQualificationValue"
         flowId:
           type: string
           minLength: 1
@@ -6364,6 +6688,8 @@ components:
         - createdByUserId
         - createdAt
       properties:
+        qualification:
+          $ref: "#/components/schemas/TaskQualificationSummary"
         id:
           type: string
           format: uuid

@@ -125,3 +125,24 @@ test("operational group covers all 34 contracts and all 15 implementation tasks"
   assert.equal(rows.size, 34);
   assert.equal(tasks.filter((task) => group.implementationPhases.test(task)).length, 15);
 });
+
+test("agent activity task namespace is non-vacuous and rejects an orphan", () => {
+  const plan = "- [x] **UX-T01. Baseline**\n- [ ] **UX-T05. Build**\n- [ ] **UX-T30. Publish**\n";
+  assert.deepEqual(planTaskIds(plan), ["UX-T01", "UX-T05", "UX-T30"]);
+  const rows = matrixRows(row("UX-01", "UX-T05", "IT-UX-01"), ["UX"]);
+  assert.deepEqual(rows.get("UX-01").tasks, ["UX-T05"]);
+  const failures = evaluateCoverage({
+    ids: ["UX-01"], rows, tasks: planTaskIds(plan), suiteIds: new Set(),
+    prefixes: ["UX"], implementationPhases: /^UX-T(?:0[5-9]|[12]\d|30)$/,
+  });
+  assert.match(failures.join("\n"), /UX-T30: implementation task named by no requirement row/);
+});
+
+
+test("agent activity group names all planned obligations and implementation tasks", () => {
+  const result = checkGroupCoverage(COVERAGE_GROUPS["agent-activity"]);
+  assert.deepEqual(result.failures, []);
+  assert.equal(result.ids.length, 37);
+  assert.equal(result.rows.size, 37);
+  assert.equal(result.tasks.filter((id) => id.startsWith("UX-T")).length, 30);
+});

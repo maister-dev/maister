@@ -29,6 +29,15 @@ export const repoRoot = resolve(here, "..");
 const analyticsRoot = join(repoRoot, "docs", "system-analytics");
 
 export const COVERAGE_GROUPS = {
+  "agent-activity": {
+    label: "Agent activity and qualification",
+    planPath: ".ai-factory/plans/feature-operational-agent-kind.md",
+    documents: ["agent-activity-history.md", "agent-incidents.md", "agent-retry.md", "task-qualification.md"],
+    prefixes: ["UX"],
+    matrixPath: "docs/system-analytics/agent-activity-traceability.md",
+    implementationPhases: /^UX-T(?:0[5-9]|1[0-4]|19|2[0-3]|2[5-9]|30)$/,
+    testRoots: ["web", "supervisor", "mcp"],
+  },
   "project-config": {
     label: "Project configuration persistence",
     planPath: ".ai-factory/plans/project-config-git-workflow.md",
@@ -122,7 +131,7 @@ export function matrixRows(src, prefixes) {
   for (const m of src.matchAll(rowRe)) {
     rows.set(m[1], {
       contract: m[2].trim(),
-      tasks: [...m[3].matchAll(/\bT\d+(?:\.\d+)?\b/g)].map((t) => t[0]),
+      tasks: [...m[3].matchAll(/\b(?:UX-)?T\d+(?:\.\d+)?\b/g)].map((t) => t[0]),
       primaryTest: m[4].trim(),
       status: m[5].trim(),
     });
@@ -186,7 +195,7 @@ function suiteTestIds(roots, prefixes) {
 export function planTaskIds(src) {
   // Task definitions only — the bold header that opens a task body. Prose
   // cross-references elsewhere in the plan must not be mistaken for one.
-  return [...src.matchAll(/(?:^\*\*(T\d+\.\d+)\s*\[[ x]\]\s*—|^- \[[ x]\] \*\*(T\d+)\.\s)/gm)]
+  return [...src.matchAll(/(?:^\*\*(T\d+\.\d+)\s*\[[ x]\]\s*—|^- \[[ x]\] \*\*((?:UX-)?T\d+)\.\s)/gm)]
     .map((match) => match[1] ?? match[2]);
 }
 

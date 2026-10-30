@@ -236,3 +236,7 @@ and the flow-bound disabled-reason — all land in this namespace.
   aggregating endpoint, accessible modal).
 - Source: `web/components/board/panels/agents-attach-panel.tsx`,
   `web/components/board/panels/agents-attach-edit-modal.tsx`.
+
+## Designed agent activity extension
+
+Agent rows gain retained/active history summary and a link to dedicated details. New qualification-capable definitions require explicit project required-policy configuration before enablement. One-off retry runner and permanent future runner are separate actions with launchRun versus editSettings grants. See [canonical behavior](../../system-analytics/agent-activity-history.md).

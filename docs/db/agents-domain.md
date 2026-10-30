@@ -231,3 +231,7 @@ under the new `package_name` key.
 ## Operational agents
 
 The `kind` and `completion_contract` definition columns default to code delivery and no operational contract. Registry SET/CLEAR/re-SET follows package bytes. Runs snapshot launch semantics; catalog resync never reclassifies historical attempts. See [operational persistence](operational-agents-domain.md).
+
+## Designed activity extension
+
+New activity/incident/attempt/retry fields are owned by [agent activity persistence](agent-activity-domain.md); qualification by [task qualification persistence](task-qualification-domain.md). Existing schema above remains authoritative until the additive migration lands.

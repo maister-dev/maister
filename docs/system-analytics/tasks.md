@@ -784,3 +784,7 @@ Task detail lists open, answered and cancelled requests — see
   and relation re-gate effect).
 - Source: `web/lib/db/schema.ts` (tasks + runs tables),
   `web/lib/runs/launchability.ts`, `web/lib/social/relations.ts` (Implemented).
+
+## Designed extension
+
+The [agent activity and qualification contract](task-qualification.md) defines the accepted follow-up; current behavior above remains Implemented until its owning phase is qualified.

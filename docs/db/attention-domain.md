@@ -123,3 +123,7 @@ erDiagram
 ## Operational agents
 
 Operational acknowledgements are keyed by user, run, reason and revision. New cleanup failures reopen attention; acknowledging one reader never hides another reader item. See [operational persistence](operational-agents-domain.md).
+
+## Designed activity extension
+
+New activity/incident/attempt/retry fields are owned by [agent activity persistence](agent-activity-domain.md); qualification by [task qualification persistence](task-qualification-domain.md). Existing schema above remains authoritative until the additive migration lands.

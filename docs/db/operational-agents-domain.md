@@ -91,3 +91,7 @@ ordered platform-generation prefixes and corrects the JSON operator grouping.
 Migration 0203 extends the closed domain-event kind CHECK for the two operational
 attention/cleanup facts. Migrations 0199/0200 remain unchanged. These new migrations have only been
 applied to owned ephemeral integration databases during implementation.
+
+## Designed activity extension
+
+New activity/incident/attempt/retry fields are owned by [agent activity persistence](agent-activity-domain.md); qualification by [task qualification persistence](task-qualification-domain.md). Existing schema above remains authoritative until the additive migration lands.

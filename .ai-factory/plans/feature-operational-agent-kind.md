@@ -3,7 +3,7 @@
 Branch: `feature/operational-agent-kind` — keep this checkout and branch.
 
 Created: 2026-10-30. Refined by aif-improve after rebase and qualification analysis.
-Status: **Planned; UX-T01–UX-T30 remain unchecked. Rebase preparation is complete.**
+Status: **Phase 0 complete; Phase 1 in progress, UX-T05 current.**
 
 This is the active follow-up plan for `/aif-implement`, `/aif-improve` and
 `/aif-verify`. The completed original operational-agent plan and qualification
@@ -41,6 +41,39 @@ resolve its alternatives.
   dependency, port or host mount. Existing lifecycle and result contracts remain
   authoritative. Add a narrow Pending-failure entrypoint and durable retry intent;
   neither changes old run outcomes or resumes a session with another runner.
+
+## Implementation checkpoint
+
+- UX-T01: verified 2026-10-30 against connected GitHub master
+  `420f432b21ea190635b949dfeac22c36cdc940ec`; local HEAD starts at `c2506f79d`.
+  Plugin work continues from local `codex/operational-agent-kind` at `fc24713c0`.
+  Current main journal ends at 0203; ADR maximum is 195. Reserve 0204 activity,
+  0205 retry, 0206 trigger attempts, 0207 qualification and ADR-196–198.
+- Supported upgrade inputs: fresh DB, canonical master through 0198, and this
+  branch through 0203. All changes append new SQL; no applied migration is rewritten.
+  Durable deployment ledgers are not accessible in this checkout and are **unknown**.
+  A pre-rebase operational 0194–0198 installation is unsupported by ordinary upgrade;
+  migration qualification must prove refusal without modifying its ledger. Release
+  requires an actual operator ledger receipt before applying anything to that DB.
+  This is an explicit supported-input boundary, not an applied-nowhere assertion.
+- UX-T02/03/24 complete: canonical activity/incident/retry/qualification analytics,
+  DB domains, ADR-196–198, exact HTTP/AsyncAPI schemas, screen states/EN-RU copy,
+  configuration capability/SET-CLEAR contract and indexes are Designed.
+- UX-T04 RED: the new namespace test returned no UX tasks and failed 9/10 on the
+  intended assertion. GREEN: namespaced definitions and matrix rows are parsed;
+  a genuinely orphaned UX-T30 fails the negative fixture. Planned traceability has
+  37 contracts/edges, 21 implementation owners and no fabricated executed tests.
+  Primary repository-standard test IDs alias the UX-IT/UX-E2E plan case IDs.
+- P0 gates: all new/changed OpenAPI and eight AsyncAPI files validate through
+  official parsers, contract regression 9/9 and five adapter mirrors align;
+  traceability/index regression 27/27, 54 Mermaid diagrams, links/ADR indexes and
+  generated ERD drift check pass. The initial tsx socket sandbox refusal was an
+  environment error; rerun of the unchanged ERD check used permitted local IPC.
+  No new runtime behavior test is marked executed or Implemented at this stage.
+- Specification refinement: configuration absence clears a nullable override while
+  preserving the project's frozen legacy/required creation baseline. Assessment
+  revisions use a task-locked counter; accepted pointer and pending candidate are
+  distinct. These implement the existing policy/CAS requirements without new tasks.
 
 ## Verified implementation anchors
 
@@ -1127,7 +1160,7 @@ Pure selectors, docs and render-only components add no artificial log noise.
 
 ### Phase 0 — Base reconciliation and complete specifications
 
-- [ ] **UX-T01. Establish the integration and migration baseline.** Dependencies: none.
+- [x] **UX-T01. Establish the integration and migration baseline.** Dependencies: none.
   Rebase and identifier reconciliation are completed in `d81a04728`; do not redo
   them. Recheck both current tips/journals/ADR registries, review incoming project-config
   attachment changes, and record applied-ledger provenance. Confirm the recorded same-branch rebase remains current; reserve new numbers
@@ -1138,7 +1171,7 @@ Pure selectors, docs and render-only components add no artificial log noise.
   existing migration logs only. Gate: no duplicate numbers/anchors, no lost original
   operational or incoming attachment behavior. Remaining work is applied-ledger provenance and future namespace reservation;
   the user separately authorized and received the rebase in this planning turn.
-- [ ] **UX-T02. Specify activity, identity, history and screen contracts.** Depends: UX-T01.
+- [x] **UX-T02. Specify activity, identity, history and screen contracts.** Depends: UX-T01.
   Paths: `docs/system-analytics/agents.md`, new
   `docs/system-analytics/agent-activity-history.md`, `docs/screens/chrome/left-rail.md`,
   `active-workspaces.md`, `docs/screens/projects/` agent-page reference (new),
@@ -1146,7 +1179,7 @@ Pure selectors, docs and render-only components add no artificial log noise.
   detached/legacy states, permissions, wirefields, query/cursor bounds and EN/RU
   copy table. Specify prompt-edit deferral, truthful project/portfolio working-copy populations,
   runner-failure diagnostic UX and separate one-off/default-runner controls. Logging: none.
-- [ ] **UX-T03. Specify incidents, persistence, APIs and migration safety.** Depends: UX-T01, UX-T02.
+- [x] **UX-T03. Specify incidents, persistence, APIs and migration safety.** Depends: UX-T01, UX-T02.
   Paths: `docs/system-analytics/attention.md`, operational lifecycle/results docs,
   new `docs/system-analytics/agent-incidents.md`,
   `docs/db/attention-domain.md`, `agents-domain.md`, `operational-agents-domain.md`,
@@ -1155,14 +1188,14 @@ Pure selectors, docs and render-only components add no artificial log noise.
   deletion/backfill path, causal recovery proof, locks and writer ownership, legacy
   endpoint compatibility, retry request/child idempotency and downstream-effect crash
   windows, failure-stage admission evidence and rollback matrix. Logging: none.
-- [ ] **UX-T24. Specify shared intake qualification and authoritative admission.** Depends: UX-T01, UX-T03.
+- [x] **UX-T24. Specify shared intake qualification and authoritative admission.** Depends: UX-T01, UX-T03.
   Paths: `docs/system-analytics/triage.md`, `tasks.md`, task-intake qualification
   reference (new), task/agent DB domains, API/SSE contracts, MCP schemas, screen and
   EN/RU copy specs, new ADR. Freeze UX-D11 schema/state tables, project policy and
   legacy cutover, complete writer/launch inventory, repository SHA provenance,
   input invalidation, retention and exact capability floor. Distinguish business
   disposition from operational failure. Primary UX-AC11; logging: none.
-- [ ] **UX-T04. Freeze executable acceptance traceability.** Depends: UX-T02, UX-T03, UX-T24.
+- [x] **UX-T04. Freeze executable acceptance traceability.** Depends: UX-T02, UX-T03, UX-T24.
   Paths: new `docs/system-analytics/agent-activity-traceability.md`,
   `scripts/validate-requirement-coverage.mjs` and its existing tests, `package.json`
   only if adding the follow-up validation alias; actual Vitest/Playwright config.

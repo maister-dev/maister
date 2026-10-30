@@ -12,10 +12,69 @@ channels:
       operationId: observeOperationalLifecycle
       message:
         oneOf:
+          - $ref: '#/components/messages/AgentActivityChanged'
+          - $ref: '#/components/messages/AgentIncidentChanged'
+          - $ref: '#/components/messages/TaskQualificationChanged'
           - $ref: '#/components/messages/AttentionAcknowledged'
           - $ref: '#/components/messages/CleanupChanged'
 components:
   messages:
+    AgentActivityChanged:
+      name: agent.activity_changed
+      summary: Designed — scoped activity invalidation
+      payload:
+        type: object
+        additionalProperties: false
+        required:
+          - projectId
+          - agentId
+          - revision
+        properties:
+          projectId: &a1
+            type: string
+            format: uuid
+          agentId: &a2
+            type: string
+            minLength: 1
+            maxLength: 256
+          revision: &a3
+            type: integer
+            minimum: 1
+    AgentIncidentChanged:
+      name: agent.incident_changed
+      summary: Designed — episode content or actionable revision changed
+      payload:
+        type: object
+        additionalProperties: false
+        required:
+          - projectId
+          - agentId
+          - episodeId
+          - revision
+        properties:
+          projectId: *a1
+          agentId: *a2
+          episodeId: *a1
+          revision: *a3
+    TaskQualificationChanged:
+      name: task.qualification_changed
+      summary: Designed — input/publication changed; not selectable as an agent trigger
+      payload:
+        type: object
+        additionalProperties: false
+        required:
+          - projectId
+          - taskId
+          - inputRevision
+          - qualificationRevision
+        properties:
+          projectId: *a1
+          taskId: *a1
+          inputRevision: *a3
+          qualificationRevision:
+            type: integer
+            minimum: 1
+            nullable: true
     AttentionAcknowledged:
       name: run.operational_attention_acknowledged
       summary: One reader acknowledged an exact failure reason revision

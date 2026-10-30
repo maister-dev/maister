@@ -925,3 +925,7 @@ single-active-run guards.
 ## Operational agents
 
 Operational definitions separate kind, execution mode, workspace access and approval policy. The immutable launch and compatibility rules are owned by [operational agents](operational-agents.md); code-delivery defaults are unchanged.
+
+## Designed extension
+
+The [agent activity and qualification contract](agent-activity-history.md) defines the accepted follow-up; current behavior above remains Implemented until its owning phase is qualified.

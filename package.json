@@ -25,6 +25,7 @@
     "runtime:check": "node scripts/check-runtime.mjs",
     "test:runtime": "node --test scripts/runtime-contract.test.mjs",
     "test:stage-ab-lane": "node --test scripts/run-stage-ab-tests.test.mjs scripts/isolation-ci-workflow.test.mjs scripts/isolation-ci-evidence.test.mjs",
+    "validate:agent-activity-coverage": "node scripts/validate-requirement-coverage.mjs --group agent-activity",
     "validate:operational-coverage": "node scripts/validate-requirement-coverage.mjs --group operational-agents"
   },
   "devDependencies": {

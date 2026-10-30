@@ -185,3 +185,8 @@ components:
       example:
         type: attention.stream_timeout
         reason: quiet_cap
+# Designed — ADR-196–198: existing decisions/work/activity regions are reused.
+# Durable agent activity, retry/attempt settlement, qualification input/publication
+# and incident content changes contribute to the scanned signature even if group
+# identity and badge count are unchanged. Visibility is checked before the tick.
+# No new browser polling, event transport or diagnostic body is introduced.

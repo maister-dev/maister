@@ -249,3 +249,7 @@ flowchart LR
 ## Operational agents
 
 Operational Failed/Crashed Runs and exhausted cleanup add per-reader revision-bound decisions. Acknowledgement changes only the reader queue. Cleanup state and acknowledgement emit transactional pointer events; equal counts with different decision IDs invalidate the live view. Notification delivery retains its count-delta policy. See [operational lifecycle](operational-agent-lifecycle.md).
+
+## Designed extension
+
+The [agent activity and qualification contract](agent-incidents.md) defines the accepted follow-up; current behavior above remains Implemented until its owning phase is qualified.
