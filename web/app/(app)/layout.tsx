@@ -126,7 +126,11 @@ export default async function AppLayout({
         badges={railBadges}
         crumb={
           <NavCrumb
+            ariaLabel={tNav("breadcrumbLabel")}
             fallback={tNav("crumbDesk")}
+            hrefs={Object.fromEntries(
+              railSections.map((section) => [section.id, section.href]),
+            )}
             labels={Object.fromEntries(
               railSections.map((section) => [section.id, section.label]),
             )}

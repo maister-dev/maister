@@ -47,6 +47,7 @@ docs/screens/
     git-panel.md     # shared run git panel (commit/discard/publish/update/PR/reattach)
     workbench.md     # shared Files/Diff/Evidence/Timeline workbench
   projects/          # project onboarding + settings surfaces
+    project-list.md # /projects project summaries + technical disclosure
     project-board.md # /projects/:slug board + card editing
     add-project.md   # /projects/new add-project form
     project-settings-git.md # /projects/:slug?tab=settings Git section (block)
