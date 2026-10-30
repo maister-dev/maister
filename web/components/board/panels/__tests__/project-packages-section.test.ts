@@ -21,6 +21,14 @@ const attachment = {
   trustStatus: "untrusted",
   attachedAt: "2026-06-12T10:00:00.000Z",
   updateAvailable: true,
+  sourceKind: "git" as const,
+  sourceTargets: [] as {
+    installId: string;
+    versionLabel: string;
+    sourceKind: "git" | "local";
+    compatible: boolean;
+    incompatibilityReason: string | null;
+  }[],
   upgradeTarget: {
     installId: "inst-2",
     versionLabel: "aif/v2.0.0",
@@ -160,6 +168,34 @@ describe("ProjectPackagesSection", () => {
     // The older version is reachable only through the explicit downgrade picker.
     expect(markup).toContain("downgradePick");
     expect(markup).toContain("aif/v2.0.0");
+  });
+
+  it("offers an explicit source switch separately from version changes", () => {
+    const withLocalSource = {
+      ...attachment,
+      sourceTargets: [
+        {
+          installId: "inst-local",
+          versionLabel: "local-abcdef123456",
+          sourceKind: "local" as const,
+          compatible: true,
+          incompatibilityReason: null,
+        },
+      ],
+    };
+    const markup = renderToStaticMarkup(
+      createElement(ProjectPackagesSection, {
+        slug: "demo",
+        isAdmin: true,
+        canTrust: true,
+        attachments: [withLocalSource],
+        availableInstalls: installs,
+      }),
+    );
+
+    expect(markup).toContain("switchSourcePick");
+    expect(markup).toContain('value="inst-local"');
+    expect(markup).toContain("sourceLocal");
   });
 
   it("hides the trust button from project admins without the global role", () => {

@@ -39,6 +39,9 @@ export const TOKEN_SCOPES = [
   // and the enabled platform ACP runners a triage verdict may assign.
   "flows:read",
   "runners:read",
+  // Project-admin package attachment lifecycle. Installing/trusting a package
+  // revision remains a separate platform-admin operation.
+  "packages:manage",
   "agents:trigger",
   "runs:delegate",
   "runs:collect",

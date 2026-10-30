@@ -546,6 +546,26 @@ nodes:
   });
 
   it("upgrade flips the group to v2: repoint, drop removed flow, keep pins", async () => {
+    const [removedFlow] = await db
+      .select({ id: schema.flows.id })
+      .from(schema.flows)
+      .where(
+        and(
+          eq(schema.flows.projectId, projectId),
+          eq(schema.flows.flowRefId, "flow-b"),
+        ),
+      );
+    const taskId = randomUUID();
+
+    await db.insert(schema.tasks).values({
+      id: taskId,
+      projectId,
+      number: 9000,
+      title: "Task survives a package upgrade that removes its Flow",
+      prompt: "Clear the removed Flow selection and preserve this task.",
+      flowId: removedFlow.id,
+    });
+
     const result = await upgradeAttachment({
       projectId,
       projectSlug: "attach-int",
@@ -564,6 +584,12 @@ nodes:
 
     expect(flowRows.map((f: any) => f.flowRefId)).toEqual(["flow-a"]);
     expect(flowRows[0].packageInstallId).toBe(installV2);
+    const [taskAfterUpgrade] = await db
+      .select({ id: schema.tasks.id, flowId: schema.tasks.flowId })
+      .from(schema.tasks)
+      .where(eq(schema.tasks.id, taskId));
+
+    expect(taskAfterUpgrade).toEqual({ id: taskId, flowId: null });
 
     const [att] = await db
       .select()
@@ -711,6 +737,26 @@ nodes:
   });
 
   it("detach removes the group (CLEAR) and re-attach restores it (re-SET)", async () => {
+    const [selectedFlow] = await db
+      .select({ id: schema.flows.id })
+      .from(schema.flows)
+      .where(
+        and(
+          eq(schema.flows.projectId, projectId),
+          eq(schema.flows.flowRefId, "flow-a"),
+        ),
+      );
+    const taskId = randomUUID();
+
+    await db.insert(schema.tasks).values({
+      id: taskId,
+      projectId,
+      number: 9001,
+      title: "Task keeps its history when a package detaches",
+      prompt: "Keep this task and clear only its removed Flow selection.",
+      flowId: selectedFlow.id,
+    });
+
     const result = await detachPackage({ projectId, attachmentId, db });
 
     expect(result).toEqual({ detached: true });
@@ -721,6 +767,12 @@ nodes:
         .from(schema.flows)
         .where(eq(schema.flows.projectId, projectId)),
     ).toHaveLength(0);
+    const [taskAfterDetach] = await db
+      .select({ id: schema.tasks.id, flowId: schema.tasks.flowId })
+      .from(schema.tasks)
+      .where(eq(schema.tasks.id, taskId));
+
+    expect(taskAfterDetach).toEqual({ id: taskId, flowId: null });
     expect(
       await db
         .select()

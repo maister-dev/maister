@@ -40,6 +40,7 @@ const {
   capabilityImports,
   capabilityRecords,
   runs,
+  tasks,
 } = schemaModule as unknown as Record<string, any>;
 
 const log = pino({
@@ -964,6 +965,23 @@ async function loadAttachment(
   return att ?? null;
 }
 
+async function clearTaskFlowSelections(
+  tx: any,
+  projectId: string,
+  flowIds: string[],
+): Promise<void> {
+  if (flowIds.length === 0) return;
+
+  // A task's Flow selection is mutable configuration, while the task itself
+  // is durable project history. Package detach (and an upgrade that removes a
+  // member Flow) must therefore leave the task flowless instead of either
+  // deleting it or letting the tasks.flow_id FK abort the package operation.
+  await tx
+    .update(tasks)
+    .set({ flowId: null, updatedAt: new Date() })
+    .where(and(eq(tasks.projectId, projectId), inArray(tasks.flowId, flowIds)));
+}
+
 // Detach: refused while any member revision is pinned by an active run; one
 // transaction removes the attachment + member rows + ingested records.
 // Member flow_revisions stay (in-flight runs + GC own them).
@@ -995,6 +1013,7 @@ export async function detachPackage(opts: {
   const revisionIds = memberFlows
     .map((f: any) => f.enabledRevisionId)
     .filter((id: unknown): id is string => typeof id === "string");
+  const memberFlowIds = memberFlows.map((f: any) => f.id as string);
 
   if (revisionIds.length > 0) {
     const active = await db
@@ -1026,6 +1045,7 @@ export async function detachPackage(opts: {
           eq(capabilityImports.packageInstallId, att.packageInstallId),
         ),
       );
+    await clearTaskFlowSelections(tx, opts.projectId, memberFlowIds);
     await tx
       .delete(flows)
       .where(
@@ -1059,6 +1079,9 @@ export async function upgradeAttachment(opts: {
   projectSlug: string;
   attachmentId: string;
   packageInstallId: string;
+  // Optional compare-and-swap guard for external/headless callers. Internal
+  // callers keep their existing behaviour when it is omitted.
+  expectedPackageInstallId?: string;
   workspaceRoot?: string;
   // FIXME(any): dual drizzle-orm peer-dep variants.
   db?: any;
@@ -1068,6 +1091,17 @@ export async function upgradeAttachment(opts: {
   const att = await loadAttachment(db, opts.projectId, opts.attachmentId);
 
   if (!att) return null;
+
+  if (
+    opts.expectedPackageInstallId !== undefined &&
+    att.packageInstallId !== opts.expectedPackageInstallId
+  ) {
+    throw new MaisterError(
+      "CONFLICT",
+      "package attachment changed since it was read; refresh and retry",
+      { details: { reason: "stale_attachment_revision" } },
+    );
+  }
 
   const [next] = await db
     .select()
@@ -1087,6 +1121,10 @@ export async function upgradeAttachment(opts: {
       "PRECONDITION",
       `package install ${next.id} is ${next.packageStatus}, not Installed`,
     );
+  }
+
+  if (next.id === att.packageInstallId) {
+    return { upgraded: false };
   }
 
   const [previous] = await db
@@ -1121,22 +1159,47 @@ export async function upgradeAttachment(opts: {
       signal: opts.signal,
     });
     const flowRowIds = memberFlows.map((m) => m.flowRowId);
+    const removedFlowWhere = and(
+      eq(flows.projectId, opts.projectId),
+      eq(flows.packageInstallId, att.packageInstallId),
+      flowRowIds.length > 0 ? notInArray(flows.id, flowRowIds) : undefined,
+    );
+    const removedFlows = await tx
+      .select({ id: flows.id })
+      .from(flows)
+      .where(removedFlowWhere);
 
     // Flows the new manifest no longer ships lose their enablement rows.
-    await tx
-      .delete(flows)
-      .where(
-        and(
-          eq(flows.projectId, opts.projectId),
-          eq(flows.packageInstallId, att.packageInstallId),
-          flowRowIds.length > 0 ? notInArray(flows.id, flowRowIds) : undefined,
-        ),
-      );
+    await clearTaskFlowSelections(
+      tx,
+      opts.projectId,
+      removedFlows.map((flow: any) => flow.id as string),
+    );
+    await tx.delete(flows).where(removedFlowWhere);
 
-    await tx
+    const updated = await tx
       .update(projectPackageAttachments)
       .set({ packageInstallId: next.id })
-      .where(eq(projectPackageAttachments.id, att.id));
+      .where(
+        opts.expectedPackageInstallId === undefined
+          ? eq(projectPackageAttachments.id, att.id)
+          : and(
+              eq(projectPackageAttachments.id, att.id),
+              eq(
+                projectPackageAttachments.packageInstallId,
+                opts.expectedPackageInstallId,
+              ),
+            ),
+      )
+      .returning({ id: projectPackageAttachments.id });
+
+    if (updated.length === 0) {
+      throw new MaisterError(
+        "CONFLICT",
+        "package attachment changed since it was read; refresh and retry",
+        { details: { reason: "stale_attachment_revision" } },
+      );
+    }
   });
 
   const capRows = await db
