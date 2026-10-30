@@ -299,6 +299,14 @@ describe("Task qualification storage", () => {
       "INSERT INTO projects(id,slug,name,repo_path,maister_yaml_path,task_key) VALUES ($1,$1,'Human qualification',$2,'/unused/config','HUMAN')",
       [projectId, repoPath],
     );
+    await database.pool.query(
+      "UPDATE users SET must_change_password=false,account_status='active' WHERE id=$1",
+      [userId],
+    );
+    await database.pool.query(
+      "INSERT INTO project_members(id,project_id,user_id,role) VALUES ($1,$2,$3,'member')",
+      [randomUUID(), projectId, userId],
+    );
     const task = await createTask(
       { title: "Clear request", prompt: "Implement the specified behavior" },
       { projectId },

@@ -7,7 +7,10 @@ import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import { parseAgentDefinition, qualifyAgentId } from "@/lib/agents/definition";
-import { OPERATIONAL_ENGINE_MIN } from "@/lib/agents/kind";
+import {
+  TASK_QUALIFICATION_ENGINE_MIN,
+  OPERATIONAL_ENGINE_MIN,
+} from "@/lib/agents/kind";
 import { MaisterError } from "@/lib/errors";
 import { isEngineCompatible } from "@/lib/flows/engine-version";
 import { semverGte } from "@/lib/flows/semver";
@@ -27,6 +30,14 @@ export function assertOperationalAgentCompatibility(
       `agent ${definition.id}: operational_v1 requires package compat.engine_min >= ${OPERATIONAL_ENGINE_MIN}`,
     );
   }
+  if (
+    definition.taskQualification &&
+    !semverGte(compat.engine_min, TASK_QUALIFICATION_ENGINE_MIN)
+  )
+    throw new MaisterError(
+      "CONFIG",
+      `agent ${definition.id}: task qualification requires package compat.engine_min >= ${TASK_QUALIFICATION_ENGINE_MIN}`,
+    );
   const range = isEngineCompatible(compat.engine_min, compat.engine_max);
 
   if (!range.compatible)

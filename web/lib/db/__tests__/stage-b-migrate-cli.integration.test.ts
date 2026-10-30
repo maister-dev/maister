@@ -27,7 +27,9 @@ async function migrationHash(tag: string): Promise<string> {
   return createHash("sha256").update(new Uint8Array(contents)).digest("hex");
 }
 
-async function runMigrationCli(): Promise<{
+async function runMigrationCli(
+  environment: { MAISTER_UPGRADE_MAINTENANCE?: string } = {},
+): Promise<{
   exitCode: number;
   stdout: string;
   stderr: string;
@@ -38,7 +40,11 @@ async function runMigrationCli(): Promise<{
       ["--import", "./scripts/_register-shim.mjs", "lib/db/migrate.ts"],
       {
         cwd: process.cwd(),
-        env: { ...process.env, DB_URL: testDatabase.databaseUrl },
+        env: {
+          ...process.env,
+          DB_URL: testDatabase.databaseUrl,
+          ...environment,
+        },
       },
     );
 
@@ -150,7 +156,13 @@ describe("db:migrate Stage B cutover", () => {
       [runId],
     );
 
-    const second = await runMigrationCli();
+    const unfenced = await runMigrationCli();
+
+    expect(unfenced.exitCode).not.toBe(0);
+    expect(unfenced.stderr + unfenced.stdout).toContain(
+      "Enable upgrade maintenance",
+    );
+    const second = await runMigrationCli({ MAISTER_UPGRADE_MAINTENANCE: "1" });
 
     expect(second.exitCode).toBe(0);
     const mode = await testDatabase.pool.query(

@@ -3,7 +3,7 @@
 Branch: `feature/operational-agent-kind` — keep this checkout and branch.
 
 Created: 2026-10-30. Refined by aif-improve after rebase and qualification analysis.
-Status: **Phase 1 complete; Phase 2 pending.**
+Status: **Phases 0–2 qualified; Phase 3 UI and package composition in progress.**
 
 This is the active follow-up plan for `/aif-implement`, `/aif-improve` and
 `/aif-verify`. The completed original operational-agent plan and qualification
@@ -11,6 +11,13 @@ receipts are retained below under **Historical operational-agent delivery**;
 its checked tasks are not acceptance evidence for this follow-up. The short
 product-direction note at the end is historical input; the decisions here
 resolve its alternatives.
+
+- UX-T26: required admission is shared by manual/force/Flow/scheduler and delivery-agent launch; frozen local SHA and first-dispatch CAS, governed child proof, REST/MCP schema parity and protected current/history APIs are implemented. Real PG/Git owning suites, actual HTTP scope/replay/history assertions and qualifier pin tests pass; complete phase gates remain required.
+- UX-T30 RED: a clean qualifier result completed Done without publishing or checking its candidate because finalization omitted the qualification snapshot. GREEN: finalizer context includes it; the source-run/task transaction publishes result, clean terminal and assessment together. Three cohesive real PG/Git tests cover rollback/replay, missing/reference/malformed/dirty/cancel/crash/edit/revoked failures and both human/finalizer lock orders. No post-terminal publication sweep.
+
+- P2 complete web unit gate: 884 files / 9,231 tests pass after removing three constant-equality checks and updating legacy-only launch seams and the filesystem ownership inventory. MCP build/typecheck, 357 unit tests and 6 stdio wire tests pass; official API/AsyncAPI parsers, adapter mirrors and full docs/ERD validation pass.
+- P2 fresh-install RED: bootstrap attention baseline is absent and migration CLI would demand an upgrade fence on an empty installation. GREEN: migration seeds zero only when no projects exist; existing-project backfill still refuses without maintenance. Owning notification integrations: 14/14 pass. Browser setup exercised the actual fresh migration CLI successfully.
+- UX-T11 browser RED: actual EN page exposes zero active-agent rows instead of six; the new Playwright scenario fails at that behavior, with clean fixture shutdown and zero leaks. Draft P3 components are isolated outside the checkout while the P2 integration gate runs.
 
 ## Settings and delivery boundary
 
@@ -48,7 +55,8 @@ resolve its alternatives.
   `420f432b21ea190635b949dfeac22c36cdc940ec`; local HEAD starts at `c2506f79d`.
   Plugin work continues from local `codex/operational-agent-kind` at `fc24713c0`.
   Current main journal ends at 0203; ADR maximum is 195. Reserve 0204 activity,
-  0205 retry, 0206 trigger attempts, 0207 qualification and ADR-196–198.
+  0205 retry, 0206 trigger attempts, 0207 qualification, 0208 attention publication
+  baseline and ADR-196–198.
 - Supported upgrade inputs: fresh DB, canonical master through 0198, and this
   branch through 0203. All changes append new SQL; no applied migration is rewritten.
   Durable deployment ledgers are not accessible in this checkout and are **unknown**.
@@ -120,6 +128,51 @@ resolve its alternatives.
   failures; isolated investigation remains active. P1 is not committed or accepted. Isolated configuration publication passes 33/33;
   the steering lock-race failed because new schema fields changed its SQL prefix.
   Preserving the existing id/run_kind prefix restores the unchanged owning test.
+
+- UX-T08 complete: one-statement retained summary, microsecond-precise signed
+  scoped history and independent attempt cursors, exhaustive active status mapping,
+  pinned protected definition view and retained-history authorization. A 10,000-row
+  EXPLAIN uses runs_agent_activity_history_idx; the summary issues one statement.
+  Query/HTTP cases pass 4/4, existing attachment suite passes 13/13, memory grants/CAS
+  passes 10/10, types and contracts pass. Cursor bound is 2,048, using existing
+  AUTH_SECRET; unknown legacy trigger remains null. Episode-only history ownership
+  is included after all run evidence expires. Nullable reference schemas now use
+  explicit null branches instead of invalid nullable-only allOf wrappers.
+- UX-T09 in progress: grouped projection and canonical queue consume one agent key,
+  exact occurrence/distinct-run/attempt counts, bounded unseen causes, content
+  revisions and explicit reader receipts. Owning projection tests passed 2/2;
+  existing decision union/grants tests pass 16 integration + 27 unit cases. Safe
+  HTTP history/acknowledgement and default/opt-in external routes passed their
+  owning tests; MCP decisions parameter parity passes 4/4. Full MCP suite retains
+  two qualification-field failures owned by UX-T26, not waived or marked green.
+- P1 regression: full web unit passes 884 files / 9,234 tests. The initial full
+  integration run had 11 failed tests plus Docker-port/cleanup hook errors; its
+  configuration/push/partition reruns passed, and restoring the existing run-column
+  prefix makes the full unchanged steering suite pass 13/13. The bounded full
+  integration rerun remains active; P1 stays staged separately and uncommitted.
+
+- Phase qualification isolation: mutable-checkout full integration finished 605
+  passing files but retained stale transformed modules across phase edits, plus a
+  Docker port timeout. It is diagnostic, not a phase-acceptance receipt. Frozen
+  staged tree 4b5a88c681dc75fd33ddafdb0d93d86ddc5d3a54 is held by unreferenced
+  snapshot d4ca6aff44cf9bd90e43e0a9aeab526eade8282e in the disposable detached
+  /private/tmp/maister-operational-p1-qualification checkout. Full unit (2 workers)
+  and integration (4 workers) run there; this tree must remain unchanged. Installed
+  dependency directories are symlinked after lockfile identity verification; the
+  existing pnpm dependency check is warning-only for this relocated test checkout.
+
+- UX-T09 complete: exact episode acknowledgement uses ordered locks and rolls
+  back with its outbox; concurrent repeats emit one event. Groups survive complete
+  run expiry and retain safe legacy reader semantics. Owners pass 14 integration
+  cases after the corrected audited 422 path; decision union regression passes
+  16, memory CAS passes 10 and librarian visibility passes 6. One full MCP gate
+  remains RED for qualification fields assigned to UX-T26.
+- UX-T10 RED: a second new cause at unchanged queue count returns false instead
+  of publishing once. Refined SDD reserves 0208 for a durable per-user publication
+  baseline: counts alone mis-notify migrated historical groups after outbox expiry.
+  Keep the existing publisher/sweep; ordinary count changes and unpublished agent
+  episodes are separate triggers. Seed existing users under maintenance through
+  an explicitly injected canonical query before reopening admission.
 
 ## Verified implementation anchors
 
@@ -485,7 +538,7 @@ transaction, CAS and external-effect protocols; no new hidden side effect.
 | `GET /api/projects/{slug}/agents` | Add safe batched `activity` summary to attached agent DTO; slug=url-param, reader=auth-context, project/agent rows=server-state. Existing grants remain. | `docs/api/web.openapi.yaml`, agents analytics |
 | `GET /api/projects/{slug}/agents/{agentId}` (new method) | Safe metadata/activity + attachment/historical state; definition capability flags, not protected prompt by default. slug/agentId=url-param; resolved project/source key=server-state; reader=auth-context. 404 only when neither visible attachment nor proven history exists. | Same |
 | `GET .../{agentId}/runs` (new) | `{items,nextCursor,asOf}`; cursor/limit/filter=query-controlled and validated, with server-derived project scope. Invalid cursor 400; inaccessible project follows existing 403/404 policy. | Same |
-| `GET .../{agentId}/definition` (new) | readRepoFiles gate; current pinned safe prompt/config/provenance or typed unavailable state. Missing current attachment is 404; valid historical page still works. No runtime secrets/private paths. | Same |
+| `GET .../{agentId}/definition` (new) | readRepoFiles gate; current pinned safe prompt/config/provenance or typed unavailable state. A retained-history owner without a current attachment returns 200 with state=unavailable and reason=agent_detached; 404 means no visible attachment or retained ownership. No runtime secrets/private paths. | Same |
 | `GET .../{agentId}/incidents` (new) | Bounded episode/cause details and acknowledgement state, separate cursor; member gets safe metadata, protected evidence/diagnostics use existing run-data grants. Derive group via project/source key, not an arbitrary representative run. | Same, attention analytics |
 | `POST .../{agentId}/incidents/acknowledge` (new) | body-controlled nonempty bounded array of `{episodeId,attentionRevision}`; compare every ID to server-state project/agent, derive user from auth and require the existing `answerHitl` project action. 200 accepted/replayed/closed no-op; 409 stale invalid revision; 400 malformed; 403/404 unauthorized. All-or-none, no run/source IDs supplied in body. | Same, operational lifecycle AsyncAPI |
 | Existing `POST /api/runs/{runId}/operational/acknowledge`, cleanup retry, project memory/settings | Preserve existing body/status/grants. Run/project/path locators=url-param; scope/user/cleanup owner=server-state/auth-context. Old per-run acknowledgement never means new episode acknowledgement. Document cutover compatibility. | Existing web OpenAPI paths |
@@ -1322,7 +1375,7 @@ journal/snapshot parity, no residual generation delta, docs/ERD synchronized.
 
 ### Phase 2 — Queries, APIs and live projection
 
-- [ ] **UX-T08. Build bounded project-agent summary/history/detail queries.** Depends: UX-T05, UX-T07, UX-T29.
+- [x] **UX-T08. Build bounded project-agent summary/history/detail queries.** Depends: UX-T05, UX-T07, UX-T29.
   Paths: new `web/lib/agents/activity-queries.ts`, `project-links.ts`,
   `web/lib/run-results/operational-projection.ts`, project agent route GETs and
   new `runs/route.ts`, `definition/route.ts`, `incidents/route.ts` under
@@ -1331,7 +1384,7 @@ journal/snapshot parity, no residual generation delta, docs/ERD synchronized.
   summary, keyset history, independent grants and safe DTOs. Logging: typed refusal
   context via existing HTTP boundary, no per-row logs. Record EXPLAIN evidence for
   the index-backed path with 10,000 retained runs, bounded page results and no N+1.
-- [ ] **UX-T09. Project one canonical decision and add episode acknowledgement.** Depends: UX-T06, UX-T07, UX-T08.
+- [x] **UX-T09. Project one canonical decision and add episode acknowledgement.** Depends: UX-T06, UX-T07, UX-T08.
   Paths: `web/lib/runs/operational-attention.ts`, `web/lib/queries/decisions.ts`,
   new project-scoped incidents/acknowledge route, external decisions route,
   `mcp/src/tools.ts` and DTO consumers. Primary: UX-IT08. Group before sorting/count;
@@ -1340,7 +1393,7 @@ journal/snapshot parity, no residual generation delta, docs/ERD synchronized.
   accepted/refused, no diagnostic body. Reuse existing decision grants for read;
   preserve the existing `answerHitl` capability for authenticated human self-ack;
   cleanup retry retains `recoverRun` and memory/settings retain `editSettings`.
-- [ ] **UX-T10. Complete durable activity invalidation and quiet notifications.** Depends: UX-T08, UX-T09.
+- [x] **UX-T10. Complete durable activity invalidation and quiet notifications.** Depends: UX-T08, UX-T09.
   Paths: launch/scheduler/park/resume writers (only invalidation seams),
   `web/app/api/attention/stream/route.ts`, `web/lib/notifications/attention-consumer.ts`,
   `web/lib/notifications/digest-trigger.ts`, existing webhook outbox, reader-state
@@ -1352,7 +1405,7 @@ journal/snapshot parity, no residual generation delta, docs/ERD synchronized.
   Pending/start/park/resume/stop/crash paths. Logging: existing structured cursor/
   lag/refusal diagnostics; no new poller or notify-on-every-repeat event stream.
 
-- [ ] **UX-T20. Implement explicit safe rerun with one-off runner override.** Depends: UX-T05, UX-T08, UX-T10, UX-T19.
+- [x] **UX-T20. Implement explicit safe rerun with one-off runner override.** Depends: UX-T05, UX-T08, UX-T10, UX-T19.
   Paths: new `web/lib/agents/retry.ts`, new run retry-options/POST/status routes,
   `launch.ts` reserved-identity seam, existing runner resolver/create-command
   dispatcher, `scheduler/system-sweeps.ts`, materialization/context mutex and orphan-GC
@@ -1364,7 +1417,7 @@ journal/snapshot parity, no residual generation delta, docs/ERD synchronized.
   speculative replay of partial effects. Logging: source/intent/successor/runner
   IDs, state/refusal and lease retry; never prompt or credential bodies.
 
-- [ ] **UX-T26. Enforce qualification at triage and every task launch boundary.** Depends: UX-T25, UX-T19.
+- [x] **UX-T26. Enforce qualification at triage and every task launch boundary.** Depends: UX-T25, UX-T19.
   Paths: `services/triage.ts`, `runs/launchability.ts`, `services/runs.ts`,
   scheduler admission/auto-launch handlers, ext task/triage and UI routes,
   `mcp/src/tools.ts`, task read models, `agents/launch.ts` task_target resolver.
@@ -1374,7 +1427,7 @@ journal/snapshot parity, no residual generation delta, docs/ERD synchronized.
   Candidate publication belongs to T30, not a route-owned terminalization. Log typed
   refusals/input/evidence revisions. No shell approval bypass or guessed validity.
 
-- [ ] **UX-T30. Publish agent qualifications only with validated terminal evidence.** Depends: UX-T26, UX-T06, UX-T19.
+- [x] **UX-T30. Publish agent qualifications only with validated terminal evidence.** Depends: UX-T26, UX-T06, UX-T19.
   Paths: `web/lib/tasks/qualification.ts`, `web/lib/agents/finalization.ts`,
   operational result projection, external/UI qualification response adapters and
   recovery integration owners. Submit immutable candidates without enqueue; in
@@ -1697,6 +1750,23 @@ The sequence is **specified requirement → canonical contract → failing accep
 6. **Evidence:** record requirement IDs, exact command/test titles, source SHA or worktree diff identity, platform/runner, observed RED reason, GREEN counts and zero skips, refactor re-run, and remaining limits. Keep records in the implementation's existing review/qualification evidence area; do not create a new test framework or use chronological receipts as canonical product documentation.
 7. **No late test phase:** T19 aggregates and re-runs already implemented acceptance coverage. Each earlier behavior task owns its tests, fixtures, runner registration and migrated assertions. T18 owns only the package/platform composition boundary; it does not repeat every lifecycle permutation through an LLM or browser.
 8. **Release gate:** all requirements and edge rows have executed primary tests, the complete owning suites and required E2E/contract/doc/migration gates are green, and no safety question is left to the implementer. Unrelated pre-existing failures are reported explicitly and resolved as blockers or by an owner-approved scope decision; they are never silently quarantined to claim full acceptance.
+
+
+- P1 checkpoint committed as `f72d14e39` (`feat(agents): persist activity identity and incident episodes`).
+- P1 qualification: immutable tree `4b5a88c681dc75fd33ddafdb0d93d86ddc5d3a54`;
+  full unit 884 files / 9,234 tests passed. Full integration: 599 files passed,
+  10 environment failures (external dependency symlinks rejected by Turbopack,
+  two Docker-port timeouts); all ten exact files then passed, 85 tests, after
+  cloning dependencies inside the disposable checkout and limiting workers to 2.
+  Two existing OS-gated files remain skipped. No source changed between runs.
+- UX-T10 GREEN: real episode publication at count 1→1, concurrent publishers,
+  receipt/outbox rollback and system-sweep replay; insert-only fenced upgrade
+  baseline and outbox-retention replay; six lifecycle transitions; successful
+  operational execution stays out of Updates while normal code-delivery activity
+  remains visible. Existing stream suite plus same-group content invalidation
+  passed (20 tests); notifications/feed/digest regression passed (54 tests),
+  notification owner integration 12 tests and unit 8 tests passed. Additive 0208
+  and generated 153-table ERD; official API/AsyncAPI validation green.
 
 ## Roadmap Linkage
 
@@ -2254,10 +2324,30 @@ cannot falsely resolve an incident. Specify API/schema/migration compatibility,
 EN/RU copy and meaningful RED→GREEN integration/browser coverage before building
 the follow-up. Use existing live SSE updates, not a new polling loop.
 
+- UX-T20 RED→GREEN: durable retry and its real HTTP boundary; same-key replay,
+  concurrent admission, one-off runner selection without default changes,
+  revoked grants, disabled attachment, stale preview, unresolved source session,
+  exact Git worktree adoption after an expired owner, stale-owner rejection,
+  unexpected file preservation, Git index-lock cleanup exhaustion and explicit
+  revision/request-key rearm. Four owning integration scenarios pass; existing
+  launch/orphan suites pass. Finalization regression is being adapted to count
+  terminal facts separately from the new lifecycle invalidation facts.
 
-- P1 qualification: immutable tree `4b5a88c681dc75fd33ddafdb0d93d86ddc5d3a54`;
-  full unit 884 files / 9,234 tests passed. Full integration: 599 files passed,
-  10 environment failures (external dependency symlinks rejected by Turbopack,
-  two Docker-port timeouts); all ten exact files then passed, 85 tests, after
-  cloning dependencies inside the disposable checkout and limiting workers to 2.
-  Two existing OS-gated files remain skipped. No source changed between runs.
+- UX-T20 final owning regression: 12 tests passed (retry HTTP/Git recovery plus
+  transaction finalization). Existing launch/config and orphan suites passed.
+  Retry disposal checks the current fence and live lease before preservation,
+  before removal and before releasing its receipt; actor revocation never revokes
+  the system's narrow disposal duty. Full P2 gate remains pending T26/T30.
+
+
+- P2 immutable qualification: tree `1d6254a626d57875cba72b7b90b1dfc827c89586`,
+  disposable snapshot `85fec4be67930bb62612800a52bc222249c22d25`, Node 24.15.0.
+  Full unit: 884 files / 9,231 tests passed. Fresh full integration: 618 files /
+  5,443 tests passed; two existing OS-conditional tests skipped on Darwin.
+  TypeScript passes. Earlier failed mutable-checkout runs are diagnostic only.
+  Owning MCP stdio, generated schema, API/AsyncAPI, traceability/docs/ERD gates
+  passed as recorded above. No hosted/deployment or live provider claim.
+- P3 composition found that an immediately rejected session.create can retain
+  no receipt_evidence. Retry correctly refuses uncertain commands; UX-T23 must
+  close this receipt-persistence gap through the existing command owner, with
+  exact rejected/non-inflight proof. Do not weaken the retry safety predicate.

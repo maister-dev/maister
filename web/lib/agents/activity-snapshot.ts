@@ -13,12 +13,17 @@ export function buildAgentActivitySnapshot(
   agentId: string,
   effective: EffectiveAgentDefinition,
 ): AgentActivitySnapshot {
+  const { taskQualification, ...legacyDefinition } = effective.parsed;
+  const definition = taskQualification
+    ? { ...legacyDefinition, taskQualification }
+    : legacyDefinition;
+
   return {
     version: 1,
     agentId,
     displayName: effective.parsed.name,
     definitionSha256: createHash("sha256")
-      .update(canonicalCommandJson(effective.parsed))
+      .update(canonicalCommandJson(definition))
       .digest("hex"),
     packageInstallId: effective.packageInstallId,
     packageName: effective.packageName,

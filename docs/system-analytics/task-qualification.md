@@ -391,3 +391,19 @@ admission snapshots. Human publication remains separate from agent candidates.
 Qualification input reads at most 1,000 blocking clarification records, ordered by
 sequence. Exceeding that bound refuses assessment with `qualification_input_limit`;
 no truncated evidence digest can be accepted.
+
+
+Qualification execution boundaries: an explicit requeue under a required project
+policy opts an existing legacy request into qualification. Delivery launch stores
+the accepted evidence and exact local SHA. The first graph/session dispatch
+revalidates that receipt and records `task_admission_checked_at` once; later
+semantic edits hold future delivery without changing an already dispatched run.
+Governed children inherit their parent's accepted evidence basis. A taskless
+legacy parent has no fabricated board relation; a task-bound parent requires its
+actual `parent_of` relation, whose deletion invalidates the child's proof.
+
+The database writer floor requires `maister.task_qualification_writer=v1` for
+qualification-governed task/run writes. Maintenance remains closed until every
+writer supports this capability. Application owners resolve Git before opening
+transactions and enforce run → task → credential lock order. Human assessment
+writers own only the task and credential locks.

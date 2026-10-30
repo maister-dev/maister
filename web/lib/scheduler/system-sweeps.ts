@@ -19,6 +19,7 @@ import type {
 
 import pino from "pino";
 
+import { runAgentRetryAdmissionSweep } from "@/lib/agents/retry";
 import { reconcileAgentTriggerAttempts } from "@/lib/agents/trigger-attempts";
 import { runEventStreamHealthSweep } from "@/lib/execution-host/events/stream-health";
 import { reportStrandedAgentTurns } from "@/lib/agents/stranded-turns";
@@ -372,6 +373,20 @@ export async function runSystemSweep(
     errors.push(`keepalive sweep failed: ${message}`);
     bundleErrors.push(`keepalive sweep failed: ${message}`);
     log.error({ err: message }, "system_sweep keepalive threw");
+  }
+
+  try {
+    const retries = await runAgentRetryAdmissionSweep(getDb());
+
+    errors.push(...retries.errors);
+    bundleErrors.push(...retries.errors);
+    log.info(retries, "system_sweep agent retries reconciled");
+  } catch (err) {
+    const message = errorMessage(err);
+
+    errors.push(`agent retry recovery failed: ${message}`);
+    bundleErrors.push(`agent retry recovery failed: ${message}`);
+    log.error({ err: message }, "system_sweep agent retry recovery threw");
   }
 
   try {

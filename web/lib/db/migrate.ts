@@ -38,6 +38,7 @@ import {
 } from "./m43-cutover-migration-root";
 import { maskDbUrl, resolvePostgresDbUrl } from "./postgres-url";
 
+import { backfillAttentionPublicationPage } from "@/lib/notifications/attention-baseline";
 import { backfillAgentActivityPage } from "@/lib/runs/agent-activity-backfill";
 import { UPGRADE_MAINTENANCE_ENV } from "@/lib/maintenance/upgrade-fence";
 import {
@@ -343,6 +344,13 @@ async function main(): Promise<void> {
         .complete
     ) {
       // Each page commits its own durable restart cursor.
+    }
+
+    while (
+      !(await backfillAttentionPublicationPage(db as unknown as ExecutionDb))
+        .complete
+    ) {
+      // Insert-only pages preserve a newer publisher baseline on restart.
     }
 
     if (m43Telemetry && !m43TelemetryLogged) {

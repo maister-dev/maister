@@ -56,7 +56,12 @@ describe("CT-LAU-06 librarian discovery tools route to the visibility-scoped ext
       "/api/v1/ext/tasks/search?q=invoice+pay&cursor=c1",
     ],
     ["work_list", {}, "GET", "/api/v1/ext/work"],
-    ["decisions_list", {}, "GET", "/api/v1/ext/decisions"],
+    [
+      "decisions_list",
+      {},
+      "GET",
+      "/api/v1/ext/decisions?operationalGrouping=agent",
+    ],
     [
       "clarification_list",
       { slug: "alpha", taskId: "task-1" },

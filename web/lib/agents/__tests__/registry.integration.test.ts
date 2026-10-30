@@ -184,10 +184,10 @@ async function agentRow(
 }
 
 describe("registerPackageAgents", () => {
-  it("IT-OPA-01 synchronizes kind and completion through SET/CLEAR/re-SET", async () => {
+  it("IT-OPA-01 synchronizes kind, completion and qualification declaration through SET/CLEAR/re-SET", async () => {
     const operational = definitionMd().replace(
       "mode: session",
-      "kind: operational\ncompletion: {contract: operational_v1}\nmode: session",
+      "kind: operational\ncompletion: {contract: operational_v1}\ntask_qualification: {contract: v1, role: intake}\nmode: session",
     );
 
     for (const [version, content, kind, completion] of [
@@ -199,13 +199,15 @@ describe("registerPackageAgents", () => {
         name: "core",
         versionLabel: version,
         agents: { scan: content },
-        engineMin: "3.9.0",
+        engineMin: "3.10.0",
       });
 
       expect((await registerPackageAgents(installId, db)).invalid).toEqual([]);
       expect(await agentRow("core:scan")).toMatchObject({
         kind,
         completionContract: completion,
+        taskQualification:
+          kind === "operational" ? { contract: "v1", role: "intake" } : null,
       });
     }
   });

@@ -31,6 +31,7 @@ const labels: FrontmatterArtifactEditorLabels = {
   description: "Description",
   agentKind: "Deliverable kind",
   agentCompletion: "Completion contract",
+  agentQualification: "Task qualification role",
   agentWorkspace: "Workspace",
   agentWorkspaceRef: "Workspace ref",
   agentMode: "Mode",

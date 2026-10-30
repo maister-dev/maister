@@ -454,7 +454,7 @@ describe("dirty-watchdog terminal choke point (ADR-090 L3)", () => {
       expect(webhookRows.rows.map((row) => row.type)).toEqual(["run.review"]);
 
       const domainRows = await pool.query(
-        `SELECT "kind" FROM "domain_events" WHERE "run_id" = $1`,
+        `SELECT "kind" FROM "domain_events" WHERE "run_id" = $1 AND kind IN ('run.done','run.failed','run.crashed','run.abandoned','run.review')`,
         [runId],
       );
 

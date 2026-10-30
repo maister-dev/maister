@@ -23,6 +23,10 @@ import {
 } from "./process-invocation";
 import { migrateTestDatabase } from "./migrate-test-database";
 
+import {
+  TASK_QUALIFICATION_WRITER_SETTING,
+  TASK_QUALIFICATION_WRITER_CAPABILITY,
+} from "@/lib/db/writer-capability";
 import * as mainSchema from "@/lib/db/schema";
 
 const MAIN_MIGRATIONS_FOLDER = "./lib/db/migrations";
@@ -494,6 +498,15 @@ export async function startMainPostgresTestDb(
 ): Promise<StartedPostgresTestDb> {
   const database = await startBarePostgresTestDb(options);
 
+  database.pool.on("connect", (client) => {
+    void client
+      .query(
+        `SET ${TASK_QUALIFICATION_WRITER_SETTING}='${TASK_QUALIFICATION_WRITER_CAPABILITY}'`,
+      )
+      .catch((error) =>
+        logger.error({ error }, "test qualification writer declaration failed"),
+      );
+  });
   try {
     await migrate(database.db, { migrationsFolder: "./lib/db/migrations" });
     logger.info(
@@ -688,6 +701,19 @@ export async function startMainAndBrainPostgresTestDbTemplate(
     const pool = new Pool({
       connectionString: databaseUrl.href,
       max: options.poolMax,
+    });
+
+    pool.on("connect", (client) => {
+      void client
+        .query(
+          `SET ${TASK_QUALIFICATION_WRITER_SETTING}='${TASK_QUALIFICATION_WRITER_CAPABILITY}'`,
+        )
+        .catch((error) =>
+          logger.error(
+            { error },
+            "test qualification writer declaration failed",
+          ),
+        );
     });
     const db = Object.assign(
       drizzle(pool),

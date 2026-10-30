@@ -321,7 +321,11 @@ export async function GET(req: NextRequest): Promise<Response> {
           decisions: queue.count,
           updates,
           decisionSignature: queue.items
-            .map((item) => item.id)
+            .map((item) =>
+              item.kind === "operational" && "aggregation" in item.operational
+                ? `${item.id}:${item.operational.contentRevision}`
+                : item.id,
+            )
             .sort()
             .join("|"),
         };

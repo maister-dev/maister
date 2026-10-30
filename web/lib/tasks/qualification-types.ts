@@ -47,7 +47,7 @@ export type TaskExecutionChildProof = {
   parentLegacy: boolean;
   planRevision: string;
   childInputDigest: string;
-  relationId: string;
+  relationId: string | null;
 };
 export type TaskAdmissionSnapshot = {
   version: 1;

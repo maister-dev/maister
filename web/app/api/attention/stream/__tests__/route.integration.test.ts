@@ -16,7 +16,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { NextRequest } from "next/server";
 import { Pool } from "pg";
@@ -903,5 +903,53 @@ it("IT-EDGE-OPL-08 equal-count operational reason replacement invalidates decisi
   } finally {
     controller.abort();
     await pool.query("DELETE FROM runs WHERE id=$1", [runId]);
+  }
+}, 30_000);
+
+it("IT-UX-09 agent episode content refreshes the existing group without changing its count or ID", async () => {
+  const episodeId = randomUUID();
+
+  await pool.query(
+    "INSERT INTO agent_incident_episodes(id,project_id,source_agent_id,scope_key,scope_kind,fingerprint,reason_code) VALUES ($1,$2,'core:scan','unknown','unknown',$3,'runner_unavailable')",
+    [episodeId, fx.project, "a".repeat(64)],
+  );
+  await pool.query(
+    "INSERT INTO agent_incident_occurrences(episode_id,source_fact_key,fingerprint,channel,observed_at) VALUES ($1,$2,$3,'admission_refusal',now())",
+    [episodeId, `attempt:${episodeId}`, "a".repeat(64)],
+  );
+  const controller = new AbortController();
+
+  try {
+    const response = await GET(streamRequest(controller));
+    const reader = response.body!.getReader();
+    const first = await reader.read();
+    const initial = parseFrame(new TextDecoder().decode(first.value).trim());
+
+    reader.releaseLock();
+    await db.transaction(async (tx) => {
+      await tx.execute(
+        sql`UPDATE agent_incident_episodes SET content_revision=content_revision+1,last_at=clock_timestamp() WHERE id=${episodeId}`,
+      );
+      await emitDomainEvent({
+        db: tx,
+        kind: "agent.incident_changed",
+        projectId: fx.project,
+        payload: { projectId: fx.project, agentId: "core:scan", revision: 2 },
+      });
+    });
+    const changes = movedFrames(await collect(response, controller, 6000));
+
+    expect(
+      changes.some(
+        (frame) =>
+          frame.data?.decisions === initial.data?.decisions &&
+          (frame.data?.changed as string[]).includes("decisions"),
+      ),
+    ).toBe(true);
+  } finally {
+    controller.abort();
+    await pool.query("DELETE FROM agent_incident_episodes WHERE id=$1", [
+      episodeId,
+    ]);
   }
 }, 30_000);

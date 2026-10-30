@@ -1232,11 +1232,11 @@ export async function getCrossProjectHitlInbox(
   userId: string,
   globalRole: GlobalRole,
   scope: CrossProjectHitlScope = {},
+  client: NodePgDatabase<typeof schema> = db(),
 ): Promise<CrossProjectHitlInbox> {
   const now = new Date();
-  const client = db();
 
-  const allVisibleIds = await getVisibleProjectIds(userId, globalRole);
+  const allVisibleIds = await getVisibleProjectIds(userId, globalRole, client);
   const allowed = scope.projectIds;
   const visibleIds =
     allowed === undefined

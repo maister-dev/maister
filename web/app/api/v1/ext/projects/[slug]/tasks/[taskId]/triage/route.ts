@@ -1,11 +1,17 @@
 import "server-only";
 
+import type { Db } from "@/lib/execution-host/db";
 import type { QueueWriteFields } from "@/lib/tasks/queue-fields";
 
 import { and, eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import {
+  prepareTaskQualification,
+  type TaskQualificationAuthor,
+} from "@/lib/tasks/qualification";
+import { taskQualificationWriteSchema } from "@/lib/tasks/qualification-schema";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
@@ -57,6 +63,12 @@ const postBodySchema = z
     // confidence → NULL). Out-of-range confidence → 422 (wire validation + DB CHECK).
     priority: z.enum(["low", "normal", "high", "urgent"]).nullable().optional(),
     confidence: z.number().min(0).max(1).nullable().optional(),
+    qualification: taskQualificationWriteSchema.shape.qualification.optional(),
+    expectedInputRevision:
+      taskQualificationWriteSchema.shape.expectedInputRevision.optional(),
+    expectedQualificationRevision:
+      taskQualificationWriteSchema.shape.expectedQualificationRevision.optional(),
+    requestKey: taskQualificationWriteSchema.shape.requestKey.optional(),
   })
   .strict()
   .refine((body) => Object.keys(body).length > 0, {
@@ -112,6 +124,122 @@ export async function POST(
           { code: "NOT_FOUND", message: "task not found" },
           { status: 404 },
         );
+      }
+
+      if (
+        body.qualification !== undefined ||
+        body.expectedInputRevision !== undefined ||
+        body.expectedQualificationRevision !== undefined ||
+        body.requestKey !== undefined
+      ) {
+        if (
+          body.flag !== undefined ||
+          body.targetBranch !== undefined ||
+          body.promotionMode !== undefined ||
+          Buffer.byteLength(JSON.stringify(body)) > 65536
+        )
+          return NextResponse.json(
+            {
+              code: "CONFIG",
+              message:
+                "Qualification cannot be mixed with flag, targetBranch or promotionMode and is limited to 64 KiB",
+            },
+            { status: 422 },
+          );
+        const request = taskQualificationWriteSchema.safeParse({
+          qualification: body.qualification,
+          expectedInputRevision: body.expectedInputRevision,
+          expectedQualificationRevision: body.expectedQualificationRevision,
+          requestKey: body.requestKey,
+          ...(body.flowId !== undefined ? { flowId: body.flowId } : {}),
+          ...(body.runnerId !== undefined ? { runnerId: body.runnerId } : {}),
+          ...(body.baseBranch !== undefined
+            ? { baseBranch: body.baseBranch }
+            : {}),
+          ...(body.enqueue !== undefined ? { enqueue: body.enqueue } : {}),
+        });
+
+        if (!request.success)
+          return NextResponse.json(
+            {
+              code: "CONFIG",
+              message:
+                "Complete structured qualification and both expected revisions are required",
+            },
+            { status: 422 },
+          );
+        if (ctx.actor.tokenKind === "agent" && !ctx.actor.boundRunId)
+          return NextResponse.json(
+            {
+              code: "PRECONDITION",
+              message: "An agent assessment requires its bound qualifier run",
+            },
+            { status: 409 },
+          );
+        const author: TaskQualificationAuthor =
+          ctx.actor.tokenKind === "agent"
+            ? {
+                kind: "agent_run",
+                runId: ctx.actor.boundRunId!,
+                tokenId: ctx.actor.tokenId,
+              }
+            : {
+                kind: "project_token",
+                identity: `token:${ctx.actor.tokenId}`,
+                tokenId: ctx.actor.tokenId,
+                userId: ctx.actor.ownerUserId,
+              };
+
+        try {
+          const prepared = await prepareTaskQualification(db as Db, {
+            projectId: ctx.projectId,
+            taskId,
+            author,
+            request: request.data,
+          });
+          const status = author.kind === "agent_run" ? 202 : 200;
+          const receipt = await (db as Db).transaction(async (tx) => {
+            const receipt = await prepared.apply(tx);
+
+            if (body.priority !== undefined || body.confidence !== undefined)
+              await setTaskQueueFields(tx, {
+                projectId: ctx.projectId,
+                taskId,
+                actor: socialActorForToken(ctx.actor),
+                queueFields: {
+                  ...(body.priority !== undefined
+                    ? { priority: body.priority }
+                    : {}),
+                  ...(body.confidence !== undefined
+                    ? { triageConfidence: body.confidence }
+                    : {}),
+                },
+              });
+            await recordRequiredTokenAudit(
+              {
+                ...tokenAuditIdentity(ctx.actor),
+                projectId: ctx.projectId,
+                scopeUsed: "tasks:triage",
+                endpoint: ENDPOINT_TRIAGE,
+                method: "POST",
+                result: "ok",
+                statusCode: status,
+              },
+              tx,
+            );
+
+            return receipt;
+          });
+
+          return NextResponse.json(receipt, { status });
+        } catch (error) {
+          if (isMaisterError(error))
+            return NextResponse.json(
+              { code: error.code, message: error.message },
+              { status: httpStatusForExtCode(error.code) },
+            );
+          throw error;
+        }
       }
 
       // ADR-112: `flag` is mutually exclusive with every verdict field —

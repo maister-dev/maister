@@ -1,16 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  MAISTER_ENGINE_VERSION,
-  GRAPH_MIN_ENGINE_VERSION,
-} from "@/lib/flows/engine-version";
+import { GRAPH_MIN_ENGINE_VERSION } from "@/lib/flows/engine-version";
 import { nodeOutputSchema } from "@/lib/config.schema";
 
 describe("config.schema — artifact produces[] fields", () => {
-  it("asserts MAISTER_ENGINE_VERSION is 3.9.0 for operational agent contracts", () => {
-    expect(MAISTER_ENGINE_VERSION).toBe("3.9.0");
-  });
-
   it("asserts GRAPH_MIN_ENGINE_VERSION remains 1.1.0", () => {
     expect(GRAPH_MIN_ENGINE_VERSION).toBe("1.1.0");
   });

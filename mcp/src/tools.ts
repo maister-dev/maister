@@ -1,3 +1,4 @@
+import taskQualificationSchema from "../../runtime/task-qualification.schema.json";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 import { type AuthContext, resolveAuthHeader } from "./auth";
@@ -985,7 +986,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   triage_set: {
     description:
-      "Submit a triage verdict for a task: any of flowId/runnerId/baseBranch/targetBranch/promotionMode stamps triage_status='triaged'; `flag: true` instead holds the task for a human (mutually exclusive with verdict fields). `flowId` accepts either the flow's UUID or its ref (e.g. `aif-bugfix`), as returned by `flow_list` (`id` or `ref`). `enqueue: true` sets the auto-launch intent (valid only with a verdict that yields a flow). `priority` (queue admission order) and `confidence` (0..1, advisory) are independent and may accompany either shape — send `null` to clear (priority → 'normal', confidence → none).",
+      "Submit a triage verdict for a task. Required requests need qualification, requestKey and both expected revisions from task_get; a bound qualifier receives a 202 candidate receipt, published only after clean validated completion. Legacy task behavior: any of flowId/runnerId/baseBranch/targetBranch/promotionMode stamps triage_status='triaged'; `flag: true` instead holds the task for a human (mutually exclusive with verdict fields). `flowId` accepts either the flow's UUID or its ref (e.g. `aif-bugfix`), as returned by `flow_list` (`id` or `ref`). `enqueue: true` sets the auto-launch intent (valid only with a verdict that yields a flow). `priority` (queue admission order) and `confidence` (0..1, advisory) are independent and may accompany either shape — send `null` to clear (priority → 'normal', confidence → none).",
     inputSchema: {
       type: "object",
       properties: {
@@ -1006,6 +1007,18 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
           enum: ["low", "normal", "high", "urgent", null],
         },
         confidence: { type: ["number", "null"], minimum: 0, maximum: 1 },
+        requestKey: { type: "string", format: "uuid" },
+        expectedInputRevision: {
+          type: "integer",
+          minimum: 1,
+          maximum: 2147483647,
+        },
+        expectedQualificationRevision: {
+          type: ["integer", "null"],
+          minimum: 1,
+          maximum: 2147483647,
+        },
+        qualification: taskQualificationSchema,
       },
       required: ["slug", "taskId"],
     },
@@ -1122,7 +1135,18 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   decisions_list: {
     description:
       "The owner's own decision queue (HITL questions, promotable, crashed and triage-flagged work). Read-only: a human-only decision is answered by the owner in the UI, never through this tool.",
-    inputSchema: { type: "object", properties: {} },
+    inputSchema: {
+      type: "object",
+      properties: {
+        operationalGrouping: {
+          type: "string",
+          enum: ["agent"],
+          default: "agent",
+          description:
+            "Group repeated operational failures by project and agent.",
+        },
+      },
+    },
   },
   activity_feed: {
     description:
@@ -1283,8 +1307,17 @@ function resolveRouting(
     }
     case "work_list":
       return { method: "GET", path: `/api/v1/ext/work` };
-    case "decisions_list":
-      return { method: "GET", path: `/api/v1/ext/decisions` };
+    case "decisions_list": {
+      const { operationalGrouping = "agent" } = args as {
+        operationalGrouping?: string;
+      };
+      const search = new URLSearchParams({ operationalGrouping });
+
+      return {
+        method: "GET",
+        path: `/api/v1/ext/decisions?${search.toString()}`,
+      };
+    }
     case "activity_feed": {
       const { projectId, kind, limit } = args as {
         projectId?: string;
@@ -2039,6 +2072,10 @@ function resolveRouting(
         enqueue,
         priority,
         confidence,
+        qualification,
+        requestKey,
+        expectedInputRevision,
+        expectedQualificationRevision,
       } = args as {
         slug: string;
         taskId: string;
@@ -2052,6 +2089,10 @@ function resolveRouting(
         // null is a legitimate wire value: explicit clear (≠ undefined/omit).
         priority?: string | null;
         confidence?: number | null;
+        qualification?: unknown;
+        requestKey?: string;
+        expectedInputRevision?: number;
+        expectedQualificationRevision?: number | null;
       };
       const body: Record<string, unknown> = {};
 
@@ -2064,6 +2105,12 @@ function resolveRouting(
       if (enqueue !== undefined) body.enqueue = enqueue;
       if (priority !== undefined) body.priority = priority;
       if (confidence !== undefined) body.confidence = confidence;
+      if (qualification !== undefined) body.qualification = qualification;
+      if (requestKey !== undefined) body.requestKey = requestKey;
+      if (expectedInputRevision !== undefined)
+        body.expectedInputRevision = expectedInputRevision;
+      if (expectedQualificationRevision !== undefined)
+        body.expectedQualificationRevision = expectedQualificationRevision;
 
       return {
         method: "POST",

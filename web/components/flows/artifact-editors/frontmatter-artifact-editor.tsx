@@ -37,6 +37,7 @@ export interface FrontmatterArtifactEditorLabels {
   // package IS the platform-agent definition.
   agentKind: string;
   agentCompletion: string;
+  agentQualification: string;
   agentWorkspace: string;
   agentWorkspaceRef: string;
   agentMode: string;
@@ -497,12 +498,18 @@ export function FrontmatterArtifactEditor({
         ) : (
           <SkillAgentFields
             editAgentKind={(next) => {
-              const updated = applyFrontmatterFieldEdit(
+              let updated = applyFrontmatterFieldEdit(
                 content,
                 "kind",
                 next || undefined,
               );
 
+              if (next !== "operational")
+                updated = applyFrontmatterFieldEdit(
+                  updated,
+                  "task_qualification",
+                  undefined,
+                );
               onChange(
                 applyFrontmatterFieldEdit(
                   updated,
@@ -512,6 +519,33 @@ export function FrontmatterArtifactEditor({
                     : undefined,
                 ),
               );
+            }}
+            editAgentQualification={(role) => {
+              let updated = applyFrontmatterFieldEdit(
+                content,
+                "task_qualification",
+                role ? { contract: "v1", role } : undefined,
+              );
+
+              if (!role && asText(fm.workspace_ref) === "task_target")
+                updated = applyFrontmatterFieldEdit(
+                  updated,
+                  "workspace_ref",
+                  undefined,
+                );
+              if (role === "qualifier") {
+                updated = applyFrontmatterFieldEdit(
+                  updated,
+                  "workspace",
+                  "repo_read",
+                );
+                updated = applyFrontmatterFieldEdit(
+                  updated,
+                  "workspace_ref",
+                  "task_target",
+                );
+              }
+              onChange(updated);
             }}
             editField={editField}
             editTextKey={editTextKey}
@@ -545,6 +579,7 @@ interface SkillAgentFieldsProps {
   readOnly: boolean;
   labels: FrontmatterArtifactEditorLabels;
   editAgentKind: (next: string) => void;
+  editAgentQualification: (next: string) => void;
   editField: (key: string, value: FieldValue) => void;
   editTextKey: (key: string) => (next: string) => void;
 }
@@ -556,6 +591,7 @@ function SkillAgentFields({
   labels,
   editField,
   editAgentKind,
+  editAgentQualification,
   editTextKey,
 }: SkillAgentFieldsProps): ReactElement {
   // `recommended` is a nested mapping — edits rewrite the whole object and
@@ -624,6 +660,17 @@ function SkillAgentFields({
                 (fm.completion as { contract?: unknown } | undefined)?.contract,
               )}
               onValue={() => undefined}
+            />
+          ) : null}
+          {asText(fm.kind) === "operational" ? (
+            <SelectField
+              label={labels.agentQualification}
+              options={["intake", "qualifier"]}
+              readOnly={readOnly}
+              value={asText(
+                (fm.task_qualification as { role?: unknown } | undefined)?.role,
+              )}
+              onValue={editAgentQualification}
             />
           ) : null}
           <SelectField

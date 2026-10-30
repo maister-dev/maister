@@ -11,6 +11,7 @@ import path from "node:path";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
+import { RUN_SETTLED_EVENT_KINDS } from "@/lib/domain-events/taxonomy";
 import { operationalSuccessFixture } from "@/test-support/operational-agent";
 import {
   agents,
@@ -313,7 +314,12 @@ async function expectCompleted(
   const events = await db
     .select()
     .from(domainEvents)
-    .where(eq(domainEvents.runId, runId));
+    .where(
+      and(
+        eq(domainEvents.runId, runId),
+        inArray(domainEvents.kind, [...RUN_SETTLED_EVENT_KINDS]),
+      ),
+    );
 
   expect(results).toHaveLength(1);
   expect(results[0]).toMatchObject({
@@ -3102,7 +3108,12 @@ describe("Agent owned prompts through the production launcher", () => {
           await db
             .select()
             .from(domainEvents)
-            .where(eq(domainEvents.runId, runId)),
+            .where(
+              and(
+                eq(domainEvents.runId, runId),
+                inArray(domainEvents.kind, [...RUN_SETTLED_EVENT_KINDS]),
+              ),
+            ),
         ).toHaveLength(0);
         const [assignment] = await db
           .select()
@@ -3272,7 +3283,12 @@ describe("Agent owned prompts through the production launcher", () => {
           await db
             .select()
             .from(domainEvents)
-            .where(eq(domainEvents.runId, runId)),
+            .where(
+              and(
+                eq(domainEvents.runId, runId),
+                inArray(domainEvents.kind, [...RUN_SETTLED_EVENT_KINDS]),
+              ),
+            ),
         ).toHaveLength(0);
       } finally {
         await recovering.stop();

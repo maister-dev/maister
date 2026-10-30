@@ -32,6 +32,7 @@ import { getOpenRelationBlockers } from "@/lib/social/relations";
 import { priorityWeightSql } from "@/lib/tasks/admission-selector";
 import { countOpenBlockingClarifications } from "@/lib/tasks/clarification-gate";
 import { type TaskPriority } from "@/lib/tasks/criticality";
+import { taskQualificationAdmittedPredicate } from "@/lib/tasks/qualification-predicates";
 
 const log = pino({
   name: "c2-eligibility",
@@ -88,6 +89,7 @@ export async function loadC2CandidateRows(db: Db): Promise<C2CandidateRow[]> {
     .from(tasks)
     .where(
       and(
+        taskQualificationAdmittedPredicate(),
         eq(tasks.triageStatus, "triaged"),
         eq(tasks.launchMode, "auto"),
         // The persisted intent is authoritative even if an old or racing

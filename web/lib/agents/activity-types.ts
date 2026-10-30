@@ -7,6 +7,11 @@ export type AgentActivitySnapshot = {
   packageName: string;
   packageVersion: string;
   packageRevision: string | null;
+  retryOrigin?: {
+    sourceRunId: string;
+    intentId: string;
+    originalEventId: number | null;
+  };
   comparisonScopes?: { business: string; infrastructure: string };
 };
 

@@ -205,7 +205,10 @@ paths:
           name: cursor
           in: query
           required: false
-          schema: *a1
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2048
         - &a5
           name: limit
           in: query
@@ -270,7 +273,7 @@ paths:
                   nextCursor:
                     type: string
                     minLength: 1
-                    maxLength: 256
+                    maxLength: 2048
                     nullable: true
                   asOf: &a6
                     type: string
@@ -321,7 +324,7 @@ paths:
                   nextCursor:
                     type: string
                     minLength: 1
-                    maxLength: 256
+                    maxLength: 2048
                     nullable: true
                   asOf: *a6
         "400": *a7
@@ -367,6 +370,12 @@ paths:
         - *a3
         - *a4
         - *a5
+        - name: state
+          in: query
+          schema: { type: string, enum: [open, resolved] }
+        - name: acknowledged
+          in: query
+          schema: { type: boolean }
       responses:
         "200":
           description: Designed — typed authorized response
@@ -388,7 +397,7 @@ paths:
                   nextCursor:
                     type: string
                     minLength: 1
-                    maxLength: 256
+                    maxLength: 2048
                     nullable: true
                   asOf: *a6
         "400": *a7
@@ -642,11 +651,11 @@ paths:
                     type: array
                     maxItems: 100
                     items:
-                      $ref: "#/components/schemas/TaskQualificationReceipt"
+                      $ref: "#/components/schemas/TaskQualificationHistoryItem"
                   nextCursor:
                     type: string
                     minLength: 1
-                    maxLength: 256
+                    maxLength: 2048
                     nullable: true
                   asOf: *a6
         "400": *a7
@@ -18438,6 +18447,7 @@ components:
                 - failed
                 - cancelled
                 - crashed
+                - null
               nullable: true
           nullable: true
         lastCompleted:
@@ -18501,6 +18511,9 @@ components:
         - outcome
         - retryOfRunId
       properties:
+        operationalOutcome:
+          $ref: "#/components/schemas/OperationalOutcome"
+          description: Present only with readRepoFiles; safe metadata remains available without protected result bodies.
         runId: *a2
         agentId: *a6
         runKind:
@@ -18516,7 +18529,10 @@ components:
             - cron
             - domain_event
             - webhook
-            - delegated
+            - flow
+            - scheduled
+            - null
+          nullable: true
         launchedAt:
           type: string
           format: date-time
@@ -18566,6 +18582,7 @@ components:
             - suppressed
             - failed
             - unknown
+            - null
           nullable: true
         runId:
           type: string
@@ -18674,6 +18691,7 @@ components:
       required:
         - aggregation
         - groupId
+        - contentRevision
         - projectId
         - projectSlug
         - agentId
@@ -18686,6 +18704,9 @@ components:
         - episodes
         - nextCursor
       properties:
+        contentRevision:
+          type: string
+          pattern: ^[a-f0-9]{64}$
         aggregation:
           type: string
           enum:
@@ -18711,7 +18732,7 @@ components:
         nextCursor:
           type: string
           minLength: 1
-          maxLength: 256
+          maxLength: 2048
           nullable: true
     AgentEpisodeAcknowledgement:
       type: object
@@ -18754,6 +18775,7 @@ components:
         - expiresAt
         - previewFingerprint
         - sourceRunnerId
+        - existingIntentId
         - runners
         - differences
       properties:
@@ -18772,6 +18794,10 @@ components:
           type: string
           minLength: 1
           maxLength: 256
+          nullable: true
+        existingIntentId:
+          type: string
+          format: uuid
           nullable: true
         runners:
           type: array
@@ -18827,6 +18853,7 @@ components:
         - runStatus
         - queueReason
         - refusalReason
+        - cleanup
       properties:
         retryIntentId: *a2
         sourceRunId: *a2
@@ -18854,6 +18881,21 @@ components:
           minLength: 1
           maxLength: 256
           nullable: true
+        cleanup:
+          type: object
+          nullable: true
+          additionalProperties: false
+          required: [state, revision, reason]
+          properties:
+            state:
+              type: string
+              enum: [armed, released, exhausted]
+            revision:
+              type: integer
+              minimum: 1
+            reason:
+              type: string
+              nullable: true
     AgentRetryCleanupBody:
       type: object
       additionalProperties: false
@@ -19039,6 +19081,71 @@ components:
           minLength: 1
           maxLength: 256
           nullable: true
+    TaskQualificationHistoryItem:
+      type: object
+      additionalProperties: false
+      required:
+        - qualificationId
+        - inputRevision
+        - qualificationRevision
+        - publicationState
+        - decision
+        - publicationReason
+        - assessedAt
+        - authorKind
+        - runId
+        - evidenceTarget
+        - evidenceSha
+        - qualification
+      properties:
+        qualificationId:
+          type: string
+          format: uuid
+        inputRevision: &a1
+          type: integer
+          minimum: 1
+        qualificationRevision: *a1
+        publicationState:
+          type: string
+          enum:
+            - candidate
+            - accepted
+            - rejected
+        decision:
+          type: string
+          enum:
+            - ready
+            - needs_information
+            - needs_review
+            - not_actionable
+        publicationReason:
+          type: string
+          minLength: 1
+          maxLength: 256
+          nullable: true
+        assessedAt:
+          type: string
+          format: date-time
+        authorKind:
+          type: string
+          enum:
+            - user
+            - project_token
+            - agent_run
+        runId:
+          type: string
+          format: uuid
+          nullable: true
+        evidenceTarget:
+          type: string
+          minLength: 1
+          maxLength: 255
+        evidenceSha:
+          type: string
+          nullable: true
+          pattern: ^[a-f0-9]{40}([a-f0-9]{24})?$
+        qualification:
+          $ref: "#/components/schemas/TaskQualificationValue"
     TaskQualificationSummary:
       type: object
       additionalProperties: false
@@ -19055,10 +19162,11 @@ components:
         - nextActions
       properties:
         candidate:
-          type: object
-          nullable: true
-          allOf:
+          oneOf:
             - $ref: "#/components/schemas/TaskQualificationReceipt"
+            - type: object
+              nullable: true
+              enum: [null]
         required:
           type: boolean
         mode:
@@ -19083,6 +19191,7 @@ components:
             - needs_information
             - needs_review
             - not_actionable
+            - null
           nullable: true
         publicationState:
           type: string
@@ -19090,6 +19199,7 @@ components:
             - candidate
             - accepted
             - rejected
+            - null
           nullable: true
         freshness:
           type: string
@@ -19405,9 +19515,11 @@ components:
           minimum: 1
           nullable: true
         reportedResult:
-          allOf:
+          oneOf:
             - $ref: "#/components/schemas/OperationalResultV1"
-          nullable: true
+            - type: object
+              nullable: true
+              enum: [null]
         referenceLinks:
           type: array
           description: Safe declared external links and server-resolved task links within the Run project. The reported result remains unchanged.
@@ -19430,9 +19542,11 @@ components:
             minLength: 1
             maxLength: 128
         cleanup:
-          allOf:
+          oneOf:
             - $ref: "#/components/schemas/OperationalCleanupState"
-          nullable: true
+            - type: object
+              nullable: true
+              enum: [null]
       description:
         Designed — platform terminal receipt joined to the exact validated
         result revision. Failed ordinary result remains unavailable; this diagnostic

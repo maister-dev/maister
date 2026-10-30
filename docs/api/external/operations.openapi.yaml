@@ -3416,6 +3416,12 @@ paths:
       security:
         - projectToken: []
         - librarianTurnToken: []
+      parameters:
+        - name: operationalGrouping
+          in: query
+          required: false
+          schema: { type: string, enum: [agent] }
+          description: Omit for the legacy per-run DTO; agent selects grouped incident sources. Malformed or duplicate values are refused with 422 CONFIG.
       responses:
         "200":
           description: Cross-project decision queue for the token owner.
@@ -5224,10 +5230,11 @@ components:
         - nextActions
       properties:
         candidate:
-          type: object
-          nullable: true
-          allOf:
+          oneOf:
             - $ref: "#/components/schemas/TaskQualificationReceipt"
+            - type: object
+              nullable: true
+              enum: [null]
         required:
           type: boolean
         mode:
@@ -5252,6 +5259,7 @@ components:
             - needs_information
             - needs_review
             - not_actionable
+            - null
           nullable: true
         publicationState:
           type: string
@@ -5259,6 +5267,7 @@ components:
             - candidate
             - accepted
             - rejected
+            - null
           nullable: true
         freshness:
           type: string
@@ -5329,6 +5338,7 @@ components:
       required:
         - aggregation
         - groupId
+        - contentRevision
         - projectId
         - projectSlug
         - agentId
@@ -5341,6 +5351,9 @@ components:
         - episodes
         - nextCursor
       properties:
+        contentRevision:
+          type: string
+          pattern: ^[a-f0-9]{64}$
         aggregation:
           type: string
           enum:
@@ -5366,7 +5379,7 @@ components:
         nextCursor:
           type: string
           minLength: 1
-          maxLength: 256
+          maxLength: 2048
           nullable: true
     # Operational components mirror web.openapi.yaml; runtime parity is required.
     OperationalReference:
@@ -5668,9 +5681,11 @@ components:
           minimum: 1
           nullable: true
         reportedResult:
-          allOf:
+          oneOf:
             - $ref: "#/components/schemas/OperationalResultV1"
-          nullable: true
+            - type: object
+              nullable: true
+              enum: [null]
         referenceLinks:
           type: array
           description: Safe declared external links and server-resolved task links within the Run project. The reported result remains unchanged.
@@ -5693,9 +5708,11 @@ components:
             minLength: 1
             maxLength: 128
         cleanup:
-          allOf:
+          oneOf:
             - $ref: "#/components/schemas/OperationalCleanupState"
-          nullable: true
+            - type: object
+              nullable: true
+              enum: [null]
       description:
         Designed — platform terminal receipt joined to the exact validated
         result revision. Failed ordinary result remains unavailable; this diagnostic

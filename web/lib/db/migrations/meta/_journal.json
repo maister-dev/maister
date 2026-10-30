@@ -1429,6 +1429,20 @@
       "when": 1793364273865,
       "tag": "0207_task_qualification",
       "breakpoints": true
+    },
+    {
+      "idx": 208,
+      "version": "7",
+      "when": 1793369885031,
+      "tag": "0208_attention_publication_state",
+      "breakpoints": true
+    },
+    {
+      "idx": 209,
+      "version": "7",
+      "when": 1793373270914,
+      "tag": "0209_task_qualification_capability",
+      "breakpoints": true
     }
   ]
 }

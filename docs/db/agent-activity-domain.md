@@ -49,3 +49,17 @@ Supported fresh/master0198/current0203 upgrades append new SQL. Old pre-rebase o
 - [Traceability](../system-analytics/agent-activity-traceability.md)
 - [Current generated ERD](erd.dbml)
 - [Database reference](../database-schema.md)
+
+## Attention publication baseline (0208)
+
+`attention_publication_states` has one `owner_user_id` primary key referencing
+`users` with cascade deletion, `projection_version=1`, nonnegative `decisions` and
+`ordinary_decisions` with `ordinary_decisions <= decisions`, creation/update
+timestamps and an optional opaque last `notification_event_id` without an outbox
+FK. It is private publication bookkeeping, not a second canonical queue count.
+The existing per-user advisory publication lock serializes its writes. Baseline
+and episode notification receipts are independent of human seen state and survive
+webhook-event retention. Cutover seeding is bounded, maintenance-fenced and
+insert-only on replay; normal publication updates the observed baseline even
+when no external notification is warranted. See the notification owner contract
+in [agent incidents](../system-analytics/agent-incidents.md).

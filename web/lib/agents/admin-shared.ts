@@ -90,6 +90,8 @@ export function projectAgentSummary(
     description: row.description,
     kind: row.kind ?? "code_delivery",
     completion: row.completionContract ?? null,
+    taskQualification: row.taskQualification ?? null,
+    ...(row.activity === undefined ? {} : { activity: row.activity }),
     runnerId: row.runnerId ?? null,
     workspace: row.workspace,
     workspaceRef: row.workspaceRef ?? null,

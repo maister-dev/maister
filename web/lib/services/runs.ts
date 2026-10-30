@@ -18,6 +18,7 @@ import path from "node:path";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { prepareTaskDeliveryAdmission } from "@/lib/tasks/qualification-admission";
 import {
   capabilityRefIdSetsFromRecords,
   firstUnknownCapabilityRef,
@@ -627,6 +628,17 @@ export async function* launchRunStaged(
   // classification detail (incl. blocker KEY-N refs) must not leak to
   // callers without project access. AuthzError propagates untouched.
   await ctx.authorize(project.id);
+  const taskAdmission = await prepareTaskDeliveryAdmission(
+    _db as unknown as import("@/lib/execution-host/db").Db,
+    {
+      projectId: project.id,
+      taskId: task.id,
+      baseBranch: input.baseBranch,
+      baseCommit: input.baseCommit,
+      targetBranch:
+        input.targetBranch ?? input.deliveryPolicy?.targetBranch ?? undefined,
+    },
+  );
   const agentActivity = input.agentId
     ? (input.agentActivity ??
       buildAgentActivitySnapshot(
@@ -1447,7 +1459,8 @@ export async function* launchRunStaged(
       );
     }
 
-    const requestedBaseCommit = input.baseCommit;
+    const requestedBaseCommit =
+      input.baseCommit ?? taskAdmission.baseCommit ?? undefined;
     const baseCommit =
       requestedBaseCommit === undefined
         ? await resolveBaseCommit({
@@ -1661,6 +1674,7 @@ export async function* launchRunStaged(
 
       await _db.transaction(async (tx: any) => {
         await ctx.assertLaunchOwnership?.(tx);
+        await taskAdmission.apply(tx);
 
         // ADR-163: for a DELEGATED child the fan-out/depth bound is decided
         // HERE — in the same transaction as the run INSERT and under the
@@ -1681,6 +1695,7 @@ export async function* launchRunStaged(
             id: runId,
             executionDataPlaneMode,
             taskId: task.id,
+            taskAdmissionSnapshot: taskAdmission.snapshot,
             projectId: project.id,
             flowId: flow.id,
             // M42 (ADR-114): the runner identity + resume handle live on

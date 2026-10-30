@@ -67,7 +67,9 @@ export function DecisionCard({
 
       <p className="m-0 text-[13px] leading-[1.45] text-ink">
         {item.kind === "operational"
-          ? item.operational.code
+          ? "aggregation" in item.operational
+            ? item.operational.title
+            : item.operational.code
           : item.kind === "clarification"
             ? item.clarification.question
             : (item.taskTitle ?? item.taskKey ?? item.projectName)}

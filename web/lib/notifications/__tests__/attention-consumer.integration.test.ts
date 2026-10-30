@@ -121,7 +121,7 @@ describe("IT-NTF-08 the consumer emits on deltas only", () => {
     // Count stays at zero: three events, no notification.
     const consumer = buildAttentionConsumer({
       db,
-      decisionsFor: async () => 0,
+      decisionsFor: async () => ({ decisions: 0, ordinaryDecisions: 0 }),
     });
 
     await consumer.handle([
@@ -138,7 +138,7 @@ describe("IT-NTF-08 the consumer emits on deltas only", () => {
     const userId = await seedMember(projectId);
     const consumer = buildAttentionConsumer({
       db,
-      decisionsFor: async () => 3,
+      decisionsFor: async () => ({ decisions: 3, ordinaryDecisions: 3 }),
     });
 
     await consumer.handle([
@@ -162,7 +162,7 @@ describe("IT-NTF-08 the consumer emits on deltas only", () => {
     const userId = await seedMember(projectId);
     const consumer = buildAttentionConsumer({
       db,
-      decisionsFor: async () => 5,
+      decisionsFor: async () => ({ decisions: 5, ordinaryDecisions: 5 }),
     });
 
     // `task.created` is a `task_activity` twin, not an attention fact.
@@ -178,7 +178,7 @@ describe("IT-EDGE-NTF-01 at-least-once redelivery converges", () => {
     const userId = await seedMember(projectId);
     const consumer = buildAttentionConsumer({
       db,
-      decisionsFor: async () => 2,
+      decisionsFor: async () => ({ decisions: 2, ordinaryDecisions: 2 }),
     });
     const window = [event(projectId)];
 
@@ -198,7 +198,10 @@ describe("IT-EDGE-NTF-01 at-least-once redelivery converges", () => {
     let count = 0;
     const consumer = buildAttentionConsumer({
       db,
-      decisionsFor: async () => count,
+      decisionsFor: async () => ({
+        decisions: count,
+        ordinaryDecisions: count,
+      }),
     });
 
     for (const next of [2, 2, 5, 0, 0, 1]) {
@@ -230,7 +233,7 @@ describe("IT-NTF-08 reader resolution", () => {
 
     const consumer = buildAttentionConsumer({
       db,
-      decisionsFor: async () => 1,
+      decisionsFor: async () => ({ decisions: 1, ordinaryDecisions: 1 }),
     });
 
     await consumer.handle([event(projectId)]);
@@ -244,7 +247,7 @@ describe("IT-NTF-08 reader resolution", () => {
     const outsider = await seedMember(projectB);
     const consumer = buildAttentionConsumer({
       db,
-      decisionsFor: async () => 1,
+      decisionsFor: async () => ({ decisions: 1, ordinaryDecisions: 1 }),
     });
 
     await consumer.handle([event(projectA)]);
@@ -262,7 +265,7 @@ describe("IT-NTF-08 reader resolution", () => {
 
     const consumer = buildAttentionConsumer({
       db,
-      decisionsFor: async () => 1,
+      decisionsFor: async () => ({ decisions: 1, ordinaryDecisions: 1 }),
     });
 
     await consumer.handle([event(projectId)]);
@@ -312,7 +315,7 @@ describe("IT-NTF-17 concurrent delta writers", () => {
 
   it("publishes ONE notification when both land on the same transition", async () => {
     const projectId = await seedProject();
-    const decisionsFor = async (): Promise<number> => 1;
+    const decisionsFor = async () => ({ decisions: 1, ordinaryDecisions: 1 });
 
     for (let attempt = 0; attempt < ATTEMPTS; attempt += 1) {
       const userId = await seedMember(projectId);
@@ -344,7 +347,7 @@ describe("IT-NTF-17 concurrent delta writers", () => {
       seedMember(projectId),
       seedMember(projectId),
     ]);
-    const decisionsFor = async (): Promise<number> => 2;
+    const decisionsFor = async () => ({ decisions: 2, ordinaryDecisions: 2 });
 
     await Promise.all([
       emitDecisionsDelta(db, first, "member", decisionsFor),

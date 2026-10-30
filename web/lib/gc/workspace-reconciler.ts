@@ -573,6 +573,24 @@ async function processTrustedCandidate(args: {
     .from(runs)
     .where(eq(runs.id, provenance.runId));
 
+  const retryOwners = await args.database
+    .execute(sql`SELECT id FROM agent_retry_intents
+    WHERE successor_run_id=${provenance.runId} AND created_run_id IS NULL
+      AND allocation->>'disposition' IN ('armed','exhausted')
+      AND EXISTS(SELECT 1 FROM jsonb_array_elements(allocation->'resources') resource
+        WHERE resource->>'path'=${worktreePath}) LIMIT 1`);
+
+  if (retryOwners.rows.length) {
+    await holdReconciliationFinding({
+      database: args.database,
+      claim: args.claim,
+      resultCode: "retry_intent_owned",
+      now: args.now(),
+    });
+    args.summary.retained += 1;
+
+    return;
+  }
   if (!operationalOwner && provenance.workspaceKind === "agent") {
     await quarantineReconciliationFinding({
       database: args.database,

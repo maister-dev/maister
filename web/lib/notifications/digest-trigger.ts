@@ -30,6 +30,7 @@ import {
   type DigestLabels,
 } from "@/lib/queries/digest";
 import { computeDecisionsQueue } from "@/lib/queries/decisions";
+import { readAttentionDecisionSnapshot } from "@/lib/notifications/attention-publication";
 import { emitDecisionsDelta } from "@/lib/notifications/attention-consumer";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import { getDb } from "@/lib/db/client";
@@ -172,7 +173,7 @@ export async function runDecisionsDeltaBackstop(
         // scope the React memo, and a cached queue would hand every reader in
         // one pass the first reader's count.
         async (userId, role) =>
-          (await computeDecisionsQueue(userId, role)).count,
+          readAttentionDecisionSnapshot(client, userId, role),
       );
 
       if (sent) summary.emitted += 1;

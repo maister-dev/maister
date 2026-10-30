@@ -4750,7 +4750,8 @@
         "invalidNotice": "Template YAML does not parse."
       },
       "agentKind": "Deliverable kind",
-      "agentCompletion": "Completion contract"
+      "agentCompletion": "Completion contract",
+      "agentQualification": "Task qualification role"
     }
   },
   "apiErrors": {

@@ -19,6 +19,8 @@ import { z } from "zod";
 import {
   AGENT_KINDS,
   operationalCompletionSchema,
+  taskQualificationDeclarationSchema,
+  type AgentTaskQualification,
   type AgentKind,
   type OperationalCompletion,
 } from "@/lib/agents/kind";
@@ -60,7 +62,11 @@ export const AGENT_RISK_TIER_KINDS = [
 ] as const;
 // workspace_ref is a free branch name in the schema; `trigger` is the special
 // resolve-from-event sentinel. Offered as Select options; other values kept.
-export const AGENT_WORKSPACE_REF_KINDS = ["trigger", "branch"] as const;
+export const AGENT_WORKSPACE_REF_KINDS = [
+  "trigger",
+  "task_target",
+  "branch",
+] as const;
 // ADR-152: the agent-memory axis a package author recommends.
 export const AGENT_MEMORY_KINDS = ["none", "enabled"] as const;
 
@@ -276,6 +282,7 @@ export const agentDefinitionFrontmatterSchema = z
     description: z.string().min(1),
     kind: z.enum(AGENT_KINDS).optional(),
     completion: operationalCompletionSchema.optional(),
+    task_qualification: taskQualificationDeclarationSchema.optional(),
     runner: z.string().min(1).max(128).optional(),
     workspace: z.enum(AGENT_WORKSPACE_KINDS),
     // `trigger` resolves the ref from the triggering event (ADR-090 rework);
@@ -309,6 +316,21 @@ export const agentDefinitionFrontmatterSchema = z
   })
   .strict()
   .superRefine((value, ctx) => {
+    if (
+      value.task_qualification &&
+      (value.kind !== "operational" ||
+        value.mode !== "session" ||
+        (value.task_qualification.role === "qualifier" &&
+          (value.workspace !== "repo_read" ||
+            value.workspace_ref !== "task_target")))
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["task_qualification"],
+        message:
+          "Task qualification requires an operational session; qualifiers require repo_read and workspace_ref=task_target",
+      });
+    }
     if ((value.kind === "operational") !== (value.completion !== undefined)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -378,6 +400,7 @@ export type ParsedAgentDefinition = {
   description: string;
   kind: AgentKind;
   completion: OperationalCompletion | null;
+  taskQualification: AgentTaskQualification | null;
   runner: string | null;
   workspace: AgentWorkspace;
   workspaceRef: string | null;
@@ -443,6 +466,7 @@ export function parseAgentDefinition(
     description: fm.description,
     kind: fm.kind ?? "code_delivery",
     completion: fm.completion ?? null,
+    taskQualification: fm.task_qualification ?? null,
     runner: fm.runner ?? null,
     workspace: fm.workspace,
     workspaceRef: fm.workspace_ref ?? null,
@@ -466,6 +490,7 @@ export type AgentDefinitionInput = {
   description: string;
   kind?: AgentKind;
   completion?: OperationalCompletion | null;
+  taskQualification?: AgentTaskQualification | null;
   runner?: string | null;
   workspace: AgentWorkspace;
   workspaceRef?: string | null;
@@ -490,6 +515,9 @@ export function renderAgentDefinition(input: AgentDefinitionInput): string {
     description: input.description,
     ...(input.kind ? { kind: input.kind } : {}),
     ...(input.completion ? { completion: input.completion } : {}),
+    ...(input.taskQualification
+      ? { task_qualification: input.taskQualification }
+      : {}),
     ...(input.runner ? { runner: input.runner } : {}),
     workspace: input.workspace,
     ...(input.workspaceRef ? { workspace_ref: input.workspaceRef } : {}),

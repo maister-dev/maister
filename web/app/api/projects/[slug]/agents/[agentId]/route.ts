@@ -4,6 +4,11 @@ import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import {
+  resolveAgentActivityAccess,
+  getAgentActivityDetail,
+  agentActivityErrorResponse,
+} from "@/lib/agents/activity-access";
 import { contextRepoSchema } from "@/lib/config.schema";
 import { agentsErrorResponse } from "@/lib/agents/admin-shared";
 import { detachAgent, updateAgentLink } from "@/lib/agents/project-links";
@@ -103,6 +108,20 @@ function notAttachedTo404(err: unknown): NextResponse | null {
   }
 
   return null;
+}
+
+export async function GET(
+  _req: NextRequest,
+  { params }: RouteParams,
+): Promise<NextResponse> {
+  try {
+    const { slug, agentId } = await params;
+    const access = await resolveAgentActivityAccess(slug, agentId);
+
+    return NextResponse.json(await getAgentActivityDetail(access));
+  } catch (error) {
+    return agentActivityErrorResponse(error);
+  }
 }
 
 export async function PATCH(

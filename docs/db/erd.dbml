@@ -283,6 +283,7 @@ table agents {
   runner_id text
   kind text [not null, default: 'code_delivery']
   completion_contract jsonb
+  task_qualification jsonb
   workspace text [not null]
   mode text [not null]
   triggers jsonb [not null]
@@ -302,6 +303,7 @@ table agents {
 
   indexes {
     package_name [name: 'agents_package_name_idx']
+
 
   }
 }
@@ -386,6 +388,16 @@ table assignments {
     assignee_actor_id [name: 'assignments_current_actor_idx']
     hitl_request_id [name: 'assignments_hitl_request_idx']
   }
+}
+
+table attention_publication_states {
+  owner_user_id text [pk, not null]
+  projection_version integer [not null, default: 1]
+  decisions integer [not null]
+  ordinary_decisions integer [not null]
+  notification_event_id text
+  initialized_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
 }
 
 table authored_capabilities {
@@ -2563,9 +2575,10 @@ table run_transcript_states {
 
 table runs {
   id text [pk, not null]
-  task_qualification_snapshot jsonb
-  task_admission_snapshot jsonb
   run_kind text [not null, default: 'flow']
+  task_qualification_snapshot jsonb
+  task_admission_checked_at "timestamp with time zone"
+  task_admission_snapshot jsonb
   retry_of_run_id text
   source_agent_id text
   launched_at "timestamp with time zone"
@@ -3604,6 +3617,8 @@ ref assignments_created_by_actor_id_actor_identities_id_fk: assignments.created_
 ref assignments_completed_by_actor_id_actor_identities_id_fk: assignments.completed_by_actor_id > actor_identities.id [delete: set null, update: no action]
 
 ref assignments_evidence_artifact_id_artifact_instances_id_fk: assignments.evidence_artifact_id > artifact_instances.id [delete: set null, update: no action]
+
+ref attention_publication_states_owner_user_id_users_id_fk: attention_publication_states.owner_user_id > users.id [delete: cascade, update: no action]
 
 ref authored_capabilities_project_id_projects_id_fk: authored_capabilities.project_id > projects.id [delete: cascade, update: no action]
 

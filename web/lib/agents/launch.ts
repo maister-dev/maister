@@ -7,6 +7,8 @@ import type { RunResultContract } from "@/lib/run-results/types";
 import type { OperationalIntegrityBaseline } from "@/lib/run-results/operational-types";
 import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 import type { AgentTurn, Run, ExecutionAssignment } from "@/lib/db/schema";
+import type { AgentRetryClaim } from "@/lib/agents/retry-types";
+import type { TaskQualificationLaunchSnapshot } from "@/lib/tasks/qualification-types";
 
 import { randomUUID } from "node:crypto";
 import { mkdir, stat } from "node:fs/promises";
@@ -66,6 +68,20 @@ import {
 } from "./workspace-paths";
 
 import {
+  assertAgentRetryClaim,
+  recordAgentRetrySuccessor,
+  frozenRetryDefinition,
+} from "@/lib/agents/retry-ownership";
+import { allocateAgentRetryWorktree } from "@/lib/agents/retry-allocation";
+import {
+  prepareTaskDeliveryAdmission,
+  assertTaskAdmissionForDispatch,
+} from "@/lib/tasks/qualification-admission";
+import {
+  loadTaskQualificationInput,
+  effectiveTaskQualificationPolicy,
+} from "@/lib/tasks/qualification";
+import {
   buildAgentActivitySnapshot,
   withAgentComparisonScopes,
 } from "@/lib/agents/activity-snapshot";
@@ -102,7 +118,6 @@ import {
 import {
   defaultRunSessionValues,
   resolveAgentRunner,
-  type RunnerCatalogEntry,
   type RunnerResolution,
   type RunnerSnapshot,
 } from "@/lib/acp-runners/resolve";
@@ -139,7 +154,9 @@ import { atomicWriteText } from "@/lib/atomic";
 import { runDirPath } from "@/lib/flows/graph/mutation-check";
 import { runtimeRoot } from "@/lib/runtime-root";
 import { hookEnvDefaults, resolveHooksConfig } from "@/lib/flows/hooks-config";
-import { resolveAgentExecutionPolicy } from "@/lib/agents/execution-policy";
+import { resolveAgentLaunchExecutionPolicy } from "@/lib/agents/execution-policy";
+import { runnerCatalogEntry } from "@/lib/agents/runner-catalog";
+export { runnerCatalogEntry } from "@/lib/agents/runner-catalog";
 import { issueAgentRunToken } from "@/lib/agents/tokens";
 import { type AgentMcpServer } from "@/lib/capabilities/agent-map";
 import { materializeAdapterCapabilityHome } from "@/lib/capabilities/adapter-home";
@@ -174,10 +191,8 @@ import { resolveAgentChainDepth } from "@/lib/agents/chain-depth";
 import { maxAgentChainDepth } from "@/lib/instance-config";
 import { admitDelegatedChild } from "@/lib/orchestrator/admission";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
-import { applyDefaultBudgetForUnattended } from "@/lib/runs/budget-default";
 import {
   permissionsFromSnapshot,
-  resolveExecutionPolicy,
   type ExecutionPolicy,
 } from "@/lib/runs/execution-policy";
 import { nextKeepaliveAt } from "@/lib/runs/keepalive-config";
@@ -320,6 +335,7 @@ export type LaunchAgentRunInput = {
   // server-internal — never a wire field — and lands on `runs.result_contract`
   // in the run-insert transaction (W8).
   resultContract?: RunResultContract | null;
+  retryClaim?: AgentRetryClaim;
   db?: Db;
 };
 
@@ -401,24 +417,7 @@ type TaskCommentPromptRow = {
   createdAt: Date;
 };
 
-function runnerCatalogEntry(row: Record<string, any>): RunnerCatalogEntry {
-  return {
-    id: row.id,
-    adapter: row.adapter,
-    capabilityAgent: row.capabilityAgent,
-    model: row.model,
-    env: row.env,
-    provider: row.provider,
-    providerKind: row.provider?.kind ?? "anthropic",
-    permissionPolicy: row.permissionPolicy,
-    readOnlyCapable:
-      getAdapterSupportById(row.adapter)?.readOnlyCapable === true,
-    enabled: row.enabled,
-    ready: row.readinessStatus === "Ready",
-  };
-}
-
-async function loadAgentContext(
+export async function loadAgentContext(
   _db: Db,
   input: LaunchAgentRunInput,
 ): Promise<LoadedAgentContext> {
@@ -534,6 +533,16 @@ async function loadAgentContext(
     );
   }
 
+  if (
+    effective.parsed.taskQualification &&
+    effectiveTaskQualificationPolicy(project) !== "required"
+  )
+    throw new MaisterError(
+      "PRECONDITION",
+      "This agent requires project.task_qualification=required",
+      { details: { reason: "qualification_policy_required" } },
+    );
+
   if (input.taskId) {
     const taskRows = await _db
       .select({ id: tasks.id })
@@ -554,7 +563,7 @@ async function loadAgentContext(
   return { agent, effective, link, project };
 }
 
-async function resolveRunnerForAgent(
+export async function resolveRunnerForAgent(
   _db: Db,
   ctx: LoadedAgentContext,
   launchOverrideRunnerId: string | null | undefined,
@@ -718,6 +727,16 @@ async function packageSkillMaterializationRoots(
   return roots;
 }
 
+export function resolveAgentContextExecutionPolicy(
+  ctx: LoadedAgentContext,
+): ExecutionPolicy {
+  return resolveAgentLaunchExecutionPolicy({
+    instanceOverride: ctx.link.executionPolicyOverride,
+    recommended: ctx.effective.parsed.recommended?.executionPolicy,
+    projectDefault: ctx.project.executionPolicyDefault,
+  });
+}
+
 export async function resolveAgentLaunchRuntime(
   input: LaunchAgentRunInput,
 ): Promise<AgentLaunchRuntime> {
@@ -759,6 +778,7 @@ export async function resolveWorkspaceRefCommittish(
   args: {
     agentId: string;
     workspaceRef: string;
+    taskQualificationSnapshot?: TaskQualificationLaunchSnapshot | null;
     repoPath: string;
     trigger: {
       source: AgentTriggerSource;
@@ -767,6 +787,18 @@ export async function resolveWorkspaceRefCommittish(
     };
   },
 ): Promise<string> {
+  if (
+    args.workspaceRef === "task_target" &&
+    args.taskQualificationSnapshot?.role === "qualifier"
+  ) {
+    if (!args.taskQualificationSnapshot.sha)
+      throw new MaisterError(
+        "PRECONDITION",
+        "Qualifier evidence SHA is missing",
+      );
+
+    return args.taskQualificationSnapshot.sha;
+  }
   let ref: string;
 
   if (args.workspaceRef !== "trigger") {
@@ -1024,7 +1056,15 @@ export async function launchAgentRun(
   assertUpgradeMaintenanceAllows("run_admission");
 
   const _db = input.db ?? getDb();
-  const ctx = await loadAgentContext(_db, input);
+  const currentContext = await loadAgentContext(_db, input);
+  const retryIntent = input.retryClaim
+    ? await _db.transaction((tx: ExecutionDb) =>
+        assertAgentRetryClaim(tx, input.retryClaim!),
+      )
+    : null;
+  const ctx = retryIntent
+    ? { ...currentContext, effective: retryIntent.recipe.definition }
+    : currentContext;
 
   // Fast trigger-event dedup BEFORE any side effect (task auto-create, worktree,
   // run insert) — covering BOTH the flow-driving and standalone paths. The
@@ -1059,13 +1099,64 @@ export async function launchAgentRun(
     return launchAgentDrivenFlowRun(_db, ctx, input);
   }
 
-  const resolution = await resolveRunnerForAgent(
+  const currentResolution = await resolveRunnerForAgent(
     _db,
     ctx,
     input.launchOverrideRunnerId,
     input.workspace ?? ctx.effective.parsed.workspace,
   );
 
+  const resolution: RunnerResolution = retryIntent
+    ? {
+        runnerId: retryIntent.recipe.runner.id,
+        runnerResolutionTier: "launchOverride",
+        capabilityAgent: retryIntent.recipe.runner.capabilityAgent,
+        runnerSnapshot: retryIntent.recipe.runner,
+      }
+    : currentResolution;
+  const taskAdmission =
+    input.taskId && ctx.effective.parsed.kind !== "operational"
+      ? await prepareTaskDeliveryAdmission(_db, {
+          projectId: input.projectId,
+          taskId: input.taskId,
+        })
+      : null;
+  let taskQualificationSnapshot: TaskQualificationLaunchSnapshot | null = null;
+
+  if (ctx.effective.parsed.taskQualification) {
+    if (ctx.effective.parsed.taskQualification.role === "qualifier") {
+      if (!input.taskId)
+        throw new MaisterError(
+          "PRECONDITION",
+          "A qualifier must bind a project task",
+          { details: { reason: "qualification_task_required" } },
+        );
+      const qualificationInput = await loadTaskQualificationInput(
+        _db,
+        input.projectId,
+        input.taskId,
+      );
+      const sha = await resolveBaseCommit({
+        projectRepoPath: ctx.project.repoPath,
+        baseRef: qualificationInput.target,
+      });
+
+      taskQualificationSnapshot = {
+        version: 1,
+        role: "qualifier",
+        taskId: input.taskId,
+        target: qualificationInput.target,
+        sha,
+      };
+    } else
+      taskQualificationSnapshot = {
+        version: 1,
+        role: "intake",
+        taskId: input.taskId ?? null,
+        target: null,
+        sha: null,
+      };
+  }
   const runId = input.runId ?? randomUUID();
   // M37 (ADR-100): an explicit delegation `workspace` overrides the agent-def
   // axis; absent ⇒ the agent's declared default.
@@ -1135,6 +1226,7 @@ export async function launchAgentRun(
       await resolveWorkspaceRefCommittish(_db, {
         agentId: input.agentId,
         workspaceRef: ctx.effective.parsed.workspaceRef,
+        taskQualificationSnapshot,
         repoPath: ctx.project.repoPath,
         trigger: input.trigger,
       });
@@ -1374,21 +1466,31 @@ export async function launchAgentRun(
           projectRepoPath: ctx.project.repoPath,
           baseRef: resolvedBranchBase,
         });
-        await addWorktree({
-          projectRepoPath: ctx.project.repoPath,
-          worktreePath,
-          branch,
-          startPoint: resolvedBranchBase,
-          provenance: {
-            version: 2,
+        if (input.retryClaim) {
+          await allocateAgentRetryWorktree(_db, input.retryClaim, {
             runId,
-            parentRepoPath: ctx.project.repoPath,
-            projectId: ctx.project.id,
+            projectId: input.projectId,
+            repositoryPath: ctx.project.repoPath,
+            path: worktreePath,
             branch,
-            workspaceKind: "agent",
-            createdAt: new Date().toISOString(),
-          },
-        });
+            baseCommit,
+          });
+        } else
+          await addWorktree({
+            projectRepoPath: ctx.project.repoPath,
+            worktreePath,
+            branch,
+            startPoint: resolvedBranchBase,
+            provenance: {
+              version: 2,
+              runId,
+              parentRepoPath: ctx.project.repoPath,
+              projectId: ctx.project.id,
+              branch,
+              workspaceKind: "agent",
+              createdAt: new Date().toISOString(),
+            },
+          });
         allocatedWorktree = true;
       }
     }
@@ -1401,17 +1503,7 @@ export async function launchAgentRun(
     // The project base is load-bearing: it carries the budget axis the agent
     // recommendation never declares, so a project token ceiling actually binds an
     // agent run.
-    const executionPolicy = applyDefaultBudgetForUnattended(
-      resolveAgentExecutionPolicy({
-        instanceOverride: ctx.link
-          .executionPolicyOverride as AgentExecutionPolicyRecommendation | null,
-        recommended: ctx.effective.parsed.recommended?.executionPolicy ?? null,
-        base: resolveExecutionPolicy({
-          projectDefault: ctx.project
-            .executionPolicyDefault as ExecutionPolicy | null,
-        }),
-      }),
-    );
+    const executionPolicy = resolveAgentContextExecutionPolicy(ctx);
 
     // ADR-111 (D5): resolve the effective agent config ONCE here and snapshot it
     // onto the run row. buildAgentPrompt reads THIS snapshot at spawn — never
@@ -1442,7 +1534,18 @@ export async function launchAgentRun(
       activitySortAt: sql`CURRENT_TIMESTAMP`,
       activityTimestampProvenance: "launch" as const,
       agentActivitySnapshot: withAgentComparisonScopes(
-        buildAgentActivitySnapshot(input.agentId, ctx.effective),
+        {
+          ...buildAgentActivitySnapshot(input.agentId, ctx.effective),
+          ...(retryIntent
+            ? {
+                retryOrigin: {
+                  sourceRunId: retryIntent.sourceRunId,
+                  intentId: retryIntent.id,
+                  originalEventId: retryIntent.recipe.trigger.eventId,
+                },
+              }
+            : {}),
+        },
         {
           configuration: agentConfig,
           trigger: input.trigger,
@@ -1455,6 +1558,7 @@ export async function launchAgentRun(
       executionDataPlaneMode,
       agentChainDepth: chain.depth,
       agentId: input.agentId,
+      retryOfRunId: retryIntent?.sourceRunId ?? null,
       executionPolicy,
       agentConfig,
       triggerSource: input.trigger.source,
@@ -1463,6 +1567,8 @@ export async function launchAgentRun(
       agentScheduleId: input.agentScheduleId ?? null,
       agentWorkspace: workspace,
       taskId: input.taskId ?? null,
+      taskAdmissionSnapshot: taskAdmission?.snapshot ?? null,
+      taskQualificationSnapshot,
       projectId: input.projectId,
       flowId: null,
       // M42 (ADR-114): runner identity lives on `run_sessions` (inserted below).
@@ -1513,6 +1619,8 @@ export async function launchAgentRun(
 
     try {
       const inserted = await _db.transaction(async (tx: Db) => {
+        if (input.retryClaim) await assertAgentRetryClaim(tx, input.retryClaim);
+        if (taskAdmission) await taskAdmission.apply(tx);
         // ADR-163: a DELEGATED child's depth + shared fan-out bound is decided
         // here, in the same transaction as the run INSERT and under the
         // per-orchestrator advisory lock, so the count includes every committed
@@ -1579,6 +1687,8 @@ export async function launchAgentRun(
             .onConflictDoNothing({ target: workspaces.worktreePath });
         }
 
+        if (input.retryClaim)
+          await recordAgentRetrySuccessor(tx, input.retryClaim, runId);
         if (input.taskId) {
           await cancelOpenAgentQuestionsForTaskInTransaction(tx, {
             taskId: input.taskId,
@@ -1592,7 +1702,7 @@ export async function launchAgentRun(
       if (!inserted) {
         // Only tear down a worktree THIS launch created — never a shared tree a
         // sibling owns, nor an orphan dir we merely claimed (F3).
-        if (worktreePath && allocatedWorktree) {
+        if (worktreePath && allocatedWorktree && !input.retryClaim) {
           await removeWorktree({
             projectRepoPath: ctx.project.repoPath,
             worktreePath,
@@ -1602,7 +1712,7 @@ export async function launchAgentRun(
         return false;
       }
     } catch (err) {
-      if (worktreePath && allocatedWorktree) {
+      if (worktreePath && allocatedWorktree && !input.retryClaim) {
         await removeWorktree({
           projectRepoPath: ctx.project.repoPath,
           worktreePath,
@@ -1617,6 +1727,16 @@ export async function launchAgentRun(
 
   if (workspace === "worktree" && isShared) {
     const allocationDirectory = sharedAgentWorktreesDirectory(ctx.project.slug);
+
+    await mkdir(allocationDirectory, { recursive: true });
+    inserted = await withAgentMaterializationLock(
+      allocationDirectory,
+      allocateAndPersist,
+    );
+  } else if (input.retryClaim) {
+    const allocationDirectory = path.dirname(
+      agentWorkdirPath(ctx.project.slug, runId),
+    );
 
     await mkdir(allocationDirectory, { recursive: true });
     inserted = await withAgentMaterializationLock(
@@ -1702,7 +1822,7 @@ function triggerContextBlock(run: Record<string, any>): string {
     case "domain_event":
       return [
         "## Trigger",
-        `Domain event id ${run.triggerEventId ?? "?"}:`,
+        `Domain event id ${run.triggerEventId ?? run.agentActivitySnapshot?.retryOrigin?.originalEventId ?? "?"}:`,
         "```json",
         JSON.stringify(run.triggerPayload ?? {}, null, 2),
         "```",
@@ -2181,6 +2301,10 @@ export async function buildAgentPrompt(
   // the current ask comes after it.
   if (memory) sections.push(memoryBlock(memory));
   if (taskBlock) sections.push(taskBlock);
+  if (run.taskQualificationSnapshot?.role === "qualifier")
+    sections.push(
+      `## Qualification evidence\nTask: ${run.taskQualificationSnapshot.taskId}\nTarget: ${run.taskQualificationSnapshot.target}\nPinned repository SHA: ${run.taskQualificationSnapshot.sha}\nInspect this read-only checkout. Read current task_get revisions and confirmed clarifications before submitting a qualification candidate. Reference its qualificationId in the final operational result; a candidate is not accepted work.`,
+    );
   if (commentTriggerBlock) sections.push(commentTriggerBlock);
   sections.push(triggerContextBlock(run));
 
@@ -3472,12 +3596,29 @@ async function driveAgentSession(
     return;
   }
 
+  try {
+    await assertTaskAdmissionForDispatch(_db, runId);
+  } catch (error) {
+    if (
+      !isMaisterError(error) ||
+      !String(error.details?.reason).startsWith("qualification_")
+    )
+      throw error;
+    await finalizeAgentRun(runId, "Failed", {
+      db: _db,
+      reason: "qualification_stale",
+    });
+
+    return;
+  }
+
   // RD4: the effective definition resolves AGAIN at spawn — the project's
   // pin is the source of truth for the prompt body and the workspace axis.
   let effective: EffectiveAgentDefinition;
 
   try {
     effective =
+      (run.retryOfRunId ? await frozenRetryDefinition(_db, run.id) : null) ??
       frozenOperationalDefinition(run) ??
       (await resolveEffectiveAgentDefinition(
         { agentId: run.agentId as string, projectId: run.projectId as string },
@@ -3517,6 +3658,7 @@ async function driveAgentSession(
         const committish = await resolveWorkspaceRefCommittish(_db, {
           agentId: run.agentId as string,
           workspaceRef: effective.parsed.workspaceRef,
+          taskQualificationSnapshot: run.taskQualificationSnapshot,
           repoPath: project.repoPath as string,
           trigger: {
             source: run.triggerSource as AgentTriggerSource,

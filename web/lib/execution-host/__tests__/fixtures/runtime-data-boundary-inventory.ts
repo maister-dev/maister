@@ -94,6 +94,46 @@ function wrappers(
 export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
   [
     ...classified(
+      "lib/agents/retry-allocation.ts",
+      "repository-worktree",
+      "Intent-fenced allocation checks only server-owned execution worktrees",
+      [
+        ["allocateAgentRetryWorktree", "node:fs/promises.lstat", "stat"],
+        ["allocateAgentRetryWorktree", "node:fs/promises.realpath", "stat"],
+      ],
+    ),
+    ...classified(
+      "lib/agents/retry.ts",
+      "repository-worktree",
+      "Retry intent cleanup preserves and verifies owned repository resources before lease release",
+      [
+        ["disposeClaim", "node:fs/promises.mkdir", "write"],
+        ["disposeClaim", "node:fs/promises.lstat", "stat"],
+        ["disposeClaim", "node:fs/promises.realpath", "stat"],
+      ],
+    ),
+    ...classified(
+      "lib/packages/attach.ts",
+      "repository-worktree",
+      "Upgrade reads pinned package definitions before the attachment transaction",
+      [
+        [
+          "upgradeAttachment",
+          "lib/agents/package-contract.ts#readPackageAgentSources",
+          "wrapper",
+        ],
+      ],
+    ),
+    ...classified(
+      "scripts/generate-task-qualification-json.ts",
+      "build-tooling",
+      "Generated MCP qualification schema is built and checked only by explicit tooling",
+      [
+        ["<module>", "node:fs/promises.readFile", "read"],
+        ["<module>", "node:fs/promises.writeFile", "write"],
+      ],
+    ),
+    ...classified(
       "lib/gc/operational-disposition.ts",
       "repository-worktree",
       "Lifecycle-claimed server-resolved disposal of operational repository resources",
@@ -2258,6 +2298,12 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
   ];
 
 export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
+  ...wrappers("lib/agents/retry-allocation.ts", "repository-worktree", [
+    ["allocateAgentRetryWorktree", false],
+  ]),
+  ...wrappers("lib/agents/retry.ts", "repository-worktree", [
+    ["runAgentRetryAdmissionSweep", false],
+  ]),
   ...wrappers("lib/gc/operational-disposition.ts", "repository-worktree", [
     ["disposeOperationalRun", false],
     ["sweepOperationalDispositions", false],

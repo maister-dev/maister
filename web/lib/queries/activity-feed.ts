@@ -41,6 +41,7 @@ import pino from "pino";
 import { ATTENTION_EVENT_KINDS } from "@/lib/domain-events/taxonomy";
 import { TASK_ACTIVITY_EVENT_KINDS } from "@/lib/db/schema";
 import { actorDTO, resolveActorLabels } from "@/lib/social/actors";
+import { humanActivityEventPredicate } from "@/lib/queries/human-activity";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { getVisibleProjectIds } from "@/lib/queries/visible-projects";
@@ -246,6 +247,7 @@ export async function getCrossProjectActivityFeed(
           .leftJoin(tasks, eq(tasks.id, domainEvents.taskId))
           .where(
             and(
+              humanActivityEventPredicate(),
               inArray(domainEvents.projectId, projectIds),
               inArray(
                 domainEvents.kind,

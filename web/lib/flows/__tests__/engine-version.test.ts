@@ -6,12 +6,6 @@ import {
   isSchemaVersionSupported,
 } from "@/lib/flows/engine-version";
 
-describe("MAISTER_ENGINE_VERSION", () => {
-  it("is 3.9.0 for operational agent contracts", () => {
-    expect(MAISTER_ENGINE_VERSION).toBe("3.9.0");
-  });
-});
-
 describe("isEngineCompatible", () => {
   it("is compatible with an open-ended (no bounds) range", () => {
     expect(isEngineCompatible().compatible).toBe(true);

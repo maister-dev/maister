@@ -18,6 +18,12 @@ export type AgentRetryRecipe = {
   };
   runner: RunnerSnapshot;
   policy: ExecutionPolicy;
+  contextDigest: string;
+  project: {
+    mainBranch: string;
+    branchPrefix: string | null;
+    branchBase: string | null;
+  };
 };
 
 export type AgentRetryAllocation = {
@@ -29,10 +35,23 @@ export type AgentRetryAllocation = {
     repositoryPath: string;
     branch: string | null;
     provenanceDigest: string;
+    baseCommit: string | null;
+    preservation?: {
+      branch: string | null;
+      commit: string | null;
+      outcome: string;
+    };
   }>;
   disposition: "armed" | "released" | "exhausted";
   revision: number;
   attempts: number;
   dueAt: string | null;
   errorCode: string | null;
+  rearmReceipt?: { requestKey: string; expectedRevision: number };
+};
+
+export type AgentRetryClaim = {
+  intentId: string;
+  owner: string;
+  fence: number;
 };

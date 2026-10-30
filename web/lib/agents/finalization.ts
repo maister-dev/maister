@@ -80,6 +80,7 @@ import {
   inspectOperationalRun,
   operationalResourceKind,
 } from "@/lib/agents/operational-context";
+import { prepareQualificationPublication } from "@/lib/tasks/qualification";
 
 const log = pino({
   name: "agent-finalization",
@@ -257,6 +258,7 @@ type FinalizationContext = Readonly<{
     | "agentKind"
     | "operationalIntegrityBaseline"
     | "operationalTerminal"
+    | "taskQualificationSnapshot"
   > & { projectId: string };
   workspaceRows: readonly Pick<Workspace, "id" | "worktreePath">[];
   workspaceContext: Awaited<ReturnType<typeof loadAgentWorkspaceContext>>;
@@ -301,6 +303,7 @@ async function loadFinalizationContext(
       agentKind: runs.agentKind,
       operationalIntegrityBaseline: runs.operationalIntegrityBaseline,
       operationalTerminal: runs.operationalTerminal,
+      taskQualificationSnapshot: runs.taskQualificationSnapshot,
     })
     .from(runs)
     .where(eq(runs.id, runId));
@@ -559,6 +562,10 @@ async function prepareAgentFinalization(
         integrity: operationalIntegrity,
       })
     : null;
+  const qualificationPublication = await prepareQualificationPublication(
+    _db,
+    preparedRun,
+  );
   const effectiveStatus =
     operationalDecision?.status ??
     (resultDecision.kind === "invalid" ? "Failed" : status);
@@ -697,6 +704,29 @@ async function prepareAgentFinalization(
       return { finalized: false };
     }
 
+    const publication = await qualificationPublication(
+      tx,
+      operationalDecision?.successful ?? false,
+      resultDecision.kind === "valid" &&
+        resultContract?.kind === "agent_operational"
+        ? (parseOperationalResult(resultDecision.value)?.references ?? [])
+        : [],
+    );
+    const terminalDecision =
+      publication.reason && operationalDecision?.successful
+        ? {
+            ...operationalDecision,
+            status: "Failed" as const,
+            successful: false,
+            effectiveOutcome: "blocked" as const,
+            cause: publication.reason,
+            reasonCodes: [
+              ...operationalDecision.reasonCodes,
+              publication.reason,
+            ],
+          }
+        : operationalDecision;
+    const terminalStatus = terminalDecision?.status ?? effectiveStatus;
     const endedAt = new Date();
     const terminalTransitionId = randomUUID();
 
@@ -719,7 +749,7 @@ async function prepareAgentFinalization(
 
       resultRevision = published.revision;
       resultStatus =
-        operationalDecision && !operationalDecision.successful
+        terminalDecision && !terminalDecision.successful
           ? "unavailable"
           : "valid";
     } else if (resultDecision.kind === "invalid") {
@@ -746,12 +776,12 @@ async function prepareAgentFinalization(
       resultStatus = "absent";
     }
 
-    const operationalTerminal: OperationalTerminal | null = operationalDecision
+    const operationalTerminal: OperationalTerminal | null = terminalDecision
       ? {
-          ...operationalDecision,
+          ...terminalDecision,
           reasonCodes: [
             ...new Set([
-              ...operationalDecision.reasonCodes,
+              ...terminalDecision.reasonCodes,
               ...(opts.causeReason ? [opts.causeReason] : []),
             ]),
           ],
@@ -763,16 +793,16 @@ async function prepareAgentFinalization(
       : null;
     const cleanupDue = new Date(
       endedAt.getTime() +
-        (effectiveStatus === "Crashed" ? gcAgeDays() * 86_400_000 : 0),
+        (terminalStatus === "Crashed" ? gcAgeDays() * 86_400_000 : 0),
     );
-    const operationalCleanup: OperationalCleanup | null = operationalDecision
+    const operationalCleanup: OperationalCleanup | null = terminalDecision
       ? {
           version: 1,
           resourceKind: operationalResourceKind(preparedRun),
           workspace: preparedRun.agentWorkspace as NonNullable<
             Run["agentWorkspace"]
           >,
-          state: effectiveStatus === "Crashed" ? "retained" : "armed",
+          state: terminalStatus === "Crashed" ? "retained" : "armed",
           revision: 1,
           armedAt: endedAt.toISOString(),
           attempts: 0,
@@ -793,7 +823,7 @@ async function prepareAgentFinalization(
     const rows = await tx
       .update(runs)
       .set({
-        status: effectiveStatus,
+        status: terminalStatus,
         ...(operationalTerminal
           ? { operationalTerminal, operationalCleanup }
           : {}),
@@ -828,6 +858,7 @@ async function prepareAgentFinalization(
 
       return { finalized: false };
     }
+    await publication.publish();
     const row = original.run;
 
     // ADR-166 D7: the terminal status ends the run's driver generation (a
@@ -837,7 +868,7 @@ async function prepareAgentFinalization(
     // D-M1 (ADR-182): a message behind the ending turn can never be
     // dispatched now. Superseded in THIS transaction, so a same-key retry
     // answers `superseded` rather than finding it queued forever.
-    if (CLOSES_MESSAGE_TURNS[effectiveStatus]) {
+    if (CLOSES_MESSAGE_TURNS[terminalStatus]) {
       const superseded = await supersedeUndispatchedMessageTurns(
         tx,
         [runId],
@@ -846,7 +877,7 @@ async function prepareAgentFinalization(
 
       if (superseded.length > 0)
         log.info(
-          { runId, status: effectiveStatus, count: superseded.length },
+          { runId, status: terminalStatus, count: superseded.length },
           "agent-queued-turns-superseded",
         );
     }
@@ -856,7 +887,7 @@ async function prepareAgentFinalization(
         .update(workspaces)
         .set({ scheduledRemovalAt: cleanupDue })
         .where(eq(workspaces.runId, runId));
-    } else if (effectiveStatus === "Abandoned") {
+    } else if (terminalStatus === "Abandoned") {
       const scheduledRemovalAt = new Date(
         endedAt.getTime() + gcAgeDays() * 86_400_000,
       );
@@ -901,7 +932,7 @@ async function prepareAgentFinalization(
 
     const incidentEpisodeIds = await applyAgentTerminalIncidents(tx, {
       run: original.run,
-      status: effectiveStatus,
+      status: terminalStatus,
       endedAt,
       transitionId: terminalTransitionId,
       reason: opts.causeReason ?? opts.reason,
@@ -915,14 +946,14 @@ async function prepareAgentFinalization(
 
     await emitWebhookEvent({
       db: tx,
-      type: WEBHOOK_TYPE_BY_STATUS[effectiveStatus],
+      type: WEBHOOK_TYPE_BY_STATUS[terminalStatus],
       projectId: row.projectId,
       runId,
       data: {
         kind: "agent",
         agentId: row.agentId,
-        ...(effectiveStatus === "Review" ? { source: "agent" } : {}),
-        ...(opts.reason && effectiveStatus !== "Review"
+        ...(terminalStatus === "Review" ? { source: "agent" } : {}),
+        ...(opts.reason && terminalStatus !== "Review"
           ? { reason: opts.reason }
           : {}),
       },
@@ -932,7 +963,7 @@ async function prepareAgentFinalization(
     // the parked coordinator wakes to promote/rework the diff (and as-plan
     // auto-promote fires). A top-level Review (no parent) emits nothing — there is
     // no orchestrator to route to. Terminal outcomes emit their terminal kind.
-    if (effectiveStatus === "Review") {
+    if (terminalStatus === "Review") {
       if (row.parentRunId) {
         await emitDomainEvent({
           db: tx,
@@ -945,7 +976,7 @@ async function prepareAgentFinalization(
           payload: {
             runKind: "agent",
             agentId: row.agentId,
-            status: effectiveStatus,
+            status: terminalStatus,
             // Codex review F1: the same cause field the flow emit helper
             // writes — a clean agent exit IS a completion and stays
             // auto-promotable.
@@ -961,8 +992,8 @@ async function prepareAgentFinalization(
       // exit's `run.done` — the outcome the coordinator must react to is the
       // FAILURE, and a `run.done` here would wake it into believing the child
       // succeeded.
-      const kind = operationalDecision
-        ? DOMAIN_KIND_BY_OUTCOME[operationalDecision.status]
+      const kind = terminalDecision
+        ? DOMAIN_KIND_BY_OUTCOME[terminalDecision.status]
         : resultDecision.kind === "invalid"
           ? "run.failed"
           : DOMAIN_KIND_BY_OUTCOME[outcome];
@@ -978,7 +1009,7 @@ async function prepareAgentFinalization(
           agentId: row.agentId,
           terminalTransitionId,
           incidentEpisodeIds,
-          status: effectiveStatus,
+          status: terminalStatus,
           ...(operationalTerminal
             ? {
                 agentKind: "operational",
@@ -1006,8 +1037,8 @@ async function prepareAgentFinalization(
           ...event,
           kind,
           cause: agentTerminalCause(
-            operationalDecision?.status ?? outcome,
-            operationalDecision?.cause ?? opts.causeReason ?? opts.reason,
+            terminalDecision?.status ?? outcome,
+            terminalDecision?.cause ?? opts.causeReason ?? opts.reason,
             resultDecision.kind === "invalid"
               ? resultDecision.reason === "result_missing"
                 ? "result_missing"
@@ -1017,7 +1048,7 @@ async function prepareAgentFinalization(
         });
     }
 
-    return { finalized: true, status: effectiveStatus, endedAt };
+    return { finalized: true, status: terminalStatus, endedAt };
   };
 
   const afterCommit = async (

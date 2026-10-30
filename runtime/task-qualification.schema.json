@@ -1,0 +1,112 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "number",
+      "const": 1
+    },
+    "requestType": {
+      "type": "string",
+      "enum": ["bug", "feature", "maintenance", "question"]
+    },
+    "decision": {
+      "type": "string",
+      "enum": ["ready", "needs_information", "needs_review", "not_actionable"]
+    },
+    "checks": {
+      "minItems": 7,
+      "maxItems": 7,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "dimension": {
+            "type": "string",
+            "enum": [
+              "goal_scope",
+              "acceptance",
+              "consistency",
+              "constraints_dependencies",
+              "duplicates",
+              "relevance",
+              "bug_evidence"
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": ["pass", "fail", "unknown", "not_applicable"]
+          },
+          "rationale": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "evidenceIds": {
+            "maxItems": 32,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          }
+        },
+        "required": ["dimension", "state", "rationale", "evidenceIds"],
+        "additionalProperties": false
+      }
+    },
+    "reasonCodes": {
+      "maxItems": 16,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_]{0,255}$"
+      }
+    },
+    "nextActions": {
+      "maxItems": 16,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2000
+      }
+    },
+    "evidenceRefs": {
+      "maxItems": 32,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["repository", "task", "run", "source", "human_attestation"]
+          },
+          "reference": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "required": ["id", "kind", "reference"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "requestType",
+    "decision",
+    "checks",
+    "reasonCodes",
+    "nextActions",
+    "evidenceRefs"
+  ],
+  "additionalProperties": false
+}

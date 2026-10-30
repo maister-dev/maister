@@ -127,7 +127,10 @@ summary row uses this same total ordering and labels estimated history explicitl
 it must not claim an exact last-launch time for such a row. Filters
 are URL-synchronized allow-listed status, trigger source and operational outcome;
 reset cursor on filter change. Cursor binds project, agent, filters and upper
-launch boundary. Tampered/mismatched cursors return 400; all queries still enforce
+launch boundary. Cursors preserve PostgreSQL microsecond ordering, use a 2,048-character
+bound and a domain-separated HMAC with the existing required `AUTH_SECRET`; no
+new secret or server-side pagination store is introduced. Rotation invalidates
+old cursors and the client returns to page one. Tampered/mismatched cursors return 400; all queries still enforce
 authorization independently. New launches do not displace rows between existing
 pages; live updates display “New runs available” with an explicit first-page
 refresh. Dynamic status/outcome filters reflect current canonical state, not a
@@ -259,3 +262,13 @@ not fabricated from lastAttemptFence.
 - [Web API](../api/web.openapi.yaml) and [external API](../api/external/operations.openapi.yaml)
 - [Persistence](../db/agent-activity-domain.md) and [qualification persistence](../db/task-qualification-domain.md)
 - [Implementation plan](../../.ai-factory/plans/feature-operational-agent-kind.md)
+
+History exposes the stored trigger vocabulary, including `flow` and `scheduled`.
+An unknown legacy trigger stays null; it is never fabricated as a manual launch.
+
+Retry previews include a nullable `existingIntentId` so a reload can follow an
+already accepted or launched receipt. Retry receipts expose only the nullable
+cleanup state, revision and safe reason; they never expose allocation paths,
+recipe, runner credentials or ACP handles. Explicit cleanup rearm uses that
+revision and its own request key. A launched receipt retains its identity after
+child retention and continues to prohibit a second successor from the source.

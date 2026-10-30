@@ -12,23 +12,22 @@ channels:
       operationId: observeOperationalLifecycle
       message:
         oneOf:
-          - $ref: '#/components/messages/AgentActivityChanged'
-          - $ref: '#/components/messages/AgentIncidentChanged'
-          - $ref: '#/components/messages/TaskQualificationChanged'
-          - $ref: '#/components/messages/AttentionAcknowledged'
-          - $ref: '#/components/messages/CleanupChanged'
+          - $ref: "#/components/messages/AgentActivityChanged"
+          - $ref: "#/components/messages/AgentIncidentChanged"
+          - $ref: "#/components/messages/TaskQualificationChanged"
+          - $ref: "#/components/messages/AttentionAcknowledged"
+          - $ref: "#/components/messages/CleanupChanged"
 components:
   messages:
     AgentActivityChanged:
       name: agent.activity_changed
-      summary: Designed — scoped activity invalidation
+      summary: Scoped durable activity invalidation
       payload:
         type: object
         additionalProperties: false
         required:
           - projectId
           - agentId
-          - revision
         properties:
           projectId: &a1
             type: string
@@ -37,9 +36,32 @@ components:
             type: string
             minLength: 1
             maxLength: 256
+            nullable: true
+          runId:
+            type: string
+            format: uuid
+          status:
+            type: string
+            enum:
+              [
+                Pending,
+                Running,
+                NeedsInput,
+                NeedsInputIdle,
+                HumanWorking,
+                WaitingOnChildren,
+                Review,
+                Done,
+                Failed,
+                Crashed,
+                Abandoned,
+              ]
           revision: &a3
             type: integer
             minimum: 1
+        oneOf:
+          - required: [runId, status]
+          - required: [revision]
     AgentIncidentChanged:
       name: agent.incident_changed
       summary: Designed — episode content or actionable revision changed
@@ -83,10 +105,10 @@ components:
         additionalProperties: false
         required: [runId, ownerUserId, reason, revision]
         properties:
-          runId: {type: string, minLength: 1}
-          ownerUserId: {type: string, minLength: 1}
-          reason: {type: string, enum: [operation_failure, cleanup_failure]}
-          revision: {type: integer, minimum: 1}
+          runId: { type: string, minLength: 1 }
+          ownerUserId: { type: string, minLength: 1 }
+          reason: { type: string, enum: [operation_failure, cleanup_failure] }
+          revision: { type: integer, minimum: 1 }
     CleanupChanged:
       name: run.operational_cleanup_changed
       summary: Cleanup reason/state changed independently of terminal business outcome
@@ -95,8 +117,9 @@ components:
         additionalProperties: false
         required: [runId, revision, state]
         properties:
-          runId: {type: string, minLength: 1}
-          revision: {type: integer, minimum: 1}
+          runId: { type: string, minLength: 1 }
+          revision: { type: integer, minimum: 1 }
           state:
             type: string
-            enum: [retained, armed, preserving, removed, released, retry, exhausted]
+            enum:
+              [retained, armed, preserving, removed, released, retry, exhausted]

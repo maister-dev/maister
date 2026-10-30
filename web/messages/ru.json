@@ -4750,7 +4750,8 @@
         "invalidNotice": "YAML шаблона не разбирается."
       },
       "agentKind": "Вид результата агента",
-      "agentCompletion": "Контракт завершения"
+      "agentCompletion": "Контракт завершения",
+      "agentQualification": "Роль в квалификации задач"
     }
   },
   "apiErrors": {

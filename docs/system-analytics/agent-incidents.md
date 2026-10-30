@@ -246,7 +246,7 @@ transaction, CAS and external-effect protocols; no new hidden side effect.
 | `GET /api/projects/{slug}/agents`                                                                 | Add safe batched `activity` summary to attached agent DTO; slug=url-param, reader=auth-context, project/agent rows=server-state. Existing grants remain.                                                                                                                                                                                                                                                                                                                                                                                                                  | `docs/api/web.openapi.yaml`, agents analytics                                                                         |
 | `GET /api/projects/{slug}/agents/{agentId}` (new method)                                          | Safe metadata/activity + attachment/historical state; definition capability flags, not protected prompt by default. slug/agentId=url-param; resolved project/source key=server-state; reader=auth-context. 404 only when neither visible attachment nor proven history exists.                                                                                                                                                                                                                                                                                            | Same                                                                                                                  |
 | `GET .../{agentId}/runs` (new)                                                                    | `{items,nextCursor,asOf}`; cursor/limit/filter=query-controlled and validated, with server-derived project scope. Invalid cursor 400; inaccessible project follows existing 403/404 policy.                                                                                                                                                                                                                                                                                                                                                                               | Same                                                                                                                  |
-| `GET .../{agentId}/definition` (new)                                                              | readRepoFiles gate; current pinned safe prompt/config/provenance or typed unavailable state. Missing current attachment is 404; valid historical page still works. No runtime secrets/private paths.                                                                                                                                                                                                                                                                                                                                                                      | Same                                                                                                                  |
+| `GET .../{agentId}/definition` (new)                                                              | readRepoFiles gate; current pinned safe prompt/config/provenance or typed unavailable state. A retained-history owner without a current attachment returns 200 with state=unavailable and reason=agent_detached; 404 means no visible attachment or retained ownership. No runtime secrets/private paths.                                                                                                                                                                                                                                                                                                                                                                      | Same                                                                                                                  |
 | `GET .../{agentId}/incidents` (new)                                                               | Bounded episode/cause details and acknowledgement state, separate cursor; member gets safe metadata, protected evidence/diagnostics use existing run-data grants. Derive group via project/source key, not an arbitrary representative run.                                                                                                                                                                                                                                                                                                                               | Same, attention analytics                                                                                             |
 | `POST .../{agentId}/incidents/acknowledge` (new)                                                  | body-controlled nonempty bounded array of `{episodeId,attentionRevision}`; compare every ID to server-state project/agent, derive user from auth and require the existing `answerHitl` project action. 200 accepted/replayed/closed no-op; 409 stale invalid revision; 400 malformed; 403/404 unauthorized. All-or-none, no run/source IDs supplied in body.                                                                                                                                                                                                              | Same, operational lifecycle AsyncAPI                                                                                  |
 | Existing `POST /api/runs/{runId}/operational/acknowledge`, cleanup retry, project memory/settings | Preserve existing body/status/grants. Run/project/path locators=url-param; scope/user/cleanup owner=server-state/auth-context. Old per-run acknowledgement never means new episode acknowledgement. Document cutover compatibility.                                                                                                                                                                                                                                                                                                                                       | Existing web OpenAPI paths                                                                                            |
@@ -303,3 +303,63 @@ uses the same attention refresh mechanism; no timer/poll-based data fetching.
 - [Web API](../api/web.openapi.yaml) and [external API](../api/external/operations.openapi.yaml)
 - [Persistence](../db/agent-activity-domain.md) and [qualification persistence](../db/task-qualification-domain.md)
 - [Implementation plan](../../.ai-factory/plans/feature-operational-agent-kind.md)
+
+### Reader projection details
+
+The grouped operational decision keeps the existing internal `operational` kind
+and carries a discriminated `aggregation: agent` source. Its stable group identity
+is derived from project/qualified-agent identity. `totalCauseCount`, distinct
+`failedRunCount` and `attemptCount` describe all open episodes; `unreadEpisodeCount`
+and the first ten displayed causes describe the reader's unseen open episodes.
+No group is actionable when that unseen set is empty. `contentRevision` is a
+SHA-256 fingerprint over canonical episode/content/reader revisions and counts,
+so a changed group is observable even when its ID and queue count stay constant.
+
+The incident collection defaults to all retained episode states. Optional `state`
+(`open` or `resolved`) and `acknowledged` (`true` or `false`) are allow-listed
+filters. A group's `nextCursor` continues `state=open&acknowledged=false`; the
+cursor binds these filters and the reader as well as project/agent. Episode pages
+are ordered by current `(lastAt,id)` descending. Repeated facts and resolutions
+can change membership/order; a live content revision refreshes the first page.
+Cursor bodies are bounded to 2,048 characters and signed with the existing
+`AUTH_SECRET`. Full history remains available after evidence expiry.
+
+Acknowledgement validates the entire unique batch (1–100 episode IDs) under
+ordered episode locks before writing any receipt. Its response counts observed
+open episodes covered, including idempotent repeats; resolved episodes are valid
+no-ops and contribute zero. Notification baseline/publication fields are preserved
+and never imply an acknowledgement. The external default keeps the legacy
+per-run DTO; `operationalGrouping=agent` and the bundled MCP opt into grouped
+sources without introducing a group mutation through a representative run.
+
+### Notification publication state
+
+The existing attention consumer and system-sweep backstop remain the publication
+owner. Episode publication receipts alone cannot distinguish a historical group
+from a count delta, and the previous webhook outbox row can expire. Add one narrow
+`attention_publication_states` row per user to preserve the current grouped
+projection baseline: total decisions, ordinary (non-agent-group) decisions,
+projection version, timestamps and the last actual notification event ID. This
+extends the existing owner; it is not a second notification engine or an Inbox
+count authority. The UI count still comes from the canonical queue.
+
+Ordinary decisions retain their count-delta rule. Agent groups notify only for
+previously unpublished, currently actionable episode revisions. Group repetition,
+acknowledgement, recovery and outbox retention alone never publish another alert.
+A new episode can publish `attention.decisions_changed` at total count 1→1.
+The publisher locks its user baseline first, then up to 100 episode rows in ID
+order; acknowledgement takes only episode locks. It rechecks eligibility after
+locking. A source finalizer still locks its run before its agent/episode scope;
+no publication path takes a source-run lock. Publication event, episode receipts
+and baseline update commit atomically. More newly actionable episodes remain
+eligible for the next bounded existing sweep; no episode is silently discarded.
+
+Add migration 0208 for this state. The migration entrypoint seeds active existing
+users in bounded, restartable pages under the existing upgrade-maintenance fence,
+after activity backfill and before reopening admission. Compute each baseline
+through the same canonical queue with an explicitly injected migration database;
+never resolve the default database from this path. Insertion is idempotent and
+never overwrites an already advanced baseline. Existing episode notification
+baselines stay separate from acknowledgement. New users start at zero. Quiet
+baseline seeding writes no external notification. A failed publisher leaves no
+publication receipt, so the shared backstop retries a 1→1 episode transition.

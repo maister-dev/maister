@@ -56,7 +56,11 @@ import type {
   AgentTriggerAttemptOutcome,
   AgentTriggerBindingSnapshot,
 } from "@/lib/agents/trigger-attempt-types";
-import type { AgentKind, OperationalCompletion } from "@/lib/agents/kind";
+import type {
+  AgentKind,
+  OperationalCompletion,
+  AgentTaskQualification,
+} from "@/lib/agents/kind";
 import type {
   OperationalIntegrityBaseline,
   OperationalTerminal,
@@ -980,6 +984,8 @@ export const agents = pgTable(
     completionContract: jsonb(
       "completion_contract",
     ).$type<OperationalCompletion>(),
+    taskQualification:
+      jsonb("task_qualification").$type<AgentTaskQualification>(),
     workspace: text("workspace", {
       enum: ["none", "repo_read", "worktree"],
     }).notNull(),
@@ -1020,6 +1026,10 @@ export const agents = pgTable(
   },
   (t) => ({
     idxPackageName: index("agents_package_name_idx").on(t.packageName),
+    taskQualificationCheck: check(
+      "agents_task_qualification_check",
+      sql`${t.taskQualification} IS NULL OR (jsonb_typeof(${t.taskQualification})='object' AND ${t.taskQualification}->>'contract'='v1' AND ${t.taskQualification}->>'role' IN ('intake','qualifier') AND ${t.taskQualification}-ARRAY['contract','role']='{}'::jsonb AND ${t.kind}='operational' AND ${t.mode}='session' AND (${t.taskQualification}->>'role'<>'qualifier' OR ${t.workspace}='repo_read' AND ${t.workspaceRef}='task_target')) IS TRUE`,
+    ),
     kindCompletionCheck: check(
       "agents_kind_completion_check",
       sql`((${t.kind} = 'code_delivery' AND ${t.completionContract} IS NULL) OR (${t.kind} = 'operational' AND ${t.completionContract} = '{"contract":"operational_v1"}'::jsonb AND ${t.mode} = 'session' AND ${t.flowRef} IS NULL)) IS TRUE`,
@@ -1972,6 +1982,10 @@ export const runs = pgTable(
     taskQualificationSnapshot: jsonb(
       "task_qualification_snapshot",
     ).$type<TaskQualificationLaunchSnapshot>(),
+    taskAdmissionCheckedAt: timestamp("task_admission_checked_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
     taskAdmissionSnapshot: jsonb(
       "task_admission_snapshot",
     ).$type<TaskAdmissionSnapshot>(),
@@ -8384,6 +8398,37 @@ export type NotificationSubscriptionRow =
   typeof notificationSubscriptions.$inferSelect;
 export type NotificationSubscriptionInsert =
   typeof notificationSubscriptions.$inferInsert;
+
+export const attentionPublicationStates = pgTable(
+  "attention_publication_states",
+  {
+    ownerUserId: text("owner_user_id")
+      .primaryKey()
+      .references(() => users.id, { onDelete: "cascade" }),
+    projectionVersion: integer("projection_version").notNull().default(1),
+    decisions: integer("decisions").notNull(),
+    ordinaryDecisions: integer("ordinary_decisions").notNull(),
+    notificationEventId: text("notification_event_id"),
+    initializedAt: timestamp("initialized_at", {
+      withTimezone: true,
+      mode: "date",
+    })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", {
+      withTimezone: true,
+      mode: "date",
+    })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    counters: check(
+      "attention_publication_state_check",
+      sql`${t.projectionVersion} = 1 AND ${t.decisions} >= 0 AND ${t.ordinaryDecisions} >= 0 AND ${t.ordinaryDecisions} <= ${t.decisions}`,
+    ),
+  }),
+);
 
 // ADR-185 / ADR-190 (migration 0184): the personal librarian's durable
 // conversation. One conversation per user; the ACP session is only a cache of

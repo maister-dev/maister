@@ -22,6 +22,7 @@ import {
   vi,
 } from "vitest";
 
+import { operationalContractFixture } from "@/test-support/operational-agent";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
 import { issueToken } from "@/lib/tokens/issue";
@@ -259,6 +260,87 @@ function request(token: string): NextRequest {
 }
 
 describe("IT-ATN-08 GET /api/v1/ext/decisions", () => {
+  it("IT-UX-08 preserves the default per-run contract and explicitly opts personal readers into a safe agent group", async () => {
+    const owner = await seedUser("grouped-decisions");
+    const project = await seedProject(`grouped-${randomUUID().slice(0, 8)}`);
+    const runId = randomUUID();
+    const episodeId = randomUUID();
+
+    await seedMember(project.projectId, owner);
+    await testDatabase.db.insert(schemaModule.runs).values({
+      id: runId,
+      projectId: project.projectId,
+      flowVersion: "agent",
+      runKind: "agent",
+      agentKind: "operational",
+      agentWorkspace: "none",
+      sourceAgentId: "fixture:operation",
+      activitySortAt: new Date(),
+      activityTimestampProvenance: "legacy_estimate",
+      status: "Failed",
+      endedAt: new Date(),
+      resultContract: operationalContractFixture("none"),
+      operationalTerminal: {
+        version: 1,
+        status: "Failed",
+        cause: "agent_exit",
+        effectiveOutcome: "failed",
+        successful: false,
+        validation: "unchecked",
+        integrity: "indeterminate",
+        baselineGeneration: null,
+        resultRevision: null,
+        reasonCodes: ["result_missing"],
+        evidenceIds: [],
+      },
+    });
+    await testDatabase.pool.query(
+      "INSERT INTO agent_incident_episodes(id,project_id,source_agent_id,scope_key,scope_kind,fingerprint,reason_code) VALUES ($1,$2,'fixture:operation','unknown','unknown',$3,'result_missing')",
+      [episodeId, project.projectId, "b".repeat(64)],
+    );
+    await testDatabase.pool.query(
+      "INSERT INTO agent_incident_occurrences(episode_id,source_fact_key,fingerprint,run_id,original_run_id,channel,observed_at) VALUES ($1,$2,$3,$4,$4,'operational_terminal',now())",
+      [episodeId, `terminal:${runId}`, "b".repeat(64), runId],
+    );
+    const token = await globalUserToken(owner, ["decisions:read"]);
+    const legacy = await (await GET(request(token.secret))).json();
+
+    expect(legacy.items).toMatchObject([
+      {
+        kind: "operational",
+        runId,
+        nextAction: "review",
+        title: "result_missing",
+      },
+    ]);
+    expect(legacy.items[0]).not.toHaveProperty("aggregation");
+    const groupedRequest = new NextRequest(
+      "http://localhost/api/v1/ext/decisions?operationalGrouping=agent",
+      { headers: request(token.secret).headers },
+    );
+    const grouped = await (await GET(groupedRequest)).json();
+
+    expect(grouped.count).toBe(1);
+    expect(grouped.items[0]).toMatchObject({
+      aggregation: "agent",
+      agentId: "fixture:operation",
+      representativeRunId: runId,
+      failedRunCount: 1,
+      unreadEpisodeCount: 1,
+    });
+    expect(grouped.items[0].contentRevision).toMatch(/^[a-f0-9]{64}$/);
+    expect(grouped.items[0]).not.toHaveProperty("since");
+    expect(JSON.stringify(grouped)).not.toMatch(
+      /acpSession|worktreePath|resultContract|triggerPayload/,
+    );
+    const invalid = new NextRequest(
+      "http://localhost/api/v1/ext/decisions?operationalGrouping=run",
+      { headers: request(token.secret).headers },
+    );
+
+    expect((await GET(invalid)).status).toBe(422);
+  });
+
   it("grants a global personal token its own queue, in the documented shape", async () => {
     const owner = await seedUser("dec-owner");
     const project = await seedProject(`ext-dec-${randomUUID().slice(0, 8)}`);

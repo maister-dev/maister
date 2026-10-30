@@ -6,7 +6,11 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { requireActiveUserById } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
-import { getDecisionsQueue } from "@/lib/queries/decisions";
+import { agentIncidentGroupDto } from "@/lib/runs/agent-incident-projection";
+import {
+  getDecisionsQueue,
+  computeLegacyDecisionsQueue,
+} from "@/lib/queries/decisions";
 import { requirePersonalOrLibrarianActor } from "@/lib/tokens/personal-actor";
 import { handleExt } from "@/lib/tokens/ext-handler";
 
@@ -30,7 +34,10 @@ function nextActionOf(
 
 function extTitle(item: DecisionItem): string {
   if (item.kind === "hitl") return item.hitl.prompt;
-  if (item.kind === "operational") return item.operational.code;
+  if (item.kind === "operational")
+    return "aggregation" in item.operational
+      ? item.operational.title
+      : item.operational.code;
 
   return item.taskTitle ?? item.taskKey ?? item.projectSlug;
 }
@@ -65,7 +72,25 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       }
 
       const owner = await requireActiveUserById(ctx.actor.ownerUserId);
-      const queue = await getDecisionsQueue(owner.id, owner.role);
+      const search = req.nextUrl.searchParams;
+
+      if (
+        [...search.keys()].some((key) => key !== "operationalGrouping") ||
+        search.getAll("operationalGrouping").length > 1 ||
+        (search.has("operationalGrouping") &&
+          search.get("operationalGrouping") !== "agent")
+      )
+        return NextResponse.json(
+          {
+            code: "CONFIG",
+            message: "Invalid operationalGrouping; omit it or select agent",
+          },
+          { status: 422 },
+        );
+      const queue =
+        search.get("operationalGrouping") === "agent"
+          ? await getDecisionsQueue(owner.id, owner.role)
+          : await computeLegacyDecisionsQueue(owner.id, owner.role);
 
       // Project to exactly the documented ExtDecisionItem shape. The internal
       // item carries the whole source payload (`hitl`, `crashed`, …) — none of
@@ -78,20 +103,26 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
           (item) =>
             item.kind !== "hitl" || item.hitl.kind !== "decision_request",
         )
-        .map((item) => ({
-          kind: item.kind,
-          projectId: item.projectId,
-          projectSlug: item.projectSlug,
-          taskKey: item.taskKey,
-          runId: item.runId,
-          hitlRequestId: item.kind === "hitl" ? item.hitl.hitlRequestId : null,
-          clarificationId:
-            item.kind === "clarification" ? item.clarification.id : null,
-          title: extTitle(item),
-          criticality: item.criticality,
-          nextAction: nextActionOf(item),
-          createdAt: item.since === null ? null : item.since.toISOString(),
-        }));
+        .map((item) => {
+          if (item.kind === "operational" && "aggregation" in item.operational)
+            return agentIncidentGroupDto(item.operational);
+
+          return {
+            kind: item.kind,
+            projectId: item.projectId,
+            projectSlug: item.projectSlug,
+            taskKey: item.taskKey,
+            runId: item.runId,
+            hitlRequestId:
+              item.kind === "hitl" ? item.hitl.hitlRequestId : null,
+            clarificationId:
+              item.kind === "clarification" ? item.clarification.id : null,
+            title: extTitle(item),
+            criticality: item.criticality,
+            nextAction: nextActionOf(item),
+            createdAt: item.since === null ? null : item.since.toISOString(),
+          };
+        });
 
       return NextResponse.json({ items, count: items.length }, { status: 200 });
     },

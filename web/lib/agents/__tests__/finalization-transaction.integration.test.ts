@@ -5,13 +5,14 @@ import { randomUUID } from "node:crypto";
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { eq } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
   prepareAgentRunFinalization,
   prepareUndispatchedAgentFailure,
 } from "@/lib/agents/finalization";
+import { RUN_SETTLED_EVENT_KINDS } from "@/lib/domain-events/taxonomy";
 import { agentWorkdirPath } from "@/lib/agents/workspace-paths";
 import {
   agentTurns,
@@ -114,7 +115,12 @@ async function readOutcome(runId: string): Promise<{
   const events = await db
     .select()
     .from(domainEvents)
-    .where(eq(domainEvents.runId, runId));
+    .where(
+      and(
+        eq(domainEvents.runId, runId),
+        inArray(domainEvents.kind, [...RUN_SETTLED_EVENT_KINDS]),
+      ),
+    );
 
   return { status: run.status, results: results.length, events: events.length };
 }
@@ -410,7 +416,12 @@ describe("Agent terminal application transaction", () => {
     const [crashed] = await db
       .select({ payload: domainEvents.payload })
       .from(domainEvents)
-      .where(eq(domainEvents.runId, runId));
+      .where(
+        and(
+          eq(domainEvents.runId, runId),
+          inArray(domainEvents.kind, [...RUN_SETTLED_EVENT_KINDS]),
+        ),
+      );
 
     // B6: a token reason is the cause's reason; an agent crash is CRASH.
     expect(crashed.payload.cause).toEqual({

@@ -5,6 +5,7 @@ import type {
   TaskQualificationMode,
   TaskQualificationValue,
   TaskQualificationRouting,
+  TaskQualificationLaunchSnapshot,
 } from "@/lib/tasks/qualification-types";
 
 import { createHash } from "node:crypto";
@@ -14,11 +15,13 @@ import pino from "pino";
 
 import { canonicalCommandJson } from "../../../runtime/command-json";
 
+import { taskTriageAutoEnqueuePredicate } from "@/lib/tasks/qualification-predicates";
 import {
   projects,
   projectTokens,
   runs,
   taskQualifications,
+  type Run,
   taskClarifications,
   tasks,
 } from "@/lib/db/schema";
@@ -31,6 +34,7 @@ import {
   taskQualificationWriteSchema,
   type TaskQualificationWrite,
 } from "@/lib/tasks/qualification-schema";
+import { projectRolesForActions } from "@/lib/authz";
 import { MaisterError } from "@/lib/errors";
 
 const log = pino({
@@ -235,6 +239,27 @@ async function assertQualificationCredential(
   author: TaskQualificationAuthor,
   sourceAgentId: string | null | undefined,
 ): Promise<void> {
+  const userId =
+    author.kind === "user"
+      ? author.userId
+      : author.kind === "project_token"
+        ? author.userId
+        : null;
+
+  if (userId) {
+    const roles = projectRolesForActions(["editTask"]);
+    const allowed =
+      await tx.execute(sql`SELECT u.id FROM users u JOIN projects p ON p.id=${projectId}
+      WHERE u.id=${userId} AND u.account_status='active' AND NOT u.must_change_password AND p.archived_at IS NULL
+      AND (u.role='admin' OR EXISTS(SELECT 1 FROM project_members membership WHERE membership.user_id=u.id AND membership.project_id=p.id AND membership.role IN ${roles})) FOR SHARE OF u,p`);
+
+    if (!allowed.rows.length)
+      throw new MaisterError(
+        "UNAUTHORIZED",
+        "The qualification author no longer has task editing authority",
+        { details: { reason: "qualification_author_revoked" } },
+      );
+  }
   if (author.kind !== "user") {
     const [token] = await tx
       .select()
@@ -562,22 +587,7 @@ export async function prepareTaskQualification(
           },
         });
       } else {
-        const ready = assessment.value.decision === "ready";
-        const enqueue = ready && routing.enqueue && routing.flowId !== null;
-
-        await tx
-          .update(tasks)
-          .set({
-            currentQualificationId: assessment.id,
-            currentQualificationRevision: assessment.revision,
-            triageStatus: ready ? "triaged" : "flagged",
-            flowId: routing.flowId,
-            runnerId: routing.runnerId,
-            launchMode: enqueue ? "auto" : null,
-            launchArmedAt: enqueue ? new Date() : null,
-            queueClaimedAt: null,
-          })
-          .where(eq(tasks.id, task.id));
+        await acceptTaskQualification(tx, assessment);
       }
       await recordTaskActivity(tx, {
         projectId: input.projectId,
@@ -607,5 +617,295 @@ export async function prepareTaskQualification(
 
       return taskQualificationReceipt(assessment);
     },
+  };
+}
+
+async function acceptTaskQualification(
+  tx: Db,
+  assessment: typeof taskQualifications.$inferSelect,
+): Promise<void> {
+  const routing = assessment.routing;
+  const ready = assessment.value.decision === "ready";
+  const enqueue = ready && routing.enqueue && routing.flowId !== null;
+  const arm = sql`${enqueue} AND ${taskTriageAutoEnqueuePredicate()}`;
+
+  await tx
+    .update(tasks)
+    .set({
+      currentQualificationId: assessment.id,
+      currentQualificationRevision: assessment.revision,
+      triageStatus: ready ? "triaged" : "flagged",
+      flowId: routing.flowId,
+      runnerId: routing.runnerId,
+      launchMode: sql`CASE WHEN ${arm} THEN 'auto' ELSE NULL END`,
+      launchArmedAt: sql`CASE WHEN ${arm} THEN ${new Date()}::timestamptz ELSE NULL END`,
+      queueClaimedAt: null,
+    })
+    .where(eq(tasks.id, assessment.taskId));
+}
+
+type QualificationPublication = {
+  reason: string | null;
+  publish: () => Promise<void>;
+};
+
+/** Resolve repository evidence before the source-run/task publication locks. */
+export async function prepareQualificationPublication(
+  db: Db,
+  run: Pick<
+    Run,
+    | "id"
+    | "projectId"
+    | "sourceAgentId"
+    | "agentId"
+    | "operationalIntegrityBaseline"
+    | "taskQualificationSnapshot"
+    | "resultContract"
+    | "taskId"
+  > & { projectId: string },
+): Promise<
+  (
+    tx: Db,
+    successful: boolean,
+    references: Array<{ kind: string; id: string; state: string }>,
+  ) => Promise<QualificationPublication>
+> {
+  const frozen: TaskQualificationLaunchSnapshot | null =
+    run.taskQualificationSnapshot;
+  const declaredRole =
+    run.resultContract?.kind === "agent_operational"
+      ? (run.resultContract.definition.taskQualification?.role ?? null)
+      : null;
+
+  if (
+    declaredRole !== (frozen?.role ?? null) ||
+    (frozen?.role === "qualifier" && frozen.taskId !== run.taskId)
+  ) {
+    return async () => ({
+      reason: "qualification_snapshot_invalid",
+      publish: async () => {},
+    });
+  }
+  let currentSha: string | null = null;
+
+  if (frozen?.role === "qualifier" && frozen.target) {
+    const [project] = await db
+      .select({ repoPath: projects.repoPath })
+      .from(projects)
+      .where(eq(projects.id, run.projectId));
+
+    if (project) {
+      try {
+        currentSha = await resolveBaseCommit({
+          projectRepoPath: project.repoPath,
+          baseRef: frozen.target,
+        });
+      } catch (error) {
+        log.warn(
+          {
+            runId: run.id,
+            errorType: error instanceof Error ? error.name : "unknown",
+          },
+          "qualification-terminal-evidence-unavailable",
+        );
+      }
+    }
+  }
+
+  return async (tx, successful, references) => {
+    if (frozen?.role !== "qualifier")
+      return { reason: null, publish: async () => {} };
+    const [task] = await tx
+      .select()
+      .from(tasks)
+      .where(
+        and(
+          eq(tasks.id, frozen.taskId ?? ""),
+          eq(tasks.projectId, run.projectId),
+        ),
+      )
+      .for("update");
+    const candidates = await tx
+      .select()
+      .from(taskQualifications)
+      .where(
+        and(
+          eq(taskQualifications.originalRunId, run.id),
+          eq(taskQualifications.publicationState, "candidate"),
+        ),
+      )
+      .orderBy(asc(taskQualifications.revision))
+      .limit(1001)
+      .for("update");
+
+    if (candidates.length > 1000)
+      throw new MaisterError(
+        "PRECONDITION",
+        "Qualifier candidate history exceeds the supported bound",
+        { details: { reason: "qualification_candidate_limit", runId: run.id } },
+      );
+    const current = task
+      ? await loadTaskQualificationInput(tx, run.projectId, task.id)
+      : null;
+    const candidate = candidates.at(-1);
+    let reason: string | null = !successful
+      ? "qualification_source_failed"
+      : !current
+        ? "qualification_task_missing"
+        : null;
+
+    if (!reason && candidate && current) {
+      if (
+        candidate.taskId !== current.taskId ||
+        candidate.projectId !== current.projectId ||
+        candidate.authorIdentity !== (run.sourceAgentId ?? run.agentId) ||
+        candidate.evidenceTarget !== frozen.target ||
+        candidate.evidenceSha !== frozen.sha ||
+        run.operationalIntegrityBaseline?.head !== frozen.sha
+      )
+        reason = "qualification_author_scope";
+      else if (
+        candidate.inputRevision !== current.inputRevision ||
+        candidate.inputDigest !== current.inputDigest ||
+        candidate.expectedQualificationRevision !==
+          current.currentQualificationRevision ||
+        current.target !== frozen.target
+      )
+        reason = "qualification_stale";
+      else if (currentSha === null)
+        reason = "qualification_evidence_unavailable";
+      else if (currentSha !== frozen.sha)
+        reason = "qualification_evidence_stale";
+      else if (
+        !references.some(
+          (ref) =>
+            ref.kind === "other" &&
+            ref.id === candidate.id &&
+            ref.state === "confirmed",
+        )
+      )
+        reason = "qualification_reference_missing";
+      else if (
+        canonicalCommandJson(candidate.routing.expected) !==
+        canonicalCommandJson({
+          flowId: task!.flowId,
+          runnerId: task!.runnerId,
+          baseBranch: task!.baseBranch,
+        })
+      )
+        reason = "qualification_routing_changed";
+      else {
+        try {
+          await assertQualificationCredential(
+            tx,
+            run.projectId,
+            {
+              kind: "agent_run",
+              runId: run.id,
+              tokenId: candidate.authorTokenId!,
+            },
+            run.sourceAgentId ?? run.agentId,
+          );
+          await validateVerdictRefs(run.projectId, candidate.routing, tx);
+        } catch (error) {
+          if (!(error instanceof MaisterError)) throw error;
+          if (
+            !["UNAUTHORIZED", "PRECONDITION", "CONFIG", "NOT_FOUND"].includes(
+              error.code,
+            )
+          )
+            throw error;
+          reason =
+            error.code === "UNAUTHORIZED"
+              ? "qualification_author_revoked"
+              : "qualification_routing_unavailable";
+        }
+      }
+    }
+    if (!reason && !candidate && current) {
+      const [accepted] = current.currentQualificationId
+        ? await tx
+            .select()
+            .from(taskQualifications)
+            .where(eq(taskQualifications.id, current.currentQualificationId))
+        : [];
+
+      if (
+        !accepted ||
+        accepted.publicationState !== "accepted" ||
+        accepted.inputRevision !== current.inputRevision ||
+        accepted.inputDigest !== current.inputDigest
+      )
+        reason = "qualification_missing";
+    }
+    const reject = candidates.filter(
+      (item) => reason !== null || item.id !== candidate?.id,
+    );
+
+    for (const item of reject)
+      await tx
+        .update(taskQualifications)
+        .set({
+          publicationState: "rejected",
+          publicationReason: reason ?? "qualification_superseded",
+          publishedAt: new Date(),
+        })
+        .where(eq(taskQualifications.id, item.id));
+    if (reject.length)
+      await emitDomainEvent({
+        db: tx,
+        kind: "task.qualification_changed",
+        projectId: run.projectId,
+        taskId: frozen.taskId,
+        runId: run.id,
+        payload: {
+          projectId: run.projectId,
+          taskId: frozen.taskId,
+          inputRevision: current?.inputRevision ?? 0,
+          qualificationRevision: current?.currentQualificationRevision ?? null,
+        },
+      });
+    log.info(
+      {
+        runId: run.id,
+        qualificationId: candidate?.id ?? null,
+        inputRevision: current?.inputRevision,
+        reason,
+      },
+      "qualification-terminal-publication-checked",
+    );
+
+    return {
+      reason,
+      publish: async () => {
+        if (reason || !candidate) return;
+        await tx
+          .update(taskQualifications)
+          .set({ publicationState: "accepted", publishedAt: new Date() })
+          .where(eq(taskQualifications.id, candidate.id));
+        await acceptTaskQualification(tx, candidate);
+        await emitDomainEvent({
+          db: tx,
+          kind: "task.qualification_changed",
+          projectId: run.projectId,
+          taskId: candidate.taskId,
+          runId: run.id,
+          payload: {
+            projectId: run.projectId,
+            taskId: candidate.taskId,
+            inputRevision: candidate.inputRevision,
+            qualificationRevision: candidate.revision,
+          },
+        });
+        log.info(
+          {
+            runId: run.id,
+            qualificationId: candidate.id,
+            revision: candidate.revision,
+          },
+          "qualification-terminal-published",
+        );
+      },
+    };
   };
 }
