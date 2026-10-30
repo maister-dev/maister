@@ -1,6 +1,6 @@
 # Git integration domain
 
-> Designed configuration-persistence changes and registration cutover are specified in [project configuration persistence](project-config-persistence.md); current implementation descriptions below remain until cutover.
+> Reviewed project configuration commits, separate push and recovery are specified in [project configuration persistence](project-config-persistence.md).
 
 
 ## Purpose

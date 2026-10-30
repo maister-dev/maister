@@ -30,16 +30,18 @@ For the full vision, product model, architecture, and roadmap see
 
 - **Multi-project registry**: N projects per host, each configured by its own
   `maister.yaml` v2 (`project` + `executors[]` + `flows[]` with version
-  pins). Registration via UI form (path to dir containing `maister.yaml`) or
-  `MAISTER_PROJECTS_DIR` env **recursive** auto-discovery on startup. Slug
+  pins) when present. UI registration supports cloning, existing local repos
+  and new repos with an optional manifest. `MAISTER_PROJECTS_DIR` env
+  **recursive** auto-discovery finds manifest-bearing repos on startup. Slug
   derived from `project.name` (kebab-case); both `slug` and `repo_path` are
   unique across projects (one repo = one project). Collisions reject the
   registration.
 - **Package management (ADR-088)**: multi-flow **packages** from git
   monorepos (`maister-package.yaml`; per-package tags `<name>/vX.Y.Z`) —
   platform sources + discovery, immutable `package_installs`, per-project
-  attachments with `maister.yaml packages[]` bootstrap/write-back, package
-  trust fan-out, local versions. The AIF package lives in the external
+  attachments with `maister.yaml packages[]` registration bootstrap and explicit
+  reviewed Git persistence, package trust fan-out and local versions. The AIF
+  package lives in the external
   `maister-plugins` repo.
 - **Flow plugin engine**: Flows are git-repo plugins pinned by tag, installed
   to `~/.maister/flows/<id>@<tag>/` system cache and symlinked per project.

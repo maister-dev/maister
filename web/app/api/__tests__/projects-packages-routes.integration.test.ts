@@ -272,6 +272,15 @@ describe("project packages routes (integration)", () => {
     const attachmentsBefore = await db
       .select()
       .from(schema.projectPackageAttachments);
+    const flowsBefore = await db
+      .select()
+      .from(schema.flows)
+      .where(eq(schema.flows.projectId, cliId));
+    const revisionsBefore = await db.select().from(schema.flowRevisions);
+    const capabilitiesBefore = await db
+      .select()
+      .from(schema.capabilityImports)
+      .where(eq(schema.capabilityImports.projectId, cliId));
     const failure = await exec(
       process.execPath,
       [
@@ -310,6 +319,21 @@ describe("project packages routes (integration)", () => {
     expect(await db.select().from(schema.projectPackageAttachments)).toEqual(
       attachmentsBefore,
     );
+    expect(
+      await db
+        .select()
+        .from(schema.flows)
+        .where(eq(schema.flows.projectId, cliId)),
+    ).toEqual(flowsBefore);
+    expect(await db.select().from(schema.flowRevisions)).toEqual(
+      revisionsBefore,
+    );
+    expect(
+      await db
+        .select()
+        .from(schema.capabilityImports)
+        .where(eq(schema.capabilityImports.projectId, cliId)),
+    ).toEqual(capabilitiesBefore);
     expect(await repositoryFingerprint()).toEqual(initialRepository);
   });
 

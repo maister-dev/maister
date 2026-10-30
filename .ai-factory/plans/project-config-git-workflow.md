@@ -1,7 +1,7 @@
 # Implementation Plan: Explicit, repeatable project configuration commits
 
 Created: 2026-10-29
-Status: Foundation and dedicated publication owners qualified. T6.1 is in progress; the API/runtime/UI cutover remains pending.
+Status: Complete — all 14 tasks and 32 requirement/edge rows qualified locally on 2026-10-30; phase commits retained.
 Branch: `codex/project-config-git-workflow`; implementation base `4a0b41b2e1911b9ad5adda250f1b8a937b0daf46`.
 Implementation branch is active. Phase-local commits are authorized; migrations and execution probes use disposable test resources. No remote push, PR creation or merge is authorized.
 
@@ -19,7 +19,7 @@ Rationale: owner-confirmed standalone follow-up to M33 package management and AD
 
 ## Verified starting point
 
-References below are repository-relative and verified at the inspected HEAD. Proposed files and API shapes are explicitly identified as proposals. Tests were inspected, not executed.
+This investigation baseline was verified at the implementation base above, before changes. Repository-relative references describe that starting point; completed execution receipts below identify the implemented source and tests actually run.
 
 | Concern | Verified code / contract | Current behavior and consequence |
 | --- | --- | --- |
@@ -336,13 +336,13 @@ Phase exit: every functional matrix row owned by phases 1–3 has an executed re
 
 ### Phase 4 — Current documentation and integration readiness
 
-**T11.1 [ ] — Reconcile current EN/RU documentation against implemented specifications.**
+**T11.1 [x] — Reconcile current EN/RU documentation against implemented specifications.**
   - Files: frozen feature SDD, new persistence analytics/traceability plus index, `docs/configuration.md`, `docs/system-analytics/projects.md`, `git-integration.md`, `docs/getting-started.md`, `docs/screens/projects/project-settings-git.md`, `docs/screens/projects/add-project.md`; `docs/api/web.openapi.yaml`; DB narrative/domain/generated ERD; superseding ADR and hub; public EN/RU `guides/register-a-project.md`, `guides/package-sources-and-versions.md`, `reference/project-manifest.md`. Update `.ai-factory/DESCRIPTION.md` only if its current write-back description remains stale; do not edit historical plans as active documentation. Mark the historical write-back design in `docs/pv/package-management.md` as superseded and link the new ADR rather than rewriting its decision history.
   - Contract checklist: new GET/preview/push routes and changed confirmation body/status/reasons/receipts; removed package `writeBack` fields; unchanged registration response with changed side effects; both runner mutations' export semantics; new operation table/revision/constraints/triggers; data-class gates. Existing MaisterError codes suffice; document reason details under CONFIG/PRECONDITION/CONFLICT/EXECUTOR_UNAVAILABLE in `docs/error-taxonomy.md`. No supervisor HTTP, SSE, Flow DSL, engine, or runner-grant change is planned.
   - Deliverable: reconcile against specifications written in Phase 0; this task does not first invent API/DB/analytics semantics. Mark each requirement/edge Implemented only after its actual named test and executed receipt exist, and propagate status to current docs without duplicating canonical contracts. Public docs explain local commit versus push, manual dirty-file remediation, local package limits, and settings excluded from export. Read `site-docs/AGENTS.md` when authoring those files. Existing skill/docs ownership workflows apply during implementation, not during this plan-only pass.
   - Logging: docs-only task, no runtime logging added. Depends on T9.1 and the green phase checkpoints.
 
-**T12.1 [ ] — Verify bidirectional coverage, integration lineage and full acceptance.**
+**T12.1 [x] — Verify bidirectional coverage, integration lineage and full acceptance.**
   - Files: only this feature's ADR/migration references, journal/snapshot/schema, generated ERD, and stale integration assertions identified by validation. Recheck agreed base before local integration; allocate/adjust any candidate migration number before it is applied durably. Never rewrite an applied migration without owner-approved lineage handling; ADR numbers remain immutable after publication.
   - Deliverable: bidirectional requirement/edge/task/test reconciliation, full selected-name inventory versus executed reports, per-slice causal RED/GREEN/refactor receipts, explicit ADR-anchor/migration/trigger integrity and final reviewed source identity. The final gate requires all declared expectations/edges satisfied and all required suites green; a checkbox, Planned row, test title, skipped case or partial reporter is insufficient. Recheck SOLID/KISS/DRY and project rules against changed code only. Retain independent adversarial read-only review of each fix cycle, resolving findings and rerunning affected tests plus required phase gates. No push, PR creation, hosted rerun, deployment, or merge is authorized by this planning request.
   - Logging: existing validator/test output only. Depends on T11.1.
@@ -492,3 +492,7 @@ All other defaults are explicit above: checked-out main branch only, fixed previ
 - T7–T9 full integration gate completed: 600 files / 5,310 tests passed, 2 existing opt-in load files/tests skipped (602/5,312 selected), 3098.04s, invocation `ddc3366e-b6ac-4bfa-aef2-970ec3ead07d`. Frozen source digest `5f34cc81f80ae4bbd39b1f49797858497372aaae17580be93f4c999070a90c9f` was rechecked after completion. The subsequent delta is limited to the isolated unknown-push client fix, its browser assertions, localized copy and strict-body OpenAPI documentation; server runtime and integration inputs remain unchanged. Final client/unit/type/browser qualification is pending on digest `b944db20e15ec2d284ac7ddaedcd725250cadf603e9673bc35275c607bd7d918`.
 
 - T7.1/T8.1/T9.1 completed: final actual source digest `b944db20e15ec2d284ac7ddaedcd725250cadf603e9673bc35275c607bd7d918` passed full web unit 884 files / 9,229 tests (24.28s), typecheck, changed-file ESLint (the existing configured CLI ignore remains), API parser/control/mirror gates and all three authenticated browser owners, 10/10 (1.0m, retries disabled, zero leaked processes; invocation `28aa0b8e-f40d-40b4-b996-9605fa4090ce`). Full integration is 600 files / 5,310 tests with only the two existing opt-in load skips; no server runtime or integration input changed after that completed gate. Final current-documentation and assertion-only acceptance reconciliation remain T11.1/T12.1.
+
+- Final assertion-only acceptance refinement passed in the actual checkout: 2 files / 17 integration tests (3.90s), changed-file ESLint and typecheck. Existing CLI refusal now compares flows, revisions and capability-import rows as well as attachments/installs; existing launch-pin admission proves selected DB runner changes, immutable prior session snapshots and absent YAML before first persistence. This is admission-ledger evidence, not a claim of a live ACP agent run. No production runtime changed after the complete full-suite/browser gates. All 12 requirements and 20 edges now resolve to executed primary owners in the Implemented matrix; final documentation/coverage checks follow.
+
+- T11.1/T12.1 completed: final API parser and 9 control tests plus 5 adapter mirrors passed; full documentation/ADR/link/index/coverage controls and the generated 142-table ERD passed; final EN/RU Mintlify build validation and anchor-aware links passed. Requirement coverage resolves all 12 expectations and 20 edges to the actual primary titles. Focused read-only audits resolved the two recovery-feedback UI defects and strengthened the CLI/admission assertions; no additional runtime changes followed qualification. Final source fingerprint excluding this plan is `3b6ca3326fff771e3a7eb87391fdce55a270a46c7926d3ea1816902d195953e8` across 134 feature paths, relative to base `4a0b41b2e1911b9ad5adda250f1b8a937b0daf46`. The complete integration gate and subsequent assertion-only owners are reported separately above; no skipped load test or hosted/live-agent execution is claimed. All 14 tasks are complete. No push, PR, merge or deployment was performed.

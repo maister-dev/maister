@@ -175,7 +175,7 @@ the credentials from `pnpm db:seed`. Active routes:
 | `/login`                     | Credentials sign-in (Auth.js v5).                                                                        |
 | `/`                          | Portfolio home — workspaces grid across all projects.                                                    |
 | `/projects`                  | Registered projects list + "Add project" button (admin only).                                            |
-| `/projects/new`              | Add-project form (admin only). Accepts a repository directory and bootstraps `maister.yaml` when needed. |
+| `/projects/new`              | Add-project form (admin only). Accepts a repository source; absent manifests use runtime defaults until an explicit reviewed save. |
 | `/projects/[slug]`           | Per-project board — Backlog, Prepare, In Delivery, In Review columns.                                    |
 | `/projects/[slug]/tasks/new` | Task creation form (member+).                                                                            |
 | `/flows`                     | Authored Flow drafts and installed package inventory.                                                    |

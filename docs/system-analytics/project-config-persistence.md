@@ -2,7 +2,7 @@
 
 ## Purpose
 
-(Designed) Separate runtime application of project configuration from explicit,
+(Implemented) Separate runtime application of project configuration from explicit,
 reviewed repository persistence. This domain owns export status, review intent,
 local commit publication, recovery and separate optional push. Registration and
 runtime package/runner behavior keep their existing domain owners.
@@ -72,7 +72,7 @@ sequenceDiagram
     end
 ```
 
-## Publication protocol (Designed)
+## Publication protocol (Implemented)
 
 The target is the checked-out configured main branch. Preview performs no
 repository write and no remote call. Git inspection disables optional index
@@ -112,7 +112,7 @@ These are design evidence, not feature acceptance. Implementation tests own
 all interruption/race windows. The unborn scaffold+amend avoids a dependency
 on newer `git worktree add --orphan`; no deployment Git upgrade is required.
 
-## Lock and recovery contract (Designed)
+## Lock and recovery contract (Implemented)
 
 Lock order is repository, project, operation. An exclusive ownership directory
 under the canonical common Git directory fences all managed parent-repository
@@ -140,7 +140,7 @@ authority revocation blocks new Git effects; completed effects still reconcile.
 Recovery uses keyset progress and isolates poison records without inventing a
 terminal result from failed reads. No new watcher, polling loop or scheduler job.
 
-## Wire and storage bounds (Designed)
+## Wire and storage bounds (Implemented)
 
 Manifest limit is 1 MiB valid UTF-8 (replacement decoding is refused as unsupported checkout); complete diff limit is 2 MiB; preview lifetime is
 10 minutes. Never issue a confirmable truncated review. Revisions are decimal
@@ -175,18 +175,18 @@ outside MAIster; path repair never becomes persistence-status authority.
 
 ## Expectations
 
-- **CPC-01:** (Designed) Each successful package/runner change affects the intended runtime rows and advances export revision as specified; complete tracked/untracked manifest state, index and HEAD fingerprints are unchanged. DB-only edits neither write YAML nor falsely mark exported values different. Enforced by T2.1, T7.1 and IT-CPC-01 parameter table; see [traceability](project-config-persistence-traceability.md).
-- **CPC-02:** (Designed) First save, existing-manifest update and repeated save use the permanent action; a confirmed change yields exactly one reviewed manifest-only commit/receipt, and a semantic no-op yields zero commits/writes. Enforced by T4.1, T6.1, T9.1 and IT-CPC-02; E2E-CPC-02 for durable entry wiring; see [traceability](project-config-persistence-traceability.md).
-- **CPC-03:** (Designed) Fresh detail status compares normalized DB projection with target-branch committed content, independent of path presence; missing, pending, in-sync, blocked and cached/unverified remain distinguishable. Enforced by T3.1, T9.1 and IT-CPC-03; E2E-CPC-03 for last-observed presentation; see [traceability](project-config-persistence-traceability.md).
-- **CPC-04:** (Designed) Before any effect the full diff, target branch, exact message and author policy are displayed; actual committed parent/blob/mode/path-set/message equal the approved review. Cancel/no-op/oversize never issue a commit. Enforced by T3.1, T4.1, T6.1, T9.1 and IT-CPC-04; E2E-CPC-04 for review-before-submit; see [traceability](project-config-persistence-traceability.md).
-- **CPC-05:** (Designed) Save issues no remote request. Separate push confirmation binds destination, range and recorded SHA; rejection leaves the local commit and DB receipt intact and retry does not recommit or push later commits. Enforced by T2.1, T6.1, T9.1 and IT-CPC-05 with local bare remote; see [traceability](project-config-persistence-traceability.md).
-- **CPC-06:** (Designed) Attach, detach, upgrade, downgrade, initial creation, and SET/CLEAR/SET through both runner APIs all pass the same mutation/export contract; no package member becomes a duplicate standalone flow. Enforced by T3.1, T7.1, T8.1 and IT-CPC-01 and IT-CPC-02, shared rather than duplicated; see [traceability](project-config-persistence-traceability.md).
-- **CPC-07:** (Designed) Rich source fixture retains unrelated source bytes/comments, standalone flows/runner, every capability array, imports/trust, roles and promotion.remote; patch only owned leaves; malformed/unsupported structures refuse without effects. Enforced by T3.1 and IT-CPC-07 preservation/refusal table; see [traceability](project-config-persistence-traceability.md).
-- **CPC-08:** (Designed) Dirty/staged/untracked/ignored target collisions and unsupported layouts refuse; before/after bytes, refs and full index fingerprint are identical. A final-seam concurrent edit/stage cannot enter the commit or be overwritten. Enforced by T4.1, T14.1 and IT-CPC-08 guarded-seam table; see [traceability](project-config-persistence-traceability.md).
-- **CPC-09:** (Designed) Every bound DB/repository change, including exportable SET→CLEAR→SET, requires a fresh preview. Same accepted intent has one effect; changed payload/foreign identity is refused. A harmless Git index refresh with unchanged entries is not falsely treated as a user edit. Enforced by T2.1, T4.1, T6.1, T14.1 and IT-CPC-09 stale/idempotency/authorization table; see [traceability](project-config-persistence-traceability.md).
-- **CPC-10:** (Designed) Each enumerated DB/FS/Git/push interruption reaches a specified outcome, releases or conservatively retains its fence, and has a tested retry/recovery path. No duplicate commit, reset, unrelated cleanup, or rollback of successful local commit occurs. Enforced by T2.1, T4.1, T5.1, T6.1, T14.1 and IT-CPC-10 process/DB-loss table; IT-CPC-05 for push windows; see [traceability](project-config-persistence-traceability.md).
-- **CPC-11:** (Designed) Registration modes, source validation, owner/task-key defaults, package trust/pins and in-flight snapshots remain correct. Missing-manifest registration adds no file; existing-source bootstrap still materializes the same pins; actual launch observes the selected DB runner. Enforced by T7.1, T8.1 and IT-CPC-11 registration/execution table; retained owning pin/launch regressions; see [traceability](project-config-persistence-traceability.md).
-- **CPC-12:** (Designed) EN/RU wiring, methods/bodies/errors, applied migration/trigger behavior and analytics match the frozen contract; every acceptance/edge has one primary runnable test and all required suites pass without hidden omissions. Enforced by T1.1, T13.1, T10.1, T2.1–T9.1, T11.1, T12.1, T14.1 and CT-CPC-12 contract/schema gate plus the owning IT/E2E reports; see [traceability](project-config-persistence-traceability.md).
+- **CPC-01:** (Implemented) Each successful package/runner change affects the intended runtime rows and advances export revision as specified; complete tracked/untracked manifest state, index and HEAD fingerprints are unchanged. DB-only edits neither write YAML nor falsely mark exported values different. Enforced by T2.1, T7.1 and IT-CPC-01 parameter table; see [traceability](project-config-persistence-traceability.md).
+- **CPC-02:** (Implemented) First save, existing-manifest update and repeated save use the permanent action; a confirmed change yields exactly one reviewed manifest-only commit/receipt, and a semantic no-op yields zero commits/writes. Enforced by T4.1, T6.1, T9.1 and IT-CPC-02; E2E-CPC-02 for durable entry wiring; see [traceability](project-config-persistence-traceability.md).
+- **CPC-03:** (Implemented) Fresh detail status compares normalized DB projection with target-branch committed content, independent of path presence; missing, pending, in-sync, blocked and cached/unverified remain distinguishable. Enforced by T3.1, T9.1 and IT-CPC-03; E2E-CPC-03 for last-observed presentation; see [traceability](project-config-persistence-traceability.md).
+- **CPC-04:** (Implemented) Before any effect the full diff, target branch, exact message and author policy are displayed; actual committed parent/blob/mode/path-set/message equal the approved review. Cancel/no-op/oversize never issue a commit. Enforced by T3.1, T4.1, T6.1, T9.1 and IT-CPC-04; E2E-CPC-02 for review-before-submit; see [traceability](project-config-persistence-traceability.md).
+- **CPC-05:** (Implemented) Save issues no remote request. Separate push confirmation binds destination, range and recorded SHA; rejection leaves the local commit and DB receipt intact and retry does not recommit or push later commits. Enforced by T2.1, T6.1, T9.1 and IT-CPC-05 with local bare remote; see [traceability](project-config-persistence-traceability.md).
+- **CPC-06:** (Implemented) Attach, detach, upgrade, downgrade, initial creation, and SET/CLEAR/SET through both runner APIs all pass the same mutation/export contract; no package member becomes a duplicate standalone flow. Enforced by T3.1, T7.1, T8.1 and IT-CPC-01 and IT-CPC-02, shared rather than duplicated; see [traceability](project-config-persistence-traceability.md).
+- **CPC-07:** (Implemented) Rich source fixture retains unrelated source bytes/comments, standalone flows/runner, every capability array, imports/trust, roles and promotion.remote; patch only owned leaves; malformed/unsupported structures refuse without effects. Enforced by T3.1 and IT-CPC-07 preservation/refusal table; see [traceability](project-config-persistence-traceability.md).
+- **CPC-08:** (Implemented) Dirty/staged/untracked/ignored target collisions and unsupported layouts refuse; before/after bytes, refs and full index fingerprint are identical. A final-seam concurrent edit/stage cannot enter the commit or be overwritten. Enforced by T4.1, T14.1 and IT-CPC-08 guarded-seam table; see [traceability](project-config-persistence-traceability.md).
+- **CPC-09:** (Implemented) Every bound DB/repository change, including exportable SET→CLEAR→SET, requires a fresh preview. Same accepted intent has one effect; changed payload/foreign identity is refused. A harmless Git index refresh with unchanged entries is not falsely treated as a user edit. Enforced by T2.1, T4.1, T6.1, T14.1 and IT-CPC-09 stale/idempotency/authorization table; see [traceability](project-config-persistence-traceability.md).
+- **CPC-10:** (Implemented) Each enumerated DB/FS/Git/push interruption reaches a specified outcome, releases or conservatively retains its fence, and has a tested retry/recovery path. No duplicate commit, reset, unrelated cleanup, or rollback of successful local commit occurs. Enforced by T2.1, T4.1, T5.1, T6.1, T14.1 and IT-CPC-10 process/DB-loss table; IT-CPC-05 for push windows; see [traceability](project-config-persistence-traceability.md).
+- **CPC-11:** (Implemented) Registration modes, source validation, owner/task-key defaults, package trust/pins and in-flight snapshots remain correct. Missing-manifest registration adds no file; existing-source bootstrap still materializes the same pins; actual launch observes the selected DB runner. Enforced by T7.1, T8.1 and IT-CPC-11 registration/execution table; retained owning pin/launch regressions; see [traceability](project-config-persistence-traceability.md).
+- **CPC-12:** (Implemented) EN/RU wiring, methods/bodies/errors, applied migration/trigger behavior and analytics match the frozen contract; every acceptance/edge has one primary runnable test and all required suites pass without hidden omissions. Enforced by T1.1, T13.1, T10.1, T2.1–T9.1, T11.1, T12.1, T14.1 and CT-CPC-12 contract/schema gate plus the owning IT/E2E reports; see [traceability](project-config-persistence-traceability.md).
 
 ## Edge cases
 
@@ -209,7 +209,7 @@ outside MAIster; path repair never becomes persistence-status authority.
 - **EDGE-CPC-17:** Launch with runtime settings before first save and after each version/runner change; actual resolved runner/pin provenance; existing in-flight snapshot unchanged; persistence performs no install/trust/setup/import. Owner: IT-CPC-11 plus existing launch/pin owners; T7.1/T8.1. Refusal uses CONFIG/PRECONDITION/CONFLICT or explicit EXECUTOR_UNAVAILABLE; exact wire outcomes are in [OpenAPI](../api/web.openapi.yaml).
 - **EDGE-CPC-18:** Real Studio cut's deleted temporary source, mutable local directory changed since attachment, unsupported coordinate, supported source's attached revision match; no guessed/omitted source. Owner: IT-CPC-07 local-coordinate portion; T3.1. Refusal uses CONFIG/PRECONDITION/CONFLICT or explicit EXECUTOR_UNAVAILABLE; exact wire outcomes are in [OpenAPI](../api/web.openapi.yaml).
 - **EDGE-CPC-19:** Exact full-diff byte/size boundaries; UTF-8/newline/mode preservation; empty or malformed bodies; broken filesystem/Git/DB/remote reads produce explicit unavailable/refusal rather than absence/no-op. Owner: IT-CPC-04/07 plus actual-response schema samples; T3.1/T6.1. Refusal uses CONFIG/PRECONDITION/CONFLICT or explicit EXECUTOR_UNAVAILABLE; exact wire outcomes are in [OpenAPI](../api/web.openapi.yaml).
-- **EDGE-CPC-20:** EN/RU parity; cancel before confirm; busy double-submit/Escape/backdrop; timeout then reopen same receipt; focus restore; no-op; banner dismissal; repeated durable action; separate push review and local-success/push-failure feedback. Owner: E2E-CPC-02/03/04; T9.1. Refusal uses CONFIG/PRECONDITION/CONFLICT or explicit EXECUTOR_UNAVAILABLE; exact wire outcomes are in [OpenAPI](../api/web.openapi.yaml).
+- **EDGE-CPC-20:** EN/RU parity; cancel before confirm; busy double-submit/Escape/backdrop; timeout then reopen same receipt; focus restore; no-op; banner dismissal; repeated durable action; separate push review and local-success/push-failure feedback. Owner: E2E-CPC-02; E2E-CPC-03; T9.1. Refusal uses CONFIG/PRECONDITION/CONFLICT or explicit EXECUTOR_UNAVAILABLE; exact wire outcomes are in [OpenAPI](../api/web.openapi.yaml).
 
 ## Private publication cleanup and independent push ownership
 

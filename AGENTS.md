@@ -150,6 +150,7 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | `web/lib/db/schema.ts` | Drizzle schema; `node_attempts` is the sole Flow execution ledger |
 | `web/lib/execution-host/events/projection-runtime.ts` | Autonomous canonical projection registry and worker activation |
 | `web/lib/config.ts` | `maister.yaml` v2 loader (zod-validated) |
+| `web/lib/project-config-persistence/` | Reviewed configuration projection, commit/push intents, Git publication and recovery |
 | `site/app/[locale]/page.tsx` | Public localized landing page |
 | `site/app/api/github/route.ts` | Validated live GitHub repository widget endpoint |
 | `site-docs/docs.json` | Public Markdown docs navigation, theme, and AI context |

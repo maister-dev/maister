@@ -238,17 +238,11 @@ with `CONFIG` naming the variable, and the resolved numbers are logged once. See
 
 ## `maister.yaml` v2
 
-> **`maister.yaml` is bootstrapped at manual registration (Implemented).** When
-> the resolved repo has **no** manifest, `POST /api/projects` atomically writes a
-> minimal schema-valid v2 file (`project.name`, resolved default branch, and
-> `flows: []`) before following the normal validation and registration path.
-> `body.name` wins over the directory basename for that initial file. A
-> **present-but-invalid** manifest still fails `CONFIG` (422) and is never
-> overwritten. `projects.maister_yaml_path` is set for all new registrations;
-> `NULL` remains a legacy recovery state, and only those legacy rows can use the
-> opt-in **persist** action to commit their DB-held configuration. The
-> `MAISTER_PROJECTS_DIR` auto-discovery path remains manifest-gated. Behavior:
-> [`system-analytics/projects.md`](system-analytics/projects.md).
+`maister.yaml` is optional at manual registration. A missing file uses validated
+in-memory defaults and leaves `maister_yaml_path` null; a present invalid file
+refuses with CONFIG/422. Registration creates no unsolicited manifest. The
+[explicit persistence workflow](#explicit-configuration-persistence-implemented--adr-194)
+is available for new and existing manifests. Auto-discovery remains manifest-gated.
 
 ```yaml
 schemaVersion: 2
@@ -481,10 +475,11 @@ revision; every member sub-install records that revision) followed by
 `attachPackage` (attachment group + `package_install_id` FK links +
 mcp/restriction ingestion) — so a bootstrapped package appears on the
 packages tab and is manageable (detach/upgrade/trust) immediately after
-registration. The runtime source of truth is the DB (UI
-attach/detach/upgrade), and each mutation **writes the pin back** to this
-file (comment-preserving, atomic) so the project can be re-raised on another
-MAIster instance from git alone.
+registration. The runtime source of truth is the DB. UI attach, detach,
+upgrade and downgrade leave repository files unchanged. The separate reviewed
+configuration save commits the current pins while preserving comments and
+unrelated sections; committed pins can recreate the project on another
+MAIster instance.
 
 #### `maister-package.yaml` v1 (Implemented, ADR-088)
 
@@ -1608,7 +1603,7 @@ The enforced application runtime range is **Node >=24.15.0 <25** for this releas
 - [Architecture](../.ai-factory/ARCHITECTURE.md) — dependency rules
   enforced around `lib/config.ts`
 
-## Explicit configuration persistence (Designed — ADR-194)
+## Explicit configuration persistence (Implemented — ADR-194)
 
 The manifest locator is independent of export status. Runtime package/default
 runner changes update DB configuration without modifying repository files.

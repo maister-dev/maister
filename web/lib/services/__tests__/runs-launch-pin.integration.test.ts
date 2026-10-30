@@ -454,9 +454,25 @@ function ctx() {
 }
 
 describe("launchRun packagePin (integration, real Postgres)", () => {
-  it("a pinned launch snapshots the pinned revision and leaves the attachment byte-identical", async () => {
+  it("IT-CPC-11: DB-only pinned launches consume project runner changes and preserve existing snapshots", async () => {
     const project = await createProject();
     const fx = await forkAttachWithNewerCut(project, "pinpkg", "flow-pin");
+
+    const selectedRunnerId = randomUUID();
+
+    await db
+      .insert(schema.platformAcpRunners)
+      .values(testPlatformRunnerRow(selectedRunnerId, "claude"));
+    await db
+      .update(schema.projects)
+      .set({ defaultRunnerId: selectedRunnerId })
+      .where(eq(schema.projects.id, project.id));
+    const [registered] = await db
+      .select()
+      .from(schema.projects)
+      .where(eq(schema.projects.id, project.id));
+
+    expect(registered.maisterYamlPath).toBeNull();
 
     await seedTask("task-pin-1", project.id, fx.flowRowId);
     const before = await attachmentRow(fx.attachmentId);
@@ -482,6 +498,47 @@ describe("launchRun packagePin (integration, real Postgres)", () => {
     expect(run.flowRevisionId).toBe(pinnedRevision.id);
     expect(run.flowRevision).toBe(pinnedRevision.resolvedRevision);
     expect(run.flowVersion).toBe(pinnedRevision.versionLabel);
+
+    const [firstSession] = await db
+      .select()
+      .from(schema.runSessions)
+      .where(eq(schema.runSessions.runId, result.runId));
+
+    expect(firstSession).toMatchObject({
+      runnerId: selectedRunnerId,
+      runnerSnapshot: { id: selectedRunnerId },
+    });
+    await db
+      .update(schema.projects)
+      .set({ defaultRunnerId: "claude-default" })
+      .where(eq(schema.projects.id, project.id));
+    await seedTask("task-pin-runner-change", project.id, fx.flowRowId);
+    const next = await launchRun(
+      {
+        taskId: "task-pin-runner-change",
+        packagePin: { packageInstallId: fx.cut2InstallId },
+      },
+      ctx(),
+      db as never,
+    );
+    const [nextSession] = await db
+      .select()
+      .from(schema.runSessions)
+      .where(eq(schema.runSessions.runId, next.runId));
+
+    expect(nextSession).toMatchObject({
+      runnerId: "claude-default",
+      runnerSnapshot: { id: "claude-default" },
+    });
+    const [preserved] = await db
+      .select()
+      .from(schema.runSessions)
+      .where(eq(schema.runSessions.runId, result.runId));
+
+    expect(preserved).toEqual(firstSession);
+    await expect(
+      readFile(join(project.repoPath, "maister.yaml"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
 
     // Full-row compare incl. packageInstallId + attachedAt — the pin NEVER
     // mutates the attachment.

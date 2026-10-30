@@ -895,7 +895,7 @@ statement accept on a task off `Backlog` → `PRECONDITION` (the existing
 [`system-analytics/librarian-operations.md`](system-analytics/librarian-operations.md)
 and [`system-analytics/librarian-conversation.md`](system-analytics/librarian-conversation.md).
 
-## Project configuration persistence reasons (Designed — ADR-194)
+## Project configuration persistence reasons (Implemented — ADR-194)
 
 Existing CONFIG/PRECONDITION/CONFLICT/EXECUTOR_UNAVAILABLE codes carry safe
 `details.reason` values defined by the [OpenAPI contract](api/web.openapi.yaml).

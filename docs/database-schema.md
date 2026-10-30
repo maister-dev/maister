@@ -268,8 +268,8 @@ as implicit `owner` of every project.
   id, slug (UNIQUE), name,
   repoPath (UNIQUE), repoUrl?, provider?,
   mainBranch ('main'), branchPrefix ('maister/'),
-  maisterYamlPath?,              // nullable for legacy DB-only rows;
-                                 //   new registration bootstraps maister.yaml
+  maisterYamlPath?,              // optional manifest locator; absent-file
+                                 //   registration stores null without writing
   defaultRunnerId?,              // platform runner override; null = inherit
   promotionMode?,                // (text, migration 0021) project-default
                                  //   promotion mode (local_merge | pull_request);
@@ -309,13 +309,12 @@ at register time (clone source / existing `origin`, and auto-detected host tag)
 per [ADR-025](decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots);
 `repoPath` is the resolved on-disk dir, not read from `maister.yaml`.
 
-`maisterYamlPath` remains **nullable** for legacy DB-only project rows. New
-manual registration atomically bootstraps a minimal `maister.yaml`, validates it,
-and stores its path; it does not create new `NULL` rows. A legacy `NULL` row can
-still use the persist action to commit its DB-held configuration. The migration
-adds **no backfill** — existing rows keep their stored state. See
-[ADR-093](decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)
-and [`system-analytics/projects.md`](system-analytics/projects.md).
+`maisterYamlPath` is an optional manifest locator. Registration without a file
+validates defaults in memory, stores `NULL` and leaves the checkout unchanged.
+Both absent and existing manifests use the permanent reviewed persistence action;
+content comparison determines status independently of this path. Existing rows
+are not backfilled. See [ADR-194](decisions/adr-194.md) and
+[`system-analytics/projects.md`](system-analytics/projects.md).
 
 **(ADR-085 — Designed, migration `0047`.)** `deliveryPolicyDefault`
 (`jsonb`, nullable) stores the project default for run delivery. Shape:
@@ -5470,7 +5469,7 @@ order.
 - [Architecture](../.ai-factory/ARCHITECTURE.md) — module boundaries
   enforced around `lib/db/`
 
-## Project configuration persistence (Designed — ADR-194)
+## Project configuration persistence (Implemented — ADR-194)
 
 `projects.config_export_revision` is bigint NOT NULL DEFAULT 0 with a nonnegative
 CHECK. It is an optimistic content revision, never a persistence-status flag.

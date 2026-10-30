@@ -18,9 +18,11 @@ description: "Connect an existing local or remote git repository to MAIster with
 4. Optionally set the display name.
 5. Submit and review validation results.
 
-When `maister.yaml` is absent, MAIster writes a minimal valid manifest using the
-resolved default branch. When the file exists but is invalid, registration
-fails with a configuration error and leaves the file unchanged.
+When `maister.yaml` is absent, MAIster validates defaults in memory and registers
+the runtime configuration without creating a file. The checkout stays clean.
+Use [Save project configuration to Git](/guides/save-project-configuration) when
+you want a reviewed configuration commit. A present invalid file causes a
+configuration error and remains unchanged.
 
 ## Clone a remote repository
 
