@@ -2,6 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
+import { AutoPromotionSettingsControl } from "@/components/board/panels/auto-promotion-settings-control";
 import ru from "@/messages/ru.json";
 
 // RU snapshot: resolve `useTranslations(ns)` against the REAL ru.json catalog
@@ -45,8 +46,6 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn() }),
 }));
 
-import { AutoPromotionSettingsControl } from "@/components/board/panels/auto-promotion-settings-control";
-
 describe("AutoPromotionSettingsControl — RU labels", () => {
   it("renders the Russian title, master toggle, and deny-list labels", () => {
     const html = renderToStaticMarkup(
@@ -57,8 +56,10 @@ describe("AutoPromotionSettingsControl — RU labels", () => {
     );
 
     // Real RU strings from messages/ru.json (settings.autoPromotion.*).
-    expect(html).toContain("Полосы авто-промоушена");
-    expect(html).toContain("Авто-промоушен диффов в границах полос");
+    expect(html).toContain("Полосы автоматической доставки");
+    expect(html).toContain(
+      "Автоматически доставлять изменения по правилам полос",
+    );
     expect(html).toContain("Всегда исключены (не настраивается)");
     // The default-mode label is localized in the table.
     expect(html).toContain("По умолчанию проекта");

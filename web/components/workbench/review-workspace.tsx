@@ -59,6 +59,7 @@ export function ReviewWorkspace({
       aria-label={labels.title}
       className="grid min-w-0 gap-4"
       data-testid="review-workspace"
+      id="review-workspace"
     >
       <header className="rounded-[14px] border border-amber-line bg-amber-soft/30 px-4 py-3">
         <h2 className="font-sans text-[16px] font-bold tracking-[-0.01em] text-ink">
@@ -68,8 +69,11 @@ export function ReviewWorkspace({
           {labels.source}
         </p>
       </header>
-      <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(300px,380px)] xl:items-start">
-        <div className="min-w-0 rounded-[14px] border border-line bg-paper p-2">
+      <div className="grid min-w-0 gap-4" data-review-layout="stacked">
+        <div
+          className="min-w-0 rounded-[14px] border border-line bg-paper p-2"
+          data-testid="review-diff-panel"
+        >
           <RunDiff
             forcedScope="review"
             labels={diffLabels}
@@ -77,7 +81,10 @@ export function ReviewWorkspace({
             runId={runId}
           />
         </div>
-        <aside className="rounded-[14px] border border-line bg-paper p-4">
+        <aside
+          className="rounded-[14px] border border-line bg-paper p-4"
+          data-testid="review-decision-panel"
+        >
           <h3 className="mb-3 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink">
             {labels.decision}
           </h3>

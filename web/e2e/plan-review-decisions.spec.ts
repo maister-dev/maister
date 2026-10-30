@@ -45,11 +45,20 @@ test.describe("Plan-review decision requests", () => {
     const resumeDecision = decisionCards.filter({
       hasText: "Choose a resume mode",
     });
+    const decisionGroup = page.getByTestId("plan-decision-group");
 
     await expect(page.locator("#agent-chat")).toBeVisible();
+    await expect(decisionGroup).toBeVisible();
     await expect(decisionCards).toHaveCount(1);
     await expect(databaseDecision).toHaveCount(0);
     await expect(resumeDecision).toHaveCount(1);
+
+    const [decisionGroupBox, agentChatBox] = await Promise.all([
+      decisionGroup.boundingBox(),
+      page.locator("#agent-chat").boundingBox(),
+    ]);
+
+    expect(decisionGroupBox?.y).toBeLessThan(agentChatBox?.y ?? 0);
 
     await resumeDecision.getByRole("button", { name: /Graph/ }).click();
 

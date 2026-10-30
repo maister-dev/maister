@@ -82,6 +82,7 @@ export interface HitlDecisionControlsLabels extends ConsensusCardMappedLabels {
   reviewComments: string;
   decisionApprove: string;
   decisionRework: string;
+  decisionTakeover?: string;
   permissionAllowOnce?: string;
   permissionAllowWithUpdates?: string;
   permissionAllowAlways?: string;
@@ -100,6 +101,7 @@ export interface HitlDecisionControlsLabels extends ConsensusCardMappedLabels {
   reviewOpenCount?: string;
   reviewOutdatedCount?: string;
   reviewLoopChip?: string;
+  reviewLoopHint?: string;
   reviewApproveOpenWarn?: string;
   reviewReworkExhausted?: string;
   // ADR-162 `json` field live-validity hint. Optional so pre-feature consumers
@@ -1460,6 +1462,7 @@ export function HitlDecisionControls({
   const decisionLabel = (d: string): string => {
     if (d === "approve") return labels.decisionApprove;
     if (d === "rework") return labels.decisionRework;
+    if (d === "takeover") return labels.decisionTakeover ?? d;
 
     return d;
   };
@@ -1480,6 +1483,9 @@ export function HitlDecisionControls({
   const loopInfo = reviewLoopInfo(reviewSchema);
   const planReviewParent = planReviewParentFromSchema(reviewSchema);
   const reworkExhausted = loopInfo?.exhausted ?? false;
+  const remainingReworks = loopInfo
+    ? Math.max(0, loopInfo.totalVisits - loopInfo.gateAttempt)
+    : 0;
   const openCount = reviewCounts?.openCount ?? 0;
   const outdatedCount = reviewCounts?.outdatedCount ?? 0;
   const exhaustedText =
@@ -1525,7 +1531,11 @@ export function HitlDecisionControls({
                 </div>
               ))}
               {planReviewParent.decisionCount > 0 ? (
-                <p className="font-mono text-[11px] text-amber">
+                <p
+                  className="rounded-[8px] border border-amber-line bg-amber-soft px-3 py-2 font-mono text-[11px] leading-[1.5] text-amber"
+                  data-testid="plan-review-approval-blocked"
+                  role="status"
+                >
                   {labels.planReviewApprovalBlocked ??
                     "Answer blocking plan decisions before approval."}
                 </p>
@@ -1542,6 +1552,16 @@ export function HitlDecisionControls({
                   {fillTemplate(labels.reviewLoopChip, {
                     $n: loopInfo.gateAttempt,
                     $m: loopInfo.totalVisits,
+                  })}
+                </span>
+              ) : null}
+              {loopInfo && labels.reviewLoopHint ? (
+                <span
+                  className="font-mono text-[10.5px] leading-[1.4] text-mute"
+                  data-testid="review-loop-hint"
+                >
+                  {fillTemplate(labels.reviewLoopHint, {
+                    $count: remainingReworks,
                   })}
                 </span>
               ) : null}
