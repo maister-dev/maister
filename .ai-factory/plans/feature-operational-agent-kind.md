@@ -2,8 +2,8 @@
 
 Branch: `feature/operational-agent-kind` — keep this checkout and branch.
 
-Created: 2026-10-30. Updated after rebase and triager investigation.
-Status: **Planned; UX-T01–UX-T28 remain unchecked. Rebase preparation is complete.**
+Created: 2026-10-30. Refined by aif-improve after rebase and qualification analysis.
+Status: **Planned; UX-T01–UX-T30 remain unchecked. Rebase preparation is complete.**
 
 This is the active follow-up plan for `/aif-implement`, `/aif-improve` and
 `/aif-verify`. The completed original operational-agent plan and qualification
@@ -154,12 +154,18 @@ last failure. Label counts **Runs in retained history / Запуски в ист
 these are not lifetime counters independent of retention. Zero runs means “Not
 run yet / Ещё не запускался”. Use one batched aggregate/latest query, not N+1.
 
-The full-width page has URL-addressable tabs: History, Memory, Definition and
-Settings. History is default and uses keyset pagination, default 25/max 100,
-newest `(launchedAt,id)` first for new/verified rows. Preserve mutable startedAt
+The full-width page has URL-addressable tabs: History, Attempts, Memory, Definition and
+Settings. Attempts has its own bounded cursor and explicit pre-run outcome labels. History is default and uses keyset pagination, default 25/max 100,
+newest `(activitySortAt,id)` first; for new/verified rows activitySortAt equals
+immutable launchedAt. Preserve mutable startedAt
 as execution/admission time, never use it for causal recovery. Backfill launch time
 only from verified creation evidence; otherwise retain a stable legacy sort time
-with explicit estimated provenance and disallow it as a recovery witness. Filters
+with explicit estimated provenance and disallow it as a recovery witness.
+Persist activitySortAt once at cutover from known launch evidence or the then-current
+legacy timestamp; never recompute it from mutable startedAt. If no timestamp exists,
+use the recorded migration instant with `migration_estimate` provenance. The latest
+summary row uses this same total ordering and labels estimated history explicitly;
+it must not claim an exact last-launch time for such a row. Filters
 are URL-synchronized allow-listed status, trigger source and operational outcome;
 reset cursor on filter change. Cursor binds project, agent, filters and upper
 launch boundary. Tampered/mismatched cursors return 400; all queries still enforce
@@ -207,11 +213,18 @@ count to the card. Cap displayed causes at 10 with a paginated detail expansion;
 the summary reports total causes and never silently drops the remainder.
 
 Scope is a frozen hash of definition digest, effective declared instance config,
-completion-contract version and semantic trigger input. Implement explicit trigger
+completion-contract version and semantic trigger input for business causes. Implement explicit trigger
 normalizers: cron/manual scan with identical declared scope can match; event,
 webhook or delegated inputs retain target identifiers/payload semantics while
 excluding delivery IDs/timestamps only where the existing trigger contract proves
 them nonsemantic. Unknown/legacy scope is **not comparable for automatic recovery**.
+These semantic-input scopes apply to business/validation causes. Infrastructure
+causes use a separate versioned allow-listed scope: project/agent, runner configuration
+digest, provider/service identity, failed stage/operation and relevant execution-host
+or repository boundary when that stage depends on it. Task ID, issue number and
+request prose do not split a provider-auth/session-create failure into new episodes.
+Unknown reason/stage is not automatically collapsed into a known infrastructure
+cause. The normalizer table is closed and tested, not arbitrary field omission.
 No secret-bearing scope inputs/hash preimages are exposed or logged. Changed scope
 starts a distinct cause episode inside the same agent/project card.
 
@@ -247,8 +260,15 @@ zero-new-work complete scan is eligible. Recovery eligibility is a platform caus
 classification, independent of the diagnostic retryable flag: a 403 may be
 non-retryable until access is repaired yet recover after an eligible successful scan.
 Partial, missing, malformed, cancelled or
-prose-only outcomes are not. A changed definition/config is a different scope and
+prose-only outcomes are not. A changed definition/config is a different business scope and
 does not falsely resolve the old problem; the UI permits acknowledging it as seen.
+
+Infrastructure recovery compares its infrastructure scope, not task-specific
+business input. A later clean complete operational success on runner A may close a
+matching provider failure across different tasks, but success on runner B may not.
+A legacy run lacking canonical validated success is not a business recovery witness;
+retain acknowledgement/manual remediation rather than infer success from prose.
+The same strict non-overlap timestamp rule applies to both scope families.
 
 Integrity violations, unresolved external effects and unavailable evidence are
 safety episodes: a later clean scan never closes them. Keep their diagnostic links
@@ -306,10 +326,11 @@ Proposed additive schema, finalized in Phase 0:
 
 | Object | Fields/invariants and access path |
 | --- | --- |
-| `runs` | Immutable `source_agent_id`, `launched_at` plus explicit legacy timestamp provenance, versioned `agent_activity_snapshot`, retry lineage; history index `(project_id,source_agent_id,launched_at DESC,id DESC)` with nonnull predicate. No persisted mutable run-count columns. |
+| `runs` | Immutable `source_agent_id`, nullable `launched_at`, nonnull activitySortAt for classified agent history with timestamp provenance, versioned `agent_activity_snapshot`, retry lineage and versioned taskAdmissionSnapshot where applicable; history index `(project_id,source_agent_id,activity_sort_at DESC,id DESC)` with source-agent predicate. No persisted mutable run-count columns. |
 | `agent_incident_episodes` (new) | UUID ID, project FK, immutable agent key, scope digest/version or explicitly unknown, reason/fingerprint, state open/resolved, attention revision, first/last terminal timestamps, resolvedAt/recovery evidence. Unique open episode per `(project,agent,scope,fingerprint)`; unknown scope uses an explicit key, not SQL NULL uniqueness. Index open episodes by authorized project/agent. |
 | `agent_incident_occurrences` (new) | Episode FK, immutable source fact key, nullable run FK SET NULL, original run ID for dedup/distinct count, fact channel (operational terminal, execution failure, admission refusal, cleanup), result/terminal/attempt or cleanup revision, observed terminal timestamp, per-occurrence verified cleanup resolution and minimal safe reason. Unique `(source fact key,cause fingerprint)`; no copied result bodies or prompts. Source key survives run deletion. Index episode/time and run/revision lookup. |
 | `agent_incident_reader_states` (new) | User/episode/attention-revision PK; nullable acknowledgedAt; independent notificationRecordedAt, notificationMode (published/baseline), nullable notificationEventId. A notification receipt never implies acknowledgement. CHECKs enforce valid null/mode combinations. User FK cascade; publication receipt survives outbox retention. Old per-run acknowledgement table remains for compatibility. |
+| `agent_trigger_attempts` (new) | Source-agent/project and binding snapshot, unique delivery claim/fence, nullable run pointer, immutable claim time and CAS settlement, bounded safe diagnostics. No cascade on detach; index agent/claimedAt/id and unsettled claims. Independent pre-run lifecycle, not another run or scheduler queue. |
 
 The separate `agent_retry_intents` ledger and unique retry-child relation in UX-D09
 are required for explicit rerun idempotency, not incident aggregation.
@@ -347,7 +368,7 @@ qualification passed. No deployment database was touched. Previous conflict-free
 receipts in the historical section do not describe this new base.
 
 Provisionally reserve follow-up migration 0204 for activity/incidents and 0205 for
-retry persistence, 0206 for qualification; reserve ADR-196 for activity/attention,
+retry persistence, 0206 for trigger-attempt evidence, and 0207 for qualification; reserve ADR-196 for activity/attention,
 ADR-197 for explicit retry/effect boundaries and ADR-198 for task qualification. Recompute against authoritative master at implementation.
 UX-T01 still owns deployment-ledger inventory: a durable DB using the pre-rebase
 operational 0194–0198 sequence must refuse ordinary upgrade until an explicit
@@ -366,7 +387,10 @@ old per-run attention may be noisier, but history/results are not removed.
 
 **UX-AC06:** migration resumes after interrupted pages without duplicates; old
 acknowledgements retain meaning; source identity survives FK deletion; constraints
-and generated schema match. New code is not enabled on partial backfill.
+and generated schema match. New code is not enabled on partial backfill. Add nullable launch columns first,
+backfill verified/estimated fields, then set defaults for future INSERTs; adding
+DEFAULT now() must not silently turn old launches into today's factual timestamps.
+CHECK/immutable guards explicitly distinguish legacy from versioned new records.
 
 ### UX-D07 — HTTP, external contracts, authorization and live updates
 
@@ -483,10 +507,27 @@ Admission refusal before a run exists stays on its existing scheduler attempt/
 launch HTTP diagnostic and agent summary; do not fabricate successful executions
 or count rejected HTTP requests as runs. Repeated scheduler refusals use the same
 agent attention card when they have durable attempt evidence, with a distinct
-source fact key and **attempt count**, not a fake failed-run count. Where an
-existing trigger lacks durable pre-run refusal evidence, record that refusal in
-its existing domain-event/attempt ledger in this scope; an exception log is not
-history. Include manual refusal feedback without manufacturing a run.
+source fact key and **attempt count**, not a fake failed-run count. Current `agent_schedules.lastAttemptFence/lastOutcome` is overwritten telemetry
+(`triggers.ts:48-95`, schema:1098-1114), not a durable attempt ledger; a global
+scheduler job run cannot identify each binding attempt. Add a narrow
+`agent_trigger_attempts` ledger: immutable id/project/sourceAgent/binding snapshot,
+trigger source and delivery identity, claimedAt, nullable settledAt/outcome/runId,
+safe reason and comparison scope. Unique schedule-snapshot/fence or event-delivery
+claim prevents replay duplicates; a deleted binding/run leaves the safe snapshot.
+Claim a scheduled fire and insert its attempt atomically (including nextFireAt),
+then settle attempt + latest telemetry + incident occurrence + outbox in one owner
+transaction. No full prompts or secret trigger bodies copied into the ledger.
+No new business retry policy: a process death after claim is reconciled by the
+existing system_sweep using the recorded launch intent/run evidence. Adopt a proven
+run receipt; if outcome cannot be proven, settle `unknown` with remediation and do
+not blindly re-fire the external operation. Late receipts refine evidence under
+CAS without double-counting incidents. Manual preflight refusal stays HTTP feedback;
+accepted explicit retries use their own intent ledger. Expose scheduled attempts
+in agent history as a distinct Attempts view, page size 25/max100, with separate
+attempt/run counts; do not mix two sorts into one unbounded union. Include manual
+refusal feedback without manufacturing a run. Backfill only the latest proven
+legacy attempt with `legacy_latest` provenance; prior counts remain unavailable,
+not fabricated from lastAttemptFence.
 
 **UX-AC08:** twenty failed workspace-less triagers yield zero working copies, one
 agent failure card, and twenty retained run records with accurate failure labels.
@@ -544,6 +585,12 @@ task revision, selected-runner snapshot and policy inputs), preallocated success
 state `accepted | launched | refused`, typed refusal, timestamps, mandatory admission
 lease owner/fence/expiry, attempt count, due time and allocation progress/provenance. Partial unique sourceRunId while state is accepted/launched serializes an active
 claim; unique nonnull runs.retryOfRunId permanently enforces one created successor.
+Retain immutable source/successor identity text and nullable navigation FKs; never
+cascade-delete an active/refused-with-resources intent or its cleanup evidence.
+The launched receipt survives child history deletion and still blocks a second
+successor from that source. While it owns resources, deletion is refused by the
+existing evidence/ownership pattern. Actor deletion revokes execution authority but
+does not orphan cleanup; a system cleanup owner retains the narrow disposal duty.
 Unique `(actor,requestKey)` and payload comparison reject key reuse
 with different contents. `runs.retryOfRunId`/retry-origin snapshot persist lineage
 and original trigger/event/schedule semantics. Derive every locator from source
@@ -585,13 +632,26 @@ Before successor INSERT, recheck the fence, source quiescence, task revision,
 current authority and accepted recipe under the owning transaction locks. Insert
 successor run, immutable snapshots and intent→run receipt atomically; then dispatch
 via existing recoverable command ownership. A final-check refusal after allocation
-records a durable resource disposition for the exact owned allocation, processed
-by the existing lifecycle/cleanup owner with preservation and bounded retries;
+records durable allocation disposition on the retry intent (`armed | released |
+exhausted`, due/attempt/error/ownership fields). The retry-admission sweep owns this
+**pre-run** disposal, reusing preservation/removal primitives under its fence;
+`operational-disposition.ts:100-105` needs an existing run and cannot own this row.
+After atomic child insertion, ownership transfers exactly once to the run's normal
+lifecycle owner and the intent is forbidden to delete its resources. Pre-run cleanup
+exhaustion uses the agent incident, safe evidence and explicit rearm via a scoped
+retry-intent action, not a fake run cleanup endpoint. Bound and specify that action
+in the retry API contract as `POST /api/runs/{runId}/retry/{intentId}/cleanup` with body
+`{expectedDispositionRevision,requestKey}`, existing launchRun grant, 202/replay
+receipt and 409 stale ownership; it rearms cleanup only, never launches work;
 never mark resources disposed merely because the intent is refused. Recovery after
-receipt adopts that same child, never creates another. Transient admission failures
-use bounded due-time retries with structured warnings; exhaustion becomes a typed
+receipt adopts that same child, never creates another. Transient pre-insert admission failures
+use at most three attempts with existing scheduler due-time/backoff utilities and
+structured warnings (no sleep-held worker); exhaustion becomes a typed
 refusal and grouped attention, while retained resources keep a separate cleanup
-obligation. A poison intent cannot starve the sweep. Unknown session-create outcome
+obligation. Process at most 100 due intents per sweep, ordered by dueAt/id, with fenced
+lease ownership; a poison intent cannot starve the sweep. Reuse the existing
+worktree operation lock/wait deadlines, recording expired-but-still-locked as
+retryable ownership contention rather than stealing the filesystem owner. Unknown session-create outcome
 stays under existing command reconciliation, not this pre-insert retry mechanism.
 
 An accepted intent is 202, not a claim that the new runner has started or succeeded.
@@ -612,13 +672,16 @@ New routes:
 - `POST /api/runs/{runId}/retry`: body-controlled `{runnerId,requestKey,previewFingerprint}`
   only. runnerId must resolve in the authorized compatible set; request key UUID;
   no taskId/projectId/cwd/package path/eventId supplied by client. Server derives
-  input. 202 `{retryIntentId,sourceRunId,runId,state,queueReason?}` for accepted
-  intent or its pending replay; state distinguishes accepted/queued/started and never
-  claims completion. Before creation, runId is null; the reserved identity is
+  input. 202 `{retryIntentId,sourceRunId,runId,intentState,runStatus,queueReason}`
+  for accepted intent or its pending replay. intentState is exactly
+  `accepted | launched | refused`; runStatus is null before child creation and then
+  the canonical RunStatus. queueReason is nullable; queued/started are UI derivations,
+  not extra intent states. The receipt never claims completion. Before creation, runId is null; the reserved identity is
   server-only. Read the intent through `GET /api/runs/{runId}/retry/{intentId}`
   (both IDs=url-param, verify source/intent match and project grant) with SSE
-  invalidation. It returns 200 with current state and nullable created runId.
-  Same-key replay of an asynchronously refused intent returns 200 with state refused
+  invalidation. It returns 200 with current state and nullable created runId/runStatus; a terminal child does not change the intent
+  from launched back to refused.
+  Same-key replay of an asynchronously refused intent returns 200 with intentState refused
   and typed reason; it never restarts that receipt. 400 malformed, 403 denied, 404 unavailable source,
   409 stale/unsafe/conflicting request or successor already owned by another
   intent, 503 maintenance/admission infrastructure unavailable before acceptance.
@@ -807,8 +870,45 @@ revision and expected current qualification revision/pointer (null for first wri
 Lock the task and CAS both: a late agent assessment must not overwrite a newer
 human needs_review/not_actionable decision on unchanged input. Request-key replay
 returns the original receipt; it never reapplies an obsolete assessment. For required tasks, only a current `ready` receipt can stamp launchable
-routing/arm enqueue. Publish qualification, verdict/hold, enqueue intent, audit and
-event atomically; stale writes return CONFLICT without partial mutation. Legacy
+routing/arm enqueue. Human/project-token assessments authorized as a human may publish qualification,
+verdict/hold, enqueue intent, audit and event atomically. Agent-authored assessment
+submission instead persists a **candidate** and proposed routing/enqueue, returning
+202; it cannot make the task ready or arm its queue while its evidence run is still
+executing. Current `services/triage.ts:187-225` arms immediately, before
+`agents/finalization.ts:609-705` validates result/integrity; preserve that legacy
+behavior only for legacy tasks, not required qualification.
+
+Keep immutable assessment content separate from its publication receipt
+`candidate | accepted | rejected`; rejected here means unsafe/stale publication,
+not the task decision `not_actionable`. A qualifier launch freezes the bound task and its qualification obligation from
+the declared role, independently of operational_v1. A valid operational result with
+no candidate is not sufficient: allow a no-op only when canonical current task
+state proves a previously accepted assessment or an explicit human-owned hold;
+otherwise finalize blocked/failed with `qualification_missing`. An intake-role run
+has no per-task assessment obligation. No agent-ID inference. One candidate per
+task/run/input revision,
+request-key/payload replay and expected current-pointer CAS are mandatory. The
+existing agent finalizer publishes a candidate only in the same transaction as its
+canonical valid, clean successful operational result. Bind run/task/author and
+repository SHA from token/snapshot, never client-supplied IDs; the final result must
+reference the submitted qualification receipt. Failure, cancellation, missing or
+malformed result, unexpected source changes, stale input/pointer or revoked scope
+reject publication and leave the task held, with exact evidence/reason. A source
+run that cannot publish its proposed qualification must not claim that operation
+succeeded; terminalization maps it to the existing blocked/failed contract. Preserve the
+reported result separately from the effective publication failure; do not rewrite
+agent counts or turn a stored candidate into proof of accepted work. No
+second asynchronous finalizer and no publication from an unowned sweep. Recovery
+replays the existing finalizer transaction; duplicates never arm twice. Human
+assessments supersede candidates via pointer CAS, so late completion cannot undo
+them. A held assessment or normal clarification can be a clean successful outcome;
+question creation itself continues through existing same-run HITL.
+
+Inventory locks before implementation: candidate submit/finalizer acquire source
+run then task, then incident advisory/episode locks where required; human task-only
+writers never acquire a run lock afterward. No external calls while holding them.
+Update conflicting existing owners together and test actual barriers. Stale writes
+return CONFLICT without partial mutation. Legacy
 callers can flag/ask but cannot ready a required task without the contract. Existing
 `auto_enqueue=always` and `triage_only` may not bypass quality; always means enqueue
 only after qualification, and triage_only holds unclear requests without asking.
@@ -833,6 +933,13 @@ No mutable branch-name checkout after the check. This is local registered-reposi
 revision evidence, not a claim of remote freshness. No per-commit event storm: stale
 is detected at decision/admission or explicit requalification, using existing event
 ownership; user-facing status must indicate when evidence needs rechecking.
+
+Each newly admitted delivery run freezes `taskAdmissionSnapshot` (version, admission
+mode, policy/input/qualification revisions, evidence SHA/target and parent receipt
+when inherited). Pending dispatch checks current task authority/freshness against
+this snapshot; an already-running run keeps its original receipt. Task content
+changes do not rewrite a historical admission. Store this on runs under immutable
+schema guards; it is not inferred later from current task state.
 
 **Existing orchestrator decomposition.** Internal execution-plan carriers are not
 independent intake requests. Preserve `run_plan`/task-mode `run_delegate` under an
@@ -879,13 +986,16 @@ EN/RU copy must distinguish “request already satisfied” from “runner faile
 qualification ledger, unique `(taskId, inputRevision, requestKey)` idempotency with
 payload-conflict rejection, same-project FK/pointer validation, writer CAS and
 bounded latest/history indexes, including immutable server-owned execution-child
-provenance and current-assessment pointer CAS. Proposed next migration 0206 after activity/retry;
+provenance and current-assessment pointer CAS. Proposed migration 0207 after activity/retry/trigger attempts;
 recheck names at T01. No history rewritten to pass. Protect qualification evidence
 under existing task/run retention and grants, with tombstones for unavailable
 references. Extend task/triage REST DTOs, ext OpenAPI, MCP `task_get/list/create` and
 `triage_set`, board/work-stage projections, project config import/export and SSE
 invalidation atomically with the policy. Use existing 403/404/409/422 semantics;
-invalid body is 400, version/capability incompatibility is an explicit precondition.
+preserve the existing triage route
+422 CONFIG validation contract (including invalid JSON/body), rather than changing
+it to 400. New routes use their explicitly specified validation statuses;
+version/capability incompatibility is an explicit precondition.
 A reader cannot infer permission from an evidence URL. Specs must enumerate the
 request/response fields, identifier trust, size bounds and all admission writers.
 Add a named engine capability/floor for task qualification and `task_target`; reserve
@@ -903,9 +1013,111 @@ admits exactly the existing task; launch still follows explicit intent/routing.
 Unknown is never converted into a false rejection. Missing/malformed assessments cannot admit work. Changes invalidate stale
 qualification; source/decision history and legacy active code work remain intact.
 
+### Delivery contract — SDD artifacts, wire schemas and implementation gates
+
+Phase 0 is a hard prerequisite, not a documentation catch-up task. Before behavior
+code, publish the following as **Designed**, following docs/CLAUDE.md R5/R5a
+(Purpose→Entities→State machine→Flows→Expectations→Edge cases→Links, at most 12
+testable normative expectations per owning domain), with requirement IDs, concrete actors,
+pre/postconditions, state transitions, concurrency/crash rules, failure/remediation
+and links to the primary acceptance cases. Mark Implemented only after receipts.
+
+| Canonical artifact | Required coverage |
+| --- | --- |
+| `docs/system-analytics/agents.md`, new `agent-activity-history.md` and `agent-incidents.md` | Activity populations, attempt vs run history, scope normalizers, episode/reader/recovery FSMs, lifecycle writer and SSE/notification ownership. |
+| `docs/system-analytics/triage.md`, `tasks.md`, new `task-qualification.md` | Incoming→assessment candidate→publication→Backlog→admission sequence, human/agent differences, repository evidence, stale decisions, parent decomposition and no-triager setup/remediation. Include state and sequence Mermaid diagrams. |
+| `docs/api/web.openapi.yaml`, `docs/api/external/operations.openapi.yaml`, owning AsyncAPI and MCP tool schemas | Every new/changed route: exact required/nullable fields, bounds, identifiers and authority, error/status examples, idempotency, incompatible/legacy caller behavior, event replay and redaction. Validate actual route responses against published schemas. |
+| `docs/db/{agents,attention,operational-agents}-domain.md`, new `task-qualification-domain.md`, generated `erd.dbml`, database index | Every column, FK/cascade, CHECK/partial uniqueness, immutability, lock order, history retention, backfill and operational rollback. Domain diagrams agree with generated schema. |
+| Project settings/agent detail, Incoming/task detail and Inbox screen references; public EN/RU guides | Empty/loading/error/stale/detached/denied states, precise labels/counts, accessible actions, editable field ownership, focus/keyboard/mobile and URL state. |
+| `docs/system-analytics/agent-activity-traceability.md`, ADR-196–198 and domain indexes | Each UX-AC and each edge row below maps to one primary executed test owner, implementation tasks and specification section. No requirement accepted only by a checkbox or source-text assertion. |
+
+Finalize the following wire decisions in those specifications, not ad hoc in handlers:
+
+- **Qualification writes:** extend external `triage_set`/existing triage POST with
+  optional `qualification` plus `requestKey`, `expectedInputRevision` and
+  `expectedQualificationRevision` (nullable first-write). A qualification is strict
+  `{schemaVersion:1,decision,checks,reasonCodes,nextActions,evidenceRefs}`; checks use
+  a closed enum of required dimensions and pass/fail/unknown/N-A, with rationale.
+  Maximum 16 checks, 32 evidence references, 16 reasons/actions and 2,000 characters
+  per rationale/action; whole request ≤64 KiB. Never accept actor/run/project/input
+  digest or an execution-child exemption from body. Current context supplies them.
+  Use existing `operation_receipt` references in operational_v1; confirmed means
+  candidate submission was durably recorded, not that publication has happened.
+- **Human UI mutation:** new `POST /api/projects/{slug}/tasks/{taskId}/qualification`
+  uses the same application service and qualification/routing payload, existing
+  `editTask` plus `readRepoFiles` when protected code evidence is read. It is one
+  aggregated mutation, not a client fan-out. Web validation 400, existing external
+  validation 422 CONFIG; unauthorized 401/403 and cross-project task 404; stale input,
+  assessment or conflicting key 409. No generic override or privileged model role.
+- **Write responses:** legacy external triage remains its existing 200 body.
+  Qualification-aware human/project-token writes return 200
+  `{qualificationId,inputRevision,qualificationRevision,publicationState,decision}`;
+  bound-agent candidates return 202 with publicationState candidate and the expected
+  pointer revision. After finalization, GET reflects accepted/rejected and typed
+  publication reason. Same-key replay returns its own current receipt (200 if settled,
+  202 if still candidate), never overwrites a later qualification. A project token
+  follows its existing human-authority mapping; a run-bound token cannot claim that
+  path by omitting runId. Mere tasks:triage scope does not fake observed repo evidence.
+- **Reads:** task_get/list and UI task DTO add a safe `qualification` summary with
+  required/mode, input/current assessment revisions, decision, publication/freshness,
+  blockedReason and next-action kinds. Full checks/evidence require existing data
+  grants. New web `GET .../tasks/{taskId}/qualifications` uses 25/max100 keyset pages
+  bound to task/filter/auth scope; return `{items,nextCursor,asOf}`. No unbounded
+  history embedded into task_list. External readers obtain current summary and a
+  navigation link; no new MCP history/mutation family is needed.
+- **Trigger attempts:** new web `GET .../agents/{agentId}/attempts` returns the
+  bounded attempt DTO with nullable runId and explicit unknown/legacy_latest
+  provenance. No run status fabricated for a refusal. Replay, history and incidents
+  share the same attempt ID. Counts of attempts and executions are never added as
+  though they were distinct work items.
+- **Events and freshness:** add one typed content-free qualification-change fact
+  in the same transaction as input/publication changes, routed to existing task/
+  attention SSE and admission wake-up. It is not a selectable agent trigger and
+  must not create a self-triage loop. The scheduler's existing durable backstop
+  handles a missed wake. Publication updates within one unchanged card/count must
+  invalidate the view. Resume a Human ask through its existing owner only.
+- **Configuration/compatibility:** add the narrow optional agent declaration
+  `task_qualification: {contract: v1, role: intake | qualifier}` to definition schema, registry, package parser, Studio,
+  attachment validation and launch snapshots. It declares required platform/project
+  behavior, not a tool grant. Both importers declare intake, updated triager declares qualifier;
+  their package engine_min requires the reserved compatible version. Check project
+  policy when attaching/enabling/launching those definitions; installing unrelated
+  core capabilities into a legacy project remains legal. `workspace_ref: task_target`
+  has special resolution only with the qualifier declaration and repo_read, so an old frozen
+  definition's literal ref cannot change meaning. An incompatible package upgrade
+  produces a precise policy/capability refusal before scheduling new runs.
+
+Fresh/incremental/backfill tests must also prove constraints under direct malformed
+writes, all-or-none transaction rollback, same-project pointers and deletion/FK
+semantics. Actor/run deletion preserves safe provenance rather than reviving an
+assessment; no acceptance from missing evidence. Project soft archive remains the
+supported operation; prospective cascade definitions do not authorize hard delete.
+Retained admissions/qualification pointers cannot reference a pruned active record;
+follow existing evidence protection, and expose historical unavailable evidence.
+
+**SDD/TDD completion rules:** for each behavior slice, record (1) its normative
+expectation and primary test, (2) an executed RED failing for that behavior rather
+than an environment error, (3) the smallest GREEN implementation, and (4) refactoring
+with the owning tests still green. A single integration test may cover a coherent
+transaction, but each matrix edge needs a named assertion/scenario; one huge happy
+path is not edge coverage. Reuse fixtures and existing tests, avoid helper-mirroring
+assertions and redundant unit/browser matrices. Migration and wire-contract tests
+are executable before their corresponding implementation. New query behavior gets
+bounded-cardinality/query-count proof, not unreliable wall-clock timing assertions.
+
+Keep parsing/validation, pure decision logic, DB transaction ownership, external
+filesystem/host effects and UI rendering separate. Reuse existing auth, error,
+result, cleanup, SSE and configuration services. Strict named DTOs, exhaustive
+unions, simple single-purpose functions and existing dependency direction implement
+SOLID/KISS/DRY; no new generic framework, parallel ORM or swallowed domain errors.
+Every phase closes with code/spec/API/DB/EN-RU parity and relevant suites green.
+The final required suite invocation must actually pass; a mixture of stale failed
+receipts and reruns is diagnostic history, not final acceptance. Only then mark
+requirements/tasks complete and make the phase commit.
+
 ## Phase tasks and commit checkpoints
 
-Task IDs UX-T01–18 are retained; added UX-T19–28 are placed in their owning phases.
+Task IDs UX-T01–18 are retained; added UX-T19–30 are placed in their owning phases.
 Dependencies, not numeric order, define execution order.
 Every task lists its primary boundary test in the acceptance matrix below. Complete
 checkboxes only after its expectations and relevant owning suites are green.
@@ -954,7 +1166,7 @@ Pure selectors, docs and render-only components add no artificial log noise.
   Paths: new `docs/system-analytics/agent-activity-traceability.md`,
   `scripts/validate-requirement-coverage.mjs` and its existing tests, `package.json`
   only if adding the follow-up validation alias; actual Vitest/Playwright config.
-  Map UX-AC01–11 and UX-IT01–20/UX-E2E01–04 to requirements, tasks and one primary
+  Map UX-AC01–11 and UX-IT01–22/UX-E2E01–04 to requirements, tasks and one primary
   test each; add group-scoped UX-T parser support without weakening the original operational group.
   Prove nonempty runner discovery and negative coverage validator fixture. Gate:
   all design questions below resolved or bounded as stated; no contradictory tables
@@ -988,7 +1200,16 @@ integration, if needed, is a distinct preparatory commit with its own evidence.
   and config contracts. Primary: UX-IT02–04. Atomic CAS+occurrences+event, replay
   uniqueness, consistent lock order, zero filesystem work in tx. Logging: episode
   created/recovered, source fact/reason/count; duplicates DEBUG only.
-- [ ] **UX-T07. Implement cutover backfill and compatibility.** Depends: UX-T05, UX-T06.
+- [ ] **UX-T29. Persist scheduled trigger attempts before launch.** Depends: UX-T05, UX-T06.
+  Paths: `web/lib/agents/triggers.ts`, new trigger-attempt service, DB schema and
+  additive migration, `scheduler/system-sweeps.ts`, attempt/incident projections.
+  Implement UX-D08 claim+fire transaction, fenced settlement and crash/adoption
+  evidence, immutable binding identity and unknown-outcome handling. Preserve
+  existing nextFireAt/dedup semantics; no automatic business retries. Primary
+  UX-IT21. Log attempt/binding/fence/outcome IDs and typed reasons. Extend history
+  only through T08's bounded query and T12's Attempts tab.
+
+- [ ] **UX-T07. Implement cutover backfill and compatibility.** Depends: UX-T05, UX-T06, UX-T29.
   Paths: existing maintenance/upgrade infrastructure, new bounded backfill module
   alongside incident service, legacy acknowledgement route/service, migration tests.
   Preserve exact legacy ack meaning, backfill identity then deterministic episodes,
@@ -1001,19 +1222,19 @@ integration, if needed, is a distinct preparatory commit with its own evidence.
 - [ ] **UX-T19. Settle known launch failures and retain unknown-outcome recovery.** Depends: UX-T05, UX-T06.
   Paths: `web/lib/agents/launch.ts`, `finalization.ts`, `create-failure.ts`,
   `web/lib/scheduler.ts`, `web/lib/reconcile.ts`, owned create/prompt owners,
-  `web/lib/runs/terminal-cause.ts`, existing trigger attempt ledger. Primary:
+  `web/lib/runs/terminal-cause.ts`; pre-run attempt evidence is owned separately by T29. Primary:
   UX-IT13. Add narrow Pending failure preparation, close post-insert/microtask
   exception gaps, record safe stage/runner diagnostics and pre-run scheduler
   refusals. Unknown host creation remains under existing reconcile; no force-fail
   or duplicate spawn. Prove scheduler-vs-failure race and crash window. Logging:
   owned command/generation, failure stage/reason and actionable recovery state.
 
-- [ ] **UX-T25. Persist qualification policy, inputs and immutable assessments.** Depends: UX-T05, UX-T24.
+- [ ] **UX-T25. Persist qualification policy, inputs and immutable assessments.** Depends: UX-T05, UX-T24, UX-T29.
   Paths: `web/lib/db/schema.ts`, additive migration/journal/snapshot/ERD,
   `web/lib/tasks/qualification.ts` (new), project configuration schemas/apply,
   `services/tasks.ts`, statement/clarification/source-update owners. Implement
-  explicit legacy policy, required-input revisions, CAS/idempotency and atomic
-  invalidation with bounded queries. Primary UX-IT18. Log task/revision/decision
+  explicit legacy policy, required-input revisions, assessment/publication separation,
+  immutable task-admission/child provenance, CAS/idempotency and atomic invalidation with bounded queries. Primary UX-IT18. Log task/revision/decision
   IDs and invalidation reasons, never task bodies; migration validation required.
 
 **Checkpoint P1:** `feat(agents): persist activity identity and incident episodes`.
@@ -1022,7 +1243,7 @@ journal/snapshot parity, no residual generation delta, docs/ERD synchronized.
 
 ### Phase 2 — Queries, APIs and live projection
 
-- [ ] **UX-T08. Build bounded project-agent summary/history/detail queries.** Depends: UX-T05, UX-T07.
+- [ ] **UX-T08. Build bounded project-agent summary/history/detail queries.** Depends: UX-T05, UX-T07, UX-T29.
   Paths: new `web/lib/agents/activity-queries.ts`, `project-links.ts`,
   `web/lib/run-results/operational-projection.ts`, project agent route GETs and
   new `runs/route.ts`, `definition/route.ts`, `incidents/route.ts` under
@@ -1070,8 +1291,20 @@ journal/snapshot parity, no residual generation delta, docs/ERD synchronized.
   `mcp/src/tools.ts`, task read models, `agents/launch.ts` task_target resolver.
   Add atomic qualification/verdict/enqueue plus safe read-only evidence context,
   exact-SHA launch, stale Pending dispatch refusal and explicit current-data APIs.
-  Primary UX-IT19; audit all force/schedule/agent paths and permissions. Log typed
+  Primary UX-IT19; audit all force/schedule/agent paths and permissions.
+  Candidate publication belongs to T30, not a route-owned terminalization. Log typed
   refusals/input/evidence revisions. No shell approval bypass or guessed validity.
+
+- [ ] **UX-T30. Publish agent qualifications only with validated terminal evidence.** Depends: UX-T26, UX-T06, UX-T19.
+  Paths: `web/lib/tasks/qualification.ts`, `web/lib/agents/finalization.ts`,
+  operational result projection, external/UI qualification response adapters and
+  recovery integration owners. Submit immutable candidates without enqueue; in
+  the canonical finalizer transaction commit result, clean success, assessment
+  pointer/verdict/queue and events together. Reject stale/failed candidates with
+  safe reasons; human acceptance remains its own authorized task-only transaction.
+  Primary UX-IT22. Test both real lock interleavings, rollback, crash/replay,
+  source violation, malformed output, human supersession and deleted/revoked actor.
+  Log candidate/run/input/publication revisions, never evidence bodies.
 
 **Checkpoint P2:** `feat(agents): expose scoped history and grouped attention`.
 Full web unit/integration suites green; API contracts and affected MCP tests/build
@@ -1140,14 +1373,17 @@ platform fixture/compatibility receipt commit. No publication or live GitHub cal
 
 ### Phase 3c — Shared intake qualification
 
-- [ ] **UX-T27. Deliver Incoming UX and one shared qualification package skill.** Depends: UX-T22, UX-T26, UX-T12.
+- [ ] **UX-T27. Deliver Incoming UX and one shared qualification package skill.** Depends: UX-T22, UX-T26, UX-T30, UX-T12.
   Paths: `web/lib/work/stage.ts`, board/project/task queries and components,
   task detail/qualification controls, settings/config UI, EN/RU catalogs;
-  canonical core triager, both intake definitions/shared skill and new shared
+  `agents/definition.ts`, registry/Studio/attachment DTOs and configuration
+  import/export for the frozen task_qualification declaration; canonical core triager, both intake definitions/shared skill and new shared
   task-qualification skill, package capabilities and fixture mirrors. Partition
   Incoming vs accepted backlog, show evidence/freshness/reasons, preserve original
   issue body and local clarification, wire policy capability refusal and current
-  qualifier definition. Primary UX-IT20/UX-E2E04. Log only existing mutation events.
+  qualifier definition. Replace the old MCP-only/no-repository persona explicitly;
+  verify native file reads at the detached SHA and denied writes/shell under actual
+  runtime permission enforcement. Primary UX-IT20/UX-E2E04. Log only existing mutation events.
 
 **Checkpoint P3c:** `feat(triage): qualify incoming requests before backlog admission`.
 Complete owning web suites, exact candidate core install/attach and shared skill resolution pass; both transport
@@ -1174,7 +1410,7 @@ variants, required project policy and operational completion are qualified toget
   follow-up traceability/qualification receipt. Logging: harness evidence only.
 
 - [ ] **UX-T28. Qualify task-quality admission and source-to-work composition.** Depends: UX-T27, UX-T23.
-  Run UX-IT18–20/UX-E2E04 through actual creation/triage/launch APIs, Postgres,
+  Run UX-IT18–20/UX-IT22/UX-E2E04 through actual creation/triage/launch APIs, Postgres,
   controlled read-only ACP and both importer transport fixtures. Assert task edit,
   answer, target/SHA and policy races; unknown evidence vs non-actionable result;
   manual/force/scheduler/MCP denial and accepted ready path. Reuse current HITL,
@@ -1208,8 +1444,8 @@ variants, required project policy and operational completion are qualified toget
   Mark completed tasks/criteria only with receipts; record phase commits, limits,
   deployment ledger premise and owner steps. Keep branch clean. Release order:
   reconcile base → maintenance/drain → additive schema and resumable backfill →
-  compatible platform/MCP → scoped smoke → reopen admission → updated core
-  package publication and explicit attachment pins (owner actions). Include the
+  compatible platform/MCP → scoped smoke → reopen compatible admission → updated
+  core package publication → explicit project qualification policy → attachment pins (owner actions). Include the
   triager and both original intake variants in the same compatible core candidate. No
   push/deploy/tag execution. Logging: none.
 
@@ -1229,8 +1465,8 @@ composition proving wiring, not re-running the whole matrix.
 
 | Primary ID | Requirement / behavior and edge cases | Actual test owner / runner |
 | --- | --- | --- |
-| UX-IT01 | AC01/06: both launch seams snapshot ID; update/detach/delete/reattach; legacy proven/unknown/conflicting identity; fresh/incremental index/constraint parity | Existing `web/lib/agents/__tests__/launch-config-snapshot.integration.test.ts`, `agent-driven-flow.integration.test.ts` and migration integration fixture; Vitest integration, task T05 |
-| UX-IT02 | AC04: 1,000 repeats, multiple causes/scopes/projects, partial/403/missing/malformed result, distinct-run vs cause counts, no Task creation | Extend `web/lib/runs/__tests__/operational-attention.integration.test.ts`; Vitest integration, T06 |
+| UX-IT01 | AC01/06: both launch seams snapshot ID; update/detach/delete/reattach; legacy proven/unknown/conflicting identity; nullable/estimated legacy sort, frozen paging after Pending admission, fresh/incremental index/constraint parity | Existing `web/lib/agents/__tests__/launch-config-snapshot.integration.test.ts`, `agent-driven-flow.integration.test.ts` and migration integration fixture; Vitest integration, task T05 |
+| UX-IT02 | AC04/08: 1,000 repeats across different task IDs on the same failed runner remain one infrastructure cause; different runner/business scopes stay distinct, partial/403/missing/malformed result, distinct-run vs cause counts, no Task creation | Extend `web/lib/runs/__tests__/operational-attention.integration.test.ts`; Vitest integration, T06 |
 | UX-IT03 | AC05: simultaneous finalizers, replay, transaction rollback/process restart, overlapping/late success, zero-work recovery, reopened episode, safety reasons never auto-clear | New focused `operational-incidents.integration.test.ts` beside existing run suites; real DB separate connections, T06 |
 | UX-IT04 | AC05: exhausted/rearmed/re-exhausted/released cleanup with two resources sharing one cause (one release cannot close both), partial disposal, cancellation and crash retained evidence; terminal/resource state and occurrence commit atomically | Extend `web/lib/gc/__tests__/operational-disposition.integration.test.ts` and actual finalizer owner; Vitest integration, T06 |
 | UX-IT05 | AC01/06: interrupted/backfilled pages, no duplicate occurrence, existing per-run acks, unknown scope, catalog/run/user deletion, archived project, no historical notification storm | Migration/backfill integration suite using repository migration harness; T07 |
@@ -1250,9 +1486,11 @@ composition proving wiring, not re-running the whole matrix.
 | UX-IT17 | AC10: ask→park→answer→same-run continuation, no task.triage_requeued duplicate; explicit requeue still launches once; old code-delivery source and task Flow runner unchanged | Existing agent-question + triager-wire integration owners, T22 |
 | UX-E2E03 | AC08–10: 20 failed rowless triagers vs zero working copies; safe bad-runner attempt→failure details→choose B→one linked successor; defaults/member/admin separation; unknown/partial refusal; EN/RU | Extend project-agent-history and operational browser composition using real route/DB/runtime fixtures, T21/T23 |
 | UX-IT18 | AC11: legacy/required project and task migration, input revision writers, idempotency/CAS, qualification pointer/policy constraints, no fabricated legacy pass, no source mutation | Migration integration plus new tasks/qualification integration suite, T25 |
-| UX-IT19 | AC11: valid/unclear/contradictory/duplicate/already-satisfied/unknown bug; actor and evidence grants; stale task/answer/SHA, same-input human-vs-agent assessment CAS, real run_plan/delegate inherited admission vs forged/invalid parent and no abandoned DAG, concurrent triage, exact checkout, every manual/force/schedule/MCP/admission path and stale Pending dispatch | Extend triage/launchability/queue admission/agent checkout integration owners with real DB/routes, T26 |
+| UX-IT19 | AC11: valid/unclear/contradictory/duplicate/already-satisfied/unknown bug, malformed bodies and exact HTTP/Zod/OpenAPI/MCP parity; actor and evidence grants; stale task/answer/SHA, same-input human-vs-agent assessment CAS, real run_plan/delegate inherited admission vs forged/invalid parent and no abandoned DAG, concurrent triage, exact checkout, every manual/force/schedule/MCP/admission path and stale Pending dispatch | Extend triage/launchability/queue admission/agent checkout integration owners with real DB/routes, T26 |
 | UX-IT20 | AC11: both import transports capture Incoming with provenance, no-repeat import/questions, one shared qualification skill; capability/policy refusal; normal flag/clarification vs runner failure; exact core snapshots and no automatic GitHub mutation | Existing intake and triager package/wire integration suites, T27 |
-| UX-E2E04 | AC11: GitHub request→Incoming→specific local clarification→current evidenced qualification→accepted Backlog→explicit enqueue; held/obsolete evidence view, stale edit, EN/RU/grants and counts; runner failure separate from request rejection | One browser composition in existing task/intake E2E owners with controlled runtime, T28 |
+| UX-E2E04 | AC11: GitHub request→Incoming→specific local clarification→candidate still held→clean finalization→accepted Backlog→explicit enqueue; held/obsolete evidence view, stale edit, EN/RU/grants and counts; runner failure separate from request rejection | One browser composition in existing task/intake E2E owners with controlled runtime, T28 |
+| UX-IT21 | AC08/06: claim+fire atomicity, concurrent binding attempts, overwritten latest telemetry, crash before/after launch receipt, unknown outcome not re-fired, detach and partial legacy backfill; history attempts vs run counts | Extend trigger and system-sweep integration owners plus migration fixture, T29 |
+| UX-IT22 | AC11/10: candidate cannot launch before clean terminal result; valid operational result without required qualification fails; dirty/malformed/cancelled/partial/failed run never publishes; finalizer rollback and recovery replay, same-input human decision wins, accepted queue wakes once, authority loss; no source-body leakage | Extend actual triage route and agent finalization integration owners with real PostgreSQL barriers, T30 |
 
 Runner gate: confirm actual discovery via Vitest list and Playwright `--list` with
 repository configs; the `--passWithNoTests` script flag is not evidence. Every
@@ -1303,23 +1541,27 @@ history requirements of this follow-up.
 
 ## Planning verification
 
-The initial activity plan received two bounded read-only reviews. This extension
-received separate package, runtime and UI/API investigations against the rebased
-code, then bounded review of retry and qualification decisions. Incorporated fixes:
-mandatory retry lease/fence and allocation adoption, immutable accepted recipe and
-delayed authority revalidation, concurrent-assessment pointer CAS, safe existing
-orchestrator decomposition, qualifier access to held intake, human-provided runtime
-proof beyond read-only inspection, and preservation of existing GitHub receipts.
-Runtime and UI reviewers confirmed no remaining blocker in the corrected retry and
-assessment/decomposition boundaries. Package review's two concrete contradictions
-were corrected; no claim of executed feature acceptance follows from these reviews.
+The first planning pass received bounded package/runtime/UI reviews. This
+`aif-improve` pass traced the current implementation independently and corrected
+these code-grounded gaps without editing implementation:
 
-Plan checks: 28 unique unchecked tasks, 11 acceptance contracts, acyclic dependency
-graph, primary integration/browser owners and diff-whitespace validation. The
-original completed delivery body remains byte-identical to the rebase commit;
-only the active follow-up and its historical bridge changed. Rebase code/schema/
-documentation validation is recorded below. No activity, retry or task-qualification
-feature behavior, new migration or triager package change has been implemented.
+| Finding | Evidence / correction | Task / primary test |
+| --- | --- | --- |
+| Agent triage could arm before final integrity/result checks | `services/triage.ts:187-225` vs `agents/finalization.ts:609-705`; candidate/publication split with one terminal owner and explicit 202 receipt. | T25/26/30; IT22 |
+| Per-task input scopes could re-notify the same runner outage | Separate infra cause identity from business input; same-runner failures across tasks stay one episode. | T06; IT02/03 |
+| Latest schedule telemetry was mistaken for an attempt ledger | `triggers.ts:48-95,196-259`; durable pre-run attempt claim/settlement, unknown handling and separate paginated history. | T29/08; IT21 |
+| Retry wire state disagreed with stored state; no run existed for pre-insert cleanup | Exact intentState/runStatus DTO, intent-owned fenced disposal before run ownership transfer; original cleanup owner requires runs row. | T20; IT14/15 |
+| Nullable legacy launch times fell outside the proposed history index | Frozen activitySortAt/provenance and nullable-first migration; no fake creation timestamps. | T05/07/08; IT01/06 |
+| Qualification API, package capability and DB admission receipt remained underspecified | Typed bounded request/response/trust matrix, existing external 422 compatibility, frozen per-run task admission and narrow declarative package capability. | T24/25/26/27; IT18/19/20 |
+| SDD artifacts and TDD completion were broad rather than enforceable | Canonical artifact ownership, phase prerequisites, behavioral RED receipts, real transaction/wire assertions and final genuinely green suite requirement. | T04/17; existing coverage validator and owning suites |
+
+Refinement adds T29 and T30, updates owning descriptions and dependencies rather
+than creating a parallel subsystem, and preserves completed historical tasks.
+Final planning checks passed: 30 unique unchecked tasks, 11 acceptance contracts,
+26 primary integration/E2E rows, an acyclic graph with prerequisites listed before
+consumers, valid Markdown table columns and unchanged completed delivery body.
+No feature test, migration or implementation is claimed executed by this plan-only
+pass. The rebase validation below remains separately scoped evidence.
 
 ---
 
