@@ -5,7 +5,7 @@
 **Implemented.** Define agents whose deliverable is an external or MAIster operation
 and its evidence. This domain owns definition/compatibility/launch semantics;
 [results](operational-agent-results.md) and [lifecycle](operational-agent-lifecycle.md)
-own terminal decisions and resources. See [ADR-194](../decisions/adr-194.md).
+own terminal decisions and resources. See [ADR-195](../decisions/adr-195.md).
 
 ## Domain entities
 

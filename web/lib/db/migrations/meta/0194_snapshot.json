@@ -1,5 +1,5 @@
 {
-  "id": "785bb38b-f76d-4ca7-8cfb-03365e33d523",
+  "id": "da485ea3-9646-4d51-ac06-2fbbf4ce071b",
   "prevId": "da2d815e-50b6-460e-8e91-664498010297",
   "version": "7",
   "dialect": "postgresql",
@@ -1002,19 +1002,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "kind": {
-          "name": "kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'code_delivery'"
-        },
-        "completion_contract": {
-          "name": "completion_contract",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
         "workspace": {
           "name": "workspace",
           "type": "text",
@@ -1150,12 +1137,7 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {
-        "agents_kind_completion_check": {
-          "name": "agents_kind_completion_check",
-          "value": "((\"agents\".\"kind\" = 'code_delivery' AND \"agents\".\"completion_contract\" IS NULL) OR (\"agents\".\"kind\" = 'operational' AND \"agents\".\"completion_contract\" = '{\"contract\":\"operational_v1\"}'::jsonb AND \"agents\".\"mode\" = 'session' AND \"agents\".\"flow_ref\" IS NULL)) IS TRUE"
-        }
-      },
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.artifact_instances": {
@@ -13605,108 +13587,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.operational_run_acknowledgements": {
-      "name": "operational_run_acknowledgements",
-      "schema": "",
-      "columns": {
-        "user_id": {
-          "name": "user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "run_id": {
-          "name": "run_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "reason": {
-          "name": "reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "revision": {
-          "name": "revision",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "acknowledged_at": {
-          "name": "acknowledged_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "operational_ack_run_idx": {
-          "name": "operational_ack_run_idx",
-          "columns": [
-            {
-              "expression": "run_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "operational_run_acknowledgements_user_id_users_id_fk": {
-          "name": "operational_run_acknowledgements_user_id_users_id_fk",
-          "tableFrom": "operational_run_acknowledgements",
-          "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "operational_run_acknowledgements_run_id_runs_id_fk": {
-          "name": "operational_run_acknowledgements_run_id_runs_id_fk",
-          "tableFrom": "operational_run_acknowledgements",
-          "tableTo": "runs",
-          "columnsFrom": [
-            "run_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "operational_run_acknowledgements_user_id_run_id_reason_revision_pk": {
-          "name": "operational_run_acknowledgements_user_id_run_id_reason_revision_pk",
-          "columns": [
-            "user_id",
-            "run_id",
-            "reason",
-            "revision"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "operational_ack_reason_revision_check": {
-          "name": "operational_ack_reason_revision_check",
-          "value": "\"operational_run_acknowledgements\".\"reason\" IN ('operation_failure','cleanup_failure') AND \"operational_run_acknowledgements\".\"revision\" > 0"
-        }
-      },
-      "isRLSEnabled": false
-    },
     "public.package_installs": {
       "name": "package_installs",
       "schema": "",
@@ -14312,6 +14192,409 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.project_config_persist_operations": {
+      "name": "project_config_persist_operations",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "project_id": {
+          "name": "project_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "actor_user_id": {
+          "name": "actor_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "repository_key": {
+          "name": "repository_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'previewed'"
+        },
+        "snapshot": {
+          "name": "snapshot",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "snapshot_digest": {
+          "name": "snapshot_digest",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "accepted_at": {
+          "name": "accepted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "owner_token": {
+          "name": "owner_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "owner_process_id": {
+          "name": "owner_process_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "prepared_sha": {
+          "name": "prepared_sha",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "committed_sha": {
+          "name": "committed_sha",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "completed_at": {
+          "name": "completed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "error_reason": {
+          "name": "error_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "used_default_author": {
+          "name": "used_default_author",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "project_config_persist_active_repo_uq": {
+          "name": "project_config_persist_active_repo_uq",
+          "columns": [
+            {
+              "expression": "repository_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"project_config_persist_operations\".\"state\" IN ('preparing', 'prepared', 'publishing', 'recovery_required')",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "project_config_persist_project_created_idx": {
+          "name": "project_config_persist_project_created_idx",
+          "columns": [
+            {
+              "expression": "project_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "project_config_persist_recovery_idx": {
+          "name": "project_config_persist_recovery_idx",
+          "columns": [
+            {
+              "expression": "state",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "project_config_persist_operations_project_id_projects_id_fk": {
+          "name": "project_config_persist_operations_project_id_projects_id_fk",
+          "tableFrom": "project_config_persist_operations",
+          "tableTo": "projects",
+          "columnsFrom": [
+            "project_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "project_config_persist_operations_actor_user_id_users_id_fk": {
+          "name": "project_config_persist_operations_actor_user_id_users_id_fk",
+          "tableFrom": "project_config_persist_operations",
+          "tableTo": "users",
+          "columnsFrom": [
+            "actor_user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "project_config_persist_identity_uq": {
+          "name": "project_config_persist_identity_uq",
+          "nullsNotDistinct": false,
+          "columns": [
+            "id",
+            "project_id",
+            "actor_user_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "project_config_persist_state_check": {
+          "name": "project_config_persist_state_check",
+          "value": "\"project_config_persist_operations\".\"state\" IN ('previewed','preparing','prepared','publishing','committed','noop','stale','failed','recovery_required')"
+        },
+        "project_config_persist_digest_check": {
+          "name": "project_config_persist_digest_check",
+          "value": "\"project_config_persist_operations\".\"snapshot_digest\" ~ '^[0-9a-f]{64}$'"
+        },
+        "project_config_persist_receipt_check": {
+          "name": "project_config_persist_receipt_check",
+          "value": "\n      (\"project_config_persist_operations\".\"state\" NOT IN ('preparing','prepared','publishing','committed','recovery_required') OR \"project_config_persist_operations\".\"accepted_at\" IS NOT NULL)\n      AND (\"project_config_persist_operations\".\"state\" NOT IN ('prepared','publishing','committed') OR \"project_config_persist_operations\".\"prepared_sha\" IS NOT NULL)\n      AND (\"project_config_persist_operations\".\"state\" <> 'committed' OR (\"project_config_persist_operations\".\"committed_sha\" IS NOT NULL AND \"project_config_persist_operations\".\"completed_at\" IS NOT NULL))\n      AND (\"project_config_persist_operations\".\"state\" NOT IN ('noop','stale','failed') OR \"project_config_persist_operations\".\"completed_at\" IS NOT NULL)\n      AND (\"project_config_persist_operations\".\"state\" NOT IN ('stale','failed','recovery_required') OR \"project_config_persist_operations\".\"error_reason\" IS NOT NULL)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.project_config_push_intents": {
+      "name": "project_config_push_intents",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "operation_id": {
+          "name": "operation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "project_id": {
+          "name": "project_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "actor_user_id": {
+          "name": "actor_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'previewed'"
+        },
+        "snapshot": {
+          "name": "snapshot",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "snapshot_digest": {
+          "name": "snapshot_digest",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "accepted_at": {
+          "name": "accepted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "completed_at": {
+          "name": "completed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "error_reason": {
+          "name": "error_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "project_config_push_active_destination_uq": {
+          "name": "project_config_push_active_destination_uq",
+          "columns": [
+            {
+              "expression": "operation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "(\"snapshot\"->>'destinationFingerprint')",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"project_config_push_intents\".\"state\" IN ('pending', 'unknown')",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "project_config_push_operation_created_idx": {
+          "name": "project_config_push_operation_created_idx",
+          "columns": [
+            {
+              "expression": "operation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "project_config_push_operation_identity_fk": {
+          "name": "project_config_push_operation_identity_fk",
+          "tableFrom": "project_config_push_intents",
+          "tableTo": "project_config_persist_operations",
+          "columnsFrom": [
+            "operation_id",
+            "project_id",
+            "actor_user_id"
+          ],
+          "columnsTo": [
+            "id",
+            "project_id",
+            "actor_user_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "project_config_push_state_check": {
+          "name": "project_config_push_state_check",
+          "value": "\"project_config_push_intents\".\"state\" IN ('previewed','pending','succeeded','failed','unknown','stale')"
+        },
+        "project_config_push_digest_check": {
+          "name": "project_config_push_digest_check",
+          "value": "\"project_config_push_intents\".\"snapshot_digest\" ~ '^[0-9a-f]{64}$'"
+        },
+        "project_config_push_receipt_check": {
+          "name": "project_config_push_receipt_check",
+          "value": "\n      (\"project_config_push_intents\".\"state\" NOT IN ('pending','succeeded','failed','unknown') OR \"project_config_push_intents\".\"accepted_at\" IS NOT NULL)\n      AND (\"project_config_push_intents\".\"state\" NOT IN ('succeeded','failed','stale') OR \"project_config_push_intents\".\"completed_at\" IS NOT NULL)\n      AND (\"project_config_push_intents\".\"state\" NOT IN ('failed','unknown','stale') OR \"project_config_push_intents\".\"error_reason\" IS NOT NULL)"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.project_flow_roles": {
@@ -15142,6 +15425,13 @@
       "name": "projects",
       "schema": "",
       "columns": {
+        "config_export_revision": {
+          "name": "config_export_revision",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "0"
+        },
         "id": {
           "name": "id",
           "type": "text",
@@ -15329,7 +15619,12 @@
         }
       },
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "projects_config_export_revision_check": {
+          "name": "projects_config_export_revision_check",
+          "value": "\"projects\".\"config_export_revision\" >= 0"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.push_subscriptions": {
@@ -17583,30 +17878,6 @@
           "notNull": true,
           "default": "'flow'"
         },
-        "agent_kind": {
-          "name": "agent_kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "operational_integrity_baseline": {
-          "name": "operational_integrity_baseline",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "operational_terminal": {
-          "name": "operational_terminal",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "operational_cleanup": {
-          "name": "operational_cleanup",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
         "agent_id": {
           "name": "agent_id",
           "type": "text",
@@ -17995,28 +18266,6 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "runs_operational_cleanup_due_idx": {
-          "name": "runs_operational_cleanup_due_idx",
-          "columns": [
-            {
-              "expression": "(\"operational_cleanup\"->>'dueAt')",
-              "asc": true,
-              "isExpression": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"runs\".\"agent_kind\" = 'operational' AND \"runs\".\"operational_cleanup\"->>'state' IN ('armed','retry','removed','preserving')",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -18468,22 +18717,6 @@
       },
       "policies": {},
       "checkConstraints": {
-        "runs_operational_contract_check": {
-          "name": "runs_operational_contract_check",
-          "value": "((\"runs\".\"agent_kind\" IS NULL OR \"runs\".\"agent_kind\" = 'code_delivery') AND coalesce(\"runs\".\"result_contract\"->>'kind', '') <> 'agent_operational' OR \"runs\".\"agent_kind\" = 'operational' AND \"runs\".\"run_kind\" = 'agent' AND \"runs\".\"persistent\" = false AND coalesce(\"runs\".\"workspace_mode\", 'own') = 'own' AND \"runs\".\"agent_workspace\" IN ('none','repo_read','worktree') AND \"runs\".\"result_contract\"->>'kind' = 'agent_operational' AND \"runs\".\"result_contract\"->'schemaVersion' = '1'::jsonb AND \"runs\".\"result_contract\"->'semanticVersion' = '1'::jsonb AND \"runs\".\"result_contract\"->'required' = 'true'::jsonb AND \"runs\".\"result_contract\"->>'sha256' ~ '^[a-f0-9]{64}$' AND jsonb_typeof(\"runs\".\"result_contract\"->'schema') = 'object' AND jsonb_typeof(\"runs\".\"result_contract\"->'definition') = 'object' AND jsonb_typeof(\"runs\".\"result_contract\"->'provenance') = 'object') IS TRUE"
-        },
-        "runs_operational_terminal_check": {
-          "name": "runs_operational_terminal_check",
-          "value": "(CASE WHEN \"runs\".\"agent_kind\" = 'operational' THEN \"runs\".\"status\" <> 'Review' AND \"runs\".\"promoted_head_sha\" IS NULL AND \"runs\".\"merge_commit_sha\" IS NULL AND CASE WHEN \"runs\".\"status\" IN ('Done','Failed','Crashed','Abandoned') THEN jsonb_typeof(\"runs\".\"operational_terminal\") = 'object' AND \"runs\".\"operational_terminal\"->'version' = '1'::jsonb AND \"runs\".\"operational_terminal\"->>'status' = \"runs\".\"status\" AND \"runs\".\"operational_terminal\"->>'validation' IN ('valid','invalid','unchecked') AND \"runs\".\"operational_terminal\"->>'integrity' IN ('clean','changed','indeterminate','unchecked') AND jsonb_typeof(\"runs\".\"operational_terminal\"->'reasonCodes') = 'array' AND jsonb_typeof(\"runs\".\"operational_terminal\"->'evidenceIds') = 'array' AND (\"runs\".\"operational_terminal\"->'successful' = 'false'::jsonb AND \"runs\".\"status\" <> 'Done' AND \"runs\".\"operational_terminal\"->>'effectiveOutcome' IN ('partial','blocked','failed','cancelled','crashed') OR \"runs\".\"status\" = 'Done' AND \"runs\".\"operational_terminal\"->'successful' = 'true'::jsonb AND \"runs\".\"operational_terminal\"->>'effectiveOutcome' = 'success' AND \"runs\".\"operational_terminal\"->>'validation' = 'valid' AND \"runs\".\"operational_terminal\"->>'integrity' = 'clean' AND jsonb_typeof(\"runs\".\"operational_terminal\"->'resultRevision') = 'number') ELSE \"runs\".\"operational_terminal\" IS NULL END ELSE \"runs\".\"operational_terminal\" IS NULL END) IS TRUE"
-        },
-        "runs_operational_baseline_check": {
-          "name": "runs_operational_baseline_check",
-          "value": "\"runs\".\"operational_integrity_baseline\" IS NULL OR (\"runs\".\"agent_kind\" = 'operational' AND jsonb_typeof(\"runs\".\"operational_integrity_baseline\") = 'object' AND \"runs\".\"operational_integrity_baseline\"->'version' = '1'::jsonb AND jsonb_typeof(\"runs\".\"operational_integrity_baseline\"->'generation') = 'number' AND jsonb_typeof(\"runs\".\"operational_integrity_baseline\"->'source') = 'array' AND jsonb_typeof(\"runs\".\"operational_integrity_baseline\"->'platform') = 'array' AND pg_column_size(\"runs\".\"operational_integrity_baseline\") <= 16777216) IS TRUE"
-        },
-        "runs_operational_cleanup_check": {
-          "name": "runs_operational_cleanup_check",
-          "value": "\"runs\".\"operational_cleanup\" IS NULL OR (\"runs\".\"agent_kind\" = 'operational' AND jsonb_typeof(\"runs\".\"operational_cleanup\") = 'object' AND \"runs\".\"operational_cleanup\"->'version' = '1'::jsonb AND \"runs\".\"operational_cleanup\"->>'state' IN ('retained','armed','preserving','removed','released','retry','exhausted') AND \"runs\".\"operational_cleanup\"->>'resourceKind' IN ('worktree','ephemeral_checkout','plain_directory','shared_repository') AND \"runs\".\"operational_cleanup\"->>'workspace' IN ('none','repo_read','worktree') AND \"runs\".\"operational_cleanup\"->'attempts' IN ('0'::jsonb,'1'::jsonb,'2'::jsonb,'3'::jsonb,'4'::jsonb,'5'::jsonb) AND jsonb_typeof(\"runs\".\"operational_cleanup\"->'revision') = 'number' AND \"runs\".\"operational_cleanup\"->>'revision' ~ '^[1-9][0-9]*$' AND jsonb_typeof(\"runs\".\"operational_cleanup\"->'evidenceIds') = 'array' AND (\"runs\".\"operational_cleanup\"->'lease' = 'null'::jsonb OR jsonb_typeof(\"runs\".\"operational_cleanup\"->'lease') = 'object' AND \"runs\".\"operational_cleanup\"->'lease' ?& array['id','owner','expiresAt']) AND (\"runs\".\"operational_cleanup\"->>'state' <> 'released' OR jsonb_typeof(\"runs\".\"operational_cleanup\"->'releasedAt') = 'string') AND (\"runs\".\"operational_cleanup\"->>'state' NOT IN ('removed','released') OR jsonb_typeof(\"runs\".\"operational_cleanup\"->'removedAt') = 'string')) IS TRUE"
-        },
         "runs_flow_driver_claim_check": {
           "name": "runs_flow_driver_claim_check",
           "value": "(\"runs\".\"flow_driver_token\" IS NULL AND \"runs\".\"flow_driver_lease_expires_at\" IS NULL) OR (\"runs\".\"run_kind\" = 'flow' AND \"runs\".\"flow_driver_token\" IS NOT NULL AND \"runs\".\"flow_driver_lease_expires_at\" IS NOT NULL)"

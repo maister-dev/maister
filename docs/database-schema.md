@@ -5541,7 +5541,7 @@ process ownership and cleanup recovery.
 
 ## Operational agents (Implemented)
 
-Main-lineage migrations 0194–0198 add definition kind/completion, frozen run
+Main-lineage migrations 0199–0203 add definition kind/completion, frozen run
 kind/result contract, immutable integrity baseline generations and terminal
 receipts, durable cleanup intent, per-reader reason/revision acknowledgements,
 cleanup progress and operational lifecycle event kinds. Existing result and

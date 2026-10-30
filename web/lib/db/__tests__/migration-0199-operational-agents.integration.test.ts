@@ -28,7 +28,7 @@ const historical = [
 beforeAll(async () => {
   database = await startMainPostgresTestDbUpTo(
     { databaseName: "operational_upgrade" },
-    "0193_numerous_spectrum",
+    "0198_project_config_attachment_binding_guard",
   );
   projectId = (await seedProjectRow(database.db)).id;
   for (const row of historical)
@@ -37,7 +37,7 @@ beforeAll(async () => {
     await readFile("./lib/db/migrations/meta/_journal.json", "utf8"),
   ) as { entries: Array<{ tag: string; when: number }> };
   const cutoff = journal.entries.find(
-    (entry) => entry.tag === "0193_numerous_spectrum",
+    (entry) => entry.tag === "0198_project_config_attachment_binding_guard",
   )?.when;
 
   if (!cutoff) throw new Error("missing upgrade baseline");

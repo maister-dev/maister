@@ -825,7 +825,7 @@ flowchart TD
   quarantine evidence; legacy best-effort removal proceeds. Operational mounts
   instead participate in pre-terminal integrity validation and durable
   preserve-before-delete cleanup; see [operational lifecycle](operational-agent-lifecycle.md).
-  *(Implemented — ADR-157, ADR-194.)*
+  *(Implemented — ADR-157, ADR-195.)*
 
 ## Implemented: worktree-agent delivery attribution (ADR-134)
 

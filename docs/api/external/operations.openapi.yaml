@@ -7705,7 +7705,7 @@ components:
       description: |
         (M17) Result of an ext HITL response. Mirrors the session route — the
         runner (not this route) owns the `NeedsInput → Running` transition.
-        (ADR-136, ADR-194 Implemented) a human answer to `agent_question`
+        (ADR-136, ADR-195 Implemented) a human answer to `agent_question`
         returns 200 with `runStatus: Done` for code-delivery sources. An
         operational source returns 202 with `runStatus: NeedsInputIdle` and
         `state: resume-queued` after committing its same-run continuation fact;

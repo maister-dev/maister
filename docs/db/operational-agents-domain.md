@@ -1,7 +1,7 @@
 # Operational agent persistence
 
-**Status: Implemented — [ADR-194](../decisions/adr-194.md).** Main-lineage migrations
-0194–0198 are qualified on fresh and seeded incremental owned test databases.
+**Status: Implemented — [ADR-195](../decisions/adr-195.md).** Main-lineage migrations
+0199–0203 are qualified on fresh and seeded incremental owned test databases.
 No owner database has been migrated by this implementation.
 
 This view owns the operational additions; [agents](agents-domain.md),
@@ -85,9 +85,9 @@ See [lifecycle](../system-analytics/operational-agent-lifecycle.md),
 
 `operational_cleanup_progress` stores the sweep's server-owned rotating run-ID
 cursor and update time. It grants no deletion authority: workspace or rowless
-leases still fence every effect. Migration 0196 adds this table and aligns the
-shared-read combination check with launch validation; 0197 protects exact
+leases still fence every effect. Migration 0201 adds this table and aligns the
+shared-read combination check with launch validation; 0202 protects exact
 ordered platform-generation prefixes and corrects the JSON operator grouping.
-Migration 0198 extends the closed domain-event kind CHECK for the two operational
-attention/cleanup facts. Migrations 0194/0195 remain unchanged. These new migrations have only been
+Migration 0203 extends the closed domain-event kind CHECK for the two operational
+attention/cleanup facts. Migrations 0199/0200 remain unchanged. These new migrations have only been
 applied to owned ephemeral integration databases during implementation.

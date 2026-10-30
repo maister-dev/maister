@@ -289,7 +289,7 @@ then clean up after itself — the coordinator only collects.
 At \`graph_completed\` a REQUIRED export with no valid result FAILS the run
 (\`run.failed{reason: "result_missing"}\`) instead of reaching Review.
 
-### Operational agents (engine 3.9.0, ADR-194)
+### Operational agents (engine 3.9.0, ADR-195)
 
 Package-root agents may declare \`kind: operational\` and
 \`completion: { contract: operational_v1 }\`; the PACKAGE must declare
