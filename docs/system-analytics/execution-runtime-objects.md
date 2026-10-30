@@ -10,7 +10,7 @@ to the web tier, browser, or manager database. The host owns private bytes and
 object registry paths; the manager owns catalog metadata, authorization, and
 artifact association.
 
-Operational agent semantics are **Designed** in the [operational lifecycle](operational-agent-lifecycle.md),
+Operational agent semantics are **Implemented** in the [operational lifecycle](operational-agent-lifecycle.md),
 [result contract](operational-agent-results.md) and [definition contract](operational-agents.md).
 They preserve this domain's existing code-delivery behavior.
 

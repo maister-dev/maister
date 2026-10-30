@@ -19,7 +19,7 @@ Two kinds of view live here (ADR-159):
 
 | File | Scope |
 | ---- | ----- |
-| [`operational-agents-domain.md`](operational-agents-domain.md) | Designed: frozen operational contracts, terminal/baseline/cleanup facts and per-reader acknowledgements. |
+| [`operational-agents-domain.md`](operational-agents-domain.md) | Implemented: frozen operational contracts, terminal/baseline/cleanup facts and per-reader acknowledgements. |
 | [`erd.dbml`](erd.dbml) | Generated consolidated ERD across all tables of both lineages (ADR-159). |
 | [`erd.md`](erd.md) | Wrapper for the consolidated ERD: view/regenerate instructions. |
 | [`projects-domain.md`](projects-domain.md) | Projects + Executors + Flows. |

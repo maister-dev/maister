@@ -14,7 +14,7 @@ and never writes any of it. The counters' definitions are locked by
 the stream by [ADR-171](../decisions.md#adr-171-user-scoped-attention-sse-stream).
 Both are **Implemented**.
 
-Operational agent semantics are **Designed** in the [operational lifecycle](operational-agent-lifecycle.md),
+Operational agent semantics are **Implemented** in the [operational lifecycle](operational-agent-lifecycle.md),
 [result contract](operational-agent-results.md) and [definition contract](operational-agents.md).
 They preserve this domain's existing code-delivery behavior.
 

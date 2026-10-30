@@ -5539,16 +5539,17 @@ remain DB-only. See the owning [persistence
 analytics](system-analytics/project-config-persistence.md) for independent push
 process ownership and cleanup recovery.
 
-## Operational agents (Designed)
+## Operational agents (Implemented)
 
-[Operational persistence](db/operational-agents-domain.md) specifies additive main-lineage
-0194/0195 fields: agents.kind/completion_contract; runs.agent_kind,
-operational_integrity_baseline, operational_terminal and operational_cleanup;
-and per-reader operational_run_acknowledgements. Existing result_contract and
-workspaces lifecycle records remain authoritative. Historical rows receive no
-operational backfill. Named immutable/terminal constraints and seeded incremental
-upgrade tests must pass before these additions are marked Implemented.
+Main-lineage migrations 0194–0198 add definition kind/completion, frozen run
+kind/result contract, immutable integrity baseline generations and terminal
+receipts, durable cleanup intent, per-reader reason/revision acknowledgements,
+cleanup progress and operational lifecycle event kinds. Existing result and
+workspace lifecycle records remain authoritative; historical runs receive no
+operational backfill. Named constraints and triggers protect the launch snapshot,
+source witnesses and exact terminal result revision.
 
-## Operational agents
-
-Operational agents add definition kind/completion, frozen run kind/result contract, immutable integrity baseline generations and terminal receipt, durable cleanup intent, per-user reason/revision acknowledgements and bounded cleanup progress. See [operational persistence](db/operational-agents-domain.md) and the generated ERD.
+[Operational persistence](db/operational-agents-domain.md) owns the field,
+constraint, migration and upgrade contracts; the consolidated ERD reflects the
+current Drizzle schema. Qualification uses fresh and seeded incremental test
+databases; production migration remains a release operation.

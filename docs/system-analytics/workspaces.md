@@ -8,7 +8,7 @@ from other concurrent runs on the same project. Workspace lifecycle
 covers creation, active workspace visibility, promotion, archival, and
 reconciliation on host or process restart.
 
-Operational agent semantics are **Designed** in the [operational lifecycle](operational-agent-lifecycle.md),
+Operational agent semantics are **Implemented** in the [operational lifecycle](operational-agent-lifecycle.md),
 [result contract](operational-agent-results.md) and [definition contract](operational-agents.md).
 They preserve this domain's existing code-delivery behavior.
 

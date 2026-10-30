@@ -89,7 +89,7 @@ Session liveness does not authorize a permission-continuation prompt. The
 resume driver also yields on durable prompt ownership or admission conflicts,
 without changing the original attempt, HITL intent, or deleting its session.
 
-Operational agent semantics are **Designed** in the [operational lifecycle](operational-agent-lifecycle.md),
+Operational agent semantics are **Implemented** in the [operational lifecycle](operational-agent-lifecycle.md),
 [result contract](operational-agent-results.md) and [definition contract](operational-agents.md).
 They preserve this domain's existing code-delivery behavior.
 

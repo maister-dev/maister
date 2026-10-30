@@ -492,3 +492,51 @@ The feature is accepted only when both intake definitions use the new contract; 
 - Final qualified application code is `ac34bac1493cb38762ebf73f1fe5a52b1ea75382` (engine 3.9.0); the final handoff commit adds only acceptance bookkeeping, accurate lifecycle/persistence documentation, comments and import whitespace. Plugin delivery is local branch `codex/operational-agent-kind` at `fc24713c00558bf2aa72195c22c8433c42d6e21c` in the original maister-plugins repository; its main checkout is clean and unchanged. Release sequence remains maintenance/drain old writers → additive migrations and compatible platform → smoke/acceptance → new core release (proposed `core/v1.4.0`, not created) → project attachment pin upgrades. Deployment database checks, hosted CI receipts, live GitHub mutations and publication remain owner/release actions, not claimed local evidence.
 
 Committed phase boundaries: specification/traceability `b67c4eb98`; definitions/snapshots `38e76981d`; results/integrity/delivery guards `0fed3674a`; permissions/disposition `673e28b1b`; UI/attention `258b8b7ac`; adversarial hardening `bd1410744`; contracts/package qualification `e2c9bad93`; ancestry regression `17e6f3213`; localized result refinement `ac34bac14`. Plugin phases are `bd14c3eba2131a8a3cb4303e66ac57a40047f71c` and `fc24713c00558bf2aa72195c22c8433c42d6e21c`. No remote state was mutated.
+
+
+## Review remediation
+
+The review at `6000b7444` reopened acceptance for the following concrete gaps.
+Earlier receipts remain historical evidence, not proof of these new cases.
+
+- [x] Context repositories: capture immutable witnesses before first dispatch, validate them on continuation and finalization, preserve unexpected changes, and never recreate mounted source on resume. Cover tracked/ignored/committed changes, absent legacy witnesses and snapshot immutability.
+- [x] Context cleanup: propagate removal failures into durable retries and attention, preserve evidence before deletion, and converge after partial removal without losing the cleanup owner.
+- [x] Operational UI and HITL wire: retain authorized Stop, follow shared UI conventions, return the documented continuation state, and verify real browser/HTTP behavior.
+- [x] Current contracts and acceptance: reconcile operational status/migration claims, run the required gate battery, adversarially review the fixes, and commit verified phases.
+
+The separate product proposal for a quiet operational rail, per-agent history
+and deduplicated recurring incidents is not implemented by this remediation.
+Current terminal runs leave active copies; active runs and per-run failure
+attention retain their existing visibility until that product contract changes.
+
+Review UI/API phase: `6f431fa74`. Current receipts: external HITL HTTP route
+29/29, question service 17/17, Stop integration 9/9, browser four feature cases
+plus authentication setup 5/5 with zero retries and zero leaked processes.
+The browser covers EN/RU, actual Stop → Abandoned/released, stale cleanup revision
+409 followed by successful retry, and shared mutation feedback. The response
+regression validates the real route body against both published API schemas.
+Logs: `/private/tmp/operational-review-{hitl-red,hitl-green,consumers,stop-consumers,ui-red,ui-green,ui-types,ui-lint}.log`.
+
+Review runtime phase: `c647ee1a7`. Nine full owning integration suites pass
+162/162 on the final implementation; the extracted shared context-consent
+consumer additionally passes 5/5. The final receipt is
+`/private/tmp/context-fixes-final-suites2.log`. Regressions cover dirty, ignored
+and committed context changes; retained evidence bytes; immutable nested
+baselines; missing witnesses/roots and descriptor mismatch; no-op and locked Git
+removal; partial removal and partial initial creation; existing target refusal;
+queued orphan cancellation; and both preparation/cancellation mutex orderings.
+Both cancellation orderings preserve cleanup ownership and converge without Git
+inside a PostgreSQL transaction. Per-run mutex metadata stays outside source
+checkouts; no-context executions allocate no context mutex. No new migration.
+
+Final review-fix gates pass: web and supervisor TypeScript; MCP TypeScript and
+build; all API/event contract parsers and five adapter mirrors; all documentation
+validators (540 Mermaid blocks, 4,333 links, requirement traceability and current
+142-table ERD); six local-state reset tests; owned-file ESLint; diff whitespace.
+An independent bounded adversarial rereview found no remaining blocker after
+closing the preparation/cancellation race. This qualification is local and
+focused on the fixes; the prior broad acceptance run remains a separate receipt.
+All review findings are addressed. No remote push, hosted CI, production
+migration or live GitHub mutation was performed. The quiet-rail/history/incident
+aggregation proposal above remains unimplemented and needs its own specification,
+API/persistence contract and TDD acceptance work.

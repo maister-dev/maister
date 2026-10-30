@@ -67,7 +67,7 @@ can read them. The scope subset and the token-authority rules live in
 in [flow-settings.md](flow-settings.md) + [workspaces.md](workspaces.md) (R7 —
 not restated here).
 
-Operational agent semantics are **Designed** in the [operational lifecycle](operational-agent-lifecycle.md),
+Operational agent semantics are **Implemented** in the [operational lifecycle](operational-agent-lifecycle.md),
 [result contract](operational-agent-results.md) and [definition contract](operational-agents.md).
 They preserve this domain's existing code-delivery behavior.
 
@@ -821,10 +821,11 @@ flowchart TD
   `readRepoFiles` on** → `MaisterError("PRECONDITION")` at WRITE time on the
   attach route, not at launch — the attach is the consent event, so an
   unauthorized declaration must never be persisted. *(Implemented — ADR-157.)*
-- **A mount is dirty at the terminal dirty-check** → WARN + quarantine evidence
-  in the same one-transaction shape as the ADR-090 dirty-watchdog; removal
-  proceeds regardless, since the mount is detached and carries no branch.
-  *(Implemented — ADR-157.)*
+- **A code-delivery mount is dirty at the terminal dirty-check** → WARN +
+  quarantine evidence; legacy best-effort removal proceeds. Operational mounts
+  instead participate in pre-terminal integrity validation and durable
+  preserve-before-delete cleanup; see [operational lifecycle](operational-agent-lifecycle.md).
+  *(Implemented — ADR-157, ADR-194.)*
 
 ## Implemented: worktree-agent delivery attribution (ADR-134)
 
@@ -841,6 +842,9 @@ create a clarification only through the server-derived task/project/agent
 identity. The request body contains no run, agent, or project identifiers.
 `reTriggerMode='agent'` is the default; `triage` is accepted only for
 `core:triager` and maps to its existing `task.triage_requeued` helper.
+The following termination/re-trigger flow applies to code-delivery agents.
+Operational agents checkpoint and resume the same run under the
+[operational continuation contract](operational-agent-lifecycle.md#operational-business-question-continuation).
 
 ```mermaid
 sequenceDiagram
