@@ -235,6 +235,7 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-191](#adr-191-librarian-surface-top-navigation-entry-and-right-side-panel) | Librarian surface: top-navigation entry and right-side panel | Accepted | 2026-09-26 |
 | [ADR-192](#adr-192-durable-scratch-prompt-intent-before-command-admission) | Durable scratch prompt intent before command admission | Accepted | 2026-09-30 |
 | [ADR-193](#adr-193-rootless-linux-namespace-isolation-for-production-test-fixtures) | Rootless Linux namespace isolation for production test fixtures | Accepted | 2026-10-03 |
+| [ADR-194](#adr-194-explicit-reviewed-project-configuration-commits) | Explicit reviewed project configuration commits | Accepted | 2026-10-29 |
 
 ---
 
@@ -1961,6 +1962,15 @@ Full record: [`decisions/adr-192.md`](decisions/adr-192.md)
 **Date:** 2026-10-03
 
 Full record: [`decisions/adr-193.md`](decisions/adr-193.md)
+
+---
+
+### ADR-194: Explicit reviewed project configuration commits
+
+**Status:** Accepted
+**Date:** 2026-10-29
+
+Full record: [`decisions/adr-194.md`](decisions/adr-194.md)
 
 ---
 

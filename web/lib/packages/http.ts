@@ -3,6 +3,7 @@ import "server-only";
 import { NextResponse } from "next/server";
 import pino from "pino";
 
+import { configMutationError } from "@/lib/project-config-persistence/mutation-error";
 import { isMaisterError } from "@/lib/errors";
 
 const log = pino({
@@ -36,19 +37,21 @@ export function packageErrorResponse(
   err: unknown,
   context: string,
 ): NextResponse {
-  if (isMaisterError(err)) {
+  const failure = configMutationError(err);
+
+  if (isMaisterError(failure)) {
     return NextResponse.json(
       {
-        code: err.code,
-        message: err.message,
+        code: failure.code,
+        message: failure.message,
         // ADR-132: machine-readable refusal context (e.g. the attach
         // package_name_taken reason) — additive, absent when unset.
-        ...(err.details !== undefined ? { details: err.details } : {}),
+        ...(failure.details !== undefined ? { details: failure.details } : {}),
       },
-      { status: httpStatusForPackageCode(err.code) },
+      { status: httpStatusForPackageCode(failure.code) },
     );
   }
-  const message = err instanceof Error ? err.message : String(err);
+  const message = failure instanceof Error ? failure.message : String(failure);
 
   log.error({ context, err: message }, "packages route unhandled error");
 

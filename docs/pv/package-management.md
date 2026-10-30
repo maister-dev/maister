@@ -17,6 +17,10 @@
 > are assigned at implementation time (next-free; the M32 outbox landed as
 > ADR-086 / migration `0046_domain_events.sql`).
 
+> The automatic manifest write-back portions below are historical and are
+> superseded by [ADR-194](../decisions/adr-194.md). Package changes now apply
+> runtime state; saving configuration requires a separate reviewed Git commit.
+
 ## 1. Goal and end model
 
 A **package** is the self-contained distribution unit for everything a Flow

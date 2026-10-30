@@ -125,7 +125,7 @@ mAIster/
     │   ├── page.tsx                # Portfolio home (superset.sh-style grid + "Needs you (N)" badge)
     │   ├── projects/
     │   │   ├── page.tsx            # Projects list + "Add project" button
-    │   │   ├── new/page.tsx        # Add-project form (paste maister.yaml dir, installs Flow plugins)
+    │   │   ├── new/page.tsx        # Add-project form (clone/local/new repo; optional manifest)
     │   │   └── [slug]/
     │   │       ├── page.tsx        # Per-project board (Backlog | In Flight) + Inbox block
     │   │       ├── actions.ts      # Server actions: create-task, launch, discard-task, hitl-respond
@@ -650,3 +650,13 @@ export async function POST(_req: Request, ctx: { params: { id: string } }) {
   designer, background agents, Telegram, A/B runs, AI-Judge, extra
   executors, guard enforcement, and trust UI need explicit contract and
   roadmap updates before implementation.
+
+## Project configuration persistence
+
+`web/lib/project-config-persistence/` owns the typed DB export projection,
+comment-preserving manifest patch, immutable review/receipt storage and the
+reviewed Git publication protocol. Runtime settings and package services remain
+the owners of application; routes must not write tracked manifests implicitly.
+Repository mutations share the canonical common-Git-directory ownership fence;
+Git effects run outside DB transactions. The API contract and owning analytics
+in `docs/` define confirmation, concurrency, recovery and separate push.

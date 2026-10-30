@@ -329,15 +329,16 @@ export default async function ProjectBoardPage({
 
   return (
     <>
-      <ConfigPersistBanner
-        canEdit={isAdmin}
-        mainBranch={project.mainBranch}
-        needsPersist={project.maisterYamlPath === null}
-        projectName={project.name}
-        repoPath={displayRepoPath}
-        settingsHref={`/projects/${slug}?tab=settings`}
-        slug={slug}
-      />
+      {tab !== "settings" && isAdmin ? (
+        <ConfigPersistBanner
+          key={slug}
+          canEdit={isAdmin}
+          exportRevision={project.configExportRevision.toString()}
+          projectName={project.name}
+          settingsHref={`/projects/${slug}?tab=settings`}
+          slug={slug}
+        />
+      ) : null}
       <header className="mb-6 grid grid-cols-1 items-start gap-6 border-b border-line pb-[22px] lg:grid-cols-[1fr_auto]">
         <div className="min-w-0">
           <div className="mb-3 inline-flex items-center gap-2.5 font-mono text-[10.5px] font-semibold uppercase tracking-[0.14em] text-mute before:h-px before:w-[18px] before:bg-amber before:content-['']">

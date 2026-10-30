@@ -3,7 +3,7 @@ import "server-only";
 import type { AgentDefinitionCapabilityConfig } from "@/lib/config.schema";
 
 import { randomUUID } from "node:crypto";
-import { readFile, rm, stat } from "node:fs/promises";
+import { rm, stat } from "node:fs/promises";
 import path from "node:path";
 
 import { eq, or } from "drizzle-orm";
@@ -13,8 +13,11 @@ import { z } from "zod";
 
 import { ADAPTER_IDS } from "@/lib/acp-runners/adapter-support";
 import { requireGlobalRole } from "@/lib/authz";
-import { atomicWriteText } from "@/lib/atomic";
-import { buildCapabilityRefIds, loadProjectConfig } from "@/lib/config";
+import {
+  buildCapabilityRefIds,
+  loadProjectConfig,
+  parseProjectConfig,
+} from "@/lib/config";
 import { syncProjectFlowRolesFromConfig } from "@/lib/assignments/service";
 import { installAndIngestCapabilityImports } from "@/lib/capabilities/import";
 import { resolveTrust } from "@/lib/flows/trust";
@@ -55,7 +58,7 @@ const postBodySchema = z
   .object({
     repoUrl: z.string().min(1).max(2048).optional(),
     target: z.string().min(1).max(4096).optional(),
-    // The body name initializes a generated manifest only when the repo has no
+    // The body name initializes runtime defaults only when the repo has no
     // maister.yaml; an existing manifest remains authoritative.
     name: z.string().min(1).max(200).optional(),
     // ADR-078 D2: body-controlled but regex allow-listed; names no path and
@@ -176,62 +179,6 @@ async function pathExists(p: string): Promise<boolean> {
   }
 }
 
-async function bootstrapMaisterYaml(
-  projectDir: string,
-  explicitName?: string,
-): Promise<{ path: string; content: string }> {
-  const name = explicitName?.trim() || path.basename(projectDir);
-  const mainBranch = await getDefaultBranch(projectDir);
-  const content = serializeProjectConfig({
-    name,
-    mainBranch,
-    branchPrefix: "maister/",
-    defaultRunnerId: null,
-    promotionMode: null,
-  });
-  const maisterYamlPath = path.join(projectDir, "maister.yaml");
-
-  await atomicWriteText(maisterYamlPath, content);
-  log.info(
-    { maisterYamlPath, mainBranch },
-    "[FIX:project-registration] default maister.yaml generated",
-  );
-
-  return { path: maisterYamlPath, content };
-}
-
-async function removeUnchangedBootstrapMaisterYaml(
-  maisterYamlPath: string,
-  expectedContent: string,
-): Promise<void> {
-  try {
-    const currentContent = await readFile(maisterYamlPath, "utf8");
-
-    if (currentContent !== expectedContent) {
-      log.warn(
-        { maisterYamlPath },
-        "leaving modified bootstrap maister.yaml after registration failure",
-      );
-
-      return;
-    }
-
-    await rm(maisterYamlPath, { force: true });
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-
-    if (code === "ENOENT") return;
-
-    log.error(
-      {
-        err: err instanceof Error ? err.message : String(err),
-        maisterYamlPath,
-      },
-      "failed to remove bootstrap maister.yaml after registration failure",
-    );
-  }
-}
-
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
     // [FIX] Codex F4: authenticate/authorize BEFORE parsing the body, so an
@@ -288,25 +235,24 @@ async function register(
     "register project start",
   );
 
-  // A present-but-invalid manifest must fail CONFIG. A missing manifest is
-  // materialized first, then follows this same validated registration path.
-  if (!(await pathExists(maisterYamlPath))) {
-    const bootstrap = await bootstrapMaisterYaml(resolved.dir, explicitName);
-
-    try {
-      return await register(resolved, adminId, explicitTaskKey, explicitName);
-    } catch (err) {
-      await removeUnchangedBootstrapMaisterYaml(
-        bootstrap.path,
-        bootstrap.content,
+  const manifestPresent = await pathExists(maisterYamlPath);
+  const config = manifestPresent
+    ? await loadProjectConfig(maisterYamlPath)
+    : parseProjectConfig(
+        serializeProjectConfig({
+          name: explicitName?.trim() || path.basename(resolved.dir),
+          mainBranch: await getDefaultBranch(resolved.dir),
+          branchPrefix: "maister/",
+          defaultRunnerId: null,
+          promotionMode: null,
+        }),
+        "registration defaults",
       );
-      throw err;
-    }
-  }
 
-  // Phase (a): load + validate maister.yaml. On failure → CONFIG (422),
-  // NO db row written.
-  const config = await loadProjectConfig(maisterYamlPath);
+  log.info(
+    { manifestPresent, dir: resolved.dir },
+    "project registration configuration resolved",
+  );
   const flowRoles = config.flow_roles ?? [];
 
   const slug = deriveSlug(config.project.name);
@@ -414,7 +360,7 @@ async function register(
         publicBranchTemplate:
           config.project.public_branch_template ??
           DEFAULT_PUBLIC_BRANCH_TEMPLATE,
-        maisterYamlPath,
+        maisterYamlPath: manifestPresent ? maisterYamlPath : null,
         // M18 (§3.4) SET/CLEAR symmetry: a present promotion.mode materializes
         // to projects.promotion_mode; an absent one resets to NULL (default)
         // in the same write — the launch resolver folds the local_merge default.

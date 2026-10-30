@@ -175,7 +175,7 @@ the credentials from `pnpm db:seed`. Active routes:
 | `/login`                     | Credentials sign-in (Auth.js v5).                                                                        |
 | `/`                          | Portfolio home — workspaces grid across all projects.                                                    |
 | `/projects`                  | Registered projects list + "Add project" button (admin only).                                            |
-| `/projects/new`              | Add-project form (admin only). Accepts a repository directory and bootstraps `maister.yaml` when needed. |
+| `/projects/new`              | Add-project form (admin only). Accepts a repository source; absent manifests use runtime defaults until an explicit reviewed save. |
 | `/projects/[slug]`           | Per-project board — Backlog, Prepare, In Delivery, In Review columns.                                    |
 | `/projects/[slug]/tasks/new` | Task creation form (member+).                                                                            |
 | `/flows`                     | Authored Flow drafts and installed package inventory.                                                    |
@@ -619,6 +619,12 @@ mAIster/
 - **Adding another component library** — HeroUI v3 + Tailwind 4 +
   `tailwind-variants` covers all primitives. Do not add shadcn/ui, MUI,
   Chakra, or hand-rolled equivalents (see `.ai-factory/rules/frontend.md`).
+- **Losing private configuration staging on restart** — keep
+  `<MAISTER_WORKTREES_ROOT>/.config-persistence` on durable host storage,
+  owned by the web service UID and outside project checkouts. Save/recovery
+  refuses unknown private content; inspect a retained cleanup receipt before
+  removing files. The supported compose setup runs only PostgreSQL in Docker;
+  web configuration persistence uses the host worktree root, without a new mount.
 - **Moving `MAISTER_WORKTREES_ROOT` without `MAISTER_WORKSPACE_ROOTS`**
   (ADR-166) — the supervisor only adopts worktrees under its
   configured roots; a moved web root that is not mirrored fails every launch

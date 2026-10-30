@@ -1,5 +1,7 @@
 # Projects domain
 
+> Reviewed configuration commits and recovery are defined in [project configuration persistence](project-config-persistence.md).
+
 ## Purpose
 
 A **project** is a single registered git repository that MAIster
@@ -8,8 +10,8 @@ operates on. Registration resolves the project source through one of three
 [`git-integration.md`](git-integration.md)) — then, **when the repo carries a
 `maister.yaml`**, loads it (v2), installs the Flow plugins it references, and
 creates rows in `projects` and `flows` with platform runner references. When the
-manifest is **absent**, registration atomically bootstraps a minimal v2 manifest
-and then uses the same validation path.
+manifest is **absent**, registration validates minimal v2 defaults in memory
+and continues through the same pipeline without creating a file.
 The domain boundary covers project lifecycle (register, archive) and the
 immediate fanout that lifecycle triggers.
 
@@ -38,11 +40,10 @@ existing semantics. No project is left partially usable.
 - **`provider`** — nullable auto-detected host tag
   (`github | gitlab | gitea | gitverse | generic`). See
   [`git-integration.md`](git-integration.md).
-- **`maister_yaml_path`** — nullable path the manifest was loaded from.
-  New registrations always set it: a missing file is atomically bootstrapped
-  before validation. `NULL` is retained only for legacy rows registered before
-  this behavior; a persist action can commit their DB-held configuration and set
-  the path (see [`git-integration.md`](git-integration.md)).
+- **`maister_yaml_path`** — nullable manifest locator. Missing-manifest
+  registration stores NULL. Reviewed persistence can set the locator after a
+  proven commit or repair it during a semantic no-op. Path presence is never
+  proof that runtime configuration matches Git.
 
 Identifiers:
 
@@ -55,7 +56,7 @@ Identifiers:
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Registered: POST /api/projects (clone | existing | new)<br/>(validated pre-existing or bootstrapped maister.yaml)
+    [*] --> Registered: POST /api/projects (clone | existing | new)<br/>(validated source or in-memory defaults)
     Registered --> Registered: edit maister.yaml<br/>(re-validate, no row change)
     Registered --> Archived: DELETE /api/projects/[slug]<br/>(soft archive)
     Archived --> Registered: unarchive<br/>(Phase 2)
@@ -77,7 +78,7 @@ is wired yet (Phase 2).
 After the source resolves, the manifest presence at `resolved.dir` selects the
 registration branch. The branch is an **allow-list** keyed on the `stat` result —
 exactly as the code gates **([ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons))**.
-A *missing* file is the only thing that triggers bootstrap; a malformed file is
+A *missing* file is the only thing that selects in-memory defaults; a malformed file is
 a user error, never a silent overwrite or fallback.
 
 ```mermaid
@@ -91,20 +92,20 @@ stateDiagram-v2
     ParseManifest --> PresentInvalid: parse / cross-ref fail
     PresentValid --> RowsFromManifest: INSERT project + flows/packages install<br/>(maister_yaml_path set)
     PresentInvalid --> [*]: CONFIG 422<br/>(NOT a fallback)
-    Absent --> BootstrapManifest: atomic write minimal v2 maister.yaml
-    BootstrapManifest --> ParseManifest
+    Absent --> InMemoryDefaults: serialize and validate defaults without writing
+    InMemoryDefaults --> RowsFromDefaults: INSERT project and owner<br/>(maister_yaml_path NULL)
+    RowsFromDefaults --> Registered
     RowsFromManifest --> Registered
     Registered --> [*]
 ```
 
 Status: **Implemented** — the present-manifest path remains unchanged; the
-manual `POST /api/projects` path bootstraps a missing manifest before validating
-it. `MAISTER_PROJECTS_DIR` auto-discovery remains `maister.yaml`-gated because
+manual `POST /api/projects` path validates missing-manifest defaults in memory. `MAISTER_PROJECTS_DIR` auto-discovery remains `maister.yaml`-gated because
 it needs a marker to find a project.
 
 ## Process flows
 
-### Resolve project source (Implemented; `new` mode Designed)
+### Resolve project source (Implemented)
 
 The union resolved before any config load, selected by an explicit
 **onboarding mode** **([ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons))**:
@@ -185,12 +186,11 @@ sequenceDiagram
     RS-->>W: { dir, repoUrl, provider, gitStatus }
     W->>FS: stat(dir/maister.yaml)
     alt manifest missing
-        W->>FS: atomic write minimal v2 maister.yaml
+        W->>CFG: parseProjectConfig(serialized defaults), no file write
     else manifest present
-        FS-->>W: preserve operator file
+        W->>CFG: loadProjectConfig(dir + /maister.yaml)
+        CFG->>FS: readFile maister.yaml
     end
-    W->>CFG: loadProjectConfig(dir + /maister.yaml)
-    CFG->>FS: readFile maister.yaml
     CFG->>CFG: zod parse + cross-ref checks
     alt CONFIG error
         CFG-->>W: throw MaisterError(CONFIG)
@@ -222,7 +222,6 @@ sequenceDiagram
             FL-->>W: throw MaisterError(FLOW_INSTALL)
             W->>DB: DELETE project (cascade: executors/flows/members)
             W->>FS: rm .maister/{slug} subtree
-            W->>FS: remove unchanged generated maister.yaml
             W-->>U: 502 FLOW_INSTALL<br/>fully rolled back, retryable
         end
     end

@@ -22,6 +22,22 @@ describe("readApiError", () => {
     ).resolves.toBe("CONFLICT");
   });
 
+  it("uses actionable localized feedback for the durable configuration publication guard", async () => {
+    await expect(
+      readApiError(
+        response(
+          {
+            code: "CONFLICT",
+            details: { reason: "operation_busy" },
+            message: "private context",
+          },
+          409,
+        ),
+        t,
+      ),
+    ).resolves.toBe("configPublicationBusy");
+  });
+
   it.each([
     [{ code: "UNKNOWN", message: "server secret" }, 500],
     [{ message: "server secret" }, 500],

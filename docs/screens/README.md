@@ -196,7 +196,7 @@ flowchart TD
 | [`projects/project-mcps-hub.md`](projects/project-mcps-hub.md) | Project MCP hub (3-source list, requirements ledger, match/connect/overlay, test-connection) | `/projects/{slug}?tab=mcps` | Implemented (list + ADR-129 hub) |
 | [`projects/project-evaluations.md`](projects/project-evaluations.md) | Evaluation Lab (Studies list, Study Lab, controlled-launch dialog, verdict) | `/projects/{slug}/evaluations` and `/projects/{slug}/evaluations/{studyId}` | Implemented (ADR-142..147/150) |
 | [`projects/add-project.md`](projects/add-project.md) | Add-project form (modes, prefill, bootstrap, classified clone errors) | `/projects/new` | Implemented |
-| [`projects/project-settings-git.md`](projects/project-settings-git.md) | Project Settings → Git (remotes table + persist-config) | `/projects/{slug}?tab=settings` | Designed (ADR-093) |
+| [`projects/project-settings-git.md`](projects/project-settings-git.md) | Project Settings → Git (remotes and reviewed configuration commits) | `/projects/{slug}?tab=settings` | Implemented (ADR-194) |
 | [`projects/project-settings-agents.md`](projects/project-settings-agents.md) | Project Settings → Agents (attach/enable, triggers, runner + autonomy policy) | `/projects/{slug}?tab=settings` | Implemented (ADR-106) |
 | [`projects/project-settings-brain.md`](projects/project-settings-brain.md) | Project Settings → Brain (enablement, home resolution, projection flow) | `/projects/{slug}?tab=settings` | Implemented (ADR-127/128) |
 | [`projects/project-brain.md`](projects/project-brain.md) | Project Brain (memory search, sources, proposals) | `/projects/{slug}?tab=brain` when Brain is enabled, migrated, and embeddings are configured | Implemented (ADR-127/128) |

@@ -9,6 +9,7 @@ const findPendingMigrations = vi.hoisted(() => vi.fn());
 const findPendingBrainMigrations = vi.hoisted(() => vi.fn());
 const assertDatabaseNotAheadOfBinary = vi.hoisted(() => vi.fn());
 const startSchedulerTimer = vi.hoisted(() => vi.fn());
+const recoverProjectConfigurations = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/db/check-migrations", () => ({
   assertDatabaseNotAheadOfBinary,
@@ -19,6 +20,9 @@ vi.mock("@/lib/db/client", () => ({
   getDb,
   beginDbShutdown: vi.fn(),
   closeDb: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("@/lib/project-config-persistence/reconcile", () => ({
+  recoverProjectConfigurations,
 }));
 vi.mock("@/lib/runs/resume-recovery", () => ({
   runResumeRecoverySweep: vi.fn().mockResolvedValue(undefined),
@@ -59,6 +63,12 @@ describe("instrumentation DB boot boundary", () => {
     assertDatabaseNotAheadOfBinary.mockReset();
     assertDatabaseNotAheadOfBinary.mockResolvedValue(undefined);
     startSchedulerTimer.mockReset();
+    recoverProjectConfigurations.mockReset();
+    recoverProjectConfigurations.mockResolvedValue({
+      inspected: 0,
+      committed: 0,
+      retained: 0,
+    });
   });
 
   afterEach(async () => {
@@ -66,6 +76,36 @@ describe("instrumentation DB boot boundary", () => {
     await applicationLifecycle()?.drain();
     if (originalRuntime === undefined) delete process.env.NEXT_RUNTIME;
     else process.env.NEXT_RUNTIME = originalRuntime;
+  });
+
+  it("runs configuration recovery after migration compatibility checks independently of host bootstrap", async () => {
+    const order: string[] = [];
+    const database = {};
+
+    getDb.mockReturnValue(database);
+    findPendingMigrations.mockImplementation(async () => {
+      order.push("main");
+
+      return [];
+    });
+    findPendingBrainMigrations.mockImplementation(async () => {
+      order.push("brain");
+
+      return [];
+    });
+    assertDatabaseNotAheadOfBinary.mockImplementation(async () => {
+      order.push("compatible");
+    });
+    recoverProjectConfigurations.mockImplementation(async () => {
+      order.push("configuration");
+
+      return { inspected: 1, committed: 1, retained: 0 };
+    });
+    await register();
+    expect(recoverProjectConfigurations).toHaveBeenCalledExactlyOnceWith(
+      database,
+    );
+    expect(order).toEqual(["main", "brain", "compatible", "configuration"]);
   });
 
   it("rejects boot when DB client initialization fails", async () => {

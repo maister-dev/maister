@@ -63,7 +63,11 @@ function project(ws: PortfolioWorkspace): PortfolioProject {
     activeWorkspaces: [ws],
     recentMerges: [],
     need: null,
-    needsPersist: false,
+    configPersistence: {
+      exportState: "unverified",
+      observedAt: null,
+      exportRevision: "0",
+    },
   };
 }
 

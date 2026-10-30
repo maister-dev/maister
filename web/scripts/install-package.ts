@@ -92,6 +92,14 @@ async function main(): Promise<void> {
 
   const project = rows[0];
 
+  if (project.maisterYamlPath === null) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `Project "${args.project}" has no repository manifest. Save configuration through Project Settings before using install-package, or attach the package through the project API. No package was installed.`,
+    );
+  }
+  const config = await loadProjectConfig(project.maisterYamlPath);
+
   const result = await installPackage({
     source: args.source,
     version: args.version,
@@ -101,8 +109,6 @@ async function main(): Promise<void> {
     workspaceRoot: project.repoPath,
     db,
   });
-
-  const config = await loadProjectConfig(project.maisterYamlPath);
 
   await installAndIngestCapabilityImports({
     config,

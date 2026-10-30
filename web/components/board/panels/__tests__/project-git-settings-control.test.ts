@@ -26,7 +26,7 @@ function render(over: Partial<ProjectGitSettingsControlProps> = {}): string {
     projectSlug: "demo",
     mainBranch: "main",
     remotes: [{ name: "origin", url: "https://github.com/o/r.git" }],
-    needsPersist: false,
+    exportRevision: "0",
     syncStrategyDefault: "rebase",
     syncRunnerId: null,
     syncRunnerOptions: [
@@ -58,12 +58,10 @@ describe("ProjectGitSettingsControl", () => {
     expect(html).not.toContain("projects.git.manage");
   });
 
-  it("shows the persist action only when needsPersist", () => {
-    expect(render({ needsPersist: true })).toContain(
-      "projects.git.persistTitle",
-    );
-    expect(render({ needsPersist: false })).not.toContain(
-      "projects.git.persistTitle",
+  it("always provides the reviewed save action for existing and new manifests", () => {
+    expect(render()).toContain('data-testid="config-persist-open"');
+    expect(render({ exportRevision: "3" })).toContain(
+      'data-testid="config-persist-open"',
     );
   });
 

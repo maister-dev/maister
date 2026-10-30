@@ -180,8 +180,9 @@ you control.
 1. Open **Project → Packages** and choose **Attach**.
 2. Pick the installed revision. The dialog shows its inventory: Flows, agents,
    skills, MCP requirements, restrictions, schemas, and scripts.
-3. Confirm. The attachment adds the package's Flows to the project and writes
-   the pin into the repository's `maister.yaml`:
+3. Confirm. The attachment adds the package's Flows and pin to the project
+   runtime. A separate [reviewed configuration save](/guides/save-project-configuration)
+   can commit this pin to `maister.yaml`:
 
    ```yaml
    packages:
@@ -202,8 +203,9 @@ repository is registered with `packages[]` already in its `maister.yaml`,
 MAIster installs and attaches those versions during registration, so a project
 can be recreated on another installation from git alone.
 
-A write-back warning means the attachment is saved but `maister.yaml` could
-not be updated; edit the pin by hand. Attaching fails when a package Flow id
+Attaching, upgrading, rolling back and detaching leave repository files
+unchanged. Review and commit the resulting pins when you want to save them
+in Git. Attaching fails when a package Flow id
 collides with a standalone `flows[]` entry, or when an MCP or restriction id is
 already provided by another attached package.
 

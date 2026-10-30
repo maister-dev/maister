@@ -59,6 +59,14 @@ export async function loadProjectConfig(
     );
   }
 
+  return parseProjectConfig(raw, maisterYamlPath);
+}
+
+/** Shared structural and reference validation; parsing never installs project content. */
+export function parseProjectConfig(
+  raw: string,
+  maisterYamlPath: string,
+): MaisterYamlV2 {
   let data: unknown;
 
   try {

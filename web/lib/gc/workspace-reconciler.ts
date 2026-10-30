@@ -12,6 +12,7 @@ import path from "node:path";
 import { eq } from "drizzle-orm";
 import pino from "pino";
 
+import { CONFIG_PERSISTENCE_DIRECTORY } from "@/lib/project-config-persistence/review-files";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -239,7 +240,12 @@ async function listCandidates(
   const candidates: ReconciliationCandidate[] = [];
 
   for (const projectEntry of projectEntries) {
-    if (!projectEntry.isDirectory() || projectEntry.isSymbolicLink()) continue;
+    if (
+      projectEntry.name === CONFIG_PERSISTENCE_DIRECTORY ||
+      !projectEntry.isDirectory() ||
+      projectEntry.isSymbolicLink()
+    )
+      continue;
 
     const projectDirectory = path.join(resolvedRoot, projectEntry.name);
     const worktreeEntries = await readdir(projectDirectory, {

@@ -15,6 +15,8 @@ import pino from "pino";
 import { z } from "zod";
 
 import { branchNameSchema } from "@/lib/git-ref-names";
+import { withRepositoryMutationFence } from "@/lib/project-config-persistence/repository-lock";
+import { executeRepositoryGit } from "@/lib/project-config-persistence/git-process";
 import { MaisterError } from "@/lib/errors";
 import {
   DELIVERY_PATHSPEC,
@@ -161,8 +163,8 @@ async function runGit(
   repo: string,
   args: readonly string[],
 ): Promise<{ stdout: string; stderr: string }> {
-  return execFileAsync("git", ["-C", repo, ...args], {
-    signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
+  return executeRepositoryGit(repo, args, {
+    timeout: GIT_TIMEOUT_MS,
     maxBuffer: EXEC_MAX_BUFFER,
     env: cLocaleGitEnv(),
   });
@@ -173,7 +175,8 @@ async function withRepoPromotionLock<T>(
   fn: () => Promise<T>,
 ): Promise<T> {
   const previous = repoPromotionLocks.get(repo) ?? Promise.resolve();
-  const run = previous.then(fn, fn);
+  const guarded = () => withRepositoryMutationFence(repo, fn);
+  const run = previous.then(guarded, guarded);
   let next: Promise<unknown>;
 
   next = run
@@ -1487,11 +1490,11 @@ export async function pullRemote(
     };
 
     try {
-      await execFileAsync(
-        "git",
-        ["-C", repo, "fetch", "--end-of-options", name, branch],
+      await executeRepositoryGit(
+        repo,
+        ["fetch", "--end-of-options", name, branch],
         {
-          signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
+          timeout: GIT_TIMEOUT_MS,
           maxBuffer: EXEC_MAX_BUFFER,
           env: NETWORK_GIT_ENV,
         },
@@ -1501,11 +1504,9 @@ export async function pullRemote(
     }
 
     try {
-      await execFileAsync(
-        "git",
+      await executeRepositoryGit(
+        repo,
         [
-          "-C",
-          repo,
           "merge",
           "--ff-only",
           "--no-autostash",
@@ -1513,7 +1514,7 @@ export async function pullRemote(
           "FETCH_HEAD",
         ],
         {
-          signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
+          timeout: GIT_TIMEOUT_MS,
           maxBuffer: EXEC_MAX_BUFFER,
           env: cLocaleGitEnv(),
         },
@@ -1523,7 +1524,8 @@ export async function pullRemote(
       // calling it terminal would tell an unattended caller not to retry.
       throw pullFailure(
         err,
-        asError(err).name === "AbortError"
+        asError(err).name === "AbortError" ||
+          (err as { killed?: boolean }).killed
           ? "EXECUTOR_UNAVAILABLE"
           : "CONFLICT",
       );

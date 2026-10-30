@@ -150,6 +150,7 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | `web/lib/db/schema.ts` | Drizzle schema; `node_attempts` is the sole Flow execution ledger |
 | `web/lib/execution-host/events/projection-runtime.ts` | Autonomous canonical projection registry and worker activation |
 | `web/lib/config.ts` | `maister.yaml` v2 loader (zod-validated) |
+| `web/lib/project-config-persistence/` | Reviewed configuration projection, commit/push intents, Git publication and recovery |
 | `site/app/[locale]/page.tsx` | Public localized landing page |
 | `site/app/api/github/route.ts` | Validated live GitHub repository widget endpoint |
 | `site-docs/docs.json` | Public Markdown docs navigation, theme, and AI context |
@@ -175,6 +176,7 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | Database Schema | `docs/database-schema.md` | 8 tables, FK cascade chain, indexes, Drizzle workflow |
 | Error Taxonomy | `docs/error-taxonomy.md` | `MaisterError` codes — when each fires, what the UI does |
 | Configuration | `docs/configuration.md` | `maister.yaml` v2 + `flow.yaml` v1 + `form_schema` versioning + env vars |
+| Project configuration persistence | `docs/system-analytics/project-config-persistence.md` | Reviewed export, commits, recovery and push; Implemented |
 | Vision | `docs/VISION.md` | One-liner, product spine, principles, validation goal |
 | Product View | `docs/PRODUCT_VIEW.md` | Lean Canvas, JTBD, gaps, MVP / Phase 2 / Later |
 | Architecture | `docs/architecture.md` | Current system architecture, C4 diagrams, data flows |

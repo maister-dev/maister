@@ -37,7 +37,6 @@ describe("UT-NAV-03 the portfolio lives at /projects", () => {
       "ProjectCard",
       "NewProjectTile",
       "DecisionsSummary",
-      "ConfigPersistBanner",
       "DensityToggle",
       "LiveTicker",
     ]) {

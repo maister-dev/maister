@@ -23,7 +23,7 @@ erDiagram
         text provider "nullable: github|gitlab|gitea|gitverse|generic"
         text main_branch "current column; product default_branch"
         text branch_prefix "default 'maister/'"
-        text maister_yaml_path "nullable (ADR-093 Designed, 0054): manifest path; NULL = config-in-DB-only"
+        text maister_yaml_path "nullable manifest locator; content status is independent of path"
         text default_runner_id "platform runner override"
         text promotion_mode "project-default promotion mode (local_merge|pull_request); override-chain source (§3.4)"
         jsonb delivery_policy_default "ADR-085 Designed: strategy/push/trigger/targetBranch"
@@ -262,10 +262,10 @@ project-scoped memory items its members kept about it.
   captured at register time ([ADR-025](../decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots)):
   the clone source / existing `origin`, and the auto-detected host tag.
   `repo_path` is the resolved on-disk dir, not read from `maister.yaml`.
-- `projects.maister_yaml_path` **(Designed, ADR-093, migration `0054`)** is
-  **nullable** (drop `NOT NULL`); `NULL` is the "config lives only in the DB"
-  signal — the project registered without a `maister.yaml`, repo untouched. No
-  backfill, so existing rows keep their path. See
+- `projects.maister_yaml_path` **(Implemented, ADR-093/194, migration `0054`)**
+  is a nullable manifest locator. Registration without a manifest leaves it
+  `NULL` and the repo untouched; semantic status comes from committed content
+  comparison, independently of the locator. No backfill changes existing paths. See
   [`../system-analytics/projects.md`](../system-analytics/projects.md).
 - `projects.default_runner_id` references a platform runner override; null means
   inherit the platform default.
@@ -308,3 +308,72 @@ NULL` is NOT used — group removal happens through the detach transaction;
   [`../system-analytics/packages.md`](../system-analytics/packages.md) (Implemented, ADR-088).
 - Config: [`../configuration.md`](../configuration.md) §`maister.yaml v2`.
 - Source: `web/lib/db/schema.ts`.
+
+## Explicit configuration commit entities (Implemented — ADR-194)
+
+Main migrations 0194–0198 own these entities and guards; the Drizzle schema,
+journal/snapshots and generated consolidated DBML describe the applied model.
+
+```mermaid
+erDiagram
+    PROJECTS ||--o{ PROJECT_CONFIG_PERSIST_OPERATIONS : owns
+    USERS ||--o{ PROJECT_CONFIG_PERSIST_OPERATIONS : reviews
+    PROJECT_CONFIG_PERSIST_OPERATIONS ||--o{ PROJECT_CONFIG_PUSH_INTENTS : publishes
+    PROJECT_CONFIG_PERSIST_OPERATIONS {
+        text id PK
+        text project_id FK
+        text actor_user_id FK
+        text repository_key
+        text state
+        jsonb snapshot
+        text snapshot_digest
+        timestamp expires_at
+        timestamp accepted_at
+        text owner_token
+        integer owner_process_id
+        text prepared_sha
+        text committed_sha
+        timestamp completed_at
+        text error_reason
+        text cleanup_state
+        timestamp cleanup_checked_at
+        text cleanup_reason
+        boolean used_default_author
+        timestamp created_at
+        timestamp updated_at
+    }
+    PROJECT_CONFIG_PUSH_INTENTS {
+        text id PK
+        text operation_id FK
+        text project_id FK
+        text actor_user_id FK
+        text state
+        jsonb snapshot
+        text snapshot_digest
+        timestamp expires_at
+        timestamp accepted_at
+        text owner_token
+        integer owner_process_id
+        integer process_group
+        timestamp completed_at
+        text error_reason
+        text cleanup_state
+        timestamp cleanup_checked_at
+        text cleanup_reason
+        timestamp created_at
+        timestamp updated_at
+    }
+```
+
+`projects.config_export_revision` is a monotonic nonnegative bigint, default 0,
+not persistence provenance. All new evidence FKs restrict deletion. Active-state
+partial uniqueness, immutable snapshot guards and lifecycle CHECKs are specified
+in the [schema narrative](../database-schema.md#project-configuration-persistence-implemented--adr-194).
+The [domain contract](../system-analytics/project-config-persistence.md) owns the
+state machine and crash-window outcomes. Existing source/locator data is preserved.
+
+Attachment binding changes acquire sorted install-row `FOR SHARE NOWAIT` locks
+before their revision trigger (migration 0198). This serializes concurrent
+install metadata changes with new/switched/deleted bindings; contention refuses
+without partial writes. The [owning concurrency contract](../system-analytics/project-config-persistence.md#lock-and-recovery-contract-implemented)
+and its PostgreSQL tests define retry and accepted-publication behavior.

@@ -34,8 +34,8 @@ without a pre-existing `maister.yaml` or a guess-and-retry loop.
 - **Entry:** the "Add project" button on `/projects` (admin) and the
   [left rail](../chrome/left-rail.md) projects section.
 - **Exit:** a successful registration lands on the new project board
-  (`/projects/{slug}`) with a validated existing or bootstrapped
-  `maister.yaml`.
+  (`/projects/{slug}`) with validated source configuration or in-memory defaults. Missing-manifest
+  registration creates no file; Settings → Git offers a separate reviewed save.
 
 ```mermaid
 flowchart TD

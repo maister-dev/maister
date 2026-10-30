@@ -268,8 +268,8 @@ as implicit `owner` of every project.
   id, slug (UNIQUE), name,
   repoPath (UNIQUE), repoUrl?, provider?,
   mainBranch ('main'), branchPrefix ('maister/'),
-  maisterYamlPath?,              // nullable for legacy DB-only rows;
-                                 //   new registration bootstraps maister.yaml
+  maisterYamlPath?,              // optional manifest locator; absent-file
+                                 //   registration stores null without writing
   defaultRunnerId?,              // platform runner override; null = inherit
   promotionMode?,                // (text, migration 0021) project-default
                                  //   promotion mode (local_merge | pull_request);
@@ -309,13 +309,12 @@ at register time (clone source / existing `origin`, and auto-detected host tag)
 per [ADR-025](decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots);
 `repoPath` is the resolved on-disk dir, not read from `maister.yaml`.
 
-`maisterYamlPath` remains **nullable** for legacy DB-only project rows. New
-manual registration atomically bootstraps a minimal `maister.yaml`, validates it,
-and stores its path; it does not create new `NULL` rows. A legacy `NULL` row can
-still use the persist action to commit its DB-held configuration. The migration
-adds **no backfill** — existing rows keep their stored state. See
-[ADR-093](decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)
-and [`system-analytics/projects.md`](system-analytics/projects.md).
+`maisterYamlPath` is an optional manifest locator. Registration without a file
+validates defaults in memory, stores `NULL` and leaves the checkout unchanged.
+Both absent and existing manifests use the permanent reviewed persistence action;
+content comparison determines status independently of this path. Existing rows
+are not backfilled. See [ADR-194](decisions/adr-194.md) and
+[`system-analytics/projects.md`](system-analytics/projects.md).
 
 **(ADR-085 — Designed, migration `0047`.)** `deliveryPolicyDefault`
 (`jsonb`, nullable) stores the project default for run delivery. Shape:
@@ -5469,3 +5468,73 @@ order.
   registration writes rows here
 - [Architecture](../.ai-factory/ARCHITECTURE.md) — module boundaries
   enforced around `lib/db/`
+
+## Project configuration persistence (Implemented — ADR-194)
+
+`projects.config_export_revision` is bigint NOT NULL DEFAULT 0 with a nonnegative
+CHECK. It is an optimistic content revision, never a persistence-status flag.
+Wire values are decimal strings. A BEFORE UPDATE trigger advances it for
+semantic changes in name/main_branch/branch_prefix/public_branch_template/
+default_runner_id/promotion_mode and refuses decreases. An attachment trigger
+advances the owning project for insert/delete/changed install identity. No-op,
+DB-only and manifest-locator receipt updates do not advance it; transaction
+rollback rolls back the bump. Existing project/attachment data is preserved.
+
+| New entity / field | Type and invariant |
+| --- | --- |
+| project_config_persist_operations.id | text UUID primary key, server-generated review/operation identity |
+| project_id, actor_user_id | text FK, ON DELETE RESTRICT; retained evidence is never cascaded away |
+| repository_key | text canonical common Git directory; server-derived, host-private |
+| state | previewed/preparing/prepared/publishing/committed/noop/stale/failed/recovery_required |
+| snapshot | typed jsonb immutable reviewed inputs, original/proposed content digests and private-directory locator, index/tree fingerprints, export projection/revision, message and author policy; no credentials |
+| snapshot_digest | text SHA-256, immutable; changed content under a used identity conflicts |
+| expires_at, created_at | timestamptz NOT NULL; 10-minute review expiry |
+| accepted_at | nullable timestamptz; required before preparing/effects |
+| owner_token, owner_process_id | nullable text UUID / integer; claim fence and diagnostic process identity; PID alone grants no signal/cleanup authority |
+| prepared_sha, committed_sha | nullable text; prepared requires verified private commit, committed requires observed target publication |
+| completed_at | nullable timestamptz; required for terminal states |
+| error_reason | nullable bounded reason enum text; required for stale/failed/recovery_required |
+| cleanup_state, cleanup_checked_at, cleanup_reason | pending/complete/retained; nullable timestamptz and bounded reason. Complete/retained require a check time; retained requires a reason. Cleanup cannot change the committed outcome. |
+| used_default_author | boolean NOT NULL DEFAULT false; author-default receipt only |
+| updated_at | timestamptz NOT NULL; state/receipt update time |
+| project_config_push_intents.id | text UUID primary key, server-generated independent push review identity |
+| operation_id, project_id, actor_user_id | composite FK to the commit operation's unique identity tuple, ON DELETE RESTRICT |
+| state | previewed/pending/succeeded/failed/unknown/stale |
+| snapshot, snapshot_digest | immutable typed jsonb + SHA-256: exact commit, reviewed secret-safe destination/address fingerprint/ref, remote baseline/outgoing ancestry |
+| expires_at, created_at, accepted_at, completed_at, updated_at | timestamptz; same intent-before-effect/receipt-after-observation rule |
+| error_reason | nullable bounded push/review reason; required for failed/unknown/stale |
+| owner_token, owner_process_id, process_group | nullable claim UUID, positive owner PID and positive Git process group. Record the group durably before permitting network effects; recovery first proves retirement. |
+| cleanup_state, cleanup_checked_at, cleanup_reason | pending/complete/retained plus checked time and bounded reason; separate from the push outcome. |
+
+Named CHECKs enforce state/receipt consistency, accepted intent before effects,
+valid digests and nonnegative revision. Immutable snapshot/identity triggers
+refuse updates and terminal state reopening; allowed transitions are enumerated
+in [persistence analytics](system-analytics/project-config-persistence.md).
+Partial UNIQUE `project_config_persist_active_repo_uq(repository_key)` covers
+preparing/prepared/publishing/recovery_required only. Multiple unaccepted reviews
+are allowed. Partial UNIQUE `project_config_push_active_destination_uq` covers
+pending/unknown per operation/destination fingerprint; failed push never occupies
+the local-commit slot. Index project/created_at for receipts and state/id for
+bounded keyset recovery. Composite operation identity is UNIQUE for push binding.
+
+The new main migration is additive: schema, SQL, journal, snapshot and generated
+ERD move together after causal RED preparation. Hand-written functions/triggers
+are checked against actual PostgreSQL catalog/behavior; no-drift generation
+alone cannot verify them. Main and Brain boot compatibility checks precede
+recovery; this feature does not modify Brain. Supported upgrade drains old web
+writers before migration and binary restart. No down migration deletes receipts.
+Unused expired previews can be pruned if unaccepted and unreferenced; committed
+receipts remain with the project. Active/private recovery evidence is retained;
+cleanup removes only verified owned private material after durable settlement.
+
+The immutable review binds the exact registered repository-path string and its
+canonical checkout. Canonical Git-quoted index entries are losslessly base64 encoded;
+no NUL is stored in JSONB. Shared install updates to exported coordinates,
+sourceSubpath or package status advance attached projects in deterministic ID order,
+and active publication guards refuse those updates. Migration 0198 also locks
+old/new install rows with `FOR SHARE NOWAIT` before semantic attachment mutations,
+so a concurrent new binding cannot escape shared-install revision invalidation.
+Trust/timestamp-only updates
+remain DB-only. See the owning [persistence
+analytics](system-analytics/project-config-persistence.md) for independent push
+process ownership and cleanup recovery.

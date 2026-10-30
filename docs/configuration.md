@@ -238,17 +238,11 @@ with `CONFIG` naming the variable, and the resolved numbers are logged once. See
 
 ## `maister.yaml` v2
 
-> **`maister.yaml` is bootstrapped at manual registration (Implemented).** When
-> the resolved repo has **no** manifest, `POST /api/projects` atomically writes a
-> minimal schema-valid v2 file (`project.name`, resolved default branch, and
-> `flows: []`) before following the normal validation and registration path.
-> `body.name` wins over the directory basename for that initial file. A
-> **present-but-invalid** manifest still fails `CONFIG` (422) and is never
-> overwritten. `projects.maister_yaml_path` is set for all new registrations;
-> `NULL` remains a legacy recovery state, and only those legacy rows can use the
-> opt-in **persist** action to commit their DB-held configuration. The
-> `MAISTER_PROJECTS_DIR` auto-discovery path remains manifest-gated. Behavior:
-> [`system-analytics/projects.md`](system-analytics/projects.md).
+`maister.yaml` is optional at manual registration. A missing file uses validated
+in-memory defaults and leaves `maister_yaml_path` null; a present invalid file
+refuses with CONFIG/422. Registration creates no unsolicited manifest. The
+[explicit persistence workflow](#explicit-configuration-persistence-implemented--adr-194)
+is available for new and existing manifests. Auto-discovery remains manifest-gated.
 
 ```yaml
 schemaVersion: 2
@@ -481,10 +475,11 @@ revision; every member sub-install records that revision) followed by
 `attachPackage` (attachment group + `package_install_id` FK links +
 mcp/restriction ingestion) — so a bootstrapped package appears on the
 packages tab and is manageable (detach/upgrade/trust) immediately after
-registration. The runtime source of truth is the DB (UI
-attach/detach/upgrade), and each mutation **writes the pin back** to this
-file (comment-preserving, atomic) so the project can be re-raised on another
-MAIster instance from git alone.
+registration. The runtime source of truth is the DB. UI attach, detach,
+upgrade and downgrade leave repository files unchanged. The separate reviewed
+configuration save commits the current pins while preserving comments and
+unrelated sections; committed pins can recreate the project on another
+MAIster instance.
 
 #### `maister-package.yaml` v1 (Implemented, ADR-088)
 
@@ -1607,3 +1602,40 @@ The enforced application runtime range is **Node >=24.15.0 <25** for this releas
   projects and Flow attachments to platform runner ids
 - [Architecture](../.ai-factory/ARCHITECTURE.md) — dependency rules
   enforced around `lib/config.ts`
+
+## Explicit configuration persistence (Implemented — ADR-194)
+
+The manifest locator is independent of export status. Runtime package/default
+runner changes update DB configuration without modifying repository files.
+A fresh status compares owned DB values to the configured branch's committed
+manifest; cached portfolio status is explicitly last-observed/unverified.
+
+| Ownership | Fields |
+| --- | --- |
+| Export from DB | project name, main_branch, branch_prefix, public_branch_template, default_runner, promotion.mode; attached packages id/source/version/path |
+| Preserve source | promotion.remote, standalone flows/runner, capabilities, imports/trust, flow roles, comments and unrelated keys |
+| DB/platform only | delivery/execution policy, queue, auto-promotion, sync defaults, Brain, membership/task metadata, runner definitions/readiness, secrets and capability overlays |
+
+Default runner and promotion mode clear symmetrically when their DB value is
+null. Export never reimports source or changes runtime pins. Absent-manifest
+registration uses validated in-memory defaults and leaves the file absent until
+explicit persistence; present-invalid source still refuses. Existing untracked
+bootstrap files remain user-owned and must be reviewed/committed or moved by
+the operator. Local Studio-cut deleted source paths refuse export instead of
+being emitted as reproducible coordinates.
+
+The [owning persistence contract](system-analytics/project-config-persistence.md)
+defines complete preview, dedicated commit, staged/dirty protection, concurrency,
+crash recovery and separate push. The supported deployment drains old web
+writers before the new main migration/binary; mixed-version writes are unsupported.
+No new env variable, binary, port, supervisor runtime mount or configuration
+source is required. Private operation worktrees use the existing worktrees root
+at `<MAISTER_WORKTREES_ROOT>/.config-persistence` (default
+`~/.maister/worktrees/.config-persistence`) and are excluded from ordinary run GC.
+Keep this host-owned directory on durable storage writable by the web service UID,
+outside every registered project checkout. Its mode is 0700; review files are
+0600 (0700 only when preserving the manifest executable mode). Restart recovery
+uses the same root; moving or deleting it during an accepted operation requires
+operator repair. Terminal cleanup removes only verified owned material and exposes
+`retained` with an actionable reason when private content differs. The first commit uses private empty
+scaffolding and normal commit amend/hooks, so bookworm's Git need not be upgraded.

@@ -314,7 +314,7 @@ describe("portfolio queries (integration)", () => {
     expect(proj?.need?.runId).not.toBe(proj?.slug);
   });
 
-  it("derives needsPersist from maisterYamlPath (null → true, set → false) in both role branches", async () => {
+  it("marks portfolio configuration status unverified independently of manifest path in both role branches", async () => {
     const user = await createUser("persist@test.com");
 
     // A DB-only project (registered with no maister.yaml → column null).
@@ -338,21 +338,37 @@ describe("portfolio queries (integration)", () => {
     const memberView = await getPortfolio(user, "member");
 
     expect(
-      memberView.projects.find((p) => p.id === dbOnlyId)?.needsPersist,
-    ).toBe(true);
+      memberView.projects.find((p) => p.id === dbOnlyId)?.configPersistence,
+    ).toEqual({
+      exportState: "unverified",
+      observedAt: null,
+      exportRevision: "0",
+    });
     expect(
-      memberView.projects.find((p) => p.id === persistedId)?.needsPersist,
-    ).toBe(false);
+      memberView.projects.find((p) => p.id === persistedId)?.configPersistence,
+    ).toEqual({
+      exportState: "unverified",
+      observedAt: null,
+      exportRevision: "0",
+    });
 
     // The admin branch selects all columns — same derivation must hold.
     const adminView = await getPortfolio(user, "admin");
 
     expect(
-      adminView.projects.find((p) => p.id === dbOnlyId)?.needsPersist,
-    ).toBe(true);
+      adminView.projects.find((p) => p.id === dbOnlyId)?.configPersistence,
+    ).toEqual({
+      exportState: "unverified",
+      observedAt: null,
+      exportRevision: "0",
+    });
     expect(
-      adminView.projects.find((p) => p.id === persistedId)?.needsPersist,
-    ).toBe(false);
+      adminView.projects.find((p) => p.id === persistedId)?.configPersistence,
+    ).toEqual({
+      exportState: "unverified",
+      observedAt: null,
+      exportRevision: "0",
+    });
   });
 
   it("counts a HumanWorking (claimed takeover) run as an active workspace", async () => {

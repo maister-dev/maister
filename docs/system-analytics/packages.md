@@ -9,7 +9,7 @@ server templates, restriction path-sets) under a single
 `maister-package.yaml` manifest and a single per-package version tag. This
 domain covers platform package sources, version discovery, package
 installation, per-project attachment/detach/upgrade, package-level trust, local
-versions, and the `maister.yaml packages[]` bootstrap + write-back contract
+versions, and the `maister.yaml packages[]` registration and reviewed-export contract
 (ADR-088). Everything below is **(Implemented)** — shipped by the
 `feature/package-management` plan — except the pieces tagged
 **(ADR-132)**: source kinds (`git | local`), digest-as-version discovery for
@@ -135,8 +135,7 @@ through server-state resolution, never a client-supplied path).
 
 Install is idempotent and content-addressed (one resolved revision per
 package; every member sub-install inherits it). Attach writes the project
-group in one transaction; the `maister.yaml` write-back is a post-commit
-side-effect. Registration `packages[]` bootstrap drives the SAME two steps
+group and export revision in one transaction without writing tracked files. Registration `packages[]` bootstrap drives the SAME two steps
 per entry (install revision → attach), so bootstrapped packages land in the
 same attachment model as UI-attached ones.
 
@@ -157,10 +156,8 @@ sequenceDiagram
     U->>W: attach to project
     W->>DB: ONE tx - flows rows + capability_imports + mcp/restriction ingestion + attachment + FK links
     Note over W,DB: pre-guard in tx - manifest flow id colliding with a standalone flows row → CONFLICT
-    W->>FS: write back packages[] pin (atomic, comment-preserving)
-    alt write-back fails
-        W-->>U: attached, writeBack failed (WARN + UI notice)
-    end
+    W-->>U: runtime applied, Git unchanged
+    Note over U,FS: reviewed persistence is a separate explicit operation
 ```
 
 ### Detach / upgrade / trust
@@ -171,7 +168,8 @@ sequenceDiagram
   for in-flight runs and GC ([`reconciliation-gc.md`](reconciliation-gc.md)).
 - **Upgrade**: install the newer revision beside the old one, then one
   transaction flips the group pointers; in-flight runs keep their pinned
-  revisions; write-back updates the yaml pin.
+  revisions. The same operation supports downgrade. Git pins change only through
+  [reviewed persistence](project-config-persistence.md).
 - **Trust**: one operator decision per package revision, gated on the
   **global `admin` role** — the fan-out crosses every project attached to the
   install, so project-scoped `managePackages` is not sufficient. The same
@@ -185,7 +183,7 @@ sequenceDiagram
 | Window | Reachable state | Recovery |
 | --- | --- | --- |
 | Install done, attach tx not committed | Orphan package install | Harmless; reused on retry or swept by GC when unreferenced |
-| Attach tx committed, write-back not performed | DB attached, yaml stale | Next attach/detach/upgrade rewrites the pin; manual edit also valid |
+| Attach tx committed, configuration not saved to Git | Runtime applied, export pending | Explicit preview and configuration commit; package mutation retry does not write YAML |
 | Trust tx committed, setup not yet run | Members trusted, `setup_status='pending'` | Existing launch precondition refuses until setup completes; setup retried via the trust/enable path |
 
 ## Expectations
@@ -206,9 +204,12 @@ sequenceDiagram
 - Every member sub-install MUST record the package's resolved revision (tag
   SHA or content digest) as `flow_revisions.resolved_revision` — never the
   `"unknown"` sentinel.
-- `maister.yaml` write-back happens AFTER the mutating transaction commits; a
-  write-back failure MUST NOT roll back the operation and MUST surface
-  `writeBack: "failed"` to the caller.
+- Package mutations MUST leave the manifest, caller index and HEAD unchanged.
+  Exportable changes advance the project revision; an accepted publication
+  fences concurrent export mutations with actionable CONFLICT/409.
+- Reviewed persistence exports pins without installing, trusting or ingesting
+  packages. Local sources that cannot reproduce the attached revision refuse
+  export explicitly while runtime attachments remain usable.
 - Detach MUST refuse with `MaisterError("PRECONDITION")` while any member
   revision is pinned by a non-terminal run's `runs.flow_revision_id`.
 - Upgrade flips group pointers only; in-flight runs keep their pinned
@@ -261,8 +262,9 @@ sequenceDiagram
   `MaisterError("PRECONDITION")`.
 - **Source delete while installs from it are attached** →
   `MaisterError("CONFLICT")` (usage guard).
-- **Write-back target unwritable** → operation succeeds, `writeBack:
-  "failed"` + WARN; DB remains the runtime truth.
+- **Repository target unavailable or unwritable** → package changes still apply
+  to runtime without file writes; the separate persistence preview/commit
+  reports the relevant refusal through its operation receipt.
 - **Registration `packages[]` id colliding with `flows[]` /
   `capability_imports[]` ids** → `MaisterError("CONFIG")` at config load.
 - **(ADR-132) Local source path relative / missing / no manifest at root nor

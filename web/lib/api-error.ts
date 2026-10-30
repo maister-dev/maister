@@ -20,7 +20,11 @@ type Translate = (
   values?: Record<string, string | number>,
 ) => string;
 
-export type ApiErrorBody = { code?: string; message?: string } | null;
+export type ApiErrorBody = {
+  code?: string;
+  message?: string;
+  details?: { reason?: string };
+} | null;
 
 export async function readApiErrorBody(res: Response): Promise<ApiErrorBody> {
   return (await res.json().catch(() => null)) as ApiErrorBody;
@@ -28,6 +32,9 @@ export async function readApiErrorBody(res: Response): Promise<ApiErrorBody> {
 
 export function apiErrorText(body: ApiErrorBody, t: Translate): string {
   const code = body?.code;
+
+  if (code === "CONFLICT" && body?.details?.reason === "operation_busy")
+    return t("configPublicationBusy");
 
   if (code && (API_ERROR_CODES as readonly string[]).includes(code)) {
     return t(code);

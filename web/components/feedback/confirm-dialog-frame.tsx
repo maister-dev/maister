@@ -40,6 +40,7 @@ export function ConfirmDialogFrame({
         className="relative flex max-h-[88vh] w-full max-w-[460px] flex-col overflow-hidden rounded-[14px] border border-line bg-paper shadow-[var(--shadow-lg)]"
         data-testid={testId}
         role="dialog"
+        tabIndex={-1}
       >
         <div className="flex items-start justify-between gap-4 border-b border-line px-5 py-4">
           <h2

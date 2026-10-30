@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
 
+import { ConfigPersistControl } from "@/components/projects/config-persist-control";
 import { readApiError } from "@/lib/api-error";
 
 export interface RemoteItem {
@@ -22,7 +23,7 @@ export interface ProjectGitSettingsControlProps {
   projectSlug: string;
   mainBranch: string;
   remotes: RemoteItem[];
-  needsPersist: boolean;
+  exportRevision: string;
   // ADR-141: branch-sync defaults + resolver-runner picker options.
   syncStrategyDefault: "rebase" | "merge";
   syncRunnerId: string | null;
@@ -45,9 +46,6 @@ export function ProjectGitSettingsControl(
   const [url, setUrl] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const [push, setPush] = useState(false);
-  const [persistNote, setPersistNote] = useState<string | null>(null);
 
   // ADR-141: branch-sync defaults form (own local state + save).
   const [syncStrategy, setSyncStrategy] = useState<"rebase" | "merge">(
@@ -194,51 +192,6 @@ export function ProjectGitSettingsControl(
     }
   }
 
-  async function persist(): Promise<void> {
-    setPending(true);
-    setPersistNote(null);
-    setError(null);
-    try {
-      const res = await fetch(
-        `/api/projects/${props.projectSlug}/persist-config`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ push }),
-        },
-      );
-
-      if (!res.ok) {
-        setError(await readApiError(res, tErr));
-        setPending(false);
-
-        return;
-      }
-      const data = (await res.json().catch(() => ({}))) as {
-        usedDefaultAuthor?: boolean;
-        pushWarning?: string;
-      };
-      const notes: string[] = [];
-
-      if (data.usedDefaultAuthor) {
-        notes.push(t("persistBanner.usedDefaultAuthor"));
-      }
-      if (data.pushWarning) {
-        notes.push(
-          t("persistBanner.pushWarning", { detail: data.pushWarning }),
-        );
-      }
-      setPersistNote(
-        notes.length > 0 ? notes.join(" ") : t("persistBanner.doneTitle"),
-      );
-      setPending(false);
-      refresh();
-    } catch {
-      setError(t("git.error"));
-      setPending(false);
-    }
-  }
-
   return (
     <>
       <div
@@ -338,33 +291,10 @@ export function ProjectGitSettingsControl(
           </button>
         </div>
 
-        {props.needsPersist ? (
-          <div className="mb-3 rounded-lg border border-amber-line bg-amber-soft p-3 text-[12.5px] text-ink">
-            <div className="font-semibold">{t("git.persistTitle")}</div>
-            <p className="mt-1 text-mute">{t("git.persistDesc")}</p>
-            <label className="mt-2 flex items-center gap-2 text-ink-2">
-              <input
-                checked={push}
-                type="checkbox"
-                onChange={(e) => setPush(e.target.checked)}
-              />
-              {t("persistBanner.alsoPush")}
-            </label>
-            {persistNote ? (
-              <p className="mt-2 text-mute" role="status">
-                {persistNote}
-              </p>
-            ) : null}
-            <button
-              className="mt-2 rounded-lg bg-amber px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-amber-2 disabled:opacity-60"
-              disabled={pending}
-              type="button"
-              onClick={() => void persist()}
-            >
-              {pending ? t("persistBanner.pending") : t("git.persist")}
-            </button>
-          </div>
-        ) : null}
+        <ConfigPersistControl
+          exportRevision={props.exportRevision}
+          slug={props.projectSlug}
+        />
 
         {props.remotes.length === 0 ? (
           <p className="font-mono text-[11.5px] text-mute">{t("git.empty")}</p>

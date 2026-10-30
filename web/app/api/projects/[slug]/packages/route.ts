@@ -15,7 +15,6 @@ import {
 } from "@/lib/packages/attach";
 import { deriveUpdateAvailable } from "@/lib/packages/catalog";
 import { notFound, packageErrorResponse } from "@/lib/packages/http";
-import { writeBackPackagesPin } from "@/lib/packages/yaml-writeback";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { packageInstalls, packageSources, projectPackageAttachments } =
@@ -127,29 +126,8 @@ export async function POST(
       );
     }
 
-    // Post-commit write-back of the packages[] pin (failure NEVER rolls back).
-    const [install] = await db
-      .select()
-      .from(packageInstalls)
-      .where(eq(packageInstalls.id, parsed.data.packageInstallId));
-    const manifest = install?.manifest as PackageInstallManifest | undefined;
-    const writeBack = await writeBackPackagesPin({
-      maisterYamlPath: project.maisterYamlPath,
-      change: {
-        op: "upsert",
-        entry: {
-          id: install.name,
-          source: install.sourceUrl,
-          version: install.versionLabel,
-          ...(manifest?.sourceSubpath !== undefined
-            ? { path: manifest.sourceSubpath }
-            : {}),
-        },
-      },
-    });
-
     return NextResponse.json(
-      { ok: true, attachmentId: result.attachmentId, writeBack },
+      { ok: true, attachmentId: result.attachmentId },
       { status: 201 },
     );
   } catch (err) {

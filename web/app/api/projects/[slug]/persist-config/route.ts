@@ -1,144 +1,67 @@
 import "server-only";
 
-import { eq } from "drizzle-orm";
-import { NextRequest, NextResponse } from "next/server";
-import pino from "pino";
-import { z } from "zod";
+import type { NextRequest, NextResponse } from "next/server";
 
-import { requireActiveSession, requireProjectAction } from "@/lib/authz";
-import { getDb } from "@/lib/db/client";
-import * as schemaModule from "@/lib/db/schema";
-import { isMaisterError, MaisterError } from "@/lib/errors";
-import { persistProjectConfig } from "@/lib/persist-config";
-
-// FIXME(any): dual drizzle-orm peer-dep variants.
-const { projects } = schemaModule as unknown as Record<string, any>;
-
-const log = pino({
-  name: "api-project-persist-config",
-  level: process.env.LOG_LEVEL ?? "info",
-});
-
-// Body is optional (an empty body commits without pushing). `push` opts into a
-// post-flip push; a push failure is advisory (200 + pushWarning), never fatal.
-const postBodySchema = z.object({ push: z.boolean().optional() }).strict();
+import { currentConfigStatus } from "@/lib/project-config-persistence/status";
+import { confirmProjectConfiguration } from "@/lib/project-config-persistence/service";
+import {
+  settleConfigReceipt,
+  latestActorConfigOperation,
+} from "@/lib/project-config-persistence/receipts";
+import {
+  configErrorResponse,
+  configHttpContext,
+  configJson,
+  configOperationIdentity,
+  configRequestBody,
+  confirmConfigBody,
+  requireConfigReviewAccess,
+} from "@/lib/project-config-persistence/http";
 
 type RouteParams = { params: Promise<{ slug: string }> };
 
-function httpStatusForCode(code: string): number {
-  switch (code) {
-    case "UNAUTHENTICATED":
-      return 401;
-    case "UNAUTHORIZED":
-    case "PASSWORD_CHANGE_REQUIRED":
-    case "ACCOUNT_INACTIVE":
-      return 403;
-    case "CONFIG":
-      return 422;
-    case "PRECONDITION":
-    case "CONFLICT":
-      return 409;
-    case "EXECUTOR_UNAVAILABLE":
-      return 503;
-    default:
-      return 500;
-  }
-}
-
-function errorResponse(err: unknown, slug: string): NextResponse {
-  if (isMaisterError(err)) {
-    return NextResponse.json(
-      { code: err.code, message: err.message },
-      { status: httpStatusForCode(err.code) },
+export async function GET(
+  _request: NextRequest,
+  { params }: RouteParams,
+): Promise<NextResponse> {
+  try {
+    const { slug } = await params;
+    const context = await configHttpContext(slug);
+    const status = await currentConfigStatus(context.db, context.projectId);
+    const operationId = await latestActorConfigOperation(
+      context.db,
+      context.projectId,
+      context.actorUserId,
     );
+
+    return configJson({ ...status, ...(operationId ? { operationId } : {}) });
+  } catch (error) {
+    return configErrorResponse(error);
   }
-
-  log.error(
-    { slug, err: err instanceof Error ? err.message : String(err) },
-    "persist-config API error",
-  );
-
-  return NextResponse.json(
-    { code: "CRASH", message: "internal error" },
-    { status: 500 },
-  );
 }
 
 export async function POST(
-  req: NextRequest,
+  request: NextRequest,
   { params }: RouteParams,
 ): Promise<NextResponse> {
-  const { slug } = await params;
-
   try {
-    // [FIX] Codex F4: session + project-action gate BEFORE parsing the body, so
-    // an unauthenticated/unauthorized caller gets 401/403 — not a schema 422 that
-    // leaks the route contract before the auth gate.
-    await requireActiveSession();
+    const { slug } = await params;
+    const context = await configHttpContext(slug);
 
-    const db = getDb() as any;
-    const rows = await db
-      .select()
-      .from(projects)
-      .where(eq(projects.slug, slug));
-    const project = rows[0];
-
-    if (!project || project.archivedAt) {
-      throw new MaisterError("PRECONDITION", `project not found: ${slug}`);
-    }
-
-    // Identifiers (invariant A): slug = url-param (access-controlled here);
-    // projectId + repo_path = server-state (the row), never the body.
-    await requireProjectAction(project.id, "editSettings");
-
-    let body: z.infer<typeof postBodySchema>;
-
-    try {
-      const raw = await req.json().catch(() => ({}));
-
-      body = postBodySchema.parse(raw ?? {});
-    } catch (err) {
-      throw new MaisterError(
-        "CONFIG",
-        `invalid POST body: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-
-    const result = await persistProjectConfig({
-      project: {
-        id: project.id,
-        repoPath: project.repoPath,
-        name: project.name,
-        mainBranch: project.mainBranch,
-        branchPrefix: project.branchPrefix,
-        publicBranchTemplate: project.publicBranchTemplate,
-        defaultRunnerId: project.defaultRunnerId ?? null,
-        promotionMode: project.promotionMode ?? null,
-        maisterYamlPath: project.maisterYamlPath ?? null,
-      },
-      db,
-      push: body.push === true,
-    });
-
-    log.info(
-      {
-        projectId: project.id,
-        slug,
-        reconciled: result.reconciled,
-        usedDefaultAuthor: result.usedDefaultAuthor,
-        pushed: result.pushed,
-      },
-      "persist-config success",
+    await requireConfigReviewAccess(context);
+    const body = await configRequestBody(request, confirmConfigBody);
+    const operation = await confirmProjectConfiguration(
+      context.db,
+      configOperationIdentity(context, body.previewId),
+      () => requireConfigReviewAccess(context),
     );
 
-    // Explicit DTO projection (PersistConfigResponse, additionalProperties:
-    // false): only ok + the optional advisory flags — no DB row, no repo path.
-    return NextResponse.json({
-      ok: true,
-      ...(result.usedDefaultAuthor ? { usedDefaultAuthor: true } : {}),
-      ...(result.pushWarning ? { pushWarning: result.pushWarning } : {}),
-    });
-  } catch (err) {
-    return errorResponse(err, slug);
+    return configJson(
+      await settleConfigReceipt(context.db, operation, () =>
+        requireConfigReviewAccess(context),
+      ),
+    );
+  } catch (error) {
+    return configErrorResponse(error);
   }
 }

@@ -47,9 +47,9 @@ packages:
 
 One `packages[]` entry attaches every Flow and capability bundle a package
 ships, pinned to one per-package tag of the form `<name>/vX.Y.Z`. `path` is the
-package directory inside a multi-package repository. MAIster writes this entry
-when a package is attached, upgraded, or rolled back in the UI, and installs
-and attaches the listed versions when a repository is registered. See
+package directory inside a multi-package repository. MAIster installs and attaches
+these versions during registration. Later UI changes apply to runtime state;
+writing their pins requires a separate [reviewed save](/guides/save-project-configuration). See
 [Package sources and versions](/guides/package-sources-and-versions).
 
 ## Promotion

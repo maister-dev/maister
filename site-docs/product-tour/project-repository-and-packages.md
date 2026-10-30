@@ -48,10 +48,11 @@ before retrying. This action updates the project checkout; use the
    executable content from it.
 6. Resolve runner slots and MCP requirements in the project tabs.
 
-An attachment makes the package available to one project. It does not change
-attachments in other projects. MAIster writes the selected package pin back to
-`maister.yaml`; a write-back warning means the database attachment succeeded
-but the repository file still needs attention.
+An attachment makes the package available to one project. Attach, detach,
+upgrade and downgrade apply runtime settings without changing tracked repository
+files. To commit package pins, use the separate
+[configuration save](/guides/save-project-configuration). Existing Runs keep
+their pinned revisions.
 
 ## Use a forked local package
 

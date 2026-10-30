@@ -1,5 +1,8 @@
 # Git integration domain
 
+> Reviewed project configuration commits, separate push and recovery are specified in [project configuration persistence](project-config-persistence.md).
+
+
 ## Purpose
 
 Git integration is the host-credential, provider-neutral git layer MAIster
