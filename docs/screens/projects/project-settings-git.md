@@ -17,6 +17,9 @@ The action is permanent for new and existing manifests. A dismissible detail
 banner uses the same dialog; dismissal never removes Settings access. Portfolio
 cards show unverified status without scanning repositories. Detail checks run
 on access, focus, manual refresh and export-revision changes, without polling.
+An open banner dialog owns its controller independently of banner visibility.
+An in-sync result or status-read failure cannot dismiss its receipt, push review
+or busy action; its opener remains available through explicit close.
 
 ## Configuration review
 

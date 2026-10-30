@@ -1,7 +1,10 @@
 "use client";
 
 import type { ReactElement } from "react";
+import type { ConfigStatus } from "@/lib/project-config-persistence/contracts";
+import type { ConfigPersistenceController } from "./use-config-persistence";
 
+import { Button } from "@heroui/react";
 import { useTranslations } from "next-intl";
 
 import { ConfigPersistDialog } from "./config-persist-dialog";
@@ -17,9 +20,34 @@ export function ConfigPersistControl({
   slug: string;
   exportRevision: string;
 }): ReactElement {
-  const t = useTranslations("projects.configPersistence");
   const { status, refresh, error } = useConfigStatus(slug, exportRevision);
   const controller = useConfigPersistence(slug, refresh);
+
+  return (
+    <>
+      <ConfigPersistContent
+        controller={controller}
+        error={error}
+        refresh={refresh}
+        status={status}
+      />
+      <ConfigPersistDialog controller={controller} />
+    </>
+  );
+}
+
+export function ConfigPersistContent({
+  status,
+  refresh,
+  error,
+  controller,
+}: {
+  status: ConfigStatus | null;
+  refresh: () => Promise<void>;
+  error: boolean;
+  controller: ConfigPersistenceController;
+}): ReactElement {
+  const t = useTranslations("projects.configPersistence");
 
   return (
     <section
@@ -48,34 +76,33 @@ export function ConfigPersistControl({
         {error ? <p>{t("statusUnavailable")}</p> : null}
       </div>
       <div className="flex flex-wrap gap-2">
-        <button
+        <Button
           className="rounded-lg bg-amber px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
           data-testid="config-persist-open"
           type="button"
-          onClick={() => void controller.show()}
+          onPress={() => void controller.show()}
         >
           {t("open")}
-        </button>
-        <button
+        </Button>
+        <Button
           className="rounded-lg border border-line px-3 py-2 text-sm"
-          disabled={controller.busy}
+          isDisabled={controller.busy}
           type="button"
-          onClick={() => void refresh()}
+          onPress={() => void refresh()}
         >
           {t("refreshStatus")}
-        </button>
+        </Button>
         {status?.operationId ? (
-          <button
+          <Button
             className="rounded-lg border border-line px-3 py-2 text-sm"
-            disabled={controller.busy}
+            isDisabled={controller.busy}
             type="button"
-            onClick={() => void controller.readReceipt(status.operationId!)}
+            onPress={() => void controller.readReceipt(status.operationId!)}
           >
             {t("previousReceipt")}
-          </button>
+          </Button>
         ) : null}
       </div>
-      <ConfigPersistDialog controller={controller} />
     </section>
   );
 }

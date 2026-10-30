@@ -3,9 +3,15 @@
 import type { ReactElement } from "react";
 import type { ConfigPersistenceController } from "./use-config-persistence";
 
+import { useMemo, useState } from "react";
+import { DiffModeEnum, DiffView } from "@git-diff-view/react";
+import { Button, TextArea } from "@heroui/react";
 import { useTranslations } from "next-intl";
 
 import { ConfirmDialog } from "@/components/feedback/confirm-dialog";
+import { useTheme } from "@/lib/theme";
+
+import "@git-diff-view/react/styles/diff-view.css";
 
 const buttonClass =
   "rounded-lg border border-line px-3 py-2 text-sm disabled:opacity-50";
@@ -62,22 +68,16 @@ export function ConfigPersistDialog({
           {c.preview.usedDefaultAuthor ? (
             <p className="text-sm text-amber">{t("defaultAuthor")}</p>
           ) : null}
-          <textarea
-            readOnly
-            aria-label={t("diff")}
-            className="min-h-64 w-full resize-y rounded border border-line p-3 font-mono text-xs"
-            data-testid="config-persist-diff"
-            value={c.preview.diff}
-          />
-          <button
+          <ConfigPersistDiff diff={c.preview.diff} label={t("diff")} />
+          <Button
             className={buttonClass}
             data-testid="config-persist-confirm"
-            disabled={c.busy}
+            isDisabled={c.busy}
             type="button"
-            onClick={() => void c.confirm()}
+            onPress={() => void c.confirm()}
           >
             {t("confirm")}
-          </button>
+          </Button>
         </>
       ) : null}
       {c.preview?.kind === "noop" ? (
@@ -129,25 +129,25 @@ export function ConfigPersistDialog({
         </p>
       ) : null}
       {needsRecovery ? (
-        <button
+        <Button
           className={buttonClass}
-          disabled={c.busy}
+          isDisabled={c.busy}
           type="button"
-          onClick={() => void c.recover()}
+          onPress={() => void c.recover()}
         >
           {t("recover")}
-        </button>
+        </Button>
       ) : null}
       {c.receipt?.state === "committed" && !uncertainPush && !c.pushReview ? (
-        <button
+        <Button
           className={buttonClass}
           data-testid="config-push-review"
-          disabled={c.busy}
+          isDisabled={c.busy}
           type="button"
-          onClick={() => void c.reviewPush()}
+          onPress={() => void c.reviewPush()}
         >
           {t("reviewPush")}
-        </button>
+        </Button>
       ) : null}
       {c.pushReview ? (
         <section
@@ -164,42 +164,92 @@ export function ConfigPersistDialog({
           <p className="break-all font-mono text-xs">
             {t("remoteBase")}: {c.pushReview.remoteBase ?? t("unborn")}
           </p>
-          <textarea
+          <TextArea
             readOnly
             aria-label={t("outgoing")}
             className="w-full font-mono text-xs"
             value={c.pushReview.outgoingShas.join("\n") || t("pushUpToDate")}
           />
-          <button
+          <Button
             className={buttonClass}
             data-testid="config-push-confirm"
-            disabled={c.busy}
+            isDisabled={c.busy}
             type="button"
-            onClick={() => void c.confirmPush()}
+            onPress={() => void c.confirmPush()}
           >
             {t("confirmPush")}
-          </button>
+          </Button>
         </section>
       ) : null}
       {!c.busy && !localNeedsRecovery && c.preview?.kind !== "ready" ? (
-        <button
+        <Button
           className={buttonClass}
           data-testid="config-persist-refresh"
           type="button"
-          onClick={() => void c.freshPreview()}
+          onPress={() => void c.freshPreview()}
         >
           {t("freshPreview")}
-        </button>
+        </Button>
       ) : null}
-      <button
+      <Button
         className={buttonClass}
         data-testid="config-persist-close"
-        disabled={c.busy}
+        isDisabled={c.busy}
         type="button"
-        onClick={c.close}
+        onPress={c.close}
       >
         {c.receipt || c.preview?.kind === "noop" ? t("close") : t("cancel")}
-      </button>
+      </Button>
     </ConfirmDialog>
+  );
+}
+
+function ConfigPersistDiff({
+  diff,
+  label,
+}: {
+  diff: string;
+  label: string;
+}): ReactElement {
+  const [showExact, setShowExact] = useState(false);
+  const { resolvedTheme } = useTheme();
+  const theme = resolvedTheme === "light" ? "light" : "dark";
+  const data = useMemo(
+    () => ({
+      oldFile: { fileName: "maister.yaml" },
+      newFile: { fileName: "maister.yaml" },
+      hunks: [diff],
+    }),
+    [diff],
+  );
+
+  return (
+    <>
+      <div
+        className="max-h-96 overflow-auto rounded border border-line"
+        data-testid="config-persist-diff-view"
+      >
+        <DiffView
+          key={theme}
+          diffViewWrap
+          data={data}
+          diffViewHighlight={false}
+          diffViewMode={DiffModeEnum.Unified}
+          diffViewTheme={theme}
+        />
+      </div>
+      <details onToggle={(event) => setShowExact(event.currentTarget.open)}>
+        <summary className="cursor-pointer text-sm">{label}</summary>
+        {showExact ? (
+          <TextArea
+            readOnly
+            aria-label={label}
+            className="min-h-64 w-full resize-y rounded border border-line p-3 font-mono text-xs"
+            data-testid="config-persist-diff"
+            value={diff}
+          />
+        ) : null}
+      </details>
+    </>
   );
 }
