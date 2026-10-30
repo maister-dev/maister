@@ -74,13 +74,29 @@ is different. Retry never rewrites old history or blindly replays external effec
 ### Integrity boundary
 
 Before dispatch capture source HEAD/branch plus a protected baseline of exact
-materialization paths, types, hashes/targets and prior ownership. Platform writes
+materialization paths, types, hashes/targets and prior ownership. Initial
+operational context descriptors are persisted before checkout creation, so a
+partial preparation failure retains a durable cleanup owner. Existing target
+paths are refused rather than overwritten. Preparation and context disposal
+share a per-run OS-backed materialization mutex outside source checkouts;
+preparation revalidates the running owner after acquiring it. Cancellation
+cannot release absent paths and then let the old preparation create them.
+Contention defers cleanup through its existing retry owner. A process crash
+releases the mutex while committed descriptors remain available for cleanup.
+Git effects stay outside Postgres transactions. Context mounts are prepared
+before that first baseline is persisted.
+The same baseline freezes each mount descriptor and its complete integrity witness;
+continuations reuse those mounts without resetting or rematerializing them. Platform writes
 append generation evidence under the existing ownership/run fences. Keep dynamic
 runtime roots separate from immutable source. Home-redirect adapters use the server-derived managed sibling `<runId>-runtime`; the same cleanup intent owns its removal after quiescence. Cwd-based adapter files remain exact-hash materialization witnesses. Baselines live in manager-owned
 metadata/opaque evidence, not agent-writable marker files.
 
 After execution quiesces inspect history/HEAD (including commit-plus-revert), index,
 tracked/untracked/ignored files, renamed paths and exact materialization contents.
+The final verdict includes every frozen context repository, using the same
+content/history checks and sibling-project allocation evidence as the primary
+checkout. Missing context witnesses or mismatched mount descriptors fail closed;
+legacy baselines without context mounts remain valid.
 No broad .claude/.maister path exclusion proves integrity. Unexpected/tampered bytes
 are preserved before restore/delete; failed probes or limits fail closed and do not
 prove misconduct. Only attributable source-contract violation quarantines the agent.
@@ -106,6 +122,15 @@ Preservation is local-only even when gcArchivePush is enabled. Git preservation
 is supplemented by opaque evidence for ignored/binary/materialization bytes not
 represented by its snapshot. Persist preservation evidence, remove locally,
 record removal, then release the host workspace through its released assignment.
+Context mounts with changed or indeterminate integrity are preserved before
+removal. A failed context removal enters the same bounded cleanup retry; it cannot
+record a released workspace. A retry accepts already-removed mounts, while failed
+existence probes remain errors. Operational mounts are owned by this disposition
+protocol, not the legacy context GC backstop.
+The legacy terminal context-release helper refuses operational ownership.
+Reconciliation cancels an orphaned queued operational continuation through the
+agent finalizer, preserving its terminal receipt and cleanup intent even when
+no ACP session is live.
 Unknown host liveness defers deletion; unknown release after deletion remains a
 reconcilable command/cleanup state. Never set removedAt solely from a failed read.
 
@@ -128,7 +153,9 @@ questions retain each confirmed answer in the resumed frozen prompt. If a checkp
 contains conflicting permission source generations, it becomes Crashed with retained
 evidence and a reconciliation reason instead of replaying either ambiguous choice.
 
-History distinguishes scheduler dispatch from business outcome. Terminal operational
+Active operational runs retain the authorized Stop action; delivery actions
+remain forbidden. History distinguishes scheduler dispatch from business outcome.
+Terminal operational
 rows leave every active-working-copy projection immediately, even while cleanup is
 held/failed. Authorized diagnostic evidence reads remain, without delivery actions.
 Attention reasons are operation_failure (terminal receipt revision 1) and
@@ -174,7 +201,8 @@ The legacy agent-question service finalizes its source as Done and re-triggers a
 new run. Operational questions instead capture the existing owned prompt proof
 in the pending question transaction, enter NeedsInput, checkpoint the same ACP
 session, and activate in NeedsInputIdle. The human answer retains the existing
-form, clarification, assignment, grants and idempotency. It queues the original
+form, clarification, assignment, grants and idempotency. It returns HTTP 202 with
+`state: resume-queued` and queues the original
 run through the agent resume cap; it cannot finalize that run or launch a second
 operational attempt. The answer fact carries continuesSourceRun=true so the
 legacy targeted re-trigger consumer yields. No tool permission is granted by a

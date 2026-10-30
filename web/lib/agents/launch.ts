@@ -1,6 +1,9 @@
 import "server-only";
 
-import type { ContextRepoDecl } from "@/lib/context-mounts/types";
+import type {
+  ContextMountSnapshot,
+  ContextRepoDecl,
+} from "@/lib/context-mounts/types";
 import type { RunResultContract } from "@/lib/run-results/types";
 import type { OperationalIntegrityBaseline } from "@/lib/run-results/operational-types";
 import type { Db as ExecutionDb } from "@/lib/execution-host/db";
@@ -66,12 +69,13 @@ import { isHostPressuredError } from "@/lib/execution-host/host-pressure";
 import {
   assertOperationalDispatchIntegrity,
   operationalResourceKind,
-  operationalReferenceEvidence,
+  captureOperationalContextMounts,
+  inspectOperationalRun,
+  inspectOperationalContexts,
 } from "@/lib/agents/operational-context";
 import {
   captureOperationalBaseline,
   captureOperationalGeneration,
-  verifyOperationalIntegrity,
 } from "@/lib/agents/operational-integrity";
 import {
   buildOperationalContract,
@@ -123,7 +127,10 @@ import {
   withAgentMaterializationLock,
   agentMaterializationPathsForRun,
 } from "@/lib/agents/materialization-manifest";
-import { prepareContextMounts } from "@/lib/context-mounts/launch";
+import {
+  prepareContextMounts,
+  prepareOperationalContextMounts,
+} from "@/lib/context-mounts/launch";
 import { atomicWriteText } from "@/lib/atomic";
 import { runDirPath } from "@/lib/flows/graph/mutation-check";
 import { runtimeRoot } from "@/lib/runtime-root";
@@ -3529,13 +3536,58 @@ async function driveAgentSession(
     let integrityBaseline: OperationalIntegrityBaseline | null =
       run.operationalIntegrityBaseline ?? null;
 
-    if (run.agentKind === "operational") {
-      if (integrityBaseline && integrityBaseline.generation > 0) {
-        const verdict = await verifyOperationalIntegrity(
-          cwd,
-          integrityBaseline,
-          await operationalReferenceEvidence(_db, run),
+    const prepareAttachedContextMounts = async (): Promise<
+      ContextMountSnapshot[]
+    > => {
+      // ADR-157 (T30): read-only sibling-repo mounts for a platform-agent run. The
+      // declaration is the PROJECT ATTACHMENT's `context_repos` — the definition's
+      // `recommended` bindings are prefill for the attach dialog only and can never
+      // name a real project by themselves (package slugs are not portable).
+      // D11: no launching user exists here, so consent was the attach-time admin
+      // action (`authorizeContextRepos` on the attach route) — not re-checked.
+      // FLAT single-table read (V14): a multi-table select mis-maps same-named
+      // columns in the app runtime.
+      const contextRepoLinks = await _db
+        .select({ contextRepos: agentProjectLinks.contextRepos })
+        .from(agentProjectLinks)
+        .where(
+          and(
+            eq(agentProjectLinks.agentId, agent.id),
+            eq(agentProjectLinks.projectId, project.id),
+          ),
         );
+
+      const prepare =
+        run.agentKind === "operational"
+          ? prepareOperationalContextMounts
+          : prepareContextMounts;
+
+      return prepare({
+        db: _db,
+        runId,
+        consumingProjectSlug: project.slug as string,
+        decls: contextRepoLinks[0]?.contextRepos as ContextRepoDecl[] | null,
+        consent: { kind: "attach-time" },
+      });
+    };
+    let contextMounts = run.contextMounts ?? [];
+
+    if (run.agentKind === "operational" && !integrityBaseline) {
+      if (contextMounts.length > 0)
+        throw new MaisterError(
+          "PRECONDITION",
+          "Operational context mounts have no frozen baseline; preserve them for diagnosis before retrying",
+          { details: { reason: "operational_context_baseline_missing" } },
+        );
+      contextMounts = await prepareAttachedContextMounts();
+    }
+
+    if (run.agentKind === "operational") {
+      if (integrityBaseline) {
+        const verdict =
+          integrityBaseline.generation > 0
+            ? await inspectOperationalRun(_db, { ...run, contextMounts })
+            : await inspectOperationalContexts(_db, { ...run, contextMounts });
 
         if (verdict.verdict !== "clean")
           throw new MaisterError(
@@ -3556,6 +3608,7 @@ async function driveAgentSession(
         integrityBaseline = {
           ...integrityBaseline,
           owner: { cwd, repoPath: project.repoPath, projectSlug: project.slug },
+          contextMounts: await captureOperationalContextMounts(contextMounts),
         };
         const written = await _db
           .update(runs)
@@ -3711,31 +3764,7 @@ async function driveAgentSession(
       );
     }
 
-    // ADR-157 (T30): read-only sibling-repo mounts for a platform-agent run. The
-    // declaration is the PROJECT ATTACHMENT's `context_repos` — the definition's
-    // `recommended` bindings are prefill for the attach dialog only and can never
-    // name a real project by themselves (package slugs are not portable).
-    // D11: no launching user exists here, so consent was the attach-time admin
-    // action (`authorizeContextRepos` on the attach route) — not re-checked.
-    // FLAT single-table read (V14): a multi-table select mis-maps same-named
-    // columns in the app runtime.
-    const contextRepoLinks = await _db
-      .select({ contextRepos: agentProjectLinks.contextRepos })
-      .from(agentProjectLinks)
-      .where(
-        and(
-          eq(agentProjectLinks.agentId, agent.id),
-          eq(agentProjectLinks.projectId, project.id),
-        ),
-      );
-
-    await prepareContextMounts({
-      db: _db,
-      runId,
-      consumingProjectSlug: project.slug as string,
-      decls: contextRepoLinks[0]?.contextRepos as ContextRepoDecl[] | null,
-      consent: { kind: "attach-time" },
-    });
+    if (run.agentKind !== "operational") await prepareAttachedContextMounts();
 
     operationalSpawnStage = "materialization_witness";
     if (run.agentKind === "operational" && integrityBaseline) {

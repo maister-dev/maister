@@ -1,7 +1,16 @@
+import type { ContextMountSnapshot } from "@/lib/context-mounts/types";
 import type { Db } from "@/lib/execution-host/db";
 import type { ReserveRuntimeObjectPayload } from "@/lib/execution-host/contracts";
 
-import { mkdtemp, mkdir, lstat, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import {
+  mkdtemp,
+  mkdir,
+  lstat,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -23,17 +32,30 @@ import {
 import {
   operationalWorkspace,
   inspectOperationalRun,
+  assertOperationalDispatchIntegrity,
 } from "@/lib/agents/operational-context";
 import {
   captureOperationalBaseline,
   captureOperationalGeneration,
 } from "@/lib/agents/operational-integrity";
+import {
+  releaseRunContextMounts,
+  releaseOperationalContextMounts,
+} from "@/lib/context-mounts/terminal";
+import * as worktreeModule from "@/lib/worktree";
+import { withOperationalContextLock } from "@/lib/context-mounts/operational-lock";
+import { prepareOperationalContextMounts } from "@/lib/context-mounts/launch";
+import { contextMountPath } from "@/lib/context-mounts/service";
+import { runReconcileSweep } from "@/lib/reconcile";
+import { startAgentSession } from "@/lib/agents/launch";
 import { operationalAgentRuntimePath } from "@/lib/agents/workspace-paths";
 import {
+  agentProjectLinks,
   executionAssignments,
   executionCommands,
   executionRuntimeObjects,
   runs,
+  projects,
   workspaces,
 } from "@/lib/db/schema";
 import {
@@ -52,7 +74,7 @@ import { gcAgeDays } from "@/lib/instance-config";
 import { readRuntimeObjectContent } from "@/lib/execution-host/runtime-objects";
 import { seedAgentRun } from "@/test-support/agent-run-seed";
 import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
-import { git } from "@/test-support/git-fixture";
+import { git, initRepo } from "@/test-support/git-fixture";
 import { operationalSuccessFixture } from "@/test-support/operational-agent";
 import {
   startMainPostgresTestDb,
@@ -66,6 +88,7 @@ let db: Db;
 let root: string;
 let seam: Awaited<ReturnType<typeof fakeExecutionHosts>>;
 const previousRoot = process.env.MAISTER_WORKTREES_ROOT;
+const previousRuntimeRoot = process.env.MAISTER_RUNTIME_ROOT;
 const previousArchivePush = process.env.MAISTER_GC_ARCHIVE_PUSH;
 
 beforeAll(async () => {
@@ -75,9 +98,11 @@ beforeAll(async () => {
   db = database.db;
   root = await mkdtemp(path.join(tmpdir(), "operational-disposition-"));
   process.env.MAISTER_WORKTREES_ROOT = path.join(root, "worktrees");
+  process.env.MAISTER_RUNTIME_ROOT = root;
   seam = await fakeExecutionHosts(db);
 }, 180_000);
 afterEach(async () => {
+  vi.restoreAllMocks();
   if (previousArchivePush === undefined)
     delete process.env.MAISTER_GC_ARCHIVE_PUSH;
   else process.env.MAISTER_GC_ARCHIVE_PUSH = previousArchivePush;
@@ -88,6 +113,9 @@ afterEach(async () => {
 afterAll(async () => {
   if (previousRoot === undefined) delete process.env.MAISTER_WORKTREES_ROOT;
   else process.env.MAISTER_WORKTREES_ROOT = previousRoot;
+  if (previousRuntimeRoot === undefined)
+    delete process.env.MAISTER_RUNTIME_ROOT;
+  else process.env.MAISTER_RUNTIME_ROOT = previousRuntimeRoot;
   await database?.stop();
   await rm(root, { recursive: true, force: true });
 });
@@ -95,6 +123,7 @@ afterAll(async () => {
 async function seed(
   workspace: "none" | "repo_read" | "worktree" = "worktree",
   workspaceRef?: "trigger",
+  contextCount = 0,
 ) {
   const runId = await seedAgentRun(db, {
     runtimeRoot: root,
@@ -113,6 +142,51 @@ async function seed(
       committish: "HEAD",
     });
   else await mkdir(context.cwd, { recursive: true });
+  const mounts: ContextMountSnapshot[] = [];
+
+  if (contextCount > 0) {
+    const siblingId = randomUUID();
+    const siblingRepo = await initRepo(path.join(root, `sibling-${runId}`));
+
+    await db.insert(projects).values({
+      id: siblingId,
+      slug: `s-${siblingId}`,
+      name: "Sibling",
+      repoPath: siblingRepo,
+      maisterYamlPath: path.join(siblingRepo, "maister.yaml"),
+      taskKey: `S${siblingId.slice(0, 7)}`.toUpperCase(),
+    });
+    await writeFile(
+      path.join(siblingRepo, ".git", "info", "exclude"),
+      "ignored.bin\n",
+    );
+    for (let i = 0; i < contextCount; i += 1) {
+      const mount: ContextMountSnapshot = {
+        projectId: siblingId,
+        slug: `context-${i}`,
+        repoPath: siblingRepo,
+        mountPath: path.join(root, "worktrees", `context-${runId}-${i}`),
+        committish: await git(siblingRepo, "rev-parse", "HEAD"),
+      };
+
+      await addDetachedWorktree({
+        projectRepoPath: mount.repoPath,
+        worktreePath: mount.mountPath,
+        committish: mount.committish,
+      });
+      mounts.push(mount);
+    }
+  }
+  const contextMounts = await Promise.all(
+    mounts.map(async (mount) => ({
+      mount,
+      baseline: await captureOperationalGeneration(
+        mount.mountPath,
+        await captureOperationalBaseline(mount.mountPath, "ephemeral_checkout"),
+        [],
+      ),
+    })),
+  );
   const baseline = await captureOperationalGeneration(
     context.cwd,
     await captureOperationalBaseline(context.cwd, context.resourceKind),
@@ -121,21 +195,418 @@ async function seed(
 
   await db
     .update(runs)
-    .set({ operationalIntegrityBaseline: baseline })
+    .set({
+      operationalIntegrityBaseline: { ...baseline, contextMounts },
+      contextMounts: mounts,
+    })
     .where(eq(runs.id, runId));
   const runtime = operationalAgentRuntimePath(context.projectSlug, runId);
 
   await mkdir(runtime, { recursive: true });
   await writeFile(path.join(runtime, "cache"), "native cache");
 
-  return { runId, context, runtime };
+  return { runId, context, runtime, mounts };
 }
 async function row(runId: string) {
   return (await db.select().from(runs).where(eq(runs.id, runId)))[0];
 }
+async function seedUnstartedOperation() {
+  const runId = await seedAgentRun(db, {
+    runtimeRoot: root,
+    workspace: "worktree",
+    operational: true,
+    resultContract: null,
+    definition:
+      "---\nname: Operation\ndescription: d\nkind: operational\ncompletion: {contract: operational_v1}\nworkspace: worktree\nmode: session\nplatform_mcp: false\ntriggers: [manual]\nrisk_tier: standard\n---\nPerform operation.\n",
+  });
+  const current = await row(runId);
+  const context = await operationalWorkspace(db, current);
+
+  return { runId, current, context };
+}
 const output = `\`\`\`json maister:output\n${JSON.stringify(operationalSuccessFixture())}\n\`\`\``;
 
 describe("operational disposition through existing lifecycle owners", () => {
+  it("serializes cancellation with context creation and refuses effects after cancellation wins", async () => {
+    const { runId, context } = await seedUnstartedOperation();
+    let enter!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const original = worktreeModule.addDetachedWorktree;
+    const creation = vi
+      .spyOn(worktreeModule, "addDetachedWorktree")
+      .mockImplementation(async (args) => {
+        enter();
+        await barrier;
+
+        return original(args);
+      });
+    const preparing = prepareOperationalContextMounts({
+      db,
+      runId,
+      consumingProjectSlug: context.projectSlug,
+      decls: [{ project: context.projectSlug }],
+      consent: { kind: "attach-time" },
+    });
+
+    await entered;
+    const cancellation = finalizeAgentRun(runId, "Abandoned", { db });
+
+    try {
+      await cancellation;
+      expect((await row(runId)).operationalCleanup).toMatchObject({
+        state: "retry",
+      });
+      await expect(
+        lstat(
+          contextMountPath(context.projectSlug, runId, context.projectSlug),
+        ),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      release();
+      await preparing;
+      await cancellation;
+    }
+    await disposeOperationalRun(runId, {
+      db,
+      now: new Date(Date.now() + 120_000),
+    });
+    expect((await row(runId)).operationalCleanup).toMatchObject({
+      state: "released",
+    });
+    await expect(
+      lstat(contextMountPath(context.projectSlug, runId, context.projectSlug)),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    const createCount = creation.mock.calls.length;
+
+    await expect(
+      prepareOperationalContextMounts({
+        db,
+        runId,
+        consumingProjectSlug: context.projectSlug,
+        decls: [{ project: context.projectSlug }],
+        consent: { kind: "attach-time" },
+      }),
+    ).rejects.toMatchObject({
+      details: { reason: "operational_context_snapshot_changed" },
+    });
+    expect(creation).toHaveBeenCalledTimes(createCount);
+  });
+
+  it("rechecks cancellation after waiting for the context mutex before creating any checkout", async () => {
+    const { runId, context } = await seedUnstartedOperation();
+    let enter!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const holder = withOperationalContextLock(runId, async () => {
+      enter();
+      await barrier;
+    });
+
+    await entered;
+    const creation = vi.spyOn(worktreeModule, "addDetachedWorktree");
+    const preparing = prepareOperationalContextMounts({
+      db,
+      runId,
+      consumingProjectSlug: context.projectSlug,
+      decls: [{ project: context.projectSlug }],
+      consent: { kind: "attach-time" },
+    });
+
+    // Both callers share the real mutex. Release it after the terminal DB commit,
+    // while preparation still waits, so its post-acquisition check must refuse.
+    await expect
+      .poll(async () => (await row(runId)).contextMounts?.length)
+      .toBe(1);
+    const cancellation = finalizeAgentRun(runId, "Abandoned", { db });
+
+    try {
+      await expect
+        .poll(async () => (await row(runId)).status)
+        .toBe("Abandoned");
+    } finally {
+      release();
+      await holder;
+    }
+    await expect(preparing).rejects.toMatchObject({
+      details: { reason: "operational_context_snapshot_changed" },
+    });
+    await cancellation;
+    expect(creation).not.toHaveBeenCalled();
+    expect((await row(runId)).operationalCleanup).toMatchObject({
+      state: "released",
+    });
+  });
+
+  it("preserves ownership and cleans a partially materialized initial context set", async () => {
+    const { runId, current, context } = await seedUnstartedOperation();
+    const siblings: Array<{ slug: string; repo: string }> = [];
+
+    for (let i = 0; i < 2; i += 1) {
+      const id = randomUUID();
+      const slug = `s-${id}`;
+      const repo = await initRepo(path.join(root, slug));
+
+      await db.insert(projects).values({
+        id,
+        slug,
+        name: "Sibling",
+        repoPath: repo,
+        maisterYamlPath: path.join(repo, "maister.yaml"),
+        taskKey: `S${id.slice(0, 7)}`.toUpperCase(),
+      });
+      siblings.push({ slug, repo });
+    }
+    await writeFile(
+      path.join(siblings[1].repo, ".git", "worktrees"),
+      "broken Git administration directory",
+    );
+    await db
+      .update(agentProjectLinks)
+      .set({ contextRepos: siblings.map(({ slug }) => ({ project: slug })) })
+      .where(eq(agentProjectLinks.agentId, current.agentId!));
+    await startAgentSession(runId, { db, executionHosts: seam.hosts });
+    const failed = await row(runId);
+
+    expect(failed.contextMounts).toHaveLength(2);
+    expect(failed).toMatchObject({
+      status: "Failed",
+      operationalCleanup: { state: "released" },
+    });
+    expect(failed.operationalCleanup!.evidenceIds.length).toBeGreaterThan(0);
+    for (const sibling of siblings)
+      await expect(
+        lstat(contextMountPath(context.projectSlug, runId, sibling.slug)),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("reconciles an orphan queued operational continuation through its terminal receipt and evidence owner", async () => {
+    const seeded = await seed("worktree", undefined, 1);
+    const parentId = randomUUID();
+
+    await db.insert(runs).values({
+      id: parentId,
+      runKind: "flow",
+      status: "Done",
+      flowVersion: "fixture",
+      flowRevision: "fixture",
+    });
+    await db
+      .update(runs)
+      .set({ status: "Pending", parentRunId: parentId })
+      .where(eq(runs.id, seeded.runId));
+    await writeFile(
+      path.join(seeded.mounts[0].mountPath, "unexpected.bin"),
+      "orphan evidence",
+    );
+    const result = await runReconcileSweep({ db, executionHosts: seam.hosts });
+
+    expect(result.abandoned).toBe(1);
+    expect(await row(seeded.runId)).toMatchObject({
+      status: "Abandoned",
+      operationalTerminal: { effectiveOutcome: "cancelled" },
+      operationalCleanup: { state: "released" },
+    });
+    expect(
+      (await row(seeded.runId)).operationalCleanup!.evidenceIds.length,
+    ).toBeGreaterThan(0);
+    await expect(lstat(seeded.mounts[0].mountPath)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("refuses rematerialization of a changed context checkout on continuation", async () => {
+    const seeded = await seed("worktree", undefined, 1);
+    const current = await row(seeded.runId);
+
+    await db
+      .update(agentProjectLinks)
+      .set({ contextRepos: [{ project: seeded.context.projectSlug }] })
+      .where(eq(agentProjectLinks.agentId, current.agentId!));
+    const before = seam.fake.callsOf("createSession").length;
+
+    await writeFile(
+      path.join(seeded.mounts[0].mountPath, "unexpected.bin"),
+      "continuation evidence",
+    );
+    await startAgentSession(seeded.runId, { db, executionHosts: seam.hosts });
+    expect(seam.fake.callsOf("createSession")).toHaveLength(before);
+    expect((await row(seeded.runId)).operationalTerminal).toMatchObject({
+      successful: false,
+      integrity: "changed",
+    });
+  });
+
+  it.each(["dirty", "ignored", "committed"] as const)(
+    "rejects and preserves %s context source changes before successful terminalization",
+    async (change) => {
+      const seeded = await seed("worktree", undefined, 1);
+      const mount = seeded.mounts[0];
+      const fileName = change === "ignored" ? "ignored.bin" : "unexpected.bin";
+
+      await writeFile(path.join(mount.mountPath, fileName), "context evidence");
+      if (change === "committed") {
+        await git(mount.mountPath, "add", ".");
+        await git(
+          mount.mountPath,
+          "commit",
+          "-qm",
+          "unexpected context commit",
+        );
+      }
+      expect(
+        (await inspectOperationalRun(db, await row(seeded.runId))).verdict,
+      ).toBe("changed");
+      await finalizeAgentRun(seeded.runId, "Done", { db, finalText: output });
+      const current = await row(seeded.runId);
+
+      expect(current).toMatchObject({
+        status: "Failed",
+        operationalTerminal: { integrity: "changed" },
+        operationalCleanup: { state: "released" },
+      });
+      const contents: string[] = [];
+
+      for (const objectId of current.operationalCleanup!.evidenceIds) {
+        const { content } = await readRuntimeObjectContent({
+          db,
+          runId: seeded.runId,
+          objectId,
+          transportForHost: async () => seam.fake.transport,
+        });
+
+        contents.push(new TextDecoder().decode(content.bytes));
+      }
+      expect(
+        contents.some((content) =>
+          content.includes(Buffer.from("context evidence").toString("base64")),
+        ),
+      ).toBe(true);
+      await expect(lstat(mount.mountPath)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    },
+  );
+
+  it("fails closed for missing witnesses, missing checkouts and changed ownership before dispatch", async () => {
+    const seeded = await seed("worktree", undefined, 1);
+    const current = await row(seeded.runId);
+    const { contextMounts: _witnesses, ...legacyBaseline } =
+      current.operationalIntegrityBaseline!;
+
+    expect(
+      await inspectOperationalRun(db, {
+        ...current,
+        operationalIntegrityBaseline: legacyBaseline,
+      }),
+    ).toMatchObject({
+      verdict: "indeterminate",
+      reasonCodes: expect.arrayContaining([
+        "operational_context_baseline_missing",
+      ]),
+    });
+    await db
+      .update(runs)
+      .set({
+        contextMounts: [
+          { ...seeded.mounts[0], mountPath: seeded.context.repoPath },
+        ],
+      })
+      .where(eq(runs.id, seeded.runId));
+    await expect(
+      assertOperationalDispatchIntegrity(db, seeded.runId),
+    ).rejects.toMatchObject({
+      details: {
+        reasons: expect.arrayContaining([
+          "operational_context_snapshot_changed",
+        ]),
+      },
+    });
+    await finalizeAgentRun(seeded.runId, "Done", { db, finalText: output });
+    expect((await row(seeded.runId)).operationalCleanup).toMatchObject({
+      state: "retry",
+      errorCode: "operational_context_snapshot_changed",
+    });
+    expect((await lstat(seeded.context.repoPath)).isDirectory()).toBe(true);
+    expect((await lstat(seeded.mounts[0].mountPath)).isDirectory()).toBe(true);
+    await rm(seeded.mounts[0].mountPath, { recursive: true });
+    expect((await inspectOperationalRun(db, current)).verdict).toBe(
+      "indeterminate",
+    );
+  });
+
+  it("refuses successful release when Git no longer recognizes a retained context directory", async () => {
+    const seeded = await seed("worktree", undefined, 1);
+    const mount = seeded.mounts[0];
+    const gitDir = (await readFile(path.join(mount.mountPath, ".git"), "utf8"))
+      .trim()
+      .replace(/^gitdir: /, "");
+
+    await rm(gitDir, { recursive: true });
+    const prepared = await prepareAgentRunFinalization(seeded.runId, "Failed", {
+      db,
+    });
+
+    await db.transaction((tx) => prepared.apply(tx));
+    await expect(
+      releaseRunContextMounts({ runId: seeded.runId, db }),
+    ).rejects.toMatchObject({
+      details: { reason: "operational_context_owner_required" },
+    });
+    await expect(
+      releaseOperationalContextMounts({
+        runId: seeded.runId,
+        mounts: seeded.mounts,
+      }),
+    ).rejects.toMatchObject({
+      details: { reason: "operational_context_cleanup_failed" },
+    });
+    expect((await lstat(mount.mountPath)).isDirectory()).toBe(true);
+  });
+
+  it("retries a failed context removal without misreporting release or rejecting already removed siblings", async () => {
+    const seeded = await seed("worktree", undefined, 2);
+    const [first, locked] = seeded.mounts;
+
+    await git(locked.repoPath, "worktree", "lock", locked.mountPath);
+    await finalizeAgentRun(seeded.runId, "Done", { db, finalText: output });
+    const current = await row(seeded.runId);
+
+    expect(current.status).toBe("Done");
+    expect(current.operationalCleanup).toMatchObject({
+      state: "retry",
+      attempts: 1,
+      releasedAt: null,
+    });
+    await expect(lstat(first.mountPath)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect((await lstat(locked.mountPath)).isDirectory()).toBe(true);
+    await git(locked.repoPath, "worktree", "unlock", locked.mountPath);
+    await disposeOperationalRun(seeded.runId, {
+      db,
+      hosts: seam.hosts,
+      now: new Date(Date.now() + 120_000),
+    });
+    expect((await row(seeded.runId)).operationalCleanup).toMatchObject({
+      state: "released",
+      attempts: 2,
+    });
+    await expect(lstat(locked.mountPath)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
   it.each(["none", "worktree"] as const)(
     "IT-OPL-05 disposes successful %s execution and its native home after commit",
     async (workspace) => {

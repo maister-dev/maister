@@ -153,6 +153,24 @@ describe("operational migration", () => {
       refs: [],
       source: [],
       platform: [],
+      contextMounts: [
+        {
+          mount: {
+            projectId,
+            slug: "sibling",
+            repoPath: "/repo",
+            mountPath: "/mount",
+            committish: "a".repeat(40),
+          },
+          baseline: {
+            version: 1,
+            generation: 1,
+            source: [],
+            platform: [],
+            head: "a".repeat(40),
+          },
+        },
+      ],
     };
     const write = (value: object) =>
       database.pool.query(
@@ -186,6 +204,27 @@ describe("operational migration", () => {
     ).rejects.toMatchObject({
       constraint: "runs_operational_baseline_immutable",
     });
+    for (const contextMounts of [
+      [],
+      [
+        {
+          ...baseline.contextMounts[0],
+          mount: { ...baseline.contextMounts[0].mount, mountPath: "/another" },
+        },
+      ],
+      [
+        {
+          ...baseline.contextMounts[0],
+          baseline: { ...baseline.contextMounts[0].baseline, source: [a] },
+        },
+      ],
+    ]) {
+      await expect(
+        write({ ...baseline, generation: 3, platform: [a, b], contextMounts }),
+      ).rejects.toMatchObject({
+        constraint: "runs_operational_baseline_immutable",
+      });
+    }
     await write({ ...baseline, generation: 3, platform: [a, b, a] });
   });
 

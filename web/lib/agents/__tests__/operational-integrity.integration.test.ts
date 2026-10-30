@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import {
+  lstat,
   mkdtemp,
   mkdir,
   readFile,
@@ -14,6 +15,7 @@ import { promisify } from "node:util";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { materializeOperationalContextMounts } from "@/lib/context-mounts/service";
 import {
   captureOperationalBaseline,
   captureOperationalGeneration,
@@ -44,6 +46,30 @@ afterEach(async () => {
 });
 
 describe("operational source integrity", () => {
+  it("refuses existing operational context targets before creating or replacing any sibling", async () => {
+    const first = join(root, "new-context");
+    const head = (
+      await exec("git", ["-C", cwd, "rev-parse", "HEAD"])
+    ).stdout.trim();
+    const mounts = [first, cwd].map((mountPath, index) => ({
+      projectId: `project-${index}`,
+      slug: `sibling-${index}`,
+      repoPath: cwd,
+      mountPath,
+      committish: head,
+    }));
+
+    await expect(
+      materializeOperationalContextMounts(mounts),
+    ).rejects.toMatchObject({
+      details: { reason: "operational_context_target_exists" },
+    });
+    await expect(lstat(first)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(join(cwd, "source.ts"), "utf8")).toBe(
+      "export const value = 1;\n",
+    );
+  });
+
   it("IT-OPL-04 accepts exact platform bytes and rejects later changes even inside owned directories", async () => {
     const baseline = await captureOperationalBaseline(cwd, "worktree");
 

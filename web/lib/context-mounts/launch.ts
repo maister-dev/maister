@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { OperationalIntegrityBaseline } from "@/lib/run-results/operational-types";
 import type {
   ContextMountSnapshot,
   ContextRepoDecl,
@@ -8,9 +9,13 @@ import type {
 import { eq } from "drizzle-orm";
 import pino from "pino";
 
+import { canonicalCommandJson } from "../../../runtime/command-json";
+
 import { requireProjectActionForUser } from "@/lib/authz";
+import { withOperationalContextLock } from "@/lib/context-mounts/operational-lock";
 import {
   materializeContextMounts,
+  materializeOperationalContextMounts,
   resolveContextMounts,
 } from "@/lib/context-mounts/service";
 import { getDb } from "@/lib/db/client";
@@ -103,13 +108,40 @@ async function persistLaunchSnapshot(
     // line, and the lost-update shape is the exact class this repo keeps
     // rediscovering.
     const rows = (await tx
-      .select({ contextMounts: runs.contextMounts })
+      .select({
+        contextMounts: runs.contextMounts,
+        agentKind: runs.agentKind,
+        operationalIntegrityBaseline: runs.operationalIntegrityBaseline,
+        status: runs.status,
+      })
       .from(runs)
       .where(eq(runs.id, runId))
       .for("update")) as Array<{
       contextMounts: ContextMountSnapshot[] | null;
+      agentKind: string | null;
+      operationalIntegrityBaseline: OperationalIntegrityBaseline | null;
+      status: string;
     }>;
-    const existing = rows[0]?.contextMounts ?? [];
+
+    if (!rows[0])
+      throw new MaisterError(
+        "PRECONDITION",
+        "Context mount ownership requires an existing run",
+        { details: { reason: "context_mount_owner_missing", runId } },
+      );
+    const existing = rows[0].contextMounts ?? [];
+
+    if (
+      rows[0]?.agentKind === "operational" &&
+      (rows[0].status !== "Running" ||
+        rows[0].operationalIntegrityBaseline ||
+        existing.length > 0)
+    )
+      throw new MaisterError(
+        "PRECONDITION",
+        "Operational context ownership is already frozen or the run is no longer running",
+        { details: { reason: "operational_context_snapshot_changed" } },
+      );
     const merged = new Map(existing.map((m) => [m.mountPath, m]));
 
     for (const mount of snapshot) merged.set(mount.mountPath, mount);
@@ -121,18 +153,7 @@ async function persistLaunchSnapshot(
   });
 }
 
-/**
- * Resolve → consent → materialize → snapshot, in that order. Git side-effects
- * land BEFORE the durable snapshot write (ADR-157's one accepted residual crash
- * window: mounts created but the snapshot never committed are reaped by the GC
- * backstop on path shape alone).
- *
- * Returns the mounts this call materialized — the value the caller threads onto
- * the supervisor session. `[]` whenever the kill-switch is off or nothing was
- * declared, so a declaring node/attachment launches with no mounts and no
- * checkout.
- */
-export async function prepareContextMounts(
+async function resolveAuthorizedContextMounts(
   args: PrepareContextMountsArgs,
 ): Promise<ContextMountSnapshot[]> {
   const decls = args.decls ?? [];
@@ -182,6 +203,26 @@ export async function prepareContextMounts(
     await authorizeLaunchingUser(snapshot, args.consent.userId);
   }
 
+  return snapshot;
+}
+
+/**
+ * Resolve → consent → materialize → snapshot, in that order. Git side-effects
+ * land BEFORE the durable snapshot write (ADR-157's one accepted residual crash
+ * window: mounts created but the snapshot never committed are reaped by the GC
+ * backstop on path shape alone).
+ *
+ * Returns the mounts this call materialized — the value the caller threads onto
+ * the supervisor session. `[]` whenever the kill-switch is off or nothing was
+ * declared, so a declaring node/attachment launches with no mounts and no
+ * checkout.
+ */
+export async function prepareContextMounts(
+  args: PrepareContextMountsArgs,
+): Promise<ContextMountSnapshot[]> {
+  const snapshot = await resolveAuthorizedContextMounts(args);
+
+  if (snapshot.length === 0) return [];
   await materializeContextMounts(snapshot);
   await persistLaunchSnapshot(args.db ?? getDb(), args.runId, snapshot);
 
@@ -196,6 +237,49 @@ export async function prepareContextMounts(
     },
     "context mount launch snapshot persisted",
   );
+
+  return snapshot;
+}
+
+/** Record all operational mount owners before the first Git/filesystem effect. */
+export async function prepareOperationalContextMounts(
+  args: PrepareContextMountsArgs,
+): Promise<ContextMountSnapshot[]> {
+  const snapshot = await resolveAuthorizedContextMounts(args);
+
+  if (snapshot.length === 0) return [];
+  await persistLaunchSnapshot(args.db ?? getDb(), args.runId, snapshot);
+  log.info(
+    {
+      runId: args.runId,
+      siblingProjectIds: snapshot.map((mount) => mount.projectId),
+    },
+    "[FIX:operational-context] context ownership recorded before materialization",
+  );
+  await withOperationalContextLock(args.runId, async () => {
+    const [current] = await (args.db ?? getDb())
+      .select({
+        status: runs.status,
+        contextMounts: runs.contextMounts,
+        operationalIntegrityBaseline: runs.operationalIntegrityBaseline,
+      })
+      .from(runs)
+      .where(eq(runs.id, args.runId));
+
+    if (
+      !current ||
+      current.status !== "Running" ||
+      current.operationalIntegrityBaseline ||
+      canonicalCommandJson(current.contextMounts) !==
+        canonicalCommandJson(snapshot)
+    )
+      throw new MaisterError(
+        "PRECONDITION",
+        "Operational context preparation lost its running owner before materialization",
+        { details: { reason: "operational_context_snapshot_changed" } },
+      );
+    await materializeOperationalContextMounts(snapshot);
+  });
 
   return snapshot;
 }

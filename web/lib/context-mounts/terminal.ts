@@ -2,13 +2,14 @@ import "server-only";
 
 import type { ContextMountSnapshot } from "@/lib/context-mounts/types";
 
-import { stat } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
 
 import { eq } from "drizzle-orm";
 import pino from "pino";
 
 import { quarantineAgentInTx } from "@/lib/agents/dirty-watchdog";
 import { releaseContextMounts } from "@/lib/context-mounts/service";
+import { MaisterError } from "@/lib/errors";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { statusPorcelain } from "@/lib/worktree";
@@ -70,9 +71,20 @@ export async function checkContextMountDirt(
   // and be reported as `indeterminate` — a spurious L3 violation, and on an
   // agent-driven run a spurious quarantine.
   try {
-    await stat(mountPath);
-  } catch {
-    return { kind: "gone" };
+    await lstat(mountPath);
+  } catch (error) {
+    if (
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      error.code === "ENOENT"
+    )
+      return { kind: "gone" };
+
+    return {
+      kind: "indeterminate",
+      error: error instanceof Error ? error.message : String(error),
+    };
   }
 
   let porcelain: string;
@@ -113,7 +125,7 @@ export type ReleaseRunContextMountsResult = {
  * orchestrator) is skipped, and a genuinely terminal one is released exactly
  * once. Idempotent — `removeWorktree` no-ops on an already-gone path.
  *
- * Removal proceeds even when L3 finds dirt: the mount is detached with no
+ * Code-delivery removal proceeds even when L3 finds dirt: the mount is detached with no
  * branch, so nothing that was ever legitimate is lost.
  */
 export async function releaseRunContextMounts(args: {
@@ -124,6 +136,7 @@ export async function releaseRunContextMounts(args: {
   const rows = (await db
     .select({
       status: runs.status,
+      agentKind: runs.agentKind,
       contextMounts: runs.contextMounts,
       agentId: runs.agentId,
       projectId: runs.projectId,
@@ -132,6 +145,7 @@ export async function releaseRunContextMounts(args: {
     .from(runs)
     .where(eq(runs.id, args.runId))) as Array<{
     status: string;
+    agentKind: string | null;
     contextMounts: ContextMountSnapshot[] | null;
     agentId: string | null;
     projectId: string | null;
@@ -152,6 +166,13 @@ export async function releaseRunContextMounts(args: {
 
     return { released: 0, dirty: 0, skippedLive: true };
   }
+
+  if (run.agentKind === "operational")
+    throw new MaisterError(
+      "PRECONDITION",
+      "Operational context cleanup must use the evidence-preserving disposition owner",
+      { details: { reason: "operational_context_owner_required" } },
+    );
 
   let dirty = 0;
 
@@ -207,12 +228,68 @@ export async function releaseRunContextMounts(args: {
     }
   }
 
-  await releaseContextMounts(snapshot);
+  const removal = await releaseContextMounts(snapshot);
 
   log.info(
-    { runId: args.runId, status: run.status, released: snapshot.length, dirty },
+    {
+      runId: args.runId,
+      status: run.status,
+      released: removal.released,
+      dirty,
+    },
     "context mounts released at the terminal choke",
   );
 
-  return { released: snapshot.length, dirty, skippedLive: false };
+  return { released: removal.released, dirty, skippedLive: false };
+}
+
+/** Called only by operational disposition, after immutable ownership and evidence checks. */
+export async function releaseOperationalContextMounts(args: {
+  runId: string;
+  mounts: ContextMountSnapshot[];
+}): Promise<void> {
+  const snapshot = args.mounts;
+  const removal = await releaseContextMounts(snapshot);
+
+  if (removal.failures.length > 0)
+    throw new MaisterError(
+      "PRECONDITION",
+      "Context worktree cleanup failed; resolve the reported Git error and retry cleanup",
+      {
+        details: {
+          reason: "operational_context_cleanup_failed",
+          failures: removal.failures,
+        },
+      },
+    );
+
+  for (const mount of snapshot) {
+    try {
+      await lstat(mount.mountPath);
+    } catch (error) {
+      if (
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        error.code === "ENOENT"
+      )
+        continue;
+      throw error;
+    }
+    throw new MaisterError(
+      "PRECONDITION",
+      "Operational context bytes remain after Git removal; diagnose the checkout and retry cleanup",
+      {
+        details: {
+          reason: "operational_context_cleanup_failed",
+          siblingProjectId: mount.projectId,
+        },
+      },
+    );
+  }
+
+  log.info(
+    { runId: args.runId, released: removal.released },
+    "[FIX:operational-context] context bytes removed after evidence preservation",
+  );
 }

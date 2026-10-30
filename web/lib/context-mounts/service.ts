@@ -6,6 +6,7 @@ import type {
 } from "@/lib/context-mounts/types";
 
 import path from "node:path";
+import { lstat } from "node:fs/promises";
 
 import { and, eq, isNull } from "drizzle-orm";
 import pino from "pino";
@@ -153,32 +154,74 @@ export async function materializeContextMounts(
       force: true,
     }).catch(() => {});
 
-    await addDetachedWorktree({
-      projectRepoPath: mount.repoPath,
-      worktreePath: mount.mountPath,
-      committish: mount.committish,
-    });
+    await createContextMount(mount);
+  }
+}
 
-    log.info(
+async function createContextMount(mount: ContextMountSnapshot): Promise<void> {
+  await addDetachedWorktree({
+    projectRepoPath: mount.repoPath,
+    worktreePath: mount.mountPath,
+    committish: mount.committish,
+  });
+
+  log.info(
+    {
+      siblingSlug: mount.slug,
+      committish: mount.committish,
+      mountPath: mount.mountPath,
+    },
+    "context mount materialized",
+  );
+}
+
+/** Operational preparation never replaces an existing checkout or its evidence. */
+export async function materializeOperationalContextMounts(
+  snapshot: ContextMountSnapshot[],
+): Promise<void> {
+  for (const mount of snapshot) {
+    try {
+      await lstat(mount.mountPath);
+    } catch (error) {
+      if (
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        error.code === "ENOENT"
+      )
+        continue;
+      throw error;
+    }
+    throw new MaisterError(
+      "PRECONDITION",
+      "Operational context target already exists; retain it for diagnosis before retrying",
       {
-        siblingSlug: mount.slug,
-        committish: mount.committish,
-        mountPath: mount.mountPath,
+        details: {
+          reason: "operational_context_target_exists",
+          siblingProjectId: mount.projectId,
+        },
       },
-      "context mount materialized",
     );
   }
+  for (const mount of snapshot) await createContextMount(mount);
 }
 
 // Release against EACH SIBLING's repo, then prune it. Without the sibling-side
 // removal the sibling repo accumulates stale `worktree list` registrations that
 // nothing else will ever clean up.
+export type ContextMountReleaseResult = {
+  released: number;
+  failures: Array<{ path: string; message: string }>;
+};
+
 export async function releaseContextMounts(
   snapshot: ContextMountSnapshot[] | null | undefined,
-): Promise<void> {
-  if (!snapshot || snapshot.length === 0) return;
+): Promise<ContextMountReleaseResult> {
+  if (!snapshot || snapshot.length === 0) return { released: 0, failures: [] };
 
   const touchedRepos = new Set<string>();
+  const failures: ContextMountReleaseResult["failures"] = [];
+  let released = 0;
 
   for (const mount of snapshot) {
     try {
@@ -188,21 +231,25 @@ export async function releaseContextMounts(
         force: true,
       });
       touchedRepos.add(mount.repoPath);
+      released += 1;
     } catch (err) {
-      // Best-effort per mount: one stuck sibling must not strand the rest, and
-      // the GC backstop reaps whatever is left by path shape.
+      // Continue releasing independent siblings, then report failure to the owner.
+      failures.push({
+        path: mount.mountPath,
+        message: err instanceof Error ? err.message : String(err),
+      });
       log.warn(
         {
           siblingSlug: mount.slug,
           mountPath: mount.mountPath,
           error: err instanceof Error ? err.message : String(err),
         },
-        "context mount removal failed — leaving it to the GC backstop",
+        "[FIX:context-release] context mount removal failed — owner must retry",
       );
     }
   }
 
-  for (const repoPath of touchedRepos) {
-    await pruneWorktrees(repoPath).catch(() => {});
-  }
+  for (const repoPath of touchedRepos) await pruneWorktrees(repoPath);
+
+  return { released, failures };
 }

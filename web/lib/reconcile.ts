@@ -2407,13 +2407,36 @@ export async function runReconcileSweep(
         // An orphaned Pending child. markAbandoned's guard admits Pending; it
         // emits run.abandoned, stamps the workspace for GC and releases context
         // mounts. No promote: a queued run never held a slot.
-        const { markAbandoned } = await import("@/lib/runs/state-transitions");
-        const result = await markAbandoned(cand.runId, {
-          db,
-          cause: { code: null, reason: "orphan", source: "reconcile" },
-        });
+        const [agent] =
+          cand.runKind === "agent"
+            ? await db
+                .select({ kind: runs.agentKind })
+                .from(runs)
+                .where(eq(runs.id, cand.runId))
+            : [];
+        let finalized: boolean;
 
-        if (!result.ok) {
+        if (agent?.kind === "operational") {
+          const { finalizeAgentRun } = await import("@/lib/agents/launch");
+          const result = await finalizeAgentRun(cand.runId, "Abandoned", {
+            db,
+            reason: `reconcile: ${reason}`,
+            closeOpenHitl: true,
+          });
+
+          finalized = result.finalized;
+        } else {
+          const { markAbandoned } =
+            await import("@/lib/runs/state-transitions");
+          const result = await markAbandoned(cand.runId, {
+            db,
+            cause: { code: null, reason: "orphan", source: "reconcile" },
+          });
+
+          finalized = result.ok;
+        }
+
+        if (!finalized) {
           skipped += 1;
           log.info(
             { runId: cand.runId, reason },

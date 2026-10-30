@@ -6,13 +6,23 @@ import type {
   OperationalRefEvidence,
   OperationalIntegrityResult,
 } from "@/lib/agents/operational-integrity";
-import type { OperationalResourceKind } from "@/lib/run-results/operational-types";
+import type { ContextMountSnapshot } from "@/lib/context-mounts/types";
+import type {
+  OperationalIntegrityBaseline,
+  OperationalResourceKind,
+} from "@/lib/run-results/operational-types";
 
 import { and, eq, ne } from "drizzle-orm";
 import pino from "pino";
 
+import { canonicalCommandJson } from "../../../runtime/command-json";
+
 import { frozenOperationalDefinition } from "@/lib/agents/launch-contract";
-import { verifyOperationalIntegrity } from "@/lib/agents/operational-integrity";
+import {
+  captureOperationalBaseline,
+  captureOperationalGeneration,
+  verifyOperationalIntegrity,
+} from "@/lib/agents/operational-integrity";
 import {
   agentWorkdirPath,
   agentReadOnlyWorkdirPath,
@@ -141,7 +151,7 @@ export async function operationalWorkspace(
   };
 }
 
-export async function inspectOperationalRun(
+export async function inspectOperationalWorkspace(
   db: Db,
   run: Pick<
     Run,
@@ -173,6 +183,167 @@ export async function inspectOperationalRun(
   );
 
   return result;
+}
+
+/** Captured before the first source baseline is committed; never re-materialized on resume. */
+export async function captureOperationalContextMounts(
+  mounts: readonly ContextMountSnapshot[],
+): Promise<NonNullable<OperationalIntegrityBaseline["contextMounts"]>> {
+  const witnesses: NonNullable<OperationalIntegrityBaseline["contextMounts"]> =
+    [];
+
+  for (const mount of mounts) {
+    const baseline = await captureOperationalGeneration(
+      mount.mountPath,
+      await captureOperationalBaseline(mount.mountPath, "ephemeral_checkout"),
+      [],
+    );
+
+    if (baseline.head !== mount.committish)
+      throw new MaisterError(
+        "PRECONDITION",
+        "Context checkout does not match its resolved launch commit",
+        {
+          details: {
+            reason: "operational_context_commit_mismatch",
+            siblingProjectId: mount.projectId,
+          },
+        },
+      );
+    witnesses.push({ mount, baseline });
+  }
+
+  return witnesses;
+}
+
+type OperationalContextRun = Pick<
+  Run,
+  "id" | "operationalIntegrityBaseline" | "contextMounts"
+>;
+
+/** Immutable witnesses own cleanup paths; the legacy column remains launch provenance. */
+export function operationalContextMountSnapshots(
+  run: OperationalContextRun,
+): ContextMountSnapshot[] {
+  return (
+    run.operationalIntegrityBaseline?.contextMounts?.map(
+      ({ mount }) => mount,
+    ) ??
+    run.contextMounts ??
+    []
+  );
+}
+
+export function assertOperationalContextSnapshot(
+  run: OperationalContextRun,
+): void {
+  if (
+    canonicalCommandJson(operationalContextMountSnapshots(run)) !==
+    canonicalCommandJson(run.contextMounts ?? [])
+  )
+    throw new MaisterError(
+      "PRECONDITION",
+      "Operational context ownership differs from the frozen launch witness; diagnose before cleanup",
+      { details: { reason: "operational_context_snapshot_changed" } },
+    );
+}
+
+export async function inspectOperationalContextMount(
+  db: Db,
+  run: OperationalContextRun,
+  mount: ContextMountSnapshot,
+): Promise<OperationalIntegrityResult> {
+  const witness = run.operationalIntegrityBaseline?.contextMounts?.find(
+    (entry) =>
+      canonicalCommandJson(entry.mount) === canonicalCommandJson(mount),
+  );
+
+  if (!witness)
+    return {
+      verdict: "indeterminate",
+      reasonCodes: ["operational_context_baseline_missing"],
+      changedPaths: [],
+    };
+
+  return verifyOperationalIntegrity(
+    mount.mountPath,
+    witness.baseline,
+    await operationalReferenceEvidence(db, {
+      id: run.id,
+      projectId: mount.projectId,
+    }),
+  );
+}
+
+export async function inspectOperationalContexts(
+  db: Db,
+  run: OperationalContextRun,
+): Promise<OperationalIntegrityResult> {
+  const results: OperationalIntegrityResult[] = [];
+  const mounts = operationalContextMountSnapshots(run);
+
+  if (
+    canonicalCommandJson(mounts) !==
+    canonicalCommandJson(run.contextMounts ?? [])
+  )
+    results.push({
+      verdict: "indeterminate",
+      reasonCodes: ["operational_context_snapshot_changed"],
+      changedPaths: [],
+    });
+
+  for (const mount of mounts) {
+    const result = await inspectOperationalContextMount(db, run, mount);
+
+    results.push({
+      ...result,
+      changedPaths: result.changedPaths.map(
+        (entry) => `context/${mount.slug}/${entry}`,
+      ),
+      reasonCodes:
+        result.verdict === "clean"
+          ? []
+          : ["operational_context_integrity_refused", ...result.reasonCodes],
+    });
+    log.info(
+      {
+        runId: run.id,
+        siblingProjectId: mount.projectId,
+        verdict: result.verdict,
+        reasons: result.reasonCodes,
+      },
+      "[FIX:operational-context] sibling source integrity validated",
+    );
+  }
+
+  return combineIntegrityResults(results);
+}
+
+function combineIntegrityResults(
+  results: readonly OperationalIntegrityResult[],
+): OperationalIntegrityResult {
+  return {
+    verdict: results.some(({ verdict }) => verdict === "changed")
+      ? "changed"
+      : results.some(({ verdict }) => verdict !== "clean")
+        ? "indeterminate"
+        : "clean",
+    reasonCodes: [
+      ...new Set(results.flatMap(({ reasonCodes }) => reasonCodes)),
+    ],
+    changedPaths: results.flatMap(({ changedPaths }) => changedPaths),
+  };
+}
+
+export async function inspectOperationalRun(
+  db: Db,
+  run: Parameters<typeof inspectOperationalWorkspace>[1] &
+    Pick<Run, "contextMounts">,
+): Promise<OperationalIntegrityResult> {
+  return combineIntegrityResults([
+    await inspectOperationalWorkspace(db, run),
+    await inspectOperationalContexts(db, run),
+  ]);
 }
 
 export async function assertOperationalDispatchIntegrity(

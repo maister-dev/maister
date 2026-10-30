@@ -1,3 +1,4 @@
+import type { ContextMountSnapshot } from "@/lib/context-mounts/types";
 import type { AgentFinalStatus } from "@/lib/agents/finalization";
 import type { AgentWorkspace } from "@/lib/db/schema";
 
@@ -68,6 +69,11 @@ export type OperationalIntegrityBaseline = {
   refs: Array<{ ref: string; sha: string }>;
   source: OperationalIntegrityEntry[];
   platform: OperationalIntegrityEntry[];
+  /** Immutable sibling checkout descriptors and full source witnesses. */
+  contextMounts?: Array<{
+    mount: ContextMountSnapshot;
+    baseline: Omit<OperationalIntegrityBaseline, "contextMounts">;
+  }>;
   owner?: { cwd: string; repoPath: string; projectSlug: string };
 };
 

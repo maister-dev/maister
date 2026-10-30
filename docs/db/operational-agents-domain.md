@@ -39,8 +39,14 @@ required built-in contract; historical rows remain null/default without backfill
 by agent identity. Enforce admitted kind/contract immutability with a trigger.
 
 Baseline metadata version 1 stores source HEAD, branch/ref and Git identity/index/
-reflog/configuration digests, exact path/type/content hashes, a source digest,
-ordered platform generations and the server-owned workspace location. It stores
+reflog/configuration digests, exact path/type/content hashes, ordered platform
+generations and the server-owned workspace location. Its optional `contextMounts`
+array freezes each `{mount, baseline}` descriptor/witness before the initial
+primary baseline is written. Context witnesses have generation 1 without
+materialization allowances and contain no nested mounts. The existing immutable
+source trigger protects the entire array; this extension requires no migration.
+A legacy baseline with mounted contexts but no witnesses fails closed, while
+a run with no context mounts retains its existing semantics. It stores
 no source bytes; diagnostic bytes use opaque runtime evidence objects.
 Initial capture precedes prompt dispatch; generation additions are append-only
 under the run fence. No source bytes enter the DB metadata.

@@ -21,16 +21,17 @@ import {
 import pino from "pino";
 
 import {
-  inspectOperationalRun,
+  assertOperationalContextSnapshot,
+  inspectOperationalWorkspace,
+  inspectOperationalContextMount,
+  operationalContextMountSnapshots,
   operationalWorkspace,
 } from "@/lib/agents/operational-context";
 import { restoreAgentMaterialization } from "@/lib/agents/dirty-watchdog";
 import { operationalAgentRuntimePath } from "@/lib/agents/workspace-paths";
 import { frozenOperationalDefinition } from "@/lib/agents/launch-contract";
-import {
-  checkContextMountDirt,
-  releaseRunContextMounts,
-} from "@/lib/context-mounts/terminal";
+import { withOperationalContextLock } from "@/lib/context-mounts/operational-lock";
+import { releaseOperationalContextMounts } from "@/lib/context-mounts/terminal";
 import { getDb } from "@/lib/db/client";
 import {
   executionAssignments,
@@ -348,32 +349,42 @@ export async function disposeOperationalRun(
     const context = await operationalWorkspace(db, run);
     const present = await exists(context.cwd);
 
-    for (const mount of run.contextMounts ?? []) {
-      const verdict = await checkContextMountDirt(mount.mountPath);
+    assertOperationalContextSnapshot(run);
+    const contextMounts = operationalContextMountSnapshots(run);
 
-      if (verdict.kind === "dirty" || verdict.kind === "indeterminate") {
-        if (!client) throw cleanupError("operational_evidence_host_missing");
-        const ids = await preserveOperationalEvidence({
+    if (contextMounts.length > 0)
+      await withOperationalContextLock(runId, async () => {
+        assertOperationalContextSnapshot(run);
+        for (const mount of contextMounts) {
+          // A previous cleanup attempt may have removed an independent sibling.
+          if (!(await exists(mount.mountPath))) continue;
+          const verdict = await inspectOperationalContextMount(db, run, mount);
+
+          if (verdict.verdict !== "clean") {
+            if (!client)
+              throw cleanupError("operational_evidence_host_missing");
+            const ids = await preserveOperationalEvidence({
+              runId,
+              cwd: mount.mountPath,
+              resourceKind: "ephemeral_checkout",
+              client,
+              renew,
+            });
+
+            await persist({
+              ...cleanup,
+              evidenceIds: [...new Set([...cleanup.evidenceIds, ...ids])],
+            });
+          }
+        }
+        await renew();
+        await releaseOperationalContextMounts({
           runId,
-          cwd: mount.mountPath,
-          resourceKind: "ephemeral_checkout",
-          client,
-          renew,
+          mounts: contextMounts,
         });
-
-        await persist({
-          ...cleanup,
-          evidenceIds: [...new Set([...cleanup.evidenceIds, ...ids])],
-        });
-      }
-    }
-    await renew();
-    const mounts = await releaseRunContextMounts({ runId, db });
-
-    if (mounts.skippedLive)
-      throw cleanupError("operational_context_cleanup_failed");
+      });
     if (!cleanup.removedAt && present) {
-      const integrity = await inspectOperationalRun(db, run);
+      const integrity = await inspectOperationalWorkspace(db, run);
       const preserveBytes =
         run.status !== "Done" || integrity.verdict !== "clean";
 
