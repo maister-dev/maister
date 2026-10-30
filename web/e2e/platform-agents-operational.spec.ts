@@ -14,6 +14,7 @@ const successId = randomUUID();
 const performedId = randomUUID();
 const failedId = randomUUID();
 const codeId = randomUUID();
+const runningId = randomUUID();
 
 test.describe("operational results, history and attention", () => {
   test.describe.configure({ mode: "serial" });
@@ -167,6 +168,28 @@ test.describe("operational results, history and attention", () => {
           capabilityAgent: "claude",
         });
       }
+      // A cancellable execution before its first prompt has no source baseline
+      // or materialized files yet. The shared stop route still owns disposition.
+      await pool.query(
+        `INSERT INTO runs (id,project_id,run_kind,agent_id,agent_kind,agent_workspace,status,flow_version,result_contract) VALUES ($1,$2,'agent',$3,'operational','worktree','Running','agent',$4::jsonb)`,
+        [runningId, projectId, agentId, JSON.stringify(contract)],
+      );
+      await pool.query(
+        `INSERT INTO workspaces (id,project_id,run_id,branch,worktree_path,parent_repo_path) VALUES ($1,$2,$3,$4,$5,$6)`,
+        [
+          randomUUID(),
+          projectId,
+          runningId,
+          `maister/${runningId}`,
+          `/tmp/${slug}/${runningId}`,
+          `/tmp/${slug}`,
+        ],
+      );
+      await seedDefaultRunSession(pool, {
+        runId: runningId,
+        runnerId: null,
+        capabilityAgent: "claude",
+      });
       await pool.query(
         `INSERT INTO agent_schedules (id,project_id,agent_id,trigger_type,cron_expr,timezone,next_fire_at,last_outcome,last_run_id) VALUES ($1,$2,$3,'cron','0 * * * *','UTC',now()+interval '1 day','launched',$4)`,
         [randomUUID(), projectId, agentId, failedId],
@@ -244,6 +267,56 @@ test.describe("operational results, history and attention", () => {
     });
   }
 
+  test("IT-OPL-02 active operational execution retains Stop without delivery actions", async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await context.addCookies([
+      { name: "NEXT_LOCALE", value: "en", url: baseURL! },
+    ]);
+    await page.goto(`/runs/${runningId}`);
+    const actions = page.locator(
+      '[data-testid="workbench-lifecycle-actions"]:visible',
+    );
+
+    await expect(actions).toBeVisible();
+    await expect(actions.getByRole("button")).toHaveText(["Stop"]);
+    await expect(page.getByTestId("workbench-git-open")).toHaveCount(0);
+    await actions.getByRole("button", { name: "Stop", exact: true }).click();
+    const [response] = await Promise.all([
+      page.waitForResponse(
+        (res) =>
+          res.request().method() === "POST" &&
+          res.url().endsWith(`/api/runs/${runningId}/stop`),
+      ),
+      page
+        .getByRole("dialog")
+        .getByRole("button", { name: "Confirm", exact: true })
+        .click(),
+    ]);
+
+    expect(response.status()).toBe(200);
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      runStatus: "Abandoned",
+    });
+    await expect(
+      page.locator('[data-testid="operational-outcome"]:visible'),
+    ).toHaveText("Cancelled");
+    await expect(actions).toHaveCount(0);
+    await withE2EDb(async (pool) => {
+      const result = await pool.query(
+        "SELECT status, operational_cleanup->>'state' AS cleanup FROM runs WHERE id=$1",
+        [runningId],
+      );
+
+      expect(result.rows).toEqual([
+        { status: "Abandoned", cleanup: "released" },
+      ]);
+    });
+  });
+
   test("IT-OPL-02 browser actions acknowledge a failure and rearm only workspace cleanup", async ({
     page,
     context,
@@ -253,6 +326,36 @@ test.describe("operational results, history and attention", () => {
       { name: "NEXT_LOCALE", value: "en", url: baseURL! },
     ]);
     await page.goto(`/runs/${failedId}`);
+    // A cleanup worker can advance the revision after the page was rendered.
+    // The refusal must show localized feedback, and a refreshed retry must
+    // still show its own success feedback through the shared provider.
+    await withE2EDb(async (pool) => {
+      await pool.query(
+        "UPDATE runs SET operational_cleanup=jsonb_set(operational_cleanup, '{revision}', '7') WHERE id=$1",
+        [failedId],
+      );
+    });
+    const [stale] = await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          response.request().method() === "POST" &&
+          response
+            .url()
+            .endsWith(`/api/runs/${failedId}/operational/cleanup/retry`),
+      ),
+      page
+        .getByRole("button", { name: "Retry workspace cleanup", exact: true })
+        .click(),
+    ]);
+
+    expect(stale.status()).toBe(409);
+    await expect(
+      page.getByText(
+        "Action failed. Refresh and review the current revision.",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    await page.reload();
     const [retry] = await Promise.all([
       page.waitForResponse(
         (response) =>
@@ -266,10 +369,13 @@ test.describe("operational results, history and attention", () => {
         .click(),
     ]);
 
+    await expect(
+      page.getByText("Workspace cleanup scheduled.", { exact: true }),
+    ).toBeVisible();
     expect(retry.status()).toBe(202);
     expect(await retry.json()).toMatchObject({
       state: "armed",
-      revision: 7,
+      revision: 8,
       attempts: 0,
       errorCode: null,
     });
@@ -295,6 +401,9 @@ test.describe("operational results, history and attention", () => {
         .click(),
     ]);
 
+    await expect(
+      page.getByText("Operation failure acknowledged.", { exact: true }),
+    ).toBeVisible();
     expect(ack.status()).toBe(200);
     expect(await ack.json()).toMatchObject({ acknowledged: true, revision: 1 });
     await withE2EDb(async (pool) => {

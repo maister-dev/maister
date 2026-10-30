@@ -1445,11 +1445,16 @@ runner-agent enforcement is queued for a follow-up patch.
 ## Agent question — task-bound clarification (Implemented — ADR-136)
 
 `agent_question` is a standalone-agent request for a human clarification on a
-task. It is not a Flow `form`/`human` pause and it never resumes an ACP session
-in v1. Creation first persists a durable `pending_termination` intent, then
+task. It is not a Flow `form`/`human` pause. For code-delivery agents it does not
+resume the source ACP session: creation first persists a durable
+`pending_termination` intent, then
 terminates the source session, and only then atomically activates the question,
 records its immutable `task_clarifications` snapshot, revokes the source-agent
-token, and marks the source run `Done`.
+token, and marks the source run `Done`. Operational agents instead checkpoint
+and continue the same run after the human answer; the
+[operational continuation contract](operational-agent-lifecycle.md#operational-business-question-continuation)
+owns that branch, including its 202 `resume-queued` response and frozen result
+requirements. The termination and re-trigger flows below describe code delivery.
 
 A matching listed session that exits before DELETE returns is confirmed absent
 on its scoped `404` and follows the same activation path. Supervisor network or

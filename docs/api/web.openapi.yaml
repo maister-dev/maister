@@ -8004,9 +8004,15 @@ paths:
           clarification. The route locks the task and active request, records
           one answer and supersedes competing questions, then inserts either a
           target-only `task.clarification_answered` event or the triager's
-          existing `task.triage_requeued` event. It never writes an artifact,
-          invokes `runFlow`, or resumes ACP. `responded_at` is set only for the
-          winning human answer; stale/conflicting answers return 409.
+          existing `task.triage_requeued` event. Code-delivery source runs remain
+          terminal and return 200. Operational sources stay `NeedsInputIdle`:
+          the durable `continuesSourceRun` fact queues a same-run continuation
+          and returns `202 {ok:true, runStatus:"NeedsInputIdle",
+          state:"resume-queued"}`. The projection worker resumes the frozen
+          operational execution; the route does not write an artifact or call
+          `runFlow`. `responded_at` is set only for the winning human answer;
+          same-answer replay returns 200 with `idempotent:true` and the current
+          source status. Stale/conflicting answers return 409.
         - **hook_trip** (ADR-108): a guardrail-trip resume-or-abort, like
           `infra_recovery` / `budget_breach`. Human-actor-only (a machine/agent
           token is rejected 403 at the shared chokepoint — it can never dismiss
@@ -8264,7 +8270,9 @@ paths:
             restart terminalized the old run and launched or queued a new one,
             park preserved work and abandoned the run, or discard failed the run
             (and optionally dropped the workspace). For `agent_question`, the
-            answer and outbox event were committed; no session is resumed. For
+            answer and outbox event were committed. Code-delivery sources remain
+            terminal; operational same-answer replays return the current source
+            status without scheduling a duplicate continuation. For
             a non-final `decision_request`, only the child card was delivered
             and `state="awaiting-decisions"` exposes the remaining count.
           content:
@@ -8284,6 +8292,7 @@ paths:
                         Running,
                         Done,
                         Failed,
+                        Crashed,
                         Abandoned,
                       ]
                     description: |
@@ -8418,7 +8427,11 @@ paths:
             returning 202; after auto-delivery completes the retries
             return 200 idempotent. For ADR-137 Plan-review final answers, the
             graph-only claim returns `rework-scheduled` or `resume-queued` and
-            never calls `resumeRun`. A concurrent replay of the same permission
+            never calls `resumeRun`. An operational `agent_question` answer
+            returns `state: "resume-queued"` with `runStatus: "NeedsInputIdle"`
+            after committing the same-run continuation fact. Its projection
+            worker owns resume; this acceptance does not claim business success.
+            A concurrent replay of the same permission
             input returns `state: "delivery-in-progress"` while its winning
             delivery is pending; it does not cancel the pending permission.
           content:
@@ -17555,7 +17568,8 @@ paths:
     post:
       operationId: acknowledgeOperationalRun
       summary: Acknowledge one operational attention revision
-      description: Designed — per authenticated reader; does not change business
+      description:
+        Implemented — per authenticated reader; does not change business
         outcome or another reader. Exact identical prior acknowledgement is
         idempotent.
       parameters:
@@ -17978,7 +17992,7 @@ components:
           items:
             $ref: "#/components/schemas/OperationalDiagnostic"
       description:
-        Designed — fixed operational_v1 value. Existing output limits plus
+        Implemented — fixed operational_v1 value. Existing output limits plus
         operational count/coverage/outcome/link semantics apply; schema validity is
         distinct from business success.
     OperationalCompletionDeclaration:
@@ -22908,8 +22922,9 @@ components:
             Required iff the HITL row has `kind == "form" | "human" |
             "agent_question"`. An `agent_question` answer is accepted only
             from a human session responder or an exact-human external token;
-            it is committed as task clarification history and never resumes the
-            terminal origin ACP session.
+            it is committed as task clarification history. Code-delivery origins
+            remain terminal. Operational origins queue a same-run continuation
+            under their frozen completion contract.
             Validated against the row's `schema` field (MAIster form
             schema — see `docs/configuration.md`). Returns 422 on
             failure. For `kind="budget_breach"`, carries the

@@ -3739,8 +3739,9 @@ paths:
         "202":
           description: |
             Delivery is pending for `resume-in-progress` or
-            `delivery-in-progress`. Plan-review `resume-queued` means the
-            answer was recorded and the run's resume is queued; the card
+            `delivery-in-progress`. Plan-review and operational-agent-question
+            `resume-queued` mean the answer was recorded and the run's resume
+            is queued; the card
             refreshes away without a delivery retry. The checkpointed-host 410 becomes 202
             after web parks and schedules resume — for a flow, agent or scratch
             run alike, each through its own idle claim; session creation need not
@@ -5204,7 +5205,7 @@ components:
           items:
             $ref: "#/components/schemas/OperationalDiagnostic"
       description:
-        Designed — fixed operational_v1 value. Existing output limits plus
+        Implemented — fixed operational_v1 value. Existing output limits plus
         operational count/coverage/outcome/link semantics apply; schema validity is
         distinct from business success.
     OperationalCompletionDeclaration:
@@ -7704,17 +7705,35 @@ components:
       description: |
         (M17) Result of an ext HITL response. Mirrors the session route — the
         runner (not this route) owns the `NeedsInput → Running` transition.
-        (ADR-136 Implemented) a human answer to `agent_question` returns the
-        terminal source `runStatus: Done`; it writes no artifact and never
-        resumes ACP.
+        (ADR-136, ADR-194 Implemented) a human answer to `agent_question`
+        returns 200 with `runStatus: Done` for code-delivery sources. An
+        operational source returns 202 with `runStatus: NeedsInputIdle` and
+        `state: resume-queued` after committing its same-run continuation fact;
+        the projection worker owns resume under the frozen contract. Identical
+        answer replay returns 200 with `idempotent: true` and the current source
+        status, without scheduling a duplicate continuation. No input artifact
+        is written by this answer path.
       properties:
         ok:
           type: boolean
           enum: [true]
         runStatus:
           type: string
-          enum: [NeedsInput, NeedsInputIdle, Running, Done]
-          description: Row state at response time.
+          enum:
+            [
+              NeedsInput,
+              NeedsInputIdle,
+              Pending,
+              Running,
+              Done,
+              Failed,
+              Crashed,
+              Abandoned,
+            ]
+          description: Row state at response time, including a terminal source on idempotent answer replay.
+        idempotent:
+          type: boolean
+          description: True when the same human answer was already committed.
         state:
           type: string
           enum:
@@ -8318,7 +8337,7 @@ components:
             - $ref: "#/components/schemas/OperationalOutcome"
           nullable: true
           description:
-            Designed — validated diagnostic outcome for operational runs,
+            Implemented — validated diagnostic outcome for operational runs,
             including Failed; successful only from the committed platform receipt.
 
     ExtRunCancelBody:

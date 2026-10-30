@@ -3,9 +3,13 @@
 import type { OperationalOutcome } from "@/lib/run-results/operational-types";
 import type { ReactElement } from "react";
 
+import { ArrowPathIcon, CheckIcon } from "@heroicons/react/24/outline";
+import { Button } from "@heroui/react";
 import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
+
+import { useFeedback } from "@/components/feedback/feedback-provider";
 
 export function OperationalRunResult({
   runId,
@@ -18,13 +22,18 @@ export function OperationalRunResult({
 }): ReactElement {
   const t = useTranslations("operationalAgents");
   const router = useRouter();
+  const feedback = useFeedback();
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const reported = outcome.reportedResult;
 
-  async function mutate(path: string, body: object): Promise<void> {
+  async function mutate(
+    path: "acknowledge" | "cleanup/retry",
+    body: Record<string, string | number>,
+    successMessage: string,
+  ): Promise<void> {
+    const mutationId = `operational:${runId}:${path}:${crypto.randomUUID()}`;
+
     setBusy(true);
-    setError(null);
     try {
       const response = await fetch(
         `/api/runs/${encodeURIComponent(runId)}/operational/${path}`,
@@ -36,13 +45,14 @@ export function OperationalRunResult({
       );
 
       if (!response.ok) {
-        setError(t("actionFailed", { status: response.status }));
+        feedback.error({ message: t("actionFailed"), mutationId });
 
         return;
       }
+      feedback.success({ message: successMessage, mutationId });
       router.refresh();
     } catch {
-      setError(t("connectionFailed"));
+      feedback.error({ message: t("connectionFailed"), mutationId });
     } finally {
       setBusy(false);
     }
@@ -155,46 +165,66 @@ export function OperationalRunResult({
       {canAct && outcome.state === "terminal" ? (
         <div className="mt-3 flex gap-3">
           {!outcome.successful && outcome.effectiveOutcome !== "cancelled" ? (
-            <button
-              disabled={busy}
+            <Button
+              isDisabled={busy}
+              size="sm"
+              variant="secondary"
               onClick={() =>
-                void mutate("acknowledge", {
-                  reason: "operation_failure",
-                  revision: 1,
-                })
+                void mutate(
+                  "acknowledge",
+                  {
+                    reason: "operation_failure",
+                    revision: 1,
+                  },
+                  t("operationAcknowledged"),
+                )
               }
             >
+              <CheckIcon aria-hidden="true" className="size-4" />
               {t("acknowledge")}
-            </button>
+            </Button>
           ) : null}
           {outcome.cleanup?.state === "exhausted" ? (
             <>
-              <button
-                disabled={busy}
+              <Button
+                isDisabled={busy}
+                size="sm"
+                variant="secondary"
                 onClick={() =>
-                  void mutate("acknowledge", {
-                    reason: "cleanup_failure",
-                    revision: outcome.cleanup!.revision,
-                  })
+                  void mutate(
+                    "acknowledge",
+                    {
+                      reason: "cleanup_failure",
+                      revision: outcome.cleanup!.revision,
+                    },
+                    t("cleanupAcknowledged"),
+                  )
                 }
               >
+                <CheckIcon aria-hidden="true" className="size-4" />
                 {t("acknowledgeCleanup")}
-              </button>
-              <button
-                disabled={busy}
+              </Button>
+              <Button
+                isDisabled={busy}
+                size="sm"
+                variant="secondary"
                 onClick={() =>
-                  void mutate("cleanup/retry", {
-                    expectedRevision: outcome.cleanup!.revision,
-                  })
+                  void mutate(
+                    "cleanup/retry",
+                    {
+                      expectedRevision: outcome.cleanup!.revision,
+                    },
+                    t("cleanupScheduled"),
+                  )
                 }
               >
+                <ArrowPathIcon aria-hidden="true" className="size-4" />
                 {t("retryCleanup")}
-              </button>
+              </Button>
             </>
           ) : null}
         </div>
       ) : null}
-      {error ? <p role="alert">{error}</p> : null}
     </section>
   );
 }

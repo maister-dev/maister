@@ -1915,7 +1915,13 @@ async function stopAgentAfterAuth(
     );
   }
 
-  if (ctx.workspace && ctx.workspace.removedAt === null) {
+  // Operational disposition owns preservation, materialization restoration and
+  // removal. A second legacy cleanup can run after that workspace is removed.
+  if (
+    ctx.run.agentKind !== "operational" &&
+    ctx.workspace &&
+    ctx.workspace.removedAt === null
+  ) {
     await deps.cleanupAgentMaterializations({
       runId,
       worktreePath: ctx.workspace.worktreePath,

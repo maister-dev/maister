@@ -274,4 +274,4 @@ recovery. A non-review or scratch URL state has an explicit unavailable state.
 
 ## Operational agents
 
-Operational agents show the structured operation result, actionable diagnostics, counts, references, source integrity and cleanup evidence. The workbench exposes Timeline and Evidence; Files/Diff and Git delivery actions are absent. Server-side frozen-kind guards independently refuse promotion, sync, merge, publication and reattachment.
+Operational agents show the structured operation result, actionable diagnostics, counts, references, source integrity and cleanup evidence. The workbench exposes Timeline and Evidence; Files/Diff and Git delivery actions are absent. Authorized users retain Stop for active operational runs; stopping records cancellation and uses the normal operational cleanup owner. Server-side frozen-kind guards independently refuse promotion, sync, merge, publication and reattachment.

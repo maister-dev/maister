@@ -1256,9 +1256,7 @@ export default async function RunDetailLayout({
   const isCutoverHistory = detail.cutoverFailure !== null;
   // ADR-181 D2: the viewer's own set — the claim owner of an open rework claim
   // gets the git set; `detail.lifecycleActions` is the viewer-less projection.
-  const viewerLifecycleActions = operational
-    ? []
-    : lifecycleActionsForViewer(detail, user.id);
+  const viewerLifecycleActions = lifecycleActionsForViewer(detail, user.id);
   const policyActions = deriveInspectorActions({
     runId: detail.runId,
     runKind: detail.runKind,

@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 
+import Ajv, { type AnySchemaObject } from "ajv";
+import { parse } from "yaml";
 import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { NextRequest } from "next/server";
@@ -15,6 +18,7 @@ import {
 } from "vitest";
 
 import { issueToken } from "@/lib/tokens/issue";
+import { operationalContractFixture } from "@/test-support/operational-agent";
 import * as schemaModule from "@/lib/db/schema";
 import {
   testPlatformRunnerRow,
@@ -312,6 +316,7 @@ async function seedRun(
   flowId: string,
   status: string = "Running",
   runKind: "agent" | "flow" = "flow",
+  agentKind: "code_delivery" | "operational" = "code_delivery",
 ) {
   const runId = randomUUID();
   const taskId = randomUUID();
@@ -341,6 +346,10 @@ async function seedRun(
     taskId,
     flowId,
     runKind,
+    agentKind,
+    agentWorkspace: agentKind === "operational" ? "worktree" : null,
+    resultContract:
+      agentKind === "operational" ? operationalContractFixture() : null,
     status,
     flowVersion: "v1.0.0",
     currentStepId: "step-1",
@@ -1518,6 +1527,124 @@ describe("POST /api/v1/ext/runs/[runId]/hitl/[hitlRequestId]/respond", () => {
       status_code: 200,
       scope_used: "hitl:respond:human",
     });
+  });
+
+  it("operational human answers return the published queued-resume contract and replay safely", async () => {
+    const { projectId, flowId } = await seedProject(
+      `ext-hitl-operational-${randomUUID().slice(0, 8)}`,
+    );
+    const ownerUserId = await seedUser("operational-question-owner");
+
+    await seedProjectMember(projectId, ownerUserId);
+    const { runId, taskId } = await seedRun(
+      projectId,
+      flowId,
+      "NeedsInputIdle",
+      "agent",
+      "operational",
+    );
+    const hitlId = await seedAgentQuestion({
+      projectId,
+      taskId,
+      runId,
+      sourceAgentId: "test:agent-question",
+    });
+    const token = await issueGlobalUserToken(ownerUserId, [
+      "hitl:respond:human",
+    ]);
+    const answer = { response: { target: "staging" } };
+    const res = await POST(
+      makePostRequest(runId, hitlId, token.secret, answer),
+      {
+        params: Promise.resolve({ runId, hitlRequestId: hitlId }),
+      },
+    );
+    const body: unknown = await res.json();
+    const webContract: {
+      paths: Record<
+        string,
+        {
+          post: {
+            responses: Record<
+              string,
+              {
+                content: { "application/json": { schema: AnySchemaObject } };
+              }
+            >;
+          };
+        }
+      >;
+    } = parse(
+      await readFile(
+        new URL(
+          "../../../../../../../../../docs/api/web.openapi.yaml",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    );
+    const externalContract: {
+      components: {
+        schemas: {
+          ExtHitlRespondAccepted: AnySchemaObject;
+          ExtHitlRespondResponse: AnySchemaObject;
+        };
+      };
+    } = parse(
+      await readFile(
+        new URL(
+          "../../../../../../../../../docs/api/external/operations.openapi.yaml",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    );
+    const ajv = new Ajv({ strict: false });
+    const validateWeb = ajv.compile(
+      webContract.paths["/api/runs/{runId}/hitl/{hitlRequestId}/respond"].post
+        .responses["202"].content["application/json"].schema,
+    );
+    const validateExternal = ajv.compile({
+      ...externalContract.components.schemas.ExtHitlRespondAccepted,
+      components: {
+        schemas: {
+          ExtHitlRespondResponse:
+            externalContract.components.schemas.ExtHitlRespondResponse,
+        },
+      },
+    });
+
+    expect(res.status).toBe(202);
+    expect(validateWeb(body), JSON.stringify(validateWeb.errors)).toBe(true);
+    expect(
+      validateExternal(body),
+      JSON.stringify(validateExternal.errors),
+    ).toBe(true);
+    expect(body).toEqual({
+      ok: true,
+      runStatus: "NeedsInputIdle",
+      state: "resume-queued",
+    });
+    const replay = await POST(
+      makePostRequest(runId, hitlId, token.secret, answer),
+      {
+        params: Promise.resolve({ runId, hitlRequestId: hitlId }),
+      },
+    );
+
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toEqual({
+      ok: true,
+      runStatus: "NeedsInputIdle",
+      idempotent: true,
+    });
+    const [source] = await db
+      .select()
+      .from(schemaModule.runs)
+      .where(eq(schemaModule.runs.id, runId));
+
+    expect(source.status).toBe("NeedsInputIdle");
+    expect(source.operationalTerminal).toBeNull();
   });
 
   it("D8: returns 403 when token lacks hitl:respond scope", async () => {

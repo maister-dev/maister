@@ -6799,6 +6799,7 @@ async function handleAgentQuestionResponse(
     {
       ok: true,
       runStatus: outcome.continuesSourceRun ? outcome.sourceRunStatus : "Done",
+      ...(outcome.continuesSourceRun ? { state: "resume-queued" } : {}),
     },
     { status: outcome.continuesSourceRun ? 202 : 200 },
   );

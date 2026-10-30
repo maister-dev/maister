@@ -5899,7 +5899,10 @@
     "acknowledge": "Acknowledge operation failure",
     "acknowledgeCleanup": "Acknowledge cleanup failure",
     "retryCleanup": "Retry workspace cleanup",
-    "actionFailed": "Action failed (HTTP {status}). Refresh and review the current revision.",
+    "operationAcknowledged": "Operation failure acknowledged.",
+    "cleanupAcknowledged": "Cleanup failure acknowledged.",
+    "cleanupScheduled": "Workspace cleanup scheduled.",
+    "actionFailed": "Action failed. Refresh and review the current revision.",
     "connectionFailed": "Connection failed. Refresh to reconcile the action before retrying.",
     "counts": {
       "scanned": "Scanned",
