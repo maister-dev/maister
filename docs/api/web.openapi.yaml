@@ -26876,7 +26876,7 @@ components:
         operationId:
           type: string
           format: uuid
-          description: Latest accepted or no-op operation owned by the current actor; an active own operation takes precedence. A locator only; receipt access rechecks the stronger permissions. Omitted for other actors.
+          description: Latest accepted or no-op operation owned by the current actor; an active local publication takes precedence, followed by a pending or unknown own push on its committed parent. A locator only; receipt access rechecks the stronger permissions. Omitted for other actors.
     ConfigPersistenceEmptyBody:
       type: object
       additionalProperties: false
@@ -26890,6 +26890,20 @@ components:
         previewId: &a1
           type: string
           format: uuid
+    ConfigPersistenceCleanupState:
+      type: string
+      enum:
+        - pending
+        - complete
+        - retained
+    ConfigPersistenceCleanupReason:
+      type: string
+      enum:
+        - unexpected_private_content
+        - cleanup_failed
+        - operation_busy
+        - recovery_required
+        - authority_changed
     ConfigPersistenceReady:
       type: object
       additionalProperties: false
@@ -26995,6 +27009,7 @@ components:
         - targetBranch
         - usedDefaultAuthor
         - pushState
+        - cleanupState
       properties:
         operationId: *a1
         state:
@@ -27026,6 +27041,10 @@ components:
             - stale
         reason:
           $ref: "#/components/schemas/ConfigPersistenceReason"
+        cleanupState:
+          $ref: "#/components/schemas/ConfigPersistenceCleanupState"
+        cleanupReason:
+          $ref: "#/components/schemas/ConfigPersistenceCleanupReason"
     ConfigPersistencePushPreview:
       type: object
       additionalProperties: false
@@ -27076,6 +27095,7 @@ components:
         - state
         - commitSha
         - localCommitPreserved
+        - cleanupState
       properties:
         operationId: *a1
         pushIntentId: *a1
@@ -27095,3 +27115,7 @@ components:
             - true
         reason:
           $ref: "#/components/schemas/ConfigPersistenceReason"
+        cleanupState:
+          $ref: "#/components/schemas/ConfigPersistenceCleanupState"
+        cleanupReason:
+          $ref: "#/components/schemas/ConfigPersistenceCleanupReason"

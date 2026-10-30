@@ -9,12 +9,12 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { createServer } from "node:net";
+import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import {
   acquireRepositoryFence,
@@ -309,6 +309,216 @@ it("IT-CPC-10: two processes share the common-directory fence, unrelated reposit
       }
     }
   } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("IT-CPC-04: module reload cannot adopt a live same-process ownership fence", async () => {
+  const root = await mkdtemp(join(tmpdir(), "config-fence-reload-"));
+  const operationId = randomUUID();
+  let first: RepositoryFence | undefined;
+  let unexpected: RepositoryFence | undefined;
+
+  try {
+    await execute("git", ["init", "-b", "main", root]);
+    first = await acquireRepositoryFence(root, operationId);
+    const before = await readFile(
+      join(root, ".git", "maister-config-mutation.lock", "owner.json"),
+      "utf8",
+    );
+
+    vi.resetModules();
+    const reloaded = await import("../repository-lock");
+    const attempt = reloaded
+      .acquireRepositoryFence(root, operationId)
+      .then((lease) => {
+        unexpected = lease;
+
+        return lease;
+      });
+
+    await expect(attempt).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "operation_busy" },
+    });
+    expect(
+      await readFile(
+        join(root, ".git", "maister-config-mutation.lock", "owner.json"),
+        "utf8",
+      ),
+    ).toBe(before);
+  } finally {
+    if (unexpected) {
+      await unexpected.release();
+      first?.retain();
+    } else await first?.release();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("IT-CPC-10: an owned hook child cannot outlive Git unnoticed", async () => {
+  const root = await mkdtemp(join(tmpdir(), "config-bg-"));
+  const socketPath = join(root, "gate.sock");
+  const server = createServer();
+  const operationId = randomUUID();
+  let fence: RepositoryFence | undefined;
+  let socket: Socket | undefined;
+
+  try {
+    const listening = once(server, "listening");
+
+    server.listen(socketPath);
+    await listening;
+    await execute("git", ["init", "-b", "main", root]);
+    await git(root, ["config", "core.hooksPath", join(root, ".git", "hooks")]);
+    const background = `const s=require('node:net').createConnection(${JSON.stringify(socketPath)},()=>{s.write('ready');process.send('ready');});s.on('end',()=>process.exit(0));setTimeout(()=>process.exit(1),10000);`;
+    const hook = `#!${process.execPath}\nconst c=require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(background)}],{stdio:['ignore','ignore','ignore','ipc']});c.once('message',()=>{c.disconnect();c.unref();process.exit(0);});c.once('error',()=>process.exit(1));setTimeout(()=>process.exit(1),10000);\n`;
+
+    await writeFile(join(root, ".git", "hooks", "post-commit"), hook, {
+      mode: 0o700,
+    });
+    fence = await acquireRepositoryFence(root, operationId);
+    const connected = once(server, "connection");
+    const outcome = fence
+      .run(() =>
+        git(root, [
+          "-c",
+          "user.name=Test",
+          "-c",
+          "user.email=test@example.invalid",
+          "commit",
+          "--allow-empty",
+          "-m",
+          "owned background",
+        ]),
+      )
+      .then(
+        () => ({ ok: true, error: null }),
+        (error: unknown) => ({ ok: false, error }),
+      );
+
+    socket = (await connected)[0] as Socket;
+    await once(socket, "data");
+    const result = await outcome;
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatchObject({
+      code: "EXECUTOR_UNAVAILABLE",
+      details: { reason: "recovery_required" },
+    });
+    expect((await git(root, ["log", "-1", "--format=%s"])).trim()).toBe(
+      "owned background",
+    );
+  } finally {
+    if (socket && !socket.destroyed) {
+      const closed = once(socket, "close");
+
+      socket.end();
+      await closed;
+    }
+    if (fence)
+      await expect
+        .poll(
+          async () => {
+            try {
+              await fence!.release();
+
+              return true;
+            } catch (error) {
+              if ((error as { code?: string }).code === "CONFLICT")
+                return false;
+              throw error;
+            }
+          },
+          { timeout: 10000 },
+        )
+        .toBe(true);
+    if (server.listening)
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("IT-CPC-10: index reservation retirement removes only the exact owned hard link", async () => {
+  const root = await mkdtemp(join(tmpdir(), "config-index-reservation-"));
+  const id = randomUUID();
+  let fence: RepositoryFence | undefined;
+
+  try {
+    await execute("git", ["init", "-b", "main", root]);
+    fence = await acquireRepositoryFence(root, id);
+    await fence.run(() => fence!.reserveIndex());
+    await writeFile(join(root, "operator.txt"), "preserve operator work\n");
+    expect(
+      (await fence.run(() => gitResult(root, ["add", "operator.txt"]))).code,
+    ).not.toBe(0);
+    fence.retain();
+    fence = await acquireRepositoryFence(root, id);
+    await expect(
+      readFile(join(root, ".git", "index.lock")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await fence.release();
+    fence = undefined;
+    await git(root, ["add", "operator.txt"]);
+    expect(await readFile(join(root, "operator.txt"), "utf8")).toBe(
+      "preserve operator work\n",
+    );
+  } finally {
+    fence?.retain();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("IT-CPC-08/10: a foreign index lock collision is retained and never removed on release", async () => {
+  const root = await mkdtemp(join(tmpdir(), "config-index-collision-"));
+  let fence: RepositoryFence | undefined;
+
+  try {
+    await execute("git", ["init", "-b", "main", root]);
+    fence = await acquireRepositoryFence(root, randomUUID());
+    await writeFile(join(root, ".git", "index.lock"), "foreign Git lock\n");
+    await expect(fence.run(() => fence!.reserveIndex())).rejects.toMatchObject({
+      details: { reason: "recovery_required" },
+    });
+    await fence.release();
+    fence = undefined;
+    expect(await readFile(join(root, ".git", "index.lock"), "utf8")).toBe(
+      "foreign Git lock\n",
+    );
+  } finally {
+    fence?.retain();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("IT-CPC-10: a replacement index lock is preserved until explicit operator resolution", async () => {
+  const root = await mkdtemp(join(tmpdir(), "config-index-replacement-"));
+  const id = randomUUID();
+  let fence: RepositoryFence | undefined;
+
+  try {
+    await execute("git", ["init", "-b", "main", root]);
+    fence = await acquireRepositoryFence(root, id);
+    await fence.run(() => fence!.reserveIndex());
+    await rm(join(root, ".git", "index.lock"));
+    await writeFile(join(root, ".git", "index.lock"), "replacement owner\n");
+    fence.retain();
+    fence = undefined;
+    await expect(acquireRepositoryFence(root, id)).rejects.toMatchObject({
+      code: "CONFLICT",
+    });
+    expect(await readFile(join(root, ".git", "index.lock"), "utf8")).toBe(
+      "replacement owner\n",
+    );
+    // The fixture simulates the operator resolving their own replacement lock.
+    await rm(join(root, ".git", "index.lock"));
+    fence = await acquireRepositoryFence(root, id);
+    await fence.release();
+    fence = undefined;
+  } finally {
+    fence?.retain();
     await rm(root, { recursive: true, force: true });
   }
 });

@@ -1,410 +1,457 @@
-import { execFile } from "node:child_process";
+import type { AnySchema } from "ajv";
+import type {
+  ConfigPreview,
+  ConfigReceipt,
+  ConfigStatus,
+} from "@/lib/project-config-persistence/contracts";
+
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { promisify } from "node:util";
+import { join, resolve } from "node:path";
 
+import SwaggerParser from "@apidevtools/swagger-parser";
+import Ajv from "ajv";
 import { eq } from "drizzle-orm";
-import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { NextRequest } from "next/server";
-import {
-  afterAll,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
-import * as schemaModule from "@/lib/db/schema";
+import { POST } from "@/app/api/projects/[slug]/persist-config/route";
 import { requireActiveSession } from "@/lib/authz";
 import { MaisterError } from "@/lib/errors";
-import { serializeProjectConfig } from "@/lib/packages/yaml-writeback";
+import { projectMembers, projects, users } from "@/lib/db/schema";
+import { git } from "@/lib/project-config-persistence/git";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 
-const execFileAsync = promisify(execFile);
-const schema = schemaModule as unknown as Record<string, any>;
+let database: StartedPostgresTestDb;
+let root: string;
+const actorUserId = randomUUID();
+let actingUserId = actorUserId;
+let schemas: Record<string, AnySchema>;
+const ajv = new Ajv({ strict: false, validateFormats: false });
+const priorWorktrees = process.env.MAISTER_WORKTREES_ROOT;
 
-let testDatabase: StartedPostgresTestDb;
-let db: NodePgDatabase;
-let tmpRoot: string;
-let gitConfigStub: string;
-let taskKeySeq = 0;
-
-vi.mock("@/lib/authz", () => ({
-  requireActiveSession: vi.fn(async () => ({
-    id: "usr_admin",
-    role: "admin",
-    mustChangePassword: false,
-  })),
-  requireProjectAction: vi.fn(async () => undefined),
+vi.mock("@/lib/db/client", async (original) => ({
+  ...(await original<typeof import("@/lib/db/client")>()),
+  getDb: () => database.db,
 }));
+vi.mock("@/lib/authz", async (original) => {
+  const actual = await original<typeof import("@/lib/authz")>();
 
-vi.mock("@/lib/db/client", () => ({
-  getDb: () => db,
-}));
-
-let POST: typeof import("@/app/api/projects/[slug]/persist-config/route").POST;
-
-function persistReq(body?: Record<string, unknown>): NextRequest {
-  return new NextRequest("http://localhost/api/projects/p/persist-config", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    ...(body ? { body: JSON.stringify(body) } : {}),
-  });
-}
-
-function callPersist(
-  slug: string,
-  body?: Record<string, unknown>,
-): Promise<Response> {
-  return POST(persistReq(body), {
-    params: Promise.resolve({ slug }),
-  }) as unknown as Promise<Response>;
-}
-
-async function git(repo: string, args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync("git", ["-C", repo, ...args]);
-
-  return stdout.trim();
-}
-
-// A temp git repo with controllable branch / author / initial-commit / dirtiness.
-async function initRepo(opts: {
-  branch?: string;
-  author?: boolean;
-  initialCommit?: boolean;
-  dirty?: boolean;
-}): Promise<string> {
-  const dir = await mkdtemp(join(tmpRoot, "repo-"));
-
-  await git(dir, ["init", "-b", opts.branch ?? "main"]);
-  if (opts.author) {
-    await git(dir, ["config", "user.name", "Test User"]);
-    await git(dir, ["config", "user.email", "test@example.com"]);
-  }
-  if (opts.initialCommit) {
-    await writeFile(join(dir, "README.md"), "# test\n");
-    await git(dir, ["add", "README.md"]);
-    await git(dir, [
-      "-c",
-      "user.name=seed",
-      "-c",
-      "user.email=seed@example.com",
-      "commit",
-      "-m",
-      "init",
-    ]);
-  }
-  if (opts.dirty) {
-    await writeFile(join(dir, "dirty.txt"), "uncommitted\n");
-  }
-
-  return dir;
-}
-
-async function seedProject(opts: {
-  repoPath: string;
-  mainBranch?: string;
-  maisterYamlPath?: string | null;
-  name?: string;
-}): Promise<{ id: string; slug: string }> {
-  const id = randomUUID();
-  const slug = `proj-${id.slice(0, 8)}`;
-
-  taskKeySeq += 1;
-  await db.insert(schema.projects).values({
-    id,
-    slug,
-    name: opts.name ?? "My App",
-    repoPath: opts.repoPath,
-    mainBranch: opts.mainBranch ?? "main",
-    branchPrefix: "maister/",
-    maisterYamlPath: opts.maisterYamlPath ?? null,
-    taskKey: `PCFG${taskKeySeq}`,
-  });
-
-  return { id, slug };
-}
-
-function expectedYaml(name = "My App"): string {
-  return serializeProjectConfig(
-    {
-      name,
-      mainBranch: "main",
-      branchPrefix: "maister/",
-      defaultRunnerId: null,
-      promotionMode: null,
-    },
-    { flows: [], packages: [] },
-  );
-}
+  return {
+    ...actual,
+    requireActiveSession: vi.fn(async () => ({
+      id: actingUserId,
+      role: "admin",
+      mustChangePassword: false,
+    })),
+    requireProjectAction: (
+      projectId: string,
+      action: Parameters<typeof actual.requireProjectAction>[1],
+    ) => actual.requireProjectActionForUser(actingUserId, projectId, action),
+  };
+});
 
 beforeAll(async () => {
-  testDatabase = await startMainPostgresTestDb({
-    databaseName: "persist_test",
+  database = await startMainPostgresTestDb({ databaseName: "config_http" });
+  root = await mkdtemp(join(tmpdir(), "config-http-"));
+  process.env.MAISTER_WORKTREES_ROOT = join(root, "private");
+  await database.db.insert(users).values({
+    id: actorUserId,
+    email: `${actorUserId}@example.invalid`,
+    role: "admin",
+    accountStatus: "active",
+    mustChangePassword: false,
   });
+  const api = await SwaggerParser.dereference(
+    resolve("../docs/api/web.openapi.yaml"),
+  );
 
-  db = testDatabase.db;
-
-  tmpRoot = await mkdtemp(join(tmpdir(), "persist-config-"));
-
-  // Determinism: neutralize host global/system git config so a repo with no
-  // LOCAL author config is genuinely "unset" (default-identity path), and a
-  // repo WITH local config is genuinely "configured".
-  gitConfigStub = join(tmpRoot, "gitconfig-empty");
-  await writeFile(gitConfigStub, "");
-  process.env.GIT_CONFIG_GLOBAL = gitConfigStub;
-  process.env.GIT_CONFIG_SYSTEM = gitConfigStub;
-
-  ({ POST } = await import("@/app/api/projects/[slug]/persist-config/route"));
+  schemas = (
+    api as unknown as { components: { schemas: Record<string, AnySchema> } }
+  ).components.schemas;
 }, 180_000);
 
 afterAll(async () => {
-  await testDatabase?.stop();
-  if (tmpRoot) await rm(tmpRoot, { recursive: true, force: true });
+  if (priorWorktrees === undefined) delete process.env.MAISTER_WORKTREES_ROOT;
+  else process.env.MAISTER_WORKTREES_ROOT = priorWorktrees;
+  await database?.stop();
+  await rm(root, { recursive: true, force: true });
 });
 
-beforeEach(async () => {
-  await db.delete(schema.projects);
+async function seed(): Promise<{ id: string; slug: string; repo: string }> {
+  const id = randomUUID();
+  const slug = `config-${id}`;
+  const repo = join(root, id);
+
+  await mkdir(repo);
+  await git(repo, ["init", "-b", "main"]);
+  await git(repo, ["config", "user.name", "HTTP Config"]);
+  await git(repo, ["config", "user.email", "http@example.invalid"]);
+  await database.db.insert(projects).values({
+    id,
+    slug,
+    name: "Runtime",
+    repoPath: repo,
+    taskKey: `HC${id.slice(0, 8).toUpperCase()}`,
+  });
+
+  return { id, slug, repo };
+}
+
+function request(body: unknown): NextRequest {
+  return new NextRequest("http://localhost/api/projects/p/persist-config", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+function contract<T>(name: string, value: unknown): T {
+  const validate = ajv.compile(schemas[name]!);
+
+  expect(validate(value), JSON.stringify(validate.errors)).toBe(true);
+
+  return value as T;
+}
+
+it("IT-CPC-09: authenticates before diagnostics and rejects the legacy unreviewed save body without effects", async () => {
+  const project = await seed();
+
+  vi.mocked(requireActiveSession).mockRejectedValueOnce(
+    new MaisterError("UNAUTHENTICATED", "Sign in"),
+  );
+  const unauthorized = await POST(request({ push: true }), {
+    params: Promise.resolve({ slug: project.slug }),
+  });
+
+  expect(unauthorized.status).toBe(401);
+  const refused = await POST(request({ push: false }), {
+    params: Promise.resolve({ slug: project.slug }),
+  });
+
+  expect(refused.status).toBe(422);
+  contract("MaisterErrorBody", await refused.json());
+  expect(await git(project.repo, ["status", "--porcelain=v1"])).toBe("");
+  await expect(
+    readFile(join(project.repo, "maister.yaml")),
+  ).rejects.toMatchObject({ code: "ENOENT" });
 });
 
-describe("POST /api/projects/[slug]/persist-config (ADR-093, integration)", () => {
-  // [FIX] Codex F4: the session gate runs BEFORE the body is parsed. A bad body
-  // (non-boolean push) would be a 422 if parsed first; auth-first makes the 401
-  // win, so the route contract is not leaked before authentication.
-  it("authenticates before parsing the body (unauthenticated + bad body → 401, not 422)", async () => {
-    vi.mocked(requireActiveSession).mockRejectedValueOnce(
-      new MaisterError("UNAUTHENTICATED", "sign in"),
-    );
+it("IT-CPC-02/04/09: real API review, dedicated commit, scalar status, repeat, no-op and actor-bound receipts match OpenAPI", async () => {
+  const { GET } =
+    await import("@/app/api/projects/[slug]/persist-config/route");
+  const { POST: previewPost } =
+    await import("@/app/api/projects/[slug]/persist-config/preview/route");
+  const { GET: receiptGet } =
+    await import("@/app/api/projects/[slug]/persist-config/[operationId]/route");
+  const project = await seed();
+  const params = { params: Promise.resolve({ slug: project.slug }) };
+  const statusResponse = await GET(
+    new NextRequest("http://localhost/"),
+    params,
+  );
 
-    const res = await callPersist("any-slug", { push: "not-a-boolean" });
+  expect(statusResponse.status).toBe(200);
+  contract<ConfigStatus>(
+    "ConfigPersistenceStatus",
+    await statusResponse.json(),
+  );
+  const previewResponse = await previewPost(request({}), params);
 
-    expect(res.status).toBe(401);
+  expect(previewResponse.status).toBe(200);
+  const preview = contract<ConfigPreview>(
+    "ConfigPersistencePreview",
+    await previewResponse.json(),
+  );
+
+  expect(preview.kind).toBe("ready");
+  if (preview.kind !== "ready") throw new Error("Expected ready review");
+  expect(preview.diff).toContain("+++ b/maister.yaml");
+  expect(await git(project.repo, ["status", "--porcelain=v1"])).toBe("");
+  const committed = await POST(
+    request({ previewId: preview.previewId }),
+    params,
+  );
+
+  expect(committed.status).toBe(200);
+  const receipt = contract<ConfigReceipt>(
+    "PersistConfigResponse",
+    await committed.json(),
+  );
+
+  expect(receipt).toMatchObject({
+    state: "committed",
+    pushState: "not_requested",
+    cleanupState: "complete",
   });
+  const readParams = {
+    params: Promise.resolve({
+      slug: project.slug,
+      operationId: preview.previewId,
+    }),
+  };
+  const read = await receiptGet(
+    new NextRequest("http://localhost/"),
+    readParams,
+  );
 
-  it("happy path: writes + commits maister.yaml with the host author, flips the DB", async () => {
-    const repo = await initRepo({ author: true, initialCommit: true });
-    const { id, slug } = await seedProject({ repoPath: repo });
+  expect(read.headers.get("cache-control")).toBe("no-store");
+  expect(
+    contract<ConfigReceipt>("PersistConfigResponse", await read.json()),
+  ).toEqual(receipt);
+  expect(
+    contract<ConfigReceipt>(
+      "PersistConfigResponse",
+      await (
+        await POST(request({ previewId: preview.previewId }), params)
+      ).json(),
+    ).commitSha,
+  ).toBe(receipt.commitSha);
+  await database.db
+    .update(projects)
+    .set({ name: "Repeated" })
+    .where(eq(projects.id, project.id));
+  const repeated = contract<ConfigPreview>(
+    "ConfigPersistencePreview",
+    await (await previewPost(request({}), params)).json(),
+  );
 
-    const res = await callPersist(slug);
-    const body = await res.json();
+  if (repeated.kind !== "ready") throw new Error("Expected repeat review");
+  expect(
+    (await POST(request({ previewId: repeated.previewId }), params)).status,
+  ).toBe(200);
+  expect(
+    contract<ConfigPreview>(
+      "ConfigPersistencePreview",
+      await (await previewPost(request({}), params)).json(),
+    ).kind,
+  ).toBe("noop");
+  expect(
+    (await git(project.repo, ["rev-list", "--count", "HEAD"])).trim(),
+  ).toBe("2");
+  expect(await git(project.repo, ["status", "--porcelain=v1"])).toBe("");
+  const foreignId = randomUUID();
 
-    expect(res.status).toBe(200);
-    expect(body).toEqual({ ok: true });
-
-    // File materialized + committed, schema-valid, content == serializer output.
-    const onDisk = await readFile(join(repo, "maister.yaml"), "utf8");
-
-    expect(onDisk).toBe(expectedYaml());
-    expect(await git(repo, ["show", "HEAD:maister.yaml"])).toBe(
-      expectedYaml().trimEnd(),
-    );
-    // The configured host author was used — NOT the default identity.
-    expect(await git(repo, ["log", "-1", "--format=%an|%ae"])).toBe(
-      "Test User|test@example.com",
-    );
-
-    const rows = await db
-      .select()
-      .from(schema.projects)
-      .where(eq(schema.projects.id, id));
-
-    expect(rows[0].maisterYamlPath).toBe(join(repo, "maister.yaml"));
+  await database.db.insert(users).values({
+    id: foreignId,
+    email: `${foreignId}@example.invalid`,
+    role: "admin",
+    accountStatus: "active",
+    mustChangePassword: false,
   });
+  actingUserId = foreignId;
+  try {
+    expect(
+      (await receiptGet(new NextRequest("http://localhost/"), readParams))
+        .status,
+    ).toBe(404);
+  } finally {
+    actingUserId = actorUserId;
+  }
+});
 
-  it("unset author: commits with the default identity on an unborn HEAD and flags usedDefaultAuthor", async () => {
-    // No initial commit -> unborn HEAD (the new-empty onboarding case); no
-    // local author config + neutralized global/system -> unset.
-    const repo = await initRepo({ author: false, initialCommit: false });
-    const { id, slug } = await seedProject({ repoPath: repo });
+it("IT-CPC-09: owner access, viewer scalar status, strict bodies and revoked confirmation enforce the real authorization boundary", async () => {
+  const { GET } =
+    await import("@/app/api/projects/[slug]/persist-config/route");
+  const { POST: previewPost } =
+    await import("@/app/api/projects/[slug]/persist-config/preview/route");
+  const { POST: recoverPost } =
+    await import("@/app/api/projects/[slug]/persist-config/[operationId]/recover/route");
+  const project = await seed();
+  const owner = randomUUID();
 
-    const res = await callPersist(slug);
-    const body = await res.json();
+  await database.db.insert(users).values({
+    id: owner,
+    email: `${owner}@example.invalid`,
+    role: "member",
+    accountStatus: "active",
+    mustChangePassword: false,
+  });
+  await database.db
+    .insert(projectMembers)
+    .values({ projectId: project.id, userId: owner, role: "owner" });
+  actingUserId = owner;
+  const params = { params: Promise.resolve({ slug: project.slug }) };
 
-    expect(res.status).toBe(200);
-    expect(body).toEqual({ ok: true, usedDefaultAuthor: true });
-    expect(await git(repo, ["log", "-1", "--format=%an|%ae"])).toBe(
-      "maister|noreply@maister.local",
+  try {
+    for (const invalid of [
+      {},
+      null,
+      [],
+      { previewId: randomUUID(), push: false },
+      { previewId: "invalid" },
+      { huge: "x".repeat(4096) },
+    ]) {
+      const response = await POST(request(invalid), params);
+
+      expect(response.status).toBe(422);
+      contract("MaisterErrorBody", await response.json());
+    }
+    const reviewResponse = await previewPost(request({}), params);
+
+    expect(reviewResponse.status).toBe(200);
+    const review = contract<ConfigPreview>(
+      "ConfigPersistencePreview",
+      await reviewResponse.json(),
     );
 
-    const rows = await db
-      .select()
-      .from(schema.projects)
-      .where(eq(schema.projects.id, id));
+    if (review.kind !== "ready") throw new Error("Expected owner review");
+    const recoverParams = {
+      params: Promise.resolve({
+        slug: project.slug,
+        operationId: review.previewId,
+      }),
+    };
 
-    expect(rows[0].maisterYamlPath).toBe(join(repo, "maister.yaml"));
-  });
-
-  it("already persisted -> 409 CONFLICT", async () => {
-    const repo = await initRepo({ author: true, initialCommit: true });
-    const { slug } = await seedProject({
-      repoPath: repo,
-      maisterYamlPath: join(repo, "maister.yaml"),
+    expect((await recoverPost(request({}), recoverParams)).status).toBe(409);
+    await database.db
+      .update(projectMembers)
+      .set({ role: "viewer" })
+      .where(eq(projectMembers.userId, owner));
+    expect(
+      (await GET(new NextRequest("http://localhost/"), params)).status,
+    ).toBe(200);
+    expect(
+      (await POST(request({ previewId: review.previewId }), params)).status,
+    ).toBe(403);
+    expect(
+      (await previewPost(request({ malformed: true }), params)).status,
+    ).toBe(403);
+    expect(await git(project.repo, ["status", "--porcelain=v1"])).toBe("");
+    await expect(
+      readFile(join(project.repo, "maister.yaml")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await database.db
+      .update(projectMembers)
+      .set({ role: "owner" })
+      .where(eq(projectMembers.userId, owner));
+    expect(
+      (await POST(request({ previewId: review.previewId }), params)).status,
+    ).toBe(200);
+    const other = await seed();
+    const foreign = await POST(request({ previewId: review.previewId }), {
+      params: Promise.resolve({ slug: other.slug }),
     });
 
-    const res = await callPersist(slug);
-    const body = await res.json();
+    expect(foreign.status).toBe(403);
+  } finally {
+    actingUserId = actorUserId;
+  }
+});
 
-    expect(res.status).toBe(409);
-    expect(body.code).toBe("CONFLICT");
+it("IT-CPC-05: separate HTTP push review and confirmation project actual results through OpenAPI", async () => {
+  const { POST: previewPost } =
+    await import("@/app/api/projects/[slug]/persist-config/preview/route");
+  const { POST: pushPreview } =
+    await import("@/app/api/projects/[slug]/persist-config/[operationId]/push/preview/route");
+  const { POST: pushPost } =
+    await import("@/app/api/projects/[slug]/persist-config/[operationId]/push/route");
+  const project = await seed();
+  const remote = join(root, `${project.id}.git`);
+
+  await mkdir(remote);
+  await git(remote, ["init", "--bare", "-b", "main"]);
+  await git(project.repo, ["remote", "add", "origin", `file://${remote}`]);
+  const params = { params: Promise.resolve({ slug: project.slug }) };
+  const review = contract<ConfigPreview>(
+    "ConfigPersistencePreview",
+    await (await previewPost(request({}), params)).json(),
+  );
+
+  if (review.kind !== "ready") throw new Error("Expected ready review");
+  const receipt = contract<ConfigReceipt>(
+    "PersistConfigResponse",
+    await (await POST(request({ previewId: review.previewId }), params)).json(),
+  );
+  const pushParams = {
+    params: Promise.resolve({
+      slug: project.slug,
+      operationId: review.previewId,
+    }),
+  };
+
+  expect((await pushPost(request({}), pushParams)).status).toBe(422);
+  const pushReviewResponse = await pushPreview(request({}), pushParams);
+
+  expect(pushReviewResponse.status).toBe(200);
+  const pushReview = contract<
+    import("@/lib/project-config-persistence/contracts").ConfigPushReview
+  >("ConfigPersistencePushPreview", await pushReviewResponse.json());
+  const pushedResponse = await pushPost(
+    request({ pushPreviewId: pushReview.pushPreviewId }),
+    pushParams,
+  );
+
+  expect(pushedResponse.status).toBe(200);
+  expect(
+    contract("ConfigPersistencePushResult", await pushedResponse.json()),
+  ).toMatchObject({
+    state: "succeeded",
+    commitSha: receipt.commitSha,
+    cleanupState: "complete",
   });
+  expect((await git(remote, ["rev-parse", "main"])).trim()).toBe(
+    receipt.commitSha,
+  );
+  const retryReview = contract<
+    import("@/lib/project-config-persistence/contracts").ConfigPushReview
+  >(
+    "ConfigPersistencePushPreview",
+    await (await pushPreview(request({}), pushParams)).json(),
+  );
 
-  it("wrong branch -> PRECONDITION, no write, DB stays null", async () => {
-    const repo = await initRepo({
-      author: true,
-      initialCommit: true,
-      branch: "develop",
-    });
-    const { id, slug } = await seedProject({
-      repoPath: repo,
-      mainBranch: "main",
-    });
-
-    const res = await callPersist(slug);
-    const body = await res.json();
-
-    expect(res.status).toBe(409);
-    expect(body.code).toBe("PRECONDITION");
-
-    const rows = await db
-      .select()
-      .from(schema.projects)
-      .where(eq(schema.projects.id, id));
-
-    expect(rows[0].maisterYamlPath).toBeNull();
-  });
-
-  it("dirty tree -> PRECONDITION", async () => {
-    const repo = await initRepo({
-      author: true,
-      initialCommit: true,
-      dirty: true,
-    });
-    const { id, slug } = await seedProject({ repoPath: repo });
-
-    const res = await callPersist(slug);
-    const body = await res.json();
-
-    expect(res.status).toBe(409);
-    expect(body.code).toBe("PRECONDITION");
-
-    const rows = await db
-      .select()
-      .from(schema.projects)
-      .where(eq(schema.projects.id, id));
-
-    expect(rows[0].maisterYamlPath).toBeNull();
-  });
-
-  it("detached HEAD -> PRECONDITION", async () => {
-    const repo = await initRepo({ author: true, initialCommit: true });
-
-    await git(repo, ["checkout", "--detach"]);
-    const { slug } = await seedProject({ repoPath: repo });
-
-    const res = await callPersist(slug);
-    const body = await res.json();
-
-    expect(res.status).toBe(409);
-    expect(body.code).toBe("PRECONDITION");
-  });
-
-  it("an unrelated committed maister.yaml -> PRECONDITION (never clobbered)", async () => {
-    const repo = await initRepo({ author: true, initialCommit: true });
-
-    await writeFile(
-      join(repo, "maister.yaml"),
-      "schemaVersion: 2\nother: true\n",
+  await database.pool.query(
+    `CREATE FUNCTION config_http_ack_fault() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id='${retryReview.pushPreviewId}' AND NEW.state='succeeded' THEN RAISE EXCEPTION 'injected receipt outage' USING ERRCODE='40001'; END IF; RETURN NEW; END; $$`,
+  );
+  await database.pool.query(
+    "CREATE TRIGGER config_http_ack_fault BEFORE UPDATE ON project_config_push_intents FOR EACH ROW EXECUTE FUNCTION config_http_ack_fault()",
+  );
+  try {
+    const unavailable = await pushPost(
+      request({ pushPreviewId: retryReview.pushPreviewId }),
+      pushParams,
     );
-    await git(repo, ["add", "maister.yaml"]);
-    await git(repo, [
-      "-c",
-      "user.name=seed",
-      "-c",
-      "user.email=seed@example.com",
-      "commit",
-      "-m",
-      "unrelated yaml",
-    ]);
-    const { id, slug } = await seedProject({ repoPath: repo });
 
-    const res = await callPersist(slug);
-    const body = await res.json();
+    expect(unavailable.status).toBe(503);
+    const error = await unavailable.json();
 
-    expect(res.status).toBe(409);
-    expect(body.code).toBe("PRECONDITION");
+    contract("MaisterErrorBody", error);
+    expect(error).toMatchObject({
+      code: "EXECUTOR_UNAVAILABLE",
+      details: { reason: "recovery_required" },
+    });
+    const noop = await previewPost(request({}), params);
 
-    const rows = await db
-      .select()
-      .from(schema.projects)
-      .where(eq(schema.projects.id, id));
-
-    expect(rows[0].maisterYamlPath).toBeNull();
-  });
-
-  it("DB-flip-fail recovery: a committed identical file with a null column reconciles by flipping only", async () => {
-    const repo = await initRepo({ author: true, initialCommit: true });
-
-    // Simulate a prior persist that committed the file but crashed before the
-    // DB flip: HEAD has the byte-identical serializer output, column is null.
-    await writeFile(join(repo, "maister.yaml"), expectedYaml());
-    await git(repo, ["add", "maister.yaml"]);
-    await git(repo, [
-      "-c",
-      "user.name=seed",
-      "-c",
-      "user.email=seed@example.com",
-      "commit",
-      "-m",
-      "persisted but crashed before flip",
-    ]);
-    const headBefore = await git(repo, ["rev-parse", "HEAD"]);
-    const { id, slug } = await seedProject({ repoPath: repo });
-
-    const res = await callPersist(slug);
-    const body = await res.json();
-
-    expect(res.status).toBe(200);
-    expect(body).toEqual({ ok: true });
-
-    // Reconcile flips the DB only — NO new commit.
-    expect(await git(repo, ["rev-parse", "HEAD"])).toBe(headBefore);
-
-    const rows = await db
-      .select()
-      .from(schema.projects)
-      .where(eq(schema.projects.id, id));
-
-    expect(rows[0].maisterYamlPath).toBe(join(repo, "maister.yaml"));
-  });
-
-  it("push requested but fails (no remote): 200 + pushWarning, DB still flipped", async () => {
-    const repo = await initRepo({ author: true, initialCommit: true });
-    const { id, slug } = await seedProject({ repoPath: repo });
-
-    const res = await callPersist(slug, { push: true });
-    const body = await res.json();
-
-    expect(res.status).toBe(200);
-    expect(body.ok).toBe(true);
-    expect(typeof body.pushWarning).toBe("string");
-    expect(body.pushWarning.length).toBeGreaterThan(0);
-
-    // Persist succeeded and is never rolled back by a push failure.
-    const rows = await db
-      .select()
-      .from(schema.projects)
-      .where(eq(schema.projects.id, id));
-
-    expect(rows[0].maisterYamlPath).toBe(join(repo, "maister.yaml"));
-    expect(await git(repo, ["show", "HEAD:maister.yaml"])).toBe(
-      expectedYaml().trimEnd(),
+    expect(
+      contract<ConfigPreview>("ConfigPersistencePreview", await noop.json())
+        .kind,
+    ).toBe("noop");
+    const { GET: statusGet } =
+      await import("@/app/api/projects/[slug]/persist-config/route");
+    const status = contract<ConfigStatus>(
+      "ConfigPersistenceStatus",
+      await (
+        await statusGet(new NextRequest("http://localhost/"), params)
+      ).json(),
     );
-  });
+
+    expect(status.operationId).toBe(review.previewId);
+  } finally {
+    await database.pool.query(
+      "DROP TRIGGER config_http_ack_fault ON project_config_push_intents",
+    );
+    await database.pool.query("DROP FUNCTION config_http_ack_fault()");
+  }
+  const { POST: recoverPost } =
+    await import("@/app/api/projects/[slug]/persist-config/[operationId]/recover/route");
+  const recovered = await recoverPost(request({}), pushParams);
+
+  expect(recovered.status).toBe(200);
+  expect(
+    contract<ConfigReceipt>("PersistConfigResponse", await recovered.json()),
+  ).toMatchObject({ state: "committed", pushState: "succeeded" });
 });

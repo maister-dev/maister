@@ -96,6 +96,9 @@ type OperationChange = Pick<
   | "committedSha"
   | "completedAt"
   | "errorReason"
+  | "cleanupState"
+  | "cleanupCheckedAt"
+  | "cleanupReason"
 > & { state: ConfigPersistState };
 
 export async function transitionConfigOperation(

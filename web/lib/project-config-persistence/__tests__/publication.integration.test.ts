@@ -317,3 +317,65 @@ it.each(["private-staging", "..private-staging"])(
     }
   },
 );
+
+it("IT-CPC-07: authentication-bearing package coordinates refuse export without file or network effects", async () => {
+  const { projectId, repo } = await seedProject();
+  const snapshot = await readExportSnapshot(database.db, projectId);
+
+  for (const source of [
+    "https://token@example.invalid/package",
+    "https://example.invalid/package?token=fixture",
+    "https://example.invalid/package#fixture",
+    "file://user@example.invalid/package",
+  ]) {
+    await expect(
+      assertExportablePackages({
+        ...snapshot.projection,
+        packages: [
+          {
+            id: "private-source",
+            source,
+            version: "v1",
+            resolvedRevision: "a".repeat(40),
+          },
+        ],
+      }),
+    ).rejects.toMatchObject({
+      code: "CONFIG",
+      details: { reason: "package_source_unexportable" },
+    });
+  }
+  expect(await git(repo, ["status", "--porcelain=v1"])).toBe("");
+});
+
+it("IT-CPC-04: global binary attributes cannot hide the proposed text diff", async () => {
+  const { repo } = await seedProject();
+  const attributes = join(root, `${randomUUID()}-attributes`);
+  const configuration = join(root, `${randomUUID()}-gitconfig`);
+
+  await writeFile(attributes, "* -diff\n");
+  await writeFile(
+    configuration,
+    `[core]\nattributesFile = ${JSON.stringify(attributes)}\n`,
+  );
+  const prior = process.env.GIT_CONFIG_GLOBAL;
+
+  process.env.GIT_CONFIG_GLOBAL = configuration;
+  try {
+    const review = await writeConfigReviewFiles({
+      operationId: randomUUID(),
+      repoPath: repo,
+      source: null,
+      proposed: "schemaVersion: 2\nproject:\n  name: Reviewed\n",
+      manifestMode: null,
+    });
+
+    expect(review.diff).toContain("+schemaVersion: 2");
+    expect(review.diff).toContain("+  name: Reviewed");
+    expect(review.diff).not.toContain("Binary files");
+    expect(await git(repo, ["status", "--porcelain=v1"])).toBe("");
+  } finally {
+    if (prior === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+    else process.env.GIT_CONFIG_GLOBAL = prior;
+  }
+});

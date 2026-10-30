@@ -8841,6 +8841,21 @@ export const projectConfigPersistOperations = pgTable(
     committedSha: text("committed_sha"),
     completedAt: timestamp("completed_at", { withTimezone: true }),
     errorReason: text("error_reason"),
+    cleanupState: text("cleanup_state", {
+      enum: ["pending", "complete", "retained"],
+    })
+      .notNull()
+      .default("pending"),
+    cleanupCheckedAt: timestamp("cleanup_checked_at", { withTimezone: true }),
+    cleanupReason: text("cleanup_reason", {
+      enum: [
+        "unexpected_private_content",
+        "cleanup_failed",
+        "operation_busy",
+        "recovery_required",
+        "authority_changed",
+      ],
+    }),
     usedDefaultAuthor: boolean("used_default_author").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
@@ -8865,6 +8880,14 @@ export const projectConfigPersistOperations = pgTable(
       t.createdAt,
     ),
     index("project_config_persist_recovery_idx").on(t.state, t.id),
+    check(
+      "project_config_persist_cleanup_check",
+      sql`
+      ${t.cleanupState} IN ('pending','complete','retained')
+      AND (${t.cleanupState} = 'pending' OR ${t.cleanupCheckedAt} IS NOT NULL)
+      AND (${t.cleanupState} <> 'retained' OR ${t.cleanupReason} IS NOT NULL)
+      AND (${t.cleanupReason} IS NULL OR ${t.cleanupReason} IN ('unexpected_private_content','cleanup_failed','operation_busy','recovery_required','authority_changed'))`,
+    ),
     check(
       "project_config_persist_state_check",
       sql`${t.state} IN ('previewed','preparing','prepared','publishing','committed','noop','stale','failed','recovery_required')`,
@@ -8899,8 +8922,26 @@ export const projectConfigPushIntents = pgTable(
     snapshotDigest: text("snapshot_digest").notNull(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    ownerToken: text("owner_token"),
+    ownerProcessId: integer("owner_process_id"),
+    processGroup: integer("process_group"),
     completedAt: timestamp("completed_at", { withTimezone: true }),
     errorReason: text("error_reason"),
+    cleanupState: text("cleanup_state", {
+      enum: ["pending", "complete", "retained"],
+    })
+      .notNull()
+      .default("pending"),
+    cleanupCheckedAt: timestamp("cleanup_checked_at", { withTimezone: true }),
+    cleanupReason: text("cleanup_reason", {
+      enum: [
+        "unexpected_private_content",
+        "cleanup_failed",
+        "operation_busy",
+        "recovery_required",
+        "authority_changed",
+      ],
+    }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -8926,12 +8967,26 @@ export const projectConfigPushIntents = pgTable(
       t.createdAt,
     ),
     check(
+      "project_config_push_cleanup_check",
+      sql`
+      ${t.cleanupState} IN ('pending','complete','retained')
+      AND (${t.cleanupState} = 'pending' OR ${t.cleanupCheckedAt} IS NOT NULL)
+      AND (${t.cleanupState} <> 'retained' OR ${t.cleanupReason} IS NOT NULL)
+      AND (${t.cleanupReason} IS NULL OR ${t.cleanupReason} IN ('unexpected_private_content','cleanup_failed','operation_busy','recovery_required','authority_changed'))`,
+    ),
+    check(
       "project_config_push_state_check",
       sql`${t.state} IN ('previewed','pending','succeeded','failed','unknown','stale')`,
     ),
     check(
       "project_config_push_digest_check",
       sql`${t.snapshotDigest} ~ '^[0-9a-f]{64}$'`,
+    ),
+    check(
+      "project_config_push_owner_check",
+      sql`
+      (${t.state} NOT IN ('pending','unknown') OR (${t.ownerToken} IS NOT NULL AND ${t.ownerProcessId} IS NOT NULL AND ${t.ownerProcessId} > 0))
+      AND (${t.processGroup} IS NULL OR ${t.processGroup} > 0)`,
     ),
     check(
       "project_config_push_receipt_check",

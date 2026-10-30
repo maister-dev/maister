@@ -1345,6 +1345,20 @@
       "when": 1793284759150,
       "tag": "0195_project_config_publication_guard",
       "breakpoints": true
+    },
+    {
+      "idx": 196,
+      "version": "7",
+      "when": 1793306820970,
+      "tag": "0196_project_config_install_guard",
+      "breakpoints": true
+    },
+    {
+      "idx": 197,
+      "version": "7",
+      "when": 1793310013043,
+      "tag": "0197_project_config_cleanup_ownership",
+      "breakpoints": true
     }
   ]
 }

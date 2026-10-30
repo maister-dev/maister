@@ -91,7 +91,7 @@ refresh writes. A scalar status is observed or explicitly cached/unverified.
    if death preceded ref/DB acknowledgement. Never manufacture another commit
    before resolving that evidence.
 4. Start `git update-ref --stdin`: `start`, conditional `update HEAD <new>
-   <old>` (or `create HEAD <new>` on unborn HEAD), then `prepare`. Git holds
+<old>` (or `create HEAD <new>` on unborn HEAD), then `prepare`. Git holds
    HEAD and referent locks. Re-read symbolic HEAD after prepare; abort unless it
    is exactly the reviewed main-branch ref. The redundant `symref-verify HEAD`
    transaction command is not used because Git rejects overlapping HEAD updates.
@@ -142,7 +142,7 @@ terminal result from failed reads. No new watcher, polling loop or scheduler job
 
 ## Wire and storage bounds (Designed)
 
-Manifest limit is 1 MiB UTF-8; complete diff limit is 2 MiB; preview lifetime is
+Manifest limit is 1 MiB valid UTF-8 (replacement decoding is refused as unsupported checkout); complete diff limit is 2 MiB; preview lifetime is
 10 minutes. Never issue a confirmable truncated review. Revisions are decimal
 strings on the wire. Git commands use a 30-second bounded execution window;
 remote read-only inspection has at most three attempts with 250/1000 ms delays
@@ -165,7 +165,7 @@ project; cleanup removes only proven operation-owned private material.
 Scalar status may include the current actor's operation locator so an interrupted
 save remains discoverable after reload. It never includes another actor's locator
 or source content; the receipt route rechecks both stronger permissions. An active
-own intent takes precedence over the latest own terminal receipt.
+own local intent takes precedence, then a pending/unknown own push on its committed parent, then the latest own terminal/no-op receipt. A later no-op must not hide an accepted push that still needs recovery.
 
 A no-op review records a terminal no-op and may repair a null manifest locator to
 the proven committed root manifest under a short revision-checked transaction.
@@ -211,6 +211,33 @@ outside MAIster; path repair never becomes persistence-status authority.
 - **EDGE-CPC-19:** Exact full-diff byte/size boundaries; UTF-8/newline/mode preservation; empty or malformed bodies; broken filesystem/Git/DB/remote reads produce explicit unavailable/refusal rather than absence/no-op. Owner: IT-CPC-04/07 plus actual-response schema samples; T3.1/T6.1. Refusal uses CONFIG/PRECONDITION/CONFLICT or explicit EXECUTOR_UNAVAILABLE; exact wire outcomes are in [OpenAPI](../api/web.openapi.yaml).
 - **EDGE-CPC-20:** EN/RU parity; cancel before confirm; busy double-submit/Escape/backdrop; timeout then reopen same receipt; focus restore; no-op; banner dismissal; repeated durable action; separate push review and local-success/push-failure feedback. Owner: E2E-CPC-02/03/04; T9.1. Refusal uses CONFIG/PRECONDITION/CONFLICT or explicit EXECUTOR_UNAVAILABLE; exact wire outcomes are in [OpenAPI](../api/web.openapi.yaml).
 
+## Private publication cleanup and independent push ownership
+
+The publication and push rows each add `cleanup_state` (`pending | complete | retained`, default `pending`), nullable `cleanup_checked_at`, and nullable bounded `cleanup_reason`. A completed or retained cleanup requires a check timestamp; retained requires an actionable reason. These fields describe private host output only and never alter the committed/push outcome. Failure to remove staging cannot undo a successful local commit. A retry may move retained cleanup back to pending and then complete after verifying the same ownership markers. No cleanup deletes unknown files, changes a caller index, removes unknown Git locks or drops an unresolved operation row.
+
+Push rows additionally add nullable `owner_token`, `owner_process_id`, and `process_group`. Pending/unknown rows require a non-null token and positive owner PID; a present group must be positive. Cleanup reasons are exactly `unexpected_private_content`, `cleanup_failed`, `operation_busy`, `recovery_required`, or `authority_changed`. A short compare-and-set transaction claims a reviewed push, then the detached Git gate records its process group durably before permitting network effects. Pending/unknown recovery cannot adopt while the original web owner or any non-zombie group member remains live. Same-process ownership also uses a live invocation registry. Push issuance does not hold the repository mutation fence: a failed or uncertain push leaves the local commit and later independent local saves available. The existing active-destination constraint still prevents a duplicate attempt for the same operation and destination until the earlier outcome is settled.
+
+The push snapshot adds the captured effective remote URL, effective resolved pre-push hook path/digest, and a server-owned private content directory. Credential-bearing HTTP URLs and ambiguous chained URL rewrites are refused before storing a review. The displayed URL is redacted; no response contains the host-private locator. Preview performs only bounded read-only remote discovery; it never fetches objects, pushes or creates a commit. Missing local ancestry proof requires explicit operator fetch before a fresh preview.
+
+At issuance, use the immutable commit SHA and captured effective URL plus destination ref. A private pre-push wrapper accepts exactly one update and checks Git's observed remote old OID against the reviewed baseline. It delegates the original configured hook with Git's actual original argv and stdin unchanged. Baseline disagreement refuses the update; normal server fast-forward/CAS rules remain enabled. No force flag, force-with-lease, policy bypass or moving branch source is used. When acknowledgement is lost, settle by read-only remote observation after the recorded group retires; never reissue an unknown push. Startup can inspect accepted outcomes but never initiate a push.
+
+API receipts expose `cleanupState` and optional `cleanupReason` (stable allow-listed reason keys); push results expose the equivalent push cleanup status. These are required fields in the deployed new API family. Current runtime settings and the manifest schema do not gain any of these operational fields.
+
+Package installation retry is an additional export writer: `installPackageRevision` can update an existing install's status and manifest metadata, including `sourceSubpath`. Add an install-update trigger covering source URL, name, version label, resolved revision, exported sourceSubpath and package status. For each currently attached project, lock/update projects in deterministic ID order and advance export revision. The accepted-publication project guard refuses these mutations while an intent is active. Trust/readiness/timestamp-only changes remain DB-only and do not advance export revision. Verify a real reinstall-style update both before and during acceptance; otherwise attachment-only invalidation leaves a race around a shared install.
+
+The immutable repository snapshot encodes canonical Git-quoted ASCII index entries as base64. `core.quotePath=true` keeps arbitrary path bytes, control characters and non-ASCII names lossless across the text/JSON boundary. Expected published index entries are derived from the immutable prepared commit tree, never a mutable private index. PostgreSQL JSONB cannot represent U+0000; the lossless encoded value remains part of the reviewed-state digest. Do not strip delimiters or normalize path text. Repeated persistence against a non-empty index is a real-Git/real-Postgres acceptance case.
+
+A review binds both the project row's exact registered repository path and the resolved canonical checkout. Recheck the row value in the short acceptance transaction, and recheck canonical path resolution outside that transaction immediately before privileged effects. A relocated path or retargeted symlink requires a fresh preview. Full proposed manifest validation reuses the registration loader's structural/reference parser (including duplicate flow IDs and role/capability identifiers) without running installers.
+
+The live ownership registry survives Next.js module reloads; a reload cannot
+adopt a still-running same-process intent between Git subprocesses. Each managed
+Git group has parent and independent child deadlines. A one-shot group check on
+Git exit refuses unnoticed surviving hook children; a signalled Git exit remains
+uncertain even if a commit object already exists. Recovery inspects that object
+and the published branch before deciding an outcome. No process watcher or
+polling loop is added, and arbitrary detached hook daemons are not a containment
+boundary of this workflow.
+
 ## Linked artifacts
 
 - [ADR-194](../decisions/adr-194.md)
@@ -219,3 +246,29 @@ outside MAIster; path repair never becomes persistence-status authority.
 - [Configuration](../configuration.md), [projects](projects.md), [Git](git-integration.md)
 - Existing service: `web/lib/persist-config.ts`; proposed internals:
   `web/lib/project-config-persistence/`.
+
+## Final caller-index reservation
+
+The final Git `read-tree` transition may preserve a concurrently staged unrelated
+path. Therefore the HEAD ref transaction alone is insufficient confirmation
+binding. After `read-tree` (or recognition of its exact partial result), reserve
+the caller's standard `index.lock` with an atomic no-clobber hard link from a
+fsynced operation marker in the common repository fence. The fence owner record
+first durably binds the marker digest, canonical index-lock path and owner nonce.
+While the reservation is held, normal Git staging cannot change the caller index.
+Recheck the entire index against the immutable prepared commit, the exact proposed
+manifest bytes/mode, original HEAD/branch/policy, DB revision and authority, and
+all other checkout/operation evidence. Only then commit the already prepared ref
+transaction. A preserved concurrent stage refuses publication and leaves every
+user byte and index entry available for explicit recovery and a fresh review.
+
+Hold the reservation until the owned Git conversation and hook process groups
+retire. A restart may remove a reservation only for the same accepted operation,
+after proving the old owner and groups retired, and matching the target and
+private marker device/inode, exact digest, mode, UID and nonce. An absent target
+permits removal of the verified private marker only. An existing different lock,
+changed/missing marker, unsupported filesystem hard links, or unknown metadata
+refuses adoption with guidance; no unknown Git lock is removed. A collision
+before successful linking leaves the existing lock untouched. A crash after
+linking, after ref commit or during reservation cleanup is resumed by that same
+proof before any repository mutation or receipt repair.

@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import {
   lstat,
   mkdir,
+  open,
   readFile,
   readdir,
   realpath,
@@ -13,12 +14,20 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 import pino from "pino";
 import { z } from "zod";
 
 import { git } from "./git";
+import {
+  INDEX_RESERVATION_MARKER,
+  writeIndexReservationMarker,
+  linkIndexReservation,
+  verifyIndexReservation,
+  retireIndexReservation,
+  discardUnlinkedIndexMarker,
+} from "./index-reservation";
 import { withGitOwnership } from "./git-process";
 
 import { MaisterError } from "@/lib/errors";
@@ -29,11 +38,23 @@ const ownerSchema = z
     processId: z.number().int().positive(),
     nonce: z.string().uuid(),
     groups: z.array(z.number().int().positive()).default([]),
+    indexReservation: z
+      .object({
+        path: z.string().min(1),
+        digest: z.string().regex(/^[0-9a-f]{64}$/u),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
 type FenceOwner = z.infer<typeof ownerSchema>;
-const liveOwners = new Set<string>();
+const processOwnership = globalThis as typeof globalThis & {
+  __maisterProjectConfigOwners?: Set<string>;
+};
+// HMR must preserve an in-flight owner between its Git subprocesses.
+const liveOwners = (processOwnership.__maisterProjectConfigOwners ??=
+  new Set<string>());
 const log = pino({
   name: "project-config-persistence/fence",
   level: process.env.LOG_LEVEL ?? "info",
@@ -71,10 +92,31 @@ async function groupIsDead(group: number): Promise<boolean> {
   if (processIsDead(-group)) return true;
   // Orphaned exited children can remain zombies until the host reaps them.
   // Zombies cannot issue effects; a live member or unreadable process table refuses adoption.
-  const { stdout } = await execute("ps", ["-axo", "pgid=,stat="], {
-    timeout: 5_000,
-    maxBuffer: 1024 * 1024,
-  });
+  let stdout: string;
+
+  try {
+    ({ stdout } = await execute(
+      "ps",
+      ["-g", String(group), "-o", "pgid=,stat="],
+      {
+        timeout: 5_000,
+        maxBuffer: 1024 * 1024,
+      },
+    ));
+  } catch (error) {
+    const failure = error as NodeJS.ErrnoException & {
+      stdout?: string;
+      stderr?: string;
+    };
+
+    if (
+      Number(failure.code) === 1 &&
+      !failure.stdout?.trim() &&
+      !failure.stderr?.trim()
+    )
+      return processIsDead(-group);
+    throw busy();
+  }
 
   const members: string[] = [];
 
@@ -114,14 +156,24 @@ async function readOwner(directory: string): Promise<FenceOwner> {
   }
 }
 
-async function assertOnlyOwnedMetadata(directory: string): Promise<void> {
-  if ((await readdir(directory)).some((entry) => entry !== "owner.json"))
+async function assertOnlyOwnedMetadata(
+  directory: string,
+  owner: FenceOwner,
+): Promise<void> {
+  if (
+    (await readdir(directory)).some(
+      (entry) =>
+        entry !== "owner.json" &&
+        !(entry === INDEX_RESERVATION_MARKER && owner.indexReservation),
+    )
+  )
     throw busy();
 }
 
 async function assertRetiredOwner(
   directory: string,
   operationId: string,
+  indexLockPath: string,
 ): Promise<void> {
   const recorded = await readOwner(directory);
 
@@ -133,7 +185,15 @@ async function assertRetiredOwner(
     throw busy();
   for (const group of recorded.groups)
     if (!(await groupIsDead(group))) throw busy();
-  await assertOnlyOwnedMetadata(directory);
+  await assertOnlyOwnedMetadata(directory, recorded);
+  if (recorded.indexReservation) {
+    if (recorded.indexReservation.path !== indexLockPath) throw busy();
+    await verifyIndexReservation(
+      directory,
+      recorded,
+      recorded.indexReservation,
+    );
+  }
 }
 
 async function writeOwner(directory: string, owner: FenceOwner): Promise<void> {
@@ -143,12 +203,32 @@ async function writeOwner(directory: string, owner: FenceOwner): Promise<void> {
     mode: 0o600,
     flag: "wx",
   });
+  const file = await open(temporary, "r");
+
+  try {
+    await file.sync();
+  } finally {
+    await file.close();
+  }
   await rename(temporary, join(directory, "owner.json"));
+  for (const path of [directory]) {
+    const handle = await open(path, "r");
+
+    try {
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+  }
 }
 
 export type RepositoryFence = {
   commonDirectory: string;
   release: () => Promise<void>;
+  assertQuiescent: () => Promise<void>;
+  reserveIndex: () => Promise<void>;
+  assertIndexReservation: () => Promise<void>;
+  releaseIndex: () => Promise<void>;
   retain: () => void;
   run: <T>(action: () => Promise<T>) => Promise<T>;
 };
@@ -158,7 +238,16 @@ export async function acquireRepositoryFence(
   repo: string,
   operationId: string,
 ): Promise<RepositoryFence> {
-  const commonDirectory = await commonGitDirectory(repo);
+  const canonicalRepo = await realpath(repo);
+  const commonDirectory = await commonGitDirectory(canonicalRepo);
+  const indexPath = resolve(
+    canonicalRepo,
+    (await git(canonicalRepo, ["rev-parse", "--git-path", "index"])).trim(),
+  );
+  const indexLockPath = join(
+    await realpath(dirname(indexPath)),
+    `${basename(indexPath)}.lock`,
+  );
   const directory = join(commonDirectory, "maister-config-mutation.lock");
   let owner: FenceOwner = {
     operationId,
@@ -174,7 +263,7 @@ export async function acquireRepositoryFence(
     await mkdir(directory, { mode: 0o700 });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    await assertRetiredOwner(directory, operationId);
+    await assertRetiredOwner(directory, operationId, indexLockPath);
     const claim = join(
       commonDirectory,
       "maister-config-mutation.recovery.lock",
@@ -187,7 +276,18 @@ export async function acquireRepositoryFence(
       throw busy();
     }
     try {
-      await assertRetiredOwner(directory, operationId);
+      await assertRetiredOwner(directory, operationId, indexLockPath);
+      const prior = await readOwner(directory);
+
+      if (prior.indexReservation)
+        await retireIndexReservation(directory, prior, prior.indexReservation);
+      log.debug(
+        {
+          operationId,
+          retiredIndexReservation: Boolean(prior.indexReservation),
+        },
+        "retired repository owner recovered",
+      );
     } catch (error) {
       await rm(claim, { recursive: true });
       throw error;
@@ -197,6 +297,13 @@ export async function acquireRepositoryFence(
   liveOwners.add(directory);
   try {
     await writeOwner(directory, owner);
+    const parent = await open(commonDirectory, "r");
+
+    try {
+      await parent.sync();
+    } finally {
+      await parent.close();
+    }
   } catch (error) {
     liveOwners.delete(directory);
     throw error;
@@ -220,8 +327,108 @@ export async function acquireRepositoryFence(
     return recording;
   };
 
+  const assertQuiescent = async (): Promise<void> => {
+    if (finished) throw busy();
+    await recording;
+    const actual = await readOwner(directory);
+
+    if (actual.nonce !== owner.nonce) throw busy();
+    for (const group of actual.groups)
+      if (!(await groupIsDead(group))) throw busy();
+    await assertOnlyOwnedMetadata(directory, actual);
+    if (actual.indexReservation) {
+      if (actual.indexReservation.path !== indexLockPath) throw busy();
+      await verifyIndexReservation(directory, actual, actual.indexReservation);
+    }
+  };
+
+  const reserveIndex = async (): Promise<void> => {
+    let collision: MaisterError | null = null;
+
+    recording = recording.then(async () => {
+      if (
+        finished ||
+        (await readOwner(directory)).nonce !== owner.nonce ||
+        owner.indexReservation
+      )
+        throw busy();
+      const reservation = await writeIndexReservationMarker(
+        directory,
+        owner,
+        indexLockPath,
+      );
+      const next = { ...owner, indexReservation: reservation };
+
+      await writeOwner(directory, next);
+      owner = next;
+      try {
+        await linkIndexReservation(directory, reservation);
+        log.debug(
+          { operationId },
+          "caller index reserved for reviewed publication",
+        );
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+
+        if (code !== "EEXIST" && code !== "EXDEV") throw error;
+        await discardUnlinkedIndexMarker(directory, owner, reservation);
+        const { indexReservation: _reservation, ...withoutReservation } = owner;
+
+        await writeOwner(directory, withoutReservation);
+        owner = withoutReservation;
+        collision = new MaisterError(
+          code === "EEXIST" ? "CONFLICT" : "PRECONDITION",
+          code === "EEXIST"
+            ? "Another Git index update is active. Preserve its lock and recover this operation after it finishes."
+            : "The Git metadata filesystem cannot provide the required atomic index reservation. Move repository metadata to a supported local filesystem before creating a fresh preview.",
+          {
+            details: {
+              reason:
+                code === "EEXIST"
+                  ? "recovery_required"
+                  : "unsupported_checkout",
+            },
+          },
+        );
+      }
+    });
+    await recording;
+    if (collision) throw collision;
+  };
+  const assertIndexReservation = async (): Promise<void> => {
+    await recording;
+    const actual = await readOwner(directory);
+
+    if (
+      finished ||
+      actual.nonce !== owner.nonce ||
+      !actual.indexReservation ||
+      actual.indexReservation.path !== indexLockPath ||
+      (await verifyIndexReservation(
+        directory,
+        actual,
+        actual.indexReservation,
+      )) !== "linked"
+    )
+      throw busy();
+  };
+  const releaseIndex = async (): Promise<void> => {
+    await assertQuiescent();
+    if (!owner.indexReservation) return;
+    await retireIndexReservation(directory, owner, owner.indexReservation);
+    const { indexReservation: _reservation, ...withoutReservation } = owner;
+
+    await writeOwner(directory, withoutReservation);
+    owner = withoutReservation;
+    log.debug({ operationId }, "caller index reservation retired");
+  };
+
   return {
     commonDirectory,
+    reserveIndex,
+    assertIndexReservation,
+    releaseIndex,
+    assertQuiescent,
     run: (action) => {
       if (finished) throw busy();
 
@@ -232,14 +439,8 @@ export async function acquireRepositoryFence(
       liveOwners.delete(directory);
     },
     release: async () => {
-      if (finished) throw busy();
-      await recording;
-      const actual = await readOwner(directory);
-
-      if (actual.nonce !== owner.nonce) throw busy();
-      for (const group of actual.groups)
-        if (!(await groupIsDead(group))) throw busy();
-      await assertOnlyOwnedMetadata(directory);
+      await releaseIndex();
+      await assertQuiescent();
       await rm(directory, { recursive: true });
       finished = true;
       liveOwners.delete(directory);
@@ -264,4 +465,17 @@ export async function withRepositoryMutationFence<T>(
       throw error;
     }
   }
+}
+
+/** A recorded PID is evidence for refusal, never authority to signal another process. */
+export async function assertConfigGitOwnerRetired(
+  ownerProcessId: number | null,
+  processGroup: number | null,
+): Promise<void> {
+  if (
+    ownerProcessId === null ||
+    (ownerProcessId !== process.pid && !processIsDead(ownerProcessId))
+  )
+    throw busy();
+  if (processGroup !== null && !(await groupIsDead(processGroup))) throw busy();
 }

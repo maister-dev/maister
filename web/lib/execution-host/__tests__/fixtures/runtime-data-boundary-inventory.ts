@@ -94,9 +94,125 @@ function wrappers(
 export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
   [
     ...classified(
+      "lib/project-config-persistence/git-conversation.ts",
+      "repository-worktree",
+      "Reviewed configuration persistence: repository policy, private staging and Git process ownership; no supervisor runtime data",
+      [
+        [
+          "executeGitConversation",
+          "node:child_process.spawn",
+          "spawn",
+          "process.execPath",
+        ],
+      ],
+    ),
+    ...classified(
+      "lib/project-config-persistence/git-process.ts",
+      "repository-worktree",
+      "Reviewed configuration persistence: repository policy, private staging and Git process ownership; no supervisor runtime data",
+      [
+        [
+          "executeRepositoryGitBytes",
+          "node:child_process.execFile",
+          "spawn",
+          "git",
+        ],
+        [
+          "executeRepositoryGitBytes",
+          "node:child_process.spawn",
+          "spawn",
+          "process.execPath",
+        ],
+      ],
+    ),
+    ...classified(
+      "lib/project-config-persistence/git-publication.ts",
+      "repository-worktree",
+      "Reviewed configuration persistence: repository policy, private staging and Git process ownership; no supervisor runtime data",
+      [
+        ["prepareConfigCommit", "node:fs/promises.lstat", "stat"],
+        ["prepareConfigCommit", "node:fs/promises.realpath", "stat"],
+        ["prepareConfigCommit", "node:fs/promises.readFile", "read"],
+        ["prepareConfigCommit", "node:fs/promises.chmod", "write"],
+        ["prepareConfigCommit", "node:fs/promises.writeFile", "write"],
+      ],
+    ),
+    ...classified(
+      "lib/project-config-persistence/policy.ts",
+      "repository-worktree",
+      "Reviewed configuration persistence: repository policy, private staging and Git process ownership; no supervisor runtime data",
+      [
+        ["hookDigest", "node:fs/promises.open", "open"],
+        ["readRepositoryHook", "node:fs/promises.realpath", "stat"],
+        ["readRepositoryHook", "node:fs/promises.stat", "stat"],
+      ],
+    ),
+    ...classified(
+      "lib/project-config-persistence/projection.ts",
+      "repository-worktree",
+      "Reviewed configuration persistence: repository policy, private staging and Git process ownership; no supervisor runtime data",
+      [
+        ["assertExportablePackages", "node:fs/promises.stat", "stat"],
+        [
+          "assertExportablePackages",
+          "lib/flows.ts#localDirectoryContentDigest",
+          "wrapper",
+        ],
+      ],
+    ),
+    ...classified(
+      "lib/project-config-persistence/publication-state.ts",
+      "repository-worktree",
+      "Reviewed configuration persistence: repository policy, private staging and Git process ownership; no supervisor runtime data",
+      [
+        ["observePartialPublication", "node:fs/promises.lstat", "stat"],
+        ["observePartialPublication", "node:fs/promises.readFile", "read"],
+        ["assertOperationPathsAbsent", "node:fs/promises.lstat", "stat"],
+
+        ["unpublishedOperationCanClose", "node:fs/promises.lstat", "stat"],
+        ["unpublishedOperationCanClose", "node:fs/promises.readFile", "read"],
+      ],
+    ),
+    ...classified(
+      "lib/project-config-persistence/index-reservation.ts",
+      "repository-worktree",
+      "Durable inode/digest proof for only the operation-owned caller index lock",
+      [
+        ["syncPath", "node:fs/promises.open", "open"],
+        ["writeIndexReservationMarker", "node:fs/promises.writeFile", "write"],
+        ["ownedMarker", "node:fs/promises.lstat", "stat"],
+        ["ownedMarker", "node:fs/promises.readFile", "read"],
+        ["verifyIndexReservation", "node:fs/promises.lstat", "stat"],
+        ["verifyIndexReservation", "node:fs/promises.readFile", "read"],
+        ["linkIndexReservation", "node:fs/promises.link", "write"],
+        ["discardUnlinkedIndexMarker", "node:fs/promises.unlink", "remove"],
+        ["retireIndexReservation", "node:fs/promises.unlink", "remove"],
+      ],
+    ),
+    ...classified(
+      "lib/project-config-persistence/repository-lock.ts",
+      "repository-worktree",
+      "Reviewed configuration persistence: repository policy, private staging and Git process ownership; no supervisor runtime data",
+      [
+        ["commonGitDirectory", "node:fs/promises.realpath", "stat"],
+        ["groupIsDead", "node:child_process.execFile", "spawn", "ps"],
+        ["readOwner", "node:fs/promises.lstat", "stat"],
+        ["readOwner", "node:fs/promises.readFile", "read"],
+        ["assertOnlyOwnedMetadata", "node:fs/promises.readdir", "list"],
+        ["writeOwner", "node:fs/promises.writeFile", "write"],
+        ["writeOwner", "node:fs/promises.open", "open"],
+        ["writeOwner", "node:fs/promises.rename", "write"],
+        ["acquireRepositoryFence", "node:fs/promises.mkdir", "write"],
+        ["acquireRepositoryFence", "node:fs/promises.rm", "remove"],
+        ["acquireRepositoryFence", "node:fs/promises.open", "open"],
+        ["acquireRepositoryFence", "node:fs/promises.realpath", "stat"],
+        ["acquireRepositoryFence.release", "node:fs/promises.rm", "remove"],
+      ],
+    ),
+    ...classified(
       "lib/project-config-persistence/review-files.ts",
       "repository-worktree",
-      "Bounded private configuration review files outside the checkout; no supervisor runtime data",
+      "Reviewed configuration persistence: repository policy, private staging and Git process ownership; no supervisor runtime data",
       [
         ["canonicalCandidate", "node:fs/promises.realpath", "stat"],
         ["configReviewRoot", "node:fs/promises.realpath", "stat"],
@@ -112,53 +228,64 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       ],
     ),
     ...classified(
-      "lib/project-config-persistence/git-process.ts",
+      "lib/project-config-persistence/cleanup.ts",
       "repository-worktree",
-      "Reviewed configuration persistence: host-owned repository, private staging and process ownership; no supervisor runtime data",
+      "Operation-owned configuration staging, retained on unexpected content; no supervisor runtime data",
       [
-        ["executeRepositoryGit", "node:child_process.execFile", "spawn", "git"],
-        [
-          "executeRepositoryGit",
-          "node:child_process.spawn",
-          "spawn",
-          "process.execPath",
-        ],
+        ["removeReviewedFiles", "node:fs/promises.lstat", "stat"],
+        ["removeReviewedFiles", "node:fs/promises.realpath", "stat"],
+        ["removeReviewedFiles", "node:fs/promises.readdir", "list"],
+        ["removeReviewedFiles", "node:fs/promises.readFile", "read"],
+        ["removeReviewedFiles", "node:fs/promises.unlink", "remove"],
+        ["removeReviewedFiles", "node:fs/promises.rmdir", "remove"],
       ],
     ),
     ...classified(
-      "lib/project-config-persistence/projection.ts",
+      "lib/project-config-persistence/push.ts",
       "repository-worktree",
-      "Reviewed configuration persistence: host-owned repository, private staging and process ownership; no supervisor runtime data",
+      "Reviewed exact-SHA push and host-owned hook files; independent of supervisor runtime data",
       [
-        ["assertExportablePackages", "node:fs/promises.stat", "stat"],
         [
-          "assertExportablePackages",
-          "lib/flows.ts#localDirectoryContentDigest",
+          "previewConfigurationPush",
+          "lib/atomic.ts#atomicWriteJson",
           "wrapper",
         ],
+        ["previewConfigurationPush", "node:fs/promises.chmod", "write"],
+        ["previewConfigurationPush", "node:fs/promises.open", "open"],
+        ["privatePushFiles", "node:fs/promises.realpath", "stat"],
+        ["privatePushFiles", "node:fs/promises.lstat", "stat"],
+        ["privatePushFiles", "node:fs/promises.readdir", "list"],
+        ["privatePushFiles", "node:fs/promises.readFile", "read"],
+        ["cleanupPush", "node:fs/promises.unlink", "remove"],
+        ["cleanupPush", "node:fs/promises.rmdir", "remove"],
       ],
     ),
     ...classified(
-      "lib/project-config-persistence/repository-lock.ts",
+      "lib/project-config-persistence/push-gate.ts",
       "repository-worktree",
-      "Reviewed configuration persistence: host-owned repository and process ownership; no supervisor runtime data",
+      "Operation-owned pre-push hook preserving original hook policy and Git argv/stdin",
       [
-        ["commonGitDirectory", "node:fs/promises.realpath", "stat"],
-        ["groupIsDead", "node:child_process.execFile", "spawn", "ps"],
-        ["readOwner", "node:fs/promises.lstat", "stat"],
-        ["readOwner", "node:fs/promises.readFile", "read"],
-        ["assertOnlyOwnedMetadata", "node:fs/promises.readdir", "list"],
-        ["writeOwner", "node:fs/promises.writeFile", "write"],
-        ["writeOwner", "node:fs/promises.rename", "write"],
-        ["acquireRepositoryFence", "node:fs/promises.mkdir", "write"],
-        ["acquireRepositoryFence", "node:fs/promises.rm", "remove"],
-        ["acquireRepositoryFence.release", "node:fs/promises.rm", "remove"],
+        ["writeReviewedPushGate", "node:fs/promises.mkdir", "write"],
+        ["writeReviewedPushGate", "node:fs/promises.writeFile", "write"],
+        ["writeReviewedPushGate", "node:fs/promises.chmod", "write"],
+        ["writeReviewedPushGate", "node:fs/promises.open", "open"],
+      ],
+    ),
+    ...classified(
+      "lib/project-config-persistence/service.ts",
+      "repository-worktree",
+      "Reviewed configuration persistence: repository policy, private staging and Git process ownership; no supervisor runtime data",
+      [
+        ["verifyPrivateBytes", "node:fs/promises.realpath", "stat"],
+        ["verifyPrivateBytes", "node:fs/promises.lstat", "stat"],
+        ["verifyPrivateBytes", "node:fs/promises.readFile", "read"],
+        ["assertRegisteredRepository", "node:fs/promises.realpath", "stat"],
       ],
     ),
     ...classified(
       "lib/project-config-persistence/status.ts",
       "repository-worktree",
-      "Reviewed configuration persistence: host-owned repository, private staging and process ownership; no supervisor runtime data",
+      "Reviewed configuration persistence: repository policy, private staging and Git process ownership; no supervisor runtime data",
       [
         ["exists", "node:fs/promises.lstat", "stat"],
         ["inspectRepository", "node:fs/promises.realpath", "stat"],
@@ -1411,16 +1538,6 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       ],
     ),
     ...classified(
-      "lib/persist-config.ts",
-      "manager-flow-state",
-      "maister.yaml / flow.yaml / package manifests and the system flow cache under ~/.maister and .maister/<slug>/flows",
-      [
-        ["pathExists", "node:fs/promises.stat", "stat"],
-        ["persistProjectConfig", "node:fs/promises.unlink", "remove"],
-        ["persistProjectConfig", "lib/atomic.ts#atomicWriteText", "wrapper"],
-      ],
-    ),
-    ...classified(
       "lib/queries/package-bom.ts",
       "manager-flow-state",
       "manager-owned package manifests, BOM and result-export schema reads through the config/package loaders",
@@ -2055,6 +2172,69 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
 
 export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
   ...wrappers(
+    "lib/project-config-persistence/git-conversation.ts",
+    "repository-worktree",
+    [["executeGitConversation", false]],
+  ),
+  ...wrappers(
+    "lib/project-config-persistence/git-process.ts",
+    "repository-worktree",
+    [
+      ["executeRepositoryGit", false],
+      ["executeReviewedRepositoryGit", false],
+    ],
+  ),
+  ...wrappers(
+    "lib/project-config-persistence/git-publication.ts",
+    "repository-worktree",
+    [["prepareConfigCommit", false]],
+  ),
+  ...wrappers(
+    "lib/project-config-persistence/policy.ts",
+    "repository-worktree",
+    [
+      ["repositoryPolicyDigest", false],
+      ["readRepositoryHook", false],
+    ],
+  ),
+  ...wrappers(
+    "lib/project-config-persistence/projection.ts",
+    "repository-worktree",
+    [["assertExportablePackages", false]],
+  ),
+  ...wrappers(
+    "lib/project-config-persistence/publication-state.ts",
+    "repository-worktree",
+    [
+      ["assertPartialPublicationSeam", false],
+      ["assertPublicationSeam", false],
+      ["inspectPartialPublication", false],
+      ["unpublishedOperationCanClose", false],
+      ["assertReservedPublicationSeam", false],
+    ],
+  ),
+  ...wrappers(
+    "lib/project-config-persistence/index-reservation.ts",
+    "repository-worktree",
+    [
+      ["writeIndexReservationMarker", false],
+      ["verifyIndexReservation", false],
+      ["linkIndexReservation", false],
+      ["discardUnlinkedIndexMarker", false],
+      ["retireIndexReservation", false],
+    ],
+  ),
+  ...wrappers(
+    "lib/project-config-persistence/repository-lock.ts",
+    "repository-worktree",
+    [
+      ["acquireRepositoryFence", false],
+      ["commonGitDirectory", false],
+      ["withRepositoryMutationFence", false],
+      ["assertConfigGitOwnerRetired", false],
+    ],
+  ),
+  ...wrappers(
     "lib/project-config-persistence/review-files.ts",
     "repository-worktree",
     [
@@ -2063,30 +2243,39 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ],
   ),
   ...wrappers(
-    "lib/project-config-persistence/git-process.ts",
-    "repository-worktree",
-    [["executeRepositoryGit", false]],
-  ),
-  ...wrappers(
-    "lib/project-config-persistence/projection.ts",
-    "repository-worktree",
-    [["assertExportablePackages", false]],
-  ),
-  ...wrappers(
-    "lib/project-config-persistence/repository-lock.ts",
+    "lib/project-config-persistence/cleanup.ts",
     "repository-worktree",
     [
-      ["commonGitDirectory", false],
-      ["acquireRepositoryFence", false],
-      ["withRepositoryMutationFence", false],
+      ["cleanupConfigOperation", false],
+      ["pruneConfigReviews", false],
+    ],
+  ),
+  ...wrappers("lib/project-config-persistence/push.ts", "repository-worktree", [
+    ["previewConfigurationPush", false],
+    ["confirmConfigurationPush", false],
+    ["recoverConfigurationPushes", false],
+    ["recoverAcceptedConfigurationPushes", false],
+    ["pruneConfigurationPushReviews", false],
+  ]),
+  ...wrappers(
+    "lib/project-config-persistence/push-gate.ts",
+    "repository-worktree",
+    [["writeReviewedPushGate", false]],
+  ),
+  ...wrappers(
+    "lib/project-config-persistence/service.ts",
+    "repository-worktree",
+    [
+      ["confirmProjectConfiguration", false],
+      ["previewProjectConfiguration", false],
     ],
   ),
   ...wrappers(
     "lib/project-config-persistence/status.ts",
     "repository-worktree",
     [
-      ["inspectRepository", false],
       ["currentConfigStatus", false],
+      ["inspectRepository", false],
     ],
   ),
 
@@ -2419,9 +2608,6 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
   ]),
   ...wrappers("lib/packages/yaml-writeback.ts", "repository-worktree", [
     ["writeBackPackagesPin", false],
-  ]),
-  ...wrappers("lib/persist-config.ts", "manager-flow-state", [
-    ["persistProjectConfig", false],
   ]),
   ...wrappers("lib/repo-source.ts", "repository-worktree", [
     ["assertGitAvailable", false],

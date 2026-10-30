@@ -5487,7 +5487,7 @@ rollback rolls back the bump. Existing project/attachment data is preserved.
 | project_id, actor_user_id | text FK, ON DELETE RESTRICT; retained evidence is never cascaded away |
 | repository_key | text canonical common Git directory; server-derived, host-private |
 | state | previewed/preparing/prepared/publishing/committed/noop/stale/failed/recovery_required |
-| snapshot | typed jsonb immutable reviewed inputs, original/proposed bytes, index/tree fingerprints, export projection/revision, message and author policy; no credentials |
+| snapshot | typed jsonb immutable reviewed inputs, original/proposed content digests and private-directory locator, index/tree fingerprints, export projection/revision, message and author policy; no credentials |
 | snapshot_digest | text SHA-256, immutable; changed content under a used identity conflicts |
 | expires_at, created_at | timestamptz NOT NULL; 10-minute review expiry |
 | accepted_at | nullable timestamptz; required before preparing/effects |
@@ -5495,6 +5495,7 @@ rollback rolls back the bump. Existing project/attachment data is preserved.
 | prepared_sha, committed_sha | nullable text; prepared requires verified private commit, committed requires observed target publication |
 | completed_at | nullable timestamptz; required for terminal states |
 | error_reason | nullable bounded reason enum text; required for stale/failed/recovery_required |
+| cleanup_state, cleanup_checked_at, cleanup_reason | pending/complete/retained; nullable timestamptz and bounded reason. Complete/retained require a check time; retained requires a reason. Cleanup cannot change the committed outcome. |
 | used_default_author | boolean NOT NULL DEFAULT false; author-default receipt only |
 | updated_at | timestamptz NOT NULL; state/receipt update time |
 | project_config_push_intents.id | text UUID primary key, server-generated independent push review identity |
@@ -5503,6 +5504,8 @@ rollback rolls back the bump. Existing project/attachment data is preserved.
 | snapshot, snapshot_digest | immutable typed jsonb + SHA-256: exact commit, reviewed secret-safe destination/address fingerprint/ref, remote baseline/outgoing ancestry |
 | expires_at, created_at, accepted_at, completed_at, updated_at | timestamptz; same intent-before-effect/receipt-after-observation rule |
 | error_reason | nullable bounded push/review reason; required for failed/unknown/stale |
+| owner_token, owner_process_id, process_group | nullable claim UUID, positive owner PID and positive Git process group. Record the group durably before permitting network effects; recovery first proves retirement. |
+| cleanup_state, cleanup_checked_at, cleanup_reason | pending/complete/retained plus checked time and bounded reason; separate from the push outcome. |
 
 Named CHECKs enforce state/receipt consistency, accepted intent before effects,
 valid digests and nonnegative revision. Immutable snapshot/identity triggers
@@ -5524,3 +5527,12 @@ writers before migration and binary restart. No down migration deletes receipts.
 Unused expired previews can be pruned if unaccepted and unreferenced; committed
 receipts remain with the project. Active/private recovery evidence is retained;
 cleanup removes only verified owned private material after durable settlement.
+
+The immutable review binds the exact registered repository-path string and its
+canonical checkout. Canonical Git-quoted index entries are losslessly base64 encoded;
+no NUL is stored in JSONB. Shared install updates to exported coordinates,
+sourceSubpath or package status advance attached projects in deterministic ID order,
+and active publication guards refuse those updates. Trust/timestamp-only updates
+remain DB-only. See the owning [persistence
+analytics](system-analytics/project-config-persistence.md) for independent push
+process ownership and cleanup recovery.

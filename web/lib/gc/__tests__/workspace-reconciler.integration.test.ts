@@ -119,6 +119,31 @@ afterEach(async () => {
 });
 
 describe("runWorkspaceReconciliationSweep", () => {
+  it("leaves configuration publication storage to its own recovery owner", async () => {
+    const reviewPath = path.join(
+      worktreesRoot,
+      ".config-persistence",
+      randomUUID(),
+    );
+
+    await mkdir(reviewPath, { recursive: true });
+    await writeFile(
+      path.join(reviewPath, "operation.json"),
+      "private evidence\n",
+    );
+    await runWorkspaceReconciliationSweep({
+      database: db,
+      root: worktreesRoot,
+    });
+    const findings = await db
+      .select()
+      .from(schema.workspaceReconciliationFindings);
+
+    expect(findings).toEqual([]);
+    expect(
+      (await lstat(path.join(reviewPath, "operation.json"))).isFile(),
+    ).toBe(true);
+  });
   it("enforces non-negative attempts and the resolved timestamp shape in the database", async () => {
     const now = new Date("2026-07-16T12:00:00.000Z");
     const findingId = await observeReconciliationFinding({

@@ -1917,6 +1917,9 @@ table project_config_persist_operations {
   committed_sha text
   completed_at "timestamp with time zone"
   error_reason text
+  cleanup_state text [not null, default: 'pending']
+  cleanup_checked_at "timestamp with time zone"
+  cleanup_reason text
   used_default_author boolean [not null, default: false]
   created_at "timestamp with time zone" [not null, default: `now()`]
   updated_at "timestamp with time zone" [not null, default: `now()`]
@@ -1926,6 +1929,7 @@ table project_config_persist_operations {
     repository_key [name: 'project_config_persist_active_repo_uq', unique]
     (project_id, created_at) [name: 'project_config_persist_project_created_idx']
     (state, id) [name: 'project_config_persist_recovery_idx']
+
 
 
 
@@ -1942,8 +1946,14 @@ table project_config_push_intents {
   snapshot_digest text [not null]
   expires_at "timestamp with time zone" [not null]
   accepted_at "timestamp with time zone"
+  owner_token text
+  owner_process_id integer
+  process_group integer
   completed_at "timestamp with time zone"
   error_reason text
+  cleanup_state text [not null, default: 'pending']
+  cleanup_checked_at "timestamp with time zone"
+  cleanup_reason text
   created_at "timestamp with time zone" [not null, default: `now()`]
   updated_at "timestamp with time zone" [not null, default: `now()`]
 
@@ -1951,6 +1961,8 @@ table project_config_push_intents {
 
     (operation_id, snapshot) [name: 'project_config_push_active_destination_uq', unique]
     (operation_id, created_at) [name: 'project_config_push_operation_created_idx']
+
+
 
 
 

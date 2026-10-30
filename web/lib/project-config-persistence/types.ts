@@ -47,12 +47,14 @@ export type ConfigRepositorySnapshot = {
   head: string | null;
   manifestDigest: string | null;
   manifestMode: string | null;
+  /** Base64 of Git-quoted ASCII index entries; delimiters and arbitrary path bytes are lossless. */
   indexEntries: string;
   status: string;
   authorName: string;
   authorEmail: string;
   usedDefaultAuthor: boolean;
   configDigest?: string;
+  signingRequired?: boolean;
 };
 
 export type ConfigPersistSnapshot = {
@@ -60,6 +62,7 @@ export type ConfigPersistSnapshot = {
   projectId: string;
   actorUserId: string;
   exportRevision: string;
+  registeredRepoPath: string;
   projection: ExportProjection;
   repository: ConfigRepositorySnapshot;
   proposedDigest: string;
@@ -76,4 +79,11 @@ export type ConfigPushSnapshot = {
   destinationFingerprint: string;
   remoteBase: string | null;
   outgoingShas: string[];
+  url: string;
+  policyDigest: string;
+  originalHook: string | null;
+  hookDigest: string | null;
+  contentDirectory: string;
+  gateDigest: string;
+  gateFiles: Record<"gate.cjs" | "pre-push", string>;
 };

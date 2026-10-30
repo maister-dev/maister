@@ -16,6 +16,13 @@
 // reachable ONLY through its `NEXT_RUNTIME === "nodejs"` branch — see the
 // note there.
 
+import pino from "pino";
+
+const configurationRecoveryLog = pino({
+  name: "instrumentation/config-persistence",
+  level: process.env.LOG_LEVEL ?? "info",
+});
+
 export async function registerNodeRuntime(): Promise<void> {
   const { assertSupportedNode } = await import("../runtime/node-version");
 
@@ -97,6 +104,20 @@ export async function registerNodeRuntime(): Promise<void> {
     );
 
     throw err;
+  }
+
+  // Accepted configuration intents recover independently of execution-host readiness.
+  try {
+    const { getDb } = await import("@/lib/db/client");
+    const { recoverProjectConfigurations } =
+      await import("@/lib/project-config-persistence/reconcile");
+
+    await recoverProjectConfigurations(getDb());
+  } catch (error) {
+    configurationRecoveryLog.error(
+      { errorType: error instanceof Error ? error.name : typeof error },
+      "configuration startup recovery requires attention",
+    );
   }
 
   // ADR-166 D8: register the local execution host FIRST (identity-change

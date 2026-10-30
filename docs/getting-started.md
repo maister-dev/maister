@@ -619,6 +619,12 @@ mAIster/
 - **Adding another component library** — HeroUI v3 + Tailwind 4 +
   `tailwind-variants` covers all primitives. Do not add shadcn/ui, MUI,
   Chakra, or hand-rolled equivalents (see `.ai-factory/rules/frontend.md`).
+- **Losing private configuration staging on restart** — keep
+  `<MAISTER_WORKTREES_ROOT>/.config-persistence` on durable host storage,
+  owned by the web service UID and outside project checkouts. Save/recovery
+  refuses unknown private content; inspect a retained cleanup receipt before
+  removing files. The supported compose setup runs only PostgreSQL in Docker;
+  web configuration persistence uses the host worktree root, without a new mount.
 - **Moving `MAISTER_WORKTREES_ROOT` without `MAISTER_WORKSPACE_ROOTS`**
   (ADR-166) — the supervisor only adopts worktrees under its
   configured roots; a moved web root that is not mirrored fails every launch

@@ -335,6 +335,9 @@ erDiagram
         text committed_sha
         timestamp completed_at
         text error_reason
+        text cleanup_state
+        timestamp cleanup_checked_at
+        text cleanup_reason
         boolean used_default_author
         timestamp created_at
         timestamp updated_at
@@ -349,8 +352,14 @@ erDiagram
         text snapshot_digest
         timestamp expires_at
         timestamp accepted_at
+        text owner_token
+        integer owner_process_id
+        integer process_group
         timestamp completed_at
         text error_reason
+        text cleanup_state
+        timestamp cleanup_checked_at
+        text cleanup_reason
         timestamp created_at
         timestamp updated_at
     }

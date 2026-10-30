@@ -8,6 +8,7 @@ import { lstat, readFile, realpath } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { git, gitResult } from "./git";
+import { repositoryPolicyDigest } from "./policy";
 import { commonGitDirectory } from "./repository-lock";
 import { manifestMatches } from "./manifest";
 import {
@@ -16,6 +17,7 @@ import {
   type ExportSnapshot,
 } from "./projection";
 
+import { parseProjectConfig } from "@/lib/config";
 import { MaisterError } from "@/lib/errors";
 import { sha256 } from "@/lib/evaluations/digest";
 
@@ -91,7 +93,7 @@ export async function inspectRepository(
   const head = headResult.code === 0 ? headResult.stdout.trim() : null;
   const [indexEntries, status, authorName, authorEmail, config, format] =
     await Promise.all([
-      git(repo, ["ls-files", "--stage", "-v", "-z"]),
+      git(repo, ["-c", "core.quotePath=true", "ls-files", "--stage", "-v"]),
       git(repo, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]),
       optionalConfig(repo, "user.name"),
       optionalConfig(repo, "user.email"),
@@ -106,7 +108,7 @@ export async function inspectRepository(
   else if (branch !== project.mainBranch) blocker = "wrong_branch";
   if (status) blocker ??= "dirty_checkout";
   if (
-    indexEntries.split("\0").some((entry) => entry && !entry.startsWith("H "))
+    indexEntries.split("\n").some((entry) => entry && !entry.startsWith("H "))
   )
     blocker = "unsupported_checkout";
   for (const key of [
@@ -205,12 +207,21 @@ export async function inspectRepository(
       head,
       manifestDigest: source === null ? null : sha256(source),
       manifestMode: mode,
-      indexEntries,
+      indexEntries: Buffer.from(indexEntries, "utf8").toString("base64"),
       status,
       authorName: authorName ?? "maister",
       authorEmail: authorEmail ?? "noreply@maister.local",
       usedDefaultAuthor: !authorName || !authorEmail,
-      configDigest: sha256(config),
+      configDigest: await repositoryPolicyDigest(
+        repo,
+        authorName ?? "maister",
+        authorEmail ?? "noreply@maister.local",
+        config,
+      ),
+      signingRequired:
+        (
+          await gitResult(repo, ["config", "--bool", "--get", "commit.gpgSign"])
+        ).stdout.trim() === "true",
     },
   };
 }
@@ -257,6 +268,8 @@ export async function currentConfigStatus(
     const observed = await inspectRepository(snapshot.project);
 
     repositoryState = repositoryStateForReason(observed.blocker);
+    if (observed.source !== null)
+      parseProjectConfig(observed.source, "maister.yaml");
     let exportState: ConfigStatus["exportState"] =
       observed.source === null
         ? "missing"

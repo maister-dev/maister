@@ -141,6 +141,7 @@ export async function writeConfigReviewFiles(
   const result = await gitResult(contentDirectory, [
     "diff",
     "--no-index",
+    "--text",
     "--full-index",
     "--no-ext-diff",
     "--no-textconv",

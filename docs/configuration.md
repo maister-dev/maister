@@ -1635,5 +1635,12 @@ crash recovery and separate push. The supported deployment drains old web
 writers before the new main migration/binary; mixed-version writes are unsupported.
 No new env variable, binary, port, supervisor runtime mount or configuration
 source is required. Private operation worktrees use the existing worktrees root
-and are excluded from ordinary run GC. The first commit uses private empty
+at `<MAISTER_WORKTREES_ROOT>/.config-persistence` (default
+`~/.maister/worktrees/.config-persistence`) and are excluded from ordinary run GC.
+Keep this host-owned directory on durable storage writable by the web service UID,
+outside every registered project checkout. Its mode is 0700; review files are
+0600 (0700 only when preserving the manifest executable mode). Restart recovery
+uses the same root; moving or deleting it during an accepted operation requires
+operator repair. Terminal cleanup removes only verified owned material and exposes
+`retained` with an actionable reason when private content differs. The first commit uses private empty
 scaffolding and normal commit amend/hooks, so bookworm's Git need not be upgraded.

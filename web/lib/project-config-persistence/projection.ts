@@ -110,32 +110,41 @@ export async function assertExportablePackages(
   projection: ExportProjection,
 ): Promise<void> {
   for (const pin of projection.packages) {
-    const local = pin.source.startsWith("file://")
-      ? fileURLToPath(pin.source)
-      : isAbsolute(pin.source)
-        ? pin.source
-        : null;
+    let local: string | null;
 
-    if (local === null) {
-      try {
-        validateUrl(pin.source);
-        if (pin.source.includes("://") && new URL(pin.source).password)
+    try {
+      if (pin.source.includes("://")) {
+        const url = new URL(pin.source);
+
+        if (
+          url.password ||
+          url.search ||
+          url.hash ||
+          ((url.protocol === "http:" || url.protocol === "https:") &&
+            url.username)
+        )
           throw new MaisterError(
             "CONFIG",
             "Credential-bearing package URLs cannot be exported.",
           );
-      } catch (cause) {
-        throw new MaisterError(
-          "CONFIG",
-          "Package source cannot be exported. Use a supported reproducible source.",
-          {
-            cause: cause instanceof Error ? cause : undefined,
-            details: { reason: "package_source_unexportable" },
-          },
-        );
       }
-      continue;
+      local = pin.source.startsWith("file://")
+        ? fileURLToPath(pin.source)
+        : isAbsolute(pin.source)
+          ? pin.source
+          : null;
+      if (local === null) validateUrl(pin.source);
+    } catch (cause) {
+      throw new MaisterError(
+        "CONFIG",
+        "Package source cannot be exported. Use a supported reproducible source without embedded credentials or URL query/fragment data.",
+        {
+          cause: cause instanceof Error ? cause : undefined,
+          details: { reason: "package_source_unexportable" },
+        },
+      );
     }
+    if (local === null) continue;
     const directory = pin.path ? join(local, pin.path) : local;
 
     try {
