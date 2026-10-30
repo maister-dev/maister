@@ -4,6 +4,9 @@ description: "Imports GitHub issues through the authenticated host gh CLI, detec
 kind: operational
 completion:
   contract: operational_v1
+task_qualification:
+  contract: v1
+  role: intake
 workspace: worktree
 mode: session
 risk_tier: standard
@@ -85,3 +88,7 @@ Completion is governed by the frozen `operational_v1` contract. Always emit the
 shared skill's final `json maister:output` result, including on partial import,
 HTTP 403, missing capability, or an unknown write. A clean process exit or prose
 report does not complete an operation. Do not change source files or Git state.
+
+Load the packaged **task-qualification** skill as the shared quality boundary.
+Capture source requests in Incoming; the project qualifier alone assesses readiness.
+Import success never means accepted backlog or authorized implementation.

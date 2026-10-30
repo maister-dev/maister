@@ -122,6 +122,7 @@ beforeAll(async () => {
     repoPath: repo,
     maisterYamlPath: path.join(root, "maister.yaml"),
     taskKey: "OPCORE",
+    taskQualificationBaseline: "required",
   });
 }, 180_000);
 afterAll(async () => {
@@ -137,7 +138,7 @@ afterAll(async () => {
 });
 
 describe("operational core package through real install/attach boundaries", () => {
-  it("IT-OPA-05 IT-EDGE-OPA-04 installs zero flows and freezes both intake variants with the shared skill", async () => {
+  it("IT-OPA-05 IT-EDGE-OPA-04 IT-UX-16 IT-UX-20 installs zero flows and freezes both intake variants with the shared skill", async () => {
     const source =
       process.env.OPERATIONAL_CORE_CANDIDATE ??
       path.resolve("test-support/fixtures/operational-core");
@@ -156,7 +157,11 @@ describe("operational core package through real install/attach boundaries", () =
       packageInstallId: installed.id,
       workspaceRoot: root,
     });
-    for (const agentId of ["core:github-intake-gh", "core:github-intake-mcp"]) {
+    for (const agentId of [
+      "core:github-intake-gh",
+      "core:github-intake-mcp",
+      "core:triager",
+    ]) {
       await attachAgent({ projectId, agentId }, db);
       const effective = await resolveEffectiveAgentDefinition(
         { projectId, agentId },
@@ -166,7 +171,7 @@ describe("operational core package through real install/attach boundaries", () =
       expect(effective.parsed).toMatchObject({
         kind: "operational",
         completion: { contract: "operational_v1" },
-        workspace: "worktree",
+        workspace: agentId === "core:triager" ? "repo_read" : "worktree",
         mode: "session",
       });
       const frozen = buildOperationalContract(effective);
@@ -211,7 +216,7 @@ describe("operational core package through real install/attach boundaries", () =
         .select()
         .from(agentProjectLinks)
         .where(eq(agentProjectLinks.projectId, projectId)),
-    ).toHaveLength(2);
+    ).toHaveLength(3);
   });
 });
 
@@ -253,6 +258,13 @@ for (const transport of ["gh", "mcp"] as const) {
         status: "Running",
         flowVersion: "agent",
         resultContract: frozen,
+        taskQualificationSnapshot: {
+          version: 1,
+          role: "intake",
+          taskId: null,
+          target: null,
+          sha: null,
+        },
         operationalIntegrityBaseline: baseline,
       });
       await db.insert(workspaces).values({

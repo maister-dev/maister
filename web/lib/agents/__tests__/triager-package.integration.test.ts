@@ -65,13 +65,12 @@ let launchAgentRun: typeof import("@/lib/agents/launch").launchAgentRun;
 let buildAgentPrompt: typeof import("@/lib/agents/launch").buildAgentPrompt;
 let resolveEffectiveAgentDefinition: typeof import("@/lib/agents/effective").resolveEffectiveAgentDefinition;
 
-// The shipped triager.md (maister-repo fixture == the maister-plugins core pkg).
+// Frozen pre-qualification operational triager preserves the existing routing wire contract.
 const TRIAGER_MD_PATH = path.join(
   __dirname,
   "fixtures",
   "core-package",
-  "maister-agents",
-  "triager.md",
+  "legacy-triager.md",
 );
 
 const AGENT_ID = "core:triager";
@@ -175,7 +174,7 @@ async function installCorePackage(opts?: {
   // A flow-less manifest: spec.flows is empty. registerPackageAgents skips the
   // same-package flow-membership check because the definition declares no flow.
   const manifest = {
-    spec: { name: "core", flows: [] },
+    spec: { name: "core", compat: { engine_min: "3.9.0" }, flows: [] },
     inventory: { skills: [], agents: [], platformAgents: ["triager"] },
   };
 

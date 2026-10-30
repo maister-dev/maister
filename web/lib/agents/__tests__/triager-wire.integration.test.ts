@@ -69,8 +69,7 @@ const TRIAGER_MD_PATH = path.join(
   __dirname,
   "fixtures",
   "core-package",
-  "maister-agents",
-  "triager.md",
+  "legacy-triager.md",
 );
 
 const AGENT_ID = "core:triager";
@@ -165,7 +164,7 @@ beforeEach(async () => {
        ("id", "source_url", "name", "version_label", "resolved_revision",
         "manifest", "manifest_digest", "installed_path", "package_status", "trust_status")
      VALUES ($1, 'github.com/maisterhq/maister-plugins', 'core', 'v1.0.0', 'rev-core-1',
-             '{"spec":{"name":"core","flows":[]},"inventory":{"platformAgents":["triager"]}}'::jsonb,
+             '{"spec":{"name":"core","compat":{"engine_min":"3.9.0"},"flows":[]},"inventory":{"platformAgents":["triager"]}}'::jsonb,
              'digest', $2, 'Installed', 'trusted')`,
     [packageInstallId, installedPath],
   );
