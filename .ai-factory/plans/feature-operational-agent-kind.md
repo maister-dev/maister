@@ -540,3 +540,46 @@ All review findings are addressed. No remote push, hosted CI, production
 migration or live GitHub mutation was performed. The quiet-rail/history/incident
 aggregation proposal above remains unimplemented and needs its own specification,
 API/persistence contract and TDD acceptance work.
+
+## Follow-up product direction — specified, not implemented
+
+The owner's clarification keeps every active agent run visible in the rail.
+This supersedes the earlier suggestion to hide all operational run cards.
+Completed operational runs must not accumulate there, whether successful or
+unsuccessful. The review fixes above are complete; this follow-up is a separate
+product change and is not included in their completed task checkboxes.
+
+- **Active executions:** show individual agent runs in a distinct rail section,
+  with a text/icon distinction rather than color alone. Preserve details, Stop,
+  queue state and independent HITL requests. Existing scheduling already has a
+  separate agent pool (`web/lib/scheduler.ts`, default three via
+  `MAISTER_MAX_CONCURRENT_AGENTS`); operational and code-delivery agents share
+  that pool. UI grouping must not imply a new capacity pool.
+- **Project summary and agent page:** the project's Agents tab shows the last
+  run's structured outcome and time, total run count, current activity and a link
+  to the project-attached agent's page. That page contains paginated run history,
+  memory, the effective prompt and configuration. Reuse existing memory access
+  and mutation rules. History retains each run's frozen definition and result.
+- **Prompt editing:** displaying the effective prompt is required; editing is
+  a proposed extension whose scope must be specified before implementation.
+  Distinguish package-definition editing through Studio from project-specific
+  configuration/overrides. Any edit affects subsequent launches only and uses
+  existing authorization and conflict/version checks.
+- **Failures:** the owner accepts either one latest failure per agent in the
+  rail or an Inbox item. The recommended design uses the existing Inbox decision
+  queue, with one agent/project item summarizing unresolved incidents and linked
+  run history. Repeated failures update counts and first/last occurrence rather
+  than creating new rail cards or new project Tasks. Different actionable causes
+  remain distinguishable inside the item; acknowledgement and recovery must not
+  hide a new cause or a later incident. Keep the Inbox badge and list derived
+  from the same canonical projection (`web/lib/queries/decisions.ts`).
+
+Follow-up acceptance: every active execution remains individually accessible;
+1,000 completed successes leave no terminal rail cards; repeated identical
+failures produce one agent/project attention item with an accurate repeat count;
+two simultaneous permission requests remain independently answerable. History
+and summary counts agree, memory access remains scoped, prompt changes cannot
+alter running or historical snapshots, and out-of-order concurrent completions
+cannot falsely resolve an incident. Specify API/schema/migration compatibility,
+EN/RU copy and meaningful RED→GREEN integration/browser coverage before building
+the follow-up. Use existing live SSE updates, not a new polling loop.
