@@ -1,6 +1,6 @@
 # Agent activity persistence
 
-**Designed — additive main-lineage migrations 0204–0207; no Brain migration.**
+**Implemented — additive main-lineage migrations 0204–0209; no Brain migration.**
 
 The owning domain defines lifecycle and authority. SQL, Drizzle schema, journal and snapshot must agree; generated consolidated ERD changes only after the corresponding DDL phase.
 

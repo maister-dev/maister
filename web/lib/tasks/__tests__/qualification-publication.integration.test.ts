@@ -1,3 +1,4 @@
+import type { OperationalResultV1 } from "@/lib/run-results/operational-types";
 import type { Db } from "@/lib/execution-host/db";
 
 import { randomUUID } from "node:crypto";
@@ -167,12 +168,13 @@ async function fixture(snapshot?: null) {
     qualificationId?: string,
     outcome: "Done" | "Failed" | "Abandoned" | "Crashed" = "Done",
     malformed = false,
+    report: OperationalResultV1 = operationalSuccessFixture(),
   ) =>
     prepareAgentRunFinalization(runId, outcome, {
       db: db,
       finalText: malformed
         ? "success"
-        : `\`\`\`json maister:output\n${JSON.stringify({ ...operationalSuccessFixture(), references: qualificationId ? [{ kind: "other", id: qualificationId, state: "confirmed" }] : [] })}\n\`\`\``,
+        : `\`\`\`json maister:output\n${JSON.stringify({ ...report, references: qualificationId ? [{ kind: "other", id: qualificationId, state: "confirmed" }] : [] })}\n\`\`\``,
     });
 
   return {
@@ -268,6 +270,7 @@ it("IT-UX-22 rejects unsafe, incomplete, stale and unauthorized evidence without
     "revoked",
     "deleted",
     "failed",
+    "partial",
   ] as const) {
     const f = await fixture(variant === "snapshot" ? null : undefined);
     const candidate =
@@ -305,6 +308,32 @@ it("IT-UX-22 rejects unsafe, incomplete, stale and unauthorized evidence without
             ? "Failed"
             : "Done",
       variant === "malformed",
+      variant === "partial"
+        ? {
+            ...operationalSuccessFixture(),
+            outcome: "partial",
+            coverage: { state: "incomplete", remainingKnown: 1 },
+            counts: {
+              scanned: 2,
+              attempted: 2,
+              completed: 1,
+              failed: 1,
+              skipped: 0,
+              created: 0,
+            },
+            diagnostics: [
+              {
+                code: "assessment_remainder_failed",
+                severity: "error",
+                operation: "qualification",
+                message: "One required operation failed.",
+                retryable: false,
+                remediation:
+                  "Inspect confirmed effects before another attempt.",
+              },
+            ],
+          }
+        : operationalSuccessFixture(),
     );
     const receipt = await db.transaction(prepared.apply);
 

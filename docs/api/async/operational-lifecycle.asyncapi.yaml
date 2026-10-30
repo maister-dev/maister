@@ -32,7 +32,7 @@ components:
           projectId: &a1
             type: string
             format: uuid
-          agentId: &a2
+          agentId:
             type: string
             minLength: 1
             maxLength: 256
@@ -64,7 +64,7 @@ components:
           - required: [revision]
     AgentIncidentChanged:
       name: agent.incident_changed
-      summary: Designed — episode content or actionable revision changed
+      summary: Implemented — episode content or actionable revision changed
       payload:
         type: object
         additionalProperties: false
@@ -75,7 +75,10 @@ components:
           - revision
         properties:
           projectId: *a1
-          agentId: *a2
+          agentId:
+            type: string
+            minLength: 1
+            maxLength: 256
           episodeId: *a1
           revision: *a3
     TaskQualificationChanged:

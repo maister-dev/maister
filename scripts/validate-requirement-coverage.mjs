@@ -35,7 +35,7 @@ export const COVERAGE_GROUPS = {
     documents: ["agent-activity-history.md", "agent-incidents.md", "agent-retry.md", "task-qualification.md"],
     prefixes: ["UX"],
     matrixPath: "docs/system-analytics/agent-activity-traceability.md",
-    implementationPhases: /^UX-T(?:0[5-9]|1[0-4]|19|2[0-3]|2[5-9]|30)$/,
+    implementationPhases: /^UX-T(?:0[5-9]|1[0-4]|19|2[0-3]|2[5-9]|3[0-3])$/,
     testRoots: ["web", "supervisor", "mcp"],
   },
   "project-config": {
@@ -152,7 +152,7 @@ export function testIdPattern(prefixes) {
 // A test id mentioned in a header COMMENT is not a test — scan only the TITLES
 // of `describe` / `it` / `test`, which is what "resolves to a real test" means.
 const TEST_TITLE_RE =
-  /\b(?:describe|it|test)(?:\.(?!each\b)\w+)*(?:\.each\s*\(\s*\[[\s\S]*?\]\s*\))?\s*\(\s*(["'`])((?:\\.|(?!\1)[\s\S])*?)\1/g;
+  /\b(?:describe|it|test)(?:\.(?!each\b)\w+)*(?:\.each\s*\(\s*\[[\s\S]*?\]\s*(?:as\s+const\s*)?\))?\s*\(\s*(["'`])((?:\\.|(?!\1)[\s\S])*?)\1/g;
 
 export function testIdsInSource(src, prefixes) {
   const found = new Set();

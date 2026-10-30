@@ -1,5 +1,6 @@
-import taskQualificationSchema from "../../runtime/task-qualification.schema.json";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+
+import taskQualificationSchema from "../../runtime/task-qualification.schema.json";
 
 import { type AuthContext, resolveAuthHeader } from "./auth";
 import { callExt, hitlRespondToolError, restResponseToToolError } from "./rest";

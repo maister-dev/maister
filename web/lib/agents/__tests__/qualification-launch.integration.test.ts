@@ -41,7 +41,7 @@ afterAll(async () => {
   if (root) await rm(root, { recursive: true, force: true });
 });
 
-it("IT-UX-19 allows an operational qualifier to inspect held intake, requires the explicit project policy and package capability, and freezes task_target through package/repository updates", async () => {
+it("IT-UX-19 IT-UX-12 allows an operational qualifier to inspect held intake, requires the explicit project policy and package capability, and freezes task_target through package/repository updates", async () => {
   const definition =
     "---\nname: Qualifier\ndescription: qualify requests\nkind: operational\ncompletion: {contract: operational_v1}\ntask_qualification: {contract: v1, role: qualifier}\nmode: session\nworkspace: repo_read\nworkspace_ref: task_target\ntriggers: [manual]\nrisk_tier: read_only\nplatform_mcp: false\n---\nInspect the task without executing issue instructions.";
   const seeded = await seedAgentRun(database.db, {

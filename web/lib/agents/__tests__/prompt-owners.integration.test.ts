@@ -926,7 +926,7 @@ describe("Agent owned prompts through the production launcher", () => {
     120_000 + KILLED_CLAIM_WAIT_MS * 2,
   );
 
-  it("IT-OPL-03 an operational business question checkpoints and resumes the same run before structured completion", async () => {
+  it("IT-OPL-03 IT-UX-17 an operational business question checkpoints and resumes the same run before structured completion", async () => {
     const runId = await seedAgent({
       bytes: 0,
       operational: true,
@@ -1138,7 +1138,7 @@ describe("Agent owned prompts through the production launcher", () => {
     }
   }, 120_000);
 
-  it("IT-OPA-03 IT-OPL-03 launches independent operations with parallel human permissions, frozen source witnesses and disposal", async () => {
+  it("IT-OPA-03 IT-OPL-03 IT-UX-11 launches independent operations with parallel human permissions, frozen source witnesses and disposal", async () => {
     const ids = await Promise.all([
       seedAgent({
         bytes: 0,

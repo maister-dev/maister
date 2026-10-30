@@ -1,6 +1,6 @@
 # Explicit agent retries
 
-**Designed — ADR-196–198.**
+**Implemented — ADR-196–198.**
 
 ## Purpose
 

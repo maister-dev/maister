@@ -3,7 +3,7 @@
 Branch: `feature/operational-agent-kind` — keep this checkout and branch.
 
 Created: 2026-10-30. Refined by aif-improve after rebase and qualification analysis.
-Status: **Phases 0–2 qualified; Phase 3 UI and package composition in progress.**
+Status: **Complete — all 33 follow-up tasks implemented and locally qualified.**
 
 This is the active follow-up plan for `/aif-implement`, `/aif-improve` and
 `/aif-verify`. The completed original operational-agent plan and qualification
@@ -26,7 +26,8 @@ resolve its alternatives.
   the connected API on 2026-10-30. Integration metadata commit `d81a04728` restores
   both migration/ADR lineages. Safety branch:
   `codex/backup-operational-before-rebase-20261030`. No feature implementation or
-  deployment migration ran; only rebase resolutions and validation changed code.
+  deployment migration ran during that rebase checkpoint; subsequent implementation
+  and qualification are recorded below.
 - SDD first. Phase 0 produces complete canonical specifications before code.
   Every behavior slice uses **RED → GREEN → REFACTOR** with real runner receipts.
   Tests and EN/RU documentation are required; standard structured logging;
@@ -1444,7 +1445,7 @@ green; SSE catch-up and negative grant cases executed, not merely mocked selecto
 
 ### Phase 3 — User surfaces and localization
 
-- [ ] **UX-T11. Render all active agent executions in the rail.** Depends: UX-T08, UX-T10.
+- [x] **UX-T11. Render all active agent executions in the rail.** Depends: UX-T08, UX-T10.
   Paths: `web/lib/queries/portfolio.ts`, `web/lib/queries/project.ts`, project and portfolio
   working-copy components, new agent activity read model/DTO as needed,
   `web/app/(app)/layout.tsx`, `web/components/chrome/left-rail.tsx`, shared rail
@@ -1454,7 +1455,7 @@ green; SSE catch-up and negative grant cases executed, not merely mocked selecto
   availability, expose active executions separately; preserve review workspaces
   and no global inaccessible occupancy. Keyboard,
   collapsed/mobile parity, text/icon state, authorized Stop/run links. Logging: none.
-- [ ] **UX-T12. Add project summary and dedicated agent page.** Depends: UX-T08, UX-T10.
+- [x] **UX-T12. Add project summary and dedicated agent page.** Depends: UX-T08, UX-T10.
   Paths: project page DTO mapping, `agents-attach-panel.tsx`, new
   `web/app/(app)/projects/[slug]/agents/[agentId]/page.tsx`, loading/error boundaries,
   new `web/components/agents/` page components, existing memory drawer/editor and
@@ -1462,7 +1463,7 @@ green; SSE catch-up and negative grant cases executed, not merely mocked selecto
   read grant, read-only historical mode, typed unavailable/error/reconnect/empty
   states, focus restoration and accessible update feedback. Reuse memory CAS;
   never expose a wrong-pin Studio link. Logging: none beyond shared HTTP errors.
-- [ ] **UX-T13. Render grouped Inbox incidents and remediation.** Depends: UX-T09, UX-T10, UX-T12.
+- [x] **UX-T13. Render grouped Inbox incidents and remediation.** Depends: UX-T09, UX-T10, UX-T12.
   Paths: `web/components/inbox/decision-card.tsx`, `decision-sections.tsx`,
   `web/app/(app)/inbox/page.tsx`, new focused incident details/ack component,
   EN/RU catalogs. Primary: UX-E2E01 plus service coverage UX-IT08.
@@ -1472,7 +1473,7 @@ green; SSE catch-up and negative grant cases executed, not merely mocked selecto
   text. Preserve separate HITL cards and request-scoped response controls. Logging:
   no render logs; mutations use UX-T09 owner.
 
-- [ ] **UX-T21. Add runner-aware failure and rerun UX.** Depends: UX-T12, UX-T13, UX-T20.
+- [x] **UX-T21. Add runner-aware failure and rerun UX.** Depends: UX-T12, UX-T13, UX-T20.
   Paths: agent history/details and Inbox incident component, run details controls,
   existing runner picker/attachment settings modal, shared mutation feedback,
   EN/RU catalogs. Show failure stage and source runner, retry safety/refusal,
@@ -1489,7 +1490,7 @@ rows, no hidden active executions or review regressions.
 
 ### Phase 3b — Core triager package adoption
 
-- [ ] **UX-T22. Adopt operational completion in core:triager and qualify exact package.** Depends: UX-T19, UX-T20, UX-T21.
+- [x] **UX-T22. Adopt operational completion in core:triager and qualify exact package.** Depends: UX-T19, UX-T20, UX-T21.
   Ownership: maister-plugins `packages/core/maister-agents/triager.md`, core
   manifest/README and platform triager fixture/fixture manifests. Preserve original
   intake changes on the plugin working branch. Update kind, strict result/count
@@ -1505,7 +1506,7 @@ platform fixture/compatibility receipt commit. No publication or live GitHub cal
 
 ### Phase 3c — Shared intake qualification
 
-- [ ] **UX-T27. Deliver Incoming UX and one shared qualification package skill.** Depends: UX-T22, UX-T26, UX-T30, UX-T12.
+- [x] **UX-T27. Deliver Incoming UX and one shared qualification package skill.** Depends: UX-T22, UX-T26, UX-T30, UX-T12.
   Paths: `web/lib/work/stage.ts`, board/project/task queries and components,
   task detail/qualification controls, settings/config UI, EN/RU catalogs;
   `agents/definition.ts`, registry/Studio/attachment DTOs and configuration
@@ -1521,9 +1522,48 @@ platform fixture/compatibility receipt commit. No publication or live GitHub cal
 Complete owning web suites, exact candidate core install/attach and shared skill resolution pass; both transport
 variants, required project policy and operational completion are qualified together.
 
+### Qualification wiring correction discovered during acceptance
+
+- [x] **UX-T31. Preserve operational control-plane permission decisions in read-only workspaces.** Depends: UX-T26, UX-T27.
+  Evidence: `supervisor/src/acp-client.ts` invokes session read-only arbitration before
+  the ordinary permission owner; non-read MCP kinds are unconditionally denied.
+  An operational qualifier therefore cannot depend on approved native repository
+  reads plus MAIster task mutations unless this boundary is explicit.
+  Snapshot `agentKind` into the session-create payload/host record from the immutable
+  run. Only an operational session's actually registered built-in `maister` MCP
+  identity may pass through to existing capability governance, execution policy and
+  request-scoped HITL. Do not grant a tool, scope or approval. Shell and file paths,
+  external/unregistered/ambiguous MCP calls and legacy omitted-kind sessions retain
+  read-only refusal. No agent-ID exception. Update supervisor/web schemas, API and
+  compatibility documentation. Primary: real ACP IT-UX-20 permission round trip;
+  existing read-only, parallel permission and adapter mirrors remain regressions.
+  RED must observe a denied call instead of a pending human decision; GREEN requires
+  an explicit response and no effect before it. No new database migration is needed.
+
+- [x] **UX-T32. Materialize only owned capability entries.** Depends: UX-T27.
+  Actual qualifier browser launch exposed a generation conflict: the cwd capability
+  materializer created an empty `.claude/agents` directory for a skills-only package,
+  outside every declared ownership path. Create destination parents only when copying
+  an entry; preserve the integrity verifier's strict unexpected-change refusal. Reuse
+  the materialization lease and existing copy functions for all adapters/callers.
+  Primary: E2E-UX-04 through actual operational repo_read launch, supported capability
+  materialization integration owners and original source-integrity regressions. No
+  directory exemption, schema migration, new status or permission relaxation.
+
+- [x] **UX-T33. Qualify transient test-container startup recovery.** Depends: UX-T07.
+  Two fresh broad runs observed the pinned Testcontainers SDK's port-binding timeout
+  before a test database became available. Retry this exact external SDK condition
+  once only after the existing allocation-label cleanup has proven absence. Every
+  attempt owns a fresh allocation ID; no SQL or migration has run. Cleanup failure,
+  daemon errors, port-in-use refusals and a second failure remain fatal, preserving
+  the last cause. Do not retry tests, change timeouts, reuse a database, restart Docker
+  or touch sibling resources. Extend the existing helper lifecycle and real Docker
+  owner controls with a surviving sibling. Primary IT-UX-05; this is qualification
+  infrastructure, with no product schema/status/env/dependency change.
+
 ### Phase 4 — Conformance, integration and release qualification
 
-- [ ] **UX-T14. Close lifecycle and permission regressions across surfaces.** Depends: UX-T11–UX-T13, UX-T19–UX-T22.
+- [x] **UX-T14. Close lifecycle and permission regressions across surfaces.** Depends: UX-T11–UX-T13, UX-T19–UX-T22.
   Paths: existing operational integration suites, memory/launch/scheduler/decisions
   suites and `web/e2e/platform-agents-operational.spec.ts`; new project-agent-page
   browser spec if the existing suite would become unfocused. Primary: UX-IT11,
@@ -1532,7 +1572,7 @@ variants, required project policy and operational completion are qualified toget
   code-delivery review/promotion using existing controlled runtime. Do not duplicate
   all original source-integrity tests; retain them as regressions. Logging: harness
   evidence only. Repair any gap through its owning spec/test/code slice.
-- [ ] **UX-T23. Verify failed-runner and rerun composition end to end.** Depends: UX-T14, UX-T22.
+- [x] **UX-T23. Verify failed-runner and rerun composition end to end.** Depends: UX-T14, UX-T22.
   Primary: UX-E2E03 plus UX-IT13–17 owning suites. Qualify bad-runner→terminal
   diagnostic→one Inbox card→new ready runner→one linked successor→structured Done;
   project/portfolio/rail counts agree. Include real DB concurrency, unknown-create
@@ -1541,13 +1581,13 @@ variants, required project policy and operational completion are qualified toget
   Paths: existing operational/project history E2E and triager wire suites,
   follow-up traceability/qualification receipt. Logging: harness evidence only.
 
-- [ ] **UX-T28. Qualify task-quality admission and source-to-work composition.** Depends: UX-T27, UX-T23.
+- [x] **UX-T28. Qualify task-quality admission and source-to-work composition.** Depends: UX-T27, UX-T23.
   Run UX-IT18–20/UX-IT22/UX-E2E04 through actual creation/triage/launch APIs, Postgres,
   controlled read-only ACP and both importer transport fixtures. Assert task edit,
   answer, target/SHA and policy races; unknown evidence vs non-actionable result;
   manual/force/scheduler/MCP denial and accepted ready path. Reuse current HITL,
   integrity/cleanup and code-delivery regression suites. Logging: test receipts only.
-- [ ] **UX-T15. Reconcile current docs and API/MCP compatibility.** Depends: UX-T14, UX-T23, UX-T28.
+- [x] **UX-T15. Reconcile current docs and API/MCP compatibility.** Depends: UX-T14, UX-T23, UX-T28.
   Paths: all Phase-0 docs, `docs/screens/README.md` and domain indexes,
   `site-docs/concepts/`/`guides/` affected agent/operations pages and RU counterparts,
   API schemas, mcp explicit DTO/tool documentation, traceability matrix, this plan.
@@ -1557,7 +1597,7 @@ variants, required project policy and operational completion are qualified toget
   occurrence-count semantics, prompt edit boundary, detach/unknown identity behavior,
   notification and ack semantics. Logging: none. Include triager package compatibility and rollout; no new custom
   operational output schema.
-- [ ] **UX-T16. Qualify migration/release compatibility against current base.** Depends: UX-T14, UX-T15.
+- [x] **UX-T16. Qualify migration/release compatibility against current base.** Depends: UX-T14, UX-T15, UX-T33.
   Recheck base/journal/ADR allocation and budgets for renumbering at integration;
   do not reuse the old original-plan conflict-free receipt. Run fresh+incremental+
   interrupted backfill proof, authorized role probes, frozen snapshot stability and
@@ -1565,14 +1605,14 @@ variants, required project policy and operational completion are qualified toget
   upgrade documentation, qualification receipts. Logging: existing maintenance
   progress and refusal logs. Confirm no new env/compose/Docker/runtime dependency
   needed. If wiring changes emerge, add an explicit wiring task before release.
-- [ ] **UX-T17. Verify the complete acceptance matrix and review the final diff.** Depends: UX-T16.
+- [x] **UX-T17. Verify the complete acceptance matrix and review the final diff.** Depends: UX-T16.
   Read final diff against the integrated base for spec/code/schema parity, safety,
   source preservation, role leakage, query bounds, lifecycle writer coverage and
   SOLID/KISS/DRY. Record exact runner discovery and source identity for every primary
   test. Run full required suites/contracts/docs/ERD/MCP/browser gates; all required
   tests pass without skips/retries/relaxed invariants. No aggregated old failed run
   receipt is described as a fresh fully green invocation. Logging: evidence only.
-- [ ] **UX-T18. Commit qualified delivery and hand off release order.** Depends: UX-T17.
+- [x] **UX-T18. Commit qualified delivery and hand off release order.** Depends: UX-T17.
   Mark completed tasks/criteria only with receipts; record phase commits, limits,
   deployment ledger premise and owner steps. Keep branch clean. Release order:
   reconcile base → maintenance/drain → additive schema and resumable backfill →
@@ -2351,3 +2391,135 @@ the follow-up. Use existing live SSE updates, not a new polling loop.
   no receipt_evidence. Retry correctly refuses uncertain commands; UX-T23 must
   close this receipt-persistence gap through the existing command owner, with
   exact rejected/non-inflight proof. Do not weaken the retry safety predicate.
+
+### P3 owning acceptance receipt (2026-10-31)
+
+- UX-T11/12/13/21/22/27 are implemented and qualified through the actual routes,
+  Postgres and controlled execution host: `agent-release-browser-final.log` records
+  24 passed, zero retries and zero process leaks. EN/RU rail/history, collapsed,
+  keyboard/mobile, a newly arriving launch behind a frozen cursor, bounded grouped
+  causes, per-reader acknowledgement, one-off runner successor and candidate hold
+  through clean finalization all pass. Working-copy and code-delivery regressions
+  remain in that same invocation. A RU qualification summary uses the accepted state.
+- Exact clean maister-plugins candidate is `13d9d4e` on
+  `codex/operational-agent-kind`; phase commits `612753a` (operational triager) and
+  `13d9d4e` (shared qualification). Normal install/trust/attach and controlled gh/MCP
+  intake paths pass nine tests (`core-exact-candidate.log`). Platform fixture bytes
+  mirror that candidate; a separate frozen pre-qualification triager fixture owns
+  the legacy routing contract, outside package agent discovery.
+- UX-T31 RED: registered MAIster mutation was denied instead of entering HITL.
+  GREEN: complete supervisor suites pass 495 unit and 331 integration tests;
+  default/legacy, unregistered/external/ambiguous MCP, shell and native-path refusals
+  remain covered. Browser asserts the actual create payload is operational,
+  readOnlySession=true and does not enable auto-approval.
+- UX-T32 RED: a skills-only qualifier failed materialization generation before its
+  first prompt. Only create destination parents for owned copied entries; never
+  exempt empty directories from source validation. GREEN: actual qualifier reaches
+  held candidate, clean Done and checkout release. Shared materialization, current
+  core fixture and precise history query owners pass eight integration tests.
+- Release preflight: main and origin/master both remain `420f432b21e`; Drizzle dry
+  generation against copied current metadata reports no schema changes; ERD has
+  153 tables; full docs/contracts and public EN/RU link checks pass. The fresh full
+  web integration gate remains running; no final global-green claim is made yet.
+
+### Qualification infrastructure correction (UX-T33)
+
+The prior complete integration attempt was stopped after two Docker port-binding
+startup failures; its partial result is not called green. The pinned SDK retries
+port inspection for 30 seconds and can refuse before returning any database.
+The existing label-scoped cleanup proves that allocation absent. A single fresh
+pre-SQL allocation is now permitted for this exact condition; no test, migration,
+SQL or business operation is retried. Other errors and unproven cleanup stay fatal.
+
+RED: the existing lifecycle owner made one startup attempt instead of two; the
+real Docker control allocated a database, simulated this precise SDK failure and
+failed before reaching a new SQL-capable allocation. GREEN: three lifecycle controls
+and the complete nine-test real PostgreSQL owner pass. They prove discarded ID
+absence, a live sibling's SQL, last-cause preservation and no retry after cleanup
+refusal. Receipts: `agent-container-retry-{red,real-red-owned,green-final,real-green}.log`.
+The fresh full gate must run again against this finalized helper; no timeout,
+Docker configuration, service, env variable or production lifecycle changed.
+
+### Final local review checkpoint
+
+Source review against integrated master covers the three independent axes (kind,
+workspace, execution mode), frozen launch/role/completion identity, every task
+admission owner, result/qualification transaction, scoped history and grouped
+per-reader attention, retry intents and cleanup ownership. The new UI reuses live
+SSE and existing settings/memory/HITL controls. No source directory exemption,
+automatic approval, empty-diff promotion, status/agent-ID exception or implicit
+publication was introduced. No unresolved source finding remains from this review;
+the complete integration gate remains required before global acceptance is closed.
+
+Local phase commits after P2: `8024edcd8` runtime permission/materialization and
+rejected-create receipts; `7826ed1cc` exact core fixtures/legacy compatibility;
+`ade2e5781` active agents/history/Incoming/quiet Inbox UI; `fa090341d` owned transient
+Postgres startup recovery. Plugin phases remain `612753a` and `13d9d4e` on the local
+`codex/operational-agent-kind` branch. No remote ref was changed.
+
+The final unit invocation with bounded worker concurrency passes 884 files / 9,233
+tests (`agent-qualified-full-unit-green.log`). An earlier concurrent invocation's
+uncertain Git-child observation is preserved as a failed receipt; the ownership
+guard was not weakened and no test was skipped or retried. Complete supervisor
+qualification passes 495 unit and 331 integration tests. MCP passes 357 unit and
+six real stdio integration tests, with typecheck/build green. Browser qualification
+`agent-release-browser-qualified.log` passes all 24 scenarios, zero retries/leaks,
+including Incoming filter continuity over 25+1 actual rows and real committed
+repository evidence. Exact clean core `packages/core` candidate passes nine
+install/trust/attach/controlled-provider tests on the final platform.
+
+Remote-base recheck on 2026-10-31: existing-auth `gh api
+repos/maister-dev/maister/commits/master --jq .sha` returns
+`420f432b21ea190635b949dfeac22c36cdc940ec`, matching both local master and
+origin/master and the integrated ancestor. The connector did not return and SSH
+was unavailable; no credential settings, fetch target or remote ref was changed.
+
+### Final acceptance (2026-10-31)
+
+All 33 active follow-up tasks are complete. The final fresh integration invocation
+`pnpm exec vitest run --project integration --maxWorkers=6` passes **618 files /
+5,444 tests**, with **two unchanged OS-conditional files/tests skipped on Darwin**
+(620 files / 5,446 tests discovered). No new or required feature test is skipped;
+no test retry is configured. Duration 1,411.41 seconds. Receipt:
+`/private/tmp/agent-qualified-full-integration.log`. This is a single fresh green
+invocation; prior partial/failed invocations are not aggregated into this result.
+
+The final complete unit invocation passes **884 files / 9,233 tests**. Complete
+supervisor: **50 files / 495 unit tests** and **36 files / 331 integration tests**.
+MCP: **357 unit tests + six real stdio tests**, typecheck/build green after its
+import-order-only correction. The complete focused browser invocation passes
+**24 tests**, zero retries and zero process leaks, including the final Incoming
+25+1 filtered pagination scenario. Exact clean core commit `13d9d4e` from
+`/private/tmp/maister-operational-plugins/packages/core` passes nine package/transport
+integration cases. Source discovery records all primary IDs through the actual
+Vitest configuration; bidirectional traceability resolves 39 requirement/edge rows
+and 24 implementation tasks across 26 suite IDs, alongside the original 34-row
+operational-agent conformance group.
+
+All branch-changed web/supervisor/MCP source files pass configured lint with zero
+code warnings; web's three intentionally ignored script paths retain the repository's
+normal exclusions. Web/supervisor/MCP TypeScript, official API/AsyncAPI parsers,
+adapter mirrors, complete docs/link/ADR/index/coverage checks and the 153-table ERD
+check pass. Public EN/RU Mintlify build validation and anchor-aware link checks pass.
+Disposable Drizzle generation reports no schema delta. No new runtime dependency,
+image, environment variable, port or compose/mount configuration is required.
+
+Acceptance decisions: active agent executions stay individually accessible in the
+rail, project and portfolio; physical workspace counts require a retained workspace
+row. Terminal failures/successes live in history; one scoped per-agent Inbox group
+retains distinct causes and independent acknowledgements. Proven pre-work failures
+can create one safe runner-specific successor; unknown/partial effects cannot be
+blindly replayed. Incoming requests require a current evidenced assessment before
+accepted backlog/delivery; candidates publish only with clean canonical terminal
+success. Code-delivery review/promotion, HITL, cancellation, crash/recovery, source
+integrity, disposal and immutable run snapshots retain their qualified semantics.
+
+The final conformance/docs phase commit records this acceptance. No push, tag,
+production migration, package publication or hosted CI dispatch was performed.
+Operator release order remains: verify the real deployment ledger and supported
+lineage; maintenance/drain; append schema and resume fenced backfill; compatible
+platform/MCP/supervisor and scoped smoke; reopen compatible admission; publish core;
+explicit project policy and attachment-pin upgrade. A pre-rebase operational
+0194–0198 deployment remains unsupported by the normal upgrade path until its
+operator provides reconciliation evidence. Hosted and production acceptance need
+their own later receipts; they are not claimed by this local qualification.

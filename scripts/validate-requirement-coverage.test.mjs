@@ -142,7 +142,12 @@ test("agent activity task namespace is non-vacuous and rejects an orphan", () =>
 test("agent activity group names all planned obligations and implementation tasks", () => {
   const result = checkGroupCoverage(COVERAGE_GROUPS["agent-activity"]);
   assert.deepEqual(result.failures, []);
-  assert.equal(result.ids.length, 37);
-  assert.equal(result.rows.size, 37);
-  assert.equal(result.tasks.filter((id) => id.startsWith("UX-T")).length, 30);
+  assert.equal(result.ids.length, 39);
+  assert.equal(result.rows.size, 39);
+  assert.equal(result.tasks.filter((id) => id.startsWith("UX-T")).length, 33);
+});
+
+test("const-asserted parameter tables do not swallow following requirement-bearing tests", () => {
+  const source = 'it.each(["live"] as const)("owner %s", () => {});\nit("IT-UX-11 permissions", () => {});\nit("IT-UX-17 continuation", () => {});\nit.each([true])("other %s", () => {});';
+  assert.deepEqual([...testIdsInSource(source, ["UX"])], ["IT-UX-11", "IT-UX-17"]);
 });

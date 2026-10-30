@@ -1,6 +1,6 @@
 # Task qualification persistence
 
-**Designed — additive main-lineage migrations 0204–0207; no Brain migration.**
+**Implemented — additive main-lineage migrations 0204–0209; no Brain migration.**
 
 The owning domain defines lifecycle and authority. SQL, Drizzle schema, journal and snapshot must agree; generated consolidated ERD changes only after the corresponding DDL phase.
 
@@ -50,3 +50,11 @@ fixtures. Task creation derives required mode from the locked project's effectiv
 policy. The database invalidates semantic inputs across all task-row writers,
 blocking clarification mutations and default-target updates, with transactional
 content-free outbox facts. Source-run → task remains the write lock order.
+
+
+0209 declares the task-qualification writer capability on production and owned test
+connections. Undeclared old writers cannot mutate governed task or admission rows.
+It also persists the agent declaration and write-once first-dispatch check receipt.
+Default legacy DB values preserve upgraded data; registration assigns new-project
+required policy. Independent request admission and execution-child proof are checked
+by their existing service owners and database constraints, never inferred from text.
