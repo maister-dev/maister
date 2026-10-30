@@ -21,6 +21,7 @@ import {
   type RepositoryFence,
 } from "../repository-lock";
 import { git, gitResult } from "../git";
+import { acquireRepositoryFenceClaim } from "../repository-fence-claim";
 
 import { sha256 } from "@/lib/evaluations/digest";
 
@@ -34,6 +35,167 @@ const loaderArgs = [
   "tsx",
   fixture,
 ];
+
+it("IT-CPC-10: interrupted owner replacement preserves an adoptable prior fence", async () => {
+  const root = await mkdtemp(join(tmpdir(), "config-owner-replacement-"));
+  const id = randomUUID();
+
+  try {
+    await execute("git", ["init", "-b", "main", root]);
+    for (const [command, checkpoint] of [
+      ["hold", "fenced"],
+      ["hold-recovery-write", "owner-write-ready"],
+    ]) {
+      const child = spawn(
+        process.execPath,
+        [...loaderArgs, command!, root, id],
+        {
+          stdio: ["pipe", "pipe", "pipe"],
+        },
+      );
+
+      try {
+        expect(String((await once(child.stdout, "data"))[0])).toContain(
+          checkpoint,
+        );
+      } finally {
+        if (child.exitCode === null && child.signalCode === null) {
+          const exited = once(child, "exit");
+
+          child.kill("SIGKILL");
+          await exited;
+        }
+      }
+    }
+    const recovered = await acquireRepositoryFence(root, id);
+
+    await recovered.release();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("IT-CPC-10: an ordinary repository mutation can retry after its owner dies", async () => {
+  const root = await mkdtemp(join(tmpdir(), "config-ordinary-retry-"));
+
+  try {
+    await execute("git", ["init", "-b", "main", root]);
+    await git(root, [
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.invalid",
+      "commit",
+      "--allow-empty",
+      "-m",
+      "base",
+    ]);
+    const head = (await git(root, ["rev-parse", "HEAD"])).trim();
+    const child = spawn(
+      process.execPath,
+      [...loaderArgs, "hold-ordinary", root, head],
+      {
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
+
+    try {
+      expect(String((await once(child.stdout, "data"))[0])).toContain("fenced");
+      await expect(
+        execute(process.execPath, [...loaderArgs, "ff", root, head]),
+      ).rejects.toMatchObject({
+        stdout: expect.stringContaining('"code":"CONFLICT"'),
+      });
+      const exited = once(child, "exit");
+
+      child.kill("SIGKILL");
+      await exited;
+      // Retry the production entry point without reading or supplying the old owner ID.
+      await expect(
+        execute(process.execPath, [...loaderArgs, "ff", root, head]),
+      ).resolves.toMatchObject({
+        stdout: expect.stringContaining("updated"),
+      });
+      expect((await git(root, ["rev-parse", "HEAD"])).trim()).toBe(head);
+      await expect(
+        readFile(
+          join(root, ".git", "maister-config-mutation.lock", "owner.json"),
+        ),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) {
+        const exited = once(child, "exit");
+
+        child.kill("SIGKILL");
+        await exited;
+      }
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("IT-CPC-10: death during recovery releases adoption exclusion and competing retries have one owner", async () => {
+  const root = await mkdtemp(join(tmpdir(), "config-recovery-retry-"));
+  const id = randomUUID();
+
+  try {
+    await execute("git", ["init", "-b", "main", root]);
+    const prior = await acquireRepositoryFence(root, id);
+
+    prior.retain();
+    const child = spawn(
+      process.execPath,
+      [...loaderArgs, "hold-recovery", root, id],
+      {
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
+
+    try {
+      expect(String((await once(child.stdout, "data"))[0])).toContain(
+        "recovering",
+      );
+      await expect(acquireRepositoryFence(root, id)).rejects.toMatchObject({
+        code: "CONFLICT",
+        details: { reason: "operation_busy" },
+      });
+      const exited = once(child, "exit");
+
+      child.kill("SIGKILL");
+      await exited;
+      const contenders = await Promise.allSettled([
+        acquireRepositoryFence(root, id),
+        acquireRepositoryFence(root, id),
+      ]);
+      const winners = contenders.filter(
+        (result) => result.status === "fulfilled",
+      );
+
+      try {
+        expect(winners).toHaveLength(1);
+        expect(
+          contenders.filter((result) => result.status === "rejected"),
+        ).toEqual([
+          expect.objectContaining({
+            reason: expect.objectContaining({ code: "CONFLICT" }),
+          }),
+        ]);
+      } finally {
+        for (const winner of winners) await winner.value.release();
+      }
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) {
+        const exited = once(child, "exit");
+
+        child.kill("SIGKILL");
+        await exited;
+      }
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 it("IT-CPC-04: fenced Git reads preserve UTF-8 across subprocess chunk boundaries", async () => {
   const root = await mkdtemp(join(tmpdir(), "config-git-utf8-"));
@@ -85,6 +247,22 @@ it("IT-CPC-10: releasing a fence preserves unexpected operator files and require
     expect(await readFile(note, "utf8")).toBe("do not discard");
     await rm(note);
     await fence.release();
+    // Unknown legacy claims and nonempty mutex paths are operator evidence,
+    // including unrelated SQLite files that must never be opened/recovered.
+    for (const name of [
+      "maister-config-mutation.recovery.lock",
+      "maister-config-mutation.mutex.sqlite",
+    ]) {
+      const path = join(root, ".git", name);
+
+      await writeFile(path, "operator evidence");
+      await expect(
+        acquireRepositoryFenceClaim(join(root, ".git")),
+      ).rejects.toMatchObject({ code: "CONFLICT" });
+      expect(await readFile(path, "utf8")).toBe("operator evidence");
+      // The fixture operator resolves its own collision, not the product.
+      await rm(path);
+    }
     await mkdir(join(root, ".git", "maister-config-mutation.lock"));
     await expect(
       acquireRepositoryFence(root, randomUUID()),

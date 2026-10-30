@@ -203,10 +203,19 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ["writeOwner", "node:fs/promises.open", "open"],
         ["writeOwner", "node:fs/promises.rename", "write"],
         ["acquireRepositoryFence", "node:fs/promises.mkdir", "write"],
-        ["acquireRepositoryFence", "node:fs/promises.rm", "remove"],
         ["acquireRepositoryFence", "node:fs/promises.open", "open"],
         ["acquireRepositoryFence", "node:fs/promises.realpath", "stat"],
         ["acquireRepositoryFence.release", "node:fs/promises.rm", "remove"],
+      ],
+    ),
+    ...classified(
+      "lib/project-config-persistence/repository-fence-claim.ts",
+      "repository-worktree",
+      "Permanent empty kernel mutex in the canonical common Git directory serializes owner adoption; no configuration or supervisor runtime data",
+      [
+        ["acquireRepositoryFenceClaim", "node:fs/promises.lstat", "stat"],
+        ["acquireRepositoryFenceClaim", "node:fs/promises.open", "open"],
+        ["acquireRepositoryFenceClaim", "node:sqlite.DatabaseSync", "sqlite"],
       ],
     ),
     ...classified(
@@ -2213,6 +2222,11 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
       ["withRepositoryMutationFence", false],
       ["assertConfigGitOwnerRetired", false],
     ],
+  ),
+  ...wrappers(
+    "lib/project-config-persistence/repository-fence-claim.ts",
+    "repository-worktree",
+    [["acquireRepositoryFenceClaim", false]],
   ),
   ...wrappers(
     "lib/project-config-persistence/review-files.ts",

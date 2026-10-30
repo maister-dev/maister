@@ -20,6 +20,7 @@ import pino from "pino";
 import { z } from "zod";
 
 import { git } from "./git";
+import { acquireRepositoryFenceClaim } from "./repository-fence-claim";
 import {
   INDEX_RESERVATION_MARKER,
   writeIndexReservationMarker,
@@ -60,6 +61,10 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 const execute = promisify(execFile);
+// Ordinary repository actions have no DB intent. Their reserved identity lets
+// the next ordinary call retire a dead owner before rechecking its own Git
+// preconditions; it never adopts or replays a configuration publication intent.
+const ORDINARY_MUTATION_ID = "00000000-0000-5000-8000-000000000001";
 
 export async function commonGitDirectory(repo: string): Promise<string> {
   return realpath(
@@ -70,7 +75,7 @@ export async function commonGitDirectory(repo: string): Promise<string> {
 function busy(): MaisterError {
   return new MaisterError(
     "CONFLICT",
-    "A repository mutation is active or needs recovery. Complete configuration recovery before retrying; do not remove unknown Git locks.",
+    "A repository mutation is active or needs recovery. Retry the repository action after its owner exits, or recover its configuration save; do not remove unknown Git locks.",
     {
       details: { reason: "operation_busy" },
     },
@@ -197,7 +202,13 @@ async function assertRetiredOwner(
 }
 
 async function writeOwner(directory: string, owner: FenceOwner): Promise<void> {
-  const temporary = join(directory, `${owner.nonce}.json`);
+  // Keep incomplete replacement evidence outside the active owner directory.
+  // A crash before rename leaves the previous owner adoptable; unknown staging
+  // files are retained and never treated as authority to run or remove Git work.
+  const temporary = join(
+    dirname(directory),
+    `${basename(directory)}.${owner.nonce}.json`,
+  );
 
   await writeFile(temporary, JSON.stringify(owner), {
     mode: 0o600,
@@ -255,7 +266,7 @@ export async function acquireRepositoryFence(
     nonce: randomUUID(),
     groups: [],
   };
-  let recoveryClaim: string | null = null;
+  let releaseRecoveryClaim: (() => Promise<void>) | null = null;
 
   if (liveOwners.has(directory)) throw busy();
 
@@ -264,17 +275,7 @@ export async function acquireRepositoryFence(
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     await assertRetiredOwner(directory, operationId, indexLockPath);
-    const claim = join(
-      commonDirectory,
-      "maister-config-mutation.recovery.lock",
-    );
-
-    try {
-      await mkdir(claim, { mode: 0o700 });
-      recoveryClaim = claim;
-    } catch {
-      throw busy();
-    }
+    releaseRecoveryClaim = await acquireRepositoryFenceClaim(commonDirectory);
     try {
       await assertRetiredOwner(directory, operationId, indexLockPath);
       const prior = await readOwner(directory);
@@ -289,7 +290,8 @@ export async function acquireRepositoryFence(
         "retired repository owner recovered",
       );
     } catch (error) {
-      await rm(claim, { recursive: true });
+      await releaseRecoveryClaim();
+      releaseRecoveryClaim = null;
       throw error;
     }
   }
@@ -308,7 +310,7 @@ export async function acquireRepositoryFence(
     liveOwners.delete(directory);
     throw error;
   } finally {
-    if (recoveryClaim !== null) await rm(recoveryClaim, { recursive: true });
+    if (releaseRecoveryClaim !== null) await releaseRecoveryClaim();
   }
 
   log.debug({ operationId }, "repository mutation fence acquired");
@@ -453,7 +455,7 @@ export async function withRepositoryMutationFence<T>(
   repo: string,
   action: () => Promise<T>,
 ): Promise<T> {
-  const fence = await acquireRepositoryFence(repo, randomUUID());
+  const fence = await acquireRepositoryFence(repo, ORDINARY_MUTATION_ID);
 
   try {
     return await fence.run(action);
