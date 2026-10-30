@@ -58,8 +58,8 @@ Cleanup version 1 stores resource kind/reference, state, armed revision/time,
 attempts 0..5, dueAt, safe error and latest re-arm receipt. Rowless claim fields
 are all-null or a complete attempt ID/owner/expiry tuple. Worktree claim remains
 solely in existing workspaces lifecycle columns; their due time follows intent.
-Every due query selects only operational terminal candidates and uses a due-time
-partial index/keyset, reasserting kind/status/revision under claim.
+Due queries filter operational terminal candidates by intent state and deadline,
+then advance a durable run-ID keyset cursor. Claims reassert kind/status/revision.
 
 Acknowledgement PK is (user_id, run_id, reason, revision), with positive revision
 and closed reason CHECKs. The leading user key supports reader exclusions; add a

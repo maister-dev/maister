@@ -123,5 +123,6 @@ export async function loadMaisterPackageManifest(
   );
 
   await assertPackageOperationalContracts(packageRoot, parsed.data);
+
   return normalizePackageManifest(parsed.data);
 }

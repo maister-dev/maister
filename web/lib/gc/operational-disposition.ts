@@ -543,7 +543,7 @@ export async function disposeOperationalRun(
   }
 }
 
-/** Due-time ordering rotates failed/held rows behind later eligible work. */
+/** A durable keyset cursor rotates past failed and held eligible rows. */
 export async function sweepOperationalDispositions(
   options: OperationalDispositionOptions = {},
 ): Promise<{ scanned: number; released: number; deferred: number }> {

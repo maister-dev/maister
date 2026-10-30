@@ -17,20 +17,25 @@ owns business terminal mapping. This domain adds no new run status or tool appro
 
 ## State machine
 
-Cleanup is independent of the committed business outcome.
+Cleanup is independent of the committed business outcome. Live and checkpointed
+runs retain their resources without a terminal cleanup intent.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Retained: live or checkpointed
-    Retained --> Armed: terminal commit and intent
-    Armed --> Preserving: lease and quiescence proven
+    [*] --> Armed: Done / Failed / Abandoned terminal commit
+    [*] --> Retained: Crashed terminal commit
+    Retained --> Preserving: diagnostic deadline due and lease acquired
+    Armed --> Preserving: lease acquired
     Preserving --> Removed: evidence preserved and local deletion recorded
     Removed --> Released: host handle release acknowledged
     Preserving --> Retry: failed preservation or safe removal
     Removed --> Retry: host release unknown
-    Retry --> Preserving: due and budget remains
-    Retry --> Exhausted: fifth failed attempt
-    Exhausted --> Armed: explicit authorized rearm
+    Retry --> Preserving: due before removal and budget remains
+    Retry --> Removed: due after recorded removal and budget remains
+    Preserving --> Exhausted: fifth failed attempt
+    Removed --> Exhausted: fifth failed release
+    Exhausted --> Armed: authorized rearm before removal
+    Exhausted --> Removed: authorized rearm after recorded removal
 ```
 
 ## Process flows

@@ -6,7 +6,6 @@ import { and, eq, notInArray, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { assertCodeDeliveryAllowed } from "@/lib/agents/operational-guard";
-
 import { RELEASED_LIFECYCLE_CLAIM } from "@/lib/runs/lifecycle-claim";
 import { loadRunnerCatalog } from "@/lib/acp-runners/catalog";
 import { resolveSyncRunner } from "@/lib/acp-runners/resolve";
