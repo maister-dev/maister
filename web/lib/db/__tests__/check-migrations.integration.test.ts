@@ -1,3 +1,5 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -118,7 +120,7 @@ describe("findPendingMigrations", () => {
 // does not know is a database from a newer release. An older binary must not
 // boot over it and write rows the newer invariants were introduced to refuse.
 describe("a database ahead of this binary", () => {
-  it("names the applied migrations the journal does not know and refuses the boot", async () => {
+  it("IT-UX-05 names the applied migrations the journal does not know and refuses the boot", async () => {
     const hash = "f".repeat(64);
 
     await db.execute(
@@ -132,6 +134,36 @@ describe("a database ahead of this binary", () => {
       await expect(assertDatabaseNotAheadOfBinary(db)).rejects.toThrow(
         /ahead of this binary.*ffffffffffff/,
       );
+      const before = await testDatabase.pool.query(
+        "SELECT hash,created_at FROM drizzle.__drizzle_migrations ORDER BY id",
+      );
+
+      await expect(
+        promisify(execFile)(
+          process.execPath,
+          [
+            "--import",
+            "tsx",
+            "--import",
+            "./scripts/_register-shim.mjs",
+            "lib/db/migrate.ts",
+          ],
+          {
+            env: { ...process.env, DB_URL: testDatabase.databaseUrl },
+            timeout: 30_000,
+          },
+        ),
+      ).rejects.toMatchObject({
+        code: 1,
+        stdout: expect.stringContaining("ahead of this binary"),
+      });
+      expect(
+        (
+          await testDatabase.pool.query(
+            "SELECT hash,created_at FROM drizzle.__drizzle_migrations ORDER BY id",
+          )
+        ).rows,
+      ).toEqual(before.rows);
     } finally {
       await db.execute(
         sql`DELETE FROM drizzle.__drizzle_migrations WHERE hash = ${hash}`,

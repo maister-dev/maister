@@ -22,16 +22,18 @@ erDiagram
 
 ## Columns and invariants
 
-| Object | Contract |
-| --- | --- |
-| runs activity | source_agent_id has no catalog FK, immutable launched_at/activity_sort_at/provenance/activity snapshot; nullable-first legacy backfill; partial history index by project/source/sort/id. |
-| episodes | Immutable project/agent/scope/fingerprint; unique open cause; attention revision is independent of repeat count. |
-| occurrences | Unique source fact key plus fingerprint; run FK SET NULL and immutable original ID; exact cleanup source resolution. |
-| reader states | User/episode/attention revision key, explicit ack timestamp and independent durable notification receipt; valid null/mode CHECKs. |
-| trigger attempts | Unique binding-snapshot/fence or event-delivery key; claimed/settled timestamps, nullable run navigation, immutable source identity and safe outcome; no detach cascade. |
-| retry intents | Request key plus actor and canonical payload guard; accepted/launched source claim; reserved child ID; immutable recipe, fence/due/attempt/progress and pre-run disposal. Source/run/actor deletion retains safe ownership evidence. |
-| retry lineage | Unique nonnull runs.retry_of_run_id; retained launched intent permanently prevents a second child after history pruning. |
-| upgrade progress | Existing upgrade infrastructure stores bounded page cursor and source/version; commit progress with page, refuse poison/unknown rows explicitly. |
+| Object                       | Contract                                                                                                                                                                                                                                                          |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| runs activity                | source_agent_id has no catalog FK, immutable launched_at/activity_sort_at/provenance/activity snapshot; nullable-first legacy backfill; partial history index by project/source/sort/id.                                                                          |
+| episodes                     | Immutable project/agent/scope/fingerprint; unique open cause; attention revision is independent of repeat count.                                                                                                                                                  |
+| occurrences                  | Unique source fact key plus fingerprint; run FK SET NULL and immutable original ID; exact cleanup source resolution.                                                                                                                                              |
+| reader states                | User/episode/attention revision key, explicit ack timestamp and independent durable notification receipt; valid null/mode CHECKs.                                                                                                                                 |
+| trigger attempts             | Unique binding-snapshot/fence or event-delivery key; claimed/settled timestamps, nullable run navigation, immutable source identity and safe outcome; no detach cascade.                                                                                          |
+| cutover checkpoints          | `agent_activity_cutovers`, version 1: phase, separate run/schedule/episode cursors, cumulative processed/unresolved counts and start/completion times. One bounded transaction commits each page. Conflict rolls back its page and leaves the last cursor intact. |
+| exact legacy reader receipts | `agent_incident_occurrence_readers`, occurrence/user primary key and acknowledgement time; user deletion cascades, run deletion does not erase the receipt. These do not acknowledge the whole episode or future occurrences.                                     |
+| retry intents                | Request key plus actor and canonical payload guard; accepted/launched source claim; reserved child ID; immutable recipe, fence/due/attempt/progress and pre-run disposal. Source/run/actor deletion retains safe ownership evidence.                              |
+| retry lineage                | Unique nonnull runs.retry_of_run_id; retained launched intent permanently prevents a second child after history pruning.                                                                                                                                          |
+| upgrade progress             | Existing upgrade infrastructure stores bounded page cursor and source/version; commit progress with page, refuse poison/unknown rows explicitly.                                                                                                                  |
 
 ## Transactions and indexes
 

@@ -5,6 +5,9 @@ import { isMaisterErrorCode, type MaisterErrorCode } from "@/lib/errors-core";
 // via migration. `task.triage_requeued` is registered with NO emitter — it
 // lands with the Stage-3 triager.
 export const DOMAIN_EVENT_KINDS = [
+  "agent.activity_changed",
+  "agent.incident_changed",
+  "task.qualification_changed",
   "task.created",
   "task.comment_added",
   "task.triage_requeued",
@@ -57,6 +60,24 @@ export type DomainEventKind = (typeof DOMAIN_EVENT_KINDS)[number];
 
 export function isDomainEventKind(value: string): value is DomainEventKind {
   return (DOMAIN_EVENT_KINDS as readonly string[]).includes(value);
+}
+
+/** Internal projection facts invalidate read models and never trigger another agent. */
+export const INTERNAL_PROJECTION_EVENT_KINDS = [
+  "agent.activity_changed",
+  "agent.incident_changed",
+  "task.qualification_changed",
+] as const satisfies readonly DomainEventKind[];
+export const AGENT_TRIGGER_EVENT_KINDS = DOMAIN_EVENT_KINDS.filter(
+  (
+    kind,
+  ): kind is Exclude<
+    DomainEventKind,
+    (typeof INTERNAL_PROJECTION_EVENT_KINDS)[number]
+  > => !(INTERNAL_PROJECTION_EVENT_KINDS as readonly string[]).includes(kind),
+);
+export function isAgentTriggerEventKind(value: string): boolean {
+  return (AGENT_TRIGGER_EVENT_KINDS as readonly string[]).includes(value);
 }
 
 // M37 (ADR-098): run-terminal kinds whose payload MUST carry the emitting run's
@@ -184,6 +205,8 @@ export const TERMINAL_CAUSE_REASONS = [
   "agent_turn_lost",
   "agent_prompt_failed",
   "agent_session_create_failed",
+  "agent_workspace_prepare_failed",
+  "agent_dispatch_failed",
   "agent_session_spawn_failed",
   "consensus_draft_incomplete",
   "consensus_draft_spawn_failed",
@@ -367,6 +390,9 @@ export type DecisionOpeningEventKind =
  * silently lies. So the scan reads the union and the counter keeps the split.
  */
 export const OPERATIONAL_ATTENTION_EVENT_KINDS = [
+  "agent.activity_changed",
+  "agent.incident_changed",
+  "task.qualification_changed",
   "run.operational_attention_acknowledged",
   "run.operational_cleanup_changed",
 ] as const satisfies readonly DomainEventKind[];

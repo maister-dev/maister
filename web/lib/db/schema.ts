@@ -1,4 +1,12 @@
 import type {
+  TaskQualificationMode,
+  TaskQualificationValue,
+  TaskQualificationRouting,
+  TaskExecutionChildProof,
+  TaskAdmissionSnapshot,
+  TaskQualificationLaunchSnapshot,
+} from "@/lib/tasks/qualification-types";
+import type {
   ConfigPersistSnapshot,
   ConfigPushSnapshot,
 } from "@/lib/project-config-persistence/types";
@@ -44,6 +52,10 @@ import type { FlowActionCompletion } from "@/lib/flows/graph/action-completion";
 import type { FlowFinishContinuation } from "@/lib/flows/graph/finish-continuation";
 import type { FlowActionResume } from "@/lib/flows/graph/action-resume";
 import type { LibrarianSubject } from "@/lib/librarian/types";
+import type {
+  AgentTriggerAttemptOutcome,
+  AgentTriggerBindingSnapshot,
+} from "@/lib/agents/trigger-attempt-types";
 import type { AgentKind, OperationalCompletion } from "@/lib/agents/kind";
 import type {
   OperationalIntegrityBaseline,
@@ -51,6 +63,16 @@ import type {
   OperationalCleanup,
   OperationalAttentionReason,
 } from "@/lib/run-results/operational-types";
+import type {
+  AgentActivitySnapshot,
+  AgentActivityTimestampProvenance,
+  AgentIncidentScopeKind,
+  AgentIncidentChannel,
+} from "@/lib/agents/activity-types";
+import type {
+  AgentRetryRecipe,
+  AgentRetryAllocation,
+} from "@/lib/agents/retry-types";
 
 import { sql } from "drizzle-orm";
 import {
@@ -203,6 +225,13 @@ function inLiteralList(
 export const projects = pgTable(
   "projects",
   {
+    taskQualificationBaseline: text("task_qualification_baseline")
+      .$type<TaskQualificationMode>()
+      .notNull()
+      .default("legacy"),
+    taskQualificationOverride: text(
+      "task_qualification_override",
+    ).$type<TaskQualificationMode>(),
     configExportRevision: bigint("config_export_revision", { mode: "bigint" })
       .notNull()
       .default(sql`0`),
@@ -267,6 +296,10 @@ export const projects = pgTable(
     archivedAt: timestamp("archived_at", { withTimezone: true, mode: "date" }),
   },
   (t) => [
+    check(
+      "projects_task_qualification_policy_check",
+      sql`${t.taskQualificationBaseline} IN ('legacy','required') AND (${t.taskQualificationOverride} IS NULL OR ${t.taskQualificationOverride} IN ('legacy','required'))`,
+    ),
     check(
       "projects_config_export_revision_check",
       sql`${t.configExportRevision} >= 0`,
@@ -1145,6 +1178,69 @@ export const agentSchedules = pgTable(
   }),
 );
 
+export const agentTriggerAttempts = pgTable(
+  "agent_trigger_attempts",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    sourceAgentId: text("source_agent_id").notNull(),
+    scheduleId: text("schedule_id").notNull(),
+    bindingSnapshot: jsonb("binding_snapshot")
+      .$type<AgentTriggerBindingSnapshot>()
+      .notNull(),
+    fence: integer("fence").notNull(),
+    deliveryKey: text("delivery_key").notNull(),
+    triggerSource: text("trigger_source", {
+      enum: ["cron", "domain_event"],
+    }).notNull(),
+    triggerEventId: bigint("trigger_event_id", { mode: "number" }),
+    provenance: text("provenance", { enum: ["claim", "legacy_latest"] })
+      .notNull()
+      .default("claim"),
+    reservedRunId: text("reserved_run_id").notNull(),
+    runId: text("run_id").references((): AnyPgColumn => runs.id, {
+      onDelete: "set null",
+    }),
+    originalRunId: text("original_run_id"),
+    claimedAt: timestamp("claimed_at", {
+      withTimezone: true,
+      mode: "date",
+    }).notNull(),
+    dueAt: timestamp("due_at", { withTimezone: true, mode: "date" }).notNull(),
+    settledAt: timestamp("settled_at", { withTimezone: true, mode: "date" }),
+    outcome: text("outcome").$type<AgentTriggerAttemptOutcome>(),
+    reasonCode: text("reason_code"),
+    scopeKey: text("scope_key").notNull().default("unknown"),
+  },
+  (t) => ({
+    delivery: unique("agent_trigger_attempt_delivery_uq").on(
+      t.scheduleId,
+      t.deliveryKey,
+    ),
+    fence: unique("agent_trigger_attempt_fence_uq").on(t.scheduleId, t.fence),
+    reserved: unique("agent_trigger_attempt_reserved_run_uq").on(
+      t.reservedRunId,
+    ),
+    history: index("agent_trigger_attempt_history_idx").on(
+      t.projectId,
+      t.sourceAgentId,
+      t.claimedAt.desc(),
+      t.id.desc(),
+    ),
+    due: index("agent_trigger_attempt_due_idx")
+      .on(t.dueAt)
+      .where(sql`${t.outcome} IS NULL OR ${t.outcome} = 'unknown'`),
+    shape: check(
+      "agent_trigger_attempt_shape_check",
+      sql`(${t.fence} > 0 AND ${t.triggerSource} IN ('cron','domain_event') AND ${t.provenance} IN ('claim','legacy_latest') AND jsonb_typeof(${t.bindingSnapshot}) = 'object' AND ${t.bindingSnapshot}->'version' = '1'::jsonb AND ${t.bindingSnapshot}->>'scheduleId' = ${t.scheduleId} AND ((${t.settledAt} IS NULL AND ${t.outcome} IS NULL) OR (${t.settledAt} IS NOT NULL AND ${t.outcome} IN ('launched','queued','refused','deduplicated','suppressed','failed','unknown'))) AND (${t.runId} IS NULL OR ${t.originalRunId} = ${t.runId})) IS TRUE`,
+    ),
+  }),
+);
+
 export const scheduledTaskLaunches = pgTable(
   "scheduled_task_launches",
   {
@@ -1458,6 +1554,26 @@ export const tasks = pgTable(
     title: text("title").notNull(),
     prompt: text("prompt").notNull(),
     revision: integer("revision").notNull().default(0),
+    qualificationMode: text("qualification_mode", {
+      enum: ["legacy", "required", "execution_child"],
+    })
+      .notNull()
+      .default("legacy"),
+    qualificationInputRevision: integer("qualification_input_revision")
+      .notNull()
+      .default(1),
+    qualificationRevisionCounter: integer("qualification_revision_counter")
+      .notNull()
+      .default(0),
+    currentQualificationId: text("current_qualification_id").references(
+      (): AnyPgColumn => taskQualifications.id,
+      { onDelete: "restrict" },
+    ),
+    currentQualificationRevision: integer("current_qualification_revision"),
+    qualificationChildProof: jsonb(
+      "qualification_child_proof",
+    ).$type<TaskExecutionChildProof>(),
+    qualificationSourceVersion: text("qualification_source_version"),
     statementRevision: integer("statement_revision"),
     launchIntent: text("launch_intent", {
       enum: ["none", "triage_only", "triage_then_launch"],
@@ -1543,6 +1659,16 @@ export const tasks = pgTable(
       .defaultNow(),
   },
   (t) => ({
+    qualificationPartition: index("tasks_qualification_partition_idx").on(
+      t.projectId,
+      t.qualificationMode,
+      t.currentQualificationId,
+      t.id,
+    ),
+    qualificationShape: check(
+      "tasks_qualification_shape_check",
+      sql`(${t.qualificationMode} IN ('legacy','required','execution_child') AND ${t.qualificationInputRevision} >= 1 AND ${t.qualificationRevisionCounter} >= 0 AND ((${t.currentQualificationId} IS NULL AND ${t.currentQualificationRevision} IS NULL) OR (${t.currentQualificationId} IS NOT NULL AND ${t.currentQualificationRevision} >= 1 AND ${t.currentQualificationRevision} <= ${t.qualificationRevisionCounter})) AND ((${t.qualificationMode} = 'execution_child' AND jsonb_typeof(${t.qualificationChildProof}) = 'object' AND ${t.qualificationChildProof}->'version' = '1'::jsonb) OR (${t.qualificationMode} <> 'execution_child' AND ${t.qualificationChildProof} IS NULL))) IS TRUE`,
+    ),
     uniqAttempt: unique("tasks_id_attempt_uq").on(t.id, t.attemptNumber),
     uniqCreatedViaOperation: unique("tasks_created_via_operation_uq").on(
       t.createdViaOperationId,
@@ -1843,6 +1969,25 @@ export const runs = pgTable(
   {
     id: text("id").primaryKey(),
     runKind: text("run_kind", { enum: RUN_KINDS }).notNull().default("flow"),
+    taskQualificationSnapshot: jsonb(
+      "task_qualification_snapshot",
+    ).$type<TaskQualificationLaunchSnapshot>(),
+    taskAdmissionSnapshot: jsonb(
+      "task_admission_snapshot",
+    ).$type<TaskAdmissionSnapshot>(),
+    retryOfRunId: text("retry_of_run_id"),
+    sourceAgentId: text("source_agent_id"),
+    launchedAt: timestamp("launched_at", { withTimezone: true, mode: "date" }),
+    activitySortAt: timestamp("activity_sort_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    activityTimestampProvenance: text(
+      "activity_timestamp_provenance",
+    ).$type<AgentActivityTimestampProvenance>(),
+    agentActivitySnapshot: jsonb(
+      "agent_activity_snapshot",
+    ).$type<AgentActivitySnapshot>(),
     agentKind: text("agent_kind", {
       enum: ["code_delivery", "operational"],
     }).$type<AgentKind>(),
@@ -2155,9 +2300,27 @@ export const runs = pgTable(
     ),
   },
   (t) => ({
+    taskQualificationShape: check(
+      "runs_task_qualification_snapshot_check",
+      sql`${t.taskQualificationSnapshot} IS NULL OR (${t.runKind} = 'agent' AND ${t.agentKind} = 'operational' AND jsonb_typeof(${t.taskQualificationSnapshot}) = 'object' AND ${t.taskQualificationSnapshot}->'version' = '1'::jsonb AND ${t.taskQualificationSnapshot}->>'role' IN ('intake','qualifier') AND (${t.taskQualificationSnapshot}->>'role' <> 'qualifier' OR ${t.agentWorkspace} = 'repo_read' AND ${t.taskQualificationSnapshot}->>'taskId' = ${t.taskId} AND length(${t.taskQualificationSnapshot}->>'target') BETWEEN 1 AND 255 AND ${t.taskQualificationSnapshot}->>'sha' ~ '^[a-f0-9]{40}([a-f0-9]{24})?$')) IS TRUE`,
+    ),
+    taskAdmissionShape: check(
+      "runs_task_admission_snapshot_check",
+      sql`${t.taskAdmissionSnapshot} IS NULL OR (${t.taskId} IS NOT NULL AND jsonb_typeof(${t.taskAdmissionSnapshot}) = 'object' AND ${t.taskAdmissionSnapshot}->'version' = '1'::jsonb AND ${t.taskAdmissionSnapshot}->>'mode' IN ('legacy','required','execution_child') AND ${t.taskAdmissionSnapshot}->'policyVersion' = '1'::jsonb AND jsonb_typeof(${t.taskAdmissionSnapshot}->'inputRevision') = 'number' AND (${t.taskAdmissionSnapshot}->>'mode' <> 'required' OR jsonb_typeof(${t.taskAdmissionSnapshot}->'qualificationId') = 'string' AND jsonb_typeof(${t.taskAdmissionSnapshot}->'qualificationRevision') = 'number' AND ${t.taskAdmissionSnapshot}->>'evidenceSha' ~ '^[a-f0-9]{40}([a-f0-9]{24})?$') AND (${t.taskAdmissionSnapshot}->>'mode' <> 'execution_child' OR jsonb_typeof(${t.taskAdmissionSnapshot}->'parent') = 'object')) IS TRUE`,
+    ),
     idxProjectStatus: index("runs_project_status_idx").on(
       t.projectId,
       t.status,
+    ),
+    agentRetryChildIndex: uniqueIndex("runs_agent_retry_child_uq")
+      .on(t.retryOfRunId)
+      .where(sql`${t.retryOfRunId} IS NOT NULL`),
+    agentActivityHistoryIndex: index("runs_agent_activity_history_idx")
+      .on(t.projectId, t.sourceAgentId, t.activitySortAt.desc(), t.id.desc())
+      .where(sql`${t.sourceAgentId} IS NOT NULL`),
+    agentActivitySnapshotCheck: check(
+      "runs_agent_activity_snapshot_check",
+      sql`(${t.sourceAgentId} IS NULL AND ${t.agentActivitySnapshot} IS NULL AND ${t.activitySortAt} IS NULL AND ${t.activityTimestampProvenance} IS NULL) OR (${t.sourceAgentId} IS NOT NULL AND ${t.activitySortAt} IS NOT NULL AND ${t.activityTimestampProvenance} IN ('launch','verified_creation','legacy_estimate','migration_estimate') AND (${t.activityTimestampProvenance} <> 'launch' OR ${t.launchedAt} IS NOT NULL) AND (${t.agentActivitySnapshot} IS NULL OR (jsonb_typeof(${t.agentActivitySnapshot}) = 'object' AND ${t.agentActivitySnapshot}->'version' = '1'::jsonb AND ${t.agentActivitySnapshot}->>'agentId' = ${t.sourceAgentId} AND ${t.agentActivitySnapshot}->>'definitionSha256' ~ '^[a-f0-9]{64}$'))) IS TRUE`,
     ),
     operationalDueIndex: index("runs_operational_cleanup_due_idx")
       .on(sql`(${t.operationalCleanup}->>'dueAt')`, t.id)
@@ -8044,7 +8207,7 @@ export const domainEvents = pgTable(
   (t) => ({
     kindCheck: check(
       "domain_events_kind_check",
-      sql`${t.kind} in ('task.created', 'task.comment_added', 'task.triage_requeued', 'task.clarification_requested', 'task.clarification_answered', 'task.clarification_cancelled', 'run.done', 'run.failed', 'run.crashed', 'run.abandoned', 'run.review', 'run.review_opened', 'run.needs_input', 'run.escalated', 'run.rework_claimed', 'run.rework_returned', 'gate.failed', 'run.operational_attention_acknowledged', 'run.operational_cleanup_changed')`,
+      sql`${t.kind} in ('agent.activity_changed', 'agent.incident_changed', 'task.qualification_changed', 'task.created', 'task.comment_added', 'task.triage_requeued', 'task.clarification_requested', 'task.clarification_answered', 'task.clarification_cancelled', 'run.done', 'run.failed', 'run.crashed', 'run.abandoned', 'run.review', 'run.review_opened', 'run.needs_input', 'run.escalated', 'run.rework_claimed', 'run.rework_returned', 'gate.failed', 'run.operational_attention_acknowledged', 'run.operational_cleanup_changed')`,
     ),
     actorTypeCheck: check(
       "domain_events_actor_type_check",
@@ -9091,4 +9254,325 @@ export const operationalCleanupProgress = pgTable(
       .notNull()
       .defaultNow(),
   },
+);
+
+export const agentIncidentEpisodes = pgTable(
+  "agent_incident_episodes",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    sourceAgentId: text("source_agent_id").notNull(),
+    scopeKey: text("scope_key").notNull(),
+    scopeKind: text("scope_kind").$type<AgentIncidentScopeKind>().notNull(),
+    fingerprint: text("fingerprint").notNull(),
+    reasonCode: text("reason_code").notNull(),
+    state: text("state", { enum: ["open", "resolved"] })
+      .notNull()
+      .default("open"),
+    attentionRevision: integer("attention_revision").notNull().default(1),
+    contentRevision: integer("content_revision").notNull().default(1),
+    firstAt: timestamp("first_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    lastAt: timestamp("last_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true, mode: "date" }),
+    recoveryRunId: text("recovery_run_id").references(() => runs.id, {
+      onDelete: "set null",
+    }),
+  },
+  (t) => ({
+    openCause: uniqueIndex("agent_incident_open_cause_uq")
+      .on(t.projectId, t.sourceAgentId, t.scopeKey, t.fingerprint)
+      .where(sql`${t.state} = 'open'`),
+    agentIndex: index("agent_incident_agent_idx").on(
+      t.projectId,
+      t.sourceAgentId,
+      t.lastAt.desc(),
+      t.id,
+    ),
+    stateCheck: check(
+      "agent_incident_state_check",
+      sql`${t.state} IN ('open','resolved') AND ${t.scopeKind} IN ('business','infrastructure','unknown') AND ${t.attentionRevision} > 0 AND ${t.contentRevision} > 0 AND ${t.lastAt} >= ${t.firstAt} AND ((${t.state} = 'open' AND ${t.resolvedAt} IS NULL) OR (${t.state} = 'resolved' AND ${t.resolvedAt} IS NOT NULL))`,
+    ),
+  }),
+);
+
+export const agentIncidentOccurrences = pgTable(
+  "agent_incident_occurrences",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    episodeId: text("episode_id")
+      .notNull()
+      .references(() => agentIncidentEpisodes.id, { onDelete: "cascade" }),
+    sourceFactKey: text("source_fact_key").notNull(),
+    fingerprint: text("fingerprint").notNull(),
+    runId: text("run_id").references(() => runs.id, { onDelete: "set null" }),
+    originalRunId: text("original_run_id"),
+    channel: text("channel").$type<AgentIncidentChannel>().notNull(),
+    observedAt: timestamp("observed_at", {
+      withTimezone: true,
+      mode: "date",
+    }).notNull(),
+    reasonCode: text("reason_code"),
+    sourceResolvedAt: timestamp("source_resolved_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+  },
+  (t) => ({
+    sourceFact: unique("agent_incident_occurrence_fact_uq").on(
+      t.sourceFactKey,
+      t.fingerprint,
+    ),
+    episodeIndex: index("agent_incident_occurrence_episode_idx").on(
+      t.episodeId,
+      t.observedAt,
+      t.id,
+    ),
+    runIndex: index("agent_incident_occurrence_run_idx").on(t.runId),
+    channelCheck: check(
+      "agent_incident_occurrence_channel_check",
+      sql`${t.channel} IN ('operational_terminal','execution_failure','admission_refusal','cleanup') AND (${t.runId} IS NULL OR ${t.originalRunId} = ${t.runId})`,
+    ),
+  }),
+);
+
+export const agentIncidentOccurrenceReaders = pgTable(
+  "agent_incident_occurrence_readers",
+  {
+    occurrenceId: text("occurrence_id")
+      .notNull()
+      .references(() => agentIncidentOccurrences.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    acknowledgedAt: timestamp("acknowledged_at", {
+      withTimezone: true,
+      mode: "date",
+    }).notNull(),
+  },
+  (t) => ({ primary: primaryKey({ columns: [t.occurrenceId, t.userId] }) }),
+);
+
+export const agentActivityCutovers = pgTable(
+  "agent_activity_cutovers",
+  {
+    version: integer("version").primaryKey(),
+    phase: text("phase", {
+      enum: ["identity", "facts", "schedules", "baseline", "complete"],
+    }).notNull(),
+    afterRunId: text("after_run_id"),
+    afterScheduleId: text("after_schedule_id"),
+    afterEpisodeId: text("after_episode_id"),
+    processed: integer("processed").notNull().default(0),
+    unresolved: integer("unresolved").notNull().default(0),
+    startedAt: timestamp("started_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    completedAt: timestamp("completed_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+  },
+  (t) => ({
+    shape: check(
+      "agent_activity_cutover_shape_check",
+      sql`${t.version} = 1 AND ${t.phase} IN ('identity','facts','schedules','baseline','complete') AND ${t.processed} >= 0 AND ${t.unresolved} >= 0 AND ((${t.phase} = 'complete') = (${t.completedAt} IS NOT NULL))`,
+    ),
+  }),
+);
+
+export const agentIncidentReaderStates = pgTable(
+  "agent_incident_reader_states",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    episodeId: text("episode_id")
+      .notNull()
+      .references(() => agentIncidentEpisodes.id, { onDelete: "cascade" }),
+    attentionRevision: integer("attention_revision").notNull(),
+    acknowledgedAt: timestamp("acknowledged_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    notificationRecordedAt: timestamp("notification_recorded_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    notificationMode: text("notification_mode", {
+      enum: ["published", "baseline"],
+    }),
+    notificationEventId: text("notification_event_id"),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.userId, t.episodeId, t.attentionRevision] }),
+    revisionCheck: check(
+      "agent_incident_reader_receipt_check",
+      sql`${t.attentionRevision} > 0 AND ((${t.notificationRecordedAt} IS NULL AND ${t.notificationMode} IS NULL AND ${t.notificationEventId} IS NULL) OR (${t.notificationRecordedAt} IS NOT NULL AND ${t.notificationMode} IN ('published','baseline') AND (${t.notificationMode} <> 'published' OR ${t.notificationEventId} IS NOT NULL)))`,
+    ),
+  }),
+);
+
+export const agentRetryIntents = pgTable(
+  "agent_retry_intents",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    sourceAgentId: text("source_agent_id").notNull(),
+    sourceRunId: text("source_run_id").notNull(),
+    actorIdentity: text("actor_identity").notNull(),
+    actorUserId: text("actor_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    requestKey: text("request_key").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    selectedRunnerId: text("selected_runner_id").notNull(),
+    recipe: jsonb("recipe").$type<AgentRetryRecipe>().notNull(),
+    previewFingerprint: text("preview_fingerprint").notNull(),
+    successorRunId: text("successor_run_id").notNull(),
+    createdRunId: text("created_run_id").references(() => runs.id, {
+      onDelete: "set null",
+    }),
+    state: text("state", { enum: ["accepted", "launched", "refused"] })
+      .notNull()
+      .default("accepted"),
+    refusalReason: text("refusal_reason"),
+    leaseOwner: text("lease_owner"),
+    leaseFence: integer("lease_fence").notNull().default(0),
+    leaseExpiresAt: timestamp("lease_expires_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    attempts: integer("attempts").notNull().default(0),
+    dueAt: timestamp("due_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    allocation: jsonb("allocation").$type<AgentRetryAllocation>(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    requestKey: unique("agent_retry_actor_request_uq").on(
+      t.actorIdentity,
+      t.requestKey,
+    ),
+    successorIdentity: unique("agent_retry_successor_uq").on(t.successorRunId),
+    sourceClaim: uniqueIndex("agent_retry_source_claim_uq")
+      .on(t.sourceRunId)
+      .where(
+        sql`${t.state} IN ('accepted','launched') OR (${t.allocation} IS NOT NULL AND ${t.allocation}->>'disposition' <> 'released')`,
+      ),
+    dueIndex: index("agent_retry_due_idx")
+      .on(t.dueAt, t.id)
+      .where(sql`${t.state} = 'accepted'`),
+    agentIndex: index("agent_retry_agent_idx").on(
+      t.projectId,
+      t.sourceAgentId,
+      t.createdAt.desc(),
+    ),
+    recipeCheck: check(
+      "agent_retry_recipe_check",
+      sql`(jsonb_typeof(${t.recipe}) = 'object' AND ${t.recipe}->'version' = '1'::jsonb AND ${t.recipe}->>'agentId' = ${t.sourceAgentId} AND ${t.recipe}->>'projectId' = ${t.projectId} AND ${t.requestDigest} ~ '^[a-f0-9]{64}$' AND ${t.previewFingerprint} ~ '^[a-f0-9]{64}$' AND pg_column_size(${t.recipe}) <= 1048576) IS TRUE`,
+    ),
+    stateCheck: check(
+      "agent_retry_state_check",
+      sql`${t.state} IN ('accepted','launched','refused') AND ${t.attempts} BETWEEN 0 AND 3 AND ${t.leaseFence} >= 0 AND ((${t.leaseOwner} IS NULL) = (${t.leaseExpiresAt} IS NULL)) AND (${t.state} <> 'refused' OR ${t.refusalReason} IS NOT NULL) AND (${t.createdRunId} IS NULL OR (${t.state} = 'launched' AND ${t.createdRunId} = ${t.successorRunId}))`,
+    ),
+    allocationCheck: check(
+      "agent_retry_allocation_check",
+      sql`${t.allocation} IS NULL OR (jsonb_typeof(${t.allocation}) = 'object' AND ${t.allocation}->'version' = '1'::jsonb AND ${t.allocation}->>'disposition' IN ('armed','released','exhausted') AND jsonb_typeof(${t.allocation}->'resources') = 'array' AND pg_column_size(${t.allocation}) <= 1048576) IS TRUE`,
+    ),
+  }),
+);
+
+export const taskQualifications = pgTable(
+  "task_qualifications",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull(),
+    policyVersion: integer("policy_version").notNull().default(1),
+    inputRevision: integer("input_revision").notNull(),
+    inputDigest: text("input_digest").notNull(),
+    requestKey: text("request_key").notNull(),
+    payloadDigest: text("payload_digest").notNull(),
+    expectedQualificationRevision: integer("expected_qualification_revision"),
+    authorKind: text("author_kind", {
+      enum: ["user", "project_token", "agent_run"],
+    }).notNull(),
+    authorIdentity: text("author_identity").notNull(),
+    authorTokenId: text("author_token_id"),
+    authorUserId: text("author_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    authorRunId: text("author_run_id").references(() => runs.id, {
+      onDelete: "set null",
+    }),
+    originalRunId: text("original_run_id"),
+    evidenceTarget: text("evidence_target").notNull(),
+    evidenceSha: text("evidence_sha"),
+    value: jsonb("value").$type<TaskQualificationValue>().notNull(),
+    routing: jsonb("routing").$type<TaskQualificationRouting>().notNull(),
+    publicationState: text("publication_state", {
+      enum: ["candidate", "accepted", "rejected"],
+    }).notNull(),
+    publicationReason: text("publication_reason"),
+    publishedAt: timestamp("published_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    revisionUnique: unique("task_qualification_revision_uq").on(
+      t.taskId,
+      t.revision,
+    ),
+    requestUnique: unique("task_qualification_request_uq").on(
+      t.taskId,
+      t.inputRevision,
+      t.requestKey,
+    ),
+    candidateUnique: uniqueIndex("task_qualification_run_input_uq")
+      .on(t.taskId, t.originalRunId, t.inputRevision)
+      .where(sql`${t.originalRunId} IS NOT NULL`),
+    history: index("task_qualification_history_idx").on(
+      t.projectId,
+      t.taskId,
+      t.revision.desc(),
+    ),
+    pending: index("task_qualification_candidate_idx")
+      .on(t.originalRunId, t.taskId)
+      .where(sql`${t.publicationState} = 'candidate'`),
+    shape: check(
+      "task_qualification_shape_check",
+      sql`(${t.policyVersion} = 1 AND ${t.inputRevision} >= 1 AND ${t.revision} >= 1 AND ${t.inputDigest} ~ '^[a-f0-9]{64}$' AND ${t.payloadDigest} ~ '^[a-f0-9]{64}$' AND ((${t.evidenceSha} IS NULL AND ${t.value}->>'decision' <> 'ready') OR ${t.evidenceSha} ~ '^[a-f0-9]{40}([a-f0-9]{24})?$') AND ${t.authorKind} IN ('user','project_token','agent_run') AND (${t.authorKind} <> 'agent_run' OR ${t.originalRunId} IS NOT NULL AND ${t.authorTokenId} IS NOT NULL) AND (${t.authorRunId} IS NULL OR ${t.authorRunId} = ${t.originalRunId}) AND pg_column_size(${t.value}) <= 131072 AND validate_task_qualification_v1(${t.value}) AND ((${t.publicationState} = 'candidate' AND ${t.publishedAt} IS NULL AND ${t.publicationReason} IS NULL AND ${t.authorKind} = 'agent_run') OR (${t.publicationState} = 'accepted' AND ${t.publishedAt} IS NOT NULL AND ${t.publicationReason} IS NULL) OR (${t.publicationState} = 'rejected' AND ${t.publishedAt} IS NOT NULL AND length(${t.publicationReason}) BETWEEN 1 AND 256))) IS TRUE`,
+    ),
+  }),
 );

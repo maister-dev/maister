@@ -2944,6 +2944,8 @@
         "infra_recovery_abandoned": "An infrastructure recovery was abandoned.",
         "hook_trip_abandoned": "A guardrail stopped the run and it was abandoned.",
         "agent_session_create_failed": "The agent's session could not be created.",
+        "agent_workspace_prepare_failed": "The execution workspace could not be prepared. Check the retained failure evidence before retrying.",
+        "agent_dispatch_failed": "The agent could not start before dispatch. Check the runner and retry with an available runner.",
         "agent_session_spawn_failed": "The agent process could not be started.",
         "consensus_draft_incomplete": "A consensus draft did not finish.",
         "consensus_draft_spawn_failed": "A consensus draft could not be started.",

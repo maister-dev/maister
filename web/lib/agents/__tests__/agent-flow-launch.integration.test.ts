@@ -238,7 +238,7 @@ afterEach(async () => {
 
 async function getRun(runId: string): Promise<Record<string, unknown>> {
   const rows = await pool.query(
-    `SELECT run_kind, agent_id, flow_id, task_id, status FROM runs WHERE id = $1`,
+    `SELECT run_kind, agent_id, flow_id, task_id, status, source_agent_id, launched_at, agent_activity_snapshot FROM runs WHERE id = $1`,
     [runId],
   );
 
@@ -246,7 +246,7 @@ async function getRun(runId: string): Promise<Record<string, unknown>> {
 }
 
 describe("launchAgentRun — agent drives a flow (M39, ADR-106)", () => {
-  it("a task-bound launch creates a run_kind='flow' run carrying agent_id + flowId on the agent's same-package flow", async () => {
+  it("IT-UX-01 UX-IT01 a task-bound launch creates a run_kind='flow' run carrying agent_id + flowId on the agent's same-package flow", async () => {
     const taskRes = await pool.query(
       `INSERT INTO "tasks" ("id", "project_id", "number", "title", "prompt", "status", "stage") VALUES ($1, $2, 1, 't', 'p', 'Backlog', 'Backlog') RETURNING id`,
       [randomUUID(), projectId],
@@ -265,6 +265,13 @@ describe("launchAgentRun — agent drives a flow (M39, ADR-106)", () => {
     if (!("runId" in result)) return;
 
     const run = await getRun(result.runId);
+
+    expect(run.source_agent_id).toBe("pkg:driver");
+    expect(run.launched_at).toBeInstanceOf(Date);
+    expect(run.agent_activity_snapshot).toMatchObject({
+      version: 1,
+      agentId: "pkg:driver",
+    });
 
     expect(run.run_kind).toBe("flow");
     expect(run.agent_id).toBe("pkg:driver");

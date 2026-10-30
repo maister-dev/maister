@@ -3,7 +3,7 @@
 Branch: `feature/operational-agent-kind` — keep this checkout and branch.
 
 Created: 2026-10-30. Refined by aif-improve after rebase and qualification analysis.
-Status: **Phase 0 complete; Phase 1 in progress, UX-T05 current.**
+Status: **Phase 1 complete; Phase 2 pending.**
 
 This is the active follow-up plan for `/aif-implement`, `/aif-improve` and
 `/aif-verify`. The completed original operational-agent plan and qualification
@@ -74,6 +74,52 @@ resolve its alternatives.
   preserving the project's frozen legacy/required creation baseline. Assessment
   revisions use a task-locked counter; accepted pointer and pending candidate are
   distinct. These implement the existing policy/CAS requirements without new tasks.
+
+- UX-T05 complete: additive 0204/0205 SQL/journal/snapshots, 148-table generated ERD,
+  standalone and flow-driving frozen identity, database-owned launch/sort times,
+  immutable activity/accepted retry recipe and unique successor lineage. Real
+  migration/launch integration tests: 17/17; TypeScript passes. Incident transaction
+  integration: 7/7; concurrent/replay/causal/shared-cleanup integration: 3/3. Phase 1
+  full-suite gate and remaining lifecycle/backfill/qualification work are pending.
+
+- UX-T06/29 complete: terminal and cleanup owners atomically persist cause episodes,
+  deduplicated occurrences and scoped outbox revisions. Classification is pure;
+  platform evidence takes precedence, prose is excluded, scan/event and runner
+  comparison scopes are frozen. Trigger claims reserve run identities and atomically
+  advance cron; fenced settlement, event replay and system-sweep receipt adoption
+  preserve uncertain outcomes without redispatch. Late proven admission receipts
+  resolve only their own admission source. RED: absent attempt ledger; GREEN:
+  68/68 owning real-Postgres integration cases; TypeScript passes. New schema-only
+  0206 is uncommitted and includes trigger identity/settlement guards.
+
+- UX-T07 complete: maintenance-fenced bounded identity/fact/schedule/baseline
+  pages persist restart cursors; conflict rolls back its page. Estimated legacy
+  times cannot witness recovery. Exact legacy reader receipts survive run deletion;
+  old acknowledgement endpoint mirrors only its covered occurrences. Historical
+  groups seed notification baselines. Actual migration CLI rejects an unknown
+  ledger before DDL and preserves its rows. RED: first bounded page processed 0;
+  GREEN: 8/8 cutover/migration/legacy-attention integrations. ERD now 151 tables.
+
+- UX-T19 complete: a guarded pre-dispatch failure application admits Pending or
+  Running only while no create/prompt command or live session exists under the run
+  lock. Generic terminal source sets are unchanged. Post-insert workspace/admission
+  and outer session-dispatch exceptions use it; unknown host commands retain their
+  existing owner. RED: Pending failure refused; GREEN: 47/47 owning integration
+  cases plus a real ENOTDIR post-insert failure preserves the blocking file,
+  records one occurrence and releases the assignment. EN/RU remediation added;
+  TypeScript passes. Phase 1 qualification persistence and full gates remain.
+
+- UX-T25 persistence is implemented: required/legacy baseline and nullable SET/CLEAR
+  override, database-owned input invalidation, immutable assessments and launch
+  provenance, strict seven-dimension values, task-locked revision/CAS/idempotency,
+  human acceptance and separate agent candidates. Bounded clarification input fails
+  explicitly above 1,000 rows. Owning real PG/Git tests pass 4/4; migration/HITL/
+  configuration suites passed their earlier 13/20/33-case checkpoints. Full web
+  unit rerun passes 884 files / 9,234 tests after taxonomy, sweep mock and filesystem
+  ownership inventory corrections. Full integration reported publication/runtime
+  failures; isolated investigation remains active. P1 is not committed or accepted. Isolated configuration publication passes 33/33;
+  the steering lock-race failed because new schema fields changed its SQL prefix.
+  Preserving the existing id/run_kind prefix restores the unchanged owning test.
 
 ## Verified implementation anchors
 
@@ -1212,7 +1258,7 @@ integration, if needed, is a distinct preparatory commit with its own evidence.
 
 ### Phase 1 — Durable identity and incident lifecycle
 
-- [ ] **UX-T05. Add frozen identity and additive persistence.** Depends: UX-T04.
+- [x] **UX-T05. Add frozen identity and additive persistence.** Depends: UX-T04.
   Paths: `web/lib/db/schema.ts`, generated migration SQL/journal/snapshot,
   `web/lib/agents/launch.ts`, `launch-contract.ts`, new
   `web/lib/agents/activity-snapshot.ts`, generated `docs/db/erd.dbml`.
@@ -1222,7 +1268,7 @@ integration, if needed, is a distinct preparatory commit with its own evidence.
   contracts on existing runs. Implement constrained indexes/FKs and nullable legacy
   boundary. Primary: UX-IT01. Logging: snapshot/backfill versions and row counts,
   never config values. Gate: fresh/incremental schema and source identity, immutable launch time and unique retry lineage invariants.
-- [ ] **UX-T06. Implement incident transitions in lifecycle owners.** Depends: UX-T05.
+- [x] **UX-T06. Implement incident transitions in lifecycle owners.** Depends: UX-T05.
   Paths: new `web/lib/runs/agent-incidents.ts` (pure classification separated
   from transaction application), existing `operational-attention.ts`,
   `web/lib/agents/finalization.ts`, `create-failure.ts`, reconcile/terminal owners
@@ -1233,7 +1279,7 @@ integration, if needed, is a distinct preparatory commit with its own evidence.
   and config contracts. Primary: UX-IT02–04. Atomic CAS+occurrences+event, replay
   uniqueness, consistent lock order, zero filesystem work in tx. Logging: episode
   created/recovered, source fact/reason/count; duplicates DEBUG only.
-- [ ] **UX-T29. Persist scheduled trigger attempts before launch.** Depends: UX-T05, UX-T06.
+- [x] **UX-T29. Persist scheduled trigger attempts before launch.** Depends: UX-T05, UX-T06.
   Paths: `web/lib/agents/triggers.ts`, new trigger-attempt service, DB schema and
   additive migration, `scheduler/system-sweeps.ts`, attempt/incident projections.
   Implement UX-D08 claim+fire transaction, fenced settlement and crash/adoption
@@ -1242,7 +1288,7 @@ integration, if needed, is a distinct preparatory commit with its own evidence.
   UX-IT21. Log attempt/binding/fence/outcome IDs and typed reasons. Extend history
   only through T08's bounded query and T12's Attempts tab.
 
-- [ ] **UX-T07. Implement cutover backfill and compatibility.** Depends: UX-T05, UX-T06, UX-T29.
+- [x] **UX-T07. Implement cutover backfill and compatibility.** Depends: UX-T05, UX-T06, UX-T29.
   Paths: existing maintenance/upgrade infrastructure, new bounded backfill module
   alongside incident service, legacy acknowledgement route/service, migration tests.
   Preserve exact legacy ack meaning, backfill identity then deterministic episodes,
@@ -1252,7 +1298,7 @@ integration, if needed, is a distinct preparatory commit with its own evidence.
   Logging: processed cursor/count/version, refusal context; no historical message
   dumps. Gate: no unchecked/unprocessed actionable facts hidden by new readers.
 
-- [ ] **UX-T19. Settle known launch failures and retain unknown-outcome recovery.** Depends: UX-T05, UX-T06.
+- [x] **UX-T19. Settle known launch failures and retain unknown-outcome recovery.** Depends: UX-T05, UX-T06.
   Paths: `web/lib/agents/launch.ts`, `finalization.ts`, `create-failure.ts`,
   `web/lib/scheduler.ts`, `web/lib/reconcile.ts`, owned create/prompt owners,
   `web/lib/runs/terminal-cause.ts`; pre-run attempt evidence is owned separately by T29. Primary:
@@ -1262,7 +1308,7 @@ integration, if needed, is a distinct preparatory commit with its own evidence.
   or duplicate spawn. Prove scheduler-vs-failure race and crash window. Logging:
   owned command/generation, failure stage/reason and actionable recovery state.
 
-- [ ] **UX-T25. Persist qualification policy, inputs and immutable assessments.** Depends: UX-T05, UX-T24, UX-T29.
+- [x] **UX-T25. Persist qualification policy, inputs and immutable assessments.** Depends: UX-T05, UX-T24, UX-T29.
   Paths: `web/lib/db/schema.ts`, additive migration/journal/snapshot/ERD,
   `web/lib/tasks/qualification.ts` (new), project configuration schemas/apply,
   `services/tasks.ts`, statement/clarification/source-update owners. Implement
@@ -2207,3 +2253,11 @@ alter running or historical snapshots, and out-of-order concurrent completions
 cannot falsely resolve an incident. Specify API/schema/migration compatibility,
 EN/RU copy and meaningful RED→GREEN integration/browser coverage before building
 the follow-up. Use existing live SSE updates, not a new polling loop.
+
+
+- P1 qualification: immutable tree `4b5a88c681dc75fd33ddafdb0d93d86ddc5d3a54`;
+  full unit 884 files / 9,234 tests passed. Full integration: 599 files passed,
+  10 environment failures (external dependency symlinks rejected by Turbopack,
+  two Docker-port timeouts); all ten exact files then passed, 85 tests, after
+  cloning dependencies inside the disposable checkout and limiting workers to 2.
+  Two existing OS-gated files remain skipped. No source changed between runs.

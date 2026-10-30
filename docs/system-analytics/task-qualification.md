@@ -149,16 +149,18 @@ consistency; relevant constraints/dependencies; strong duplicates; current relev
 Bug checks include expected vs actual behavior, environment/version, credible
 reproduction or observed evidence and why behavior violates the intended contract.
 Feature checks compare requested behavior with current implementation/docs/tests.
-No mandatory ceremonial template for a small clear task. Each check is
+No mandatory ceremonial template for a small clear task. The strict value includes `requestType: bug | feature | maintenance | question`.
+All seven dimensions occur exactly once. Only `bug_evidence` may be N/A, and
+only for a non-bug request with an explicit rationale. Each check is
 `pass | fail | unknown | not_applicable` with rationale and evidence; N/A requires
 a justified request-type rule, not an escape from relevance. Decisions:
 
-| Decision | Meaning / product result |
-| --- | --- |
-| `ready` | All applicable blocking checks pass, no blocking contradiction/question; accepted backlog. Routing and launch intent still govern execution. |
-| `needs_information` | Missing requester facts or contradictory requirements; stay Incoming and use existing task Human ask. |
-| `needs_review` | Evidence inaccessible, insufficient, stale or uncertain; stay Incoming with explicit evidence gap and human/technical verification action. |
-| `not_actionable` | Evidence supports duplicate, already satisfied, obsolete or invalid request; stay in Incoming's resolved/held filter with reason and evidence. No automatic deletion, GitHub closure or irreversible task abandonment. |
+| Decision            | Meaning / product result                                                                                                                                                                                               |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ready`             | All applicable blocking checks pass, no blocking contradiction/question; accepted backlog. Routing and launch intent still govern execution.                                                                           |
+| `needs_information` | Missing requester facts or contradictory requirements; stay Incoming and use existing task Human ask.                                                                                                                  |
+| `needs_review`      | Evidence inaccessible, insufficient, stale or uncertain; stay Incoming with explicit evidence gap and human/technical verification action.                                                                             |
+| `not_actionable`    | Evidence supports duplicate, already satisfied, obsolete or invalid request; stay in Incoming's resolved/held filter with reason and evidence. No automatic deletion, GitHub closure or irreversible task abandonment. |
 
 Task rejection/needs-information can be a **successful operational run**: the agent
 completed qualification correctly. Provider/auth/tool/persistence failure is an
@@ -368,3 +370,24 @@ older writer to launch them. Stop incompatible old writers at the maintenance ga
 - [Web API](../api/web.openapi.yaml) and [external API](../api/external/operations.openapi.yaml)
 - [Persistence](../db/agent-activity-domain.md) and [qualification persistence](../db/task-qualification-domain.md)
 - [Implementation plan](../../.ai-factory/plans/feature-operational-agent-kind.md)
+
+The server registration owner explicitly freezes new projects with a `required`
+creation baseline. The additive SQL default remains `legacy` for existing data and
+trusted internal legacy fixtures; public task creation cannot override its
+project's effective policy. Database input guards cover every semantic task-row
+writer, blocking clarification changes and project default-target changes. They
+advance the server input revision and clear stale acceptance/enqueue atomically;
+ordinary priority/pause edits do not. API and database assessment validation share
+the closed seven-dimension vocabulary; publication and active-pointer scope have
+deferred transaction constraints.
+
+Held human assessments may explicitly have no repository SHA when evidence is
+unavailable; they cannot admit delivery. Ready always requires a verified SHA and
+repository evidence linked from the relevance check. An agent assessment binds its
+source run's immutable qualifier snapshot and cannot invent a target/SHA from its
+request body. New qualifier/intake snapshots are immutable beside task delivery
+admission snapshots. Human publication remains separate from agent candidates.
+
+Qualification input reads at most 1,000 blocking clarification records, ordered by
+sequence. Exceeding that bound refuses assessment with `qualification_input_limit`;
+no truncated evidence digest can be accepted.

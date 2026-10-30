@@ -18,6 +18,7 @@ export type SerializeProjectInput = {
   branchPrefix: string;
   // ADR-181: absent = the column default, like an absent YAML key.
   publicBranchTemplate?: string;
+  taskQualificationOverride?: "legacy" | "required" | null;
   defaultRunnerId: string | null;
   promotionMode: string | null;
 };
@@ -47,6 +48,9 @@ export function serializeProjectConfig(
     project.publicBranchTemplate !== DEFAULT_PUBLIC_BRANCH_TEMPLATE
   ) {
     projectBlock.public_branch_template = project.publicBranchTemplate;
+  }
+  if (project.taskQualificationOverride) {
+    projectBlock.task_qualification = project.taskQualificationOverride;
   }
   if (project.defaultRunnerId) {
     projectBlock.default_runner = project.defaultRunnerId;

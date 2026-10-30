@@ -13,9 +13,10 @@ import type {
   TerminalCause,
 } from "@/lib/domain-events/taxonomy";
 
+import { randomUUID } from "node:crypto";
 import { stat } from "node:fs/promises";
 
-import { and, eq, inArray, is, isNull } from "drizzle-orm";
+import { and, eq, inArray, is, isNull, isNotNull } from "drizzle-orm";
 import { NodePgTransaction } from "drizzle-orm/node-postgres";
 import pino from "pino";
 
@@ -38,10 +39,19 @@ import {
   supersedeUndispatchedMessageTurns,
 } from "./turns";
 
+import { applyAgentTerminalIncidents } from "@/lib/runs/agent-incidents";
+import { parseOperationalResult } from "@/lib/run-results/operational-schema";
 import { terminalCauseReason } from "@/lib/domain-events/taxonomy";
 import { closedAnswerResponse } from "@/lib/hitl-closed-answer";
 import { getDb } from "@/lib/db/client";
-import { hitlRequests, projects, runs, workspaces } from "@/lib/db/schema";
+import {
+  hitlRequests,
+  projects,
+  runs,
+  workspaces,
+  runSessions,
+  executionCommands,
+} from "@/lib/db/schema";
 import { releaseRunContextMounts } from "@/lib/context-mounts/terminal";
 import {
   cancelActiveAssignmentsForRun,
@@ -238,6 +248,9 @@ type FinalizationContext = Readonly<{
     | "rootRunId"
     | "resultContract"
     | "agentId"
+    | "sourceAgentId"
+    | "agentActivitySnapshot"
+    | "launchedAt"
     | "taskId"
     | "parentRunId"
     | "contextMounts"
@@ -249,6 +262,20 @@ type FinalizationContext = Readonly<{
   workspaceContext: Awaited<ReturnType<typeof loadAgentWorkspaceContext>>;
   project: Pick<Project, "slug" | "repoPath"> | null;
 }>;
+
+function finalizationProvenance(context: FinalizationContext | null): string {
+  return canonicalCommandJson(
+    context === null
+      ? null
+      : {
+          ...context,
+          run: {
+            ...context.run,
+            launchedAt: context.run.launchedAt?.toISOString() ?? null,
+          },
+        },
+  );
+}
 
 async function loadFinalizationContext(
   db: Db,
@@ -264,6 +291,9 @@ async function loadFinalizationContext(
       rootRunId: runs.rootRunId,
       resultContract: runs.resultContract,
       agentId: runs.agentId,
+      sourceAgentId: runs.sourceAgentId,
+      agentActivitySnapshot: runs.agentActivitySnapshot,
+      launchedAt: runs.launchedAt,
       projectId: runs.projectId,
       taskId: runs.taskId,
       parentRunId: runs.parentRunId,
@@ -319,6 +349,69 @@ export async function prepareAgentRunFinalization(
   );
 }
 
+/** A launch preparation failed before any session or prompt was dispatched. */
+export async function prepareUndispatchedAgentFailure(
+  runId: string,
+  opts: AgentFinalizeOptions,
+): Promise<PreparedAgentFinalization> {
+  const prepared = await prepareAgentFinalization(runId, "Failed", opts, [
+    "Pending",
+    "Running",
+  ]);
+
+  return {
+    afterCommit: prepared.afterCommit,
+    apply: async (tx) => {
+      const [run] = await tx
+        .select({ status: runs.status })
+        .from(runs)
+        .where(eq(runs.id, runId))
+        .for("update");
+
+      if (!run || (run.status !== "Pending" && run.status !== "Running"))
+        return { finalized: false };
+      const [command] = await tx
+        .select({ id: executionCommands.id })
+        .from(executionCommands)
+        .where(
+          and(
+            eq(executionCommands.runId, runId),
+            inArray(executionCommands.kind, [
+              "session.create",
+              "session.prompt",
+            ]),
+          ),
+        )
+        .limit(1);
+      const [session] = await tx
+        .select({ id: runSessions.id })
+        .from(runSessions)
+        .where(
+          and(
+            eq(runSessions.runId, runId),
+            isNotNull(runSessions.acpSessionId),
+          ),
+        )
+        .limit(1);
+
+      if (command || session) {
+        log.warn(
+          {
+            runId,
+            hasOwnedCommand: command !== undefined,
+            hasLiveSession: session !== undefined,
+          },
+          "agent-undispatched-failure-retained-for-owner",
+        );
+
+        return { finalized: false };
+      }
+
+      return prepared.apply(tx);
+    },
+  };
+}
+
 /** A proven checkpointed input rejection has no live slot to reclaim. */
 export async function prepareCheckpointedAgentFailure(
   runId: string,
@@ -348,7 +441,7 @@ async function prepareAgentFinalization(
       apply: async () => ({ finalized: false }),
       afterCommit: async () => {},
     };
-  const provenance = canonicalCommandJson(original);
+  const provenance = finalizationProvenance(original);
   const preparedRun = original.run;
   const workspaceRows = original.workspaceRows;
   let ephemeralCleanup: { repoPath: string; worktreePath: string } | null =
@@ -569,7 +662,7 @@ async function prepareAgentFinalization(
       return { finalized: false };
     const current = await loadFinalizationContext(tx, runId);
 
-    if (canonicalCommandJson(current) !== provenance)
+    if (finalizationProvenance(current) !== provenance)
       throw new MaisterError(
         "CONFLICT",
         "agent finalization provenance changed after preparation",
@@ -605,6 +698,7 @@ async function prepareAgentFinalization(
     }
 
     const endedAt = new Date();
+    const terminalTransitionId = randomUUID();
 
     // ADR-165 (D9/W3): the result row commits in THIS transaction — the same one
     // that flips the status and emits the wake — so a woken parent's
@@ -717,6 +811,9 @@ async function prepareAgentFinalization(
         projectId: runs.projectId,
         taskId: runs.taskId,
         agentId: runs.agentId,
+        sourceAgentId: runs.sourceAgentId,
+        agentActivitySnapshot: runs.agentActivitySnapshot,
+        launchedAt: runs.launchedAt,
         agentWorkspace: runs.agentWorkspace,
         parentRunId: runs.parentRunId,
       });
@@ -802,6 +899,20 @@ async function prepareAgentFinalization(
       });
     }
 
+    const incidentEpisodeIds = await applyAgentTerminalIncidents(tx, {
+      run: original.run,
+      status: effectiveStatus,
+      endedAt,
+      transitionId: terminalTransitionId,
+      reason: opts.causeReason ?? opts.reason,
+      terminal: operationalTerminal,
+      reported:
+        resultDecision.kind === "valid" &&
+        resultContract?.kind === "agent_operational"
+          ? parseOperationalResult(resultDecision.value)
+          : null,
+    });
+
     await emitWebhookEvent({
       db: tx,
       type: WEBHOOK_TYPE_BY_STATUS[effectiveStatus],
@@ -865,6 +976,8 @@ async function prepareAgentFinalization(
         payload: {
           runKind: "agent",
           agentId: row.agentId,
+          terminalTransitionId,
+          incidentEpisodeIds,
           status: effectiveStatus,
           ...(operationalTerminal
             ? {

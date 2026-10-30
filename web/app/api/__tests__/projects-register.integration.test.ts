@@ -661,6 +661,7 @@ describe("POST /api/projects — maister.yaml bootstrap (integration)", () => {
       project: {
         ...seedConfig.project,
         public_branch_template: "wip/{task_key}-a{attempt}",
+        task_qualification: "legacy",
       },
     };
 
@@ -671,9 +672,13 @@ describe("POST /api/projects — maister.yaml bootstrap (integration)", () => {
 
     expect(rows).toHaveLength(1);
     expect(rows[0].publicBranchTemplate).toBe("wip/{task_key}-a{attempt}");
+    expect(rows[0]).toMatchObject({
+      taskQualificationBaseline: "required",
+      taskQualificationOverride: "legacy",
+    });
   });
 
-  it("stores the default template when the manifest omits the key", async () => {
+  it("IT-UX-18 stores the default template when the manifest omits the key", async () => {
     const res = await POST(req({ target: "ignored" }));
 
     expect(res.status).toBe(201);
@@ -681,6 +686,10 @@ describe("POST /api/projects — maister.yaml bootstrap (integration)", () => {
 
     expect(rows).toHaveLength(1);
     expect(rows[0].publicBranchTemplate).toBe("feature/{task_key}-{slug}");
+    expect(rows[0]).toMatchObject({
+      taskQualificationBaseline: "required",
+      taskQualificationOverride: null,
+    });
   });
 
   it("fails CONFIG when a present maister.yaml is invalid (no DB-default fallback)", async () => {

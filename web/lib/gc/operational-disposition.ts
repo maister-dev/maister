@@ -41,6 +41,7 @@ import {
   runs,
   workspaces,
 } from "@/lib/db/schema";
+import { applyAgentCleanupIncident } from "@/lib/runs/agent-incidents";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { MaisterError, isMaisterError } from "@/lib/errors";
 import { createExecutionHosts } from "@/lib/execution-host/client";
@@ -211,6 +212,8 @@ export async function disposeOperationalRun(
         .returning({ id: runs.id });
 
       if (!updated) throw cleanupError("operational_cleanup_fenced");
+      await applyAgentCleanupIncident(tx, run, next, new Date());
+
       if (
         next.revision !== cleanup.revision ||
         next.state !== cleanup.state ||

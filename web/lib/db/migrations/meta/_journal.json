@@ -1401,6 +1401,34 @@
       "when": 1793349207368,
       "tag": "0203_pink_synch",
       "breakpoints": true
+    },
+    {
+      "idx": 204,
+      "version": "7",
+      "when": 1793358671683,
+      "tag": "0204_agent_activity",
+      "breakpoints": true
+    },
+    {
+      "idx": 205,
+      "version": "7",
+      "when": 1793358792081,
+      "tag": "0205_agent_retry",
+      "breakpoints": true
+    },
+    {
+      "idx": 206,
+      "version": "7",
+      "when": 1793360784610,
+      "tag": "0206_agent_trigger_attempts",
+      "breakpoints": true
+    },
+    {
+      "idx": 207,
+      "version": "7",
+      "when": 1793364273865,
+      "tag": "0207_task_qualification",
+      "breakpoints": true
     }
   ]
 }

@@ -269,6 +269,26 @@ describe("parseAgentDefinition", () => {
     );
   });
 
+  it("refuses internal projection facts as business trigger recommendations", () => {
+    for (const kind of [
+      "agent.activity_changed",
+      "agent.incident_changed",
+      "task.qualification_changed",
+    ]) {
+      expectConfig(
+        () =>
+          parseAgentDefinition(
+            "core:scan",
+            VALID.replace(
+              "risk_tier: read_only",
+              `risk_tier: read_only\nrecommended:\n  events:\n    - ${kind}`,
+            ),
+          ),
+        /events/,
+      );
+    }
+  });
+
   it("parses the ADR-106 fields: flow + recommended.branch_base/executionPolicy", () => {
     const withAdr106 = VALID.replace(
       "risk_tier: read_only",

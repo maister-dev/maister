@@ -1,15 +1,22 @@
 import "server-only";
 
+import type { AgentTriggerClaim } from "@/lib/agents/trigger-attempts";
 import type { DomainEventConsumer } from "@/lib/domain-events/consumers";
 import type { DomainEventRow } from "@/lib/db/schema";
 
 import { and, eq, inArray, lte, sql } from "drizzle-orm";
 import pino from "pino";
 
+import {
+  claimCronAgentAttempt,
+  claimEventAgentAttempt,
+  settleAgentTriggerAttempt,
+} from "@/lib/agents/trigger-attempts";
 import { resolveAgentChainDepth } from "@/lib/agents/chain-depth";
 import { launchAgentRun, type LaunchAgentRunResult } from "@/lib/agents/launch";
 import { MENTION_SUPPRESSION_STATUSES } from "@/lib/agents/summonability";
 import { getDb } from "@/lib/db/client";
+import { isAgentTriggerEventKind } from "@/lib/domain-events/taxonomy";
 import { isGraphOnlyCutoverFailure } from "@/lib/domain-events/cutover";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
@@ -50,24 +57,20 @@ async function claimAgentScheduleTelemetry(input: {
   db: Db;
   scheduleId: string;
   now: Date;
-}): Promise<number | null> {
-  const claimed = await input.db
-    .update(agentSchedules)
-    .set({
-      lastAttemptAt: input.now,
-      lastAttemptFence: sql`COALESCE(${agentSchedules.lastAttemptFence}, 0) + 1`,
-      updatedAt: input.now,
-    })
-    .where(eq(agentSchedules.id, input.scheduleId))
-    .returning({ fence: agentSchedules.lastAttemptFence });
-
-  return (claimed[0]?.fence as number | undefined) ?? null;
+  eventId: number;
+}): Promise<AgentTriggerClaim | null> {
+  return claimEventAgentAttempt(
+    input.db,
+    input.scheduleId,
+    input.now,
+    input.eventId,
+  );
 }
 
 async function recordAgentScheduleOutcome(input: {
   db: Db;
   scheduleId: string;
-  fence: number | null;
+  fence: AgentTriggerClaim | null;
   outcome: AgentScheduleOutcome;
   runId?: string | null;
   errorCode?: string | null;
@@ -75,22 +78,12 @@ async function recordAgentScheduleOutcome(input: {
   now: Date;
 }): Promise<void> {
   if (input.fence === null) return;
-
-  await input.db
-    .update(agentSchedules)
-    .set({
-      lastOutcome: input.outcome,
-      lastRunId: input.runId ?? null,
-      lastErrorCode: input.errorCode ?? null,
-      lastErrorMessage: input.errorMessage ?? null,
-      updatedAt: input.now,
-    })
-    .where(
-      and(
-        eq(agentSchedules.id, input.scheduleId),
-        eq(agentSchedules.lastAttemptFence, input.fence),
-      ),
-    );
+  await settleAgentTriggerAttempt(input.db, input.fence, {
+    outcome: input.outcome,
+    runId: input.runId ?? null,
+    reasonCode: input.errorCode ?? null,
+    now: input.now,
+  });
 }
 
 function outcomeForLaunch(result: LaunchAgentRunResult): {
@@ -193,30 +186,10 @@ export async function dispatchDueAgentSchedules(
       continue;
     }
 
-    const claimed = await _db
-      .update(agentSchedules)
-      .set({
-        nextFireAt: next,
-        lastFiredAt: now,
-        lastAttemptAt: now,
-        lastAttemptFence: sql`COALESCE(${agentSchedules.lastAttemptFence}, 0) + 1`,
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(agentSchedules.id, row.id),
-          lte(agentSchedules.nextFireAt, now),
-          eq(agentSchedules.enabled, true),
-        ),
-      )
-      .returning({
-        id: agentSchedules.id,
-        fence: agentSchedules.lastAttemptFence,
-      });
+    const fence = await claimCronAgentAttempt(_db, row.id, now, next);
 
-    if (claimed.length === 0) continue;
+    if (!fence) continue;
     summary.claimed += 1;
-    const fence = (claimed[0]?.fence as number | undefined) ?? null;
 
     try {
       const result = await launch({
@@ -224,6 +197,7 @@ export async function dispatchDueAgentSchedules(
         projectId: row.projectId,
         trigger: { source: "cron" },
         agentScheduleId: row.id,
+        runId: fence.reservedRunId,
         db: _db,
       });
 
@@ -425,7 +399,10 @@ async function summonMentionedAgents(input: {
       db: _db,
       scheduleId: binding.scheduleId,
       now: new Date(),
+      eventId: Number(event.id),
     });
+
+    if (!fence) continue;
 
     try {
       // Read-then-launch, serialized ONLY by the singleton dispatcher
@@ -486,7 +463,17 @@ async function summonMentionedAgents(input: {
         continue;
       }
 
-      if (await chainDepthExhausted(_db, event.id, agentId)) continue;
+      if (await chainDepthExhausted(_db, event.id, agentId)) {
+        await recordAgentScheduleOutcome({
+          db: _db,
+          scheduleId: binding.scheduleId,
+          fence,
+          outcome: "refused",
+          errorCode: "chain_depth_exhausted",
+          now: new Date(),
+        });
+        continue;
+      }
 
       const result = await launch({
         agentId,
@@ -505,6 +492,7 @@ async function summonMentionedAgents(input: {
           },
         },
         agentScheduleId: binding.scheduleId,
+        runId: fence.reservedRunId,
         db: _db,
       });
       const outcome = outcomeForLaunch(result);
@@ -564,6 +552,7 @@ export function buildAgentTriggersConsumer(
       const launch = opts.launch ?? launchAgentRun;
 
       for (const event of events) {
+        if (!isAgentTriggerEventKind(event.kind)) continue;
         if (isGraphOnlyCutoverFailure(event)) {
           log.debug(
             { eventId: event.id, runId: event.runId, reason: "graph-cutover" },
@@ -736,7 +725,10 @@ export function buildAgentTriggersConsumer(
             db: _db,
             scheduleId: row.scheduleId,
             now: new Date(),
+            eventId: Number(event.id),
           });
+
+          if (!fence) continue;
 
           // Self-exclusion (ADR-089): an event actored by the matched agent
           // never re-triggers it — structural loop termination for the
@@ -769,7 +761,17 @@ export function buildAgentTriggersConsumer(
             continue;
           }
 
-          if (await chainDepthExhausted(_db, event.id, row.agentId)) continue;
+          if (await chainDepthExhausted(_db, event.id, row.agentId)) {
+            await recordAgentScheduleOutcome({
+              db: _db,
+              scheduleId: row.scheduleId,
+              fence,
+              outcome: "refused",
+              errorCode: "chain_depth_exhausted",
+              now: new Date(),
+            });
+            continue;
+          }
 
           ownerSelected = true;
           try {
@@ -786,6 +788,7 @@ export function buildAgentTriggersConsumer(
                 },
               },
               agentScheduleId: row.scheduleId,
+              runId: fence.reservedRunId,
               db: _db,
             });
             const outcome = outcomeForLaunch(result);

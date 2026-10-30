@@ -18,15 +18,15 @@ erDiagram
 
 ## Columns and invariants
 
-| Object | Contract |
-| --- | --- |
-| projects | Versioned taskQualificationPolicy: immutable creation baseline legacy/required and nullable override; old projects legacy, new required. Changes use existing reviewed project config semantics, never agent writes. |
-| tasks | Server-owned required/admission mode, qualification_input_revision, qualification_revision_counter, current_qualification_id/revision (accepted only); inherited execution-child proof only from admitted bound-parent transaction. |
-| task_qualifications | Immutable assessment ID/task/project/input revision/digest/author identity/run/evidence SHA/checks/decision/next actions, publication receipt candidate/accepted/rejected with typed reason; bounded JSON and content. |
-| uniqueness | Unique task/input revision/request key; payload conflict rejected; one candidate per task/run/input revision. Task current pointer targets same project/task; input and pointer CAS both required. |
-| runs | Immutable task_admission_snapshot records exact policy/input/assessment/evidence/parent proof. Existing running work keeps its original admission. |
-| evidence | Active pointers cannot be pruned; run/actor navigation may become unavailable without losing immutable provenance or granting acceptance. |
-| invalidation | Every semantic writer increments input revision and clears current acceptance/old enqueue in its transaction. Priority/pause and ordinary discussion do not silently change requirements. |
+| Object              | Contract                                                                                                                                                                                                                            |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| projects            | Versioned taskQualificationPolicy: immutable creation baseline legacy/required and nullable override; old projects legacy, new required. Changes use existing reviewed project config semantics, never agent writes.                |
+| tasks               | Server-owned required/admission mode, qualification_input_revision, qualification_revision_counter, current_qualification_id/revision (accepted only); inherited execution-child proof only from admitted bound-parent transaction. |
+| task_qualifications | Immutable assessment ID/task/project/input revision/digest/author identity/run/evidence SHA/checks/decision/next actions, publication receipt candidate/accepted/rejected with typed reason; bounded JSON and content.              |
+| uniqueness          | Unique task/input revision/request key; payload conflict rejected; one candidate per task/run/input revision. Task current pointer targets same project/task; input and pointer CAS both required.                                  |
+| runs                | Immutable task_admission_snapshot records exact policy/input/assessment/evidence/parent proof. Existing running work keeps its original admission.                                                                                  |
+| evidence            | Active pointers cannot be pruned; run/actor navigation may become unavailable without losing immutable provenance or granting acceptance.                                                                                           |
+| invalidation        | Every semantic writer increments input revision and clears current acceptance/old enqueue in its transaction. Priority/pause and ordinary discussion do not silently change requirements.                                           |
 
 ## Transactions and indexes
 
@@ -42,3 +42,11 @@ Supported fresh/master0198/current0203 upgrades append new SQL. Old pre-rebase o
 - [Traceability](../system-analytics/agent-activity-traceability.md)
 - [Current generated ERD](erd.dbml)
 - [Database reference](../database-schema.md)
+
+`evidence_sha` is nullable only for held assessments; ready requires a verified
+SHA. New projects receive their required baseline from the sole registration
+owner; the additive SQL legacy default preserves upgraded rows and trusted legacy
+fixtures. Task creation derives required mode from the locked project's effective
+policy. The database invalidates semantic inputs across all task-row writers,
+blocking clarification mutations and default-target updates, with transactional
+content-free outbox facts. Source-run → task remains the write lock order.

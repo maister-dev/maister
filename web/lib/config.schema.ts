@@ -210,6 +210,7 @@ export const projectBlockSchema = z.object({
   main_branch: z.string().min(1).default("main"),
   branch_prefix: z.string().min(1).default("maister/"),
   public_branch_template: publicBranchTemplateSchema.optional(),
+  task_qualification: z.enum(["legacy", "required"]).optional(),
   promotion: projectPromotionSchema.optional(),
   default_runner: z.string().min(1).optional(),
 });

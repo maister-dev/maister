@@ -1,5 +1,4 @@
 import "server-only";
-
 import type {
   ContextMountSnapshot,
   ContextRepoDecl,
@@ -40,6 +39,7 @@ import { admitAgentGenerationTurn, resumeVariantFor } from "./generation-turn";
 import {
   parkClaimedAgentTurnForHostPressure,
   settleAgentCreateFailure,
+  settleUndispatchedAgentFailure,
 } from "./create-failure";
 import {
   assertAgentResumeTurn,
@@ -65,6 +65,10 @@ import {
   operationalAgentRuntimePath,
 } from "./workspace-paths";
 
+import {
+  buildAgentActivitySnapshot,
+  withAgentComparisonScopes,
+} from "@/lib/agents/activity-snapshot";
 import { isHostPressuredError } from "@/lib/execution-host/host-pressure";
 import {
   assertOperationalDispatchIntegrity,
@@ -962,6 +966,7 @@ async function launchAgentDrivenFlowRun(
       taskId,
       flowId: flow.id as string,
       agentId: input.agentId,
+      agentActivity: buildAgentActivitySnapshot(input.agentId, ctx.effective),
       // Trigger provenance carries the (agent_id, trigger_event_id) dedup claim
       // onto the flow run so an at-least-once redelivery converges to one run.
       triggerSource: input.trigger.source,
@@ -1432,6 +1437,21 @@ export async function launchAgentRun(
       id: runId,
       runKind: "agent" as const,
       agentKind: ctx.effective.parsed.kind,
+      sourceAgentId: input.agentId,
+      launchedAt: sql`CURRENT_TIMESTAMP`,
+      activitySortAt: sql`CURRENT_TIMESTAMP`,
+      activityTimestampProvenance: "launch" as const,
+      agentActivitySnapshot: withAgentComparisonScopes(
+        buildAgentActivitySnapshot(input.agentId, ctx.effective),
+        {
+          configuration: agentConfig,
+          trigger: input.trigger,
+          taskId: input.taskId ?? null,
+          runner: resolution.runnerSnapshot,
+          workspace,
+          hostId: placementHost.id,
+        },
+      ),
       executionDataPlaneMode,
       agentChainDepth: chain.depth,
       agentId: input.agentId,
@@ -1614,13 +1634,31 @@ export async function launchAgentRun(
     };
   }
 
-  if (workspace === "none") {
-    await mkdir(agentWorkdirPath(ctx.project.slug, runId), {
-      recursive: true,
-    });
-  }
+  let startResult: Awaited<ReturnType<typeof tryStartRun>>;
 
-  const startResult = await tryStartRun(runId, { db: _db });
+  try {
+    if (workspace === "none") {
+      await mkdir(agentWorkdirPath(ctx.project.slug, runId), {
+        recursive: true,
+      });
+    }
+    startResult = await tryStartRun(runId, { db: _db });
+  } catch (error) {
+    log.error(
+      {
+        runId,
+        stage: "launch_preparation",
+        errorType: error instanceof Error ? error.name : "unknown",
+      },
+      "agent-launch-preparation-failed",
+    );
+    await settleUndispatchedAgentFailure(
+      _db,
+      runId,
+      "agent_workspace_prepare_failed",
+    );
+    throw error;
+  }
 
   log.info(
     {
@@ -1638,7 +1676,7 @@ export async function launchAgentRun(
 
   if (startResult.started) {
     queueMicrotask(() => {
-      void startAgentSession(runId).catch((err: unknown) => {
+      void startAgentSession(runId, { db: _db }).catch((err: unknown) => {
         log.error(
           { runId, err: err instanceof Error ? err.message : String(err) },
           "startAgentSession dispatch threw",
@@ -3027,8 +3065,24 @@ export async function startAgentSession(
   try {
     await driveAgentSession(runId, { ...opts, db, executionHosts });
   } catch (err) {
-    if (!(err instanceof AgentPromptQuarantined)) throw err;
-    await endQuarantinedAgentRun(db, executionHosts, err.commandId);
+    if (err instanceof AgentPromptQuarantined) {
+      await endQuarantinedAgentRun(db, executionHosts, err.commandId);
+
+      return;
+    }
+    if (
+      opts.signal?.aborted ||
+      isFencedError(err) ||
+      err instanceof SessionCreatePending ||
+      err instanceof AgentPromptContinuationPending ||
+      err instanceof PromptIncarnationPending
+    )
+      throw err;
+    if (
+      await settleUndispatchedAgentFailure(db, runId, "agent_dispatch_failed")
+    )
+      return;
+    throw err;
   }
 }
 

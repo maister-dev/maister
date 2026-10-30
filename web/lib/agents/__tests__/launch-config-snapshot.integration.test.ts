@@ -222,7 +222,45 @@ async function runAgentConfig(
 }
 
 describe("ADR-111 launch-time config snapshot", () => {
-  it("IT-OPA-03 IT-OPA-04 IT-EDGE-OPA-01 freezes operational kind, definition and completion before Pending dispatch and package detachment", async () => {
+  it("IT-UX-13 settles a persisted run after actual workspace preparation fails", async () => {
+    const agentId = await seedTriager(null);
+    const runId = randomUUID();
+
+    await writeFile(
+      path.join(worktreesTmp, projectSlug),
+      "Blocking file retained for diagnosis",
+    );
+    await expect(
+      launchAgentRun({
+        runId,
+        agentId,
+        projectId,
+        trigger: { source: "manual" },
+        db,
+      }),
+    ).rejects.toMatchObject({ code: "ENOTDIR" });
+    expect(
+      (
+        await pool.query(
+          "SELECT status,source_agent_id FROM runs WHERE id=$1",
+          [runId],
+        )
+      ).rows[0],
+    ).toEqual({ status: "Failed", source_agent_id: agentId });
+    expect(
+      (
+        await pool.query(
+          "SELECT count(*)::int AS n FROM agent_incident_occurrences WHERE original_run_id=$1",
+          [runId],
+        )
+      ).rows[0].n,
+    ).toBe(1);
+    expect(await readFile(path.join(worktreesTmp, projectSlug), "utf8")).toBe(
+      "Blocking file retained for diagnosis",
+    );
+  });
+
+  it("IT-UX-01 UX-IT01 IT-OPA-03 IT-OPA-04 IT-EDGE-OPA-01 freezes operational kind, definition and completion before Pending dispatch and package detachment", async () => {
     const agentId = await seedTriager(null);
     const source = (
       await pool.query("SELECT source_path FROM agents WHERE id = $1", [
@@ -257,12 +295,21 @@ describe("ADR-111 launch-time config snapshot", () => {
     if ("deduped" in result) throw new Error("unexpected dedup");
     const run = (
       await pool.query(
-        "SELECT agent_kind, result_contract, execution_policy FROM runs WHERE id = $1",
+        "SELECT agent_kind, result_contract, execution_policy, source_agent_id, launched_at, activity_sort_at, agent_activity_snapshot FROM runs WHERE id = $1",
         [result.runId],
       )
     ).rows[0];
 
     expect(run.agent_kind).toBe("operational");
+    expect(run.source_agent_id).toBe(agentId);
+    expect(run.launched_at).toBeInstanceOf(Date);
+    expect(run.activity_sort_at).toEqual(run.launched_at);
+    expect(run.agent_activity_snapshot).toMatchObject({
+      version: 1,
+      agentId,
+      packageName: "aif",
+    });
+
     expect(run.result_contract).toMatchObject({
       kind: "agent_operational",
       semanticVersion: 1,
@@ -280,6 +327,18 @@ describe("ADR-111 launch-time config snapshot", () => {
       "DELETE FROM project_package_attachments WHERE project_id = $1",
       [projectId],
     );
+    const retainedActivity = (
+      await pool.query(
+        "SELECT source_agent_id,launched_at,agent_activity_snapshot FROM runs WHERE id=$1",
+        [result.runId],
+      )
+    ).rows[0];
+
+    expect(retainedActivity).toEqual({
+      source_agent_id: agentId,
+      launched_at: run.launched_at,
+      agent_activity_snapshot: run.agent_activity_snapshot,
+    });
     const { frozenOperationalDefinition, operationalCompletionPrompt } =
       await import("@/lib/agents/launch-contract");
     const frozen = frozenOperationalDefinition({

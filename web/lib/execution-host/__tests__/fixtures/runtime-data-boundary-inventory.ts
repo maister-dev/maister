@@ -795,7 +795,28 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "lib/context-mounts/terminal.ts",
       "manager-flow-state",
       "read-only sibling-repo context mounts materialized under the run dir (ADR-157)",
-      [["checkContextMountDirt", "node:fs/promises.stat", "stat"]],
+      [
+        ["checkContextMountDirt", "node:fs/promises.lstat", "stat"],
+        ["releaseOperationalContextMounts", "node:fs/promises.lstat", "stat"],
+      ],
+    ),
+    ...classified(
+      "lib/context-mounts/operational-lock.ts",
+      "manager-flow-state",
+      "Manager-owned per-run operational materialization mutex under runtimeRoot/.maister; never host-private session bytes",
+      [["withOperationalContextLock", "node:fs/promises.mkdir", "write"]],
+    ),
+    ...classified(
+      "lib/context-mounts/service.ts",
+      "repository-worktree",
+      "Presence check on immutable server-resolved sibling repository checkout descriptors before operational materialization",
+      [
+        [
+          "materializeOperationalContextMounts",
+          "node:fs/promises.lstat",
+          "stat",
+        ],
+      ],
     ),
     ...classified(
       "lib/db/check-migrations.ts",
@@ -2398,6 +2419,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["finalizeAgentRun", false],
     ["prepareAgentRunFinalization", false],
     ["prepareCheckpointedAgentFailure", false],
+    ["prepareUndispatchedAgentFailure", false],
   ]),
   ...wrappers("lib/agents/flow-binding.ts", "repository-worktree", [
     ["resolveFlowBoundAgent", false],
@@ -2478,9 +2500,16 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["resolveOutputResultSchema", true],
     ["resolveOutputResultSchemaWithIdentity", true],
   ]),
+  ...wrappers("lib/context-mounts/operational-lock.ts", "manager-flow-state", [
+    ["withOperationalContextLock", false],
+  ]),
+  ...wrappers("lib/context-mounts/service.ts", "repository-worktree", [
+    ["materializeOperationalContextMounts", false],
+  ]),
   ...wrappers("lib/context-mounts/terminal.ts", "manager-flow-state", [
     ["checkContextMountDirt", false],
     ["releaseRunContextMounts", false],
+    ["releaseOperationalContextMounts", false],
   ]),
   ...wrappers("lib/db/check-migrations.ts", "migration-tooling", [
     ["assertDatabaseNotAheadOfBinary", false],

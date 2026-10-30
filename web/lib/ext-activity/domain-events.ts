@@ -37,6 +37,36 @@ function stringField(
 
 function mapDomainEvent(row: DomainEventActivityRow): DomainEventMapping {
   switch (row.kind) {
+    case "agent.activity_changed":
+      return {
+        salience: "low",
+        action: {
+          verb: "update",
+          object: "agent activity",
+          outcome: "changed",
+        },
+        summary: "agent activity changed",
+      };
+    case "agent.incident_changed":
+      return {
+        salience: "low",
+        action: {
+          verb: "update",
+          object: "agent incident",
+          outcome: "changed",
+        },
+        summary: "agent incident changed",
+      };
+    case "task.qualification_changed":
+      return {
+        salience: "low",
+        action: {
+          verb: "update",
+          object: "task qualification",
+          outcome: "changed",
+        },
+        summary: "task qualification changed",
+      };
     case "task.created":
       return {
         salience: "high",

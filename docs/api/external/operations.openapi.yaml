@@ -5073,6 +5073,7 @@ components:
       additionalProperties: false
       required:
         - schemaVersion
+        - requestType
         - decision
         - checks
         - reasonCodes
@@ -5083,6 +5084,9 @@ components:
           type: integer
           enum:
             - 1
+        requestType:
+          type: string
+          enum: [bug, feature, maintenance, question]
         decision:
           type: string
           enum:
@@ -5092,17 +5096,20 @@ components:
             - not_actionable
         checks:
           type: array
-          maxItems: 16
+          maxItems: 7
           items:
             $ref: "#/components/schemas/TaskQualificationCheck"
-          minItems: 1
+          minItems: 7
         reasonCodes:
           type: array
           maxItems: 16
-          items: &a1
-            type: string
-            minLength: 1
-            maxLength: 256
+          items:
+            allOf:
+              - &a1
+                type: string
+                minLength: 1
+                maxLength: 256
+              - pattern: "^[a-z][a-z0-9_]{0,255}$"
         nextActions:
           type: array
           maxItems: 16
@@ -7041,19 +7048,28 @@ components:
         `web/lib/ext-activity/domain-events.ts` non-exhaustive — so this enum,
         that switch, and the CHECK migration all move together.
       enum:
+        - agent.activity_changed
+        - agent.incident_changed
+        - task.qualification_changed
         - task.created
         - task.comment_added
         - task.triage_requeued
         - task.clarification_answered
+        - task.clarification_requested
+        - task.clarification_cancelled
         - run.done
         - run.failed
         - run.crashed
         - run.abandoned
         - run.review
+        - run.review_opened
+        - run.needs_input
         - run.escalated
         - run.rework_claimed
         - run.rework_returned
         - gate.failed
+        - run.operational_attention_acknowledged
+        - run.operational_cleanup_changed
 
     ExtActivityPulseItem:
       type: object

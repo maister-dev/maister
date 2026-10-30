@@ -155,18 +155,6 @@ async function persistPendingQuestion(
   db: Db,
 ): Promise<PendingQuestion> {
   return await inTransaction(db, async (tx) => {
-    const taskRows = await tx
-      .select({ id: tasks.id })
-      .from(tasks)
-      .where(
-        and(eq(tasks.id, input.taskId), eq(tasks.projectId, input.projectId)),
-      )
-      .for("update");
-
-    if (!taskRows[0]) {
-      throw new MaisterError("PRECONDITION", "task not found for human ask");
-    }
-
     const sourceRows = await tx
       .select({
         id: runs.id,
@@ -191,6 +179,18 @@ async function persistPendingQuestion(
       source.runKind !== "agent"
     ) {
       throw new MaisterError("PRECONDITION", "bound agent run is not eligible");
+    }
+
+    const taskRows = await tx
+      .select({ id: tasks.id })
+      .from(tasks)
+      .where(
+        and(eq(tasks.id, input.taskId), eq(tasks.projectId, input.projectId)),
+      )
+      .for("update");
+
+    if (!taskRows[0]) {
+      throw new MaisterError("PRECONDITION", "task not found for human ask");
     }
 
     const existingRows = await tx
@@ -421,6 +421,25 @@ async function activatePendingQuestion(
   statusCode: number,
 ): Promise<"active" | "replayed" | "pending"> {
   return await inTransaction(db, async (tx) => {
+    const sourceRows = await tx
+      .select({
+        id: runs.id,
+        projectId: runs.projectId,
+        taskId: runs.taskId,
+        status: runs.status,
+        runKind: runs.runKind,
+        agentKind: runs.agentKind,
+      })
+      .from(runs)
+      .where(eq(runs.id, pending.runId))
+      .for("update");
+    const source = sourceRows[0];
+
+    await tx
+      .select({ id: tasks.id })
+      .from(tasks)
+      .where(eq(tasks.id, pending.taskId))
+      .for("update");
     const rows = await tx
       .select()
       .from(hitlRequests)
@@ -441,20 +460,6 @@ async function activatePendingQuestion(
     ) {
       throw new MaisterError("CONFLICT", "human ask cannot be activated");
     }
-
-    const sourceRows = await tx
-      .select({
-        id: runs.id,
-        projectId: runs.projectId,
-        taskId: runs.taskId,
-        status: runs.status,
-        runKind: runs.runKind,
-        agentKind: runs.agentKind,
-      })
-      .from(runs)
-      .where(eq(runs.id, pending.runId))
-      .for("update");
-    const source = sourceRows[0];
 
     if (
       !source ||

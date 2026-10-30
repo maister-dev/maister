@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { AgentActivitySnapshot } from "@/lib/agents/activity-types";
 import type { CapabilityAgent } from "@/lib/config.schema";
 import type { ProjectAction } from "@/lib/authz";
 import type { ScheduledLaunchReservation } from "@/lib/scheduled-launches/types";
@@ -24,6 +25,8 @@ import {
   readAndValidateFormSchemaDoc,
   type CapabilityRefRecord,
 } from "@/lib/config";
+import { buildAgentActivitySnapshot } from "@/lib/agents/activity-snapshot";
+import { resolveEffectiveAgentDefinition } from "@/lib/agents/effective";
 import { atomicWriteJson } from "@/lib/atomic";
 import { loadFlowRunnerBindings } from "@/lib/acp-runners/catalog";
 import { inspectFlowRunners } from "@/lib/acp-runners/flow-preflight";
@@ -303,6 +306,7 @@ export type LaunchRunInput = {
   // persona/policy source the graph runner injects on every ai_coding node.
   // null/absent for a normal board flow run.
   agentId?: string | null;
+  agentActivity?: AgentActivitySnapshot;
   // M39 (ADR-106): a flow-driving agent's {autoApply, onBudgetBreach} axes,
   // OVERLAID onto the resolved task/project base policy (not a wholesale launch
   // override) so inherited axes such as budget limits survive. null/absent for a
@@ -623,6 +627,16 @@ export async function* launchRunStaged(
   // classification detail (incl. blocker KEY-N refs) must not leak to
   // callers without project access. AuthzError propagates untouched.
   await ctx.authorize(project.id);
+  const agentActivity = input.agentId
+    ? (input.agentActivity ??
+      buildAgentActivitySnapshot(
+        input.agentId,
+        await resolveEffectiveAgentDefinition(
+          { agentId: input.agentId, projectId: project.id },
+          _db,
+        ),
+      ))
+    : null;
 
   // Execution-control policy: resolve (launch override → task → project →
   // supervised), reject blind-ship combos, then gate non-supervised launches
@@ -1696,6 +1710,11 @@ export async function* launchRunStaged(
             // a normal board launch). The graph runner reads it to inject the
             // agent's persona on every ai_coding node.
             agentId: input.agentId ?? null,
+            sourceAgentId: input.agentId ?? null,
+            launchedAt: agentActivity ? sql`CURRENT_TIMESTAMP` : null,
+            activitySortAt: agentActivity ? sql`CURRENT_TIMESTAMP` : null,
+            activityTimestampProvenance: agentActivity ? "launch" : null,
+            agentActivitySnapshot: agentActivity,
             // M39 (ADR-106): trigger provenance for an agent-driven flow run. The
             // partial unique (agent_id, trigger_event_id) index is the race backstop
             // for a CONCURRENT redelivery (the sequential one is caught by

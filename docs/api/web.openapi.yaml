@@ -183,7 +183,8 @@ paths:
     get:
       operationId: getProjectAgentHistory
       summary: (Designed — ADR-196–198) getProjectAgentHistory
-      description: Identifiers are URL parameters; actor/project/source context is derived from
+      description:
+        Identifiers are URL parameters; actor/project/source context is derived from
         authenticated server state. Existing data grants apply before aggregation and nested evidence
         serialization. No secrets, host paths or session handles are returned.
       parameters:
@@ -290,7 +291,8 @@ paths:
     get:
       operationId: getProjectAgentAttempts
       summary: (Designed — ADR-196–198) getProjectAgentAttempts
-      description: Identifiers are URL parameters; actor/project/source context is derived from
+      description:
+        Identifiers are URL parameters; actor/project/source context is derived from
         authenticated server state. Existing data grants apply before aggregation and nested evidence
         serialization. No secrets, host paths or session handles are returned.
       parameters:
@@ -332,7 +334,8 @@ paths:
     get:
       operationId: getProjectPinnedAgentDefinition
       summary: (Designed — ADR-196–198) getProjectPinnedAgentDefinition
-      description: Designed. Require readRepoFiles. Resolve the exact attached pin; unavailable/untrusted
+      description:
+        Designed. Require readRepoFiles. Resolve the exact attached pin; unavailable/untrusted
         definition is explicit, never newest-install fallback. Protected current config is redacted by
         its declared value class; no runtime expansion.
       parameters: &a13
@@ -355,7 +358,8 @@ paths:
     get:
       operationId: getProjectAgentIncidents
       summary: (Designed — ADR-196–198) getProjectAgentIncidents
-      description: Identifiers are URL parameters; actor/project/source context is derived from
+      description:
+        Identifiers are URL parameters; actor/project/source context is derived from
         authenticated server state. Existing data grants apply before aggregation and nested evidence
         serialization. No secrets, host paths or session handles are returned.
       parameters:
@@ -397,7 +401,8 @@ paths:
     post:
       operationId: acknowledgeProjectAgentEpisodes
       summary: (Designed — ADR-196–198) acknowledgeProjectAgentEpisodes
-      description: Designed. answerHitl required. Atomically validate every episode against addressed
+      description:
+        Designed. answerHitl required. Atomically validate every episode against addressed
         agent/project and observed attentionRevision. Same episode repeats do not invalidate
         acknowledgement; closed observed episode is an idempotent no-op. A new episode is not
         acknowledged implicitly.
@@ -432,7 +437,8 @@ paths:
     get:
       operationId: getAgentRetryOptions
       summary: (Designed — ADR-196–198) getAgentRetryOptions
-      description: Designed. launchRun required. Prove source terminal quiescence and no dispatched work.
+      description:
+        Designed. launchRun required. Prove source terminal quiescence and no dispatched work.
         Partial/unknown effects return eligible=false and typed reason. The expiring preview binds
         exact current recipe, task and runner policy.
       parameters:
@@ -457,7 +463,8 @@ paths:
     post:
       operationId: retryAgentRun
       summary: (Designed — ADR-196–198) retryAgentRun
-      description: Identifiers are URL parameters; actor/project/source context is derived from
+      description:
+        Identifiers are URL parameters; actor/project/source context is derived from
         authenticated server state. Existing data grants apply before aggregation and nested evidence
         serialization. No secrets, host paths or session handles are returned.
       parameters:
@@ -494,7 +501,8 @@ paths:
     get:
       operationId: getAgentRetryIntent
       summary: (Designed — ADR-196–198) getAgentRetryIntent
-      description: Identifiers are URL parameters; actor/project/source context is derived from
+      description:
+        Identifiers are URL parameters; actor/project/source context is derived from
         authenticated server state. Existing data grants apply before aggregation and nested evidence
         serialization. No secrets, host paths or session handles are returned.
       parameters:
@@ -523,7 +531,8 @@ paths:
     post:
       operationId: rearmAgentRetryCleanup
       summary: (Designed — ADR-196–198) rearmAgentRetryCleanup
-      description: Identifiers are URL parameters; actor/project/source context is derived from
+      description:
+        Identifiers are URL parameters; actor/project/source context is derived from
         authenticated server state. Existing data grants apply before aggregation and nested evidence
         serialization. No secrets, host paths or session handles are returned.
       parameters:
@@ -564,7 +573,8 @@ paths:
     post:
       operationId: assessProjectTask
       summary: (Designed — ADR-196–198) assessProjectTask
-      description: Designed. editTask required; code-bearing evidence reads additionally require
+      description:
+        Designed. editTask required; code-bearing evidence reads additionally require
         readRepoFiles. Human assessment, routing and enqueue are one application transaction. Expected
         input and current pointer revisions both CAS; same-key payload conflict is 409. Body maximum
         64 KiB. No force bypass.
@@ -600,7 +610,8 @@ paths:
     get:
       operationId: getProjectTaskQualificationHistory
       summary: (Designed — ADR-196–198) getProjectTaskQualificationHistory
-      description: Identifiers are URL parameters; actor/project/source context is derived from
+      description:
+        Identifiers are URL parameters; actor/project/source context is derived from
         authenticated server state. Existing data grants apply before aggregation and nested evidence
         serialization. No secrets, host paths or session handles are returned.
       parameters:
@@ -1844,7 +1855,8 @@ paths:
         - git
       operationId: getProjectConfigPersistenceStatus
       summary: (Implemented, ADR-194) Read export and checkout status
-      description: Project paths, target branch and configuration are server-derived. Detailed repository
+      description:
+        Project paths, target branch and configuration are server-derived. Detailed repository
         content requires editSettings and readRepoFiles; scalar status requires readBoard. Responses
         are no-store. Immutable actor/project-bound intents guard retries. See
         ../system-analytics/project-config-persistence.md.
@@ -1857,7 +1869,8 @@ paths:
             minLength: 1
       responses:
         "200":
-          description: Observed status/review or durable operation outcome. Known push failure preserves the
+          description:
+            Observed status/review or durable operation outcome. Known push failure preserves the
             local committed receipt.
           content:
             application/json:
@@ -1874,7 +1887,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/MaisterErrorBody"
         "409":
-          description: Precondition, stale/expired review, active operation, unsupported repository state, or
+          description:
+            Precondition, stale/expired review, active operation, unsupported repository state, or
             explicit recovery is required. Structured details.reason identifies remediation.
           content:
             application/json:
@@ -1887,7 +1901,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/MaisterErrorBody"
         "503":
-          description: "EXECUTOR_UNAVAILABLE: repository/database/remote evidence unavailable. No
+          description:
+            "EXECUTOR_UNAVAILABLE: repository/database/remote evidence unavailable. No
             missing/success/terminal result is fabricated."
           content:
             application/json:
@@ -1898,7 +1913,8 @@ paths:
         - git
       operationId: postProjectPersistConfig
       summary: (Implemented, ADR-194) Confirm the exact reviewed local commit
-      description: Project paths, target branch and configuration are server-derived. Detailed repository
+      description:
+        Project paths, target branch and configuration are server-derived. Detailed repository
         content requires editSettings and readRepoFiles; scalar status requires readBoard. Responses
         are no-store. Immutable actor/project-bound intents guard retries. See
         ../system-analytics/project-config-persistence.md.
@@ -1911,7 +1927,8 @@ paths:
             minLength: 1
       responses:
         "200":
-          description: Observed status/review or durable operation outcome. Known push failure preserves the
+          description:
+            Observed status/review or durable operation outcome. Known push failure preserves the
             local committed receipt.
           content:
             application/json:
@@ -1928,7 +1945,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/MaisterErrorBody"
         "409":
-          description: Precondition, stale/expired review, active operation, unsupported repository state, or
+          description:
+            Precondition, stale/expired review, active operation, unsupported repository state, or
             explicit recovery is required. Structured details.reason identifies remediation.
           content:
             application/json:
@@ -1941,7 +1959,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/MaisterErrorBody"
         "503":
-          description: "EXECUTOR_UNAVAILABLE: repository/database/remote evidence unavailable. No
+          description:
+            "EXECUTOR_UNAVAILABLE: repository/database/remote evidence unavailable. No
             missing/success/terminal result is fabricated."
           content:
             application/json:
@@ -1959,7 +1978,8 @@ paths:
         - git
       operationId: previewProjectPersistConfig
       summary: (Implemented, ADR-194) Preview complete manifest diff without repository writes
-      description: Project paths, target branch and configuration are server-derived. Detailed repository
+      description:
+        Project paths, target branch and configuration are server-derived. Detailed repository
         content requires editSettings and readRepoFiles; scalar status requires readBoard. Responses
         are no-store. Immutable actor/project-bound intents guard retries. See
         ../system-analytics/project-config-persistence.md.
@@ -1972,7 +1992,8 @@ paths:
             minLength: 1
       responses:
         "200":
-          description: Observed status/review or durable operation outcome. Known push failure preserves the
+          description:
+            Observed status/review or durable operation outcome. Known push failure preserves the
             local committed receipt.
           content:
             application/json:
@@ -1989,7 +2010,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/MaisterErrorBody"
         "409":
-          description: Precondition, stale/expired review, active operation, unsupported repository state, or
+          description:
+            Precondition, stale/expired review, active operation, unsupported repository state, or
             explicit recovery is required. Structured details.reason identifies remediation.
           content:
             application/json:
@@ -2002,7 +2024,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/MaisterErrorBody"
         "503":
-          description: "EXECUTOR_UNAVAILABLE: repository/database/remote evidence unavailable. No
+          description:
+            "EXECUTOR_UNAVAILABLE: repository/database/remote evidence unavailable. No
             missing/success/terminal result is fabricated."
           content:
             application/json:
@@ -2020,7 +2043,8 @@ paths:
         - git
       operationId: getProjectConfigPersistenceReceipt
       summary: (Implemented, ADR-194) Read a specific receipt without recovery writes
-      description: Project paths, target branch and configuration are server-derived. Detailed repository
+      description:
+        Project paths, target branch and configuration are server-derived. Detailed repository
         content requires editSettings and readRepoFiles; scalar status requires readBoard. Responses
         are no-store. Immutable actor/project-bound intents guard retries. See
         ../system-analytics/project-config-persistence.md.
@@ -2039,7 +2063,8 @@ paths:
             format: uuid
       responses:
         "200":
-          description: Observed status/review or durable operation outcome. Known push failure preserves the
+          description:
+            Observed status/review or durable operation outcome. Known push failure preserves the
             local committed receipt.
           content:
             application/json:
@@ -2056,7 +2081,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/MaisterErrorBody"
         "409":
-          description: Precondition, stale/expired review, active operation, unsupported repository state, or
+          description:
+            Precondition, stale/expired review, active operation, unsupported repository state, or
             explicit recovery is required. Structured details.reason identifies remediation.
           content:
             application/json:
@@ -2069,7 +2095,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/MaisterErrorBody"
         "503":
-          description: "EXECUTOR_UNAVAILABLE: repository/database/remote evidence unavailable. No
+          description:
+            "EXECUTOR_UNAVAILABLE: repository/database/remote evidence unavailable. No
             missing/success/terminal result is fabricated."
           content:
             application/json:
@@ -2081,7 +2108,8 @@ paths:
         - git
       operationId: recoverProjectConfigPersistence
       summary: (Implemented, ADR-194) Reconcile an already accepted local intent
-      description: Project paths, target branch and configuration are server-derived. Detailed repository
+      description:
+        Project paths, target branch and configuration are server-derived. Detailed repository
         content requires editSettings and readRepoFiles; scalar status requires readBoard. Responses
         are no-store. Immutable actor/project-bound intents guard retries. See
         ../system-analytics/project-config-persistence.md.
@@ -2098,7 +2126,8 @@ paths:
           schema: *a1
       responses:
         "200":
-          description: Observed status/review or durable operation outcome. Known push failure preserves the
+          description:
+            Observed status/review or durable operation outcome. Known push failure preserves the
             local committed receipt.
           content:
             application/json:
@@ -2115,7 +2144,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/MaisterErrorBody"
         "409":
-          description: Precondition, stale/expired review, active operation, unsupported repository state, or
+          description:
+            Precondition, stale/expired review, active operation, unsupported repository state, or
             explicit recovery is required. Structured details.reason identifies remediation.
           content:
             application/json:
@@ -2128,7 +2158,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/MaisterErrorBody"
         "503":
-          description: "EXECUTOR_UNAVAILABLE: repository/database/remote evidence unavailable. No
+          description:
+            "EXECUTOR_UNAVAILABLE: repository/database/remote evidence unavailable. No
             missing/success/terminal result is fabricated."
           content:
             application/json:
@@ -2146,7 +2177,8 @@ paths:
         - git
       operationId: previewProjectConfigPush
       summary: (Implemented, ADR-194) Review the exact outgoing SHA, destination and ancestry
-      description: Project paths, target branch and configuration are server-derived. Detailed repository
+      description:
+        Project paths, target branch and configuration are server-derived. Detailed repository
         content requires editSettings and readRepoFiles; scalar status requires readBoard. Responses
         are no-store. Immutable actor/project-bound intents guard retries. See
         ../system-analytics/project-config-persistence.md.
@@ -2163,7 +2195,8 @@ paths:
           schema: *a1
       responses:
         "200":
-          description: Observed status/review or durable operation outcome. Known push failure preserves the
+          description:
+            Observed status/review or durable operation outcome. Known push failure preserves the
             local committed receipt.
           content:
             application/json:
@@ -2180,7 +2213,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/MaisterErrorBody"
         "409":
-          description: Precondition, stale/expired review, active operation, unsupported repository state, or
+          description:
+            Precondition, stale/expired review, active operation, unsupported repository state, or
             explicit recovery is required. Structured details.reason identifies remediation.
           content:
             application/json:
@@ -2193,7 +2227,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/MaisterErrorBody"
         "503":
-          description: "EXECUTOR_UNAVAILABLE: repository/database/remote evidence unavailable. No
+          description:
+            "EXECUTOR_UNAVAILABLE: repository/database/remote evidence unavailable. No
             missing/success/terminal result is fabricated."
           content:
             application/json:
@@ -2211,7 +2246,8 @@ paths:
         - git
       operationId: pushProjectPersistConfig
       summary: (Implemented, ADR-194) Confirm a separate immutable push intent
-      description: Project paths, target branch and configuration are server-derived. Detailed repository
+      description:
+        Project paths, target branch and configuration are server-derived. Detailed repository
         content requires editSettings and readRepoFiles; scalar status requires readBoard. Responses
         are no-store. Immutable actor/project-bound intents guard retries. See
         ../system-analytics/project-config-persistence.md.
@@ -2228,7 +2264,8 @@ paths:
           schema: *a1
       responses:
         "200":
-          description: Observed status/review or durable operation outcome. Known push failure preserves the
+          description:
+            Observed status/review or durable operation outcome. Known push failure preserves the
             local committed receipt.
           content:
             application/json:
@@ -2245,7 +2282,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/MaisterErrorBody"
         "409":
-          description: Precondition, stale/expired review, active operation, unsupported repository state, or
+          description:
+            Precondition, stale/expired review, active operation, unsupported repository state, or
             explicit recovery is required. Structured details.reason identifies remediation.
           content:
             application/json:
@@ -2258,7 +2296,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/MaisterErrorBody"
         "503":
-          description: "EXECUTOR_UNAVAILABLE: repository/database/remote evidence unavailable. No
+          description:
+            "EXECUTOR_UNAVAILABLE: repository/database/remote evidence unavailable. No
             missing/success/terminal result is fabricated."
           content:
             application/json:
@@ -2592,7 +2631,8 @@ paths:
     get:
       operationId: getProjectAgentActivity
       summary: (Designed — ADR-196–198) getProjectAgentActivity
-      description: Identifiers are URL parameters; actor/project/source context is derived from
+      description:
+        Identifiers are URL parameters; actor/project/source context is derived from
         authenticated server state. Existing data grants apply before aggregation and nested evidence
         serialization. No secrets, host paths or session handles are returned.
       parameters:
@@ -18878,6 +18918,7 @@ components:
       additionalProperties: false
       required:
         - schemaVersion
+        - requestType
         - decision
         - checks
         - reasonCodes
@@ -18888,6 +18929,9 @@ components:
           type: integer
           enum:
             - 1
+        requestType:
+          type: string
+          enum: [bug, feature, maintenance, question]
         decision:
           type: string
           enum:
@@ -18897,14 +18941,17 @@ components:
             - not_actionable
         checks:
           type: array
-          maxItems: 16
+          maxItems: 7
           items:
             $ref: "#/components/schemas/TaskQualificationCheck"
-          minItems: 1
+          minItems: 7
         reasonCodes:
           type: array
           maxItems: 16
-          items: *a6
+          items:
+            allOf:
+              - *a6
+              - pattern: "^[a-z][a-z0-9_]{0,255}$"
         nextActions:
           type: array
           maxItems: 16
@@ -18943,10 +18990,12 @@ components:
         - qualification
       properties:
         requestKey: *a2
-        expectedInputRevision: *a7
+        expectedInputRevision:
+          { type: integer, minimum: 1, maximum: 2147483647 }
         expectedQualificationRevision:
           type: integer
           minimum: 1
+          maximum: 2147483647
           nullable: true
         qualification:
           $ref: "#/components/schemas/TaskQualificationValue"
@@ -20421,6 +20470,11 @@ components:
       additionalProperties: false
       minProperties: 1
       properties:
+        taskQualificationPolicy:
+          type: string
+          enum: [legacy, required]
+          nullable: true
+          description: Explicit reviewed override. Null clears to the immutable creation baseline; required task holds remain required.
         runnerId:
           type: string
           nullable: true
@@ -20584,6 +20638,15 @@ components:
       additionalProperties: false
       required: [ok, projectId]
       properties:
+        taskQualificationPolicy:
+          type: object
+          additionalProperties: false
+          required: [version, baseline, override, mode]
+          properties:
+            version: { type: integer, enum: [1] }
+            baseline: { type: string, enum: [legacy, required] }
+            override: { type: string, enum: [legacy, required], nullable: true }
+            mode: { type: string, enum: [legacy, required] }
         ok:
           type: boolean
         projectId:

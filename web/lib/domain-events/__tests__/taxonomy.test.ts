@@ -138,6 +138,9 @@ describe("run.review cause", () => {
 describe("domain-event taxonomy", () => {
   it("contains registered domain kinds including operational disposition", () => {
     expect([...DOMAIN_EVENT_KINDS]).toEqual([
+      "agent.activity_changed",
+      "agent.incident_changed",
+      "task.qualification_changed",
       "task.created",
       "task.comment_added",
       "task.triage_requeued",

@@ -10,6 +10,7 @@ import type {
 import { and, eq, inArray } from "drizzle-orm";
 
 import { runs, operationalRunAcknowledgements } from "@/lib/db/schema";
+import { mirrorLegacyAgentAcknowledgement } from "@/lib/runs/agent-activity-backfill";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { MaisterError } from "@/lib/errors";
 
@@ -141,6 +142,11 @@ export async function acknowledgeOperationalAttention(
       })
       .onConflictDoNothing()
       .returning({ runId: operationalRunAcknowledgements.runId });
+
+    await mirrorLegacyAgentAcknowledgement(tx, {
+      ...args,
+      acknowledgedAt: new Date(),
+    });
 
     if (inserted.length)
       await emitDomainEvent({

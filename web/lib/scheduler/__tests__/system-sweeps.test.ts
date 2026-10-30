@@ -54,6 +54,12 @@ const runLibrarianRetentionMock = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/runs/keepalive-sweeper", () => ({
   runSweepTick: runSweepTickMock,
 }));
+vi.mock("@/lib/agents/trigger-attempts", () => ({
+  reconcileAgentTriggerAttempts: vi.fn(async () => ({
+    adopted: 0,
+    unknown: 0,
+  })),
+}));
 vi.mock("@/lib/reconcile", () => ({
   runReconcileSweep: runReconcileSweepMock,
 }));

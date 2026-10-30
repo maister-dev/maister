@@ -16,7 +16,7 @@ import { requireProjectActionForUser } from "@/lib/authz";
 import { revokeAgentProjectTokens } from "@/lib/agents/tokens";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
-import { isDomainEventKind } from "@/lib/domain-events/taxonomy";
+import { isAgentTriggerEventKind } from "@/lib/domain-events/taxonomy";
 import { MaisterError } from "@/lib/errors";
 import {
   nextFireAt,
@@ -163,7 +163,7 @@ function normalizeSchedule(
     );
   }
   for (const kind of kinds) {
-    if (!isDomainEventKind(kind)) {
+    if (!isAgentTriggerEventKind(kind)) {
       throw new MaisterError("CONFIG", `unknown domain-event kind: ${kind}`);
     }
   }

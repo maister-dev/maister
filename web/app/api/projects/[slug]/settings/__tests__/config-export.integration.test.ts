@@ -50,7 +50,10 @@ async function state(): Promise<string[]> {
 }
 async function patch(
   route: typeof aggregate,
-  body: { runnerId: string | null } | { syncStrategyDefault: "merge" },
+  body:
+    | { runnerId: string | null }
+    | { syncStrategyDefault: "merge" }
+    | { taskQualificationPolicy: "legacy" | "required" | null },
 ): Promise<Response> {
   return route(
     new NextRequest(`http://t/api/projects/${slug}/settings`, {
@@ -126,6 +129,28 @@ it("IT-CPC-01: both runner APIs SET/CLEAR/SET the exportable runtime value witho
   expect(await state()).toEqual(fingerprint);
 });
 
+it("IT-UX-18: qualification policy SET/CLEAR/SET updates reviewed export and retains its baseline", async () => {
+  for (const mode of ["required", null, "required"] as const) {
+    const before = await readExportSnapshot(database.db, projectId);
+    const response = await patch(aggregate, { taskQualificationPolicy: mode });
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).taskQualificationPolicy).toEqual({
+      version: 1,
+      baseline: "legacy",
+      override: mode,
+      mode: mode ?? "legacy",
+    });
+    const after = await readExportSnapshot(database.db, projectId);
+
+    expect(after.projection.taskQualificationOverride).toBe(mode);
+    expect(BigInt(after.exportRevision)).toBe(
+      BigInt(before.exportRevision) + 1n,
+    );
+    expect(await state()).toEqual(fingerprint);
+  }
+});
+
 it("IT-CPC-09: both runner APIs report the active publication guard as actionable 409 and leave runtime state unchanged", async () => {
   const preview = await previewProjectConfiguration(
     database.db,
@@ -159,6 +184,9 @@ it("IT-CPC-09: both runner APIs report the active publication guard as actionabl
         details: { reason: "operation_busy" },
       });
     }
+    expect(
+      (await patch(aggregate, { taskQualificationPolicy: null })).status,
+    ).toBe(409);
     const [row] = await database.db
       .select()
       .from(projects)

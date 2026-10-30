@@ -6430,9 +6430,18 @@ async function handleAgentQuestionResponse(
 
   const outcome: AgentQuestionResponseOutcome = await db.transaction(
     async (tx: any) => {
-      // Lock order is task → request. New task-bound agent launches use the
-      // same order while superseding questions, so answer-vs-successor resolves
-      // deterministically without a dangling active Inbox assignment.
+      // Source run → task → request matches qualifier publication and finalization.
+      const sourceRows = await tx
+        .select({
+          status: runs.status,
+          runKind: runs.runKind,
+          agentKind: runs.agentKind,
+        })
+        .from(runs)
+        .where(eq(runs.id, runId))
+        .for("update");
+      const source = sourceRows[0];
+
       const taskRows = await tx
         .select({
           id: tasks.id,
@@ -6494,17 +6503,6 @@ async function handleAgentQuestionResponse(
           "agent_question clarification provenance is missing",
         );
       }
-
-      const sourceRows = await tx
-        .select({
-          status: runs.status,
-          runKind: runs.runKind,
-          agentKind: runs.agentKind,
-        })
-        .from(runs)
-        .where(eq(runs.id, runId))
-        .for("update");
-      const source = sourceRows[0];
 
       if (
         !source ||

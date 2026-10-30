@@ -45,6 +45,10 @@ const log = pino({
 
 const patchBodySchema = z
   .object({
+    taskQualificationPolicy: z
+      .enum(["legacy", "required"])
+      .nullable()
+      .optional(),
     runnerId: z.string().min(1).nullable().optional(),
     deliveryPolicyDefault: storedDeliveryPolicySchema.nullable().optional(),
     // ADR-121 §4.3: per-project queue settings. `null` clears the override (env
@@ -221,6 +225,9 @@ export async function PATCH(
 
     const update: Record<string, unknown> = {};
 
+    if (body.taskQualificationPolicy !== undefined) {
+      update.taskQualificationOverride = body.taskQualificationPolicy;
+    }
     if (body.runnerId !== undefined) {
       update.defaultRunnerId = body.runnerId;
     }
@@ -355,6 +362,19 @@ export async function PATCH(
     return NextResponse.json({
       ok: true,
       projectId: project.id,
+      taskQualificationPolicy: {
+        version: 1,
+        baseline: project.taskQualificationBaseline,
+        override:
+          body.taskQualificationPolicy === undefined
+            ? project.taskQualificationOverride
+            : body.taskQualificationPolicy,
+        mode:
+          (body.taskQualificationPolicy === undefined
+            ? project.taskQualificationOverride
+            : body.taskQualificationPolicy) ??
+          project.taskQualificationBaseline,
+      },
       defaultRunnerId:
         body.runnerId === undefined ? project.defaultRunnerId : body.runnerId,
       deliveryPolicyDefault:

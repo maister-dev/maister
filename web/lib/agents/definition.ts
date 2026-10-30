@@ -27,7 +27,7 @@ import {
   hooksSettingsSchema,
   type HooksSettings,
 } from "@/lib/config.schema";
-import { DOMAIN_EVENT_KINDS } from "@/lib/domain-events/taxonomy";
+import { AGENT_TRIGGER_EVENT_KINDS } from "@/lib/domain-events/taxonomy";
 // errors-core, not @/lib/errors: this module is imported by the client-side
 // artifact validator (Studio editor bundle); the server re-export preserves
 // class identity so server-side catch/instanceof still works.
@@ -183,7 +183,7 @@ const recommendedSchema = z
       .strict()
       .optional(),
     events: z
-      .array(z.enum(DOMAIN_EVENT_KINDS))
+      .array(z.enum(AGENT_TRIGGER_EVENT_KINDS))
       .min(1)
       .refine(
         (kinds) => new Set(kinds).size === kinds.length,

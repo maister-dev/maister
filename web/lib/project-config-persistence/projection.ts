@@ -98,6 +98,7 @@ export async function readExportSnapshot(
       mainBranch: project.mainBranch,
       branchPrefix: project.branchPrefix,
       publicBranchTemplate: project.publicBranchTemplate,
+      taskQualificationOverride: project.taskQualificationOverride,
       defaultRunnerId: project.defaultRunnerId,
       promotionMode: project.promotionMode,
       packages: packages.sort((a, b) => a.id.localeCompare(b.id)),
