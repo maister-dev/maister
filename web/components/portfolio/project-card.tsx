@@ -59,6 +59,7 @@ export async function ProjectCard({
   project,
 }: ProjectCardProps): Promise<ReactElement> {
   const t = await getTranslations("portfolio");
+  const tConfig = await getTranslations("projects.configPersistence");
   const tReadiness = await getTranslations("readiness");
 
   const accentStyle = ACCENT_VARS[project.accent];
@@ -82,6 +83,12 @@ export async function ProjectCard({
               {project.name}
             </Link>
           </h2>
+          <p
+            className="text-xs text-mute"
+            data-testid="config-persist-cached-status"
+          >
+            {tConfig(`exportStates.${project.configPersistence.exportState}`)}
+          </p>
         </div>
         <div className="flex flex-none flex-col items-end gap-1">
           <span

@@ -10,7 +10,6 @@ import { DecisionsSummary } from "@/components/portfolio/decisions-summary";
 import { NewProjectTile } from "@/components/portfolio/new-project-tile";
 import { OnboardingChecklist } from "@/components/portfolio/onboarding-checklist";
 import { ProjectCard } from "@/components/portfolio/project-card";
-import { ConfigPersistBanner } from "@/components/projects/config-persist-banner";
 import { requireSession } from "@/lib/authz";
 import { getDecisionsCount } from "@/lib/queries/decisions";
 import {
@@ -103,21 +102,6 @@ export default async function PortfolioPage(): Promise<ReactElement> {
               }}
             />
           ) : null}
-
-          {user.role === "admin"
-            ? portfolio.projects
-                .filter((project) => project.needsPersist)
-                .map((project) => (
-                  <ConfigPersistBanner
-                    key={project.id}
-                    canEdit
-                    needsPersist
-                    projectName={project.name}
-                    settingsHref={`/projects/${project.slug}?tab=settings`}
-                    slug={project.slug}
-                  />
-                ))
-            : null}
 
           <section
             aria-label="Projects"

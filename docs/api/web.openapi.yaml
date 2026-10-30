@@ -1237,12 +1237,12 @@ paths:
         It then **stats `maister.yaml` v2** at `{resolvedDir}/maister.yaml`.
         **Present** → today's path (validate, derive slug from `project.name`
         kebab-case server-side, install each `flows[]` plugin). **Absent** →
-        atomically bootstrap a minimal schema-valid v2 manifest using
+        validate minimal v2 configuration in memory using
         `name = body.name || basename(resolvedDir)`, the resolved default branch,
-        and `flows: []`; then follow that same validation and registration path.
-        A generated file is removed when registration fails unless an operator
-        changed it first. Both paths check `slug` / `repo_path` / `taskKey`
-        uniqueness, persist `projects` (including `maister_yaml_path`), and
+        and `flows: []`, then follow the same registration pipeline. No manifest
+        is written; `maister_yaml_path` remains null until an explicit reviewed
+        save. Both paths check `slug` / `repo_path` / `taskKey`
+        uniqueness, persist `projects`, and
         insert a `project_members` row for the caller with `role = "owner"`.
 
         Phases and their error codes:
@@ -1252,7 +1252,7 @@ paths:
            `PRECONDITION` (409) on clone failure (with advisory `reason` +
            redacted `detail`), missing dir, or a target/new path collision
         3. Stat `maister.yaml` — **present-but-invalid** → `CONFIG` (422);
-           **missing** → atomically bootstrap the minimal manifest, then validate it
+           **missing** → validate minimal configuration in memory without writing a file
         4. Slug/repo_path/taskKey collision check — `CONFLICT` (409)
         5. DB write (project + owner membership, plus executors/flows on the
            present-manifest path) in ONE transaction — `CONFIG` (422) on
@@ -1378,7 +1378,7 @@ paths:
       tags:
         - git
       operationId: getProjectConfigPersistenceStatus
-      summary: (Designed, ADR-194) Read export and checkout status
+      summary: (Implemented, ADR-194) Read export and checkout status
       description: Project paths, target branch and configuration are server-derived. Detailed repository
         content requires editSettings and readRepoFiles; scalar status requires readBoard. Responses
         are no-store. Immutable actor/project-bound intents guard retries. See
@@ -1432,7 +1432,7 @@ paths:
       tags:
         - git
       operationId: postProjectPersistConfig
-      summary: (Designed, ADR-194) Confirm the exact reviewed local commit
+      summary: (Implemented, ADR-194) Confirm the exact reviewed local commit
       description: Project paths, target branch and configuration are server-derived. Detailed repository
         content requires editSettings and readRepoFiles; scalar status requires readBoard. Responses
         are no-store. Immutable actor/project-bound intents guard retries. See
@@ -1493,7 +1493,7 @@ paths:
       tags:
         - git
       operationId: previewProjectPersistConfig
-      summary: (Designed, ADR-194) Preview complete manifest diff without repository writes
+      summary: (Implemented, ADR-194) Preview complete manifest diff without repository writes
       description: Project paths, target branch and configuration are server-derived. Detailed repository
         content requires editSettings and readRepoFiles; scalar status requires readBoard. Responses
         are no-store. Immutable actor/project-bound intents guard retries. See
@@ -1554,7 +1554,7 @@ paths:
       tags:
         - git
       operationId: getProjectConfigPersistenceReceipt
-      summary: (Designed, ADR-194) Read a specific receipt without recovery writes
+      summary: (Implemented, ADR-194) Read a specific receipt without recovery writes
       description: Project paths, target branch and configuration are server-derived. Detailed repository
         content requires editSettings and readRepoFiles; scalar status requires readBoard. Responses
         are no-store. Immutable actor/project-bound intents guard retries. See
@@ -1615,7 +1615,7 @@ paths:
       tags:
         - git
       operationId: recoverProjectConfigPersistence
-      summary: (Designed, ADR-194) Reconcile an already accepted local intent
+      summary: (Implemented, ADR-194) Reconcile an already accepted local intent
       description: Project paths, target branch and configuration are server-derived. Detailed repository
         content requires editSettings and readRepoFiles; scalar status requires readBoard. Responses
         are no-store. Immutable actor/project-bound intents guard retries. See
@@ -1680,7 +1680,7 @@ paths:
       tags:
         - git
       operationId: previewProjectConfigPush
-      summary: (Designed, ADR-194) Review the exact outgoing SHA, destination and ancestry
+      summary: (Implemented, ADR-194) Review the exact outgoing SHA, destination and ancestry
       description: Project paths, target branch and configuration are server-derived. Detailed repository
         content requires editSettings and readRepoFiles; scalar status requires readBoard. Responses
         are no-store. Immutable actor/project-bound intents guard retries. See
@@ -1745,7 +1745,7 @@ paths:
       tags:
         - git
       operationId: pushProjectPersistConfig
-      summary: (Designed, ADR-194) Confirm a separate immutable push intent
+      summary: (Implemented, ADR-194) Confirm a separate immutable push intent
       description: Project paths, target branch and configuration are server-derived. Detailed repository
         content requires editSettings and readRepoFiles; scalar status requires readBoard. Responses
         are no-store. Immutable actor/project-bound intents guard retries. See
@@ -13829,9 +13829,11 @@ paths:
         beside the upstream" — never an opaque DB error. There is no
         auto-rename and no attachment-level aliasing.
 
-        The `maister.yaml
-        packages[]` pin is written back AFTER commit; a write-back failure is
-        reported as `writeBack: "failed"`, never a rollback.
+        Successful attach, detach, upgrade and downgrade apply runtime configuration
+        and advance its export revision without modifying repository files, index
+        or HEAD. Saving package pins requires the separate reviewed persistence action.
+        An active publication refuses exportable changes with 409 CONFLICT and
+        `details.reason: operation_busy`.
       operationId: attachProjectPackage
       parameters:
         - {
@@ -13846,6 +13848,7 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required: [packageInstallId]
               properties:
                 packageInstallId: { type: string, minLength: 1 }
@@ -13856,11 +13859,10 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [ok, attachmentId, writeBack]
+                required: [ok, attachmentId]
                 properties:
                   ok: { type: boolean, enum: [true] }
                   attachmentId: { type: string }
-                  writeBack: { type: string, enum: [ok, failed] }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -13913,10 +13915,9 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [ok, writeBack]
+                required: [ok]
                 properties:
                   ok: { type: boolean, enum: [true] }
-                  writeBack: { type: string, enum: [ok, failed] }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -13952,6 +13953,7 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required: [packageInstallId]
               properties:
                 packageInstallId: { type: string, minLength: 1 }
@@ -13962,10 +13964,9 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [ok, writeBack]
+                required: [ok]
                 properties:
                   ok: { type: boolean, enum: [true] }
-                  writeBack: { type: string, enum: [ok, failed] }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }

@@ -8,6 +8,7 @@ import { z } from "zod";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
+import { configMutationError } from "@/lib/project-config-persistence/mutation-error";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 
 const { platformAcpRunners, projects } = schemaModule as unknown as Record<
@@ -47,15 +48,21 @@ function httpStatusForCode(code: string): number {
 }
 
 function errorResponse(err: unknown, slug: string): NextResponse {
-  if (isMaisterError(err)) {
+  const failure = configMutationError(err);
+
+  if (isMaisterError(failure)) {
     return NextResponse.json(
-      { code: err.code, message: err.message },
-      { status: httpStatusForCode(err.code) },
+      {
+        code: failure.code,
+        message: failure.message,
+        ...(failure.details ? { details: failure.details } : {}),
+      },
+      { status: httpStatusForCode(failure.code) },
     );
   }
 
   log.error(
-    { slug, err: err instanceof Error ? err.message : String(err) },
+    { slug, err: failure instanceof Error ? failure.message : String(failure) },
     "project runner settings API error",
   );
 

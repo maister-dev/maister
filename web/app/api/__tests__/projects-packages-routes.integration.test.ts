@@ -1,3 +1,5 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -7,7 +9,6 @@ import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { NextRequest } from "next/server";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { parse as parseYaml } from "yaml";
 
 import { requireGlobalRole } from "@/lib/authz";
 import * as schemaModule from "@/lib/db/schema";
@@ -79,6 +80,22 @@ beforeAll(async () => {
     "schemaVersion: 1\nname: routepkg\nflows:\n  - { id: route-flow, path: flows/route-flow }\n",
   );
 
+  await exec("git", ["-C", workspaceRoot, "init", "-b", "main"]);
+  await exec("git", ["-C", workspaceRoot, "add", "maister.yaml"]);
+  await exec("git", [
+    "-C",
+    workspaceRoot,
+    "-c",
+    "user.name=Fixture",
+    "-c",
+    "user.email=fixture@example.test",
+    "commit",
+    "-m",
+    "initial manifest",
+  ]);
+  initialRepository = await repositoryFingerprint();
+  ({ POST: upgradePOST } =
+    await import("@/app/api/projects/[slug]/packages/[attachmentId]/upgrade/route"));
   projectId = randomUUID();
   await db.insert(schema.projects).values({
     taskKey: `T${randomUUID().slice(0, 8)}`.toUpperCase(),
@@ -108,6 +125,23 @@ afterAll(async () => {
 
 // Shared across describes: the fork-beside-upstream block below forks the
 // upstream install the first block attached.
+const exec = promisify(execFile);
+
+async function repositoryFingerprint(): Promise<string[]> {
+  return Promise.all([
+    readFile(join(workspaceRoot, "maister.yaml"), "utf8"),
+    ...[
+      ["rev-parse", "HEAD"],
+      ["ls-files", "--stage", "-v"],
+      ["status", "--porcelain=v1", "--untracked-files=all"],
+    ].map(
+      async (args) =>
+        (await exec("git", ["-C", workspaceRoot, ...args])).stdout,
+    ),
+  ]);
+}
+let initialRepository: string[];
+let upgradePOST: typeof import("@/app/api/projects/[slug]/packages/[attachmentId]/upgrade/route").POST;
 let installId: string;
 let attachmentId: string;
 
@@ -132,7 +166,7 @@ describe("project packages routes (integration)", () => {
     expect(res.status).toBe(422);
   });
 
-  it("attach happy path: 201 + write-back pins packages[] in maister.yaml", async () => {
+  it("IT-CPC-01: attach applies runtime configuration and leaves the committed repository untouched", async () => {
     const { installPackageRevision } = await import("@/lib/packages/attach");
     const installed = await installPackageRevision({
       source: pkgDir,
@@ -154,20 +188,10 @@ describe("project packages routes (integration)", () => {
     const body = await res.json();
 
     expect(body.ok).toBe(true);
-    expect(body.writeBack).toBe("ok");
+    expect(body).not.toHaveProperty("writeBack");
     attachmentId = body.attachmentId;
 
-    const yamlText = await readFile(
-      join(workspaceRoot, "maister.yaml"),
-      "utf8",
-    );
-
-    expect(yamlText).toContain("# keep this comment");
-    const parsed = parseYaml(yamlText);
-
-    expect(parsed.packages).toEqual([
-      { id: "routepkg", source: pkgDir, version: "routepkg/v1.0.0" },
-    ]);
+    expect(await repositoryFingerprint()).toEqual(initialRepository);
 
     const listRes = await attachGET(
       jsonRequest("/api/projects/pkg-routes/packages"),
@@ -184,7 +208,36 @@ describe("project packages routes (integration)", () => {
     });
   });
 
-  it("detach: 200 + write-back removes the pin", async () => {
+  it("IT-CPC-01: upgrade and downgrade change the installed runtime pin without touching Git", async () => {
+    const { installPackageRevision } = await import("@/lib/packages/attach");
+    const next = await installPackageRevision({
+      source: pkgDir,
+      version: "routepkg/v2.0.0",
+      trustStatus: "trusted_by_policy",
+      db,
+    });
+
+    for (const target of [next.id, installId]) {
+      const res = await upgradePOST(
+        jsonRequest("/api/projects/pkg-routes/packages/x/upgrade", {
+          packageInstallId: target,
+        }),
+        { params: Promise.resolve({ slug: "pkg-routes", attachmentId }) },
+      );
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ok: true });
+      const [attachment] = await db
+        .select()
+        .from(schema.projectPackageAttachments)
+        .where(eq(schema.projectPackageAttachments.id, attachmentId));
+
+      expect(attachment.packageInstallId).toBe(target);
+      expect(await repositoryFingerprint()).toEqual(initialRepository);
+    }
+  });
+
+  it("IT-CPC-01: detach removes runtime configuration and leaves Git untouched", async () => {
     const res = await detachDELETE(
       jsonRequest("/api/projects/pkg-routes/packages/x"),
       {
@@ -198,13 +251,66 @@ describe("project packages routes (integration)", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
 
-    expect(body.writeBack).toBe("ok");
+    expect(body).toEqual({ ok: true });
+    expect(await repositoryFingerprint()).toEqual(initialRepository);
+  });
 
-    const parsed = parseYaml(
-      await readFile(join(workspaceRoot, "maister.yaml"), "utf8"),
+  it("IT-CPC-11: the install-package CLI refuses a DB-only project before any package or capability effects", async () => {
+    const cliId = randomUUID();
+    const cliRepo = join(homeDir, "cli-project");
+
+    await mkdir(cliRepo);
+    await db.insert(schema.projects).values({
+      id: cliId,
+      slug: "config-cli-no-manifest",
+      name: "CLI no manifest",
+      repoPath: cliRepo,
+      maisterYamlPath: null,
+      taskKey: `K${cliId.slice(0, 8).toUpperCase()}`,
+    });
+    const installsBefore = await db.select().from(schema.packageInstalls);
+    const attachmentsBefore = await db
+      .select()
+      .from(schema.projectPackageAttachments);
+    const failure = await exec(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "--import",
+        "./scripts/_register-shim.mjs",
+        "scripts/install-package.ts",
+        "--project",
+        "config-cli-no-manifest",
+        "--source",
+        pkgDir,
+        "--version",
+        "routepkg/v1.0.0",
+      ],
+      {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          DB_URL: testDatabase.databaseUrl,
+          NODE_ENV: "test",
+        },
+      },
+    ).then(
+      () => null,
+      (error: unknown) => error,
     );
 
-    expect(parsed.packages).toEqual([]);
+    expect(failure).toMatchObject({ code: 1 });
+    expect((failure as { stdout: string }).stdout).toContain(
+      "has no repository manifest",
+    );
+    expect(await db.select().from(schema.packageInstalls)).toEqual(
+      installsBefore,
+    );
+    expect(await db.select().from(schema.projectPackageAttachments)).toEqual(
+      attachmentsBefore,
+    );
+    expect(await repositoryFingerprint()).toEqual(initialRepository);
   });
 
   it("trust requires the GLOBAL admin role — project-scoped managePackages is not sufficient", async () => {

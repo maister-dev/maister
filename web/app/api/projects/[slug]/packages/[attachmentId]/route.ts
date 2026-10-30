@@ -8,7 +8,6 @@ import { authorizeManagePackages } from "../../flow-packages/_lib";
 import * as schemaModule from "@/lib/db/schema";
 import { detachPackage } from "@/lib/packages/attach";
 import { notFound, packageErrorResponse } from "@/lib/packages/http";
-import { writeBackPackagesPin } from "@/lib/packages/yaml-writeback";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { projectPackageAttachments } = schemaModule as unknown as Record<
@@ -17,7 +16,7 @@ const { projectPackageAttachments } = schemaModule as unknown as Record<
 >;
 
 // (ADR-088) Detach: refused while member revisions are run-pinned
-// (PRECONDITION → 409). Write-back removes the packages[] pin post-commit.
+// (PRECONDITION → 409). Repository persistence requires a separate review.
 export async function DELETE(
   _req: NextRequest,
   ctx: { params: Promise<{ slug: string; attachmentId: string }> },
@@ -47,12 +46,7 @@ export async function DELETE(
     if (result === null)
       return notFound(`attachment not found: ${attachmentId}`);
 
-    const writeBack = await writeBackPackagesPin({
-      maisterYamlPath: project.maisterYamlPath,
-      change: { op: "remove", id: att.packageName },
-    });
-
-    return NextResponse.json({ ok: true, writeBack });
+    return NextResponse.json({ ok: true });
   } catch (err) {
     return packageErrorResponse(err, `projects/${slug}/packages DELETE`);
   }

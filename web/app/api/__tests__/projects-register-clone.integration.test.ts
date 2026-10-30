@@ -1,12 +1,5 @@
 import { execFileSync } from "node:child_process";
-import {
-  mkdir,
-  mkdtemp,
-  readFile,
-  rm,
-  stat,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
@@ -146,7 +139,13 @@ async function buildBareRepoRaw(name: string, yaml: string): Promise<string> {
   return bare;
 }
 
-function request(payload: { repoUrl?: string; target?: string }): NextRequest {
+function request(payload: {
+  repoUrl?: string;
+  target?: string;
+  mode?: "existing" | "new";
+  name?: string;
+  taskKey?: string;
+}): NextRequest {
   return new NextRequest("http://localhost/api/projects", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -193,7 +192,7 @@ afterAll(async () => {
 });
 
 describe("POST /api/projects — real source resolution (integration)", () => {
-  it("clone without maister.yaml bootstraps and registers the manifest", async () => {
+  it("IT-CPC-11: clone without a manifest registers DB defaults and keeps the checkout clean", async () => {
     const bare = await buildBareRepoWithoutManifest("bootstrap-no-manifest");
     const repoUrl = `file://${bare}`;
     const repoName = basename(bare).replace(/\.git$/, "");
@@ -202,14 +201,47 @@ describe("POST /api/projects — real source resolution (integration)", () => {
     const res = await POST(request({ repoUrl }));
 
     expect(res.status).toBe(201);
-    expect(await readFile(join(projectDir, "maister.yaml"), "utf8")).toBe(
-      "schemaVersion: 2\nproject:\n  name: bootstrap-no-manifest\nflows: []\n",
-    );
+    expect(await pathExists(join(projectDir, "maister.yaml"))).toBe(false);
+    expect(
+      execFileSync("git", ["-C", projectDir, "status", "--porcelain=v1"], {
+        encoding: "utf8",
+      }),
+    ).toBe("");
 
     const row = await projectRow("bootstrap-no-manifest");
 
-    expect(row.maisterYamlPath).toBe(join(projectDir, "maister.yaml"));
+    expect(row.maisterYamlPath).toBeNull();
   });
+
+  it.each(["existing", "new"] as const)(
+    "IT-CPC-11: %s absent-manifest registration leaves an empty clean repository",
+    async (mode) => {
+      const target = `missing-${mode}`;
+      const dir = join(reposRoot, target);
+
+      if (mode === "existing") await mkdir(dir);
+      const res = await POST(
+        request({
+          target,
+          mode,
+          name: `Missing ${mode}`,
+          taskKey: mode === "new" ? "MNEW" : "MEXT",
+        }),
+      );
+
+      expect(res.status).toBe(201);
+      const row = await projectRow(`missing-${mode}`);
+
+      expect(row.maisterYamlPath).toBeNull();
+      expect(await pathExists(join(dir, "maister.yaml"))).toBe(false);
+      expect(await pathExists(join(dir, ".git"))).toBe(true);
+      expect(
+        execFileSync("git", ["-C", dir, "status", "--porcelain=v1"], {
+          encoding: "utf8",
+        }),
+      ).toBe("");
+    },
+  );
 
   it("clone success: clones a file:// bare repo, derives repo_path, provider=generic", async () => {
     const bare = await buildBareRepo("clone-success", "Clone Success Proj");

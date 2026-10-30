@@ -137,7 +137,8 @@ vi.mock("@/lib/authz", () => ({
   })),
 }));
 
-vi.mock("@/lib/config", () => ({
+vi.mock("@/lib/config", async (original) => ({
+  ...(await original<typeof import("@/lib/config")>()),
   loadProjectConfig: vi.fn(async () => {
     if (currentConfigError) throw currentConfigError;
 
@@ -571,7 +572,7 @@ describe("POST /api/projects — maister.yaml bootstrap (integration)", () => {
     });
   }
 
-  it("generates and registers a default maister.yaml when none exists", async () => {
+  it("registers validated DB defaults without creating a manifest", async () => {
     currentResolved = {
       dir: noManifestDir,
       repoUrl: null,
@@ -593,14 +594,14 @@ describe("POST /api/projects — maister.yaml bootstrap (integration)", () => {
     const rows = await projectRows("no-manifest");
 
     expect(rows).toHaveLength(1);
-    expect(rows[0].maisterYamlPath).toBe(join(noManifestDir, "maister.yaml"));
+    expect(rows[0].maisterYamlPath).toBeNull();
     expect(rows[0].name).toBe("no-manifest");
     expect(rows[0].mainBranch).toBe("main"); // non-git dir → tier-3 fallback
     expect(rows[0].taskKey).toBe("NOM"); // deriveTaskKey("no-manifest")
     expect(installFlowPlugin).not.toHaveBeenCalled();
-    expect(await readFile(join(noManifestDir, "maister.yaml"), "utf8")).toBe(
-      "schemaVersion: 2\nproject:\n  name: no-manifest\nflows: []\n",
-    );
+    await expect(
+      readFile(join(noManifestDir, "maister.yaml"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
 
     const members = await db
       .select()
@@ -636,7 +637,7 @@ describe("POST /api/projects — maister.yaml bootstrap (integration)", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].name).toBe("My Cool App");
     expect(rows[0].taskKey).toBe("COOL");
-    expect(rows[0].maisterYamlPath).toBe(join(noManifestDir, "maister.yaml"));
+    expect(rows[0].maisterYamlPath).toBeNull();
   });
 
   it("still loads the manifest (maisterYamlPath set) when maister.yaml is present", async () => {
@@ -737,7 +738,7 @@ describe("POST /api/projects — maister.yaml bootstrap (integration)", () => {
     const rows = await projectRows("fresh-app");
 
     expect(rows).toHaveLength(1);
-    expect(rows[0].maisterYamlPath).toBe(join(noManifestDir, "maister.yaml"));
+    expect(rows[0].maisterYamlPath).toBeNull();
 
     // register's "initialized" branch ran the (mocked) gitInit on the dir.
     const { gitInit } = await import("@/lib/repo-source");

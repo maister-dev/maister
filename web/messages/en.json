@@ -1551,24 +1551,8 @@
     "taskKeyPlaceholder": "MAI — derived from the project name when empty",
     "taskKeyFormatHint": "2–10 chars: A–Z and digits, starting with a letter.",
     "persistBanner": {
-      "title": "{project}: config lives only in the database",
-      "body": "Persist it to a committed maister.yaml so this project can be re-created from git alone.",
-      "persist": "Persist to maister.yaml",
       "dismiss": "Dismiss",
-      "settingsLink": "Or set it up later in Settings → Git",
-      "confirmTitle": "Persist project config?",
-      "branchLabel": "Branch",
-      "pathLabel": "Repository",
-      "commitLabel": "Commit",
-      "alsoPush": "Also push to the remote",
-      "confirm": "Persist",
-      "cancel": "Cancel",
-      "pending": "Persisting…",
-      "doneTitle": "Config persisted to maister.yaml",
-      "close": "Close",
-      "usedDefaultAuthor": "Committed with the default identity maister <noreply@maister.local> — set git user.name and user.email for a real author.",
-      "pushWarning": "Push failed: {detail}",
-      "error": "Couldn't persist the config. Please try again."
+      "settingsLink": "Or set it up later in Settings → Git"
     },
     "git": {
       "remotesTitle": "Git remotes",
@@ -1596,10 +1580,99 @@
       "push": "Push",
       "fetch": "Fetch",
       "pending": "Working…",
-      "error": "Request failed. Please try again.",
-      "persistTitle": "Config lives only in the database",
-      "persistDesc": "Persist it to a committed maister.yaml so this project can be re-created from git alone.",
-      "persist": "Persist now"
+      "error": "Request failed. Please try again."
+    },
+    "configPersistence": {
+      "title": "Configuration in Git",
+      "open": "Review configuration save",
+      "reviewTitle": "Review maister.yaml commit",
+      "reviewBody": "Review the complete change, target branch and commit message. Confirmation creates one local configuration commit.",
+      "excluded": "This exports project identity, branch defaults, default runner, promotion mode and attached package pins. Queue, Brain, sync policies and source-only Flow/capability settings are managed separately.",
+      "cancel": "Cancel",
+      "close": "Close",
+      "working": "Working…",
+      "confirm": "Commit reviewed configuration",
+      "branch": "Target branch",
+      "message": "Commit message",
+      "file": "File",
+      "diff": "Proposed maister.yaml diff",
+      "defaultAuthor": "Git identity is incomplete. Missing user.name uses maister; missing user.email uses noreply@maister.local. Configured fields remain in use. Set both fields before creating a fresh review to choose the complete identity.",
+      "noop": "Exportable configuration already matches the committed manifest. No commit or file write is needed.",
+      "committed": "Configuration committed to Git",
+      "localCommitPreserved": "The local commit is saved. Push is a separate explicit action.",
+      "operation": "Operation",
+      "recover": "Inspect and recover this operation",
+      "reviewPush": "Review push of this commit",
+      "pushTitle": "Review separate push",
+      "confirmPush": "Push reviewed commits",
+      "remoteBase": "Reviewed remote base",
+      "unborn": "No remote branch yet",
+      "outgoing": "Commits to publish",
+      "pushUpToDate": "The remote already contains this commit.",
+      "freshPreview": "Review local configuration again",
+      "refreshStatus": "Refresh status",
+      "previousReceipt": "View previous save receipt",
+      "observedAt": "Observed",
+      "statusUnavailable": "Repository status could not be checked. Retry after restoring repository access.",
+      "requestFailed": "The request could not be completed. Inspect the same operation receipt before retrying a save or push.",
+      "cleanupRetained": "Private output was retained for inspection. Review the operation on the execution host before retrying cleanup.",
+      "exportStates": {
+        "unverified": "Git configuration status has not been verified.",
+        "missing": "Applied in MAIster; no committed manifest exists.",
+        "pending": "Applied in MAIster; exportable configuration differs from Git.",
+        "in_sync": "Exportable configuration matches the committed manifest.",
+        "blocked": "Configuration export needs attention."
+      },
+      "repositoryStates": {
+        "ready": "Repository is ready for review.",
+        "dirty": "Repository contains user changes. Resolve them before saving.",
+        "wrong_branch": "Check out the configured main branch before saving.",
+        "detached": "Check out the configured main branch; HEAD is detached.",
+        "operation_in_progress": "A Git or configuration operation requires completion or recovery.",
+        "unavailable": "Repository readiness is unverified or unavailable."
+      },
+      "states": {
+        "previewed": "This review has not been committed.",
+        "preparing": "The accepted commit is being prepared. Inspect this operation before retrying.",
+        "prepared": "The commit is prepared; publication requires recovery.",
+        "publishing": "Publication needs its receipt checked.",
+        "committed": "Configuration committed to Git",
+        "noop": "No configuration change was needed.",
+        "stale": "The review is stale. Create and confirm a fresh review.",
+        "failed": "The local save failed. Inspect the receipt, then create a fresh review.",
+        "recovery_required": "This save requires recovery using the same operation."
+      },
+      "pushStates": {
+        "previewed": "Push review is awaiting confirmation.",
+        "pending": "The accepted push needs its outcome checked.",
+        "succeeded": "Reviewed commit published successfully.",
+        "failed": "Push failed. The local configuration commit is preserved. Create a fresh push review to retry.",
+        "unknown": "Push outcome is unknown. Inspect this operation before sending another push.",
+        "stale": "Push review is stale. Create a fresh push review."
+      },
+      "reasons": {
+        "stale_preview": "Configuration, authority or repository state changed. Create and confirm a fresh review.",
+        "preview_expired": "This review expired. Create and confirm a fresh review.",
+        "wrong_branch": "Check out the configured main branch, then create a fresh review.",
+        "detached_head": "Check out the configured main branch, then create a fresh review.",
+        "dirty_checkout": "Review and commit or move your changes manually, including any untracked maister.yaml. Resolve staged changes before retrying.",
+        "operation_in_progress": "Finish the Git operation or recover the recorded configuration operation. Unknown Git locks require manual inspection.",
+        "unsupported_checkout": "Use a supported full SHA-1 checkout without sparse/split indexes, special index flags or manifest filters/encodings. See the configuration guide.",
+        "manifest_invalid": "Correct the repository manifest and commit that correction before creating a fresh review.",
+        "manifest_too_large": "The manifest exceeds the 1 MiB review limit. Reduce its size before retrying.",
+        "diff_too_large": "The complete diff exceeds the 2 MiB review limit. Reduce the change before retrying.",
+        "package_source_unexportable": "An attached package has no portable, credential-free source coordinate. Resolve its source before saving; runtime attachment is preserved.",
+        "package_revision_mismatch": "A package source no longer matches its attached revision. Restore or select the intended version before reviewing again.",
+        "missing_package_install": "An attachment has no matching installed package. Repair the package attachment before saving.",
+        "repository_unavailable": "Restore repository and storage access, then inspect the same operation before retrying.",
+        "operation_busy": "Another operation is active. Inspect its receipt before retrying this action.",
+        "recovery_required": "Preserve repository files and locks. Inspect and recover this same operation after resolving the reported conflict.",
+        "commit_failed": "The commit was refused. Check Git hooks, author and signing policy, resolve the cause, then create a fresh review.",
+        "push_failed": "Push failed; the local commit remains saved. Check the remote, credentials and hooks, then review push again.",
+        "push_review_stale": "The remote, destination or publication policy changed. Create and confirm a fresh push review.",
+        "not_committed": "Save configuration locally before reviewing its push.",
+        "authority_changed": "Access changed. Restore the required project permissions before reviewing or recovering."
+      }
     }
   },
   "settings": {
@@ -3775,7 +3848,6 @@
     "attachmentsEmpty": "No packages attached. Install a revision from a platform source on Settings, then attach it here.",
     "attachPackage": "Attach",
     "attachPick": "Pick a package install…",
-    "attachWriteBackFailed": "Attached, but the maister.yaml write-back failed — update the pin manually.",
     "attachLocalCutBadge": "local cut",
     "attachNameTakenExplainer": "This fork shares its upstream's package name “{name}” — rename the fork (Studio → manifest name → commit → cut a version) to attach it beside the upstream.",
     "attachNameTakenEditorLink": "Open the fork in Studio",
@@ -3801,7 +3873,8 @@
     "viewerAgents": "Agents",
     "viewerMcps": "MCP templates",
     "viewerRestrictions": "Restriction sets",
-    "viewerNone": "None shipped by this package."
+    "viewerNone": "None shipped by this package.",
+    "appliedInMaister": "Applied in MAIster. Save configuration separately in Settings → Git."
   },
   "mcpPanel": {
     "title": "Project MCP servers",
@@ -4684,7 +4757,8 @@
     "CRASH": "Internal error",
     "NOT_FOUND": "Not found",
     "requestFailed": "Request failed. Try again.",
-    "serverResponse": "Show server response"
+    "serverResponse": "Show server response",
+    "configPublicationBusy": "Finish or recover the active configuration save in Settings → Git before changing exportable settings."
   },
   "webhooks": {
     "empty": "No webhook subscriptions configured.",

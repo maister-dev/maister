@@ -26,7 +26,7 @@ export function useModalFocusTrap<T extends HTMLElement>(
           )
         : [];
 
-    focusable()[0]?.focus();
+    (focusable()[0] ?? dialogRef.current)?.focus();
 
     const previousOverflow = document.body.style.overflow;
 
@@ -44,10 +44,22 @@ export function useModalFocusTrap<T extends HTMLElement>(
 
       const items = focusable();
 
-      if (items.length === 0) return;
+      if (items.length === 0) {
+        event.preventDefault();
+        dialogRef.current?.focus();
+
+        return;
+      }
 
       const first = items[0];
       const last = items[items.length - 1];
+
+      if (!items.includes(document.activeElement as HTMLElement)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first)?.focus();
+
+        return;
+      }
 
       if (event.shiftKey && document.activeElement === first) {
         event.preventDefault();

@@ -1,21 +1,12 @@
 import "server-only";
 
-import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { authorizeManagePackages } from "../../../flow-packages/_lib";
 
-import * as schemaModule from "@/lib/db/schema";
-import {
-  upgradeAttachment,
-  type PackageInstallManifest,
-} from "@/lib/packages/attach";
+import { upgradeAttachment } from "@/lib/packages/attach";
 import { notFound, packageErrorResponse } from "@/lib/packages/http";
-import { writeBackPackagesPin } from "@/lib/packages/yaml-writeback";
-
-// FIXME(any): dual drizzle-orm peer-dep variants.
-const { packageInstalls } = schemaModule as unknown as Record<string, any>;
 
 const upgradeBodySchema = z
   .object({ packageInstallId: z.string().min(1) })
@@ -58,27 +49,7 @@ export async function POST(
       );
     }
 
-    const [install] = await db
-      .select()
-      .from(packageInstalls)
-      .where(eq(packageInstalls.id, parsed.data.packageInstallId));
-    const manifest = install?.manifest as PackageInstallManifest | undefined;
-    const writeBack = await writeBackPackagesPin({
-      maisterYamlPath: project.maisterYamlPath,
-      change: {
-        op: "upsert",
-        entry: {
-          id: install.name,
-          source: install.sourceUrl,
-          version: install.versionLabel,
-          ...(manifest?.sourceSubpath !== undefined
-            ? { path: manifest.sourceSubpath }
-            : {}),
-        },
-      },
-    });
-
-    return NextResponse.json({ ok: true, writeBack });
+    return NextResponse.json({ ok: true });
   } catch (err) {
     return packageErrorResponse(err, `projects/${slug}/packages upgrade`);
   }

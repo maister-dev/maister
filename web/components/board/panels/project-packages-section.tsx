@@ -11,6 +11,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
+import { readApiErrorBody } from "@/lib/api-error";
 import { ConfirmDialog } from "@/components/feedback/confirm-dialog";
 
 type Props = {
@@ -27,21 +28,23 @@ async function call(
   url: string,
   method: "POST" | "DELETE",
   body?: unknown,
-): Promise<{ ok: boolean; writeBack?: string }> {
+): Promise<{ ok: boolean; publicationBusy?: boolean }> {
   const res = await fetch(url, {
     method,
     headers: { "content-type": "application/json" },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
-  const payload = (await res.json().catch(() => null)) as {
-    writeBack?: string;
-  } | null;
 
   if (!res.ok) {
-    return { ok: false };
+    const failure = await readApiErrorBody(res);
+
+    return {
+      ok: false,
+      publicationBusy: failure?.details?.reason === "operation_busy",
+    };
   }
 
-  return { ok: true, writeBack: payload?.writeBack };
+  return { ok: true };
 }
 
 // (ADR-088) Whole-package attachments of a project: attach from the platform
@@ -55,6 +58,7 @@ export function ProjectPackagesSection({
   availableInstalls,
 }: Props): ReactElement {
   const t = useTranslations("packages");
+  const tErr = useTranslations("apiErrors");
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [busy, setBusy] = useState<string | null>(null);
@@ -85,11 +89,14 @@ export function ProjectPackagesSection({
     if (notice) noticeRef.current?.focus();
   }, [notice]);
 
-  function surface(result: { ok: boolean; writeBack?: string }): void {
-    if (!result.ok) setNotice(t("errorGeneric"));
-    else if (result.writeBack === "failed")
-      setNotice(t("attachWriteBackFailed"));
-    else setNotice(null);
+  function surface(result: { ok: boolean; publicationBusy?: boolean }): void {
+    if (!result.ok)
+      setNotice(
+        result.publicationBusy
+          ? tErr("configPublicationBusy")
+          : t("errorGeneric"),
+      );
+    else setNotice(t("appliedInMaister"));
     if (result.ok) refresh();
   }
 

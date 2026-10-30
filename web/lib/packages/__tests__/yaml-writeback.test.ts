@@ -1,6 +1,6 @@
 import type { ExportProjection } from "@/lib/project-config-persistence/types";
 
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -14,10 +14,7 @@ import {
   normalizedManifest,
   manifestMatches,
 } from "@/lib/project-config-persistence/manifest";
-import {
-  serializeProjectConfig,
-  writeBackPackagesPin,
-} from "@/lib/packages/yaml-writeback";
+import { serializeProjectConfig } from "@/lib/packages/yaml-writeback";
 
 let workDir: string;
 let yamlPath: string;
@@ -47,143 +44,6 @@ afterEach(async () => {
   await rm(workDir, { recursive: true, force: true });
 });
 
-describe("writeBackPackagesPin", () => {
-  it("IT-CPC-07: changing a package pin preserves leaf comments and untouched source ranges", async () => {
-    const source = SEED.replace(
-      "    version: aif/v1.0.0",
-      "    version: aif/v1.0.0 # reviewed pin",
-    );
-
-    await writeFile(yamlPath, source);
-    await writeBackPackagesPin({
-      maisterYamlPath: yamlPath,
-      change: {
-        op: "upsert",
-        entry: {
-          id: "aif",
-          source: "github.com/org/maister-plugins",
-          version: "aif/v2.0.0",
-          path: "packages/aif",
-        },
-      },
-    });
-    expect(await readFile(yamlPath, "utf8")).toBe(
-      source.replace("version: aif/v1.0.0", "version: aif/v2.0.0"),
-    );
-  });
-  it("SET: adds a new entry, preserving comments", async () => {
-    const result = await writeBackPackagesPin({
-      maisterYamlPath: yamlPath,
-      change: {
-        op: "upsert",
-        entry: {
-          id: "core",
-          source: "github.com/org/maister-plugins",
-          version: "core/v0.1.0",
-          path: "packages/core",
-        },
-      },
-    });
-
-    expect(result).toBe("ok");
-    const text = await readFile(yamlPath, "utf8");
-
-    expect(text).toContain("# Dogfood registration — comments MUST survive");
-    expect(text).toContain("# inline comment");
-
-    const parsed = parseYaml(text);
-
-    expect(parsed.packages).toHaveLength(2);
-    expect(parsed.packages[1]).toEqual({
-      id: "core",
-      source: "github.com/org/maister-plugins",
-      version: "core/v0.1.0",
-      path: "packages/core",
-    });
-  });
-
-  it("re-SET: upserting an existing id rewrites the version pin", async () => {
-    const result = await writeBackPackagesPin({
-      maisterYamlPath: yamlPath,
-      change: {
-        op: "upsert",
-        entry: {
-          id: "aif",
-          source: "github.com/org/maister-plugins",
-          version: "aif/v2.0.0",
-          path: "packages/aif",
-        },
-      },
-    });
-
-    expect(result).toBe("ok");
-    const parsed = parseYaml(await readFile(yamlPath, "utf8"));
-
-    expect(parsed.packages).toHaveLength(1);
-    expect(parsed.packages[0].version).toBe("aif/v2.0.0");
-  });
-
-  it("CLEAR: remove deletes the entry and keeps the rest of the file", async () => {
-    const result = await writeBackPackagesPin({
-      maisterYamlPath: yamlPath,
-      change: { op: "remove", id: "aif" },
-    });
-
-    expect(result).toBe("ok");
-    const text = await readFile(yamlPath, "utf8");
-    const parsed = parseYaml(text);
-
-    expect(parsed.packages).toEqual([]);
-    expect(parsed.project.name).toBe("myapp");
-    expect(text).toContain("# Dogfood registration — comments MUST survive");
-  });
-
-  it("creates the packages[] block when absent", async () => {
-    await writeFile(yamlPath, "schemaVersion: 2\nflows: []\n", "utf8");
-
-    const result = await writeBackPackagesPin({
-      maisterYamlPath: yamlPath,
-      change: {
-        op: "upsert",
-        entry: { id: "aif", source: "s", version: "aif/v1.0.0" },
-      },
-    });
-
-    expect(result).toBe("ok");
-    const parsed = parseYaml(await readFile(yamlPath, "utf8"));
-
-    expect(parsed.packages).toEqual([
-      { id: "aif", source: "s", version: "aif/v1.0.0" },
-    ]);
-  });
-
-  it("returns 'failed' (never throws) on an unreadable target", async () => {
-    const result = await writeBackPackagesPin({
-      maisterYamlPath: join(workDir, "missing-dir", "maister.yaml"),
-      change: { op: "remove", id: "aif" },
-    });
-
-    expect(result).toBe("failed");
-  });
-
-  // ADR-093: a project registered with no maister.yaml has maisterYamlPath
-  // null (DB is authoritative). Write-back is a benign no-op, not a failure.
-  it("returns 'skipped' for a null path without touching the disk", async () => {
-    const before = await readFile(yamlPath, "utf8");
-
-    const result = await writeBackPackagesPin({
-      maisterYamlPath: null,
-      change: { op: "remove", id: "aif" },
-    });
-
-    expect(result).toBe("skipped");
-    expect(await readFile(yamlPath, "utf8")).toBe(before);
-  });
-});
-
-// ADR-181 (RED 5): `project.public_branch_template` round-trips between the
-// manifest and `projects.public_branch_template`. The default is omitted, like
-// `branch_prefix`; a non-default value is emitted and survives the schema.
 describe("serializeProjectConfig — project.public_branch_template", () => {
   const base = {
     name: "myapp",

@@ -386,19 +386,8 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "project registration reads maister.yaml from the operator-supplied checkout path",
       [
         ["pathExists", "node:fs/promises.stat", "stat"],
-        [
-          "removeUnchangedBootstrapMaisterYaml",
-          "node:fs/promises.readFile",
-          "read",
-        ],
-        [
-          "removeUnchangedBootstrapMaisterYaml",
-          "node:fs/promises.rm",
-          "remove",
-        ],
         ["POST", "node:fs/promises.rm", "remove"],
         ["register", "node:fs/promises.rm", "remove"],
-        ["bootstrapMaisterYaml", "lib/atomic.ts#atomicWriteText", "wrapper"],
         ["register", "lib/config.ts#loadProjectConfig", "wrapper"],
         ["register", "lib/repo-source.ts#gitInit", "wrapper"],
       ],
@@ -1529,15 +1518,6 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       [["loadMaisterPackageManifest", "node:fs/promises.readFile", "read"]],
     ),
     ...classified(
-      "lib/packages/yaml-writeback.ts",
-      "repository-worktree",
-      "worktree, repository, package and capability materialization on the shared checkout — Stage C repository cut",
-      [
-        ["writeBackPackagesPin", "node:fs/promises.readFile", "read"],
-        ["writeBackPackagesPin", "lib/atomic.ts#atomicWriteText", "wrapper"],
-      ],
-    ),
-    ...classified(
       "lib/queries/package-bom.ts",
       "manager-flow-state",
       "manager-owned package manifests, BOM and result-export schema reads through the config/package loaders",
@@ -2605,9 +2585,6 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
   ]),
   ...wrappers("lib/packages/manifest.ts", "repository-worktree", [
     ["loadMaisterPackageManifest", true],
-  ]),
-  ...wrappers("lib/packages/yaml-writeback.ts", "repository-worktree", [
-    ["writeBackPackagesPin", false],
   ]),
   ...wrappers("lib/repo-source.ts", "repository-worktree", [
     ["assertGitAvailable", false],

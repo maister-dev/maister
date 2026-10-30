@@ -183,8 +183,8 @@ export async function SettingsPanel({
       ) : null}
       {isAdmin ? (
         <ProjectGitSettingsControl
+          exportRevision={project.configExportRevision.toString()}
           mainBranch={project.mainBranch}
-          needsPersist={project.maisterYamlPath === null}
           projectSlug={project.slug}
           remotes={gitRemotes}
           syncRunnerId={project.syncRunnerId ?? null}
