@@ -40,6 +40,7 @@ import {
   invocationRecords,
   readLogTail,
   type Invocation,
+  type ProcessIdentity,
   registerRoot,
   processIdentity,
   findProcessIdentities,
@@ -261,6 +262,155 @@ async function stopIdleChild(child: ChildProcess): Promise<void> {
 
   process.kill(-child.pid, "SIGKILL");
   await exited;
+}
+
+async function assertDarwinInspectorTransportRetries(
+  invocation: Invocation,
+  owned: ProcessIdentity,
+  foreign: ProcessIdentity,
+  directory: string,
+): Promise<void> {
+  const executable = path.join(directory, "process-transport-failure");
+
+  await execFileAsync("cc", [
+    "-Wall",
+    "-Wextra",
+    "-Werror",
+    "-O2",
+    fileURLToPath(
+      new URL("../fixtures/process-transport-failure.c", import.meta.url),
+    ),
+    "-o",
+    executable,
+  ]);
+  const name = (await readdir(invocation.directory)).find((entry) =>
+    /^process-environment-[a-f0-9]{16}$/u.test(entry),
+  );
+
+  if (!name) throw new Error("transport-control native reader is missing");
+  const reader = path.join(invocation.directory, name);
+  const original = `${reader}.transport-original`;
+  const replacement = `${reader}.transport-control`;
+  const controlFile = path.join(
+    invocation.directory,
+    "process-transport-control",
+  );
+
+  await copyFile(executable, replacement);
+  await rename(reader, original);
+  try {
+    await rename(replacement, reader);
+    const controls = [
+      { mode: 1, failures: 1, calls: 2, signal: "SIGPIPE", code: null },
+      { mode: 1, failures: -1, calls: 2, signal: "SIGPIPE", code: null },
+      { mode: 2, failures: -1, calls: 1, signal: null, code: 70 },
+      { mode: 3, failures: -1, calls: 1, signal: null, code: null },
+      { mode: 4, failures: -1, calls: 1, signal: "SIGTERM", code: null },
+    ] as const;
+    const moduleUrl = new URL("../process-invocation.ts", import.meta.url).href;
+    const source = `const reader = await import(${JSON.stringify(moduleUrl)}); try { const identities = await reader.findProcessIdentities(${JSON.stringify(invocation)}, ${JSON.stringify([foreign.pid, owned.pid, owned.pid])}); process.stdout.write(JSON.stringify({ identities })); } catch (error) { const cause = error.cause; process.stdout.write(JSON.stringify({ error: { name: error.name, message: error.message, cause: cause ? { code: cause.code ?? null, signal: cause.signal ?? null, killed: cause.killed ?? null, stderr: cause.stderr ?? null } : null } })); }`;
+
+    for (const control of controls) {
+      await writeFile(controlFile, `${control.mode} ${control.failures} 0\n`, {
+        mode: 0o600,
+      });
+      const probe = await execFileAsync(
+        process.execPath,
+        ["--input-type=module", "-e", source],
+        {
+          env: { ...process.env, ...invocationEnvironment(invocation) },
+          timeout: 10_000,
+          maxBuffer: 32 * 1024,
+        },
+      );
+      const result = JSON.parse(probe.stdout) as Readonly<{
+        identities?: readonly (ProcessIdentity | null)[];
+        error?: Readonly<{
+          name: string;
+          message: string;
+          cause: Readonly<{
+            code: string | number | null;
+            signal: string | null;
+            killed: boolean | null;
+            stderr: string | null;
+          }> | null;
+        }>;
+      }>;
+      const calls = Number(
+        (await readFile(controlFile, "utf8")).trim().split(/\s+/u)[2],
+      );
+      const recovered = control.mode === 1 && control.failures === 1;
+
+      expect
+        .soft(calls, `native transport mode ${control.mode}`)
+        .toBe(control.calls);
+      if (recovered) {
+        expect.soft(result.error).toBeUndefined();
+        expect.soft(result.identities).toEqual([foreign, owned, owned]);
+      } else if (control.mode === 3) {
+        expect.soft(result.error).toMatchObject({
+          name: "InvocationOwnershipError",
+          message: "malformed native process identity",
+          cause: null,
+        });
+      } else {
+        expect.soft(result.error).toMatchObject({
+          name: "InvocationOwnershipError",
+          cause: {
+            code: control.code,
+            signal: control.signal,
+            killed: false,
+            stderr: expect.stringContaining(`"call":${control.calls}`),
+          },
+        });
+      }
+      const diagnostics = probe.stderr
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map(
+          (line: string) =>
+            JSON.parse(line) as Readonly<{
+              event: string;
+              level?: string;
+              attempt?: number;
+              attempts?: number;
+              elapsedMs?: number;
+              selectedPids?: readonly number[];
+              code?: string | number | null;
+              signal?: string | null;
+              killed?: boolean | null;
+              retrying?: boolean;
+            }>,
+        )
+        .filter((event) => event.event === "process-inspection-command-failed");
+
+      expect
+        .soft(diagnostics)
+        .toHaveLength(control.mode === 3 ? 0 : recovered ? 1 : control.calls);
+      for (const [index, diagnostic] of diagnostics.entries()) {
+        expect.soft(diagnostic).toMatchObject({
+          level: "warn",
+          attempt: index + 1,
+          attempts: 2,
+          elapsedMs: expect.any(Number),
+          selectedPids: [foreign.pid, owned.pid],
+          code: control.code,
+          signal: control.signal,
+          killed: false,
+          retrying: control.mode === 1 && index === 0,
+        });
+        expect.soft(Number(diagnostic.elapsedMs)).toBeGreaterThanOrEqual(0);
+      }
+    }
+  } finally {
+    await rm(reader, { force: true });
+    await rename(original, reader);
+    await rm(controlFile, { force: true });
+    await rm(replacement, { force: true });
+  }
+  expect(await processIdentity(invocation, owned.pid)).toEqual(owned);
+  expect(await processIdentity(invocation, foreign.pid)).toEqual(foreign);
 }
 
 async function assertWatchdogInspectionFailureGroups(
@@ -1357,6 +1507,13 @@ describe("S5.2 invocation process ownership", () => {
         expect(Number(fields[6])).toBeGreaterThan(0);
         expect(Number(fields[6])).toBeLessThan(5);
       }
+
+      await assertDarwinInspectorTransportRetries(
+        invocation,
+        record.identity,
+        otherIdentity,
+        directory,
+      );
 
       const environmentDeniedExecutable = path.join(
         directory,

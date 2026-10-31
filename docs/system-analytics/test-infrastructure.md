@@ -335,6 +335,15 @@ The existing O-identity control schedules real child `setpgid`/`SIGSTOP` and
 exit transitions around those reads; no synthetic ownership fields are used.
 The real sandbox-denial control verifies actionable
 diagnostics and that the inspected child survives the refusal.
+An inspector command terminated by `SIGPIPE` permits one fresh command attempt,
+with the same selected PIDs, 10-second per-command deadline and 4 MiB output
+bound. The failed command's bytes never establish identity or ownership. Only
+the complete replacement read, including its kernel identity and exact tag
+checks, can authorize a signal. A second transport failure, any other command
+failure, malformed output and unreadable live identities remain fatal. Structured
+failure diagnostics retain attempt, elapsed time, exit code, signal and `killed`
+without argv or environment bytes. O-identity controls both a recovered real
+native read and exhausted `SIGPIPE`, and retains the foreign child's identity.
 The fixture watchdog checks parent and runner identities immediately and every 500 ms; owned-group
 termination, including a TERM-resistant adapter, is verified within five seconds.
 `execution-ab-process-cleanup.integration.test.ts` runs 13 controls in the serial

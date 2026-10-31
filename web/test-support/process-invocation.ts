@@ -14,6 +14,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 import { fileURLToPath, URL as NodeURL } from "node:url";
 import { promisify } from "node:util";
 
@@ -200,6 +201,79 @@ export async function nativeExecutable(
   return executable;
 }
 
+async function readDarwinProcessOutput(
+  invocation: Invocation,
+  executable: string,
+  pids?: readonly number[],
+): Promise<Readonly<{ stdout: string; stderr: string }>> {
+  const env = {
+    ...process.env,
+    ...invocationEnvironment(invocation),
+    MAISTER_TEST_PROCESS_INSPECTOR: invocation.id,
+  };
+
+  for (let attempt = 1; ; attempt++) {
+    const startedAt = performance.now();
+
+    try {
+      return await execFileAsync(
+        executable,
+        [invocation.id, ...(pids === undefined ? [] : pids.map(String))],
+        {
+          env,
+          timeout: 10_000,
+          maxBuffer: 4 * 1024 * 1024,
+        },
+      );
+    } catch (cause: unknown) {
+      const code =
+        cause instanceof Error &&
+        "code" in cause &&
+        (typeof cause.code === "number" || typeof cause.code === "string")
+          ? cause.code
+          : null;
+      const signal =
+        cause instanceof Error &&
+        "signal" in cause &&
+        typeof cause.signal === "string"
+          ? cause.signal
+          : null;
+      const killed =
+        cause instanceof Error &&
+        "killed" in cause &&
+        typeof cause.killed === "boolean"
+          ? cause.killed
+          : null;
+      const diagnostics =
+        cause instanceof Error &&
+        "stderr" in cause &&
+        typeof cause.stderr === "string"
+          ? cause.stderr.slice(-4096).trim()
+          : "";
+      // Transport loss grants no authority: only a complete fresh native read can do so.
+      const retrying = attempt === 1 && code === null && signal === "SIGPIPE";
+
+      logInvocation(invocation, "process-inspection-command-failed", {
+        level: "warn",
+        selectedPids: pids ?? null,
+        attempt,
+        attempts: 2,
+        elapsedMs: performance.now() - startedAt,
+        code,
+        signal,
+        killed,
+        retrying,
+        nativeDiagnostics: diagnostics,
+      });
+      if (!retrying)
+        throw new InvocationOwnershipError(
+          `native process ownership could not be inspected for ${pids?.join(",") ?? "snapshot"}${diagnostics ? `: ${diagnostics}` : ""}`,
+          { cause },
+        );
+    }
+  }
+}
+
 async function readDarwinProcesses(
   invocation: Invocation,
   pids?: readonly number[],
@@ -209,32 +283,11 @@ async function readDarwinProcesses(
     NATIVE_SOURCE,
     "process-environment",
   );
-  const env = {
-    ...process.env,
-    ...invocationEnvironment(invocation),
-    MAISTER_TEST_PROCESS_INSPECTOR: invocation.id,
-  };
-  const { stdout, stderr } = await execFileAsync(
+  const { stdout, stderr } = await readDarwinProcessOutput(
+    invocation,
     executable,
-    [invocation.id, ...(pids === undefined ? [] : pids.map(String))],
-    {
-      env,
-      timeout: 10_000,
-      maxBuffer: 4 * 1024 * 1024,
-    },
-  ).catch((cause: unknown): never => {
-    const diagnostics =
-      cause instanceof Error &&
-      "stderr" in cause &&
-      typeof cause.stderr === "string"
-        ? cause.stderr.slice(-4096).trim()
-        : "";
-
-    throw new InvocationOwnershipError(
-      `native process ownership could not be inspected for ${pids?.join(",") ?? "snapshot"}${diagnostics ? `: ${diagnostics}` : ""}`,
-      { cause },
-    );
-  });
+    pids,
+  );
 
   if (stderr.trim())
     logInvocation(invocation, "process-inspection-diagnostic", {
