@@ -39,7 +39,7 @@ values.
 Set these fields before enabling the attachment:
 
 | Setting | Project decision |
-| --- | --- |
+| ---------------- | -------------------------------------------------------------------------------------------------------- |
 | Runner override | Keep the package or project default, or select another Ready compatible runner. |
 | Workspace | Use no repository, a read-only checkout, or an isolated writable worktree as declared by the definition. |
 | Branch base | Choose the branch used for taskless or maintenance work. |
@@ -57,7 +57,7 @@ memory because its work runs through Flow sessions.
 The same edit dialog owns the effective trigger bindings:
 
 | Trigger | Configuration |
-| --- | --- |
+| ------------ | ---------------------------------------------------------------------------------------- |
 | Manual | Launch from the agent row or a task. Use this for the first test. |
 | Cron | Add a cron expression and IANA timezone. The shared scheduler clock dispatches it. |
 | Domain event | Select MAIster event kinds such as task or Run changes. |
@@ -85,3 +85,8 @@ contract; the project admin must inspect and release it.
 - [Repository and project packages](/product-tour/project-repository-and-packages)
 - [Project Brain and platform agents](/concepts/project-brain-and-agents)
 - [Run history and Run workspace](/product-tour/run-history-and-workbench)
+
+
+## Deliverable kind
+
+The package declares `kind: code_delivery` (the default) or `kind: operational` with `completion.contract: operational_v1`. The project attachment cannot override kind or completion. Operational sessions retain normal tool approval and isolation. Their validated result determines Done or failure, independently of workspace access. See [operational agents](/guides/operational-agents).

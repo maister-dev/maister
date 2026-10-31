@@ -1,3 +1,4 @@
+import type { AgentKind } from "@/lib/agents/kind";
 import type { RunKind, ScratchDialogStatus } from "@/lib/db/schema";
 import type { RunStatusValue } from "@/lib/runs/run-status-values";
 
@@ -37,6 +38,7 @@ export const WORKBENCH_GIT_ACTION_ORDER: readonly WorkbenchGitActionId[] = [
 ];
 
 export type WorkbenchGitDisabledReason =
+  | "operational-delivery-forbidden"
   | "live-workbench"
   | "human-owned"
   | "missing-workspace"
@@ -60,6 +62,7 @@ export type WorkbenchGitAction = {
 };
 
 export type WorkbenchGitPolicyInput = {
+  agentKind?: AgentKind | null;
   runKind: RunKind;
   // An unknown runtime string admits nothing (allow-list, never a deny-list).
   runStatus: RunStatusValue | (string & {});
@@ -230,6 +233,12 @@ function factRefusal(
 export function deriveWorkbenchGitActions(
   input: WorkbenchGitPolicyInput,
 ): WorkbenchGitAction[] {
+  if (input.agentKind === "operational")
+    return allOrdered((id) =>
+      id === "stop" && isStopAllowed(input)
+        ? null
+        : "operational-delivery-forbidden",
+    );
   const cls = statusClass(input.runStatus);
 
   if (cls === null) return allOrdered(() => "unsupported-status");

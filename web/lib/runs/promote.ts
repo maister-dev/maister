@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq, or } from "drizzle-orm";
 import pino from "pino";
 
+import { assertCodeDeliveryAllowed } from "@/lib/agents/operational-guard";
 import {
   createAssignment,
   ensureUserActor,
@@ -257,6 +258,8 @@ async function loadRun(db: Db, runId: string): Promise<any> {
     throw new MaisterError("PRECONDITION", `run not found: ${runId}`);
   }
 
+  assertCodeDeliveryAllowed(run, "promote");
+
   return run;
 }
 
@@ -270,6 +273,8 @@ async function loadRunForUpdate(db: Db, runId: string): Promise<any> {
   if (!rows[0]) {
     throw new MaisterError("PRECONDITION", `run not found: ${runId}`);
   }
+
+  assertCodeDeliveryAllowed(rows[0], "promote");
 
   return rows[0];
 }

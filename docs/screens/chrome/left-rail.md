@@ -211,3 +211,7 @@ labels), `gc` (TTL badges).
   `web/components/chrome/left-rail-route.ts`, `web/app/(app)/layout.tsx`,
   `web/lib/acp-runners/readiness-summary.ts`,
   `web/lib/acp-runners/runner-readiness-rows.ts`.
+
+## Designed agent activity extension
+
+A separate Agents section shows every active agent-origin run, including Pending/parked and flow-driving runs. Physical workspace rows require a retained workspace and exclude runs already represented in Agents. Terminal operations leave the rail; repeated failures are grouped in Inbox. Expanded/collapsed/mobile share the population and accessible exact status. See [canonical behavior](../../system-analytics/agent-activity-history.md).

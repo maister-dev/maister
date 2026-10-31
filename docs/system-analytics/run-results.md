@@ -13,6 +13,10 @@ recursion bounds recorded beside it. It does **not** own evidence
 ([`flow-graph.md`](flow-graph.md)), promotion ([`workspaces.md`](workspaces.md)),
 or the delegation toolset itself ([`orchestrator.md`](orchestrator.md)).
 
+Operational agent semantics are **Implemented** in the [operational lifecycle](operational-agent-lifecycle.md),
+[result contract](operational-agent-results.md) and [definition contract](operational-agents.md).
+They preserve this domain's existing code-delivery behavior.
+
 ## Domain entities
 
 - **Run result contract** — `runs.result_contract` (jsonb, NULL = none). Written
@@ -360,3 +364,7 @@ The result value reuses the ADR-162 limits through ONE validator
 - Source: `web/lib/run-results/` · `web/lib/orchestrator/bounds.ts` ·
   `web/lib/flows/runner-graph.ts` · `web/lib/agents/launch.ts` ·
   `web/app/api/v1/ext/runs/collect/route.ts`
+
+## Operational agents
+
+Operational contracts reuse this ledger. The exact terminal revision is also projected as diagnostic `operationalOutcome` on failed Runs; the ordinary failure result remains unavailable. See [operational results](operational-agent-results.md).

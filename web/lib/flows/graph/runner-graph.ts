@@ -257,6 +257,7 @@ import { causeReason } from "@/lib/domain-events/taxonomy";
 import { clearFailedCoordinatorWake } from "@/lib/domain-events/coordinator-wake-intent";
 import { emitDelegatedReviewIfChild } from "@/lib/runs/delegated-review-emit";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
+import { assertTaskAdmissionForDispatch } from "@/lib/tasks/qualification-admission";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { runs, hitlRequests } = schemaModule as unknown as Record<string, any>;
@@ -2825,6 +2826,7 @@ export async function runGraph(
   let lastBrain: BrainAmbientEntry[] | undefined;
 
   try {
+    await assertTaskAdmissionForDispatch(rootDb, runId);
     while (currentNodeId !== null) {
       // P7 (ADR-103): rewrite run.json from the ledger before processing this
       // node, so an agent node reads the latest run-context (every prior terminal

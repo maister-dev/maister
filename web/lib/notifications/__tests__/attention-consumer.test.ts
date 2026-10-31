@@ -9,12 +9,16 @@
  *     time (`EDGE-NTF-01`).
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   buildAttentionConsumer,
   deltaTypeFor,
 } from "@/lib/notifications/attention-consumer";
+
+vi.mock("@/lib/notifications/attention-publication", () => ({
+  lockUnpublishedAttentionEpisodes: async () => [],
+}));
 
 describe("UT-NTF-08 deltaTypeFor", () => {
   it("emits nothing when the count did not move", () => {
@@ -95,7 +99,11 @@ describe("UT-NTF-12 consumer failure handling", () => {
 
     return buildAttentionConsumer({
       db: handle,
-      decisionsFor: async (userId) => decisionsFor(userId),
+      decisionsFor: async (userId) => {
+        const decisions = await decisionsFor(userId);
+
+        return { decisions, ordinaryDecisions: decisions };
+      },
     });
   }
 

@@ -1,3 +1,6 @@
+import type { AgentKind } from "@/lib/agents/kind";
+import type { RunResultContract } from "@/lib/run-results/types";
+
 import { randomUUID } from "node:crypto";
 
 import * as fullSchema from "@/lib/db/schema";
@@ -15,6 +18,9 @@ export type WorkbenchRunSeed = {
   baseCommit?: string | null;
   status?: string;
   runKind?: "flow" | "agent" | "scratch";
+  agentKind?: AgentKind;
+  agentWorkspace?: "none" | "repo_read" | "worktree";
+  resultContract?: RunResultContract;
   taskKey?: string;
   // null → a task-less run (no `tasks` row).
   task?: { number: number; title: string } | null;
@@ -97,6 +103,9 @@ export async function seedWorkbenchRun(
     flowVersion: "v1.0.0",
     status: seed.status ?? "Failed",
     runKind: seed.runKind ?? "flow",
+    agentKind: seed.agentKind ?? null,
+    agentWorkspace: seed.agentWorkspace ?? null,
+    resultContract: seed.resultContract ?? null,
     workspaceMode: seed.sharedTreeAllocator
       ? "shared"
       : (seed.workspaceMode ?? null),

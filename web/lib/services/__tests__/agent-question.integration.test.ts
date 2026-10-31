@@ -6,6 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import * as schema from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { operationalContractFixture } from "@/test-support/operational-agent";
 import { finalizeAgentRun } from "@/lib/agents/launch";
 import {
   cancelOpenAgentQuestionsForTask,
@@ -499,6 +500,33 @@ describe("agent-question lifecycle (ADR-136, integration)", () => {
       executionHosts: hosts,
     });
     const successorRunId = randomUUID();
+    const operationalRunId = randomUUID();
+    const operationalQuestionId = randomUUID();
+
+    await db.insert(schema.runs).values({
+      id: operationalRunId,
+      runKind: "agent",
+      agentKind: "operational",
+      resultContract: operationalContractFixture("none"),
+      agentWorkspace: "none",
+      projectId: seeded.projectId,
+      taskId: seeded.taskId,
+      agentId: seeded.agentId,
+      status: "NeedsInputIdle",
+      currentStepId: "agent",
+      flowVersion: "agent",
+    });
+    await db.insert(schema.hitlRequests).values({
+      id: operationalQuestionId,
+      runId: operationalRunId,
+      taskId: seeded.taskId,
+      stepId: "agent",
+      kind: "agent_question",
+      activationState: "active",
+      reTriggerMode: "agent",
+      prompt: "Confirm an independent operation",
+      schema: input(seeded).schema,
+    });
 
     await db.insert(schema.runs).values({
       id: successorRunId,
@@ -551,6 +579,20 @@ describe("agent-question lifecycle (ADR-136, integration)", () => {
     expect(request?.supersededByRunId).toBe(successorRunId);
     expect(clarification?.supersededByRunId).toBe(successorRunId);
     expect(assignment?.status).toBe("cancelled");
+    const [independent] = await db
+      .select()
+      .from(schema.hitlRequests)
+      .where(eq(schema.hitlRequests.id, operationalQuestionId));
+
+    expect(independent.supersededAt).toBeNull();
+    expect(
+      (
+        await db
+          .select()
+          .from(schema.runs)
+          .where(eq(schema.runs.id, operationalRunId))
+      )[0].status,
+    ).toBe("NeedsInputIdle");
   });
 
   it("serializes a human answer and successor supersession into one terminal winner", async () => {

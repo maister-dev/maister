@@ -48,7 +48,7 @@ a node type. This example uses the resolved default runner and only a whitespace
 check; add your project's actual tests and required evidence before using it
 for delivery. The reviewer inspects a failed check before requesting rework.
 
-The current engine is **3.8.0**. Keep the minimum at the earliest version that
+The current engine is **3.9.0**. Keep the minimum at the earliest version that
 supports the Flow's contracts. Flows that rely on rendering a consensus draft
 prompt with Run context before fan-out should declare `engine_min: 3.8.0`.
 Participant output is inserted as data into verifier and synthesizer prompts;

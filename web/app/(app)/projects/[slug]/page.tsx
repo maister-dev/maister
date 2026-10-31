@@ -1,5 +1,4 @@
 import type { ProjectTab } from "@/components/board/project-tabs";
-import type { AgentConfigParam } from "@/lib/agents/definition";
 import type { PortfolioWorkspace } from "@/lib/queries/portfolio";
 import type { ReactElement } from "react";
 
@@ -7,6 +6,9 @@ import Link from "next/link";
 import { getTranslations } from "next-intl/server";
 import { notFound } from "next/navigation";
 
+import { IncomingRequests } from "@/components/agents/incoming-requests";
+import { ActiveAgentExecutions } from "@/components/agents/active-agent-executions";
+import { ProjectAgentsPanel as AgentsAttachPanelLoader } from "@/components/agents/project-agents-panel";
 import { Board } from "@/components/board/board";
 import { BoardTools } from "@/components/board/board-tools";
 import { ProjectBrainPanel } from "@/components/brain/project-brain-panel";
@@ -24,10 +26,6 @@ import { SettingsPanel } from "@/components/board/panels/settings-panel";
 import { WebhooksPanel } from "@/components/board/panels/webhooks-panel";
 import { ProjectMembersPanel } from "@/components/project/project-members-panel";
 import { ConfigPersistBanner } from "@/components/projects/config-persist-banner";
-import {
-  AgentsAttachPanel,
-  type AgentRecommendedView,
-} from "@/components/board/panels/agents-attach-panel";
 import { SchedulesPanel } from "@/components/schedules/schedules-panel";
 import { AutomationsPanel } from "@/components/automations/automations-panel";
 import { WorkbenchLifecycleActions } from "@/components/workbench/lifecycle-actions";
@@ -58,8 +56,6 @@ import {
   getProjectActivityLog,
 } from "@/lib/queries/activity";
 import { TaskActivityLog } from "@/components/board/panels/task-activity-log";
-import { getProjectAgentsView } from "@/lib/agents/project-links";
-import { DOMAIN_EVENT_KINDS } from "@/lib/domain-events/taxonomy";
 import { reposRoot } from "@/lib/instance-config";
 import { formatProjectRepoPath } from "@/lib/project-path-display";
 import { getProjectBySlug, getProjectPageData } from "@/lib/queries/project";
@@ -80,6 +76,7 @@ import { listBranches } from "@/lib/worktree";
 
 const VALID_TABS: readonly ProjectTab[] = [
   "board",
+  "incoming",
   "activity",
   "brain",
   "repo",
@@ -113,6 +110,7 @@ interface PageProps {
     event_kind?: string | string[];
     task?: string | string[];
     page?: string | string[];
+    incoming_state?: string;
     audit_token?: string | string[];
     audit_result?: string | string[];
     audit_page?: string | string[];
@@ -139,6 +137,7 @@ export default async function ProjectBoardPage({
     event_kind: rawEventKind,
     task: rawTaskFilter,
     page: rawPage,
+    incoming_state: rawIncomingState,
     audit_token: rawAuditToken,
     audit_result: rawAuditResult,
     audit_page: rawAuditPage,
@@ -432,6 +431,7 @@ export default async function ProjectBoardPage({
         />
       </div>
 
+      <ActiveAgentExecutions items={pageData.activeExecutions} />
       <ProjectActiveWorkspaces
         activeLabel={tPortfolio("activeCount", {
           count: pageData.activeWorkspaces.length,
@@ -451,6 +451,27 @@ export default async function ProjectBoardPage({
         slug={slug}
       />
 
+      {tab === "incoming" ? (
+        <IncomingRequests
+          page={Math.min(
+            1000,
+            Math.max(1, Number.parseInt(String(rawPage ?? "1"), 10) || 1),
+          )}
+          projectId={project.id}
+          slug={slug}
+          state={
+            [
+              "unassessed",
+              "needs_information",
+              "needs_review",
+              "not_actionable",
+            ].includes(rawIncomingState ?? "")
+              ? (rawIncomingState as import("@/lib/queries/incoming").IncomingFilter)
+              : undefined
+          }
+          taskKey={project.taskKey}
+        />
+      ) : null}
       {tab === "board" ? (
         <section>
           {hitl.count > 0 ? (
@@ -822,110 +843,6 @@ export default async function ProjectBoardPage({
 // Project the stored `recommended` jsonb (faithful to the .md frontmatter, snake
 // `branch_base`) to the panel's camelCase view shape — mirrors
 // admin-shared.ts `projectRecommended` (the GET-route DTO path).
-function toRecommendedView(rec: unknown): AgentRecommendedView | null {
-  if (!rec || typeof rec !== "object") return null;
-  const r = rec as {
-    runner?: string;
-    branch_base?: string;
-    cron?: { expr: string; timezone: string };
-    events?: string[];
-    mention?: boolean;
-    executionPolicy?: {
-      autoApply?: "off" | "permissions" | "full";
-      onBudgetBreach?: "escalate" | "terminate" | "terminate_restorable";
-    };
-  };
-
-  return {
-    ...(r.runner !== undefined ? { runner: r.runner } : {}),
-    ...(r.branch_base !== undefined ? { branchBase: r.branch_base } : {}),
-    ...(r.cron !== undefined ? { cron: r.cron } : {}),
-    ...(r.events !== undefined ? { events: r.events } : {}),
-    ...(r.mention !== undefined ? { mention: r.mention } : {}),
-    ...(r.executionPolicy !== undefined
-      ? { executionPolicy: r.executionPolicy }
-      : {}),
-  };
-}
-
-async function AgentsAttachPanelLoader({
-  slug,
-  projectId,
-  canManage,
-  runners,
-  mcpRequirements,
-}: {
-  slug: string;
-  projectId: string;
-  canManage: boolean;
-  runners: Array<{ id: string; label: string }>;
-  mcpRequirements: Array<{
-    refId: string;
-    declaredBy: string[];
-    classification: string;
-  }>;
-}): Promise<ReactElement> {
-  const view = await getProjectAgentsView(projectId);
-  // ADR-129 (W-G, T7.2): an agent's effective MCPs = the refs it declares,
-  // resolved through the project's bindings. The hub already threads bindings
-  // into `requirements` and stamps `declaredBy: ["agent:<id>", …]`, so filtering
-  // by that label yields each agent's effective set (D5 — one resolution path).
-  const effectiveMcpsFor = (
-    agentId: string,
-  ): Array<{ refId: string; classification: string }> =>
-    mcpRequirements
-      .filter((r) => r.declaredBy.includes(`agent:${agentId}`))
-      .map((r) => ({ refId: r.refId, classification: r.classification }));
-
-  return (
-    <AgentsAttachPanel
-      attached={view.attached.map((row) => ({
-        linkId: row.linkId,
-        enabled: row.enabled,
-        runnerOverrideId: row.runnerOverrideId,
-        branchBase: row.branchBase,
-        executionPolicyOverride: row.executionPolicyOverride,
-        config: row.config,
-        canReadBrain: row.canReadBrain,
-        canWriteBrain: row.canWriteBrain,
-        memoryEnabled: row.memoryEnabled,
-        crossProjectReach: row.crossProjectReach,
-        schedulesRevision: row.schedulesRevision,
-        schedules: row.schedules,
-        agent: {
-          id: row.agent.id as string,
-          name: row.agent.name as string,
-          packageName: row.agent.packageName as string,
-          workspace: row.agent.workspace as string,
-          mode: row.agent.mode as string,
-          triggers: row.agent.triggers as string[],
-          riskTier: row.agent.riskTier as string,
-          enabled: row.agent.enabled as boolean,
-          quarantinedAt: row.agent.quarantinedAt
-            ? new Date(row.agent.quarantinedAt as Date).toISOString()
-            : null,
-          flowRef: (row.agent.flowRef as string | null) ?? null,
-          recommended: toRecommendedView(row.agent.recommended),
-          configSchema:
-            (row.agent.configSchema as AgentConfigParam[] | null) ?? null,
-          effectiveMcps: effectiveMcpsFor(row.agent.id as string),
-        },
-      }))}
-      available={view.available.map((agent) => ({
-        id: agent.id as string,
-        name: agent.name as string,
-        packageName: agent.packageName as string,
-        recommended: toRecommendedView(agent.recommended),
-        configSchema: (agent.configSchema as AgentConfigParam[] | null) ?? null,
-      }))}
-      canManage={canManage}
-      eventKinds={[...DOMAIN_EVENT_KINDS]}
-      runners={runners}
-      slug={slug}
-    />
-  );
-}
-
 function ProjectActiveWorkspaces({
   activeWorkspaces,
   title,

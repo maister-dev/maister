@@ -22,7 +22,9 @@ import {
   type ExecutionPolicy,
   type ExecutionPolicyOverrides,
   defaultExecutionPolicy,
+  resolveExecutionPolicy,
 } from "@/lib/runs/execution-policy";
+import { applyDefaultBudgetForUnattended } from "@/lib/runs/budget-default";
 
 export function resolveAgentExecutionPolicy(args: {
   instanceOverride?: AgentExecutionPolicyRecommendation | null;
@@ -58,4 +60,18 @@ export function resolveAgentExecutionPolicy(args: {
   return Object.keys(overrides).length > 0
     ? { preset: base.preset, overrides }
     : { preset: base.preset };
+}
+
+export function resolveAgentLaunchExecutionPolicy(args: {
+  instanceOverride?: AgentExecutionPolicyRecommendation | null;
+  recommended?: AgentExecutionPolicyRecommendation | null;
+  projectDefault?: ExecutionPolicy | null;
+}): ExecutionPolicy {
+  return applyDefaultBudgetForUnattended(
+    resolveAgentExecutionPolicy({
+      instanceOverride: args.instanceOverride,
+      recommended: args.recommended,
+      base: resolveExecutionPolicy({ projectDefault: args.projectDefault }),
+    }),
+  );
 }

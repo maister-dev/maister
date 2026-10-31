@@ -7,7 +7,7 @@ import type { ExecutionCommand } from "@/lib/db/schema";
 
 import { randomUUID } from "node:crypto";
 
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, notExists, sql } from "drizzle-orm";
 import { z } from "zod";
 import pino from "pino";
 
@@ -175,9 +175,77 @@ export async function recordOwnedAgentPermission(
   client: BoundClient,
   event: PermissionEvent,
 ): Promise<boolean> {
-  return db.transaction((tx) =>
-    recordOwnedAgentPermissionInTransaction(tx, client, event),
-  );
+  const [compensation] = await db
+    .select()
+    .from(executionCommands)
+    .where(
+      and(
+        eq(executionCommands.runId, client.assignment.runId),
+        eq(executionCommands.executionAssignmentId, client.assignment.id),
+        eq(executionCommands.targetSessionId, event.sessionId),
+        eq(executionCommands.kind, "session.input"),
+        sql`${executionCommands.payload}->>'requestId' = ${event.requestId}`,
+        sql`${executionCommands.payload}->>'action' = 'cancel'`,
+        sql`${executionCommands.payload}->>'reason' = 'permission_persistence_failed'`,
+      ),
+    )
+    .limit(1);
+
+  if (compensation) {
+    if (
+      compensation.state === "succeeded" ||
+      (compensation.state === "failed" &&
+        compensation.lastError?.code === "HITL_TIMEOUT")
+    )
+      return true;
+    throw new PromptOwnerDeferred("agent_permission_compensation_pending");
+  }
+  try {
+    return await db.transaction((tx) =>
+      recordOwnedAgentPermissionInTransaction(tx, client, event),
+    );
+  } catch (error) {
+    // A committed owner keeps its request-bound delivery. Only proven absence
+    // compensates a rolled-back creation; an unreadable DB is ambiguous.
+    try {
+      const [owner] = await db
+        .select({ id: hitlRequests.id })
+        .from(hitlRequests)
+        .where(
+          and(
+            eq(hitlRequests.runId, client.assignment.runId),
+            sql`${hitlRequests.schema}->>'requestId' = ${event.requestId}`,
+            sql`${hitlRequests.schema}->>'supervisorSessionId' = ${event.sessionId}`,
+          ),
+        );
+
+      if (!owner) {
+        await client.deliverInput(event.sessionId, {
+          kind: "permission",
+          action: "cancel",
+          requestId: event.requestId,
+          reason: "permission_persistence_failed",
+        });
+        log.error(
+          { runId: client.assignment.runId, requestId: event.requestId },
+          "agent-orphaned-permission-deferred-cancelled",
+        );
+      }
+    } catch (compensationError) {
+      log.error(
+        {
+          runId: client.assignment.runId,
+          requestId: event.requestId,
+          errorType:
+            compensationError instanceof Error
+              ? compensationError.name
+              : "unknown",
+        },
+        "agent-permission-compensation-unconfirmed",
+      );
+    }
+    throw error;
+  }
 }
 
 export async function recordOwnedAgentPermissionInTransaction(
@@ -432,6 +500,9 @@ export async function completeAgentPermissionDelivery(
       },
     })
     .where(eq(hitlRequests.id, hitl.id));
+  // Reissued delivery acknowledges its ancestors in this same transaction.
+  // Count outstanding decisions only after those historical markers settle.
+  await completeAgentPermissionOrigin(tx, hitl.id);
   await tx
     .update(runs)
     .set({ status: "Running", keepaliveUntil: null })
@@ -440,13 +511,24 @@ export async function completeAgentPermissionDelivery(
         eq(runs.id, hitl.runId),
         eq(runs.status, "NeedsInput"),
         eq(runs.executionAssignmentId, source.agentPrompt.assignmentId),
+        notExists(
+          tx
+            .select({ id: hitlRequests.id })
+            .from(hitlRequests)
+            .where(
+              and(
+                eq(hitlRequests.runId, hitl.runId),
+                isNull(hitlRequests.respondedAt),
+                isNull(hitlRequests.supersededAt),
+              ),
+            ),
+        ),
       ),
     );
   log.info(
     { runId: hitl.runId, hitlRequestId, deliveryCommandId },
     "agent-owned-permission-delivered",
   );
-  await completeAgentPermissionOrigin(tx, hitl.id);
   await completeHitlAssignmentFromCurrentActor({
     db: tx,
     hitlRequestId: hitl.id,

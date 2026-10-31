@@ -35,6 +35,11 @@ import {
   recordRequiredTokenAudit,
 } from "@/lib/tokens/ext-handler";
 import { socialActorForToken } from "@/lib/tokens/verify";
+import {
+  assertExecutionParentAdmission,
+  establishExecutionChildAdmission,
+} from "@/lib/tasks/qualification-admission";
+import { retryDigest } from "@/lib/agents/retry-guards";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches lib/services/tasks.ts).
 const { tasks } = schemaModule as unknown as Record<string, any>;
@@ -259,6 +264,8 @@ export async function POST(
         // The DECISIVE bound is re-taken inside the launcher's own run-insert
         // transaction under the same lock (see admitDelegatedChild call sites).
         await db.transaction(async (tx: Db) => {
+          if (needsChildTask)
+            await assertExecutionParentAdmission(tx, ctx.projectId, parent.id);
           await admitDelegatedChild(tx, { parentRunId: parent.id });
 
           if (!needsChildTask) return;
@@ -290,6 +297,30 @@ export async function POST(
 
           childTaskId = created.taskId;
 
+          if (parent.taskId) {
+            await addTaskRelation(
+              {
+                projectId: ctx.projectId,
+                fromTaskId: parent.taskId,
+                kind: "parent_of",
+                toTaskId: childTaskId,
+                actor: socialActorForToken(ctx.actor),
+              },
+              tx,
+            );
+          } else {
+            log.info(
+              { parentRunId, childTaskId },
+              "delegation parent run has no task — child task created without a parent_of relation",
+            );
+          }
+          await establishExecutionChildAdmission(tx, {
+            projectId: ctx.projectId,
+            parentRunId: parent.id,
+            childTaskId,
+            planRevision: retryDigest(body),
+          });
+
           // Stamp the delegation intent — `createTask` does not accept it
           // (same idiom as run_plan's as-plan tasks). `launch_mode='manual'` is
           // what keeps the as-plan auto-launcher and the abandon cascade's
@@ -318,23 +349,6 @@ export async function POST(
           // null: today only the flow graph runner issues an orchestrator
           // token, and a flow run always has a task, so this branch is
           // unreachable — kept as a graceful log, never hardened into an assert.
-          if (parent.taskId) {
-            await addTaskRelation(
-              {
-                projectId: ctx.projectId,
-                fromTaskId: parent.taskId,
-                kind: "parent_of",
-                toTaskId: childTaskId,
-                actor: socialActorForToken(ctx.actor),
-              },
-              tx,
-            );
-          } else {
-            log.info(
-              { parentRunId, childTaskId },
-              "delegation parent run has no task — child task created without a parent_of relation",
-            );
-          }
         });
 
         // Everything from here on is fallible AFTER the carrier transaction

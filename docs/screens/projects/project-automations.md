@@ -121,3 +121,7 @@ DST prompt, retry state, action, and safe remediation has a localized label.
   [project-settings-agents.md](project-settings-agents.md), and
   [../admin-scheduler.md](../admin-scheduler.md).
 - API: [../../api/web.openapi.yaml](../../api/web.openapi.yaml).
+
+## Operational agents
+
+Agent automation resultingRun joins the actual Run status, kind and operational diagnostic outcome. Dispatch success (`launched`) remains separate from business completion; a launched operation may finish Failed with HTTP 403 diagnostics on its Run.

@@ -1639,3 +1639,29 @@ uses the same root; moving or deleting it during an accepted operation requires
 operator repair. Terminal cleanup removes only verified owned material and exposes
 `retained` with an actionable reason when private content differs. The first commit uses private empty
 scaffolding and normal commit amend/hooks, so bookworm's Git need not be upgraded.
+
+## Operational agents
+
+Agent definitions may declare `kind: operational` and `completion: { contract: operational_v1 }` under a package engine floor of 3.9.0. Kind does not enable automatic approval or replace workspace/mode. The frozen structured completion and resource rules are specified in [operational agents](system-analytics/operational-agents.md).
+
+## Designed task qualification capability
+
+The [qualification contract](system-analytics/task-qualification.md) adds the optional
+agent frontmatter declaration `task_qualification: {contract: v1, role: intake | qualifier}`.
+The qualifier role requires operational/session, `workspace: repo_read` and
+`workspace_ref: task_target`; intake requires operational completion but does not
+assess each captured task itself. This declares behavior, never permission or autoapproval.
+Engine 3.10.0 is reserved for this capability; old 3.9.0 definitions retain frozen semantics.
+Registry SET/CLEAR, package ingestion, Studio, attachment and launch agree on absence.
+`task_target` resolves a server-owned bound task target/default to an immutable SHA;
+without the capability an old literal Git ref keeps its prior interpretation.
+
+Project config gains optional `project.task_qualification: legacy | required`.
+The project stores a frozen creation baseline (legacy for pre-upgrade projects,
+required for newly registered projects) and a nullable explicit override; effective
+policy is override or baseline. Removing the YAML key clears only the override in
+the same import/apply transaction. It never changes the creation baseline or waives
+an existing task's required hold. UI/settings/export show the effective value and
+its provenance. Required-policy activation is an explicit editSettings action;
+upgraded intake/qualifier attachment enablement refuses an incompatible project
+before scheduling. Unrelated core capabilities remain installable in legacy projects.

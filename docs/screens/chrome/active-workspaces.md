@@ -231,3 +231,11 @@ both required.
   `web/components/workbench/lifecycle-actions.tsx`,
   `web/lib/queries/portfolio.ts`, `web/app/api/scratch-runs/[runId]/route.ts`
   (rename `PATCH`, new).
+
+## Operational agents
+
+Completed operational agents leave portfolio, project and rail active lists at the terminal transition, including retained diagnostic workspaces and pending/failed cleanup. Shared status sets are unchanged; default code-delivery workspaces retain their prior visibility.
+
+## Designed agent activity extension
+
+Require a real retained workspace on rail, project and portfolio. Workspace-less failures cannot receive Git actions or green Done labels. Active agent executions use their own run-based section; code-delivery Review/Failed/Crashed workspace behavior remains. See [canonical behavior](../../system-analytics/agent-activity-history.md).

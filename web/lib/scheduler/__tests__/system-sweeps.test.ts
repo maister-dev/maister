@@ -54,6 +54,20 @@ const runLibrarianRetentionMock = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/runs/keepalive-sweeper", () => ({
   runSweepTick: runSweepTickMock,
 }));
+vi.mock("@/lib/agents/retry", () => ({
+  runAgentRetryAdmissionSweep: vi.fn(async () => ({
+    launched: 0,
+    refused: 0,
+    deferred: 0,
+    errors: [],
+  })),
+}));
+vi.mock("@/lib/agents/trigger-attempts", () => ({
+  reconcileAgentTriggerAttempts: vi.fn(async () => ({
+    adopted: 0,
+    unknown: 0,
+  })),
+}));
 vi.mock("@/lib/reconcile", () => ({
   runReconcileSweep: runReconcileSweepMock,
 }));
@@ -62,6 +76,13 @@ vi.mock("@/lib/runs/cost-reconcile-sweep", () => ({
 }));
 vi.mock("@/lib/gc/workspace-gc", () => ({
   runWorkspaceGcSweep: runWorkspaceGcSweepMock,
+}));
+vi.mock("@/lib/gc/operational-disposition", () => ({
+  sweepOperationalDispositions: vi.fn(async () => ({
+    scanned: 0,
+    released: 0,
+    deferred: 0,
+  })),
 }));
 vi.mock("@/lib/gc/workspace-reconciler", () => ({
   runWorkspaceReconciliationSweep: runWorkspaceReconciliationSweepMock,

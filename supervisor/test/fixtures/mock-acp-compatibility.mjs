@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { randomUUID } from "node:crypto";
+import {readFile} from "node:fs/promises";
 import { Readable, Writable } from "node:stream";
 
 import * as acp from "@agentclientprotocol/sdk/unstable";
@@ -135,6 +136,7 @@ class CompatibilityAgent {
         toolCallId: "compat-tool-call",
         kind: effectivePermissionKind,
         title: toolNameForPrompt(params),
+        ...(promptText(params).includes("native-path") ? {locations:[{path:"/tmp/source.ts"}]} : {}),
       },
       options: [
         { optionId: "allow", kind: "allow_always", name: "Allow" },
@@ -142,16 +144,19 @@ class CompatibilityAgent {
       ],
     });
 
+    const fileReference=process.argv.includes("--native-read-file") ? promptText(params).match(/native-file:(\S+)/)?.[1] : null;
+    const nativeText=fileReference && result.outcome.outcome === "selected" && result.outcome.optionId === "allow"
+      ? await readFile(decodeURIComponent(fileReference),"utf8") : null;
     await this.connection.sessionUpdate({
       sessionId: params.sessionId,
       update: {
         sessionUpdate: "agent_message_chunk",
         content: {
           type: "text",
-          text:
+          text: nativeText ?? (
             result.outcome.outcome === "selected"
               ? `permission selected:${result.outcome.optionId}`
-              : "permission cancelled",
+              : "permission cancelled"),
         },
       },
     });

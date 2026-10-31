@@ -21,6 +21,7 @@ import {
 } from "vitest";
 
 import { MaisterError } from "@/lib/errors";
+import { operationalContractFixture } from "@/test-support/operational-agent";
 import {
   addRunWorktree,
   advanceRemoteBranch,
@@ -47,7 +48,7 @@ vi.mock("@/lib/worktree", async (orig) => {
   return { ...actual, remoteBranchHead: vi.fn(actual.remoteBranchHead) };
 });
 
-let db: NodePgDatabase;
+let db: NodePgDatabase<typeof import("@/lib/db/schema")>;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 vi.mock("@/lib/authz", () => ({
@@ -147,6 +148,82 @@ async function refusal(p: Promise<unknown>): Promise<PushRefusal> {
 }
 
 describe("publish under a public branch name", () => {
+  it("IT-OPL-04 refuses operational delivery at service boundaries before any repository or provider mutation", async () => {
+    const branch = "maister/operational";
+    const worktree = await addRunWorktree(root, repo.parent, branch);
+    const seed = await seedWorkbenchRun(db, {
+      parentRepoPath: repo.parent,
+      worktreePath: worktree,
+      branch,
+      baseCommit: repo.baseSha,
+      status: "Running",
+      runKind: "agent",
+      agentKind: "operational",
+      agentWorkspace: "worktree",
+      resultContract: operationalContractFixture(),
+    });
+    const { finalizeAgentRun } = await import("@/lib/agents/finalization");
+
+    await finalizeAgentRun(seed.runId, "Failed", { db });
+    const lifecycle = await import("@/lib/workbench-lifecycle/service");
+    const services = await import("@/lib/workbench-git/service");
+    const { promoteRun } = await import("@/lib/runs/promote");
+    const { syncRunTarget } = await import("@/lib/runs/sync-target");
+    const before = await gitIn(repo.remote, [
+      "for-each-ref",
+      "--format=%(refname) %(objectname)",
+    ]);
+    const refusal = {
+      code: "PRECONDITION",
+      details: { reason: "operational_delivery_forbidden" },
+    };
+
+    for (const action of [
+      () => publish(seed.runId),
+      () =>
+        lifecycle.snapshotWorkbenchCommit(seed.runId, {
+          commitMessage: "Forbidden snapshot",
+          allowPausedBudgetRun: true,
+        }),
+      () =>
+        lifecycle.createWorkbenchHandoffBranch(seed.runId, {
+          remote: "origin",
+          handoffBranch: "forbidden-handoff",
+          allowPausedBudgetRun: true,
+        }),
+      () =>
+        services.openPullRequest(
+          seed.runId,
+          {},
+          { origin: "http://localhost:3000" },
+        ),
+      () => services.finalizePullRequestRun(seed.runId, {}),
+      () => services.reattachWorkbench(seed.runId),
+      () =>
+        promoteRun(
+          seed.runId,
+          { mode: "local_merge", autoOnReady: true },
+          { sessionUser: { id: "user-1" }, authorize: async () => undefined },
+          db,
+        ),
+      () =>
+        syncRunTarget({
+          runId: seed.runId,
+          actor: { type: "user", id: "user-1" },
+          db,
+        }),
+    ])
+      await expect(action()).rejects.toMatchObject(refusal);
+    expect(
+      await gitIn(repo.remote, [
+        "for-each-ref",
+        "--format=%(refname) %(objectname)",
+      ]),
+    ).toBe(before);
+    expect(
+      (await workspaceRow(db, seed.workspaceId)).publishedBranch,
+    ).toBeNull();
+  });
   it("renders the template, pushes internal:public with an upstream, and records the publication after the push", async () => {
     const run = await seeded();
     const head = await gitIn(run.worktree, ["rev-parse", "HEAD"]);

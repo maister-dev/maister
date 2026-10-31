@@ -17,6 +17,8 @@ export type AgentSummaryRow = {
   origin: "git" | "authored";
   name: string;
   description: string;
+  kind?: "code_delivery" | "operational";
+  completion?: { contract: "operational_v1" } | null;
   runnerId: string | null;
   workspace: string;
   mode: string;
@@ -190,7 +192,17 @@ export function AgentsPanel({ agents, projects }: Props): ReactElement {
                 <td className="px-4 py-3 font-mono text-ink-2">
                   {agent.runnerId ?? "—"}
                 </td>
-                <td className="px-4 py-3 text-ink-2">{agent.workspace}</td>
+                <td className="px-4 py-3 text-ink-2">
+                  {agent.workspace}
+                  <br />
+                  <span>
+                    {t(
+                      agent.kind === "operational"
+                        ? "kindOperational"
+                        : "kindCodeDelivery",
+                    )}
+                  </span>
+                </td>
                 <td className="px-4 py-3 text-ink-2">{agent.mode}</td>
                 <td className="px-4 py-3 font-mono text-[11px] text-ink-2">
                   {agent.triggers.join(", ")}

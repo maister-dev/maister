@@ -76,6 +76,8 @@ import {
   stubSessions,
 } from "./stub-supervisor";
 
+import { qualificationFixture } from "@/test-support/task-qualification";
+
 const STUB_RELEASE_BACKSTOP_MS = 15_000;
 const STUB_RELEASE_POLL_MS = 150;
 const E2E_HOLD_TURN_BACKSTOP_MS = 120_000;
@@ -690,6 +692,7 @@ export async function startTestSupervisor(
     flushText(rec);
     if (!rec.exitPending) return;
     rec.exitPending = false;
+    stubExitSession(rec.sessionId, rec.exitCode);
     emitOrQueue(rec, {
       type: "session.exited",
       sessionId: rec.sessionId,
@@ -966,9 +969,111 @@ export async function startTestSupervisor(
       rec.runKind === "agent" &&
       (await hasResultContract(rec.runId))
     ) {
+      const run = (
+        await opts.pool.query<{
+          agent_kind: string | null;
+          task_id: string | null;
+          task_qualification_snapshot: { role: string; sha: string } | null;
+          slug: string;
+        }>(
+          "SELECT r.agent_kind,r.task_id,r.task_qualification_snapshot,p.slug FROM runs r JOIN projects p ON p.id=r.project_id WHERE r.id=$1",
+          [rec.runId],
+        )
+      ).rows[0];
+
+      let qualificationId: string | null = null;
+
+      if (run.task_qualification_snapshot?.role === "qualifier") {
+        const { token, apiBaseUrl } = readFacade(rec.mcpServers);
+
+        if (!token || !apiBaseUrl || !run.task_id)
+          throw new Error(
+            "Controlled qualifier is missing its bound facade context",
+          );
+        const headers = {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+        };
+        const taskUrl = `${apiBaseUrl}/api/v1/ext/projects/${run.slug}/tasks/${run.task_id}`;
+        const currentResponse = await fetch(taskUrl, { headers });
+
+        if (!currentResponse.ok)
+          throw new Error(
+            `Controlled qualifier task read refused: ${currentResponse.status}`,
+          );
+        const current = (await currentResponse.json()) as {
+          qualification: {
+            inputRevision: number;
+            qualificationRevision: number | null;
+          };
+        };
+        const qualification = qualificationFixture();
+
+        qualification.evidenceRefs = [
+          {
+            id: "repo",
+            kind: "repository",
+            reference: `${run.task_qualification_snapshot.sha}:README.md:1`,
+          },
+        ];
+        const proposed = await fetch(`${taskUrl}/triage`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            requestKey: randomUUID(),
+            expectedInputRevision: current.qualification.inputRevision,
+            expectedQualificationRevision:
+              current.qualification.qualificationRevision,
+            qualification,
+            enqueue: false,
+          }),
+        });
+
+        if (proposed.status !== 202)
+          throw new Error(
+            `Controlled qualifier candidate refused: ${proposed.status} ${await proposed.text()}`,
+          );
+        qualificationId = (
+          (await proposed.json()) as { qualificationId: string }
+        ).qualificationId;
+        const release = path.join(
+          opts.stubCompat!.sessionsDir,
+          `${rec.runId}.qualification-release`,
+        );
+        const deadline = Date.now() + 30000;
+
+        while (!existsSync(release)) {
+          if (Date.now() > deadline)
+            throw new Error(
+              "Controlled qualifier candidate barrier was not released",
+            );
+          await new Promise<void>((resolve) => setTimeout(resolve, 50));
+        }
+      }
       emitText(
         rec,
-        sentinel({ summary: "one researcher's finding", outcome: "completed" }),
+        sentinel(
+          run.agent_kind === "operational"
+            ? {
+                schemaVersion: 1,
+                outcome: "success",
+                summary: "Controlled complete operation; no new work.",
+                coverage: { state: "complete", remainingKnown: 0 },
+                counts: {
+                  scanned: qualificationId ? 1 : 0,
+                  attempted: qualificationId ? 1 : 0,
+                  completed: qualificationId ? 1 : 0,
+                  failed: 0,
+                  skipped: 0,
+                  created: 0,
+                },
+                references: qualificationId
+                  ? [{ kind: "other", id: qualificationId, state: "confirmed" }]
+                  : [],
+                diagnostics: [],
+              }
+            : { summary: "one researcher's finding", outcome: "completed" },
+        ),
       );
     }
 
@@ -1741,6 +1846,23 @@ export async function startTestSupervisor(
           return;
         }
         const body = resolved.request as Record<string, unknown>;
+
+        if (
+          (body.runner as { model?: string } | undefined)?.model ===
+          "e2e-prework-unavailable"
+        ) {
+          const failure = {
+            code: "CONFIG",
+            message:
+              "Controlled runner binary is unavailable before session creation",
+            details: { reason: "e2e_runner_prework_unavailable" },
+          };
+
+          stubRecord(env, 422, failure);
+          sendJson(422, failure);
+
+          return;
+        }
         const capabilityProfileObjectId = body.capabilityProfileObjectId;
 
         if (typeof capabilityProfileObjectId === "string") {
@@ -1929,7 +2051,7 @@ export async function startTestSupervisor(
           isResume: rec.isResume,
           mcpServers,
         });
-        if (stub) stubWriteRecord(sessionId, acpSessionId, body);
+        if (opts.stubCompat) stubWriteRecord(sessionId, acpSessionId, body);
 
         const out = { sessionId, pid: 4242, acpSessionId };
 

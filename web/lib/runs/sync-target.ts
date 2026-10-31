@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq, notInArray, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { assertCodeDeliveryAllowed } from "@/lib/agents/operational-guard";
 import { RELEASED_LIFECYCLE_CLAIM } from "@/lib/runs/lifecycle-claim";
 import { loadRunnerCatalog } from "@/lib/acp-runners/catalog";
 import { resolveSyncRunner } from "@/lib/acp-runners/resolve";
@@ -398,6 +399,8 @@ async function loadRun(db: Db, runId: string): Promise<any> {
     throw new MaisterError("PRECONDITION", `run not found: ${runId}`);
   }
 
+  assertCodeDeliveryAllowed(rows[0], "sync-target");
+
   return rows[0];
 }
 
@@ -427,6 +430,8 @@ async function loadRunForUpdate(tx: Db, runId: string): Promise<any> {
   if (rows.length === 0) {
     throw new MaisterError("PRECONDITION", `run not found: ${runId}`);
   }
+
+  assertCodeDeliveryAllowed(rows[0], "sync-target");
 
   return rows[0];
 }

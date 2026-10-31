@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { Db as ActivityDb } from "@/lib/execution-host/db";
 import type { ContextRepoDecl } from "@/lib/context-mounts/types";
 import type { AgentExecutionPolicyRecommendation } from "@/lib/db/schema";
 
@@ -11,18 +12,20 @@ import {
   listEnabledPackageRefs,
   resolveEffectiveAgentDefinition,
 } from "@/lib/agents/effective";
+import { getAgentActivitySummaries } from "@/lib/agents/activity-queries";
 import { validateInstanceConfig } from "@/lib/agents/config";
 import { requireProjectActionForUser } from "@/lib/authz";
 import { revokeAgentProjectTokens } from "@/lib/agents/tokens";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
-import { isDomainEventKind } from "@/lib/domain-events/taxonomy";
+import { isAgentTriggerEventKind } from "@/lib/domain-events/taxonomy";
 import { MaisterError } from "@/lib/errors";
 import {
   nextFireAt,
   validateCronExpression,
   validateTimezone,
 } from "@/lib/run-schedules/cron";
+import { assertAgentQualificationPolicy } from "@/lib/agents/qualification-policy";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const {
@@ -163,7 +166,7 @@ function normalizeSchedule(
     );
   }
   for (const kind of kinds) {
-    if (!isDomainEventKind(kind)) {
+    if (!isAgentTriggerEventKind(kind)) {
       throw new MaisterError("CONFIG", `unknown domain-event kind: ${kind}`);
     }
   }
@@ -237,8 +240,13 @@ export async function getProjectAgentsView(
     Record<string, any>
   >;
 
-  const attached = linkRows.map(({ link, agent }) => ({
-    agent,
+  const activity = await getAgentActivitySummaries(
+    (db ?? getDb()) as ActivityDb,
+    projectId,
+    linkRows.map(({ agent }) => agent.id as string),
+  );
+  const attached: AttachedAgentView[] = linkRows.map(({ link, agent }) => ({
+    agent: { ...agent, activity: activity.get(agent.id as string) },
     linkId: link.id as string,
     enabled: link.enabled as boolean,
     runnerOverrideId: (link.runnerOverrideId ?? null) as string | null,
@@ -324,6 +332,8 @@ export async function attachAgent(
     { projectId: input.projectId, agentId: input.agentId },
     _db,
   );
+
+  await assertAgentQualificationPolicy(_db, input.projectId, effective.parsed);
   // ADR-152 D22: a flow-bound agent can never carry memory (its launch diverts
   // to a run_kind='flow' run), so the definition's recommendation is overruled
   // here rather than landing a `true` that updateAgentLink would then refuse to
@@ -454,6 +464,19 @@ export async function updateAgentLink(
   db?: Db,
 ): Promise<void> {
   const _db = db ?? getDb();
+
+  if (input.patch.enabled === true) {
+    const effective = await resolveEffectiveAgentDefinition(
+      { projectId: input.projectId, agentId: input.agentId },
+      _db,
+    );
+
+    await assertAgentQualificationPolicy(
+      _db,
+      input.projectId,
+      effective.parsed,
+    );
+  }
 
   const linkRows = await _db
     .select()

@@ -14,6 +14,8 @@ import type {
 import { and, asc, eq, isNull, or, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { canonicalCommandJson } from "../../../runtime/command-json";
+
 import {
   recordOwnedAgentPermissionInTransaction,
   prepareAgentPermissionResponse,
@@ -46,6 +48,7 @@ import {
   assertAgentPermissionResumeSource,
   assertAgentResumeTurn,
 } from "@/lib/execution-host/agent-permission-handoff";
+import { operationalHumanAnswerPrompt } from "@/lib/agents/launch-contract";
 export { assertAgentResumeTurn } from "@/lib/execution-host/agent-permission-handoff";
 
 const log = pino({
@@ -53,10 +56,10 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-async function pendingPermission(
+async function pendingPermissions(
   db: Db,
   runId: string,
-): Promise<HitlRequest | null> {
+): Promise<HitlRequest[]> {
   const candidates = await db
     .select()
     .from(hitlRequests)
@@ -71,6 +74,10 @@ async function pendingPermission(
           and(
             sql`${hitlRequests.response}->'_agentResume' IS NULL`,
             or(
+              and(
+                eq(hitlRequests.kind, "agent_question"),
+                sql`${hitlRequests.activationState} = 'active'`,
+              ),
               and(
                 eq(hitlRequests.kind, "hook_trip"),
                 or(
@@ -102,23 +109,82 @@ async function pendingPermission(
     return !grant.success || !grant.data.reissuedHitlRequestId;
   });
 
-  if (current.length > 1)
-    throw new PromptOwnerInvariantError("agent_permission_resume_source_count");
+  const proofs = current.map((request) =>
+    agentCheckpointEnvelopeSchema.safeParse(request.schema),
+  );
 
-  return current[0] ?? null;
+  if (proofs.some((proof) => !proof.success))
+    throw new PromptOwnerInvariantError("agent_permission_resume_source_shape");
+  const first = proofs[0];
+
+  if (
+    first?.success &&
+    proofs.some(
+      (proof) =>
+        proof.success &&
+        (proof.data.agentPrompt.commandId !==
+          first.data.agentPrompt.commandId ||
+          proof.data.agentPrompt.turnId !== first.data.agentPrompt.turnId ||
+          proof.data.agentPrompt.assignmentId !==
+            first.data.agentPrompt.assignmentId ||
+          proof.data.agentPrompt.incarnationId !==
+            first.data.agentPrompt.incarnationId ||
+          proof.data.supervisorSessionId !== first.data.supervisorSessionId),
+    )
+  )
+    throw new PromptOwnerInvariantError(
+      "agent_permission_resume_source_identity",
+    );
+
+  return current;
 }
 
-/** Reconcile host evidence before acquiring scheduler/run locks. This records
- * historical evidence only; it cannot grant a new execution generation.
+/** Reconcile host evidence before acquiring scheduler/run locks. Conflicting
+ * checkpoint generations fail closed; reconciliation never grants execution.
  */
 export async function reconcileAgentPermissionResume(
   db: Db,
   runId: string,
   transport: ExecutionHostTransport,
 ): Promise<void> {
-  const hitl = await pendingPermission(db, runId);
+  let requests: HitlRequest[];
 
-  if (!hitl) return;
+  try {
+    requests = await pendingPermissions(db, runId);
+  } catch (error) {
+    if (
+      !(error instanceof PromptOwnerInvariantError) ||
+      error.details?.causeCode !== "agent_permission_resume_source_identity"
+    )
+      throw error;
+    const [run] = await db
+      .select({ kind: runs.agentKind, status: runs.status })
+      .from(runs)
+      .where(eq(runs.id, runId));
+
+    if (run?.kind !== "operational" || run.status !== "NeedsInputIdle")
+      throw error;
+    // A checkpoint with conflicting generations cannot safely replay either
+    // choice. Preserve its evidence and make reconciliation an explicit action.
+    const { finalizeAgentRun } = await import("./finalization");
+
+    await finalizeAgentRun(runId, "Crashed", {
+      db,
+      causeReason: "agent_permission_resume_source_identity",
+      reason:
+        "Parallel permission recovery has conflicting execution generations. Inspect the retained permission receipts and reconcile external effects before starting a new attempt.",
+    });
+
+    return;
+  }
+  for (const hitl of requests) await reconcilePermission(db, hitl, transport);
+}
+
+async function reconcilePermission(
+  db: Db,
+  hitl: HitlRequest,
+  transport: ExecutionHostTransport,
+): Promise<void> {
   const parsed = agentCheckpointEnvelopeSchema.safeParse(hitl.schema);
 
   if (!parsed.success)
@@ -126,7 +192,13 @@ export async function reconcileAgentPermissionResume(
   const source = parsed.data;
   const response = hitl.response as Record<string, unknown> | null;
 
-  if (typeof response?.optionId !== "string") return;
+  if (
+    !response ||
+    (source.kind === "agent_question"
+      ? !hitl.respondedAt
+      : typeof response.optionId !== "string")
+  )
+    return;
   const evidence = await reconcilePromptCommand({
     db,
     commandId: source.agentPrompt.commandId,
@@ -187,9 +259,28 @@ export async function readAgentPermissionResume(
   db: Db,
   runId: string,
 ): Promise<Readiness> {
-  const hitl = await pendingPermission(db, runId);
+  const requests = await pendingPermissions(db, runId);
+  const sources = await Promise.all(
+    requests.map((request) => readCheckpointSource(db, request)),
+  );
+  const rejected = sources.find(
+    (source) => source.kind === "ready" && source.source.kind === "rejected",
+  );
 
-  return hitl ? readCheckpointSource(db, hitl) : null;
+  if (rejected) return rejected;
+  const pending = sources.find((source) => source.kind === "pending");
+
+  if (pending) return pending;
+
+  return (
+    sources.find(
+      (source) =>
+        source.kind === "ready" &&
+        source.source.pause?.kind === "agent_question",
+    ) ??
+    sources[0] ??
+    null
+  );
 }
 
 async function withdrawRefusedAgentDelivery(
@@ -268,52 +359,73 @@ export async function authorizeAgentPermissionResume(
       runId: assignment.runId,
       assignmentId: assignment.id,
       variant: "resume",
-      prompt: source.turn.prompt,
+      prompt:
+        source.pause?.kind === "agent_question"
+          ? operationalHumanAnswerPrompt(
+              run,
+              source.turn.prompt,
+              source.hitl.response,
+            )
+          : source.turn.prompt,
     });
   }
-  const grant: AgentPermissionResume = {
-    version: 1,
-    kind: source.kind,
-    assignmentId: assignment.id,
-    turnId: turn.id,
-    sourceCommandId: source.command.id,
-    sourceRequestSha256: source.command.requestSha256!,
-    sourceTerminalEvidenceSha256: source.command.terminalEvidenceSha256!,
-    checkpointCommandId: source.checkpoint?.id ?? null,
-    inputCommandId: source.input?.id ?? null,
-    resumeSessionId: source.incarnation.acpSessionId,
-    optionId: source.response.optionId,
-    ...(source.pause ? { pause: source.pause } : {}),
-  };
+  const requests = await pendingPermissions(tx, assignment.runId);
 
-  // A delivery the host refused outright never reached a deferred (ADR-180):
-  // the grant carries the answer to the reissued request, so the void intent
-  // is withdrawn with it rather than left as an unclassified input.
-  const response =
-    source.input === null && source.response._delivery !== undefined
-      ? await withdrawRefusedAgentDelivery(tx, source)
-      : source.response;
+  for (const request of requests) {
+    const member = await readCheckpointSource(tx, request);
 
-  await tx
-    .update(hitlRequests)
-    .set({
-      response: { ...response, _agentResume: grant },
-      ...(source.kind === "result" || source.input
-        ? { respondedAt: new Date() }
-        : {}),
-    })
-    .where(eq(hitlRequests.id, source.hitl.id));
-  if (!source.pause && (source.kind === "result" || source.input)) {
-    await completeAgentPermissionOrigin(tx, source.hitl.id);
-    await recordAgentPermissionAcknowledgement(tx, source.hitl.id);
+    if (
+      member.kind !== "ready" ||
+      member.source.kind !== source.kind ||
+      member.source.command.id !== source.command.id
+    )
+      throw new PromptOwnerInvariantError(
+        "agent_permission_resume_group_changed",
+      );
+    const item = member.source;
+    const grant: AgentPermissionResume = {
+      version: 1,
+      kind: item.kind === "rejected" ? "result" : item.kind,
+      assignmentId: assignment.id,
+      turnId: turn.id,
+      sourceCommandId: item.command.id,
+      sourceRequestSha256: item.command.requestSha256!,
+      sourceTerminalEvidenceSha256: item.command.terminalEvidenceSha256!,
+      checkpointCommandId: item.checkpoint?.id ?? null,
+      inputCommandId: item.input?.id ?? null,
+      resumeSessionId: item.incarnation.acpSessionId,
+      optionId: item.response.optionId,
+      ...(item.pause ? { pause: item.pause } : {}),
+    };
+    const response =
+      item.input === null && item.response._delivery !== undefined
+        ? await withdrawRefusedAgentDelivery(tx, item)
+        : item.pause?.kind === "agent_question"
+          ? (item.hitl.response as Record<string, unknown>)
+          : item.response;
+
+    await tx
+      .update(hitlRequests)
+      .set({
+        response: { ...response, _agentResume: grant },
+        ...(item.kind === "result" || item.input
+          ? { respondedAt: new Date() }
+          : {}),
+      })
+      .where(eq(hitlRequests.id, item.hitl.id));
+    if (!item.pause && (item.kind === "result" || item.input)) {
+      await completeAgentPermissionOrigin(tx, item.hitl.id);
+      await recordAgentPermissionAcknowledgement(tx, item.hitl.id);
+    }
   }
+
   log.info(
     {
       runId: assignment.runId,
       assignmentId: assignment.id,
       turnId: turn.id,
       sourceCommandId: source.command.id,
-      kind: grant.kind,
+      kind: source.kind,
     },
     "agent-permission-resume-authorized",
   );
@@ -345,7 +457,7 @@ export async function lockAgentPermissionResult(
   });
 
   if (!assignment || assignment.placementReason !== "resume") return null;
-  const [hitl] = await tx
+  const members = await tx
     .select()
     .from(hitlRequests)
     .where(
@@ -358,20 +470,28 @@ export async function lockAgentPermissionResult(
     )
     .for("update");
 
-  if (!hitl) return null;
-  const source = await assertAgentPermissionResumeSource(tx, hitl, assignment);
-  const grant = agentPermissionResumeSchema.parse(
-    (hitl.response as Record<string, unknown>)._agentResume,
-  );
+  if (!members.length) return null;
+  for (const hitl of members) {
+    const source = await assertAgentPermissionResumeSource(
+      tx,
+      hitl,
+      assignment,
+    );
+    const grant = agentPermissionResumeSchema.parse(
+      (hitl.response as Record<string, unknown>)._agentResume,
+    );
 
-  if (
-    source.kind !== "result" ||
-    !hitl.respondedAt ||
-    source.turn.state !== "dispatched" ||
-    grant.turnId !== source.turn.id ||
-    grant.applied
-  )
-    throw new PromptOwnerInvariantError("agent_permission_result_application");
+    if (
+      source.kind !== "result" ||
+      !hitl.respondedAt ||
+      source.turn.state !== "dispatched" ||
+      grant.turnId !== source.turn.id ||
+      grant.applied
+    )
+      throw new PromptOwnerInvariantError(
+        "agent_permission_result_application",
+      );
+  }
 
   return { state: "exited", persistent: run.persistent };
 }
@@ -410,7 +530,7 @@ export async function acknowledgeAgentPermissionResult(
   commandId: string,
 ): Promise<void> {
   const [run] = await tx.select().from(runs).where(eq(runs.id, runId));
-  const [hitl] = await tx
+  const members = await tx
     .select()
     .from(hitlRequests)
     .where(
@@ -422,18 +542,24 @@ export async function acknowledgeAgentPermissionResult(
       ),
     );
 
-  if (!hitl) return;
-  const response = hitl.response as Record<string, unknown>;
-  const grant = agentPermissionResumeSchema.safeParse(response._agentResume);
+  for (const hitl of members) {
+    const response = hitl.response as Record<string, unknown>;
+    const grant = agentPermissionResumeSchema.safeParse(response._agentResume);
 
-  if (!grant.success)
-    throw new PromptOwnerInvariantError("agent_permission_resume_grant_shape");
-  await tx
-    .update(hitlRequests)
-    .set({
-      response: { ...response, _agentResume: { ...grant.data, applied: true } },
-    })
-    .where(eq(hitlRequests.id, hitl.id));
+    if (!grant.success)
+      throw new PromptOwnerInvariantError(
+        "agent_permission_resume_grant_shape",
+      );
+    await tx
+      .update(hitlRequests)
+      .set({
+        response: {
+          ...response,
+          _agentResume: { ...grant.data, applied: true },
+        },
+      })
+      .where(eq(hitlRequests.id, hitl.id));
+  }
 }
 
 /** Only the current granted turn may carry the accepted choice to one
@@ -452,7 +578,7 @@ export async function deliverResumedAgentPermission(
       }))
     )
       return null;
-    const [parent] = await tx
+    const parents = await tx
       .select()
       .from(hitlRequests)
       .where(
@@ -465,7 +591,18 @@ export async function deliverResumedAgentPermission(
       )
       .for("update");
 
-    if (!parent) return null;
+    const matching = parents.filter((candidate) => {
+      const schema = candidate.schema as Record<string, unknown>;
+
+      return (
+        canonicalCommandJson(schema.toolCall ?? null) ===
+        canonicalCommandJson(event.toolCall ?? null)
+      );
+    });
+
+    if (matching.length !== 1) return null;
+    const parent = matching[0];
+
     const response = parent.response as Record<string, unknown>;
     const grant = agentPermissionResumeSchema.safeParse(response._agentResume);
 

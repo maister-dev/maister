@@ -14,6 +14,9 @@ import { getLocale, getTranslations } from "next-intl/server";
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 
+import { TaskQualificationControl } from "@/components/agents/task-qualification-control";
+import { getTaskQualificationSummaries } from "@/lib/tasks/qualification-queries";
+import { isRequestAccepted } from "@/lib/work/stage";
 import { LaunchPopover } from "@/components/board/launch-popover";
 import {
   TaskCardEditModal,
@@ -241,8 +244,14 @@ export default async function TaskDetailPage({
     { openBlockers: detail.openBlockers },
     { openBlocking },
   );
-  const launchDisabledReason =
-    platformStatus.kind !== "ready"
+  const qualification = (
+    await getTaskQualificationSummaries(getDb(), [detail.task.id])
+  ).get(detail.task.id);
+  const qualificationHeld = qualification && !isRequestAccepted(qualification);
+  const tQualification = await getTranslations("taskQualification");
+  const launchDisabledReason = qualificationHeld
+    ? tQualification("launchHeld")
+    : platformStatus.kind !== "ready"
       ? t("launchSupervisorUnavailable")
       : manualLaunchability === "launchable"
         ? undefined
@@ -266,8 +275,9 @@ export default async function TaskDetailPage({
     { openBlockers: detail.openBlockers },
     { openBlocking },
   );
-  const forceLaunchDisabledReason =
-    platformStatus.kind !== "ready"
+  const forceLaunchDisabledReason = qualificationHeld
+    ? tQualification("launchHeld")
+    : platformStatus.kind !== "ready"
       ? t("launchSupervisorUnavailable")
       : forceLaunchability === "launchable"
         ? undefined
@@ -701,6 +711,14 @@ export default async function TaskDetailPage({
           taskNumber={detail.task.number}
         />
       </header>
+      {qualification ? (
+        <TaskQualificationControl
+          canAct={canAct}
+          slug={slug}
+          summary={qualification}
+          taskId={detail.task.id}
+        />
+      ) : null}
 
       {launchConfig ? (
         <section className="flex flex-col gap-2">

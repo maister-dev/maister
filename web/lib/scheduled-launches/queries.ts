@@ -1,10 +1,12 @@
 import "server-only";
 
+import type { OperationalOutcome } from "@/lib/run-results/operational-types";
 import type { ScheduledLaunchRequest } from "@/lib/scheduled-launches/types";
 
 import { and, asc, desc, eq, ne, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 
+import { loadOperationalOutcomes } from "@/lib/run-results/operational-projection";
 import { getDb } from "@/lib/db/client";
 import {
   agentProjectLinks,
@@ -59,7 +61,12 @@ export type ScheduledLaunchDTO = {
   errorCode: string | null;
   errorMessage: string | null;
   lateByMs: number | null;
-  resultingRun: { id: string; status: string } | null;
+  resultingRun: {
+    id: string;
+    status: string;
+    agentKind?: "code_delivery" | "operational" | null;
+    operationalOutcome?: OperationalOutcome | null;
+  } | null;
   createdBy: { id: string; email: string } | null;
   createdAt: string;
   updatedAt: string;
@@ -219,7 +226,12 @@ export type AutomationRow = {
   errorCode: string | null;
   errorMessage: string | null;
   lateByMs: number | null;
-  resultingRun: { id: string; status: string } | null;
+  resultingRun: {
+    id: string;
+    status: string;
+    agentKind?: "code_delivery" | "operational" | null;
+    operationalOutcome?: OperationalOutcome | null;
+  } | null;
   detailHref: string;
   updatedAt: string;
 };
@@ -478,12 +490,15 @@ async function listProjectAutomationRows(input: {
       lastErrorCode: agentSchedules.lastErrorCode,
       lastErrorMessage: agentSchedules.lastErrorMessage,
       lastRunId: agentSchedules.lastRunId,
+      runStatus: runs.status,
+      agentKind: runs.agentKind,
       updatedAt: agentSchedules.updatedAt,
       agentId: agents.id,
       agentName: agents.name,
     })
     .from(agentSchedules)
     .innerJoin(agents, eq(agents.id, agentSchedules.agentId))
+    .leftJoin(runs, eq(runs.id, agentSchedules.lastRunId))
     .innerJoin(
       agentProjectLinks,
       and(
@@ -514,6 +529,12 @@ async function listProjectAutomationRows(input: {
       : recurringQuery.limit(sourceLimit),
     sourceLimit === undefined ? agentQuery : agentQuery.limit(sourceLimit),
   ]);
+  const operationalOutcomes = await loadOperationalOutcomes(
+    db,
+    bindings.flatMap((row) =>
+      row.lastRunId && row.agentKind === "operational" ? [row.lastRunId] : [],
+    ),
+  );
   const projectIdentifier = input.projectSlug ?? input.projectId;
   const rows: AutomationRow[] = [
     ...launches.map((row) => {
@@ -577,9 +598,16 @@ async function listProjectAutomationRows(input: {
       errorCode: row.lastErrorCode,
       errorMessage: row.lastErrorMessage,
       lateByMs: null,
-      resultingRun: row.lastRunId
-        ? { id: row.lastRunId, status: "Unknown" }
-        : null,
+      resultingRun:
+        row.lastRunId && row.runStatus
+          ? {
+              id: row.lastRunId,
+              status: row.runStatus,
+              agentKind: row.agentKind,
+              operationalOutcome:
+                operationalOutcomes.get(row.lastRunId) ?? null,
+            }
+          : null,
       detailHref: `/api/projects/${projectIdentifier}/automations/${row.triggerType === "cron" ? "agent_cron" : "agent_event"}/${row.id}`,
       updatedAt: iso(row.updatedAt)!,
     })),

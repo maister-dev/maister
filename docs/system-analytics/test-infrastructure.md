@@ -1277,6 +1277,12 @@ AT-17. Browser half stays open under S5.3.
 - A container startup failure after a successful Docker probe still produces
   `TestDatabaseDockerUnavailableError` without exposing a connection-string
   password.
+- The pinned SDK's pre-SQL port-binding timeout permits one fresh allocation only
+  after label-scoped cleanup proves the first allocation absent. Emit a structured
+  warning. Cleanup failure, non-transient errors and a second failure remain fatal
+  with the last cause. Never retry tests, migrations or SQL, extend deadlines, restart
+  Docker, reuse a database or remove sibling resources. The owning real-Docker
+  IT-UX-05 control proves first-allocation absence and a live sibling's SQL response.
 - Migration or E2E seed failure still attempts to stop the pool and container.
 - The E2E child receives the ephemeral `DB_URL`; its Next server keeps its
   normal runtime `NODE_ENV`.

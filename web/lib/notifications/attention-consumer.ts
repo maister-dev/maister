@@ -1,32 +1,6 @@
 import "server-only";
 
-/**
- * The `attention.*` domain-event consumer (ADR-173 D5/D6, `NTF-08`,
- * `EDGE-NTF-01`).
- *
- * ONE entry in `DOMAIN_EVENT_CONSUMERS` plus its cursor row — exactly what
- * ADR-086 promised a consumer would cost. No new clock, no new outbox.
- *
- * TRIGGERS ARE DELTAS ONLY (D6). A domain event is never forwarded as a
- * notification: the consumer recomputes the reader's `decisions` count and emits
- * only when that NUMBER moved. A per-event stream is the anti-pattern that
- * trains a reader to mute the channel within a week, at which point the whole
- * delivery path is dead weight. The digest is the other trigger and is emitted
- * by the scheduler, not from here.
- *
- * IDEMPOTENCE (`EDGE-NTF-01`). Domain-event dispatch is at-least-once, so
- * `handle` must converge. It does, twice over:
- *   - the count is recomputed from current state rather than accumulated, so a
- *     redelivered window produces the same number;
- *   - that number is compared against the last one this consumer emitted for
- *     the reader (`notification_deltas`-free: the previous value is read from
- *     the reader's most recent `attention.*` event), so an unchanged count emits
- *     nothing at all.
- *
- * POISON SAFETY. The dispatcher breaks WITHOUT advancing the cursor when a
- * handler throws, so one permanently-failing reader would stall every later
- * event. Each reader is therefore wrapped: `handle` never throws.
- */
+/** Shared attention publisher: ordinary decision deltas and newly actionable incident revisions. */
 
 import type { DomainEventConsumer } from "@/lib/domain-events/consumers";
 import type { DomainEventRow } from "@/lib/db/schema";
@@ -35,7 +9,12 @@ import { sql } from "drizzle-orm";
 import pino from "pino";
 
 import { ATTENTION_PLANE_EVENT_KINDS } from "@/lib/domain-events/taxonomy";
-import { computeDecisionsQueue } from "@/lib/queries/decisions";
+import {
+  readAttentionDecisionSnapshot,
+  lockUnpublishedAttentionEpisodes,
+  recordAttentionEpisodePublications,
+  type AttentionDecisionSnapshot,
+} from "@/lib/notifications/attention-publication";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import { getDb } from "@/lib/db/client";
 import { isMaisterError } from "@/lib/errors";
@@ -64,7 +43,7 @@ export interface AttentionConsumerDeps {
   decisionsFor?: (
     userId: string,
     role: "admin" | "member" | "viewer",
-  ) => Promise<number>;
+  ) => Promise<AttentionDecisionSnapshot>;
 }
 
 /**
@@ -103,38 +82,6 @@ async function readersOf(
 }
 
 /**
- * The last `decisions` value this consumer published for a reader, read back out
- * of its own emissions. Keeping the previous value in the outbox rather than in
- * a new table is what lets the consumer stay "one entry plus a cursor row": the
- * events it already writes ARE the state it needs.
- */
-async function lastPublishedCount(
-  client: Db,
-  ownerUserId: string,
-): Promise<number | null> {
-  // `id DESC` is a total order over a random uuid, so the tiebreak is stable for
-  // a given set of rows but says nothing about which is newer. It never decides
-  // anything in practice: this consumer emits at most one event per reader per
-  // pass and passes are serialized, so two rows cannot share an `occurred_at`.
-  const result = await client.execute(sql`
-    SELECT (data->>'decisions')::int AS decisions
-    FROM webhook_events
-    WHERE type IN (
-            'attention.decision_opened',
-            'attention.decision_closed',
-            'attention.decisions_changed'
-          )
-      AND data->>'ownerUserId' = ${ownerUserId}
-    ORDER BY occurred_at DESC, id DESC
-    LIMIT 1
-  `);
-  const row = (result.rows ?? [])[0] as
-    { decisions: number | null } | undefined;
-
-  return row?.decisions ?? null;
-}
-
-/**
  * Which of the three delta types a move is. `opened`/`closed` are the edges a
  * reader cares about most — "something started waiting on me" and "you are
  * clear" — and `decisions_changed` covers a move between two non-zero values.
@@ -167,7 +114,7 @@ export function buildAttentionConsumer(
       const decisionsFor =
         deps.decisionsFor ??
         (async (userId, role) =>
-          (await computeDecisionsQueue(userId, role)).count);
+          readAttentionDecisionSnapshot(client, userId, role));
 
       // One pass per READER, not per event: three events that move the same
       // reader's count are one notification, which is the whole point of D6.
@@ -235,27 +182,7 @@ export function buildAttentionConsumer(
  */
 const DECISION_DELTA_LOCK_NAMESPACE = 0x61746e_64;
 
-/**
- * One reader's delta, shared by the domain-event consumer and the
- * `system_sweep` backstop so there is exactly one definition of "the count
- * moved, tell them" (ADR-173 D5/D6).
- *
- * Idempotent by construction: the count is recomputed from current state and
- * compared against the last value PUBLISHED for this reader, so a redelivery,
- * a sweep landing on the heels of a consumer pass, and both running against the
- * same unchanged state all emit nothing.
- *
- * That last clause is only true if the read and the write are ATOMIC, and the
- * two callers hold SEPARATE scheduler leases — so nothing stopped both from
- * reading `previous = 0, current = 1` and each publishing its own
- * `attention.decision_opened` for one transition. Two outbox rows with
- * different ids are two notifications: the drainer's
- * `(subscription_id, event_id)` idempotency collapses a redelivery of ONE
- * event, never two distinct ones. So the whole read-compare-publish runs under
- * a per-owner advisory lock, taken FIRST: with the lock held before the count
- * is read, the loser of the race reads the winner's committed row as its
- * baseline and emits nothing.
- */
+/** Owner lock precedes episode locks; publication, receipts and baseline commit atomically. */
 export async function emitDecisionsDelta(
   client: Db,
   userId: string,
@@ -263,32 +190,56 @@ export async function emitDecisionsDelta(
   decisionsFor: (
     userId: string,
     role: "admin" | "member" | "viewer",
-  ) => Promise<number>,
+  ) => Promise<AttentionDecisionSnapshot>,
 ): Promise<boolean> {
   return client.transaction(async (tx: Db) => {
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(${DECISION_DELTA_LOCK_NAMESPACE}::int, hashtext(${userId})::int)`,
     );
-
+    const episodes = await lockUnpublishedAttentionEpisodes(tx, userId, role);
     const current = await decisionsFor(userId, role);
-    const previous = await lastPublishedCount(tx, userId);
+    const previousRows = await tx.execute(
+      sql`SELECT decisions,ordinary_decisions FROM attention_publication_states WHERE owner_user_id=${userId}`,
+    );
+    const previous = previousRows.rows[0] as
+      { decisions: number; ordinary_decisions: number } | undefined;
+    const baseline = previous?.decisions ?? 0;
+    const ordinaryChanged =
+      current.ordinaryDecisions !== (previous?.ordinary_decisions ?? 0);
+    const type =
+      ordinaryChanged || episodes.length > 0
+        ? (deltaTypeFor(baseline, current.decisions) ??
+          "attention.decisions_changed")
+        : null;
+    const eventId =
+      type === null
+        ? null
+        : await emitWebhookEvent({
+            db: tx,
+            type,
+            ownerUserId: userId,
+            data: { decisions: current.decisions, previous: baseline },
+          });
 
-    // A reader this consumer has never published for is seeded at zero, so
-    // their first notification describes a real change rather than a backlog
-    // they already know about.
-    const baseline = previous ?? 0;
-    const type = deltaTypeFor(baseline, current);
+    if (eventId !== null)
+      await recordAttentionEpisodePublications(tx, userId, episodes, eventId);
+    await tx.execute(sql`INSERT INTO attention_publication_states(owner_user_id,decisions,ordinary_decisions,notification_event_id)
+      VALUES (${userId},${current.decisions},${current.ordinaryDecisions},${eventId})
+      ON CONFLICT(owner_user_id) DO UPDATE SET decisions=excluded.decisions,
+        ordinary_decisions=excluded.ordinary_decisions,
+        notification_event_id=coalesce(excluded.notification_event_id,attention_publication_states.notification_event_id),updated_at=clock_timestamp()`);
+    log.debug(
+      {
+        userId,
+        decisions: current.decisions,
+        ordinaryDecisions: current.ordinaryDecisions,
+        newEpisodeCount: episodes.length,
+        eventId,
+      },
+      "attention publication observed",
+    );
 
-    if (type === null) return false;
-
-    await emitWebhookEvent({
-      db: tx,
-      type,
-      ownerUserId: userId,
-      data: { decisions: current, previous: baseline },
-    });
-
-    return true;
+    return eventId !== null;
   });
 }
 

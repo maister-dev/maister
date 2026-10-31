@@ -148,6 +148,12 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | `web/lib/supervisor-client.ts` | The ONLY place `web/` talks to `supervisor/` (HTTP+SSE) |
 | `web/lib/errors.ts` | `MaisterError` discriminated union (11 codes) |
 | `web/lib/db/schema.ts` | Drizzle schema; `node_attempts` is the sole Flow execution ledger |
+| `web/lib/agents/activity-queries.ts` | Scoped active executions and retained run/attempt history |
+| `web/lib/tasks/qualification.ts` | Versioned request assessments and authoritative admission |
+| `web/components/agents/` | Project agent history, grouped incidents, retries and qualification controls |
+| `web/lib/agents/launch-contract.ts` | Immutable agent kind, definition and operational completion snapshots |
+| `web/lib/run-results/operational-projection.ts` | Shared operational diagnostic projection for run details, collect and automation history |
+| `web/lib/gc/operational-disposition.ts` | Durable operational cleanup through existing workspace lifecycle claims |
 | `web/lib/execution-host/events/projection-runtime.ts` | Autonomous canonical projection registry and worker activation |
 | `web/lib/config.ts` | `maister.yaml` v2 loader (zod-validated) |
 | `web/lib/project-config-persistence/` | Reviewed configuration projection, commit/push intents, Git publication and recovery |
@@ -173,7 +179,7 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | Getting Started | `docs/getting-started.md` | Install, dev workflow, first run |
 | Russian Guide | `docs/ru/README.md` | Purpose, workflow, operator guide |
 | Supervisor | `docs/supervisor.md` | ACP daemon: HTTP+SSE API, lifecycle, durable events, runtime objects, env vars |
-| Database Schema | `docs/database-schema.md` | 8 tables, FK cascade chain, indexes, Drizzle workflow |
+| Database Schema | `docs/database-schema.md` | 153 tables, FK cascade chain, indexes, Drizzle workflow |
 | Error Taxonomy | `docs/error-taxonomy.md` | `MaisterError` codes — when each fires, what the UI does |
 | Configuration | `docs/configuration.md` | `maister.yaml` v2 + `flow.yaml` v1 + `form_schema` versioning + env vars |
 | Project configuration persistence | `docs/system-analytics/project-config-persistence.md` | Reviewed export, commits, recovery and push; Implemented |
@@ -181,6 +187,8 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | Product View | `docs/PRODUCT_VIEW.md` | Lean Canvas, JTBD, gaps, MVP / Phase 2 / Later |
 | Architecture | `docs/architecture.md` | Current system architecture, C4 diagrams, data flows |
 | Decisions | `docs/decisions.md` | ADRs and locked technical decisions |
+| Agent activity design | `docs/system-analytics/agent-activity-history.md` | Active executions and retained history |
+| Task qualification design | `docs/system-analytics/task-qualification.md` | Incoming requests and admission contracts |
 | System Analytics | `docs/system-analytics/` | Domain flows for projects, runs, HITL, executors, Flow DSL, and test database infrastructure |
 | Screens Reference | `docs/screens/README.md` | User-facing screens and shared chrome |
 | API Contracts | `docs/api/` | Web/supervisor OpenAPI and SSE AsyncAPI contracts |

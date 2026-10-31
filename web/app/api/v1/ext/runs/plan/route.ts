@@ -39,6 +39,11 @@ import {
   recordRequiredTokenAudit,
 } from "@/lib/tokens/ext-handler";
 import { socialActorForToken } from "@/lib/tokens/verify";
+import {
+  assertExecutionParentAdmission,
+  establishExecutionChildAdmission,
+} from "@/lib/tasks/qualification-admission";
+import { retryDigest } from "@/lib/agents/retry-guards";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches lib/services/tasks.ts).
 const { runs, tasks } = schemaModule as unknown as Record<string, any>;
@@ -415,6 +420,7 @@ export async function POST(
           // per-orchestrator lock, as `live children + batch size` — replacing
           // the pre-ADR-163 check that compared the batch LENGTH alone against
           // the cap and so ignored every child already running.
+          await assertExecutionParentAdmission(tx, ctx.projectId, parent.id);
           await admitDelegatedChild(tx, {
             parentRunId: parent.id,
             incoming: planTasks.length,
@@ -434,6 +440,25 @@ export async function POST(
               { projectId: ctx.projectId, actorUserId: null },
               tx,
             );
+
+            if (parent.taskId) {
+              await addTaskRelation(
+                {
+                  projectId: ctx.projectId,
+                  fromTaskId: parent.taskId,
+                  kind: "parent_of",
+                  toTaskId: created.taskId,
+                  actor: socialActorForToken(ctx.actor),
+                },
+                tx,
+              );
+            }
+            await establishExecutionChildAdmission(tx, {
+              projectId: ctx.projectId,
+              parentRunId: parent.id,
+              childTaskId: created.taskId,
+              planRevision: retryDigest(body),
+            });
 
             // Stamp the as-plan launch intent — createTask does not accept it.
             // The spec is `kind`-discriminated (ADR-163) so the auto-launcher
@@ -469,18 +494,6 @@ export async function POST(
 
             // parent_of from the orchestrator's task. A task-less orchestrator
             // run still gets its as-plan tasks created — just no board parent.
-            if (parent.taskId) {
-              await addTaskRelation(
-                {
-                  projectId: ctx.projectId,
-                  fromTaskId: parent.taskId,
-                  kind: "parent_of",
-                  toTaskId: created.taskId,
-                  actor: socialActorForToken(ctx.actor),
-                },
-                tx,
-              );
-            }
           }
 
           if (!parent.taskId) {

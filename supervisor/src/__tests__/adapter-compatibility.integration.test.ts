@@ -1,15 +1,16 @@
 import type { ChildProcessByStdio } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
 import type {
+  McpServerInput,
   RunnerLaunch,
   SessionEvent,
   SessionRecord,
   SupervisorError,
 } from "../types";
 
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { EventEmitter, once } from "node:events";
-import { createWriteStream, mkdtempSync } from "node:fs";
+import { createWriteStream, mkdtempSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -362,6 +363,319 @@ describe("adapter compatibility fixtures", () => {
     return { events, result, pendingPermissions, sessionId: record.sessionId };
   }
 
+  it("IT-UX-20 an operational read-only session asks for its registered MAIster mutation instead of denying or approving it", async () => {
+    const child = spawnFixture(["--permission-kind", "other"]);
+    const emitter = new EventEmitter();
+    const events = eventCollector(emitter);
+    const pendingPermissions = createPendingPermissions({ timeoutMs: 5000 });
+    const record: SessionRecord & { agentKind: "operational" } = {
+      ...recordFor("opencode"),
+      readOnlySession: true,
+      agentKind: "operational",
+      autoApprovePermissions: false,
+    };
+    const connection = await createAcpConnection({
+      stdin: child.stdin,
+      stdoutSource: child.stdout,
+      sessionId: record.sessionId,
+      worktreePath: process.cwd(),
+      record,
+      emitter,
+      logger,
+      adapter: "opencode",
+      pendingPermissions,
+      runner: runnerFor("opencode"),
+      mcpServers: [
+        {
+          name: "maister",
+          transport: "stdio" as const,
+          command: "node",
+          args: [],
+          env: {
+            MAISTER_PROJECT_TOKEN: "controlled-token",
+            MAISTER_API_BASE_URL: "http://fixture.invalid",
+          },
+        },
+      ],
+    });
+    const prompt = sendPromptOnConnection(
+      connection.connection,
+      {
+        adapter: "opencode",
+        acpSessionId: connection.acpSessionId,
+        stepId: "qualify",
+        prompt: "tool-name:mcp__maister__triage_set",
+      },
+      logger,
+    );
+    const permission = await waitForEvent(
+      emitter,
+      (event) => event.type === "session.permission_request",
+    );
+
+    if (permission.type !== "session.permission_request")
+      throw new Error("Expected explicit control-plane permission");
+    expect(pendingPermissions.size(record.sessionId)).toBe(1);
+    expect(events).not.toContainEqual(
+      expect.objectContaining({
+        type: "session.update",
+        update: expect.objectContaining({
+          content: expect.objectContaining({
+            text: "permission selected:allow",
+          }),
+        }),
+      }),
+    );
+    expect(
+      pendingPermissions.resolve(
+        record.sessionId,
+        permission.requestId,
+        "allow",
+      ),
+    ).toBe(true);
+    expect(await prompt).toMatchObject({ stopReason: "end_turn" });
+    expect(pendingPermissions.size(record.sessionId)).toBe(0);
+  });
+
+  it.each([
+    {
+      kind: "other",
+      tool: "mcp__maister__triage_set",
+      registered: true,
+      operational: true,
+      duplicateFacade: true,
+    },
+    {
+      kind: "other",
+      tool: "mcp__maister__triage_set",
+      registered: true,
+      operational: true,
+      httpFacade: true,
+    },
+    {
+      kind: "other",
+      tool: "mcp__maister__triage_set",
+      registered: true,
+      operational: true,
+      missingFacadeCredential: true,
+    },
+    {
+      kind: "other",
+      tool: "mcp__github__issue_write",
+      registered: true,
+      operational: true,
+    },
+    {
+      kind: "other",
+      tool: "mcp__maister__triage_set",
+      registered: false,
+      operational: true,
+    },
+    {
+      kind: "other",
+      tool: "ambiguous_tool",
+      registered: true,
+      operational: true,
+    },
+    {
+      kind: "edit",
+      tool: "mcp__maister__triage_set",
+      registered: true,
+      operational: true,
+      nativePath: true,
+    },
+    {
+      kind: "execute",
+      tool: "mcp__maister__triage_set",
+      registered: true,
+      operational: true,
+    },
+    {
+      kind: "other",
+      tool: "mcp__maister__triage_set",
+      registered: true,
+      operational: false,
+    },
+  ])(
+    "IT-UX-20 preserves read-only refusal for $tool ($kind, registered=$registered, operational=$operational)",
+    async ({ kind, tool, registered, operational, ...request }) => {
+      const child = spawnFixture(["--permission-kind", kind]);
+      const emitter = new EventEmitter();
+      const events = eventCollector(emitter);
+      const pendingPermissions = createPendingPermissions({ timeoutMs: 5000 });
+      const record: SessionRecord = {
+        ...recordFor("opencode"),
+        readOnlySession: true,
+        ...(operational ? { agentKind: "operational" as const } : {}),
+      };
+      const facade: McpServerInput = {
+        name: "maister",
+        transport:
+          "httpFacade" in request ? ("http" as const) : ("stdio" as const),
+        command: "node",
+        args: [],
+        url: "http://fixture.invalid",
+        env:
+          "missingFacadeCredential" in request
+            ? {}
+            : {
+                MAISTER_PROJECT_TOKEN: "controlled-token",
+                MAISTER_API_BASE_URL: "http://fixture.invalid",
+              },
+      };
+      const connection = await createAcpConnection({
+        stdin: child.stdin,
+        stdoutSource: child.stdout,
+        sessionId: record.sessionId,
+        worktreePath: process.cwd(),
+        record,
+        emitter,
+        logger,
+        adapter: "opencode",
+        pendingPermissions,
+        runner: runnerFor("opencode"),
+        ...(registered
+          ? {
+              mcpServers: [
+                facade,
+                ...("duplicateFacade" in request ? [facade] : []),
+              ],
+            }
+          : {}),
+      });
+
+      expect(
+        await sendPromptOnConnection(
+          connection.connection,
+          {
+            adapter: "opencode",
+            acpSessionId: connection.acpSessionId,
+            stepId: "qualify",
+            prompt: `tool-name:${tool}${"nativePath" in request ? " native-path" : ""}`,
+          },
+          logger,
+        ),
+      ).toMatchObject({ stopReason: "end_turn" });
+      expect(pendingPermissions.size(record.sessionId)).toBe(0);
+      expect(events).not.toContainEqual(
+        expect.objectContaining({ type: "session.permission_request" }),
+      );
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "session.update",
+          update: expect.objectContaining({
+            content: expect.objectContaining({
+              text: "permission selected:deny",
+            }),
+          }),
+        }),
+      );
+    },
+  );
+
+  it("IT-UX-20 native read-only ACP reads the detached evidence SHA after the source branch advances", async () => {
+    const reader = spawnFixture([
+      "--permission-kind",
+      "read",
+      "--native-read-file",
+    ]);
+    const root = fixtures[fixtures.length - 1].root;
+    const source = join(root, "source");
+    const detached = join(root, "evidence");
+
+    execFileSync("git", ["init", "-b", "main", source]);
+    writeFileSync(join(source, "evidence.txt"), "pinned evidence\n");
+    execFileSync("git", ["-C", source, "add", "evidence.txt"]);
+    execFileSync("git", [
+      "-C",
+      source,
+      "-c",
+      "user.name=Fixture",
+      "-c",
+      "user.email=fixture@example.test",
+      "commit",
+      "-m",
+      "Evidence",
+    ]);
+    const sha = execFileSync("git", ["-C", source, "rev-parse", "HEAD"], {
+      encoding: "utf8",
+    }).trim();
+
+    execFileSync("git", [
+      "-C",
+      source,
+      "worktree",
+      "add",
+      "--detach",
+      detached,
+      sha,
+    ]);
+    writeFileSync(
+      join(source, "evidence.txt"),
+      "new mutable branch evidence\n",
+    );
+    // The controlled adapter uses the same native file access as the supported runner.
+    execFileSync("git", ["-C", source, "add", "evidence.txt"]);
+    execFileSync("git", [
+      "-C",
+      source,
+      "-c",
+      "user.name=Fixture",
+      "-c",
+      "user.email=fixture@example.test",
+      "commit",
+      "-m",
+      "Advance source",
+    ]);
+    const emitter = new EventEmitter();
+    const events = eventCollector(emitter);
+    const record: SessionRecord = {
+      ...recordFor("claude"),
+      readOnlySession: true,
+    };
+    const connection = await createAcpConnection({
+      stdin: reader.stdin,
+      stdoutSource: reader.stdout,
+      sessionId: record.sessionId,
+      worktreePath: detached,
+      record,
+      emitter,
+      logger,
+      adapter: "claude",
+      pendingPermissions: createPendingPermissions({ timeoutMs: 5000 }),
+      runner: runnerFor("claude"),
+    });
+
+    expect(
+      await sendPromptOnConnection(
+        connection.connection,
+        {
+          adapter: "claude",
+          acpSessionId: connection.acpSessionId,
+          stepId: "qualify",
+          prompt: `Read native-file:${encodeURIComponent(join(detached, "evidence.txt"))}`,
+        },
+        logger,
+      ),
+    ).toMatchObject({ stopReason: "end_turn" });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "session.update",
+        update: expect.objectContaining({
+          content: expect.objectContaining({ text: "pinned evidence\n" }),
+        }),
+      }),
+    );
+    expect(events).not.toContainEqual(
+      expect.objectContaining({ type: "session.permission_request" }),
+    );
+    expect(
+      execFileSync("git", ["-C", detached, "rev-parse", "HEAD"], {
+        encoding: "utf8",
+      }).trim(),
+    ).toBe(sha);
+  });
+
   describe("readOnlySession L1 wire arbitration (ADR-090)", () => {
     const capableAdapters = listAdapterRuntimes()
       .filter((runtime) => runtime.readOnlyCapable)
@@ -402,6 +716,7 @@ describe("adapter compatibility fixtures", () => {
 
     it.each([
       ["edit", "deny"],
+      ["execute", "deny"],
       ["other", "deny"],
     ] as const)(
       "shared arbitration answers %s with %s without HITL leakage",

@@ -333,7 +333,11 @@ export function stubReceipt(commandId: string) {
         runId: r.runId,
         kind: r.kind,
         assignmentEpoch: r.epoch,
-        phase: "completed",
+        phase:
+          (r.body as { details?: { reason?: string } } | null)?.details
+            ?.reason === "e2e_runner_prework_unavailable"
+            ? "rejected"
+            : "completed",
         httpStatus: r.status,
         body: r.body ?? {},
         receivedAt: r.receivedAt,

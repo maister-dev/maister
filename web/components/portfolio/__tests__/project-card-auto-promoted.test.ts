@@ -9,6 +9,10 @@ import { describe, expect, it, vi } from "vitest";
 // ProjectCard is an async Server Component that reads translations via
 // getTranslations. Mock it with a minimal ICU-interpolating resolver so the
 // {lane} token in the auto glyph tooltip renders.
+vi.mock("@/components/agents/active-agent-executions", () => ({
+  ActiveAgentExecutions: () => null,
+}));
+
 vi.mock("next-intl/server", () => ({
   getTranslations:
     async (namespace: string) =>
@@ -60,6 +64,7 @@ function project(ws: PortfolioWorkspace): PortfolioProject {
     agentsCount: 0,
     members: [],
     agents: ["claude"],
+    activeExecutions: [],
     activeWorkspaces: [ws],
     recentMerges: [],
     need: null,

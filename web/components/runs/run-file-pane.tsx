@@ -58,7 +58,7 @@ export async function renderRunFilePane({
   // request field. Mirrors the retired files/content route's gate.
   await requireProjectAction(detail.projectId, "readRepoFiles");
 
-  if (file === null) {
+  if (file === null || detail.agentKind === "operational") {
     return (
       <div
         className="rounded-[8px] border border-dashed border-line bg-paper p-6 text-center font-mono text-[12px] text-mute"

@@ -22,6 +22,15 @@ One row per file — this table is the **canonical index** of the folder
 
 | Domain | File | What it covers |
 | ------ | ---- | -------------- |
+| Agent activity history | [`agent-activity-history.md`](agent-activity-history.md) | Implemented: active executions and retained run/attempt history. |
+| Agent incidents | [`agent-incidents.md`](agent-incidents.md) | Implemented: quiet grouped attention and causal recovery. |
+| Agent retries | [`agent-retry.md`](agent-retry.md) | Implemented: explicit fenced alternate-runner attempts. |
+| Task qualification | [`task-qualification.md`](task-qualification.md) | Implemented: Incoming requests, evidence and publication admission. |
+| Agent activity traceability | [`agent-activity-traceability.md`](agent-activity-traceability.md) | Implemented: follow-up requirements, tasks and primary tests. |
+| Operational agents | [`operational-agents.md`](operational-agents.md) | Implemented: independent kind/policy axes, frozen launch contract and package compatibility. |
+| Operational results | [`operational-agent-results.md`](operational-agent-results.md) | Implemented: operational_v1 values, semantic validation, terminal mapping and diagnostic collection. |
+| Operational lifecycle | [`operational-agent-lifecycle.md`](operational-agent-lifecycle.md) | Implemented: integrity, concurrent HITL, safe disposal, retention and actionable failures. |
+| Operational traceability | [`operational-agents-traceability.md`](operational-agents-traceability.md) | Operational requirement/edge ownership, implementation tasks and primary tests. |
 | Acp runners | [`acp-runners.md`](acp-runners.md) | Platform ACP runner catalog CRUD on `/settings`: create/edit/delete + default + enable/disable, usage-guarded hard delete, readiness recompute (ADR-065). |
 | Agent memory | [`agent-memory.md`](agent-memory.md) | Agent memory files (ADR-152, Implemented): per-attachment `memory_enabled` axis, injective on-disk `memory.md` store, launch-time injection with a `runs.agent_memory_hash` provenance stamp, content-hash CAS write path, and the owner's view/edit/clear surface. |
 | Agent mentions | [`agent-mentions.md`](agent-mentions.md) | Agent mentions in task comments (ADR-151, Implemented): write-time `@<agentId>` resolution/expansion, `agent_schedules` mention binding, summonability predicate, and the additive directed-summon branch of the `agent_triggers` consumer. |

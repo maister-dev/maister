@@ -275,6 +275,7 @@ async function loadCandidates(db: Db, now: Date): Promise<CandidateRow[]> {
     .innerJoin(runs, eq(runs.id, workspaces.runId))
     .where(
       and(
+        sql`coalesce(${runs.agentKind}, 'code_delivery') <> 'operational'`,
         isNull(workspaces.removedAt),
         inArray(runs.status, [...WORKTREE_TTL_RUN_STATUSES]),
         or(

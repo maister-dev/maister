@@ -35,6 +35,7 @@ export type ExportProjection = {
   mainBranch: string;
   branchPrefix: string;
   publicBranchTemplate: string;
+  taskQualificationOverride?: "legacy" | "required" | null;
   defaultRunnerId: string | null;
   promotionMode: string | null;
   packages: ExportPackage[];

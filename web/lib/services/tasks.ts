@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { Db as QualificationDb } from "@/lib/execution-host/db";
 import type { Task } from "@/lib/db/schema";
 import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 import type { TaskPriority } from "@/lib/tasks/criticality";
@@ -31,6 +32,10 @@ import {
 import { subscribe } from "@/lib/social/subscriptions";
 import { applyQueueWriteFields } from "@/lib/tasks/queue-fields";
 import { cancelClarificationsForAbandonedTasks } from "@/lib/tasks/clarification-requests";
+import {
+  getTaskQualificationSummaries,
+  type TaskQualificationSummary,
+} from "@/lib/tasks/qualification-queries";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches app/api/projects/[slug]/tasks/route.ts).
 const { projects, runs, tasks } = schemaModule as unknown as Record<
@@ -317,6 +322,7 @@ export async function createTask(
 }
 
 export type TaskDTO = {
+  qualification: TaskQualificationSummary;
   id: string;
   number: number;
   taskKey: string;
@@ -342,7 +348,22 @@ export type TaskDTO = {
   createdAt: Date;
 };
 
-async function taskToDTO(row: any, db: { select: any }): Promise<TaskDTO> {
+async function taskToDTO(
+  row: any,
+  db: { select: any },
+  qualification?: TaskQualificationSummary,
+): Promise<TaskDTO> {
+  const summary =
+    qualification ??
+    (await getTaskQualificationSummaries(db as QualificationDb, [row.id])).get(
+      row.id,
+    );
+
+  if (!summary)
+    throw new MaisterError(
+      "PRECONDITION",
+      "Task qualification state is unavailable",
+    );
   const keyRows = await (db as any)
     .select({ taskKey: projects.taskKey })
     .from(projects)
@@ -358,6 +379,7 @@ async function taskToDTO(row: any, db: { select: any }): Promise<TaskDTO> {
     .limit(1);
 
   return {
+    qualification: summary,
     id: row.id,
     number: row.number,
     taskKey: keyRows[0]?.taskKey ?? "",
@@ -406,7 +428,14 @@ export async function listTaskDTOs(
     .where(eq(tasks.projectId, projectId))
     .orderBy(desc(tasks.createdAt));
 
-  return Promise.all(rows.map((r: any) => taskToDTO(r, _db)));
+  const summaries = await getTaskQualificationSummaries(
+    _db as QualificationDb,
+    rows.map((row: { id: string }) => row.id),
+  );
+
+  return Promise.all(
+    rows.map((r: any) => taskToDTO(r, _db, summaries.get(r.id))),
+  );
 }
 
 export type UpdateTaskInput = {

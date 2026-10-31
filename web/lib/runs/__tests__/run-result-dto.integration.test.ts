@@ -13,6 +13,10 @@ import {
 } from "vitest";
 
 import {
+  operationalBlockedFixture,
+  operationalContractFixture,
+} from "@/test-support/operational-agent";
+import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
@@ -91,7 +95,6 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await pool.query(`DELETE FROM "run_results"`);
   await pool.query(`DELETE FROM "runs"`);
   await pool.query(`DELETE FROM "projects"`);
 
@@ -162,6 +165,69 @@ describe("loadRunPublicResult gates the payload on the derived status", () => {
     expect(dto?.resultStatus).toBe("pending");
     expect(dto?.value).toBeNull();
   }, 60_000);
+
+  it("IT-OPR-04 exposes a failed operation diagnostic while ordinary result stays unavailable", async () => {
+    const runId = randomUUID();
+    const contract = operationalContractFixture("none");
+
+    await pool.query(
+      `INSERT INTO runs (id,project_id,run_kind,status,flow_version,agent_kind,agent_workspace,result_contract) VALUES ($1,$2,'agent','Running','agent','operational','none',$3::jsonb)`,
+      [runId, projectId, JSON.stringify(contract)],
+    );
+    await seedResult({
+      runId,
+      revision: 1,
+      validity: "valid",
+      value: {
+        ...operationalBlockedFixture(),
+        references: [
+          {
+            kind: "task",
+            id: "provider-task-without-uuid",
+            state: "confirmed",
+            url: "https://example.test/untrusted-task",
+          },
+          { kind: "task", id: randomUUID(), state: "confirmed" },
+        ],
+      } as unknown as Record<string, unknown>,
+    });
+    await pool.query(
+      `UPDATE run_results SET schema_ref=$2, schema_sha256=$3 WHERE run_id=$1`,
+      [runId, contract.schemaRef, contract.sha256],
+    );
+    await pool.query(
+      `UPDATE runs SET status='Failed', ended_at=now(), operational_terminal=$2::jsonb WHERE id=$1`,
+      [
+        runId,
+        JSON.stringify({
+          version: 1,
+          status: "Failed",
+          cause: "agent_exit",
+          effectiveOutcome: "blocked",
+          successful: false,
+          validation: "valid",
+          integrity: "clean",
+          baselineGeneration: 1,
+          resultRevision: 1,
+          reasonCodes: ["reported_blocked"],
+          evidenceIds: [],
+        }),
+      ],
+    );
+    const dto = await loadRunPublicResult(db, runId);
+
+    expect(dto?.resultStatus).toBe("unavailable");
+    expect(dto?.value).toBeNull();
+    expect(dto?.operationalOutcome).toMatchObject({
+      reportedOutcome: "blocked",
+      effectiveOutcome: "blocked",
+      successful: false,
+      resultRevision: 1,
+      reportedResult: { diagnostics: [{ httpStatus: 403 }] },
+      referenceLinks: [],
+    });
+    expect(JSON.stringify(dto)).not.toContain("/tmp/fixture");
+  });
 
   it("renders nothing at all for a run with neither contract nor rows", async () => {
     expect(await loadRunPublicResult(db, await seedRun("Review"))).toBeNull();

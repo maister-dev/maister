@@ -429,3 +429,46 @@ describe("run_plan flow targets (ADR-163)", () => {
     expect(fits.status).toBe(202);
   }, 60_000);
 });
+
+it("IT-UX-19 refuses an unadmitted required parent before writing any plan DAG", async () => {
+  await pool.query(
+    "UPDATE tasks SET qualification_mode='required',qualification_input_revision=qualification_input_revision+1 WHERE id=(SELECT task_id FROM runs WHERE id=$1)",
+    [parentRunId],
+  );
+  const before = (
+    await pool.query(
+      "SELECT count(*)::int total FROM tasks WHERE project_id=$1",
+      [ctx.projectId],
+    )
+  ).rows[0].total;
+  const response = await planPost(
+    planRequest(secret, {
+      tasks: [
+        {
+          key: "work",
+          target: { flowId: "delegated-flow" },
+          prompt: "Implement the request",
+          dependsOn: [],
+        },
+      ],
+    }),
+    {},
+  );
+
+  expect(response.status).toBe(409);
+  expect(
+    (
+      await pool.query(
+        "SELECT count(*)::int total FROM tasks WHERE project_id=$1",
+        [ctx.projectId],
+      )
+    ).rows[0].total,
+  ).toBe(before);
+  expect(
+    (
+      await pool.query("SELECT id FROM runs WHERE parent_run_id=$1", [
+        parentRunId,
+      ])
+    ).rows,
+  ).toEqual([]);
+});

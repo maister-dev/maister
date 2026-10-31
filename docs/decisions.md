@@ -236,6 +236,10 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-192](#adr-192-durable-scratch-prompt-intent-before-command-admission) | Durable scratch prompt intent before command admission | Accepted | 2026-09-30 |
 | [ADR-193](#adr-193-rootless-linux-namespace-isolation-for-production-test-fixtures) | Rootless Linux namespace isolation for production test fixtures | Accepted | 2026-10-03 |
 | [ADR-194](#adr-194-explicit-reviewed-project-configuration-commits) | Explicit reviewed project configuration commits | Accepted | 2026-10-29 |
+| [ADR-195](#adr-195-operational-agents-with-frozen-completion-contracts) | Operational agents with frozen completion contracts | Accepted | 2026-10-29 |
+| [ADR-198](#adr-198-incoming-request-qualification-before-delivery) | Incoming request qualification before delivery | Accepted | 2026-10-30 |
+| [ADR-197](#adr-197-explicit-fenced-agent-retry-admission) | Explicit fenced agent retry admission | Accepted | 2026-10-30 |
+| [ADR-196](#adr-196-agent-activity-history-and-grouped-incidents) | Agent activity history and grouped incidents | Accepted | 2026-10-30 |
 
 ---
 
@@ -2254,3 +2258,39 @@ properties/lastAction` sets `nullable: true` beside an `allOf` with no sibling
   successor's permissions. Real route/transaction, rollback, replay and late
   answer controls are in `permission-terminal.integration.test.ts`; see
   [scratch runs](system-analytics/scratch-runs.md).
+
+### ADR-195: Operational agents with frozen completion contracts
+
+**Status:** Accepted
+**Date:** 2026-10-29
+
+Full record: [`decisions/adr-195.md`](decisions/adr-195.md)
+
+---
+
+### ADR-196: Agent activity history and grouped incidents
+
+**Status:** Accepted
+**Date:** 2026-10-30
+
+Full record: [`decisions/adr-196.md`](decisions/adr-196.md)
+
+---
+
+### ADR-197: Explicit fenced agent retry admission
+
+**Status:** Accepted
+**Date:** 2026-10-30
+
+Full record: [`decisions/adr-197.md`](decisions/adr-197.md)
+
+---
+
+### ADR-198: Incoming request qualification before delivery
+
+**Status:** Accepted
+**Date:** 2026-10-30
+
+Full record: [`decisions/adr-198.md`](decisions/adr-198.md)
+
+---

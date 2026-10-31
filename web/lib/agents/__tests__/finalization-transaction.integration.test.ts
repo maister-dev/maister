@@ -5,13 +5,18 @@ import { randomUUID } from "node:crypto";
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { eq } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { prepareAgentRunFinalization } from "@/lib/agents/finalization";
+import {
+  prepareAgentRunFinalization,
+  prepareUndispatchedAgentFailure,
+} from "@/lib/agents/finalization";
+import { RUN_SETTLED_EVENT_KINDS } from "@/lib/domain-events/taxonomy";
 import { agentWorkdirPath } from "@/lib/agents/workspace-paths";
 import {
   agentTurns,
+  executionCommands,
   domainEvents,
   projects,
   runResults,
@@ -110,12 +115,157 @@ async function readOutcome(runId: string): Promise<{
   const events = await db
     .select()
     .from(domainEvents)
-    .where(eq(domainEvents.runId, runId));
+    .where(
+      and(
+        eq(domainEvents.runId, runId),
+        inArray(domainEvents.kind, [...RUN_SETTLED_EVENT_KINDS]),
+      ),
+    );
 
   return { status: run.status, results: results.length, events: events.length };
 }
 
 describe("Agent terminal application transaction", () => {
+  it("IT-UX-13 settles a known Pending preparation failure and refuses a live session", async () => {
+    const pending = await seedRun();
+
+    await database.pool.query("UPDATE runs SET status='Pending' WHERE id=$1", [
+      pending.runId,
+    ]);
+    const prepared = await prepareUndispatchedAgentFailure(pending.runId, {
+      db,
+      reason: "agent_workspace_prepare_failed",
+    });
+
+    expect(await db.transaction(prepared.apply)).toMatchObject({
+      finalized: true,
+      status: "Failed",
+    });
+    expect((await readOutcome(pending.runId)).status).toBe("Failed");
+    const live = await seedRun();
+
+    await db.insert(runSessions).values({
+      id: randomUUID(),
+      runId: live.runId,
+      sessionName: "default",
+      acpSessionId: "live-session",
+    });
+    const unsafe = await prepareUndispatchedAgentFailure(live.runId, {
+      db,
+      reason: "agent_dispatch_failed",
+    });
+
+    expect(await db.transaction(unsafe.apply)).toEqual({ finalized: false });
+    expect((await readOutcome(live.runId)).status).toBe("Running");
+    const uncertain = await seedRun();
+    const { hostId } = await fakeExecutionHosts(db);
+    const assignment = await db.transaction((tx) =>
+      mintAssignment(tx, { runId: uncertain.runId, hostId, reason: "launch" }),
+    );
+
+    await db.insert(executionCommands).values({
+      id: randomUUID(),
+      runId: uncertain.runId,
+      executionAssignmentId: assignment.id,
+      executionHostId: hostId,
+      assignmentEpoch: assignment.epoch,
+      kind: "session.create",
+      maxAttempts: 3,
+      transportState: "unknown",
+    });
+    const uncertainFailure = await prepareUndispatchedAgentFailure(
+      uncertain.runId,
+      { db, reason: "agent_dispatch_failed" },
+    );
+
+    expect(await db.transaction(uncertainFailure.apply)).toEqual({
+      finalized: false,
+    });
+    expect((await readOutcome(uncertain.runId)).status).toBe("Running");
+    const raced = await seedRun();
+
+    await database.pool.query("UPDATE runs SET status='Pending' WHERE id=$1", [
+      raced.runId,
+    ]);
+    const raceFailure = await prepareUndispatchedAgentFailure(raced.runId, {
+      db,
+      reason: "agent_dispatch_failed",
+    });
+
+    await Promise.all([
+      database.pool.query(
+        "UPDATE runs SET status='Running' WHERE id=$1 AND status='Pending'",
+        [raced.runId],
+      ),
+      db.transaction(raceFailure.apply),
+    ]);
+    expect((await readOutcome(raced.runId)).status).toBe("Failed");
+  });
+
+  it("IT-UX-02 IT-UX-03 creates one episode with terminal facts and rolls both back together", async () => {
+    const first = await seedRun();
+    const [bound] = await db
+      .select()
+      .from(runs)
+      .where(eq(runs.id, first.runId));
+    const second = await seedRun();
+
+    await database.pool.query("UPDATE runs SET project_id=$2 WHERE id=$1", [
+      second.runId,
+      bound.projectId,
+    ]);
+    for (const runId of [first.runId, second.runId]) {
+      await database.pool.query(
+        "UPDATE runs SET source_agent_id='fixture:triager',launched_at=now(),activity_sort_at=now(),activity_timestamp_provenance='launch' WHERE id=$1",
+        [runId],
+      );
+    }
+    const prepared = await prepareAgentRunFinalization(first.runId, "Failed", {
+      db,
+      reason: "agent_session_create_failed",
+    });
+    const abort = new Error("roll back terminal and incident");
+
+    await expect(
+      db.transaction(async (tx) => {
+        await prepared.apply(tx);
+        throw abort;
+      }),
+    ).rejects.toBe(abort);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS n FROM agent_incident_occurrences WHERE original_run_id=$1",
+          [first.runId],
+        )
+      ).rows[0].n,
+    ).toBe(0);
+    await db.transaction(prepared.apply);
+    const next = await prepareAgentRunFinalization(second.runId, "Failed", {
+      db,
+      reason: "agent_session_create_failed",
+    });
+
+    await db.transaction(next.apply);
+    await db.transaction(next.apply);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS n FROM agent_incident_episodes WHERE project_id=$1",
+          [bound.projectId],
+        )
+      ).rows[0].n,
+    ).toBe(1);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS n FROM agent_incident_occurrences WHERE original_run_id=ANY($1::text[])",
+          [[first.runId, second.runId]],
+        )
+      ).rows[0].n,
+    ).toBe(2);
+  });
+
   it("refuses a transaction connection as the preparation and cleanup connection", async () => {
     const { runId, marker } = await seedRun();
 
@@ -266,7 +416,12 @@ describe("Agent terminal application transaction", () => {
     const [crashed] = await db
       .select({ payload: domainEvents.payload })
       .from(domainEvents)
-      .where(eq(domainEvents.runId, runId));
+      .where(
+        and(
+          eq(domainEvents.runId, runId),
+          inArray(domainEvents.kind, [...RUN_SETTLED_EVENT_KINDS]),
+        ),
+      );
 
     // B6: a token reason is the cause's reason; an agent crash is CRASH.
     expect(crashed.payload.cause).toEqual({

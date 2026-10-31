@@ -12,6 +12,7 @@ import {
 } from "@/lib/config.schema";
 import { MaisterError } from "@/lib/errors";
 import { envRefName } from "@/lib/mcp/value-grammar";
+import { assertPackageOperationalContracts } from "@/lib/agents/package-contract";
 
 const log = pino({
   name: "package-manifest",
@@ -120,6 +121,8 @@ export async function loadMaisterPackageManifest(
     },
     "maister-package.yaml loaded",
   );
+
+  await assertPackageOperationalContracts(packageRoot, parsed.data);
 
   return normalizePackageManifest(parsed.data);
 }

@@ -73,6 +73,7 @@ export function normalizedManifest(
     publicBranchTemplate:
       project.public_branch_template ?? DEFAULT_PUBLIC_BRANCH_TEMPLATE,
     defaultRunnerId: project.default_runner ?? null,
+    taskQualificationOverride: project.task_qualification ?? null,
     promotionMode: project.promotion?.mode ?? null,
     packages: [...packages].sort((a, b) => a.id.localeCompare(b.id)),
   };
@@ -81,6 +82,7 @@ export function normalizedManifest(
 export function exportProjectionDigest(projection: ExportProjection): string {
   return contentDigest({
     ...projection,
+    taskQualificationOverride: projection.taskQualificationOverride ?? null,
     packages: projection.packages
       .map(({ resolvedRevision: _revision, ...pin }) => pin)
       .sort((a, b) => a.id.localeCompare(b.id)),
@@ -322,6 +324,7 @@ export function patchProjectManifest(
       DEFAULT_PUBLIC_BRANCH_TEMPLATE,
     ],
     ["default_runner", projection.defaultRunnerId, null],
+    ["task_qualification", projection.taskQualificationOverride ?? null, null],
   ] as const) {
     const present = mapAt(result, ["project"]).has(key);
 

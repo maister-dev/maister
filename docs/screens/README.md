@@ -191,6 +191,8 @@ flowchart TD
 | [`settings-brain.md`](settings-brain.md) | Settings → Brain provider config (admin) | `/settings` | Implemented |
 | [`admin-scheduler.md`](admin-scheduler.md) | Scheduler cockpit (admin) | `/admin/scheduler` | Implemented (ADR-071) |
 | [`admin/execution-host.md`](admin/execution-host.md) | Execution-host and event-plane diagnostics (admin) | `/admin/execution-host` | Implemented (P0-7) |
+| [`projects/project-agent-history.md`](projects/project-agent-history.md) | Agent detail and retained run/attempt history | `/projects/{slug}/agents/{agentId}` | Implemented (ADR-196) |
+| [`projects/incoming-requests.md`](projects/incoming-requests.md) | Incoming requests before accepted backlog | `/projects/{slug}?tab=incoming` | Implemented (ADR-198) |
 | [`projects/project-board.md`](projects/project-board.md) | Project board (columns, Markdown task cards, launch, task editing) | `/projects/{slug}` | Implemented |
 | [`projects/project-automations.md`](projects/project-automations.md) | Project Automations (one-time task launches, recurring schedules, agent binding links) | `/projects/{slug}?tab=automations` | Implemented (ADR-139) |
 | [`projects/project-mcps-hub.md`](projects/project-mcps-hub.md) | Project MCP hub (3-source list, requirements ledger, match/connect/overlay, test-connection) | `/projects/{slug}?tab=mcps` | Implemented (list + ADR-129 hub) |

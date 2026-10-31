@@ -9,7 +9,10 @@ import type { AgentParkApplication } from "./park";
 import { and, eq } from "drizzle-orm";
 import pino from "pino";
 
-import { prepareAgentRunFinalization } from "./finalization";
+import {
+  prepareAgentRunFinalization,
+  prepareUndispatchedAgentFailure,
+} from "./finalization";
 import { afterPersistentAgentPark, applyAgentPark } from "./park";
 import { insertHostParkSuccessor } from "./host-park-settlement";
 
@@ -26,6 +29,24 @@ const log = pino({
   name: "agent-create-failure",
   level: process.env.LOG_LEVEL ?? "info",
 });
+
+/** Settle only a proven pre-dispatch failure; owned or uncertain commands retain recovery. */
+export async function settleUndispatchedAgentFailure(
+  db: Db,
+  runId: string,
+  reason: "agent_workspace_prepare_failed" | "agent_dispatch_failed",
+): Promise<boolean> {
+  const prepared = await prepareUndispatchedAgentFailure(runId, { db, reason });
+  const application = await db.transaction(prepared.apply);
+
+  await prepared.afterCommit(application);
+  log.warn(
+    { runId, reason, finalized: application.finalized },
+    "agent-undispatched-failure-settled",
+  );
+
+  return application.finalized;
+}
 
 /** A refused create produced no prompt; close only its original admitted input.
  * A message whose create the host refused for outbox pressure parks instead

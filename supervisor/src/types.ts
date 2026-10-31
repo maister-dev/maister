@@ -494,8 +494,9 @@ export const StartSessionRequestSchema = z
     // M34 (ADR-090 L1): session-scoped read-only — the requestPermission
     // handler auto-denies write-class tool kinds and auto-approves the
     // read-safe allow-list for the WHOLE session. Used for none/repo_read
-    // platform-agent runs (headless: no HITL inbox exists for them).
+    // platform-agent runs; scoped operational MAIster MCP requests still use HITL.
     readOnlySession: z.boolean().optional(),
+    agentKind: z.enum(["code_delivery", "operational"]).optional(),
     // B1 (execution-policy permissions=auto_approve): the requestPermission
     // handler auto-selects the allow option for every request in this session
     // (L3, below the read-only layers — read-only always wins). Resolved from
@@ -1308,8 +1309,9 @@ export type SessionRecord = {
   readOnlyTurn?: boolean;
   // M34 (ADR-090 L1): the whole session is read-only — every permission
   // request is decided inline (write-class denied, read-safe approved); no
-  // pending-permission deferred is ever created.
+  // file/shell deferred is created; operational MAIster MCP uses ordinary HITL.
   readOnlySession?: boolean;
+  agentKind?: "code_delivery" | "operational";
   // B1 (execution-policy permissions=auto_approve): auto-select the allow
   // option for every permission request in this session, BELOW the read-only
   // layers. Resolved from the run's execution_policy snapshot in spawn.ts.

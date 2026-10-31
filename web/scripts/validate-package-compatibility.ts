@@ -10,6 +10,11 @@ import {
   loadEvaluationMethod,
 } from "@/lib/evaluations/method";
 import { MAISTER_ENGINE_VERSION } from "@/lib/flows/engine-version";
+import { parseAgentDefinition, qualifyAgentId } from "@/lib/agents/definition";
+import {
+  assertOperationalAgentCompatibility,
+  readPackageAgentSources,
+} from "@/lib/agents/package-contract";
 
 const log = pino({
   name: "validate-package-compatibility",
@@ -27,6 +32,7 @@ export type ValidatePackageResult = {
   version: string;
   flowCount: number;
   evaluationMethodCount: number;
+  agentCount: number;
 };
 
 // Parse the release wrapper argv: `--mode release --source <repo> --tag <name>/<v>`.
@@ -104,6 +110,24 @@ export async function validatePackageCompatibility(
     log.info({ packageName, flowId: flow.id }, "flow manifest compatible");
   }
 
+  const agentSources = await readPackageAgentSources(packageRoot);
+  for (const source of agentSources) {
+    const definition = parseAgentDefinition(
+      qualifyAgentId(manifest.name, source.stem),
+      source.content,
+    );
+    assertOperationalAgentCompatibility(definition, manifest.compat);
+    log.info(
+      {
+        packageName,
+        agentId: definition.id,
+        definitionPath: source.path,
+        kind: definition.kind,
+      },
+      "agent definition compatible",
+    );
+  }
+
   for (const method of manifest.evaluationMethods) {
     const methodRoot = join(packageRoot, method.path);
     const loaded = await loadEvaluationMethod(methodRoot);
@@ -141,6 +165,7 @@ export async function validatePackageCompatibility(
     version,
     flowCount: manifest.flows.length,
     evaluationMethodCount: manifest.evaluationMethods.length,
+    agentCount: agentSources.length,
   };
 }
 

@@ -193,3 +193,15 @@ export type WorkInFlightStage = (typeof WORK_IN_FLIGHT_STAGES)[number];
 export function isWorkInFlight(stage: WorkStage): stage is WorkInFlightStage {
   return (WORK_IN_FLIGHT_STAGES as readonly WorkStage[]).includes(stage);
 }
+
+/** Request acceptance is independent of routing and the run lifecycle. */
+export function isRequestAccepted(summary: {
+  mode: "legacy" | "required" | "execution_child";
+  freshness: "current" | "stale" | "unassessed";
+  decision: string | null;
+}): boolean {
+  return (
+    summary.mode !== "required" ||
+    (summary.freshness === "current" && summary.decision === "ready")
+  );
+}

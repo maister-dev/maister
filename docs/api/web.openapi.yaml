@@ -179,6 +179,491 @@ tags:
       one durable conversation, its turns and cards, personal memory, reset and
       history deletion, the conversation SSE stream, and the admin enablement.
 paths:
+  /api/projects/{slug}/agents/{agentId}/runs:
+    get:
+      operationId: getProjectAgentHistory
+      summary: (Implemented — ADR-196–198) getProjectAgentHistory
+      description:
+        Identifiers are URL parameters; actor/project/source context is derived from
+        authenticated server state. Existing data grants apply before aggregation and nested evidence
+        serialization. No secrets, host paths or session handles are returned.
+      parameters:
+        - &a2
+          name: slug
+          in: path
+          required: true
+          schema: &a1
+            type: string
+            minLength: 1
+            maxLength: 256
+        - &a3
+          name: agentId
+          in: path
+          required: true
+          schema: *a1
+        - &a4
+          name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2048
+        - &a5
+          name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 25
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - Pending
+              - Running
+              - NeedsInput
+              - NeedsInputIdle
+              - HumanWorking
+              - WaitingOnChildren
+              - Review
+              - Done
+              - Failed
+              - Crashed
+              - Abandoned
+        - name: triggerSource
+          in: query
+          required: false
+          schema: *a1
+        - name: outcome
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - success
+              - partial
+              - blocked
+              - failed
+              - cancelled
+              - crashed
+            nullable: true
+      responses:
+        "200":
+          description: Implemented — typed authorized response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - items
+                  - nextCursor
+                  - asOf
+                properties:
+                  items:
+                    type: array
+                    maxItems: 100
+                    items:
+                      $ref: "#/components/schemas/AgentHistoryItem"
+                  nextCursor:
+                    type: string
+                    minLength: 1
+                    maxLength: 2048
+                    nullable: true
+                  asOf: &a6
+                    type: string
+                    format: date-time
+        "400": &a7
+          description: Malformed request/cursor
+        "401": &a8
+          description: Unauthenticated
+        "403": &a9
+          description: Denied project/data grant
+        "404": &a10
+          description: Unavailable or foreign source
+        "409": &a11
+          description: Stale revision, unsafe state or conflicting key
+        "503": &a12
+          description: Maintenance or execution infrastructure unavailable
+  /api/projects/{slug}/agents/{agentId}/attempts:
+    get:
+      operationId: getProjectAgentAttempts
+      summary: (Implemented — ADR-196–198) getProjectAgentAttempts
+      description:
+        Identifiers are URL parameters; actor/project/source context is derived from
+        authenticated server state. Existing data grants apply before aggregation and nested evidence
+        serialization. No secrets, host paths or session handles are returned.
+      parameters:
+        - *a2
+        - *a3
+        - *a4
+        - *a5
+      responses:
+        "200":
+          description: Implemented — typed authorized response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - items
+                  - nextCursor
+                  - asOf
+                properties:
+                  items:
+                    type: array
+                    maxItems: 100
+                    items:
+                      $ref: "#/components/schemas/AgentAttemptItem"
+                  nextCursor:
+                    type: string
+                    minLength: 1
+                    maxLength: 2048
+                    nullable: true
+                  asOf: *a6
+        "400": *a7
+        "401": *a8
+        "403": *a9
+        "404": *a10
+        "409": *a11
+        "503": *a12
+  /api/projects/{slug}/agents/{agentId}/definition:
+    get:
+      operationId: getProjectPinnedAgentDefinition
+      summary: (Implemented — ADR-196–198) getProjectPinnedAgentDefinition
+      description:
+        Designed. Require readRepoFiles. Resolve the exact attached pin; unavailable/untrusted
+        definition is explicit, never newest-install fallback. Protected current config is redacted by
+        its declared value class; no runtime expansion.
+      parameters: &a13
+        - *a2
+        - *a3
+      responses:
+        "200":
+          description: Implemented — typed authorized response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentDefinitionView"
+        "400": *a7
+        "401": *a8
+        "403": *a9
+        "404": *a10
+        "409": *a11
+        "503": *a12
+  /api/projects/{slug}/agents/{agentId}/incidents:
+    get:
+      operationId: getProjectAgentIncidents
+      summary: (Implemented — ADR-196–198) getProjectAgentIncidents
+      description:
+        Identifiers are URL parameters; actor/project/source context is derived from
+        authenticated server state. Existing data grants apply before aggregation and nested evidence
+        serialization. No secrets, host paths or session handles are returned.
+      parameters:
+        - *a2
+        - *a3
+        - *a4
+        - *a5
+        - name: state
+          in: query
+          schema: { type: string, enum: [open, resolved] }
+        - name: acknowledged
+          in: query
+          schema: { type: boolean }
+      responses:
+        "200":
+          description: Implemented — typed authorized response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - items
+                  - nextCursor
+                  - asOf
+                properties:
+                  items:
+                    type: array
+                    maxItems: 100
+                    items:
+                      $ref: "#/components/schemas/AgentIncidentEpisode"
+                  nextCursor:
+                    type: string
+                    minLength: 1
+                    maxLength: 2048
+                    nullable: true
+                  asOf: *a6
+        "400": *a7
+        "401": *a8
+        "403": *a9
+        "404": *a10
+        "409": *a11
+        "503": *a12
+  /api/projects/{slug}/agents/{agentId}/incidents/acknowledge:
+    post:
+      operationId: acknowledgeProjectAgentEpisodes
+      summary: (Implemented — ADR-196–198) acknowledgeProjectAgentEpisodes
+      description:
+        Designed. answerHitl required. Atomically validate every episode against addressed
+        agent/project and observed attentionRevision. Same episode repeats do not invalidate
+        acknowledgement; closed observed episode is an idempotent no-op. A new episode is not
+        acknowledged implicitly.
+      parameters: *a13
+      responses:
+        "200":
+          description: Implemented — typed authorized response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - acknowledged
+                properties:
+                  acknowledged:
+                    type: integer
+                    minimum: 0
+        "400": *a7
+        "401": *a8
+        "403": *a9
+        "404": *a10
+        "409": *a11
+        "503": *a12
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentEpisodeAcknowledgement"
+  /api/runs/{runId}/retry-options:
+    get:
+      operationId: getAgentRetryOptions
+      summary: (Implemented — ADR-196–198) getAgentRetryOptions
+      description:
+        Designed. launchRun required. Prove source terminal quiescence and no dispatched work.
+        Partial/unknown effects return eligible=false and typed reason. The expiring preview binds
+        exact current recipe, task and runner policy.
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: *a1
+      responses:
+        "200":
+          description: Implemented — typed authorized response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentRetryOptions"
+        "400": *a7
+        "401": *a8
+        "403": *a9
+        "404": *a10
+        "409": *a11
+        "503": *a12
+  /api/runs/{runId}/retry:
+    post:
+      operationId: retryAgentRun
+      summary: (Implemented — ADR-196–198) retryAgentRun
+      description:
+        Identifiers are URL parameters; actor/project/source context is derived from
+        authenticated server state. Existing data grants apply before aggregation and nested evidence
+        serialization. No secrets, host paths or session handles are returned.
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: *a1
+      responses:
+        "200":
+          description: Settled same-key replay
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentRetryReceipt"
+        "202":
+          description: Accepted intent; nullable runId does not claim execution
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentRetryReceipt"
+        "400": *a7
+        "401": *a8
+        "403": *a9
+        "404": *a10
+        "409": *a11
+        "503": *a12
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentRetryBody"
+  /api/runs/{runId}/retry/{intentId}:
+    get:
+      operationId: getAgentRetryIntent
+      summary: (Implemented — ADR-196–198) getAgentRetryIntent
+      description:
+        Identifiers are URL parameters; actor/project/source context is derived from
+        authenticated server state. Existing data grants apply before aggregation and nested evidence
+        serialization. No secrets, host paths or session handles are returned.
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: *a1
+        - name: intentId
+          in: path
+          required: true
+          schema: *a1
+      responses:
+        "200":
+          description: Implemented — typed authorized response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentRetryReceipt"
+        "400": *a7
+        "401": *a8
+        "403": *a9
+        "404": *a10
+        "409": *a11
+        "503": *a12
+  /api/runs/{runId}/retry/{intentId}/cleanup:
+    post:
+      operationId: rearmAgentRetryCleanup
+      summary: (Implemented — ADR-196–198) rearmAgentRetryCleanup
+      description:
+        Identifiers are URL parameters; actor/project/source context is derived from
+        authenticated server state. Existing data grants apply before aggregation and nested evidence
+        serialization. No secrets, host paths or session handles are returned.
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: *a1
+        - name: intentId
+          in: path
+          required: true
+          schema: *a1
+      responses:
+        "200":
+          description: Same-key receipt replay
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentRetryCleanupReceipt"
+        "202":
+          description: Cleanup rearmed; never launches work
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentRetryCleanupReceipt"
+        "400": *a7
+        "401": *a8
+        "403": *a9
+        "404": *a10
+        "409": *a11
+        "503": *a12
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentRetryCleanupBody"
+  /api/projects/{slug}/tasks/{taskId}/qualification:
+    post:
+      operationId: assessProjectTask
+      summary: (Implemented — ADR-196–198) assessProjectTask
+      description:
+        Designed. editTask required; code-bearing evidence reads additionally require
+        readRepoFiles. Human assessment, routing and enqueue are one application transaction. Expected
+        input and current pointer revisions both CAS; same-key payload conflict is 409. Body maximum
+        64 KiB. No force bypass.
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: *a1
+        - name: taskId
+          in: path
+          required: true
+          schema: *a1
+      responses:
+        "200":
+          description: Implemented — typed authorized response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskQualificationReceipt"
+        "400": *a7
+        "401": *a8
+        "403": *a9
+        "404": *a10
+        "409": *a11
+        "503": *a12
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaskQualificationWrite"
+  /api/projects/{slug}/tasks/{taskId}/qualifications:
+    get:
+      operationId: getProjectTaskQualificationHistory
+      summary: (Implemented — ADR-196–198) getProjectTaskQualificationHistory
+      description:
+        Identifiers are URL parameters; actor/project/source context is derived from
+        authenticated server state. Existing data grants apply before aggregation and nested evidence
+        serialization. No secrets, host paths or session handles are returned.
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: *a1
+        - name: taskId
+          in: path
+          required: true
+          schema: *a1
+        - *a4
+        - *a5
+      responses:
+        "200":
+          description: Implemented — typed authorized response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - items
+                  - nextCursor
+                  - asOf
+                properties:
+                  items:
+                    type: array
+                    maxItems: 100
+                    items:
+                      $ref: "#/components/schemas/TaskQualificationHistoryItem"
+                  nextCursor:
+                    type: string
+                    minLength: 1
+                    maxLength: 2048
+                    nullable: true
+                  asOf: *a6
+        "400": *a7
+        "401": *a8
+        "403": *a9
+        "404": *a10
+        "409": *a11
+        "503": *a12
   /api/admin/acp-runners:
     get:
       tags: [admin]
@@ -1379,7 +1864,8 @@ paths:
         - git
       operationId: getProjectConfigPersistenceStatus
       summary: (Implemented, ADR-194) Read export and checkout status
-      description: Project paths, target branch and configuration are server-derived. Detailed repository
+      description:
+        Project paths, target branch and configuration are server-derived. Detailed repository
         content requires editSettings and readRepoFiles; scalar status requires readBoard. Responses
         are no-store. Immutable actor/project-bound intents guard retries. See
         ../system-analytics/project-config-persistence.md.
@@ -1392,7 +1878,8 @@ paths:
             minLength: 1
       responses:
         "200":
-          description: Observed status/review or durable operation outcome. Known push failure preserves the
+          description:
+            Observed status/review or durable operation outcome. Known push failure preserves the
             local committed receipt.
           content:
             application/json:
@@ -1409,7 +1896,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/MaisterErrorBody"
         "409":
-          description: Precondition, stale/expired review, active operation, unsupported repository state, or
+          description:
+            Precondition, stale/expired review, active operation, unsupported repository state, or
             explicit recovery is required. Structured details.reason identifies remediation.
           content:
             application/json:
@@ -1422,7 +1910,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/MaisterErrorBody"
         "503":
-          description: "EXECUTOR_UNAVAILABLE: repository/database/remote evidence unavailable. No
+          description:
+            "EXECUTOR_UNAVAILABLE: repository/database/remote evidence unavailable. No
             missing/success/terminal result is fabricated."
           content:
             application/json:
@@ -1433,7 +1922,8 @@ paths:
         - git
       operationId: postProjectPersistConfig
       summary: (Implemented, ADR-194) Confirm the exact reviewed local commit
-      description: Project paths, target branch and configuration are server-derived. Detailed repository
+      description:
+        Project paths, target branch and configuration are server-derived. Detailed repository
         content requires editSettings and readRepoFiles; scalar status requires readBoard. Responses
         are no-store. Immutable actor/project-bound intents guard retries. See
         ../system-analytics/project-config-persistence.md.
@@ -1446,7 +1936,8 @@ paths:
             minLength: 1
       responses:
         "200":
-          description: Observed status/review or durable operation outcome. Known push failure preserves the
+          description:
+            Observed status/review or durable operation outcome. Known push failure preserves the
             local committed receipt.
           content:
             application/json:
@@ -1463,7 +1954,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/MaisterErrorBody"
         "409":
-          description: Precondition, stale/expired review, active operation, unsupported repository state, or
+          description:
+            Precondition, stale/expired review, active operation, unsupported repository state, or
             explicit recovery is required. Structured details.reason identifies remediation.
           content:
             application/json:
@@ -1476,7 +1968,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/MaisterErrorBody"
         "503":
-          description: "EXECUTOR_UNAVAILABLE: repository/database/remote evidence unavailable. No
+          description:
+            "EXECUTOR_UNAVAILABLE: repository/database/remote evidence unavailable. No
             missing/success/terminal result is fabricated."
           content:
             application/json:
@@ -1494,7 +1987,8 @@ paths:
         - git
       operationId: previewProjectPersistConfig
       summary: (Implemented, ADR-194) Preview complete manifest diff without repository writes
-      description: Project paths, target branch and configuration are server-derived. Detailed repository
+      description:
+        Project paths, target branch and configuration are server-derived. Detailed repository
         content requires editSettings and readRepoFiles; scalar status requires readBoard. Responses
         are no-store. Immutable actor/project-bound intents guard retries. See
         ../system-analytics/project-config-persistence.md.
@@ -1507,7 +2001,8 @@ paths:
             minLength: 1
       responses:
         "200":
-          description: Observed status/review or durable operation outcome. Known push failure preserves the
+          description:
+            Observed status/review or durable operation outcome. Known push failure preserves the
             local committed receipt.
           content:
             application/json:
@@ -1524,7 +2019,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/MaisterErrorBody"
         "409":
-          description: Precondition, stale/expired review, active operation, unsupported repository state, or
+          description:
+            Precondition, stale/expired review, active operation, unsupported repository state, or
             explicit recovery is required. Structured details.reason identifies remediation.
           content:
             application/json:
@@ -1537,7 +2033,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/MaisterErrorBody"
         "503":
-          description: "EXECUTOR_UNAVAILABLE: repository/database/remote evidence unavailable. No
+          description:
+            "EXECUTOR_UNAVAILABLE: repository/database/remote evidence unavailable. No
             missing/success/terminal result is fabricated."
           content:
             application/json:
@@ -1555,7 +2052,8 @@ paths:
         - git
       operationId: getProjectConfigPersistenceReceipt
       summary: (Implemented, ADR-194) Read a specific receipt without recovery writes
-      description: Project paths, target branch and configuration are server-derived. Detailed repository
+      description:
+        Project paths, target branch and configuration are server-derived. Detailed repository
         content requires editSettings and readRepoFiles; scalar status requires readBoard. Responses
         are no-store. Immutable actor/project-bound intents guard retries. See
         ../system-analytics/project-config-persistence.md.
@@ -1574,7 +2072,8 @@ paths:
             format: uuid
       responses:
         "200":
-          description: Observed status/review or durable operation outcome. Known push failure preserves the
+          description:
+            Observed status/review or durable operation outcome. Known push failure preserves the
             local committed receipt.
           content:
             application/json:
@@ -1591,7 +2090,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/MaisterErrorBody"
         "409":
-          description: Precondition, stale/expired review, active operation, unsupported repository state, or
+          description:
+            Precondition, stale/expired review, active operation, unsupported repository state, or
             explicit recovery is required. Structured details.reason identifies remediation.
           content:
             application/json:
@@ -1604,7 +2104,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/MaisterErrorBody"
         "503":
-          description: "EXECUTOR_UNAVAILABLE: repository/database/remote evidence unavailable. No
+          description:
+            "EXECUTOR_UNAVAILABLE: repository/database/remote evidence unavailable. No
             missing/success/terminal result is fabricated."
           content:
             application/json:
@@ -1616,7 +2117,8 @@ paths:
         - git
       operationId: recoverProjectConfigPersistence
       summary: (Implemented, ADR-194) Reconcile an already accepted local intent
-      description: Project paths, target branch and configuration are server-derived. Detailed repository
+      description:
+        Project paths, target branch and configuration are server-derived. Detailed repository
         content requires editSettings and readRepoFiles; scalar status requires readBoard. Responses
         are no-store. Immutable actor/project-bound intents guard retries. See
         ../system-analytics/project-config-persistence.md.
@@ -1633,7 +2135,8 @@ paths:
           schema: *a1
       responses:
         "200":
-          description: Observed status/review or durable operation outcome. Known push failure preserves the
+          description:
+            Observed status/review or durable operation outcome. Known push failure preserves the
             local committed receipt.
           content:
             application/json:
@@ -1650,7 +2153,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/MaisterErrorBody"
         "409":
-          description: Precondition, stale/expired review, active operation, unsupported repository state, or
+          description:
+            Precondition, stale/expired review, active operation, unsupported repository state, or
             explicit recovery is required. Structured details.reason identifies remediation.
           content:
             application/json:
@@ -1663,7 +2167,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/MaisterErrorBody"
         "503":
-          description: "EXECUTOR_UNAVAILABLE: repository/database/remote evidence unavailable. No
+          description:
+            "EXECUTOR_UNAVAILABLE: repository/database/remote evidence unavailable. No
             missing/success/terminal result is fabricated."
           content:
             application/json:
@@ -1681,7 +2186,8 @@ paths:
         - git
       operationId: previewProjectConfigPush
       summary: (Implemented, ADR-194) Review the exact outgoing SHA, destination and ancestry
-      description: Project paths, target branch and configuration are server-derived. Detailed repository
+      description:
+        Project paths, target branch and configuration are server-derived. Detailed repository
         content requires editSettings and readRepoFiles; scalar status requires readBoard. Responses
         are no-store. Immutable actor/project-bound intents guard retries. See
         ../system-analytics/project-config-persistence.md.
@@ -1698,7 +2204,8 @@ paths:
           schema: *a1
       responses:
         "200":
-          description: Observed status/review or durable operation outcome. Known push failure preserves the
+          description:
+            Observed status/review or durable operation outcome. Known push failure preserves the
             local committed receipt.
           content:
             application/json:
@@ -1715,7 +2222,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/MaisterErrorBody"
         "409":
-          description: Precondition, stale/expired review, active operation, unsupported repository state, or
+          description:
+            Precondition, stale/expired review, active operation, unsupported repository state, or
             explicit recovery is required. Structured details.reason identifies remediation.
           content:
             application/json:
@@ -1728,7 +2236,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/MaisterErrorBody"
         "503":
-          description: "EXECUTOR_UNAVAILABLE: repository/database/remote evidence unavailable. No
+          description:
+            "EXECUTOR_UNAVAILABLE: repository/database/remote evidence unavailable. No
             missing/success/terminal result is fabricated."
           content:
             application/json:
@@ -1746,7 +2255,8 @@ paths:
         - git
       operationId: pushProjectPersistConfig
       summary: (Implemented, ADR-194) Confirm a separate immutable push intent
-      description: Project paths, target branch and configuration are server-derived. Detailed repository
+      description:
+        Project paths, target branch and configuration are server-derived. Detailed repository
         content requires editSettings and readRepoFiles; scalar status requires readBoard. Responses
         are no-store. Immutable actor/project-bound intents guard retries. See
         ../system-analytics/project-config-persistence.md.
@@ -1763,7 +2273,8 @@ paths:
           schema: *a1
       responses:
         "200":
-          description: Observed status/review or durable operation outcome. Known push failure preserves the
+          description:
+            Observed status/review or durable operation outcome. Known push failure preserves the
             local committed receipt.
           content:
             application/json:
@@ -1780,7 +2291,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/MaisterErrorBody"
         "409":
-          description: Precondition, stale/expired review, active operation, unsupported repository state, or
+          description:
+            Precondition, stale/expired review, active operation, unsupported repository state, or
             explicit recovery is required. Structured details.reason identifies remediation.
           content:
             application/json:
@@ -1793,7 +2305,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/MaisterErrorBody"
         "503":
-          description: "EXECUTOR_UNAVAILABLE: repository/database/remote evidence unavailable. No
+          description:
+            "EXECUTOR_UNAVAILABLE: repository/database/remote evidence unavailable. No
             missing/success/terminal result is fabricated."
           content:
             application/json:
@@ -2124,6 +2637,44 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
   /api/projects/{slug}/agents/{agentId}:
+    get:
+      operationId: getProjectAgentActivity
+      summary: (Implemented — ADR-196–198) getProjectAgentActivity
+      description:
+        Identifiers are URL parameters; actor/project/source context is derived from
+        authenticated server state. Existing data grants apply before aggregation and nested evidence
+        serialization. No secrets, host paths or session handles are returned.
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: &a1
+            type: string
+            minLength: 1
+            maxLength: 256
+        - name: agentId
+          in: path
+          required: true
+          schema: *a1
+      responses:
+        "200":
+          description: Implemented — typed authorized response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentActivityDetail"
+        "400":
+          description: Malformed request/cursor
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Denied project/data grant
+        "404":
+          description: Unavailable or foreign source
+        "409":
+          description: Stale revision, unsafe state or conflicting key
+        "503":
+          description: Maintenance or execution infrastructure unavailable
     patch:
       tags: [projects]
       summary: (M34 — Implemented; M39 instance config Implemented — ADR-106) Update an attachment (one aggregating endpoint)
@@ -3070,7 +3621,8 @@ paths:
                 additionalProperties: false
                 required: [clarification]
                 properties:
-                  clarification: { $ref: "#/components/schemas/TaskClarification" }
+                  clarification:
+                    { $ref: "#/components/schemas/TaskClarification" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -3113,7 +3665,8 @@ paths:
                 additionalProperties: false
                 required: [clarification]
                 properties:
-                  clarification: { $ref: "#/components/schemas/TaskClarification" }
+                  clarification:
+                    { $ref: "#/components/schemas/TaskClarification" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -5997,7 +6550,14 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [runId, dialogStatus, runStatus, supervisorStopped, workspaceActive]
+                required:
+                  [
+                    runId,
+                    dialogStatus,
+                    runStatus,
+                    supervisorStopped,
+                    workspaceActive,
+                  ]
                 properties:
                   runId: { type: string, format: uuid }
                   dialogStatus: { type: string }
@@ -6102,7 +6662,14 @@ paths:
                 oneOf:
                   - $ref: "#/components/schemas/WorkspaceLifecycleRemovalResponse"
                   - type: object
-                    required: [runId, dialogStatus, runStatus, supervisorStopped, workspaceRemoved]
+                    required:
+                      [
+                        runId,
+                        dialogStatus,
+                        runStatus,
+                        supervisorStopped,
+                        workspaceRemoved,
+                      ]
                     properties:
                       runId: { type: string, format: uuid }
                       dialogStatus: { type: string }
@@ -6291,7 +6858,12 @@ paths:
                   value:
                     code: CONFLICT
                     message: scratch run 3f1c9a52-7d4e-4b8a-9c21-6e0d5a8b7f10 is not recoverable (status NeedsInputIdle)
-                    details: { reason: scratch_not_recoverable, status: NeedsInputIdle, next: respond }
+                    details:
+                      {
+                        reason: scratch_not_recoverable,
+                        status: NeedsInputIdle,
+                        next: respond,
+                      }
         "503":
           description: |
             The execution host is unavailable retryably (`code:
@@ -7102,10 +7674,17 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "410": { description: The catalogue holds a tombstone (`runtime_object_deleted`) whose metadata remains while the bytes are gone. }
-        "422": { description: Runtime-object representation or actual response bytes fail integrity verification (`runtime_object_integrity_mismatch`). Missing host bytes are 404 (`runtime_object_missing`) with the catalogue retained. }
+        "410":
+          {
+            description: The catalogue holds a tombstone (`runtime_object_deleted`) whose metadata remains while the bytes are gone.,
+          }
+        "422":
+          {
+            description: Runtime-object representation or actual response bytes fail integrity verification (`runtime_object_integrity_mismatch`). Missing host bytes are 404 (`runtime_object_missing`) with the catalogue retained.,
+          }
         "416": { description: Range is malformed or unsatisfiable. }
-        "503": { description: The selected execution host transport is unavailable. }
+        "503":
+          { description: The selected execution host transport is unavailable. }
 
   /api/runs/{runId}/promote:
     post:
@@ -7976,9 +8555,15 @@ paths:
           clarification. The route locks the task and active request, records
           one answer and supersedes competing questions, then inserts either a
           target-only `task.clarification_answered` event or the triager's
-          existing `task.triage_requeued` event. It never writes an artifact,
-          invokes `runFlow`, or resumes ACP. `responded_at` is set only for the
-          winning human answer; stale/conflicting answers return 409.
+          existing `task.triage_requeued` event. Code-delivery source runs remain
+          terminal and return 200. Operational sources stay `NeedsInputIdle`:
+          the durable `continuesSourceRun` fact queues a same-run continuation
+          and returns `202 {ok:true, runStatus:"NeedsInputIdle",
+          state:"resume-queued"}`. The projection worker resumes the frozen
+          operational execution; the route does not write an artifact or call
+          `runFlow`. `responded_at` is set only for the winning human answer;
+          same-answer replay returns 200 with `idempotent:true` and the current
+          source status. Stale/conflicting answers return 409.
         - **hook_trip** (ADR-108): a guardrail-trip resume-or-abort, like
           `infra_recovery` / `budget_breach`. Human-actor-only (a machine/agent
           token is rejected 403 at the shared chokepoint — it can never dismiss
@@ -8236,7 +8821,9 @@ paths:
             restart terminalized the old run and launched or queued a new one,
             park preserved work and abandoned the run, or discard failed the run
             (and optionally dropped the workspace). For `agent_question`, the
-            answer and outbox event were committed; no session is resumed. For
+            answer and outbox event were committed. Code-delivery sources remain
+            terminal; operational same-answer replays return the current source
+            status without scheduling a duplicate continuation. For
             a non-final `decision_request`, only the child card was delivered
             and `state="awaiting-decisions"` exposes the remaining count.
           content:
@@ -8256,6 +8843,7 @@ paths:
                         Running,
                         Done,
                         Failed,
+                        Crashed,
                         Abandoned,
                       ]
                     description: |
@@ -8390,7 +8978,11 @@ paths:
             returning 202; after auto-delivery completes the retries
             return 200 idempotent. For ADR-137 Plan-review final answers, the
             graph-only claim returns `rework-scheduled` or `resume-queued` and
-            never calls `resumeRun`. A concurrent replay of the same permission
+            never calls `resumeRun`. An operational `agent_question` answer
+            returns `state: "resume-queued"` with `runStatus: "NeedsInputIdle"`
+            after committing the same-run continuation fact. Its projection
+            worker owns resume; this acceptance does not claim business success.
+            A concurrent replay of the same permission
             input returns `state: "delivery-in-progress"` while its winning
             delivery is pending; it does not cancel the pending permission.
           content:
@@ -8400,10 +8992,20 @@ paths:
                 required: [ok, state]
                 properties:
                   ok: { type: boolean, enum: [true] }
-                  runStatus: { type: string, enum: ["NeedsInput", "NeedsInputIdle", "Running"] }
+                  runStatus:
+                    {
+                      type: string,
+                      enum: ["NeedsInput", "NeedsInputIdle", "Running"],
+                    }
                   state:
                     type: string
-                    enum: [resume-in-progress, rework-scheduled, resume-queued, delivery-in-progress]
+                    enum:
+                      [
+                        resume-in-progress,
+                        rework-scheduled,
+                        resume-queued,
+                        delivery-in-progress,
+                      ]
                   remainingDecisionCount:
                     type: integer
                     minimum: 0
@@ -10567,7 +11169,11 @@ paths:
                 reattachSources: { local: null, published: null, archive: null }
                 rescueRefs: []
                 actions:
-                  - { id: stop, enabled: false, disabledReason: unsupported-status }
+                  - {
+                      id: stop,
+                      enabled: false,
+                      disabledReason: unsupported-status,
+                    }
                   - { id: archive, enabled: true, disabledReason: null }
                   - { id: drop, enabled: true, disabledReason: null }
                   - { id: exportBranch, enabled: true, disabledReason: null }
@@ -10575,8 +11181,16 @@ paths:
                   - { id: discardChanges, enabled: true, disabledReason: null }
                   - { id: update, enabled: true, disabledReason: null }
                   - { id: openPr, enabled: true, disabledReason: null }
-                  - { id: finalizePr, enabled: false, disabledReason: pr-missing }
-                  - { id: reattach, enabled: false, disabledReason: worktree-present }
+                  - {
+                      id: finalizePr,
+                      enabled: false,
+                      disabledReason: pr-missing,
+                    }
+                  - {
+                      id: reattach,
+                      enabled: false,
+                      disabledReason: worktree-present,
+                    }
                 prDefaults:
                   title: "ABC-12: Fix login redirect"
                   body: |-
@@ -11169,7 +11783,12 @@ paths:
                     ownerUserId: "user_123"
                     ownerLabel: "Alex"
                     scopes:
-                      ["tasks:read", "flows:read", "runners:read", "hitl:respond:human"]
+                      [
+                        "tasks:read",
+                        "flows:read",
+                        "runners:read",
+                        "hitl:respond:human",
+                      ]
                     humanHitl: true
                     prefix: "mai_abcd1234"
                     createdAt: "2026-06-23T12:00:00.000Z"
@@ -11407,7 +12026,12 @@ paths:
                 summary: Add the scopes a token was issued without
                 value:
                   scopes:
-                    ["tasks:read", "flows:read", "runners:read", "hitl:respond:human"]
+                    [
+                      "tasks:read",
+                      "flows:read",
+                      "runners:read",
+                      "hitl:respond:human",
+                    ]
               clear-expiry:
                 summary: Make a token non-expiring
                 value:
@@ -11433,7 +12057,12 @@ paths:
                     ownerUserId: null
                     ownerLabel: null
                     scopes:
-                      ["tasks:read", "flows:read", "runners:read", "hitl:respond:human"]
+                      [
+                        "tasks:read",
+                        "flows:read",
+                        "runners:read",
+                        "hitl:respond:human",
+                      ]
                     prefix: "mai_abcd1234"
                     createdAt: "2026-06-23T12:00:00.000Z"
                     lastUsedAt: "2026-09-10T08:11:00.000Z"
@@ -17019,12 +17648,14 @@ paths:
           description: A repeat of an already stored `clientMessageId`; the stored message and its turn.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/LibrarianPostMessageResult" }
+              schema:
+                { $ref: "#/components/schemas/LibrarianPostMessageResult" }
         "202":
           description: Message stored; its turn is admitted or queued.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/LibrarianPostMessageResult" }
+              schema:
+                { $ref: "#/components/schemas/LibrarianPostMessageResult" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -17152,12 +17783,14 @@ paths:
           description: The decision result; accepted actions return their domain result.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/LibrarianCardDecisionResult" }
+              schema:
+                { $ref: "#/components/schemas/LibrarianCardDecisionResult" }
         "202":
           description: A human action may have applied, but its outcome is unknown; query the operation receipt and do not repeat with a new key.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/LibrarianCardDecisionResult" }
+              schema:
+                { $ref: "#/components/schemas/LibrarianCardDecisionResult" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -17294,7 +17927,6 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
 
-
   /api/librarian/history/clear-preview:
     get:
       tags: [librarian]
@@ -17310,7 +17942,8 @@ paths:
           description: The clear scope and its digest.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/LibrarianHistoryClearPreview" }
+              schema:
+                { $ref: "#/components/schemas/LibrarianHistoryClearPreview" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
@@ -17481,6 +18114,91 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "422": { $ref: "#/components/responses/Config" }
+
+  /api/runs/{runId}/operational/acknowledge:
+    post:
+      operationId: acknowledgeOperationalRun
+      summary: Acknowledge one operational attention revision
+      description:
+        Implemented — per authenticated reader; does not change business
+        outcome or another reader. Exact identical prior acknowledgement is
+        idempotent.
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OperationalAcknowledgementBody"
+      responses:
+        "200":
+          description: Acknowledgement persisted, or identical prior acknowledgement found.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - acknowledged
+                  - revision
+                properties:
+                  acknowledged:
+                    type: boolean
+                    enum:
+                      - true
+                  revision:
+                    type: integer
+                    minimum: 1
+        "400": &a1
+          description: Invalid JSON/body or unsupported contract.
+        "401": &a2
+          $ref: "#/components/responses/Unauthenticated"
+        "403": &a3
+          $ref: "#/components/responses/Forbidden"
+        "404": &a4
+          description: Run not found or not visible.
+        "409": &a5
+          description: Wrong run kind, stale reason/revision or conflicting lifecycle intent.
+  /api/runs/{runId}/operational/cleanup/retry:
+    post:
+      operationId: retryOperationalCleanup
+      summary: Re-arm an exhausted operational cleanup intent
+      description:
+        Implemented — existing project recovery authority; 202 records
+        intent, not removal. Latest identical expectedRevision retry returns the
+        existing re-arm receipt without resetting attempts again. Stale/different
+        revision conflicts. No filesystem path is body-controlled.
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OperationalCleanupRetryBody"
+      responses:
+        "202":
+          description:
+            Cleanup intent durably armed, or latest identical re-arm receipt
+            returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperationalCleanupState"
+        "400": *a1
+        "401": *a2
+        "403": *a3
+        "404": *a4
+        "409": *a5
 
 components:
   securitySchemes:
@@ -17670,6 +18388,1170 @@ components:
             properties:
               ok: { type: boolean, enum: [true] }
   schemas:
+    AgentActivitySummary:
+      type: object
+      additionalProperties: false
+      required:
+        - retainedRunCount
+        - activeRunCount
+        - attemptCount
+        - lastLaunched
+        - lastCompleted
+      properties:
+        retainedRunCount: &a1
+          type: integer
+          minimum: 0
+        activeRunCount: *a1
+        attemptCount:
+          type: integer
+          minimum: 0
+          nullable: true
+        lastLaunched:
+          type: object
+          additionalProperties: false
+          required:
+            - runId
+            - status
+            - at
+            - estimated
+            - outcome
+          properties:
+            runId: &a2
+              type: string
+              format: uuid
+            status: &a3
+              type: string
+              enum: &a8
+                - Pending
+                - Running
+                - NeedsInput
+                - NeedsInputIdle
+                - HumanWorking
+                - WaitingOnChildren
+                - Review
+                - Done
+                - Failed
+                - Crashed
+                - Abandoned
+            at: &a4
+              type: string
+              format: date-time
+            estimated:
+              type: boolean
+            outcome: &a5
+              type: string
+              enum:
+                - success
+                - partial
+                - blocked
+                - failed
+                - cancelled
+                - crashed
+                - null
+              nullable: true
+          nullable: true
+        lastCompleted:
+          type: object
+          additionalProperties: false
+          required:
+            - runId
+            - status
+            - at
+            - outcome
+          properties:
+            runId: *a2
+            status: *a3
+            at: *a4
+            outcome: *a5
+          nullable: true
+    AgentActivityDetail:
+      type: object
+      additionalProperties: false
+      required:
+        - agentId
+        - displayName
+        - attachmentState
+        - activity
+        - canReadDefinition
+        - canEditSettings
+        - canRetry
+      properties:
+        agentId: &a6
+          type: string
+          minLength: 1
+          maxLength: 256
+        displayName: *a6
+        attachmentState:
+          type: string
+          enum:
+            - attached
+            - detached
+            - deleted
+        activity:
+          $ref: "#/components/schemas/AgentActivitySummary"
+        canReadDefinition:
+          type: boolean
+        canEditSettings:
+          type: boolean
+        canRetry:
+          type: boolean
+    AgentHistoryItem:
+      type: object
+      additionalProperties: false
+      required:
+        - runId
+        - agentId
+        - runKind
+        - status
+        - triggerSource
+        - launchedAt
+        - sortAt
+        - timestampProvenance
+        - workspaceAvailable
+        - outcome
+        - retryOfRunId
+      properties:
+        operationalOutcome:
+          $ref: "#/components/schemas/OperationalOutcome"
+          description: Present only with readRepoFiles; safe metadata remains available without protected result bodies.
+        runId: *a2
+        agentId: *a6
+        runKind:
+          type: string
+          enum:
+            - agent
+            - flow
+        status: *a3
+        triggerSource:
+          type: string
+          enum:
+            - manual
+            - cron
+            - domain_event
+            - webhook
+            - flow
+            - scheduled
+            - null
+          nullable: true
+        launchedAt:
+          type: string
+          format: date-time
+          nullable: true
+        sortAt: *a4
+        timestampProvenance:
+          type: string
+          enum:
+            - launch
+            - verified_creation
+            - legacy_estimate
+            - migration_estimate
+        workspaceAvailable:
+          type: boolean
+        outcome: *a5
+        retryOfRunId:
+          type: string
+          format: uuid
+          nullable: true
+    AgentAttemptItem:
+      type: object
+      additionalProperties: false
+      required:
+        - attemptId
+        - triggerSource
+        - claimedAt
+        - settledAt
+        - outcome
+        - runId
+        - reasonCode
+        - provenance
+      properties:
+        attemptId: *a2
+        triggerSource: *a6
+        claimedAt: *a4
+        settledAt:
+          type: string
+          format: date-time
+          nullable: true
+        outcome:
+          type: string
+          enum:
+            - launched
+            - queued
+            - refused
+            - deduplicated
+            - suppressed
+            - failed
+            - unknown
+            - null
+          nullable: true
+        runId:
+          type: string
+          format: uuid
+          nullable: true
+        reasonCode:
+          type: string
+          minLength: 1
+          maxLength: 256
+          nullable: true
+        provenance:
+          type: string
+          enum:
+            - recorded
+            - legacy_latest
+    AgentDefinitionView:
+      type: object
+      additionalProperties: false
+      required:
+        - state
+        - reason
+        - agentId
+        - packageVersion
+        - definitionDigest
+        - prompt
+        - configuration
+      properties:
+        state:
+          type: string
+          enum:
+            - available
+            - unavailable
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 256
+          nullable: true
+        agentId: *a6
+        packageVersion:
+          type: string
+          minLength: 1
+          maxLength: 256
+          nullable: true
+        definitionDigest:
+          type: string
+          minLength: 1
+          maxLength: 256
+          nullable: true
+        prompt:
+          type: string
+          maxLength: 1048576
+          nullable: true
+        configuration:
+          type: object
+          additionalProperties: true
+          nullable: true
+    AgentIncidentEpisode:
+      type: object
+      additionalProperties: false
+      required:
+        - episodeId
+        - attentionRevision
+        - reasonCode
+        - scopeKind
+        - state
+        - firstAt
+        - lastAt
+        - occurrenceCount
+        - acknowledged
+        - representativeRunId
+        - remediationCode
+      properties:
+        episodeId: *a2
+        attentionRevision: &a7
+          type: integer
+          minimum: 1
+        reasonCode: *a6
+        scopeKind:
+          type: string
+          enum:
+            - business
+            - infrastructure
+            - unknown
+        state:
+          type: string
+          enum:
+            - open
+            - resolved
+        firstAt: *a4
+        lastAt: *a4
+        occurrenceCount: *a1
+        acknowledged:
+          type: boolean
+        representativeRunId:
+          type: string
+          format: uuid
+          nullable: true
+        remediationCode:
+          type: string
+          minLength: 1
+          maxLength: 256
+          nullable: true
+    AgentIncidentGroup:
+      type: object
+      additionalProperties: false
+      required:
+        - aggregation
+        - groupId
+        - contentRevision
+        - projectId
+        - projectSlug
+        - agentId
+        - title
+        - unreadEpisodeCount
+        - totalCauseCount
+        - failedRunCount
+        - attemptCount
+        - representativeRunId
+        - episodes
+        - nextCursor
+      properties:
+        contentRevision:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        aggregation:
+          type: string
+          enum:
+            - agent
+        groupId: *a6
+        projectId: *a2
+        projectSlug: *a6
+        agentId: *a6
+        title: *a6
+        unreadEpisodeCount: *a1
+        totalCauseCount: *a1
+        failedRunCount: *a1
+        attemptCount: *a1
+        representativeRunId:
+          type: string
+          format: uuid
+          nullable: true
+        episodes:
+          type: array
+          maxItems: 10
+          items:
+            $ref: "#/components/schemas/AgentIncidentEpisode"
+        nextCursor:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          nullable: true
+    AgentEpisodeAcknowledgement:
+      type: object
+      additionalProperties: false
+      required:
+        - episodes
+      properties:
+        episodes:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - episodeId
+              - attentionRevision
+            properties:
+              episodeId: *a2
+              attentionRevision: *a7
+          minItems: 1
+    AgentRetryBody:
+      type: object
+      additionalProperties: false
+      required:
+        - runnerId
+        - requestKey
+        - previewFingerprint
+      properties:
+        runnerId: *a6
+        requestKey: *a2
+        previewFingerprint:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+    AgentRetryOptions:
+      type: object
+      additionalProperties: false
+      required:
+        - eligible
+        - reason
+        - expiresAt
+        - previewFingerprint
+        - sourceRunnerId
+        - existingIntentId
+        - runners
+        - differences
+      properties:
+        eligible:
+          type: boolean
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 256
+          nullable: true
+        expiresAt: *a4
+        previewFingerprint:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        sourceRunnerId:
+          type: string
+          minLength: 1
+          maxLength: 256
+          nullable: true
+        existingIntentId:
+          type: string
+          format: uuid
+          nullable: true
+        runners:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - id
+              - label
+              - ready
+              - reason
+            properties:
+              id: *a6
+              label: *a6
+              ready:
+                type: boolean
+              reason:
+                type: string
+                minLength: 1
+                maxLength: 256
+                nullable: true
+        differences:
+          type: array
+          maxItems: 32
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - field
+              - source
+              - current
+            properties:
+              field: *a6
+              source:
+                type: string
+                minLength: 1
+                maxLength: 256
+                nullable: true
+              current:
+                type: string
+                minLength: 1
+                maxLength: 256
+                nullable: true
+    AgentRetryReceipt:
+      type: object
+      additionalProperties: false
+      required:
+        - retryIntentId
+        - sourceRunId
+        - runId
+        - intentState
+        - runStatus
+        - queueReason
+        - refusalReason
+        - cleanup
+      properties:
+        retryIntentId: *a2
+        sourceRunId: *a2
+        runId:
+          type: string
+          format: uuid
+          nullable: true
+        intentState:
+          type: string
+          enum:
+            - accepted
+            - launched
+            - refused
+        runStatus:
+          type: string
+          enum: *a8
+          nullable: true
+        queueReason:
+          type: string
+          minLength: 1
+          maxLength: 256
+          nullable: true
+        refusalReason:
+          type: string
+          minLength: 1
+          maxLength: 256
+          nullable: true
+        cleanup:
+          type: object
+          nullable: true
+          additionalProperties: false
+          required: [state, revision, reason]
+          properties:
+            state:
+              type: string
+              enum: [armed, released, exhausted]
+            revision:
+              type: integer
+              minimum: 1
+            reason:
+              type: string
+              nullable: true
+    AgentRetryCleanupBody:
+      type: object
+      additionalProperties: false
+      required:
+        - expectedDispositionRevision
+        - requestKey
+      properties:
+        expectedDispositionRevision: *a7
+        requestKey: *a2
+    AgentRetryCleanupReceipt:
+      type: object
+      additionalProperties: false
+      required:
+        - retryIntentId
+        - dispositionRevision
+        - state
+      properties:
+        retryIntentId: *a2
+        dispositionRevision: *a7
+        state:
+          type: string
+          enum:
+            - armed
+            - released
+            - exhausted
+    TaskQualificationCheck:
+      type: object
+      additionalProperties: false
+      required:
+        - dimension
+        - state
+        - rationale
+        - evidenceIds
+      properties:
+        dimension:
+          type: string
+          enum:
+            - goal_scope
+            - acceptance
+            - consistency
+            - constraints_dependencies
+            - duplicates
+            - relevance
+            - bug_evidence
+        state:
+          type: string
+          enum:
+            - pass
+            - fail
+            - unknown
+            - not_applicable
+        rationale:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        evidenceIds:
+          type: array
+          maxItems: 32
+          items: *a6
+    TaskQualificationValue:
+      type: object
+      additionalProperties: false
+      required:
+        - schemaVersion
+        - requestType
+        - decision
+        - checks
+        - reasonCodes
+        - nextActions
+        - evidenceRefs
+      properties:
+        schemaVersion:
+          type: integer
+          enum:
+            - 1
+        requestType:
+          type: string
+          enum: [bug, feature, maintenance, question]
+        decision:
+          type: string
+          enum:
+            - ready
+            - needs_information
+            - needs_review
+            - not_actionable
+        checks:
+          type: array
+          maxItems: 7
+          items:
+            $ref: "#/components/schemas/TaskQualificationCheck"
+          minItems: 7
+        reasonCodes:
+          type: array
+          maxItems: 16
+          items:
+            allOf:
+              - *a6
+              - pattern: "^[a-z][a-z0-9_]{0,255}$"
+        nextActions:
+          type: array
+          maxItems: 16
+          items:
+            type: string
+            minLength: 1
+            maxLength: 2000
+        evidenceRefs:
+          type: array
+          maxItems: 32
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - id
+              - kind
+              - reference
+            properties:
+              id: *a6
+              kind:
+                type: string
+                enum:
+                  - repository
+                  - task
+                  - run
+                  - source
+                  - human_attestation
+              reference: *a6
+    TaskQualificationWrite:
+      type: object
+      additionalProperties: false
+      required:
+        - requestKey
+        - expectedInputRevision
+        - expectedQualificationRevision
+        - qualification
+      properties:
+        requestKey: *a2
+        expectedInputRevision:
+          { type: integer, minimum: 1, maximum: 2147483647 }
+        expectedQualificationRevision:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+          nullable: true
+        qualification:
+          $ref: "#/components/schemas/TaskQualificationValue"
+        flowId: *a6
+        runnerId: *a6
+        baseBranch:
+          type: string
+          minLength: 1
+          maxLength: 255
+        enqueue:
+          type: boolean
+    TaskQualificationReceipt:
+      type: object
+      additionalProperties: false
+      required:
+        - qualificationId
+        - inputRevision
+        - qualificationRevision
+        - publicationState
+        - decision
+        - publicationReason
+      properties:
+        qualificationId: *a2
+        inputRevision: *a7
+        qualificationRevision: *a7
+        publicationState:
+          type: string
+          enum:
+            - candidate
+            - accepted
+            - rejected
+        decision:
+          type: string
+          enum:
+            - ready
+            - needs_information
+            - needs_review
+            - not_actionable
+        publicationReason:
+          type: string
+          minLength: 1
+          maxLength: 256
+          nullable: true
+    TaskQualificationHistoryItem:
+      type: object
+      additionalProperties: false
+      required:
+        - qualificationId
+        - inputRevision
+        - qualificationRevision
+        - publicationState
+        - decision
+        - publicationReason
+        - assessedAt
+        - authorKind
+        - runId
+        - evidenceTarget
+        - evidenceSha
+        - qualification
+      properties:
+        qualificationId:
+          type: string
+          format: uuid
+        inputRevision: &a1
+          type: integer
+          minimum: 1
+        qualificationRevision: *a1
+        publicationState:
+          type: string
+          enum:
+            - candidate
+            - accepted
+            - rejected
+        decision:
+          type: string
+          enum:
+            - ready
+            - needs_information
+            - needs_review
+            - not_actionable
+        publicationReason:
+          type: string
+          minLength: 1
+          maxLength: 256
+          nullable: true
+        assessedAt:
+          type: string
+          format: date-time
+        authorKind:
+          type: string
+          enum:
+            - user
+            - project_token
+            - agent_run
+        runId:
+          type: string
+          format: uuid
+          nullable: true
+        evidenceTarget:
+          type: string
+          minLength: 1
+          maxLength: 255
+        evidenceSha:
+          type: string
+          nullable: true
+          pattern: ^[a-f0-9]{40}([a-f0-9]{24})?$
+        qualification:
+          $ref: "#/components/schemas/TaskQualificationValue"
+    TaskQualificationSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - required
+        - mode
+        - inputRevision
+        - qualificationRevision
+        - qualificationId
+        - decision
+        - publicationState
+        - freshness
+        - blockedReason
+        - nextActions
+      properties:
+        candidate:
+          oneOf:
+            - $ref: "#/components/schemas/TaskQualificationReceipt"
+            - type: object
+              nullable: true
+              enum: [null]
+        required:
+          type: boolean
+        mode:
+          type: string
+          enum:
+            - legacy
+            - required
+            - execution_child
+        inputRevision: *a7
+        qualificationRevision:
+          type: integer
+          minimum: 1
+          nullable: true
+        qualificationId:
+          type: string
+          format: uuid
+          nullable: true
+        decision:
+          type: string
+          enum:
+            - ready
+            - needs_information
+            - needs_review
+            - not_actionable
+            - null
+          nullable: true
+        publicationState:
+          type: string
+          enum:
+            - candidate
+            - accepted
+            - rejected
+            - null
+          nullable: true
+        freshness:
+          type: string
+          enum:
+            - current
+            - stale
+            - unassessed
+        blockedReason:
+          type: string
+          minLength: 1
+          maxLength: 256
+          nullable: true
+        nextActions:
+          type: array
+          maxItems: 16
+          items: *a6
+    OperationalReference:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - id
+        - state
+      properties:
+        kind:
+          type: string
+          enum:
+            - task
+            - external_issue
+            - operation_receipt
+            - other
+        id:
+          type: string
+          minLength: 1
+          maxLength: 512
+        state:
+          type: string
+          enum:
+            - confirmed
+            - unresolved
+        url:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          format: uri
+          description: http/https only; no embedded credentials.
+    OperationalDiagnostic:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - severity
+        - operation
+        - message
+        - retryable
+        - remediation
+      properties:
+        code:
+          type: string
+          minLength: 1
+          maxLength: 128
+        severity:
+          type: string
+          enum:
+            - warning
+            - error
+        operation:
+          type: string
+          minLength: 1
+          maxLength: 256
+        message:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        retryable:
+          type: boolean
+        remediation:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        referenceIds:
+          type: array
+          maxItems: 1000
+          items:
+            type: string
+            minLength: 1
+            maxLength: 512
+        service:
+          type: string
+          minLength: 1
+          maxLength: 256
+        httpStatus:
+          type: integer
+          minimum: 100
+          maximum: 599
+    OperationalResultV1:
+      type: object
+      additionalProperties: false
+      required:
+        - schemaVersion
+        - outcome
+        - summary
+        - coverage
+        - counts
+        - references
+        - diagnostics
+      properties:
+        schemaVersion:
+          type: integer
+          enum:
+            - 1
+        outcome:
+          type: string
+          enum:
+            - success
+            - partial
+            - blocked
+            - failed
+        summary:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        coverage:
+          type: object
+          additionalProperties: false
+          required:
+            - state
+            - remainingKnown
+          properties:
+            state:
+              type: string
+              enum:
+                - complete
+                - incomplete
+                - not_started
+            remainingKnown:
+              type: integer
+              minimum: 0
+              maximum: 9007199254740991
+              nullable: true
+        counts:
+          type: object
+          additionalProperties: false
+          required:
+            - scanned
+            - attempted
+            - completed
+            - failed
+            - skipped
+            - created
+          properties:
+            scanned: &a1
+              type: integer
+              minimum: 0
+              maximum: 9007199254740991
+            attempted: *a1
+            completed: *a1
+            failed: *a1
+            skipped: *a1
+            created: *a1
+        references:
+          type: array
+          maxItems: 1000
+          items:
+            $ref: "#/components/schemas/OperationalReference"
+        diagnostics:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/OperationalDiagnostic"
+      description:
+        Implemented — fixed operational_v1 value. Existing output limits plus
+        operational count/coverage/outcome/link semantics apply; schema validity is
+        distinct from business success.
+    OperationalCompletionDeclaration:
+      type: object
+      additionalProperties: false
+      required:
+        - contract
+      properties:
+        contract:
+          type: string
+          enum:
+            - operational_v1
+    OperationalAcknowledgementBody:
+      type: object
+      additionalProperties: false
+      required:
+        - reason
+        - revision
+      properties:
+        reason:
+          type: string
+          enum:
+            - operation_failure
+            - cleanup_failure
+        revision:
+          type: integer
+          minimum: 1
+    OperationalCleanupRetryBody:
+      type: object
+      additionalProperties: false
+      required:
+        - expectedRevision
+      properties:
+        expectedRevision:
+          type: integer
+          minimum: 1
+    OperationalCleanupState:
+      type: object
+      additionalProperties: false
+      required:
+        - state
+        - revision
+        - attempts
+        - dueAt
+        - errorCode
+        - evidenceIds
+      properties:
+        state:
+          type: string
+          enum:
+            - retained
+            - armed
+            - preserving
+            - removed
+            - released
+            - retry
+            - exhausted
+        revision:
+          type: integer
+          minimum: 1
+        attempts:
+          type: integer
+          minimum: 0
+          maximum: 5
+        dueAt:
+          type: string
+          format: date-time
+          nullable: true
+        errorCode:
+          type: string
+          nullable: true
+        evidenceIds:
+          type: array
+          items: { type: string }
+          description: Opaque retained diagnostic object IDs, authorized through the run object-content endpoint.
+    OperationalOutcome:
+      type: object
+      additionalProperties: false
+      required:
+        - version
+        - state
+        - reportedOutcome
+        - effectiveOutcome
+        - successful
+        - validation
+        - integrity
+        - resultRevision
+        - reportedResult
+        - referenceLinks
+        - reasonCodes
+        - cleanup
+      properties:
+        version:
+          type: integer
+          enum:
+            - 1
+        state:
+          type: string
+          enum:
+            - pending
+            - terminal
+        reportedOutcome:
+          type: string
+          nullable: true
+          enum:
+            - success
+            - partial
+            - blocked
+            - failed
+            - null
+        effectiveOutcome:
+          type: string
+          nullable: true
+          enum:
+            - success
+            - partial
+            - blocked
+            - failed
+            - cancelled
+            - crashed
+            - null
+        successful:
+          type: boolean
+        validation:
+          type: string
+          enum:
+            - pending
+            - valid
+            - invalid
+            - unchecked
+        integrity:
+          type: string
+          enum:
+            - pending
+            - clean
+            - changed
+            - indeterminate
+            - unchecked
+        resultRevision:
+          type: integer
+          minimum: 1
+          nullable: true
+        reportedResult:
+          oneOf:
+            - $ref: "#/components/schemas/OperationalResultV1"
+            - type: object
+              nullable: true
+              enum: [null]
+        referenceLinks:
+          type: array
+          description: Safe declared external links and server-resolved task links within the Run project. The reported result remains unchanged.
+          items:
+            type: object
+            additionalProperties: false
+            required: [kind, id, href]
+            properties:
+              kind:
+                {
+                  type: string,
+                  enum: [task, external_issue, operation_receipt, other],
+                }
+              id: { type: string }
+              href: { type: string, maxLength: 2048 }
+        reasonCodes:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+        cleanup:
+          oneOf:
+            - $ref: "#/components/schemas/OperationalCleanupState"
+            - type: object
+              nullable: true
+              enum: [null]
+      description:
+        Designed — platform terminal receipt joined to the exact validated
+        result revision. Failed ordinary result remains unavailable; this diagnostic
+        projection never makes it a successful answer.
+
     InboxCardContext:
       type: object
       description: |
@@ -18027,117 +19909,199 @@ components:
         filesystem internals. `definitionPath` is the logical path within the
         providing package, never a host filesystem path.
       required:
-        [
-          id,
-          packageName,
-          versionLabel,
-          origin,
-          name,
-          description,
-          workspace,
-          mode,
-          triggers,
-          riskTier,
-          definitionPath,
-          enabled,
-        ]
+        - id
+        - packageName
+        - versionLabel
+        - origin
+        - name
+        - description
+        - workspace
+        - mode
+        - triggers
+        - riskTier
+        - definitionPath
+        - enabled
+        - kind
+        - completion
+        - taskQualification
       properties:
-        id: { type: string }
+        taskQualification:
+          type: object
+          nullable: true
+          additionalProperties: false
+          required: [contract, role]
+          properties:
+            contract: { type: string, enum: [v1] }
+            role: { type: string, enum: [intake, qualifier] }
+        activity:
+          $ref: "#/components/schemas/AgentActivitySummary"
+          description: Implemented — safe batched retained history summary
+        id:
+          type: string
         packageName:
-          {
-            type: string,
-            description: "(ADR-106) Providing package = `package_installs.name` (was `flowRefId`).",
-          }
-        versionLabel: { type: string }
-        origin: { type: string, enum: [git, authored] }
-        name: { type: string }
-        description: { type: string }
-        runnerId: { type: string, nullable: true }
-        workspace: { type: string, enum: [none, repo_read, worktree] }
+          type: string
+          description: (ADR-106) Providing package = `package_installs.name` (was `flowRefId`).
+        versionLabel:
+          type: string
+        origin:
+          type: string
+          enum:
+            - git
+            - authored
+        name:
+          type: string
+        description:
+          type: string
+        runnerId:
+          type: string
+          nullable: true
+        workspace:
+          type: string
+          enum:
+            - none
+            - repo_read
+            - worktree
         workspaceRef:
           type: string
           nullable: true
-          description: "`trigger` or a literal branch; repo_read only (ADR-090 amendment)."
-        mode: { type: string, enum: [session, subagent] }
+          description: "`task_target` for a bound operational qualifier, `trigger`, or a literal branch; repo_read only."
+        mode:
+          type: string
+          enum:
+            - session
+            - subagent
         triggers:
           type: array
           items:
             type: string
-            enum: [manual, cron, domain_event, webhook, flow]
-        riskTier: { type: string, enum: [read_only, standard, destructive] }
+            enum:
+              - manual
+              - cron
+              - domain_event
+              - webhook
+              - flow
+        riskTier:
+          type: string
+          enum:
+            - read_only
+            - standard
+            - destructive
         recommended:
           type: object
           nullable: true
           description: Package-recommended bindings — seed/pre-fill the attach panel (RD5).
           additionalProperties: false
           properties:
-            runner: { type: string }
+            runner:
+              type: string
             branchBase:
-              {
-                type: string,
-                description: "(ADR-106) Recommended branch base.",
-              }
+              type: string
+              description: (ADR-106) Recommended branch base.
             cron:
               type: object
               additionalProperties: false
               properties:
-                expr: { type: string }
-                timezone: { type: string }
+                expr:
+                  type: string
+                timezone:
+                  type: string
             events:
               type: array
-              items: { type: string }
-            executionPolicy: { $ref: "#/components/schemas/AgentRunnerPolicy" }
+              items:
+                type: string
+            executionPolicy:
+              $ref: "#/components/schemas/AgentRunnerPolicy"
         flowRef:
           type: string
           nullable: true
-          description: "(ADR-106) Same-package flow the agent drives (a `flows[].id` of the providing package manifest); `null` → standalone."
+          description:
+            (ADR-106) Same-package flow the agent drives (a `flows[].id` of the
+            providing package manifest); `null` → standalone.
         branchBase:
-          {
-            type: string,
-            nullable: true,
-            description: "(ADR-106) Agent branch base; defaults to the project main branch.",
-          }
+          type: string
+          nullable: true
+          description: (ADR-106) Agent branch base; defaults to the project main branch.
         definitionPath:
           type: string
           description: Logical package-relative path (for example `maister-agents/triager.md`).
-        enabled: { type: boolean }
-        quarantinedAt: { type: string, format: date-time, nullable: true }
-        quarantineReason: { type: string, nullable: true }
+        enabled:
+          type: boolean
+        quarantinedAt:
+          type: string
+          format: date-time
+          nullable: true
+        quarantineReason:
+          type: string
+          nullable: true
+        kind:
+          type: string
+          enum:
+            - code_delivery
+            - operational
+          description: Independent definition purpose; omitted legacy
+            definitions resolve code_delivery.
+        completion:
+          allOf:
+            - $ref: "#/components/schemas/OperationalCompletionDeclaration"
+          nullable: true
+          description: Required operational contract declaration, null for
+            legacy code delivery.
+
     AttachedAgent:
       type: object
       description: |
         (M34 — Implemented; M39 instance config Implemented — ADR-106) Attach-panel
         row — the agent summary joined with its link, per-project INSTANCE
         overrides, and trigger bindings for this project.
-      required: [agent, linkId, enabled, schedules]
+      required:
+        - agent
+        - linkId
+        - enabled
+        - schedules
       properties:
-        agent: { $ref: "#/components/schemas/AgentSummary" }
-        linkId: { type: string, format: uuid }
-        enabled: { type: boolean }
-        runnerOverrideId: { type: string, nullable: true }
+        agent:
+          $ref: "#/components/schemas/AgentSummary"
+        linkId:
+          type: string
+          format: uuid
+        enabled:
+          type: boolean
+        runnerOverrideId:
+          type: string
+          nullable: true
         branchBase:
-          {
-            type: string,
-            nullable: true,
-            description: "(ADR-106) Instance override of the branch base; `null` → fall back to the agent `recommended`/project main.",
-          }
+          type: string
+          nullable: true
+          description:
+            (ADR-106) Instance override of the branch base; `null` → fall back
+            to the agent `recommended`/project main.
         executionPolicyOverride:
           type: object
           nullable: true
-          allOf: [{ $ref: "#/components/schemas/AgentRunnerPolicy" }]
-          description: "(ADR-106) Instance override of `{autoApply, onBudgetBreach}`; `null` → fall back to the agent `recommended`."
+          allOf:
+            - $ref: "#/components/schemas/AgentRunnerPolicy"
+          description:
+            (ADR-106) Instance override of `{autoApply, onBudgetBreach}`;
+            `null` → fall back to the agent `recommended`.
         canReadBrain:
           type: boolean
-          description: "(ADR-122) Per-link Brain read axis (default false)."
+          description: (ADR-122) Per-link Brain read axis (default false).
         canWriteBrain:
           type: boolean
-          description: "(ADR-122) Per-link Brain write axis (default false; read never grants write)."
+          description:
+            (ADR-122) Per-link Brain write axis (default false; read never
+            grants write).
         memoryEnabled:
           type: boolean
-          description: "(ADR-152) Per-link agent-memory axis (default false). A SEPARATE store from Brain — neither `canReadBrain` nor `canWriteBrain` implies it. Seeded server-side from the effective definition's `memory:` field on attach, effective thereafter."
+          description:
+            (ADR-152) Per-link agent-memory axis (default false). A SEPARATE
+            store from Brain — neither `canReadBrain` nor `canWriteBrain` implies
+            it. Seeded server-side from the effective definition's `memory:` field
+            on attach, effective thereafter.
         schedules:
           type: array
-          items: { $ref: "#/components/schemas/AgentScheduleBody" }
+          items:
+            $ref: "#/components/schemas/AgentScheduleBody"
     AgentMemoryState:
       type: object
       description: |
@@ -18629,6 +20593,11 @@ components:
       additionalProperties: false
       minProperties: 1
       properties:
+        taskQualificationPolicy:
+          type: string
+          enum: [legacy, required]
+          nullable: true
+          description: Explicit reviewed override. Null clears to the immutable creation baseline; required task holds remain required.
         runnerId:
           type: string
           nullable: true
@@ -18792,6 +20761,15 @@ components:
       additionalProperties: false
       required: [ok, projectId]
       properties:
+        taskQualificationPolicy:
+          type: object
+          additionalProperties: false
+          required: [version, baseline, override, mode]
+          properties:
+            version: { type: integer, enum: [1] }
+            baseline: { type: string, enum: [legacy, required] }
+            override: { type: string, enum: [legacy, required], nullable: true }
+            mode: { type: string, enum: [legacy, required] }
         ok:
           type: boolean
         projectId:
@@ -19605,24 +21583,41 @@ components:
     AutomationRunLink:
       type: object
       nullable: true
-      required: [id, status]
+      required:
+        - id
+        - status
       properties:
-        id: { type: string, format: uuid }
+        id:
+          type: string
+          format: uuid
         status:
           type: string
           enum:
-            [
-              Pending,
-              Running,
-              NeedsInput,
-              NeedsInputIdle,
-              HumanWorking,
-              Review,
-              Done,
-              Abandoned,
-              Crashed,
-              Failed,
-            ]
+            - Pending
+            - Running
+            - NeedsInput
+            - NeedsInputIdle
+            - HumanWorking
+            - Review
+            - Done
+            - Abandoned
+            - Crashed
+            - Failed
+        agentKind:
+          type: string
+          nullable: true
+          enum:
+            - code_delivery
+            - operational
+            - null
+        operationalOutcome:
+          allOf:
+            - $ref: "#/components/schemas/OperationalOutcome"
+          nullable: true
+          description:
+            Implemented — actual resulting run outcome, separate from scheduler
+            dispatch success.
+
     OneTimeTaskLaunchAutomationRow:
       type: object
       required:
@@ -20931,7 +22926,16 @@ components:
         defaultRunnerId: { type: string, nullable: true }
     ScratchPendingHitl:
       type: object
-      required: [hitlRequestId, kind, prompt, schema, options, answerState, storedResponse]
+      required:
+        [
+          hitlRequestId,
+          kind,
+          prompt,
+          schema,
+          options,
+          answerState,
+          storedResponse,
+        ]
       properties:
         hitlRequestId: { type: string, format: uuid }
         kind: { type: string, enum: [permission, form, human] }
@@ -21160,7 +23164,7 @@ components:
           description: A `MaisterErrorCode`, or null when the cause has none (an abandon).
         reason:
           type: string
-          pattern: '^[a-z][a-z0-9_]{0,63}(/[a-z][a-z0-9_]{0,63})?$'
+          pattern: "^[a-z][a-z0-9_]{0,63}(/[a-z][a-z0-9_]{0,63})?$"
           description: The emitter's reason token (snake_case; the orchestrator cascade writes `cascade/<token>`).
         source:
           type: string
@@ -22327,8 +24331,9 @@ components:
             Required iff the HITL row has `kind == "form" | "human" |
             "agent_question"`. An `agent_question` answer is accepted only
             from a human session responder or an exact-human external token;
-            it is committed as task clarification history and never resumes the
-            terminal origin ACP session.
+            it is committed as task clarification history. Code-delivery origins
+            remain terminal. Operational origins queue a same-run continuation
+            under their frozen completion contract.
             Validated against the row's `schema` field (MAIster form
             schema — see `docs/configuration.md`). Returns 422 on
             failure. For `kind="budget_breach"`, carries the
@@ -23166,14 +25171,33 @@ components:
         objectId: { type: string, format: uuid }
         kind:
           type: string
-          enum: [session_log, raw_transcript, cost_diagnostic, checkpoint, attachment, capability_profile, capability_instructions, agent_memory_snapshot, node_result, evidence, generated_artifact, plan_review, diagnostic]
+          enum:
+            [
+              session_log,
+              raw_transcript,
+              cost_diagnostic,
+              checkpoint,
+              attachment,
+              capability_profile,
+              capability_instructions,
+              agent_memory_snapshot,
+              node_result,
+              evidence,
+              generated_artifact,
+              plan_review,
+              diagnostic,
+            ]
         logicalName: { type: string, maxLength: 255 }
         mimeType: { type: string, maxLength: 255 }
         sizeBytes: { type: string, nullable: true, pattern: "^[0-9]+$" }
         sha256: { type: string, nullable: true, pattern: "^[a-f0-9]{64}$" }
         generation: { type: integer, minimum: 1 }
         retentionClass: { type: string, enum: [run, delivery, ephemeral] }
-        state: { type: string, enum: [available, deleting, missing, deleted, expired, corrupt] }
+        state:
+          {
+            type: string,
+            enum: [available, deleting, missing, deleted, expired, corrupt],
+          }
         createdAt: { type: string, format: date-time }
         sealedAt: { type: string, format: date-time, nullable: true }
         expiresAt: { type: string, format: date-time, nullable: true }
@@ -23332,7 +25356,7 @@ components:
         reason: { $ref: "#/components/schemas/HitlRespondReason" }
         causeCode:
           type: string
-          pattern: '^[a-z][a-z0-9_]{0,63}$'
+          pattern: "^[a-z][a-z0-9_]{0,63}$"
     HitlRespondErrorBody:
       allOf:
         - { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -23357,7 +25381,16 @@ components:
               required: [reason]
               additionalProperties: false
               properties:
-                reason: { type: string, enum: [permission_not_pending, permission_delivery_rejected, agent_session_ended] }
+                reason:
+                  {
+                    type: string,
+                    enum:
+                      [
+                        permission_not_pending,
+                        permission_delivery_rejected,
+                        agent_session_ended,
+                      ],
+                  }
     HitlRespondSavedError:
       allOf:
         - { $ref: "#/components/schemas/HitlRespondErrorBody" }
@@ -25907,7 +27940,15 @@ components:
         deterministically (`renderStatementPrompt`, fixed section order).
       additionalProperties: false
       required:
-        [context, goal, acceptance, constraints, outOfScope, links, openQuestions]
+        [
+          context,
+          goal,
+          acceptance,
+          constraints,
+          outOfScope,
+          links,
+          openQuestions,
+        ]
       properties:
         context: { type: string, minLength: 1, maxLength: 8000 }
         goal: { type: string, minLength: 1, maxLength: 2000 }
@@ -26110,7 +28151,15 @@ components:
       type: object
       additionalProperties: false
       required:
-        [id, runId, resetState, readThroughSeq, lastSeq, memoryEnabledNextSegment, createdAt]
+        [
+          id,
+          runId,
+          resetState,
+          readThroughSeq,
+          lastSeq,
+          memoryEnabledNextSegment,
+          createdAt,
+        ]
       properties:
         id: { type: string, format: uuid }
         runId:
@@ -26167,7 +28216,8 @@ components:
         visibility-filtered read. When the task is gone or no longer visible to
         the owner, `available` is false and every other field but `taskId` is
         null — an explicit unavailable state, never a stale title.
-      required: [taskId, available, taskKey, title, projectSlug, status, workStage]
+      required:
+        [taskId, available, taskKey, title, projectSlug, status, workStage]
       properties:
         taskId: { type: string, format: uuid }
         available: { type: boolean }
@@ -26191,7 +28241,17 @@ components:
         one domain event on followed work, rendered without a model turn. Run
         status and stage are read live at render. A merged run never claims
         deployment: `promotedKind: merge` reads "merged · deployment unknown".
-      required: [updateId, eventKind, task, runId, runStatus, workStage, promotedKind, occurredAt]
+      required:
+        [
+          updateId,
+          eventKind,
+          task,
+          runId,
+          runStatus,
+          workStage,
+          promotedKind,
+          occurredAt,
+        ]
       properties:
         updateId: { type: string, format: uuid }
         eventKind:
@@ -26431,7 +28491,8 @@ components:
           enum: [owner_message, explain, summary]
         status:
           type: string
-          enum: [queued, admitted, running, completed, stopped, failed, withdrawn]
+          enum:
+            [queued, admitted, running, completed, stopped, failed, withdrawn]
           description: |
             `withdrawn` — the queued message was withdrawn by the owner or by a
             reset before its turn ran.
@@ -26467,7 +28528,8 @@ components:
         id: { type: string, format: uuid }
         status:
           type: string
-          enum: [queued, admitted, running, completed, stopped, failed, withdrawn]
+          enum:
+            [queued, admitted, running, completed, stopped, failed, withdrawn]
         queuePosition: { type: integer, minimum: 1, nullable: true }
 
     LibrarianMessage:

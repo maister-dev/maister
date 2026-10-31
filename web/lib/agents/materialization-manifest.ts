@@ -316,6 +316,7 @@ async function withLock<T>(cwd: string, effect: () => Promise<T>): Promise<T> {
       throw new MaisterError(
         "CONFLICT",
         `timed out waiting for agent materialization lock in ${cwd}`,
+        { details: { reason: "agent_materialization_lock_timeout" } },
       );
     }
 

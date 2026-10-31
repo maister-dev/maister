@@ -78,3 +78,13 @@ belong in the appropriate host process environment.
 Unknown schema versions, duplicate Flow identifiers, empty sources or versions,
 and unresolved runner references fail configuration validation. MAIster reports
 the error and does not guess a replacement.
+
+
+## Incoming qualification policy
+
+`project.task_qualification: required | legacy` sets the project override.
+Omit it to restore the immutable project creation baseline. Existing projects and
+tasks remain explicit legacy until opted in; new projects default required.
+Changing this setting requires project configuration permission. Required task
+holds survive a later policy change. Qualification-capable core packages require
+engine 3.10.0 and required project policy before activation.

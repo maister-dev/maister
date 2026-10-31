@@ -22,6 +22,7 @@ export interface TopNavProps {
   sections?: readonly LeftRailNavSection[];
   /** ADR-191 D1: the librarian entry, first in the right group. */
   librarianEntry?: ReactNode;
+  agentExecutions?: ReactNode;
 }
 
 export async function TopNav({
@@ -31,6 +32,7 @@ export async function TopNav({
   badges,
   sections = [],
   librarianEntry,
+  agentExecutions,
 }: TopNavProps): Promise<ReactElement> {
   const t = await getTranslations("nav");
 
@@ -51,6 +53,7 @@ export async function TopNav({
         <div className="flex min-w-0 items-center gap-3 lg:gap-9">
           {sections.length > 0 ? (
             <MobileRailDrawer
+              activity={agentExecutions}
               ariaLabel={t("sectionsLabel")}
               badges={badges}
               closeLabel={t("closeNavigation")}

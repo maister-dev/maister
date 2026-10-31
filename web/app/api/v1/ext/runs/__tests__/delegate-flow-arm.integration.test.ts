@@ -1069,3 +1069,37 @@ describe("tool support by child kind (ADR-163 D2 / REQ-14)", () => {
     );
   }, 60_000);
 });
+
+it("IT-UX-19 refuses a parent that requires qualification before creating a delegate carrier", async () => {
+  await pool.query(
+    "UPDATE tasks SET qualification_mode='required',qualification_input_revision=qualification_input_revision+1 WHERE id=$1",
+    [orchestratorTaskId],
+  );
+  const before = (
+    await pool.query(
+      "SELECT count(*)::int total FROM tasks WHERE project_id=$1",
+      [ctx.projectId],
+    )
+  ).rows[0].total;
+  const response = await delegatePost(
+    delegateRequest(secret, flowDelegation()),
+    {},
+  );
+
+  expect(response.status).toBe(409);
+  expect(
+    (
+      await pool.query(
+        "SELECT count(*)::int total FROM tasks WHERE project_id=$1",
+        [ctx.projectId],
+      )
+    ).rows[0].total,
+  ).toBe(before);
+  expect(
+    (
+      await pool.query("SELECT id FROM runs WHERE parent_run_id=$1", [
+        parentRunId,
+      ])
+    ).rows,
+  ).toEqual([]);
+});

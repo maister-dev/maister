@@ -49,7 +49,10 @@ export const MAX_CONTEXT_MOUNT_GC_ATTEMPTS = RETRY_BACKOFF_MS.length + 1;
 // A deterministic failure can never succeed on a retry, so it is recorded as a
 // permanent `failed` with evidence rather than burning the retry budget.
 export type ContextMountGcFailureCode =
-  "sibling_project_absent" | "not_a_registered_worktree" | "removal_failed";
+  | "sibling_project_absent"
+  | "not_a_registered_worktree"
+  | "removal_failed"
+  | "agent_kind_unknown";
 
 export type ContextMountGcMarker = {
   state: "retry_waiting" | "failed";
@@ -241,19 +244,49 @@ export async function runContextMountGcSweep(
     if (candidates.length === 0) continue;
 
     const runIds = [...new Set(candidates.map((c) => c.runId))];
-    const liveRows: Array<{ id: string }> = await db
-      .select({ id: runs.id })
+    const ownerRows: Array<{
+      id: string;
+      status: string;
+      agentKind: string | null;
+    }> = await db
+      .select({ id: runs.id, status: runs.status, agentKind: runs.agentKind })
       .from(runs)
-      .where(
-        and(
-          inArray(runs.id, runIds),
-          inArray(runs.status, [...CONTEXT_MOUNT_LIVE_RUN_STATUSES]),
-        ),
-      );
-    const liveIds = new Set(liveRows.map((r) => r.id));
+      .where(and(inArray(runs.id, runIds)));
+    const liveIds = new Set(
+      ownerRows
+        .filter(
+          (row) =>
+            row.agentKind === "operational" ||
+            (CONTEXT_MOUNT_LIVE_RUN_STATUSES as readonly string[]).includes(
+              row.status,
+            ),
+        )
+        .map((row) => row.id),
+    );
+    const knownIds = new Set(ownerRows.map((row) => row.id));
 
     for (const candidate of candidates) {
       summary.scanned += 1;
+
+      if (!knownIds.has(candidate.runId)) {
+        const previous = await readMarker(candidate.markerPath);
+
+        if (previous?.lastErrorCode === "agent_kind_unknown") {
+          summary.skipped += 1;
+          continue;
+        }
+        await recordAttemptFailure({
+          candidate,
+          marker: previous,
+          now: now(),
+          errorCode: "agent_kind_unknown",
+          errorMessage:
+            "Execution purpose is unknown; retain this context checkout for operator diagnosis",
+          deterministic: true,
+        });
+        summary.poisoned += 1;
+        continue;
+      }
 
       if (liveIds.has(candidate.runId)) {
         summary.live += 1;
@@ -263,7 +296,10 @@ export async function runContextMountGcSweep(
       const at = now();
       const marker = await readMarker(candidate.markerPath);
 
-      if (!markerIsDue(marker, at)) {
+      if (
+        marker?.lastErrorCode !== "agent_kind_unknown" &&
+        !markerIsDue(marker, at)
+      ) {
         summary.skipped += 1;
         continue;
       }

@@ -3,10 +3,13 @@ import type { FlowResultDegradationCode } from "@/lib/runs/flow-result-dto";
 import type { ResultStatus } from "@/lib/run-results/types";
 import type { ReactElement, ReactNode } from "react";
 
+import Link from "next/link";
 import { getLocale, getTranslations } from "next-intl/server";
 import { notFound, redirect } from "next/navigation";
 import { ExclamationTriangleIcon } from "@heroicons/react/24/outline";
 
+import { AgentRetryControl } from "@/components/agents/agent-retry-control";
+import { OperationalRunResult } from "@/components/runs/operational-run-result";
 import {
   CRASH_RECOVER_DECISION,
   TURN_LOST_DECISION,
@@ -419,7 +422,9 @@ export default async function RunDetailLayout({
   }));
   // ADR-165 (T8.1/T8.2): the run's own public result, and the labels the panel
   // and the child glyphs share. `null` means "render no panel".
+  const tActivity = await getTranslations("agentActivity");
   const publicResult = await loadRunPublicResult(getDb(), runId);
+  const operational = publicResult?.operationalOutcome ?? null;
   const resultStatusLabels: Record<ResultStatus, string> = {
     pending: t("publicResultStatusPending"),
     valid: t("publicResultStatusValid"),
@@ -1283,12 +1288,14 @@ export default async function RunDetailLayout({
     disabled: !action.enabled,
     disabledReason: action.enabled ? null : t("inspectorDisabled"),
   }));
-  const visiblePolicyActions = policyActions.filter((action) =>
-    isCutoverHistory
-      ? action.id === "archive" || action.id === "drop"
-      : !action.disabled ||
-        (detail.status === "Crashed" && action.id === "recover"),
-  );
+  const visiblePolicyActions = operational
+    ? []
+    : policyActions.filter((action) =>
+        isCutoverHistory
+          ? action.id === "archive" || action.id === "drop"
+          : !action.disabled ||
+            (detail.status === "Crashed" && action.id === "recover"),
+      );
   const headerPromotionPolicy = policyActions.find(
     (action) => action.id === "promote" || action.id === "promotePullRequest",
   );
@@ -1347,8 +1354,8 @@ export default async function RunDetailLayout({
       ]
     : [];
   const inspectorActions: RunInspectorAction[] = [
-    ...dirtyGateActions,
-    ...reviewGateActions,
+    ...(operational ? [] : dirtyGateActions),
+    ...(operational ? [] : reviewGateActions),
     ...pendingInputActions,
     ...gateChatActions,
     ...(showReview && !hasReviewGate
@@ -1456,10 +1463,45 @@ export default async function RunDetailLayout({
           />
         ) : (
           <>
-            <AgentRunCenter
-              labels={agentRunCenterLabels}
-              result={flowResultDto}
-            />
+            {detail.sourceAgentId ? (
+              <Link
+                className="inline-flex text-sm text-mute underline"
+                href={`/projects/${detail.projectSlug}/agents/${encodeURIComponent(detail.sourceAgentId)}`}
+              >
+                {tActivity("history")}
+              </Link>
+            ) : null}
+            {detail.retryOfRunId ? (
+              <p className="text-xs text-mute">
+                {tActivity("retryOf")}{" "}
+                <Link
+                  className="underline"
+                  href={`/runs/${detail.retryOfRunId}`}
+                >
+                  {detail.retryOfRunId.slice(0, 8)}
+                </Link>
+              </p>
+            ) : null}
+            {canAct &&
+            detail.runKind === "agent" &&
+            ["Failed", "Crashed"].includes(detail.status) &&
+            (detail.agentKind === "operational" ||
+              detail.agentWorkspace === "none" ||
+              detail.agentWorkspace === "repo_read") ? (
+              <AgentRetryControl runId={detail.runId} />
+            ) : null}
+            {operational ? (
+              <OperationalRunResult
+                canAct={canAct}
+                outcome={operational}
+                runId={detail.runId}
+              />
+            ) : (
+              <AgentRunCenter
+                labels={agentRunCenterLabels}
+                result={flowResultDto}
+              />
+            )}
             <AgentRunTranscript
               defaultOpen
               labels={flowRunCenterLabels.transcript}
@@ -1501,7 +1543,7 @@ export default async function RunDetailLayout({
                 result contract and no rows — most runs. */}
             <RunPublicResultPanel
               labels={publicResultLabels}
-              result={publicResult}
+              result={operational ? null : publicResult}
             />
             <LiveRunInspector
               actions={inspectorActions}
@@ -1976,7 +2018,7 @@ export default async function RunDetailLayout({
 
           {detail.pendingHitl && !isCutoverHistory ? primaryResult : null}
 
-          {!hasReviewGate ? (
+          {!hasReviewGate && !operational ? (
             <ReviewWorkspaceUnavailable
               message={t("reviewWorkspaceUnavailable")}
             />
@@ -2069,6 +2111,7 @@ export default async function RunDetailLayout({
                 }
                 runId={detail.runId}
                 tabLabels={flowGraphData?.tabLabels ?? workbenchTabLabels}
+                tabs={operational ? ["timeline", "evidence"] : undefined}
                 timeline={
                   <RunTimeline
                     assignmentEvents={timeline.assignmentEvents}

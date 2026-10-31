@@ -71,6 +71,18 @@ export const LIBRARIAN_GROUP = {
 };
 
 const ANALYTICS_GROUPS = [
+  {
+    label: "Agent activity",
+    documents: ["agent-activity-history.md", "agent-incidents.md", "agent-retry.md", "task-qualification.md"],
+    prefixes: ["UX"],
+    traceabilityFile: "agent-activity-traceability.md",
+  },
+  {
+    label: "Operational agents",
+    documents: ["operational-agents.md", "operational-agent-results.md", "operational-agent-lifecycle.md"],
+    prefixes: ["OPA", "OPR", "OPL"],
+    traceabilityFile: "operational-agents-traceability.md",
+  },
   STAGE_B_GROUP,
   M51_GROUP,
   RUN_TRACE_GROUP,

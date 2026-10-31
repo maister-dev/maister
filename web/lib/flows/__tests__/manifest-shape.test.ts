@@ -1,10 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { flowYamlV1Schema } from "@/lib/config.schema";
-import {
-  isEngineCompatible,
-  MAISTER_ENGINE_VERSION,
-} from "@/lib/flows/engine-version";
+import { isEngineCompatible } from "@/lib/flows/engine-version";
 import {
   classifyStoredFlowManifest,
   getFlowManifestIncompatibility,
@@ -88,7 +85,7 @@ describe("graph-only manifest shape contract", () => {
       manifestShape: "graph",
       reason: {
         kind: "engine_incompatible",
-        message: "engine 3.8.0 < engine_min 4.0.0",
+        message: "engine 3.10.0 < engine_min 4.0.0",
       },
     });
     expect(isEngineCompatible(value.compat.engine_min)).toMatchObject({
@@ -115,11 +112,11 @@ describe("graph-only manifest shape contract", () => {
       expect(error).toMatchObject({
         code: "CONFIG",
         message:
-          "flow manifest in flow revision rev-engine-max is incompatible with this MAIster engine: engine 3.8.0 < engine_min 4.0.0",
+          "flow manifest in flow revision rev-engine-max is incompatible with this MAIster engine: engine 3.10.0 < engine_min 4.0.0",
       });
       expect(getFlowManifestIncompatibility(error)).toEqual({
         kind: "engine_incompatible",
-        message: "engine 3.8.0 < engine_min 4.0.0",
+        message: "engine 3.10.0 < engine_min 4.0.0",
       });
     }
   });
@@ -130,10 +127,6 @@ describe("graph-only manifest shape contract", () => {
     ).toMatchObject({
       nodes: [validNode],
     });
-  });
-
-  it("publishes engine 3.8.0 as the consensus-prompt-rendering host contract", () => {
-    expect(MAISTER_ENGINE_VERSION).toBe("3.8.0");
   });
 
   it("lets the intake caller select FLOW_INSTALL without changing remediation", () => {

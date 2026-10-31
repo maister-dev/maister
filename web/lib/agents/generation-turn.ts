@@ -10,6 +10,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { agentTurns, runs, runSessions } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { lockCurrentSessionAssignment } from "@/lib/execution-host/session-binding";
+import { operationalCompletionPrompt } from "@/lib/agents/launch-contract";
 
 type GenerationVariant = Extract<
   AgentTurn["variant"],
@@ -73,7 +74,9 @@ export async function admitAgentGenerationTurn(
         },
       },
     );
-  if (input.prompt.length === 0 || input.prompt.length > 1_000_000)
+  const prompt = operationalCompletionPrompt(run, input.prompt);
+
+  if (prompt.length === 0 || prompt.length > 1_000_000)
     throw new MaisterError(
       "CONFIG",
       "agent prompt must contain 1 to 1000000 characters",
@@ -90,7 +93,7 @@ export async function admitAgentGenerationTurn(
     );
 
   if (existing) {
-    if (existing.prompt !== input.prompt)
+    if (existing.prompt !== prompt)
       throw new MaisterError(
         "CONFLICT",
         "agent generation already owns different input",
@@ -135,7 +138,7 @@ export async function admitAgentGenerationTurn(
       ordinal: runScopedVariants.includes(input.variant) ? 0 : sequence.ordinal,
       variant: input.variant,
       logicalKey,
-      prompt: input.prompt,
+      prompt,
       state: "claimed",
       executionAssignmentId: assignment.id,
       assignmentEpoch: assignment.epoch,

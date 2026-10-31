@@ -6,6 +6,7 @@ import type { MaisterProvenance } from "@/lib/worktree-provenance";
 import { and, eq, gt, inArray, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { assertCodeDeliveryAllowed } from "@/lib/agents/operational-guard";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
@@ -217,6 +218,17 @@ export async function recordReattached(args: {
   liveLease: boolean;
 }): Promise<boolean> {
   const client = (args.database ?? getDb()) as Db;
+  const [owner] = await client
+    .select({
+      id: runs.id,
+      agentKind: runs.agentKind,
+      resultContract: runs.resultContract,
+    })
+    .from(runs)
+    .innerJoin(workspaces, eq(workspaces.runId, runs.id))
+    .where(eq(workspaces.id, args.workspaceId));
+
+  if (owner) assertCodeDeliveryAllowed(owner, "reattach");
   const freshRemovalAt = new Date(Date.now() + gcAgeDays() * 86_400_000);
   const collectedByGc = client
     .select({ id: runs.id })

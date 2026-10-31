@@ -54,7 +54,7 @@ beforeEach(async () => {
 async function installCoreFixture(): Promise<string> {
   const installId = randomUUID();
   const manifest = {
-    spec: { name: "core", flows: [] },
+    spec: { compat: { engine_min: "3.10.0" }, name: "core", flows: [] },
     inventory: {
       skills: [],
       agents: [],

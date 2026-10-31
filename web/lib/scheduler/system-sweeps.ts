@@ -19,6 +19,8 @@ import type {
 
 import pino from "pino";
 
+import { runAgentRetryAdmissionSweep } from "@/lib/agents/retry";
+import { reconcileAgentTriggerAttempts } from "@/lib/agents/trigger-attempts";
 import { runEventStreamHealthSweep } from "@/lib/execution-host/events/stream-health";
 import { reportStrandedAgentTurns } from "@/lib/agents/stranded-turns";
 import { runBrainDecaySweep } from "@/lib/brain/decay";
@@ -64,6 +66,7 @@ import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
 import { runSyncRecoverySweep } from "@/lib/runs/sync-recovery";
 import { configuredEventStreamLagAgeMs } from "@/lib/instance-config";
 import { durableWorkersHealth } from "@/lib/workers/health";
+import { sweepOperationalDispositions } from "@/lib/gc/operational-disposition";
 
 export type GcCompatibilitySummary = {
   worktreesPreserved: number;
@@ -192,6 +195,12 @@ async function runGcBundle(): Promise<GcBundleResult> {
   let plainAgentDirectory: PlainAgentDirectoryGcSummary | null = null;
 
   try {
+    const operational = await sweepOperationalDispositions();
+
+    if (operational.deferred > 0)
+      errors.push(
+        `${operational.deferred} operational workspace cleanup(s) deferred`,
+      );
     workspace = await runWorkspaceGcSweep();
   } catch (err) {
     const message = errorMessage(err);
@@ -367,6 +376,20 @@ export async function runSystemSweep(
   }
 
   try {
+    const retries = await runAgentRetryAdmissionSweep(getDb());
+
+    errors.push(...retries.errors);
+    bundleErrors.push(...retries.errors);
+    log.info(retries, "system_sweep agent retries reconciled");
+  } catch (err) {
+    const message = errorMessage(err);
+
+    errors.push(`agent retry recovery failed: ${message}`);
+    bundleErrors.push(`agent retry recovery failed: ${message}`);
+    log.error({ err: message }, "system_sweep agent retry recovery threw");
+  }
+
+  try {
     reconcile = await runReconcileSweep();
   } catch (err) {
     const message = errorMessage(err);
@@ -374,6 +397,18 @@ export async function runSystemSweep(
     errors.push(`reconcile sweep failed: ${message}`);
     bundleErrors.push(`reconcile sweep failed: ${message}`);
     log.error({ err: message }, "system_sweep reconcile threw");
+  }
+
+  try {
+    const attempts = await reconcileAgentTriggerAttempts(getDb(), new Date());
+
+    log.info(attempts, "system_sweep agent trigger attempts reconciled");
+  } catch (err) {
+    const message = errorMessage(err);
+
+    errors.push(`agent trigger recovery failed: ${message}`);
+    bundleErrors.push(`agent trigger recovery failed: ${message}`);
+    log.error({ err: message }, "system_sweep agent trigger recovery threw");
   }
 
   try {

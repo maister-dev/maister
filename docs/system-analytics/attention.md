@@ -14,6 +14,10 @@ and never writes any of it. The counters' definitions are locked by
 the stream by [ADR-171](../decisions.md#adr-171-user-scoped-attention-sse-stream).
 Both are **Implemented**.
 
+Operational agent semantics are **Implemented** in the [operational lifecycle](operational-agent-lifecycle.md),
+[result contract](operational-agent-results.md) and [definition contract](operational-agents.md).
+They preserve this domain's existing code-delivery behavior.
+
 ## Domain entities
 
 - **`decisions`** — the count of work blocked on the reader: respondable
@@ -241,3 +245,11 @@ flowchart LR
 - [HITL](hitl.md)
 - [Domain events](domain-events.md)
 - [Screen reference — `/activity`](../screens/activity.md)
+
+## Operational agents
+
+Operational Failed/Crashed Runs and exhausted cleanup add per-reader revision-bound decisions. Acknowledgement changes only the reader queue. Cleanup state and acknowledgement emit transactional pointer events; equal counts with different decision IDs invalidate the live view. Notification delivery retains its count-delta policy. See [operational lifecycle](operational-agent-lifecycle.md).
+
+## Designed extension
+
+The [agent activity and qualification contract](agent-incidents.md) defines the accepted follow-up; current behavior above remains Implemented until its owning phase is qualified.

@@ -106,7 +106,9 @@ test("repo_read dirt quarantines the agent, comments the task, and refuses relau
   // a markdown code span, so assert on a substring that stays inside one
   // text node of the rendered paragraph.)
   await page.goto(`/projects/${q.projectSlug}/tasks/${q.taskNumber}`);
-  await expect(page.getByText("was quarantined after run")).toBeVisible();
+  await expect(
+    page.getByText("was quarantined after run").filter({ visible: true }),
+  ).toBeVisible();
 
   // The picker itself hides quarantined agents, so assert the server
   // contract directly: every relaunch entry point refuses with PRECONDITION

@@ -1,3 +1,5 @@
+import type { Db as ExecutionDb } from "@/lib/execution-host/db";
+
 import "@/lib/load-env";
 
 import { rm } from "node:fs/promises";
@@ -15,6 +17,7 @@ import {
   mainMigrationHash,
   mainMigrationLedgerHighWater,
   readMainMigrationJournal,
+  assertDatabaseNotAheadOfBinary,
 } from "./check-migrations";
 import { declareWriterCapability } from "./writer-capability";
 import {
@@ -35,6 +38,8 @@ import {
 } from "./m43-cutover-migration-root";
 import { maskDbUrl, resolvePostgresDbUrl } from "./postgres-url";
 
+import { backfillAttentionPublicationPage } from "@/lib/notifications/attention-baseline";
+import { backfillAgentActivityPage } from "@/lib/runs/agent-activity-backfill";
 import { UPGRADE_MAINTENANCE_ENV } from "@/lib/maintenance/upgrade-fence";
 import {
   GRAPH_ONLY_CUTOVER_REASON,
@@ -254,6 +259,7 @@ async function main(): Promise<void> {
   let m43TelemetryLogged = false;
 
   try {
+    await assertDatabaseNotAheadOfBinary(db);
     const pending = await findPendingMigrations(db);
     const m43Pending = pending.includes(M43_CUTOVER_MIGRATION);
     const m43Entry = findMainMigrationJournalEntry(M43_CUTOVER_MIGRATION);
@@ -332,6 +338,20 @@ async function main(): Promise<void> {
     }
 
     await migrate(db, { migrationsFolder: MIGRATIONS_FOLDER });
+
+    while (
+      !(await backfillAgentActivityPage(db as unknown as ExecutionDb, 100))
+        .complete
+    ) {
+      // Each page commits its own durable restart cursor.
+    }
+
+    while (
+      !(await backfillAttentionPublicationPage(db as unknown as ExecutionDb))
+        .complete
+    ) {
+      // Insert-only pages preserve a newer publisher baseline on restart.
+    }
 
     if (m43Telemetry && !m43TelemetryLogged) {
       logM43CutoverTelemetry(m43Telemetry);

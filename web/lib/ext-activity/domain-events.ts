@@ -37,6 +37,36 @@ function stringField(
 
 function mapDomainEvent(row: DomainEventActivityRow): DomainEventMapping {
   switch (row.kind) {
+    case "agent.activity_changed":
+      return {
+        salience: "low",
+        action: {
+          verb: "update",
+          object: "agent activity",
+          outcome: "changed",
+        },
+        summary: "agent activity changed",
+      };
+    case "agent.incident_changed":
+      return {
+        salience: "low",
+        action: {
+          verb: "update",
+          object: "agent incident",
+          outcome: "changed",
+        },
+        summary: "agent incident changed",
+      };
+    case "task.qualification_changed":
+      return {
+        salience: "low",
+        action: {
+          verb: "update",
+          object: "task qualification",
+          outcome: "changed",
+        },
+        summary: "task qualification changed",
+      };
     case "task.created":
       return {
         salience: "high",
@@ -97,6 +127,26 @@ function mapDomainEvent(row: DomainEventActivityRow): DomainEventMapping {
           outcome: "cancelled",
         },
         summary: `cancelled a clarification for ${taskLabel(row)}`,
+      };
+    case "run.operational_attention_acknowledged":
+      return {
+        salience: "low",
+        action: {
+          verb: "acknowledge",
+          object: "operation",
+          outcome: "acknowledged",
+        },
+        summary: "operational attention acknowledged",
+      };
+    case "run.operational_cleanup_changed":
+      return {
+        salience: "low",
+        action: {
+          verb: "clean",
+          object: "operational workspace",
+          outcome: stringField(row.payload, "state") ?? "changed",
+        },
+        summary: "operational workspace disposition changed",
       };
     case "run.done":
       return {

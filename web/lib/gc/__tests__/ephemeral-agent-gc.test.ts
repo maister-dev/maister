@@ -37,9 +37,9 @@ describe("runEphemeralAgentGcSweep", () => {
     readdirMock.mockReset();
   });
 
-  it("reaps -ro dirs whose run is terminal or absent, keeps live ones, ignores non-ro dirs", async () => {
+  it("reaps known terminal code checkouts, keeps live runs and preserves unclassified orphans", async () => {
     // live1: still Running -> keep. dead1: terminal -> reap. absent1: no run
-    // row -> reap. The two non-`-ro` entries must be ignored entirely.
+    // row -> retain for diagnosis. The two non-`-ro` entries must be ignored entirely.
     readdirMock.mockResolvedValue([
       "live1-ro",
       "dead1-ro",
@@ -52,20 +52,20 @@ describe("runEphemeralAgentGcSweep", () => {
     const summary = await runEphemeralAgentGcSweep({
       db: fakeDb(
         [{ slug: "proj", repoPath: "/repos/proj" }],
-        [{ id: "live1" }],
+        [
+          { id: "live1", status: "Running", agentKind: "code_delivery" },
+          { id: "dead1", status: "Done", agentKind: "code_delivery" },
+        ],
       ),
       removeOwnedWorktree: remove,
       restoreMaterialization: vi.fn().mockResolvedValue(undefined),
     });
 
-    expect(summary).toEqual({ scanned: 3, removed: 2, live: 1, failed: 0 });
+    expect(summary).toEqual({ scanned: 3, removed: 1, live: 1, failed: 1 });
 
     const removedPaths = remove.mock.calls.map((c) => c[0].worktreePath).sort();
 
-    expect(removedPaths).toEqual([
-      "/tmp/wt-root/proj/absent1-ro",
-      "/tmp/wt-root/proj/dead1-ro",
-    ]);
+    expect(removedPaths).toEqual(["/tmp/wt-root/proj/dead1-ro"]);
     // The live run's checkout is never touched.
     expect(removedPaths).not.toContain("/tmp/wt-root/proj/live1-ro");
     // Every removal is path-guarded to the worktrees root.
@@ -84,7 +84,13 @@ describe("runEphemeralAgentGcSweep", () => {
       .mockResolvedValueOnce(undefined);
 
     const summary = await runEphemeralAgentGcSweep({
-      db: fakeDb([{ slug: "proj", repoPath: "/repos/proj" }], []),
+      db: fakeDb(
+        [{ slug: "proj", repoPath: "/repos/proj" }],
+        [
+          { id: "dead1", status: "Done", agentKind: "code_delivery" },
+          { id: "dead2", status: "Failed", agentKind: "code_delivery" },
+        ],
+      ),
       removeOwnedWorktree: remove,
       restoreMaterialization: vi.fn().mockResolvedValue(undefined),
     });

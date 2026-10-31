@@ -631,6 +631,49 @@ describe("shared Testcontainers Postgres helper", () => {
     }
   }, 180_000);
 
+  it("IT-UX-05 retries a reclaimed transient startup allocation without removing a live sibling", async () => {
+    const sibling = await startBarePostgresTestDb({
+      databaseName: "transient_start_sibling",
+    });
+    const original = PostgreSqlContainer.prototype.start;
+    let discardedId: string | undefined;
+    let retried: StartedPostgresTestDb | undefined;
+    const start = vi
+      .spyOn(PostgreSqlContainer.prototype, "start")
+      .mockImplementationOnce(async function (this: PostgreSqlContainer) {
+        const allocated = await original.call(this);
+
+        discardedId = allocated.getId();
+        throw new Error(
+          "Timed out after 30000ms while waiting for container ports to be bound to the host",
+        );
+      });
+
+    try {
+      retried = await startBarePostgresTestDb({
+        databaseName: "transient_start_retry",
+      });
+      expect(discardedId).toBeDefined();
+      expect(retried.container.getId()).not.toBe(discardedId);
+      const docker = (await getContainerRuntimeClient()).container.dockerode;
+      const containers = await docker.listContainers({ all: true });
+
+      expect(containers.some((container) => container.Id === discardedId)).toBe(
+        false,
+      );
+      expect((await sibling.pool.query("SELECT 1 AS value")).rows).toEqual([
+        { value: 1 },
+      ]);
+      expect((await retried.pool.query("SELECT 1 AS value")).rows).toEqual([
+        { value: 1 },
+      ]);
+    } finally {
+      start.mockRestore();
+      await retried?.stop();
+      await sibling.stop();
+    }
+  });
+
   it("reclaims a failed-start allocation while preserving a live sibling database", async () => {
     const sibling = await startBarePostgresTestDb({
       databaseName: "test_support_start_failure_sibling",

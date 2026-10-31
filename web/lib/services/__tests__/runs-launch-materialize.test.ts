@@ -165,6 +165,24 @@ const fakeDb: FakeDb = {
 // ADR-166: the launch places the run on the local execution host inside its
 // run-insert transaction; the fake db here has no row locks, so the seam is
 // mocked (its own contract is pinned by lib/execution-host integration tests).
+// These routing regressions exercise the legacy policy; required admission owns real PG/Git coverage.
+vi.mock("@/lib/tasks/qualification-admission", () => ({
+  prepareTaskDeliveryAdmission: vi.fn(async () => ({
+    snapshot: {
+      version: 1,
+      mode: "legacy",
+      policyVersion: 1,
+      inputRevision: 1,
+      qualificationId: null,
+      qualificationRevision: null,
+      evidenceTarget: null,
+      evidenceSha: null,
+      parent: null,
+    },
+    baseCommit: null,
+    apply: async () => {},
+  })),
+}));
 vi.mock("@/lib/execution-host", () => ({
   localHost: vi.fn(async () => ({
     id: "host-1",

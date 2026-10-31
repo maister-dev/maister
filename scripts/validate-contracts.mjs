@@ -15,6 +15,7 @@ const OPENAPI_FILES = [
 ];
 
 const ASYNCAPI_FILES = [
+  "docs/api/async/operational-lifecycle.asyncapi.yaml",
   "docs/api/async/attention-stream.asyncapi.yaml",
   "docs/api/async/librarian-stream.asyncapi.yaml",
   "docs/api/async/outbound-webhooks.asyncapi.yaml",

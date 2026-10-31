@@ -17,3 +17,6 @@ capabilities: []
 # No MCP server templates: core agents reach MAIster through the built-in
 # maister MCP facade with ephemeral agent tokens, not a package-shipped server.
 mcps: []
+
+compat:
+  engine_min: "3.10.0"

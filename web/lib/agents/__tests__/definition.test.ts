@@ -37,6 +37,59 @@ function expectConfig(fn: () => unknown, match: RegExp): void {
 }
 
 describe("parseAgentDefinition", () => {
+  it("IT-OPA-01 preserves code defaults and round-trips explicit operational completion", () => {
+    expect(parseAgentDefinition("core:scan", VALID)).toMatchObject({
+      kind: "code_delivery",
+      completion: null,
+    });
+    const parsed = parseAgentDefinition(
+      "core:scan",
+      VALID.replace(
+        "mode: session",
+        "kind: operational\ncompletion:\n  contract: operational_v1\nmode: session",
+      ),
+    );
+
+    expect(parsed).toMatchObject({
+      kind: "operational",
+      completion: { contract: "operational_v1" },
+      mode: "session",
+      workspace: "repo_read",
+    });
+    expect(
+      parseAgentDefinition(parsed.id, renderAgentDefinition(parsed)),
+    ).toEqual(parsed);
+  });
+
+  it("IT-EDGE-OPA-02 rejects incompatible kind/completion and execution combinations", () => {
+    for (const declaration of [
+      "kind: operational",
+      "completion: {contract: operational_v1}",
+      "kind: operational\ncompletion: {contract: future}",
+      "kind: operational\ncompletion: {contract: operational_v1, autoApprove: true}",
+      "kind: operational\ncompletion: {contract: operational_v1}\nflow: delivery",
+    ]) {
+      expectConfig(
+        () =>
+          parseAgentDefinition(
+            "core:scan",
+            VALID.replace("mode: session", `${declaration}\nmode: session`),
+          ),
+        /completion|operational|contract|unrecognized/i,
+      );
+    }
+    expectConfig(
+      () =>
+        parseAgentDefinition(
+          "core:scan",
+          VALID.replace(
+            "mode: session",
+            "kind: operational\ncompletion: {contract: operational_v1}\nmode: subagent",
+          ).replace("  - manual\n  - domain_event", "  - flow"),
+        ),
+      /operational|session/i,
+    );
+  });
   it("parses a valid definition into the typed shape (qualified id)", () => {
     const parsed = parseAgentDefinition("aif:triager", VALID);
 
@@ -214,6 +267,26 @@ describe("parseAgentDefinition", () => {
         ),
       /events/,
     );
+  });
+
+  it("refuses internal projection facts as business trigger recommendations", () => {
+    for (const kind of [
+      "agent.activity_changed",
+      "agent.incident_changed",
+      "task.qualification_changed",
+    ]) {
+      expectConfig(
+        () =>
+          parseAgentDefinition(
+            "core:scan",
+            VALID.replace(
+              "risk_tier: read_only",
+              `risk_tier: read_only\nrecommended:\n  events:\n    - ${kind}`,
+            ),
+          ),
+        /events/,
+      );
+    }
   });
 
   it("parses the ADR-106 fields: flow + recommended.branch_base/executionPolicy", () => {

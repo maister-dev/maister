@@ -11,6 +11,8 @@ import { pathToFileURL } from "node:url";
 import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { splitFrontmatter } from "@/lib/flows/artifact-frontmatter";
+import { parseAgentDefinition, qualifyAgentId } from "@/lib/agents/definition";
 import {
   installCapabilityRevision,
   runCapabilityRevisionSetup,
@@ -30,6 +32,8 @@ import { evaluateMcpReadiness } from "@/lib/mcp/readiness";
 import { loadMcpReadinessContext } from "@/lib/mcp/readiness-host";
 import { resolvePackageSource } from "@/lib/packages/install";
 import { redactUrl } from "@/lib/repo-source";
+import { assertAttachedQualificationAgentsPolicy } from "@/lib/agents/qualification-policy";
+import { readPackageAgentSources } from "@/lib/agents/package-contract";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (see flows.ts).
 const {
@@ -1097,8 +1101,25 @@ export async function upgradeAttachment(opts: {
   // Host READS, before the transaction (ADR-179 D18). A version that DROPS a
   // reference re-caches as Ready here — the verdict is rebuilt, never merged.
   const readinessByRef = await packageReadinessByRef(next);
+  const agentDefinitions = (await readPackageAgentSources(next.installedPath))
+    .filter((source) => {
+      const parsed = splitFrontmatter(source.content);
+
+      return parsed.ok && parsed.frontmatter?.task_qualification !== undefined;
+    })
+    .map((source) =>
+      parseAgentDefinition(
+        qualifyAgentId(next.name, source.stem),
+        source.content,
+      ),
+    );
 
   await db.transaction(async (tx: any) => {
+    await assertAttachedQualificationAgentsPolicy(
+      tx,
+      opts.projectId,
+      agentDefinitions,
+    );
     if (previous) await deleteIngestionRecords(tx, opts.projectId, previous);
 
     // Old bundle import rows are replaced by the new revision's; member flow

@@ -93,6 +93,13 @@ export async function resolveFlowBoundAgent(args: {
   );
   const parsed = effective.parsed;
 
+  if (parsed.kind === "operational")
+    throw new MaisterError(
+      "CONFIG",
+      "operational agents cannot be bound as Flow personas or subagents",
+      { details: { reason: "operational_combination_unsupported" } },
+    );
+
   if (args.requireFlowTrigger !== false && !parsed.triggers.includes("flow")) {
     throw new MaisterError(
       "CONFIG",

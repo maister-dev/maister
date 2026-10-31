@@ -386,3 +386,7 @@ recommended option and consequences, and offers only the server-provided option
 IDs. On submit it disables the choice, reports localized failure/retry feedback,
 and removes itself when answered or parent-reworked. It does not create or mark
 social Inbox items; the parent review keeps its existing gate chat.
+
+## Designed agent activity extension
+
+Agent problems have one stable project/agent card with distinct cause episodes, exact occurrence/failed-run counts and per-reader acknowledgement. Repeated causes stay quiet after acknowledgement. HITL requests remain independent. Current grouped semantics are specified in agent-incidents. See [canonical behavior](../system-analytics/agent-activity-history.md).

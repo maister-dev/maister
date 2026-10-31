@@ -707,6 +707,18 @@ describe("TOOL_SPECS ↔ external OpenAPI contract", () => {
     // The result envelope itself, not just the status vocabulary.
     expect(TOOL_SPECS.run_collect.description).toContain("result.value");
     expect(TOOL_SPECS.run_collect.description).toContain("resultFailure");
+    expect(TOOL_SPECS.run_collect.description).toContain("operationalOutcome");
+    expect(TOOL_SPECS.run_collect.description).toContain(
+      "diagnostic evidence, never a success substitute",
+    );
+    expect(
+      deref(
+        (
+          deref(openapi.components?.schemas?.ExtChildRunSummary ?? {})
+            .properties ?? {}
+        ).operationalOutcome ?? {},
+      ),
+    ).toBeDefined();
   });
 
   // Mutation check: proves the assertion above compares the parsed SET rather

@@ -1366,6 +1366,83 @@
       "when": 1793349207363,
       "tag": "0198_project_config_attachment_binding_guard",
       "breakpoints": true
+    },
+    {
+      "idx": 199,
+      "version": "7",
+      "when": 1793349207364,
+      "tag": "0199_operational_agents",
+      "breakpoints": true
+    },
+    {
+      "idx": 200,
+      "version": "7",
+      "when": 1793349207365,
+      "tag": "0200_operational_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 201,
+      "version": "7",
+      "when": 1793349207366,
+      "tag": "0201_operational_cleanup_progress",
+      "breakpoints": true
+    },
+    {
+      "idx": 202,
+      "version": "7",
+      "when": 1793349207367,
+      "tag": "0202_operational_baseline_generations",
+      "breakpoints": true
+    },
+    {
+      "idx": 203,
+      "version": "7",
+      "when": 1793349207368,
+      "tag": "0203_pink_synch",
+      "breakpoints": true
+    },
+    {
+      "idx": 204,
+      "version": "7",
+      "when": 1793358671683,
+      "tag": "0204_agent_activity",
+      "breakpoints": true
+    },
+    {
+      "idx": 205,
+      "version": "7",
+      "when": 1793358792081,
+      "tag": "0205_agent_retry",
+      "breakpoints": true
+    },
+    {
+      "idx": 206,
+      "version": "7",
+      "when": 1793360784610,
+      "tag": "0206_agent_trigger_attempts",
+      "breakpoints": true
+    },
+    {
+      "idx": 207,
+      "version": "7",
+      "when": 1793364273865,
+      "tag": "0207_task_qualification",
+      "breakpoints": true
+    },
+    {
+      "idx": 208,
+      "version": "7",
+      "when": 1793369885031,
+      "tag": "0208_attention_publication_state",
+      "breakpoints": true
+    },
+    {
+      "idx": 209,
+      "version": "7",
+      "when": 1793373270914,
+      "tag": "0209_task_qualification_capability",
+      "breakpoints": true
     }
   ]
 }

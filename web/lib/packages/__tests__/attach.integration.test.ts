@@ -1212,3 +1212,110 @@ describe("package trust fan-out across projects (integration)", () => {
     await rm(fanDir, { recursive: true, force: true });
   });
 });
+
+it("IT-UX-19 refuses an active attachment upgrade to a qualifier until the project explicitly enables required qualification", async () => {
+  const qualifiedRoot = await mkdtemp(join(tmpdir(), "qualification-project-"));
+
+  dirsToClean.push(qualifiedRoot);
+  const nextProjectId = randomUUID();
+  const slug = `qualified-${nextProjectId.slice(0, 8)}`;
+  const packageName = `qualpkg-${nextProjectId.slice(0, 8)}`;
+  const versions = await Promise.all([
+    mkdtemp(join(tmpdir(), "qualification-package-v1-")),
+    mkdtemp(join(tmpdir(), "qualification-package-v2-")),
+  ]);
+
+  dirsToClean.push(...versions);
+  for (const [index, directory] of versions.entries()) {
+    await buildPackage(directory, ["qualification-flow"], { mcps: false });
+    const manifest = await readFile(
+      join(directory, "maister-package.yaml"),
+      "utf8",
+    );
+
+    await writeFile(
+      join(directory, "maister-package.yaml"),
+      manifest.replace(
+        "name: attpkg",
+        `name: ${packageName}\ncompat: {engine_min: '3.10.0'}`,
+      ),
+    );
+    await writeFile(
+      join(directory, "maister-agents/triager.md"),
+      `---\nname: Qualifier\ndescription: Qualification fixture\nkind: operational\ncompletion: {contract: operational_v1}\nworkspace: ${index === 0 ? "none" : "repo_read"}\n${index === 0 ? "" : "workspace_ref: task_target\ntask_qualification: {contract: v1, role: qualifier}\n"}mode: session\ntriggers: [manual]\nrisk_tier: read_only\n---\nInspect current input.`,
+    );
+  }
+  await db.insert(schema.projects).values({
+    id: nextProjectId,
+    slug,
+    name: "Qualification upgrade",
+    repoPath: qualifiedRoot,
+    maisterYamlPath: join(qualifiedRoot, "maister.yaml"),
+    taskKey: `Q${nextProjectId.replaceAll("-", "").slice(0, 7).toUpperCase()}`,
+  });
+  const oldInstall: { id: string } = await installPackageRevision({
+    source: versions[0],
+    version: `${packageName}/v1`,
+    db,
+  });
+
+  await trustPackageRevision({
+    packageInstallId: oldInstall.id,
+    db,
+  });
+  const attached = await attachPackage({
+    projectId: nextProjectId,
+    projectSlug: slug,
+    packageInstallId: oldInstall.id,
+    workspaceRoot: qualifiedRoot,
+    db,
+  });
+
+  if (!attached) throw new Error("Fixture package attachment is missing");
+  await db.insert(schema.agentProjectLinks).values({
+    id: randomUUID(),
+    projectId: nextProjectId,
+    agentId: `${packageName}:triager`,
+    enabled: true,
+  });
+  const nextInstall: { id: string } = await installPackageRevision({
+    source: versions[1],
+    version: `${packageName}/v2`,
+    db,
+  });
+
+  await trustPackageRevision({
+    packageInstallId: nextInstall.id,
+    db,
+  });
+  const upgrade = {
+    projectId: nextProjectId,
+    projectSlug: slug,
+    attachmentId: attached.attachmentId,
+    packageInstallId: nextInstall.id,
+    workspaceRoot: qualifiedRoot,
+    db,
+  };
+
+  await expect(upgradeAttachment(upgrade)).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "qualification_policy_required" },
+  });
+  const [unchanged] = await db
+    .select()
+    .from(schema.projectPackageAttachments)
+    .where(eq(schema.projectPackageAttachments.id, attached.attachmentId));
+
+  expect(unchanged.packageInstallId).toBe(oldInstall.id);
+  await db
+    .update(schema.projects)
+    .set({ taskQualificationOverride: "required" })
+    .where(eq(schema.projects.id, nextProjectId));
+  await upgradeAttachment(upgrade);
+  const [changed] = await db
+    .select()
+    .from(schema.projectPackageAttachments)
+    .where(eq(schema.projectPackageAttachments.id, attached.attachmentId));
+
+  expect(changed.packageInstallId).toBe(nextInstall.id);
+});

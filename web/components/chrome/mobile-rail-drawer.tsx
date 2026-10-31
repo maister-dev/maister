@@ -4,7 +4,7 @@ import type {
   LeftRailNavSection,
   RailBadges,
 } from "@/components/chrome/left-rail-nav";
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
 
 import { Bars3Icon, XMarkIcon } from "@heroicons/react/24/outline";
 import { useRef, useState } from "react";
@@ -20,7 +20,9 @@ export function MobileRailDrawer({
   badges,
   openLabel,
   sections,
+  activity,
 }: {
+  activity?: ReactNode;
   ariaLabel: string;
   closeLabel: string;
   comingSoon: string;
@@ -90,6 +92,9 @@ export function MobileRailDrawer({
               sections={sections}
               variant="expanded"
             />
+            <div className="mt-4 min-h-0 flex-1 overflow-y-auto border-t border-line pt-4">
+              {activity}
+            </div>
           </div>
         </div>
       ) : null}

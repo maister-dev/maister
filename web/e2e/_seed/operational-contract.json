@@ -1,0 +1,91 @@
+{
+  "kind": "agent_operational",
+  "contractName": "operational_v1",
+  "schemaRef": "maister:operational_v1@8c83781c8f59b78bd73d55484f82bfb1d2c905635dda645b3c09ff97e7e82cc6",
+  "schemaVersion": 1,
+  "semanticVersion": 1,
+  "sha256": "8c83781c8f59b78bd73d55484f82bfb1d2c905635dda645b3c09ff97e7e82cc6",
+  "required": true,
+  "schema": {
+    "schemaVersion": 1,
+    "fields": [
+      {
+        "name": "schemaVersion",
+        "type": "number",
+        "required": true
+      },
+      {
+        "name": "outcome",
+        "type": "enum",
+        "required": true,
+        "options": ["success", "partial", "blocked", "failed"]
+      },
+      {
+        "name": "summary",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "coverage",
+        "type": "json",
+        "required": true
+      },
+      {
+        "name": "counts",
+        "type": "json",
+        "required": true
+      },
+      {
+        "name": "references",
+        "type": "array",
+        "required": true,
+        "items": {
+          "type": "json"
+        }
+      },
+      {
+        "name": "diagnostics",
+        "type": "array",
+        "required": true,
+        "items": {
+          "type": "json"
+        }
+      }
+    ]
+  },
+  "definition": {
+    "id": "fixture:operation",
+    "name": "Operation",
+    "description": "Perform an operation",
+    "kind": "operational",
+    "completion": {
+      "contract": "operational_v1"
+    },
+    "runner": null,
+    "workspace": "worktree",
+    "workspaceRef": null,
+    "mode": "session",
+    "triggers": ["manual"],
+    "capabilityProfile": null,
+    "platformMcp": false,
+    "riskTier": "standard",
+    "flow": null,
+    "recommended": null,
+    "hooks": null,
+    "config": null,
+    "memory": "none",
+    "prompt": "Perform the operation.\n"
+  },
+  "provenance": {
+    "packageName": "fixture",
+    "packageInstallId": "fixture-install",
+    "versionLabel": "v1",
+    "resolvedRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "definitionSha256": "beb0a27dfa7bd131666a912983f7436dc4df6a77ecf458e45cd45faa283d5a8b",
+    "installedPath": "/tmp/fixture",
+    "sourcePath": "/tmp/fixture/maister-agents/operation.md",
+    "manifest": null,
+    "execTrust": "trusted"
+  },
+  "promptAppendix": "Operational completion contract: operational_v1 (semantic version 1).\nPerform the requested operation with the existing permission and isolation policy. Explicit human decisions use normal HITL. After resume, read the task's confirmed human clarifications before continuing pending work. Do not modify source code, commit, merge, promote or publish a branch. Required tools still need their normal approvals.\nEnd the completing turn with exactly one fenced json maister:output object:\n{\"schemaVersion\":1,\"outcome\":\"success\",\"summary\":\"Complete scan; no new work.\",\"coverage\":{\"state\":\"complete\",\"remainingKnown\":0},\"counts\":{\"scanned\":0,\"attempted\":0,\"completed\":0,\"failed\":0,\"skipped\":0,\"created\":0},\"references\":[],\"diagnostics\":[]}\nAllowed outcomes: success, partial, blocked, failed. Counts are nonnegative safe integers counting distinct work items: attempted=completed+failed; attempted+skipped<=scanned; created<=attempted. A confirmed creation followed by failed receipt may have created=1,completed=0,failed=1. Include each confirmed task ID. Unknown writes require reconciliation before retry, never claim them as creations.\nCoverage state is complete, incomplete or not_started. remainingKnown is null when unknown; complete requires 0. Success requires complete coverage, no failed work, error diagnostic or unresolved effect. A complete zero-work scan succeeds. Partial requires confirmed progress and an incomplete/failed remainder. Blocked/failed require an actionable error diagnostic; HTTP 403 or retry exhaustion cannot be reported as success.\nReferences: {kind: task|external_issue|operation_receipt|other,id,state: confirmed|unresolved,url?: http/https without credentials}. Only confirmed receipts establish progress. Diagnostics: {code,severity: warning|error,operation,message,retryable,remediation,referenceIds?: string[],service?: string,httpStatus?: 100..599}. Preserve confirmed and unresolved effect references for diagnosis. No credentials, private paths or raw provider dumps.\nUse only these fields. summary/message/remediation<=2000 characters; IDs<=512; URLs<=2048; code<=128; operation/service<=256; references<=1000; diagnostics<=100. The platform validates both the result and source integrity. Prose or process exit cannot establish business success."
+}

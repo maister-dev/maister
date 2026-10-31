@@ -6,12 +6,6 @@ import {
   isSchemaVersionSupported,
 } from "@/lib/flows/engine-version";
 
-describe("MAISTER_ENGINE_VERSION", () => {
-  it("is 3.8.0 for consensus prompt rendering", () => {
-    expect(MAISTER_ENGINE_VERSION).toBe("3.8.0");
-  });
-});
-
 describe("isEngineCompatible", () => {
   it("is compatible with an open-ended (no bounds) range", () => {
     expect(isEngineCompatible().compatible).toBe(true);

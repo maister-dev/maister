@@ -24,7 +24,13 @@ import {
   sql,
 } from "drizzle-orm";
 
+import {
+  getActiveAgentExecutions,
+  type ActiveAgentExecution,
+} from "@/lib/agents/activity-queries";
+import { ACTIVE_AGENT_RUN_STATUSES } from "@/lib/agents/activity-status";
 import { hasReadyPlatformRunner } from "@/lib/acp-runners/ready-runner";
+import { acceptedBacklogPredicate } from "@/lib/tasks/qualification-predicates";
 import { getDb } from "@/lib/db/client";
 import { getVisibleProjectIds } from "@/lib/queries/visible-projects";
 import { isProjectFlowLaunchable } from "@/lib/flows/project-flow-launchability";
@@ -57,6 +63,7 @@ import {
   type WorkbenchLifecycleActionId,
   type WorkbenchRunStatus,
 } from "@/lib/workbench-lifecycle/policy";
+import { operationalActiveWorkspacePredicate } from "@/lib/run-results/operational-visibility";
 
 const {
   actorIdentities,
@@ -184,6 +191,7 @@ export interface PortfolioProject {
   members: PortfolioMember[];
   agents: AgentRole[];
   activeWorkspaces: PortfolioWorkspace[];
+  activeExecutions: ActiveAgentExecution[];
   recentMerges: PortfolioRecentMerge[];
   need: PortfolioNeed | null;
   // Portfolio reads no repositories; detail status supplies fresh evidence on demand.
@@ -273,6 +281,7 @@ export function scratchActionForWorkspace(input: {
 }
 
 export function lifecycleActionsForWorkspace(input: {
+  agentKind?: "code_delivery" | "operational" | null;
   runKind: RunKind;
   runStatus: string;
   dialogStatus: ScratchDialogStatus | null;
@@ -292,6 +301,8 @@ export function lifecycleActionsForWorkspace(input: {
   prState?: "open" | "merged" | "closed" | null;
   promotionState?: string | null;
 }): WorkbenchLifecycleAction[] {
+  if (input.agentKind === "operational") return [];
+
   return deriveWorkbenchLifecycleActions({
     runKind: input.runKind,
     runStatus: input.runStatus as WorkbenchRunStatus,
@@ -360,6 +371,7 @@ export async function getPortfolio(
   const projectIds = visibleProjects.map((p) => p.id);
 
   const [
+    activeExecutions,
     memberRows,
     flowCountRows,
     taskFlowRunRows,
@@ -369,6 +381,7 @@ export async function getPortfolio(
     needRows,
     legacyNeedRows,
   ] = await Promise.all([
+    getActiveAgentExecutions(client, projectIds),
     client
       .select({
         projectId: projectMembers.projectId,
@@ -401,19 +414,22 @@ export async function getPortfolio(
       .select({ projectId: tasks.projectId, value: count() })
       .from(tasks)
       .where(
-        and(inArray(tasks.projectId, projectIds), eq(tasks.status, "Backlog")),
+        and(
+          inArray(tasks.projectId, projectIds),
+          eq(tasks.status, "Backlog"),
+          acceptedBacklogPredicate(),
+        ),
       )
       .groupBy(tasks.projectId),
 
-    // M34: leftJoin — none/repo_read agent runs have NO workspaces row but
-    // still belong in the active grid (the IS NULL filter passes on the
-    // absent row).
+    // Working copies require their retained workspace record.
     client
       .select({
         runId: runs.id,
         projectId: runs.projectId,
         status: runs.status,
         runKind: runs.runKind,
+        agentKind: runs.agentKind,
         agentId: runs.agentId,
         triggerSource: runs.triggerSource,
         acpSessionId: activeSessionAcpSessionId(runs.id),
@@ -434,19 +450,14 @@ export async function getPortfolio(
         scratchDialogStatus: scratchRuns.dialogStatus,
       })
       .from(runs)
-      .leftJoin(workspaces, eq(workspaces.runId, runs.id))
+      .innerJoin(workspaces, eq(workspaces.runId, runs.id))
       .leftJoin(scratchRuns, eq(scratchRuns.runId, runs.id))
       .where(
         and(
           inArray(runs.projectId, projectIds),
           inArray(runs.status, [...ACTIVE_RUN_STATUSES]),
-          // Live workspace rows as before — plus workspace-LESS rows only
-          // for agent runs (none/repo_read have no worktree by design).
-          // A bare IS NULL would also surface seeded/legacy kindless rows.
-          or(
-            and(isNotNull(workspaces.id), isNull(workspaces.removedAt)),
-            and(eq(runs.runKind, "agent"), isNull(workspaces.id)),
-          ),
+          operationalActiveWorkspacePredicate(),
+          isNull(workspaces.removedAt),
         ),
       )
       .orderBy(desc(runs.startedAt)),
@@ -654,6 +665,7 @@ export async function getPortfolio(
         acpSessionId: row.acpSessionId,
       }),
       lifecycleActions: lifecycleActionsForWorkspace({
+        agentKind: row.agentKind,
         runKind: row.runKind as RunKind,
         runStatus: row.status,
         dialogStatus: row.scratchDialogStatus as ScratchDialogStatus | null,
@@ -775,6 +787,9 @@ export async function getPortfolio(
       members,
       agents,
       activeWorkspaces,
+      activeExecutions: activeExecutions.filter(
+        (run) => run.projectId === p.id,
+      ),
       recentMerges: mergesByProject.get(p.id) ?? [],
       need: firstNeedByProject.get(p.id) ?? null,
       configPersistence: {
@@ -969,6 +984,7 @@ export async function getRailWorkspaceGroups(
       runnerSnapshot: activeSessionRunnerSnapshot(runs.id),
       status: runs.status,
       runKind: runs.runKind,
+      agentKind: runs.agentKind,
       createdByUserId: runs.createdByUserId,
       startedAt: runs.startedAt,
       endedAt: runs.endedAt,
@@ -1005,6 +1021,8 @@ export async function getRailWorkspaceGroups(
   // disk that carry a GC removal deadline, so the TTL countdown badge surfaces
   // before the sweeper prunes them.
   const railFilter = and(
+    sql`NOT ((${runs.runKind}='agent' OR (${runs.runKind}='flow' AND ${runs.sourceAgentId} IS NOT NULL)) AND ${runs.status} IN ${ACTIVE_AGENT_RUN_STATUSES})`,
+    operationalActiveWorkspacePredicate(),
     or(
       inArray(runs.status, [...ACTIVE_RUN_STATUSES]),
       and(
@@ -1100,6 +1118,7 @@ export async function getRailWorkspaceGroups(
       archived: ttl.archived,
       pruned: ttl.pruned,
       lifecycleActions: lifecycleActionsForWorkspace({
+        agentKind: row.agentKind,
         runKind: row.runKind as RunKind,
         runStatus: row.status,
         dialogStatus: row.scratchDialogStatus as ScratchDialogStatus | null,
@@ -1222,11 +1241,11 @@ export async function getCrossProjectHitlInbox(
   userId: string,
   globalRole: GlobalRole,
   scope: CrossProjectHitlScope = {},
+  client: NodePgDatabase<typeof schema> = db(),
 ): Promise<CrossProjectHitlInbox> {
   const now = new Date();
-  const client = db();
 
-  const allVisibleIds = await getVisibleProjectIds(userId, globalRole);
+  const allVisibleIds = await getVisibleProjectIds(userId, globalRole, client);
   const allowed = scope.projectIds;
   const visibleIds =
     allowed === undefined
@@ -1271,6 +1290,7 @@ export async function getCrossProjectHitlInbox(
       flowRef: sql<string>`coalesce(${flows.flowRefId}, 'scratch')`,
       projectId: runs.projectId,
       runKind: runs.runKind,
+      agentKind: runs.agentKind,
       runStatus: runs.status,
       taskId: runs.taskId,
       agentId: runs.agentId,

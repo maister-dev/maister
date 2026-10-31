@@ -186,6 +186,9 @@ function isPlanReviewParentHitl(hitl: RunPendingHitl): boolean {
 }
 
 export interface RunDetail {
+  sourceAgentId: string | null;
+  retryOfRunId: string | null;
+  agentWorkspace: "none" | "repo_read" | "worktree" | null;
   runId: string;
   projectId: string;
   projectSlug: string;
@@ -210,6 +213,7 @@ export interface RunDetail {
   agent: CapabilityAgent | null;
   // Run kind drives the Review surface: flow and worktree-agent runs use the
   // ReviewPanel; scratch runs keep their own promote affordance.
+  agentKind: "code_delivery" | "operational" | null;
   runKind: "flow" | "scratch" | "agent";
   // M18: the parent repo path + workspace branch/promotion ledger (nullable on
   // pre-M18 rows; the run-detail page derives safe fallbacks, see §3.6).
@@ -486,6 +490,7 @@ export const getRunDetail = cache(async function getRunDetail(
       status: runs.status,
       startedAt: runs.startedAt,
       runKind: runs.runKind,
+      agentKind: runs.agentKind,
       // ADR-160: eligibility terms the continuation block gates on. Without
       // them the derivation reads `null` and would offer a claim on an
       // orchestrator child or a shared-tree run.
@@ -530,6 +535,8 @@ export const getRunDetail = cache(async function getRunDetail(
       removedAt: workspaces.removedAt,
       // ADR-181 D1a: the git fact loader's workspace inputs.
       agentWorkspace: runs.agentWorkspace,
+      sourceAgentId: runs.sourceAgentId,
+      retryOfRunId: runs.retryOfRunId,
       rootRunId: runs.rootRunId,
       publishedBranch: workspaces.publishedBranch,
       publishedRemote: workspaces.publishedRemote,
@@ -831,6 +838,7 @@ export const getRunDetail = cache(async function getRunDetail(
       status: row.status,
       workspaceMode: row.workspaceMode,
       agentWorkspace: row.agentWorkspace,
+      agentKind: row.agentKind,
       rootRunId: row.rootRunId,
       parentRunId: row.parentRunId,
     },
@@ -874,6 +882,9 @@ export const getRunDetail = cache(async function getRunDetail(
 
   return {
     runId: row.runId,
+    sourceAgentId: row.sourceAgentId,
+    retryOfRunId: row.retryOfRunId,
+    agentWorkspace: row.agentWorkspace,
     // The inner join on projects guarantees a project here; a project-less
     // local-package run (ADR-097) matches zero rows and getRunDetail returns
     // null above, so this narrowing never throws on a real row.
@@ -893,6 +904,7 @@ export const getRunDetail = cache(async function getRunDetail(
     endedAt: row.endedAt,
     runKind: row.runKind,
     currentStepId: row.currentStepId,
+    agentKind: row.agentKind,
     branch,
     worktreePath,
     parentRepoPath,

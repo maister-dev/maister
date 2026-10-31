@@ -96,7 +96,9 @@ test("manual agent launch: run visible with the agent chip, then finalizes Done"
   // While the stub holds the stream open the run is live — the project page
   // shows it in the active grid with the agent kind + trigger chip.
   await page.goto(`/projects/${fx.projectSlug}`);
-  await expect(page.getByText("agent · manual")).toBeVisible();
+  await expect(
+    page.locator(`[data-agent-run-id="${runId}"]`).filter({ visible: true }),
+  ).toHaveCount(2);
 
   releaseSession(session.sessionId);
 

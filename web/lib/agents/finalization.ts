@@ -5,13 +5,18 @@ import type { Db } from "@/lib/execution-host/db";
 import type { Run, Workspace, Project } from "@/lib/db/schema";
 import type { RunResultContract, ResultStatus } from "@/lib/run-results/types";
 import type {
+  OperationalCleanup,
+  OperationalTerminal,
+} from "@/lib/run-results/operational-types";
+import type {
   RunReviewCause,
   TerminalCause,
 } from "@/lib/domain-events/taxonomy";
 
+import { randomUUID } from "node:crypto";
 import { stat } from "node:fs/promises";
 
-import { and, eq, inArray, is, isNull } from "drizzle-orm";
+import { and, eq, inArray, is, isNull, isNotNull } from "drizzle-orm";
 import { NodePgTransaction } from "drizzle-orm/node-postgres";
 import pino from "pino";
 
@@ -34,10 +39,19 @@ import {
   supersedeUndispatchedMessageTurns,
 } from "./turns";
 
+import { applyAgentTerminalIncidents } from "@/lib/runs/agent-incidents";
+import { parseOperationalResult } from "@/lib/run-results/operational-schema";
 import { terminalCauseReason } from "@/lib/domain-events/taxonomy";
 import { closedAnswerResponse } from "@/lib/hitl-closed-answer";
 import { getDb } from "@/lib/db/client";
-import { hitlRequests, projects, runs, workspaces } from "@/lib/db/schema";
+import {
+  hitlRequests,
+  projects,
+  runs,
+  workspaces,
+  runSessions,
+  executionCommands,
+} from "@/lib/db/schema";
 import { releaseRunContextMounts } from "@/lib/context-mounts/terminal";
 import {
   cancelActiveAssignmentsForRun,
@@ -61,6 +75,12 @@ import { removeWorktree } from "@/lib/worktree";
 import { promoteNextPending } from "@/lib/scheduler";
 import { MaisterError } from "@/lib/errors";
 import { isMaisterErrorCode } from "@/lib/errors-core";
+import { operationalTerminalDecision } from "@/lib/agents/operational-completion";
+import {
+  inspectOperationalRun,
+  operationalResourceKind,
+} from "@/lib/agents/operational-context";
+import { prepareQualificationPublication } from "@/lib/tasks/qualification";
 
 const log = pino({
   name: "agent-finalization",
@@ -229,14 +249,35 @@ type FinalizationContext = Readonly<{
     | "rootRunId"
     | "resultContract"
     | "agentId"
+    | "sourceAgentId"
+    | "agentActivitySnapshot"
+    | "launchedAt"
     | "taskId"
     | "parentRunId"
     | "contextMounts"
+    | "agentKind"
+    | "operationalIntegrityBaseline"
+    | "operationalTerminal"
+    | "taskQualificationSnapshot"
   > & { projectId: string };
   workspaceRows: readonly Pick<Workspace, "id" | "worktreePath">[];
   workspaceContext: Awaited<ReturnType<typeof loadAgentWorkspaceContext>>;
   project: Pick<Project, "slug" | "repoPath"> | null;
 }>;
+
+function finalizationProvenance(context: FinalizationContext | null): string {
+  return canonicalCommandJson(
+    context === null
+      ? null
+      : {
+          ...context,
+          run: {
+            ...context.run,
+            launchedAt: context.run.launchedAt?.toISOString() ?? null,
+          },
+        },
+  );
+}
 
 async function loadFinalizationContext(
   db: Db,
@@ -252,10 +293,17 @@ async function loadFinalizationContext(
       rootRunId: runs.rootRunId,
       resultContract: runs.resultContract,
       agentId: runs.agentId,
+      sourceAgentId: runs.sourceAgentId,
+      agentActivitySnapshot: runs.agentActivitySnapshot,
+      launchedAt: runs.launchedAt,
       projectId: runs.projectId,
       taskId: runs.taskId,
       parentRunId: runs.parentRunId,
       contextMounts: runs.contextMounts,
+      agentKind: runs.agentKind,
+      operationalIntegrityBaseline: runs.operationalIntegrityBaseline,
+      operationalTerminal: runs.operationalTerminal,
+      taskQualificationSnapshot: runs.taskQualificationSnapshot,
     })
     .from(runs)
     .where(eq(runs.id, runId));
@@ -304,6 +352,69 @@ export async function prepareAgentRunFinalization(
   );
 }
 
+/** A launch preparation failed before any session or prompt was dispatched. */
+export async function prepareUndispatchedAgentFailure(
+  runId: string,
+  opts: AgentFinalizeOptions,
+): Promise<PreparedAgentFinalization> {
+  const prepared = await prepareAgentFinalization(runId, "Failed", opts, [
+    "Pending",
+    "Running",
+  ]);
+
+  return {
+    afterCommit: prepared.afterCommit,
+    apply: async (tx) => {
+      const [run] = await tx
+        .select({ status: runs.status })
+        .from(runs)
+        .where(eq(runs.id, runId))
+        .for("update");
+
+      if (!run || (run.status !== "Pending" && run.status !== "Running"))
+        return { finalized: false };
+      const [command] = await tx
+        .select({ id: executionCommands.id })
+        .from(executionCommands)
+        .where(
+          and(
+            eq(executionCommands.runId, runId),
+            inArray(executionCommands.kind, [
+              "session.create",
+              "session.prompt",
+            ]),
+          ),
+        )
+        .limit(1);
+      const [session] = await tx
+        .select({ id: runSessions.id })
+        .from(runSessions)
+        .where(
+          and(
+            eq(runSessions.runId, runId),
+            isNotNull(runSessions.acpSessionId),
+          ),
+        )
+        .limit(1);
+
+      if (command || session) {
+        log.warn(
+          {
+            runId,
+            hasOwnedCommand: command !== undefined,
+            hasLiveSession: session !== undefined,
+          },
+          "agent-undispatched-failure-retained-for-owner",
+        );
+
+        return { finalized: false };
+      }
+
+      return prepared.apply(tx);
+    },
+  };
+}
+
 /** A proven checkpointed input rejection has no live slot to reclaim. */
 export async function prepareCheckpointedAgentFailure(
   runId: string,
@@ -333,7 +444,7 @@ async function prepareAgentFinalization(
       apply: async () => ({ finalized: false }),
       afterCommit: async () => {},
     };
-  const provenance = canonicalCommandJson(original);
+  const provenance = finalizationProvenance(original);
   const preparedRun = original.run;
   const workspaceRows = original.workspaceRows;
   let ephemeralCleanup: { repoPath: string; worktreePath: string } | null =
@@ -354,9 +465,11 @@ async function prepareAgentFinalization(
 
   const status =
     outcome === "Done"
-      ? isSharedWritableExit
-        ? "Review"
-        : finalStatusForCleanAgentExit(workspaceRows.length > 0)
+      ? preparedRun.agentKind === "operational"
+        ? "Done"
+        : isSharedWritableExit
+          ? "Review"
+          : finalStatusForCleanAgentExit(workspaceRows.length > 0)
       : outcome;
 
   if (outcome === "Done") {
@@ -378,7 +491,10 @@ async function prepareAgentFinalization(
   // text it produced is not an answer.
   const resultContract = preparedRun.resultContract;
   const resultDecision =
-    outcome === "Done" && resultContract
+    (outcome === "Done" ||
+      (preparedRun.agentKind === "operational" &&
+        (opts.finalText !== undefined || opts.finalOutput !== undefined))) &&
+    resultContract
       ? opts.finalOutput
         ? decideAgentResultFromOutput({
             contract: resultContract,
@@ -389,7 +505,79 @@ async function prepareAgentFinalization(
             finalText: opts.finalText,
           })
       : { kind: "none" as const };
-  const effectiveStatus = resultDecision.kind === "invalid" ? "Failed" : status;
+  let operationalQuiescent = true;
+
+  if (
+    preparedRun.agentKind === "operational" &&
+    preparedRun.executionAssignmentId
+  ) {
+    try {
+      const { createExecutionHosts } =
+        await import("@/lib/execution-host/client");
+      const client = await createExecutionHosts({ db: _db }).forAssignment({
+        id: preparedRun.executionAssignmentId,
+      });
+
+      operationalQuiescent = !(await client.sessionsForRun()).some(
+        (session) => session.status === "live",
+      );
+    } catch (error) {
+      operationalQuiescent = false;
+      log.error(
+        { runId, errorType: error instanceof Error ? error.name : "unknown" },
+        "operational-execution-quiescence-unproven",
+      );
+    }
+  }
+  const operationalIntegrity =
+    preparedRun.agentKind === "operational"
+      ? !operationalQuiescent
+        ? {
+            verdict: "indeterminate" as const,
+            reasonCodes: ["operational_execution_not_quiescent"],
+            changedPaths: [],
+          }
+        : await inspectOperationalRun(_db, preparedRun).catch(
+            (error: unknown) => {
+              log.warn(
+                {
+                  runId,
+                  errorType: error instanceof Error ? error.name : "unknown",
+                },
+                "operational-final-integrity-unavailable",
+              );
+
+              return {
+                verdict: "indeterminate" as const,
+                reasonCodes: ["operational_integrity_probe_failed"],
+                changedPaths: [],
+              };
+            },
+          )
+      : null;
+  const operationalDecision = operationalIntegrity
+    ? operationalTerminalDecision({
+        requested: outcome,
+        result: resultDecision,
+        integrity: operationalIntegrity,
+      })
+    : null;
+  const qualificationPublication = await prepareQualificationPublication(
+    _db,
+    preparedRun,
+  );
+  const effectiveStatus =
+    operationalDecision?.status ??
+    (resultDecision.kind === "invalid" ? "Failed" : status);
+
+  if (operationalIntegrity?.verdict === "changed" && preparedRun.agentId)
+    quarantine = {
+      agentId: preparedRun.agentId,
+      runId,
+      projectId: preparedRun.projectId,
+      taskId: preparedRun.taskId,
+      reason: "operational_source_contract_violation",
+    };
 
   // Cleanup cwd derives from immutable run/workspace/project provenance, not
   // the mutable catalog agent row. Agent deletion is ON DELETE SET NULL and
@@ -417,7 +605,11 @@ async function prepareAgentFinalization(
     // ADR-090 L3 is agent-specific: only a live catalog agent can be
     // quarantined. Inspect before applying the terminal transaction; the
     // quarantine write itself remains part of that transaction.
-    if (wsCtx && original.run.agentId) {
+    if (
+      preparedRun.agentKind !== "operational" &&
+      wsCtx &&
+      original.run.agentId
+    ) {
       const verdict = await checkRepoReadDirt(l3Target, runId);
 
       if (verdict.kind !== "clean") {
@@ -463,15 +655,21 @@ async function prepareAgentFinalization(
 
   const apply = async (tx: Db): Promise<AgentFinalizationApplication> => {
     const [locked] = await tx
-      .select({ id: runs.id })
+      .select({ id: runs.id, status: runs.status })
       .from(runs)
       .where(eq(runs.id, runId))
       .for("update");
 
-    if (!locked) return { finalized: false };
+    if (!locked || !sourceStatuses.includes(locked.status))
+      return { finalized: false };
+    if (
+      preparedRun.agentKind === "operational" &&
+      preparedRun.operationalTerminal
+    )
+      return { finalized: false };
     const current = await loadFinalizationContext(tx, runId);
 
-    if (canonicalCommandJson(current) !== provenance)
+    if (finalizationProvenance(current) !== provenance)
       throw new MaisterError(
         "CONFLICT",
         "agent finalization provenance changed after preparation",
@@ -506,65 +704,40 @@ async function prepareAgentFinalization(
       return { finalized: false };
     }
 
+    const publication = await qualificationPublication(
+      tx,
+      operationalDecision?.successful ?? false,
+      resultDecision.kind === "valid" &&
+        resultContract?.kind === "agent_operational"
+        ? (parseOperationalResult(resultDecision.value)?.references ?? [])
+        : [],
+    );
+    const terminalDecision =
+      publication.reason && operationalDecision?.successful
+        ? {
+            ...operationalDecision,
+            status: "Failed" as const,
+            successful: false,
+            effectiveOutcome: "blocked" as const,
+            cause: publication.reason,
+            reasonCodes: [
+              ...operationalDecision.reasonCodes,
+              publication.reason,
+            ],
+          }
+        : operationalDecision;
+    const terminalStatus = terminalDecision?.status ?? effectiveStatus;
     const endedAt = new Date();
-
-    // M42 (ADR-114): the agent run's session resume handle lives on its
-    // `run_sessions` row (sole source of truth) — a delegated child reaching
-    // Review keeps it for run_rework session/resume; a terminal run is never
-    // resumed (status-gated), so no run-level marker reset is needed here.
-    const rows = await tx
-      .update(runs)
-      .set({
-        status: effectiveStatus,
-        endedAt,
-        currentStepId: null,
-      })
-      .where(
-        and(
-          eq(runs.id, runId),
-          eq(runs.runKind, "agent"),
-          inArray(runs.status, sourceStatuses),
-        ),
-      )
-      .returning({
-        projectId: runs.projectId,
-        taskId: runs.taskId,
-        agentId: runs.agentId,
-        agentWorkspace: runs.agentWorkspace,
-        parentRunId: runs.parentRunId,
-      });
-
-    if (!rows[0]) return { finalized: false };
-    const row = original.run;
-
-    // ADR-166 D7: the terminal status ends the run's driver generation (a
-    // Review child re-enters through a NEW generation on rework/re-message).
-    await releaseAssignmentForRun(tx, runId, "run_terminal");
-
-    // D-M1 (ADR-182): a message behind the ending turn can never be
-    // dispatched now. Superseded in THIS transaction, so a same-key retry
-    // answers `superseded` rather than finding it queued forever.
-    if (CLOSES_MESSAGE_TURNS[effectiveStatus]) {
-      const superseded = await supersedeUndispatchedMessageTurns(
-        tx,
-        [runId],
-        endedAt,
-      );
-
-      if (superseded.length > 0)
-        log.info(
-          { runId, status: effectiveStatus, count: superseded.length },
-          "agent-queued-turns-superseded",
-        );
-    }
+    const terminalTransitionId = randomUUID();
 
     // ADR-165 (D9/W3): the result row commits in THIS transaction — the same one
     // that flips the status and emits the wake — so a woken parent's
     // `run_collect` can never observe a settle without its result.
     let resultStatus: ResultStatus | null = null;
+    let resultRevision: number | null = null;
 
     if (resultDecision.kind === "valid") {
-      await publishRunResult(tx, {
+      const published = await publishRunResult(tx, {
         runId,
         value: resultDecision.value,
         valueBytes: resultDecision.valueBytes,
@@ -573,15 +746,22 @@ async function prepareAgentFinalization(
         producerRef: "session:default",
         artifactManifest: await engineArtifactManifest(tx, runId),
       });
-      resultStatus = "valid";
+
+      resultRevision = published.revision;
+      resultStatus =
+        terminalDecision && !terminalDecision.successful
+          ? "unavailable"
+          : "valid";
     } else if (resultDecision.kind === "invalid") {
-      await recordInvalidRunResult(tx, {
+      const invalid = await recordInvalidRunResult(tx, {
         runId,
         contract: resultContract as RunResultContract,
         reason: resultDecision.reason,
         producerKind: "agent_session",
         producerRef: "session:default",
       });
+
+      resultRevision = invalid.revision;
       resultStatus = "unavailable";
       log.warn(
         {
@@ -596,7 +776,118 @@ async function prepareAgentFinalization(
       resultStatus = "absent";
     }
 
-    if (effectiveStatus === "Abandoned") {
+    const operationalTerminal: OperationalTerminal | null = terminalDecision
+      ? {
+          ...terminalDecision,
+          reasonCodes: [
+            ...new Set([
+              ...terminalDecision.reasonCodes,
+              ...(opts.causeReason ? [opts.causeReason] : []),
+            ]),
+          ],
+          resultRevision,
+          baselineGeneration:
+            preparedRun.operationalIntegrityBaseline?.generation ?? null,
+          evidenceIds: [],
+        }
+      : null;
+    const cleanupDue = new Date(
+      endedAt.getTime() +
+        (terminalStatus === "Crashed" ? gcAgeDays() * 86_400_000 : 0),
+    );
+    const operationalCleanup: OperationalCleanup | null = terminalDecision
+      ? {
+          version: 1,
+          resourceKind: operationalResourceKind(preparedRun),
+          workspace: preparedRun.agentWorkspace as NonNullable<
+            Run["agentWorkspace"]
+          >,
+          state: terminalStatus === "Crashed" ? "retained" : "armed",
+          revision: 1,
+          armedAt: endedAt.toISOString(),
+          attempts: 0,
+          dueAt: cleanupDue.toISOString(),
+          errorCode: null,
+          evidenceIds: [],
+          removedAt: null,
+          releasedAt: null,
+          lease: null,
+          rearmReceipt: null,
+        }
+      : null;
+
+    // M42 (ADR-114): the agent run's session resume handle lives on its
+    // `run_sessions` row (sole source of truth) — a delegated child reaching
+    // Review keeps it for run_rework session/resume; a terminal run is never
+    // resumed (status-gated), so no run-level marker reset is needed here.
+    const rows = await tx
+      .update(runs)
+      .set({
+        status: terminalStatus,
+        ...(operationalTerminal
+          ? { operationalTerminal, operationalCleanup }
+          : {}),
+        endedAt,
+        currentStepId: null,
+      })
+      .where(
+        and(
+          eq(runs.id, runId),
+          eq(runs.runKind, "agent"),
+          inArray(runs.status, sourceStatuses),
+        ),
+      )
+      .returning({
+        projectId: runs.projectId,
+        taskId: runs.taskId,
+        agentId: runs.agentId,
+        sourceAgentId: runs.sourceAgentId,
+        agentActivitySnapshot: runs.agentActivitySnapshot,
+        launchedAt: runs.launchedAt,
+        agentWorkspace: runs.agentWorkspace,
+        parentRunId: runs.parentRunId,
+      });
+
+    if (!rows[0]) {
+      if (resultRevision !== null)
+        throw new MaisterError(
+          "CONFLICT",
+          "agent terminal CAS lost after result publication; roll back the result",
+          { details: { reason: "agent_terminal_cas_lost" } },
+        );
+
+      return { finalized: false };
+    }
+    await publication.publish();
+    const row = original.run;
+
+    // ADR-166 D7: the terminal status ends the run's driver generation (a
+    // Review child re-enters through a NEW generation on rework/re-message).
+    await releaseAssignmentForRun(tx, runId, "run_terminal");
+
+    // D-M1 (ADR-182): a message behind the ending turn can never be
+    // dispatched now. Superseded in THIS transaction, so a same-key retry
+    // answers `superseded` rather than finding it queued forever.
+    if (CLOSES_MESSAGE_TURNS[terminalStatus]) {
+      const superseded = await supersedeUndispatchedMessageTurns(
+        tx,
+        [runId],
+        endedAt,
+      );
+
+      if (superseded.length > 0)
+        log.info(
+          { runId, status: terminalStatus, count: superseded.length },
+          "agent-queued-turns-superseded",
+        );
+    }
+
+    if (operationalCleanup) {
+      await tx
+        .update(workspaces)
+        .set({ scheduledRemovalAt: cleanupDue })
+        .where(eq(workspaces.runId, runId));
+    } else if (terminalStatus === "Abandoned") {
       const scheduledRemovalAt = new Date(
         endedAt.getTime() + gcAgeDays() * 86_400_000,
       );
@@ -639,16 +930,30 @@ async function prepareAgentFinalization(
       });
     }
 
+    const incidentEpisodeIds = await applyAgentTerminalIncidents(tx, {
+      run: original.run,
+      status: terminalStatus,
+      endedAt,
+      transitionId: terminalTransitionId,
+      reason: opts.causeReason ?? opts.reason,
+      terminal: operationalTerminal,
+      reported:
+        resultDecision.kind === "valid" &&
+        resultContract?.kind === "agent_operational"
+          ? parseOperationalResult(resultDecision.value)
+          : null,
+    });
+
     await emitWebhookEvent({
       db: tx,
-      type: WEBHOOK_TYPE_BY_STATUS[effectiveStatus],
+      type: WEBHOOK_TYPE_BY_STATUS[terminalStatus],
       projectId: row.projectId,
       runId,
       data: {
         kind: "agent",
         agentId: row.agentId,
-        ...(effectiveStatus === "Review" ? { source: "agent" } : {}),
-        ...(opts.reason && effectiveStatus !== "Review"
+        ...(terminalStatus === "Review" ? { source: "agent" } : {}),
+        ...(opts.reason && terminalStatus !== "Review"
           ? { reason: opts.reason }
           : {}),
       },
@@ -658,7 +963,7 @@ async function prepareAgentFinalization(
     // the parked coordinator wakes to promote/rework the diff (and as-plan
     // auto-promote fires). A top-level Review (no parent) emits nothing — there is
     // no orchestrator to route to. Terminal outcomes emit their terminal kind.
-    if (effectiveStatus === "Review") {
+    if (terminalStatus === "Review") {
       if (row.parentRunId) {
         await emitDomainEvent({
           db: tx,
@@ -671,7 +976,7 @@ async function prepareAgentFinalization(
           payload: {
             runKind: "agent",
             agentId: row.agentId,
-            status: effectiveStatus,
+            status: terminalStatus,
             // Codex review F1: the same cause field the flow emit helper
             // writes — a clean agent exit IS a completion and stays
             // auto-promotable.
@@ -687,8 +992,9 @@ async function prepareAgentFinalization(
       // exit's `run.done` — the outcome the coordinator must react to is the
       // FAILURE, and a `run.done` here would wake it into believing the child
       // succeeded.
-      const kind =
-        resultDecision.kind === "invalid"
+      const kind = terminalDecision
+        ? DOMAIN_KIND_BY_OUTCOME[terminalDecision.status]
+        : resultDecision.kind === "invalid"
           ? "run.failed"
           : DOMAIN_KIND_BY_OUTCOME[outcome];
       const event = {
@@ -701,7 +1007,17 @@ async function prepareAgentFinalization(
         payload: {
           runKind: "agent",
           agentId: row.agentId,
-          status: effectiveStatus,
+          terminalTransitionId,
+          incidentEpisodeIds,
+          status: terminalStatus,
+          ...(operationalTerminal
+            ? {
+                agentKind: "operational",
+                effectiveOutcome: operationalTerminal.effectiveOutcome,
+                resultRevision: operationalTerminal.resultRevision,
+                successful: operationalTerminal.successful,
+              }
+            : {}),
           ...(opts.reason ? { reason: opts.reason } : {}),
           ...(resultDecision.kind === "invalid"
             ? {
@@ -721,8 +1037,8 @@ async function prepareAgentFinalization(
           ...event,
           kind,
           cause: agentTerminalCause(
-            outcome,
-            opts.causeReason ?? opts.reason,
+            terminalDecision?.status ?? outcome,
+            terminalDecision?.cause ?? opts.causeReason ?? opts.reason,
             resultDecision.kind === "invalid"
               ? resultDecision.reason === "result_missing"
                 ? "result_missing"
@@ -732,7 +1048,7 @@ async function prepareAgentFinalization(
         });
     }
 
-    return { finalized: true, status: effectiveStatus, endedAt };
+    return { finalized: true, status: terminalStatus, endedAt };
   };
 
   const afterCommit = async (
@@ -760,6 +1076,34 @@ async function prepareAgentFinalization(
           details: { reason: "agent_finalization_commit_unconfirmed", runId },
         },
       );
+
+    if (original.run.agentKind === "operational") {
+      log.info(
+        { runId, status: result.status },
+        "operational-terminal-cleanup-armed",
+      );
+      const { disposeOperationalRun } =
+        await import("@/lib/gc/operational-disposition");
+
+      await disposeOperationalRun(runId, { db: _db }).catch((error: unknown) =>
+        log.error(
+          { runId, errorType: error instanceof Error ? error.name : "unknown" },
+          "operational-cleanup-dispatch-deferred",
+        ),
+      );
+      await promoteNextPending({ db: _db, pool: "agent" }).catch(
+        (error: unknown) =>
+          log.error(
+            {
+              runId,
+              errorType: error instanceof Error ? error.name : "unknown",
+            },
+            "operational-slot-promotion-failed",
+          ),
+      );
+
+      return;
+    }
 
     let materializationReleaseFailedFor: string | null = null;
 
@@ -876,6 +1220,32 @@ export async function finalizeAgentRun(
   opts: AgentFinalizeOptions = {},
 ): Promise<{ finalized: boolean; status?: AgentFinalStatus }> {
   const db = opts.db ?? getDb();
+  const [run] = await db
+    .select({
+      agentKind: runs.agentKind,
+      executionAssignmentId: runs.executionAssignmentId,
+    })
+    .from(runs)
+    .where(eq(runs.id, runId));
+
+  if (run?.agentKind === "operational" && run.executionAssignmentId) {
+    try {
+      const { createExecutionHosts } =
+        await import("@/lib/execution-host/client");
+      const client = await createExecutionHosts({ db }).forAssignment({
+        id: run.executionAssignmentId,
+      });
+
+      for (const session of await client.sessionsForRun())
+        if (session.status === "live")
+          await client.deleteSession(session.sessionId);
+    } catch (error) {
+      log.error(
+        { runId, errorType: error instanceof Error ? error.name : "unknown" },
+        "operational-terminal-teardown-unconfirmed",
+      );
+    }
+  }
   const prepared = await prepareAgentRunFinalization(runId, outcome, {
     ...opts,
     db,

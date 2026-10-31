@@ -40,6 +40,7 @@ export type AgentMaterializationGcSummary = {
 
 export type AgentMaterializationRunCleanupState = {
   readonly status: string;
+  readonly agentKind?: string | null;
   readonly agentWorkspace: string | null;
 };
 
@@ -110,18 +111,24 @@ async function loadRunStatuses(
       id: runs.id,
       status: runs.status,
       agentWorkspace: runs.agentWorkspace,
+      agentKind: runs.agentKind,
     })
     .from(runs)
     .where(inArray(runs.id, [...runIds]))) as Array<{
     readonly id: string;
     readonly status: string;
     readonly agentWorkspace: string | null;
+    readonly agentKind?: string | null;
   }>;
 
   return new Map(
     rows.map((row) => [
       row.id,
-      { status: row.status, agentWorkspace: row.agentWorkspace },
+      {
+        status: row.status,
+        agentWorkspace: row.agentWorkspace,
+        agentKind: row.agentKind,
+      },
     ]),
   );
 }
@@ -129,7 +136,8 @@ async function loadRunStatuses(
 function shouldRestoreMaterialization(
   state: AgentMaterializationRunCleanupState | undefined,
 ): boolean {
-  if (!state) return true;
+  if (!state) return false;
+  if (state.agentKind === "operational") return false;
   if (TERMINAL_CLEANUP_STATUSES.has(state.status)) return true;
 
   // A crashed worktree can be resumed. Crashed none/repo_read sessions have no
@@ -177,6 +185,14 @@ export async function runAgentMaterializationCleanupSweep(
   for (const candidate of candidates) {
     const state = statuses.get(candidate.runId);
 
+    if (!state) {
+      failed += 1;
+      log.error(
+        { runId: candidate.runId, reason: "agent_kind_unknown" },
+        "unclassified materialization retained for operator diagnosis",
+      );
+      continue;
+    }
     if (!shouldRestoreMaterialization(state)) {
       live += 1;
       continue;

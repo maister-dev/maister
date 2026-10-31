@@ -12,7 +12,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import {
@@ -348,7 +348,12 @@ async function emitChildTerminal(args: {
   const rows = (await db
     .select()
     .from(schema.domainEvents)
-    .where(eq(schema.domainEvents.runId, childRunId))) as DomainEventRow[];
+    .where(
+      and(
+        eq(schema.domainEvents.runId, childRunId),
+        eq(schema.domainEvents.kind, kind),
+      ),
+    )) as DomainEventRow[];
 
   return rows[0];
 }
@@ -412,7 +417,12 @@ async function emitChildReview(args: {
   const rows = (await db
     .select()
     .from(schema.domainEvents)
-    .where(eq(schema.domainEvents.runId, childRunId))) as DomainEventRow[];
+    .where(
+      and(
+        eq(schema.domainEvents.runId, childRunId),
+        eq(schema.domainEvents.kind, "run.review"),
+      ),
+    )) as DomainEventRow[];
 
   return rows[0];
 }

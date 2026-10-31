@@ -15,6 +15,10 @@ export async function declareWriterCapability(
   client: SessionClient,
 ): Promise<void> {
   await client.query(
-    `SET ${WRITER_CAPABILITY_SETTING} = '${EXECUTION_AB_WRITER_CAPABILITY}'`,
+    `SET ${WRITER_CAPABILITY_SETTING} = '${EXECUTION_AB_WRITER_CAPABILITY}'; SET ${TASK_QUALIFICATION_WRITER_SETTING} = '${TASK_QUALIFICATION_WRITER_CAPABILITY}'`,
   );
 }
+
+export const TASK_QUALIFICATION_WRITER_SETTING =
+  "maister.task_qualification_writer";
+export const TASK_QUALIFICATION_WRITER_CAPABILITY = "v1";

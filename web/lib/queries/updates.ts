@@ -32,6 +32,7 @@ import pino from "pino";
 
 import { ATTENTION_EVENT_KINDS } from "@/lib/domain-events/taxonomy";
 import { getActivityCursor } from "@/lib/queries/activity-cursor";
+import { humanActivityEventPredicate } from "@/lib/queries/human-activity";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { getVisibleProjectIds } from "@/lib/queries/visible-projects";
@@ -106,6 +107,7 @@ export async function getUpdatesCount(
       .from(domainEvents)
       .where(
         and(
+          humanActivityEventPredicate(),
           inArray(domainEvents.projectId, projectIds),
           inArray(domainEvents.kind, [...ATTENTION_EVENT_KINDS]),
           gt(domainEvents.occurredAt, since),

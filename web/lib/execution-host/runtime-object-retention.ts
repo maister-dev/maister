@@ -25,7 +25,10 @@ import {
 import { getDb } from "@/lib/db/client";
 import { isMaisterError } from "@/lib/errors";
 import { gcAgeDays } from "@/lib/instance-config";
-import { DISPOSABLE_WORKSPACE_RUN_STATUSES } from "@/lib/runs/run-status-sets";
+import {
+  DISPOSABLE_WORKSPACE_RUN_STATUSES,
+  TERMINAL_RUN_STATUSES,
+} from "@/lib/runs/run-status-sets";
 import { isApplicationStopping } from "@/lib/server-lifecycle";
 
 const RETENTION_BATCH_SIZE = 100;
@@ -114,7 +117,7 @@ async function dueCandidates(
   now: Date,
   limit: number,
 ): Promise<(ExecutionRuntimeObject & { createdAtText: string })[]> {
-  const deadline = sql`COALESCE((SELECT max(${workspaces.scheduledRemovalAt}) FROM ${workspaces} WHERE ${workspaces.runId} = ${executionRuntimeObjects.runId}), ${runs.endedAt} + make_interval(days => ${gcAgeDays()}))`;
+  const deadline = sql`CASE WHEN ${runs.agentKind} = 'operational' THEN ${runs.endedAt} + make_interval(days => ${gcAgeDays()}) ELSE COALESCE((SELECT max(${workspaces.scheduledRemovalAt}) FROM ${workspaces} WHERE ${workspaces.runId} = ${executionRuntimeObjects.runId}), ${runs.endedAt} + make_interval(days => ${gcAgeDays()})) END`;
   const rows = await db
     .select({
       object: executionRuntimeObjects,
@@ -137,7 +140,16 @@ async function dueCandidates(
               "run",
               "delivery",
             ]),
-            inArray(runs.status, [...DISPOSABLE_WORKSPACE_RUN_STATUSES]),
+            or(
+              and(
+                eq(runs.agentKind, "operational"),
+                inArray(runs.status, [...TERMINAL_RUN_STATUSES]),
+              ),
+              and(
+                sql`${runs.agentKind} IS DISTINCT FROM 'operational'`,
+                inArray(runs.status, [...DISPOSABLE_WORKSPACE_RUN_STATUSES]),
+              ),
+            ),
             sql`${deadline} <= ${now}`,
           ),
           eq(executionRuntimeObjects.state, "deleting"),

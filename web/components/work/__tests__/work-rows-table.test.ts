@@ -189,7 +189,7 @@ describe("T-D11 a header drops exactly when its cells do", () => {
   // Asserted as the PAIRING rather than as a column count, so the failure names
   // the column instead of a number, and so adding an eleventh column cannot
   // satisfy it by accident.
-  /** The `hidden @min-[Npx]:table-cell` pair reduced to its container width. */
+  /** The responsive table-cell visibility pair reduced to its container width. */
   function dropToken(className: string): number | null {
     if (!className.includes("hidden")) return null;
     const match = /@min-\[(\d+)px\]:table-cell/u.exec(className);

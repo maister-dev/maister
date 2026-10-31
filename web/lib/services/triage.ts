@@ -3,6 +3,7 @@ import "server-only";
 import { and, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { taskTriageAutoEnqueuePredicate } from "@/lib/tasks/qualification-predicates";
 import { LAUNCHABLE_FLOW_ENABLEMENT_STATES } from "@/lib/flows/enablement-states";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -13,6 +14,7 @@ import {
   resolveFlowRef,
 } from "@/lib/flows/resolve-flow-ref";
 import { recordTaskActivity, type SocialActor } from "@/lib/social/activity";
+import { assertLegacyTriageOrCurrentQualification } from "@/lib/tasks/qualification-admission";
 import {
   applyQueueWriteFields,
   hasQueueWriteFields,
@@ -198,12 +200,27 @@ export async function applyTriageVerdict(
     queueFields?: QueueWriteFields;
   },
 ): Promise<void> {
+  const [qualificationTask] = await tx
+    .select({ mode: tasks.qualificationMode, id: tasks.id })
+    .from(tasks)
+    .where(
+      and(eq(tasks.id, input.taskId), eq(tasks.projectId, input.projectId)),
+    )
+    .for("update");
+
+  if (qualificationTask?.mode !== "legacy") {
+    await assertLegacyTriageOrCurrentQualification(
+      tx,
+      input.projectId,
+      input.taskId,
+    );
+  }
   const set = verdictColumns(input.verdict);
 
   if (input.queueFields) applyQueueWriteFields(input.queueFields, set);
   const now = new Date();
   const arm = input.enqueue === true;
-  const armWhenAllowed = sql`CASE WHEN ${tasks.launchIntent} IS NULL OR ${tasks.launchIntent} = 'triage_then_launch' THEN ${arm} ELSE false END`;
+  const armWhenAllowed = sql`CASE WHEN ${taskTriageAutoEnqueuePredicate()} THEN ${arm} ELSE false END`;
 
   await tx
     .update(tasks)
@@ -387,6 +404,9 @@ export async function sendTaskToTriageInTransaction(
   await tx
     .update(tasks)
     .set({
+      qualificationMode: sql`CASE WHEN ${tasks.qualificationMode}='execution_child' OR (SELECT coalesce(task_qualification_override,task_qualification_baseline) FROM projects WHERE id=${input.projectId})='required' THEN 'required' ELSE ${tasks.qualificationMode} END`,
+      qualificationChildProof: sql`CASE WHEN ${tasks.qualificationMode}='execution_child' OR (SELECT coalesce(task_qualification_override,task_qualification_baseline) FROM projects WHERE id=${input.projectId})='required' THEN NULL ELSE ${tasks.qualificationChildProof} END`,
+      qualificationInputRevision: sql`${tasks.qualificationInputRevision}+CASE WHEN ${tasks.qualificationMode}<>'legacy' OR (SELECT coalesce(task_qualification_override,task_qualification_baseline) FROM projects WHERE id=${input.projectId})='required' THEN 1 ELSE 0 END`,
       triageStatus: null,
       launchMode: null,
       launchArmedAt: null,

@@ -210,6 +210,7 @@ export const projectBlockSchema = z.object({
   main_branch: z.string().min(1).default("main"),
   branch_prefix: z.string().min(1).default("maister/"),
   public_branch_template: publicBranchTemplateSchema.optional(),
+  task_qualification: z.enum(["legacy", "required"]).optional(),
   promotion: projectPromotionSchema.optional(),
   default_runner: z.string().min(1).optional(),
 });
@@ -1679,6 +1680,7 @@ export const maisterPackageManifestSchema = z
   .object({
     schemaVersion: z.literal(1),
     name: capabilityRefIdSchema,
+    compat: flowCompatSchema.optional(),
     metadata: flowMetadataSchema.optional(),
     // A package may ship zero flows (capability/agent-only, or a fresh in-Studio
     // draft) — empty is valid (ADR-105/M39). Other entry arrays already default.

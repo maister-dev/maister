@@ -12,7 +12,7 @@ import "server-only";
 
 import type { CrashAction } from "@/lib/board";
 
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { crashActionFor } from "@/lib/board";
@@ -147,6 +147,7 @@ export async function listCrashedForProjects(
       and(
         inArray(runs.projectId, [...projectIds]),
         eq(runs.status, "Crashed"),
+        sql`${runs.agentKind} IS DISTINCT FROM 'operational'`,
         eq(runs.runKind, "flow"),
       ),
     )

@@ -10,7 +10,7 @@ import type { TaskPriority } from "@/lib/tasks/criticality";
 import type { FlowManifestIncompatibility } from "@/lib/flows/manifest-parser";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 
 import { crashActionFor, deriveStage } from "@/lib/board";
 import {
@@ -18,6 +18,7 @@ import {
   type PromotedKind,
   type WorkStage,
 } from "@/lib/work/stage";
+import { incomingWorkPredicate } from "@/lib/tasks/qualification-predicates";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import {
@@ -387,7 +388,9 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
     .from(tasks)
     .leftJoin(flows, eq(flows.id, tasks.flowId))
     .leftJoin(flowRevisions, eq(flowRevisions.id, flows.enabledRevisionId))
-    .where(eq(tasks.projectId, projectId))
+    .where(
+      and(eq(tasks.projectId, projectId), sql`NOT ${incomingWorkPredicate()}`),
+    )
     .orderBy(desc(tasks.createdAt));
 
   const columns: Record<BoardColumn, BoardColumnData> = {

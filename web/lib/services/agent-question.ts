@@ -25,6 +25,8 @@ import {
   type ExecutionHosts,
 } from "@/lib/execution-host";
 import { revokeAgentRunTokensForRun } from "@/lib/agents/tokens";
+import { captureAgentPauseSource } from "@/lib/execution-host/agent-pause-source";
+import { markCheckpointed } from "@/lib/runs/state-transitions";
 
 const { hitlRequests, runs, taskClarifications, tasks } = schema;
 
@@ -110,6 +112,26 @@ function stableJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
+function questionFormSchema(value: unknown): unknown {
+  if (
+    value &&
+    typeof value === "object" &&
+    "kind" in value &&
+    value.kind === "agent_question"
+  ) {
+    const {
+      kind: _kind,
+      agentPrompt: _prompt,
+      supervisorSessionId: _session,
+      ...form
+    } = value as Record<string, unknown>;
+
+    return form;
+  }
+
+  return value;
+}
+
 function sameQuestionPayload(
   row: { prompt: string; schema: unknown; reTriggerMode: string | null },
   input: CreateAgentQuestionInput,
@@ -117,7 +139,7 @@ function sameQuestionPayload(
   return (
     row.prompt === input.question &&
     row.reTriggerMode === input.reTriggerMode &&
-    stableJson(row.schema) === stableJson(input.schema)
+    stableJson(questionFormSchema(row.schema)) === stableJson(input.schema)
   );
 }
 
@@ -133,24 +155,14 @@ async function persistPendingQuestion(
   db: Db,
 ): Promise<PendingQuestion> {
   return await inTransaction(db, async (tx) => {
-    const taskRows = await tx
-      .select({ id: tasks.id })
-      .from(tasks)
-      .where(
-        and(eq(tasks.id, input.taskId), eq(tasks.projectId, input.projectId)),
-      )
-      .for("update");
-
-    if (!taskRows[0]) {
-      throw new MaisterError("PRECONDITION", "task not found for human ask");
-    }
-
     const sourceRows = await tx
       .select({
         id: runs.id,
         projectId: runs.projectId,
         taskId: runs.taskId,
         agentId: runs.agentId,
+        agentKind: runs.agentKind,
+        executionAssignmentId: runs.executionAssignmentId,
         runKind: runs.runKind,
         status: runs.status,
       })
@@ -169,6 +181,18 @@ async function persistPendingQuestion(
       throw new MaisterError("PRECONDITION", "bound agent run is not eligible");
     }
 
+    const taskRows = await tx
+      .select({ id: tasks.id })
+      .from(tasks)
+      .where(
+        and(eq(tasks.id, input.taskId), eq(tasks.projectId, input.projectId)),
+      )
+      .for("update");
+
+    if (!taskRows[0]) {
+      throw new MaisterError("PRECONDITION", "task not found for human ask");
+    }
+
     const existingRows = await tx
       .select({
         id: hitlRequests.id,
@@ -177,6 +201,7 @@ async function persistPendingQuestion(
         reTriggerMode: hitlRequests.reTriggerMode,
         activationState: hitlRequests.activationState,
         supersededAt: hitlRequests.supersededAt,
+        respondedAt: hitlRequests.respondedAt,
       })
       .from(hitlRequests)
       .where(
@@ -186,7 +211,15 @@ async function persistPendingQuestion(
         ),
       )
       .for("update");
-    const existing = existingRows[0];
+    const existing = existingRows.find((row) => {
+      if (source.agentKind !== "operational" || row.respondedAt === null)
+        return true;
+      const proof = row.schema as {
+        agentPrompt?: { assignmentId?: string };
+      } | null;
+
+      return proof?.agentPrompt?.assignmentId === source.executionAssignmentId;
+    });
 
     if (existing) {
       if (
@@ -236,6 +269,30 @@ async function persistPendingQuestion(
     const nextSequence = Number(sequenceRows[0]?.maxSeq ?? 0) + 1;
     const hitlRequestId = randomUUID();
 
+    let operationalSource: Awaited<ReturnType<typeof captureAgentPauseSource>> =
+      null;
+
+    if (source.agentKind === "operational") {
+      const session = await loadActiveRunSession(tx, source.id);
+
+      if (!source.executionAssignmentId || !session?.hostSessionId)
+        throw new MaisterError(
+          "PRECONDITION",
+          "operational human questions require the current owned prompt",
+          { details: { reason: "operational_question_source_missing" } },
+        );
+      operationalSource = await captureAgentPauseSource(tx, {
+        runId: source.id,
+        assignmentId: source.executionAssignmentId,
+        sessionId: session.hostSessionId,
+      });
+      if (!operationalSource)
+        throw new MaisterError(
+          "PRECONDITION",
+          "operational human questions require the current owned prompt",
+          { details: { reason: "operational_question_source_missing" } },
+        );
+    }
     await createHitlRequest(tx, {
       id: hitlRequestId,
       runId: input.sourceRunId,
@@ -244,9 +301,16 @@ async function persistPendingQuestion(
       taskId: input.taskId,
       activationState: "pending_termination",
       reTriggerMode: input.reTriggerMode,
-      schema: input.schema,
+      schema: operationalSource
+        ? { ...input.schema, kind: "agent_question", ...operationalSource }
+        : input.schema,
       prompt: input.question,
     });
+    if (operationalSource)
+      await tx
+        .update(runs)
+        .set({ status: "NeedsInput" })
+        .where(and(eq(runs.id, source.id), eq(runs.status, "Running")));
     await tx.insert(taskClarifications).values({
       id: randomUUID(),
       taskId: input.taskId,
@@ -300,6 +364,22 @@ async function terminateSourceSession(
     (session) => session.acpSessionId === activeSession.acpSessionId,
   );
 
+  const [source] = await db
+    .select({ agentKind: runs.agentKind })
+    .from(runs)
+    .where(eq(runs.id, sourceRunId));
+
+  if (source?.agentKind === "operational") {
+    const sessionId = live?.sessionId ?? activeSession.hostSessionId;
+
+    if (!sessionId) return "pending";
+    const client = await deps.hosts.forRun(sourceRunId, { teardown: true });
+
+    await client.checkpoint(sessionId);
+    await markCheckpointed(sourceRunId, { db });
+
+    return "terminated";
+  }
   if (!live) {
     if (liveSessionsForRun.length > 0) {
       throw new MaisterError(
@@ -341,6 +421,25 @@ async function activatePendingQuestion(
   statusCode: number,
 ): Promise<"active" | "replayed" | "pending"> {
   return await inTransaction(db, async (tx) => {
+    const sourceRows = await tx
+      .select({
+        id: runs.id,
+        projectId: runs.projectId,
+        taskId: runs.taskId,
+        status: runs.status,
+        runKind: runs.runKind,
+        agentKind: runs.agentKind,
+      })
+      .from(runs)
+      .where(eq(runs.id, pending.runId))
+      .for("update");
+    const source = sourceRows[0];
+
+    await tx
+      .select({ id: tasks.id })
+      .from(tasks)
+      .where(eq(tasks.id, pending.taskId))
+      .for("update");
     const rows = await tx
       .select()
       .from(hitlRequests)
@@ -362,19 +461,6 @@ async function activatePendingQuestion(
       throw new MaisterError("CONFLICT", "human ask cannot be activated");
     }
 
-    const sourceRows = await tx
-      .select({
-        id: runs.id,
-        projectId: runs.projectId,
-        taskId: runs.taskId,
-        status: runs.status,
-        runKind: runs.runKind,
-      })
-      .from(runs)
-      .where(eq(runs.id, pending.runId))
-      .for("update");
-    const source = sourceRows[0];
-
     if (
       !source ||
       source.runKind !== "agent" ||
@@ -387,7 +473,9 @@ async function activatePendingQuestion(
       );
     }
 
-    if (SOURCE_STATUS_FINALIZED_BY_HUMAN_ASK_SET.has(source.status)) {
+    if (source.agentKind === "operational") {
+      if (source.status !== "NeedsInputIdle") return "pending";
+    } else if (SOURCE_STATUS_FINALIZED_BY_HUMAN_ASK_SET.has(source.status)) {
       await tx
         .update(runs)
         .set({ status: "Done", endedAt: new Date(), currentStepId: null })
@@ -566,6 +654,9 @@ export async function cancelOpenAgentQuestionsForTaskInTransaction(
         eq(hitlRequests.kind, "agent_question"),
         isNull(hitlRequests.respondedAt),
         isNull(hitlRequests.supersededAt),
+        // Independent operations keep their own checkpoint and human decision.
+        // A task-bound code successor cannot silently orphan that operation.
+        sql`NOT EXISTS (SELECT 1 FROM ${runs} WHERE ${runs.id} = ${hitlRequests.runId} AND ${runs.agentKind} = 'operational')`,
         inArray(hitlRequests.activationState, [
           "pending_termination",
           "active",

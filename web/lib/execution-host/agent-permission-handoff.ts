@@ -37,14 +37,16 @@ import {
   executionCommands,
   hitlRequests,
   runSessionIncarnations,
+  runs,
 } from "@/lib/db/schema";
 import { OWNED_TURN_VARIANTS } from "@/lib/agents/turn-variants";
+import { operationalHumanAnswerPrompt } from "@/lib/agents/launch-contract";
 
 const id = z.string().min(1);
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const pauseProofSchema = z
   .object({
-    kind: z.enum(["hook_trip", "budget_breach"]),
+    kind: z.enum(["hook_trip", "budget_breach", "agent_question"]),
     decisionSha256: digest,
     haltEventId: id.nullable(),
   })
@@ -151,9 +153,14 @@ export async function readCheckpointSource(
 
   if (!parsed.success)
     throw new PromptOwnerInvariantError("agent_permission_resume_source_shape");
-  if (typeof response?.optionId !== "string")
-    return { kind: "pending", reason: "choice_missing" };
   const source = parsed.data;
+  const choice =
+    source.kind === "agent_question" && hitl.respondedAt
+      ? "answered"
+      : response?.optionId;
+
+  if (!response || typeof choice !== "string")
+    return { kind: "pending", reason: "choice_missing" };
 
   const isPause = source.kind !== "permission";
 
@@ -161,8 +168,13 @@ export async function readCheckpointSource(
     source.kind !== hitl.kind ||
     (isPause
       ? !hitl.respondedAt ||
-        response.optionId !== (source.kind === "hook_trip" ? "resume" : "raise")
-      : !source.options.some((option) => option.optionId === response.optionId))
+        choice !==
+          (source.kind === "agent_question"
+            ? "answered"
+            : source.kind === "hook_trip"
+              ? "resume"
+              : "raise")
+      : !source.options.some((option) => option.optionId === choice))
   )
     throw new PromptOwnerInvariantError("agent_permission_resume_choice");
   const [command] = await db
@@ -344,7 +356,7 @@ export async function readCheckpointSource(
     kind: "ready",
     source: {
       hitl,
-      response: { ...response, optionId: response.optionId },
+      response: { ...response, optionId: choice },
       command,
       turn,
       prior,
@@ -356,7 +368,8 @@ export async function readCheckpointSource(
         input?.receiptEvidence &&
         isRejectedPermissionInputReceipt(input.receiptEvidence)
           ? "rejected"
-          : source.kind === "permission" && input === null
+          : source.kind === "agent_question" ||
+              (source.kind === "permission" && input === null)
             ? "continue"
             : (resolved.order === "after_checkpoint" || halt !== null) &&
                 isPermissionCheckpointInterruption(command)
@@ -428,8 +441,7 @@ export async function assertAgentResumeTurn(
         eq(hitlRequests.runId, turn.runId),
         sql`${hitlRequests.response}->'_agentResume'->>'turnId' = ${turn.id}`,
       ),
-    )
-    .limit(2);
+    );
 
   if (grants.length === 0) {
     // ADR-182: the repeated input is the previous OWNED turn — a steer between
@@ -469,23 +481,46 @@ export async function assertAgentResumeTurn(
 
     return;
   }
-  if (grants.length !== 1)
-    throw new PromptOwnerInvariantError("agent_permission_resume_grant_count");
-  const hitl = grants[0];
-  const source = await assertAgentPermissionResumeSource(db, hitl, assignment);
+  const sources: Source[] = [];
 
-  if (
-    source.kind !== "continue" ||
-    source.turn.state !== "superseded" ||
-    turn.runId !== assignment.runId ||
-    turn.executionAssignmentId !== assignment.id ||
-    turn.assignmentEpoch !== assignment.epoch ||
-    turn.runSessionId !== source.turn.runSessionId ||
-    turn.prompt !== source.turn.prompt
-  )
-    throw new PromptOwnerInvariantError(
-      "agent_permission_resume_turn_identity",
-    );
+  for (const hitl of grants)
+    sources.push(await assertAgentPermissionResumeSource(db, hitl, assignment));
+  const question = sources.find(
+    (source) => source.pause?.kind === "agent_question",
+  );
+  const [run] = question
+    ? await db
+        .select({
+          agentKind: runs.agentKind,
+          resultContract: runs.resultContract,
+        })
+        .from(runs)
+        .where(eq(runs.id, turn.runId))
+    : [];
+  const expected =
+    question && run
+      ? operationalHumanAnswerPrompt(
+          run,
+          question.turn.prompt,
+          question.hitl.response,
+        )
+      : sources[0].turn.prompt;
+
+  for (const source of sources) {
+    if (
+      source.kind !== "continue" ||
+      source.turn.state !== "superseded" ||
+      turn.runId !== assignment.runId ||
+      turn.executionAssignmentId !== assignment.id ||
+      turn.assignmentEpoch !== assignment.epoch ||
+      turn.runSessionId !== source.turn.runSessionId ||
+      source.turn.prompt !== sources[0].turn.prompt ||
+      turn.prompt !== expected
+    )
+      throw new PromptOwnerInvariantError(
+        "agent_permission_resume_turn_identity",
+      );
+  }
 }
 
 /** The frozen create must resume the ACP handle named by the source proof. */

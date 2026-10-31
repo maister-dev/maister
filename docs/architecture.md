@@ -458,6 +458,7 @@ only IDs, counts, and state, never plan or answer bodies.
 
 ## Where to read next
 
+- Implemented operational lifecycle events: [`api/async/operational-lifecycle.asyncapi.yaml`](api/async/operational-lifecycle.asyncapi.yaml), with semantics in [`system-analytics/operational-agent-lifecycle.md`](system-analytics/operational-agent-lifecycle.md).
 - API contracts: [`api/supervisor.openapi.yaml`](api/supervisor.openapi.yaml),
   [`api/async/supervisor-sse.asyncapi.yaml`](api/async/supervisor-sse.asyncapi.yaml).
 - Database: [`db/erd.md`](db/erd.md), [`database-schema.md`](database-schema.md).

@@ -5,6 +5,7 @@ import { getTranslations } from "next-intl/server";
 import Link from "next/link";
 import clsx from "clsx";
 
+import { ActiveAgentExecutions } from "@/components/agents/active-agent-executions";
 import { READINESS_BADGE } from "@/components/readiness-badge";
 import { WorkbenchLifecycleActions } from "@/components/workbench/lifecycle-actions";
 
@@ -366,6 +367,7 @@ export async function ProjectCard({
           <span className="font-bold text-[var(--p-accent)]">→</span>
         </Link>
       </footer>
+      <ActiveAgentExecutions items={project.activeExecutions} />
     </article>
   );
 }

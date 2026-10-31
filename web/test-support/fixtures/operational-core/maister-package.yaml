@@ -1,0 +1,29 @@
+# MAIster core package — platform agents and shared first-party skills that ship
+# with the control plane.
+# Contract: docs/pv/package-management.md (MAIster repo). This package carries
+# no flows. The version pin is the git tag (core/vX.Y.Z), never a field in this
+# file.
+schemaVersion: 1
+name: core
+compat:
+  engine_min: "3.10.0"
+metadata:
+  title: "MAIster Core"
+  summary: "First-party MAIster platform agents — GitHub Issue Intake (gh/MCP), Triager, Brain Improver, and Experiment Judge — plus shared core skills."
+  links:
+    - { kind: docs, title: "Triage domain", url: "https://github.com/maister-dev/maister/blob/master/docs/system-analytics/triage.md" }
+    - { kind: docs, title: "Platform agents", url: "https://github.com/maister-dev/maister/blob/master/docs/system-analytics/agents.md" }
+# No flows: the package combines platform agents with a shared skill bundle.
+# Agents are catalogued from maister-agents/<stem>.md under id `core:<stem>`.
+flows: []
+capabilities:
+  - { id: core-bundle, path: capability }
+# Core agents use the built-in facade. The MCP intake variant also declares
+# the project-bound github-intake ref; no server or credentials ship here.
+mcps: []
+# Package-sourced Evaluation Methods (M46, ADR-143). `sdd-quality` is the default
+# Evaluation Lab method; it requires MAIster engine >= 3.2.0. Older MAIster
+# control planes ignore this key entirely (they treat the package as having no
+# evaluation methods), so this addition is backward compatible.
+evaluationMethods:
+  - { id: sdd-quality, path: evaluation-methods/sdd-quality }

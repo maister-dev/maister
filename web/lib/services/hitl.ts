@@ -150,6 +150,7 @@ import {
   dropWorkbench,
 } from "@/lib/workbench-lifecycle/service";
 import { headCommit, localBranchHead, remoteBranchHead } from "@/lib/worktree";
+import { runEventWakeBus } from "@/lib/execution-host/events/run-wake";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const {
@@ -6386,13 +6387,14 @@ async function handleNodeInterruptResponse(args: {
   );
 }
 
-type AgentQuestionResponseOutcome =
+type AgentQuestionResponseOutcome = (
   | { kind: "replayed"; reTriggerMode: "agent" | "triage" }
   | {
       kind: "answered";
       reTriggerMode: "agent" | "triage";
       supersededCount: number;
-    };
+    }
+) & { continuesSourceRun?: boolean; sourceRunStatus?: string };
 
 async function handleAgentQuestionResponse(
   args: HandlerArgs,
@@ -6428,9 +6430,18 @@ async function handleAgentQuestionResponse(
 
   const outcome: AgentQuestionResponseOutcome = await db.transaction(
     async (tx: any) => {
-      // Lock order is task → request. New task-bound agent launches use the
-      // same order while superseding questions, so answer-vs-successor resolves
-      // deterministically without a dangling active Inbox assignment.
+      // Source run → task → request matches qualifier publication and finalization.
+      const sourceRows = await tx
+        .select({
+          status: runs.status,
+          runKind: runs.runKind,
+          agentKind: runs.agentKind,
+        })
+        .from(runs)
+        .where(eq(runs.id, runId))
+        .for("update");
+      const source = sourceRows[0];
+
       const taskRows = await tx
         .select({
           id: tasks.id,
@@ -6493,24 +6504,20 @@ async function handleAgentQuestionResponse(
         );
       }
 
-      const sourceRows = await tx
-        .select({ status: runs.status, runKind: runs.runKind })
-        .from(runs)
-        .where(eq(runs.id, runId))
-        .for("update");
-      const source = sourceRows[0];
-
       if (
         !source ||
         source.runKind !== "agent" ||
-        !AGENT_QUESTION_SOURCE_STATUS_SET.has(source.status)
+        !(source.agentKind === "operational"
+          ? lockedHitl.respondedAt !== null ||
+            source.status === "NeedsInputIdle"
+          : AGENT_QUESTION_SOURCE_STATUS_SET.has(source.status))
       ) {
         throw new MaisterError(
           "PRECONDITION",
           "agent_question source run cannot be finalized as Done",
         );
       }
-      if (source.status !== "Done") {
+      if (source.agentKind !== "operational" && source.status !== "Done") {
         await tx
           .update(runs)
           .set({ status: "Done", endedAt: new Date(), currentStepId: null })
@@ -6525,7 +6532,18 @@ async function handleAgentQuestionResponse(
       }
 
       if (lockedHitl.respondedAt !== null) {
-        if (!payloadsEqual(lockedHitl.response, response)) {
+        if (
+          !payloadsEqual(
+            source.agentKind === "operational"
+              ? Object.fromEntries(
+                  Object.entries(lockedHitl.response ?? {}).filter(
+                    ([key]) => key !== "_agentResume",
+                  ),
+                )
+              : lockedHitl.response,
+            response,
+          )
+        ) {
           throw new MaisterError(
             "CONFLICT",
             "agent_question already has a different answer",
@@ -6534,7 +6552,12 @@ async function handleAgentQuestionResponse(
 
         await args.recordSuccessAudit?.(tx, 200);
 
-        return { kind: "replayed", reTriggerMode } as const;
+        return {
+          kind: "replayed",
+          reTriggerMode,
+          continuesSourceRun: source.agentKind === "operational",
+          sourceRunStatus: source.status,
+        } as const;
       }
       if (
         lockedHitl.activationState !== "active" ||
@@ -6696,6 +6719,13 @@ async function handleAgentQuestionResponse(
         });
       }
 
+      if (source.agentKind === "operational")
+        await tx
+          .update(runs)
+          .set({
+            resumeRequestedAt: sql`coalesce(${runs.resumeRequestedAt}, clock_timestamp())`,
+          })
+          .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInputIdle")));
       await emitDomainEvent({
         db: tx,
         kind: "task.clarification_answered",
@@ -6708,16 +6738,24 @@ async function handleAgentQuestionResponse(
           hitlRequestId,
           originKind: "agent_run",
           reTriggerMode,
+          ...(source.agentKind === "operational"
+            ? { continuesSourceRun: true }
+            : {}),
           ...(reTriggerMode === "agent"
             ? { requestingAgentId: clarification.originAgentId }
             : {}),
         },
       });
 
-      await args.recordSuccessAudit?.(tx, 200);
+      await args.recordSuccessAudit?.(
+        tx,
+        source.agentKind === "operational" ? 202 : 200,
+      );
 
       return {
         kind: "answered",
+        continuesSourceRun: source.agentKind === "operational",
+        sourceRunStatus: source.status,
         reTriggerMode,
         supersededCount: siblingIds.length,
       } as const;
@@ -6731,7 +6769,13 @@ async function handleAgentQuestionResponse(
     );
 
     return NextResponse.json(
-      { ok: true, runStatus: "Done", idempotent: true },
+      {
+        ok: true,
+        runStatus: outcome.continuesSourceRun
+          ? outcome.sourceRunStatus
+          : "Done",
+        idempotent: true,
+      },
       { status: 200 },
     );
   }
@@ -6747,7 +6791,16 @@ async function handleAgentQuestionResponse(
     "agent_question answered and re-trigger fact committed",
   );
 
-  return NextResponse.json({ ok: true, runStatus: "Done" }, { status: 200 });
+  if (outcome.continuesSourceRun) runEventWakeBus.wake(runId);
+
+  return NextResponse.json(
+    {
+      ok: true,
+      runStatus: outcome.continuesSourceRun ? outcome.sourceRunStatus : "Done",
+      ...(outcome.continuesSourceRun ? { state: "resume-queued" } : {}),
+    },
+    { status: outcome.continuesSourceRun ? 202 : 200 },
+  );
 }
 
 export async function respondToHitl(

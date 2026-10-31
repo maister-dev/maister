@@ -94,6 +94,123 @@ function wrappers(
 export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
   [
     ...classified(
+      "lib/agents/retry-allocation.ts",
+      "repository-worktree",
+      "Intent-fenced allocation checks only server-owned execution worktrees",
+      [
+        ["allocateAgentRetryWorktree", "node:fs/promises.lstat", "stat"],
+        ["allocateAgentRetryWorktree", "node:fs/promises.realpath", "stat"],
+      ],
+    ),
+    ...classified(
+      "lib/agents/retry.ts",
+      "repository-worktree",
+      "Retry intent cleanup preserves and verifies owned repository resources before lease release",
+      [
+        ["disposeClaim", "node:fs/promises.mkdir", "write"],
+        ["disposeClaim", "node:fs/promises.lstat", "stat"],
+        ["disposeClaim", "node:fs/promises.realpath", "stat"],
+      ],
+    ),
+    ...classified(
+      "lib/packages/attach.ts",
+      "repository-worktree",
+      "Upgrade reads pinned package definitions before the attachment transaction",
+      [
+        [
+          "upgradeAttachment",
+          "lib/agents/package-contract.ts#readPackageAgentSources",
+          "wrapper",
+        ],
+      ],
+    ),
+    ...classified(
+      "scripts/generate-task-qualification-json.ts",
+      "build-tooling",
+      "Generated MCP qualification schema is built and checked only by explicit tooling",
+      [
+        ["<module>", "node:fs/promises.readFile", "read"],
+        ["<module>", "node:fs/promises.writeFile", "write"],
+      ],
+    ),
+    ...classified(
+      "lib/gc/operational-disposition.ts",
+      "repository-worktree",
+      "Lifecycle-claimed server-resolved disposal of operational repository resources",
+      [
+        ["exists", "node:fs/promises.lstat", "stat"],
+        [
+          "disposeOperationalRun",
+          "lib/gc/plain-agent-directory-gc.ts#removeOwnedPlainAgentDirectory",
+          "wrapper",
+        ],
+      ],
+    ),
+    ...classified(
+      "lib/gc/operational-evidence.ts",
+      "repository-worktree",
+      "Bounded source preservation into opaque evidence before destructive worktree cleanup",
+      [
+        ["preserveOperationalEvidence", "node:fs/promises.realpath", "stat"],
+        ["preserveOperationalEvidence", "node:fs/promises.readlink", "read"],
+        ["preserveOperationalEvidence", "node:fs.constants", "unresolved"],
+        ["preserveOperationalEvidence", "node:fs/promises.open", "open"],
+        ["git", "node:child_process.execFile", "spawn", "git"],
+      ],
+    ),
+    ...classified(
+      "lib/agents/operational-integrity.ts",
+      "repository-worktree",
+      "Bounded integrity hashes over server-resolved repository/worktree material; no host runtime paths",
+      [
+        ["captureTree", "node:fs/promises.realpath", "stat"],
+        ["captureTree", "node:fs/promises.lstat", "stat"],
+        ["captureTree", "node:fs/promises.open", "open"],
+        ["captureTree", "node:fs.constants", "unresolved"],
+        ["visit", "node:fs/promises.lstat", "stat"],
+        ["visit", "node:fs/promises.readlink", "read"],
+        ["visit", "node:fs/promises.realpath", "stat"],
+        ["visit", "node:fs/promises.readdir", "list"],
+        ["visit", "node:fs.constants", "unresolved"],
+        ["visit", "node:fs/promises.open", "open"],
+        ["captureTree", "node:fs/promises.readdir", "list"],
+        ["git", "node:child_process.execFile", "spawn", "git"],
+      ],
+    ),
+    ...classified(
+      "lib/agents/package-contract.ts",
+      "repository-worktree",
+      "Inert validation of package-owned agent sources before operational admission",
+      [
+        ["readPackageAgentSources", "node:fs/promises.readdir", "list"],
+        ["readPackageAgentSources", "node:fs/promises.readFile", "read"],
+      ],
+    ),
+    ...classified(
+      "lib/packages/manifest.ts",
+      "repository-worktree",
+      "Package-root operational contract validation; no execution",
+      [
+        [
+          "loadMaisterPackageManifest",
+          "lib/agents/package-contract.ts#assertPackageOperationalContracts",
+          "wrapper",
+        ],
+      ],
+    ),
+    ...classified(
+      "scripts/validate-package-compatibility.ts",
+      "build-tooling",
+      "Release gate reads inert agent definitions from the candidate package",
+      [
+        [
+          "validatePackageCompatibility",
+          "lib/agents/package-contract.ts#readPackageAgentSources",
+          "wrapper",
+        ],
+      ],
+    ),
+    ...classified(
       "lib/project-config-persistence/git-conversation.ts",
       "repository-worktree",
       "Reviewed configuration persistence: repository policy, private staging and Git process ownership; no supervisor runtime data",
@@ -718,7 +835,28 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "lib/context-mounts/terminal.ts",
       "manager-flow-state",
       "read-only sibling-repo context mounts materialized under the run dir (ADR-157)",
-      [["checkContextMountDirt", "node:fs/promises.stat", "stat"]],
+      [
+        ["checkContextMountDirt", "node:fs/promises.lstat", "stat"],
+        ["releaseOperationalContextMounts", "node:fs/promises.lstat", "stat"],
+      ],
+    ),
+    ...classified(
+      "lib/context-mounts/operational-lock.ts",
+      "manager-flow-state",
+      "Manager-owned per-run operational materialization mutex under runtimeRoot/.maister; never host-private session bytes",
+      [["withOperationalContextLock", "node:fs/promises.mkdir", "write"]],
+    ),
+    ...classified(
+      "lib/context-mounts/service.ts",
+      "repository-worktree",
+      "Presence check on immutable server-resolved sibling repository checkout descriptors before operational materialization",
+      [
+        [
+          "materializeOperationalContextMounts",
+          "node:fs/promises.lstat",
+          "stat",
+        ],
+      ],
     ),
     ...classified(
       "lib/db/check-migrations.ts",
@@ -2160,6 +2298,28 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
   ];
 
 export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
+  ...wrappers("lib/agents/retry-allocation.ts", "repository-worktree", [
+    ["allocateAgentRetryWorktree", false],
+  ]),
+  ...wrappers("lib/agents/retry.ts", "repository-worktree", [
+    ["runAgentRetryAdmissionSweep", false],
+  ]),
+  ...wrappers("lib/gc/operational-disposition.ts", "repository-worktree", [
+    ["disposeOperationalRun", false],
+    ["sweepOperationalDispositions", false],
+  ]),
+  ...wrappers("lib/gc/operational-evidence.ts", "repository-worktree", [
+    ["preserveOperationalEvidence", false],
+  ]),
+  ...wrappers("lib/agents/operational-integrity.ts", "repository-worktree", [
+    ["captureOperationalBaseline", false],
+    ["captureOperationalGeneration", false],
+    ["verifyOperationalIntegrity", false],
+  ]),
+  ...wrappers("lib/agents/package-contract.ts", "repository-worktree", [
+    ["readPackageAgentSources", true],
+    ["assertPackageOperationalContracts", true],
+  ]),
   ...wrappers(
     "lib/project-config-persistence/git-conversation.ts",
     "repository-worktree",
@@ -2305,6 +2465,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["finalizeAgentRun", false],
     ["prepareAgentRunFinalization", false],
     ["prepareCheckpointedAgentFailure", false],
+    ["prepareUndispatchedAgentFailure", false],
   ]),
   ...wrappers("lib/agents/flow-binding.ts", "repository-worktree", [
     ["resolveFlowBoundAgent", false],
@@ -2385,9 +2546,16 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["resolveOutputResultSchema", true],
     ["resolveOutputResultSchemaWithIdentity", true],
   ]),
+  ...wrappers("lib/context-mounts/operational-lock.ts", "manager-flow-state", [
+    ["withOperationalContextLock", false],
+  ]),
+  ...wrappers("lib/context-mounts/service.ts", "repository-worktree", [
+    ["materializeOperationalContextMounts", false],
+  ]),
   ...wrappers("lib/context-mounts/terminal.ts", "manager-flow-state", [
     ["checkContextMountDirt", false],
     ["releaseRunContextMounts", false],
+    ["releaseOperationalContextMounts", false],
   ]),
   ...wrappers("lib/db/check-migrations.ts", "migration-tooling", [
     ["assertDatabaseNotAheadOfBinary", false],

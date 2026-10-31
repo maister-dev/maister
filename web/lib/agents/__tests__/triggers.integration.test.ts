@@ -12,6 +12,10 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  claimCronAgentAttempt,
+  reconcileAgentTriggerAttempts,
+} from "@/lib/agents/trigger-attempts";
+import {
   GRAPH_ONLY_CUTOVER_REASON,
   GRAPH_ONLY_CUTOVER_SOURCE,
 } from "@/lib/domain-events/cutover";
@@ -212,7 +216,133 @@ async function seedTask(): Promise<string> {
 }
 
 describe("agent cron dispatcher (agent_tick.dispatcher)", () => {
-  it("claims a due row exactly once across concurrent ticks and never backfills", async () => {
+  it("IT-UX-21 rolls back the scheduled fire when its durable attempt cannot be written", async () => {
+    const agentId = await seedAgent({
+      id: "atomic-attempt",
+      triggers: ["cron"],
+    });
+    const scheduleId = randomUUID();
+    const now = new Date();
+
+    await pool.query(
+      "INSERT INTO agent_schedules(id,agent_id,project_id,trigger_type,cron_expr,timezone,next_fire_at) VALUES ($1,$2,$3,'cron','* * * * *','UTC',$4)",
+      [scheduleId, agentId, projectId, now],
+    );
+    await pool.query(
+      "CREATE FUNCTION reject_test_attempt() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test attempt write rejected'; END $$",
+    );
+    await pool.query(
+      "CREATE TRIGGER reject_test_attempt BEFORE INSERT ON agent_trigger_attempts FOR EACH ROW EXECUTE FUNCTION reject_test_attempt()",
+    );
+    try {
+      await expect(
+        claimCronAgentAttempt(
+          testDatabase.db,
+          scheduleId,
+          now,
+          new Date(now.getTime() + 60_000),
+        ),
+      ).rejects.toThrow();
+    } finally {
+      await pool.query(
+        "DROP TRIGGER reject_test_attempt ON agent_trigger_attempts",
+      );
+      await pool.query("DROP FUNCTION reject_test_attempt()");
+    }
+    expect(
+      (
+        await pool.query(
+          "SELECT next_fire_at,last_attempt_fence FROM agent_schedules WHERE id=$1",
+          [scheduleId],
+        )
+      ).rows[0],
+    ).toEqual({ next_fire_at: now, last_attempt_fence: null });
+    expect(
+      (
+        await pool.query(
+          "SELECT count(*)::int AS n FROM agent_trigger_attempts WHERE schedule_id=$1",
+          [scheduleId],
+        )
+      ).rows[0].n,
+    ).toBe(0);
+  });
+
+  it("IT-UX-21 recovers a lost launch receipt without redispatch and preserves detached attempt evidence", async () => {
+    const agentId = await seedAgent({
+      id: "recover-attempt",
+      triggers: ["cron"],
+    });
+    const scheduleId = randomUUID();
+    const now = new Date();
+
+    await pool.query(
+      "INSERT INTO agent_schedules(id,agent_id,project_id,trigger_type,cron_expr,timezone,next_fire_at) VALUES ($1,$2,$3,'cron','* * * * *','UTC',$4)",
+      [scheduleId, agentId, projectId, now],
+    );
+    const claim = await claimCronAgentAttempt(
+      testDatabase.db,
+      scheduleId,
+      now,
+      new Date(now.getTime() + 60_000),
+    );
+
+    expect(claim).not.toBeNull();
+    const later = new Date(now.getTime() + 360_000);
+
+    expect(await reconcileAgentTriggerAttempts(testDatabase.db, later)).toEqual(
+      { adopted: 0, unknown: 1 },
+    );
+    expect(
+      (
+        await pool.query(
+          "SELECT count(*)::int AS n FROM runs WHERE project_id=$1",
+          [projectId],
+        )
+      ).rows[0].n,
+    ).toBe(0);
+    await pool.query(
+      "INSERT INTO runs(id,project_id,agent_id,run_kind,status,flow_version,flow_revision) VALUES ($1,$2,$3,'agent','Pending','agent','manual')",
+      [claim!.reservedRunId, projectId, agentId],
+    );
+    expect(
+      await reconcileAgentTriggerAttempts(
+        testDatabase.db,
+        new Date(later.getTime() + 360_000),
+      ),
+    ).toEqual({ adopted: 1, unknown: 0 });
+    expect(
+      (
+        await pool.query(
+          "SELECT outcome,run_id FROM agent_trigger_attempts WHERE id=$1",
+          [claim!.id],
+        )
+      ).rows[0],
+    ).toEqual({ outcome: "queued", run_id: claim!.reservedRunId });
+    expect(
+      (
+        await pool.query(
+          "SELECT state FROM agent_incident_episodes WHERE project_id=$1",
+          [projectId],
+        )
+      ).rows[0].state,
+    ).toBe("resolved");
+    await pool.query("DELETE FROM agent_schedules WHERE id=$1", [scheduleId]);
+    await pool.query("DELETE FROM runs WHERE id=$1", [claim!.reservedRunId]);
+    expect(
+      (
+        await pool.query(
+          "SELECT source_agent_id,original_run_id,run_id FROM agent_trigger_attempts WHERE id=$1",
+          [claim!.id],
+        )
+      ).rows[0],
+    ).toEqual({
+      source_agent_id: agentId,
+      original_run_id: claim!.reservedRunId,
+      run_id: null,
+    });
+  });
+
+  it("IT-UX-21 claims a due row exactly once across concurrent ticks and never backfills", async () => {
     const cronAgent = await seedAgent({ id: "cron-agent", triggers: ["cron"] });
 
     const past = new Date(Date.now() - 10 * 60_000);
@@ -240,6 +370,14 @@ describe("agent cron dispatcher (agent_tick.dispatcher)", () => {
     // Exactly one tick wins the claim; the missed window fires once.
     expect(a.claimed + b.claimed).toBe(1);
     expect(launches).toEqual(["test-pkg:cron-agent"]);
+    const attempts = await pool.query(
+      "SELECT outcome,source_agent_id FROM agent_trigger_attempts WHERE project_id=$1",
+      [projectId],
+    );
+
+    expect(attempts.rows).toEqual([
+      { outcome: "launched", source_agent_id: cronAgent },
+    ]);
 
     const row = await pool.query(
       `SELECT "next_fire_at", "last_fired_at" FROM "agent_schedules"`,

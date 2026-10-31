@@ -5538,3 +5538,18 @@ Trust/timestamp-only updates
 remain DB-only. See the owning [persistence
 analytics](system-analytics/project-config-persistence.md) for independent push
 process ownership and cleanup recovery.
+
+## Operational agents (Implemented)
+
+Main-lineage migrations 0199–0203 add definition kind/completion, frozen run
+kind/result contract, immutable integrity baseline generations and terminal
+receipts, durable cleanup intent, per-reader reason/revision acknowledgements,
+cleanup progress and operational lifecycle event kinds. Existing result and
+workspace lifecycle records remain authoritative; historical runs receive no
+operational backfill. Named constraints and triggers protect the launch snapshot,
+source witnesses and exact terminal result revision.
+
+[Operational persistence](db/operational-agents-domain.md) owns the field,
+constraint, migration and upgrade contracts; the consolidated ERD reflects the
+current Drizzle schema. Qualification uses fresh and seeded incremental test
+databases; production migration remains a release operation.

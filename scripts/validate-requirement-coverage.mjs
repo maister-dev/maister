@@ -29,6 +29,15 @@ export const repoRoot = resolve(here, "..");
 const analyticsRoot = join(repoRoot, "docs", "system-analytics");
 
 export const COVERAGE_GROUPS = {
+  "agent-activity": {
+    label: "Agent activity and qualification",
+    planPath: ".ai-factory/plans/feature-operational-agent-kind.md",
+    documents: ["agent-activity-history.md", "agent-incidents.md", "agent-retry.md", "task-qualification.md"],
+    prefixes: ["UX"],
+    matrixPath: "docs/system-analytics/agent-activity-traceability.md",
+    implementationPhases: /^UX-T(?:0[5-9]|1[0-4]|19|2[0-3]|2[5-9]|3[0-3])$/,
+    testRoots: ["web", "supervisor", "mcp"],
+  },
   "project-config": {
     label: "Project configuration persistence",
     planPath: ".ai-factory/plans/project-config-git-workflow.md",
@@ -37,6 +46,15 @@ export const COVERAGE_GROUPS = {
     matrixPath: "docs/system-analytics/project-config-persistence-traceability.md",
     implementationPhases: /^T(?:[2-9]|14)\./,
     testRoots: ["web"],
+  },
+  "operational-agents": {
+    label: "Operational agents",
+    planPath: ".ai-factory/plans/feature-operational-agent-kind.md",
+    documents: ["operational-agents.md", "operational-agent-results.md", "operational-agent-lifecycle.md"],
+    prefixes: ["OPA", "OPR", "OPL"],
+    matrixPath: "docs/system-analytics/operational-agents-traceability.md",
+    implementationPhases: /^T(?:[4-9]|1[0-8])$/,
+    testRoots: ["web", "supervisor", "mcp"],
   },
   m51: {
     label: "M51",
@@ -113,7 +131,7 @@ export function matrixRows(src, prefixes) {
   for (const m of src.matchAll(rowRe)) {
     rows.set(m[1], {
       contract: m[2].trim(),
-      tasks: [...m[3].matchAll(/T\d+\.\d+/g)].map((t) => t[0]),
+      tasks: [...m[3].matchAll(/\b(?:UX-)?T\d+(?:\.\d+)?\b/g)].map((t) => t[0]),
       primaryTest: m[4].trim(),
       status: m[5].trim(),
     });
@@ -134,7 +152,7 @@ export function testIdPattern(prefixes) {
 // A test id mentioned in a header COMMENT is not a test — scan only the TITLES
 // of `describe` / `it` / `test`, which is what "resolves to a real test" means.
 const TEST_TITLE_RE =
-  /\b(?:describe|it|test)(?:\.\w+)?\s*\(\s*(["'`])((?:\\.|(?!\1)[\s\S])*?)\1/g;
+  /\b(?:describe|it|test)(?:\.(?!each\b)\w+)*(?:\.each\s*\(\s*\[[\s\S]*?\]\s*(?:as\s+const\s*)?\))?\s*\(\s*(["'`])((?:\\.|(?!\1)[\s\S])*?)\1/g;
 
 export function testIdsInSource(src, prefixes) {
   const found = new Set();
@@ -177,7 +195,8 @@ function suiteTestIds(roots, prefixes) {
 export function planTaskIds(src) {
   // Task definitions only — the bold header that opens a task body. Prose
   // cross-references elsewhere in the plan must not be mistaken for one.
-  return [...src.matchAll(/\*\*(T\d+\.\d+)\s*\[[ x]\]\s*—/g)].map((m) => m[1]);
+  return [...src.matchAll(/(?:^\*\*(T\d+\.\d+)\s*\[[ x]\]\s*—|^- \[[ x]\] \*\*((?:UX-)?T\d+)\.\s)/gm)]
+    .map((match) => match[1] ?? match[2]);
 }
 
 // Pure: every input is supplied, so fixtures exercise it without the repo.

@@ -350,6 +350,8 @@ async function register(
         id: projectId,
         slug,
         name: config.project.name,
+        taskQualificationBaseline: "required",
+        taskQualificationOverride: config.project.task_qualification ?? null,
         repoPath,
         repoUrl: resolved.repoUrl,
         provider: resolved.provider,

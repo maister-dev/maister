@@ -5,6 +5,7 @@ import type { ReactElement } from "react";
 import Link from "next/link";
 import clsx from "clsx";
 
+import { AgentIncidentCard } from "@/components/agents/agent-incident-card";
 import { RunRecoverActions } from "@/components/runs/run-recover-actions";
 import { WorkStageChip } from "@/components/work/work-stage-chip";
 
@@ -24,10 +25,15 @@ export function DecisionCard({
 }: {
   item: Extract<
     DecisionItem,
-    { kind: "crashed" | "promotable" | "flagged" | "clarification" }
+    {
+      kind:
+        "crashed" | "promotable" | "flagged" | "clarification" | "operational";
+    }
   >;
   labels: DecisionCardLabels;
 }): ReactElement {
+  if (item.kind === "operational" && "aggregation" in item.operational)
+    return <AgentIncidentCard group={item.operational} />;
   const taskHref =
     item.taskId !== null && item.taskKey !== null
       ? `/projects/${item.projectSlug}/tasks/${item.taskKey.split("-").pop()}`
@@ -63,9 +69,13 @@ export function DecisionCard({
       </div>
 
       <p className="m-0 text-[13px] leading-[1.45] text-ink">
-        {item.kind === "clarification"
-          ? item.clarification.question
-          : (item.taskTitle ?? item.taskKey ?? item.projectName)}
+        {item.kind === "operational"
+          ? "aggregation" in item.operational
+            ? item.operational.title
+            : item.operational.code
+          : item.kind === "clarification"
+            ? item.clarification.question
+            : (item.taskTitle ?? item.taskKey ?? item.projectName)}
       </p>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -75,7 +85,8 @@ export function DecisionCard({
             runId={item.crashed.runId}
           />
         ) : null}
-        {item.kind === "promotable" && item.runId !== null ? (
+        {(item.kind === "promotable" || item.kind === "operational") &&
+        item.runId !== null ? (
           <Link
             className="inline-flex h-8 items-center rounded-[10px] border border-line bg-ivory px-3 text-[12.5px] font-semibold text-ink no-underline"
             href={`/runs/${item.runId}`}

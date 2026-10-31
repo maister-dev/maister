@@ -23,7 +23,7 @@ import {
 import { OWNED_TURN_VARIANTS } from "@/lib/agents/turn-variants";
 
 export const agentPauseEnvelopeSchema = z.object({
-  kind: z.enum(["hook_trip", "budget_breach"]),
+  kind: z.enum(["hook_trip", "budget_breach", "agent_question"]),
   supervisorSessionId: z.string().min(1),
   agentPrompt: agentPermissionSourceSchema,
 });

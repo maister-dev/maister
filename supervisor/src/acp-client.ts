@@ -545,15 +545,26 @@ export async function createAcpConnection(
             name: o.name,
           }));
 
-        // M34 (ADR-090 L1): a read-only SESSION arbitrates every request
-        // inline — read-safe kinds approved, everything else denied (the
-        // session is headless; no HITL inbox exists for it). Decided BEFORE
-        // the SSE emit and the pending-permission registration.
-        const sessionDecision = resolveReadOnlySessionDecision(
-          record.readOnlySession,
-          tc,
-          options,
-        );
+        // Read-only sessions arbitrate file and shell access inline. An operational
+        // run's registered MAIster MCP instead reaches ordinary governance and HITL;
+        // agent kind never grants a tool or approves a permission request.
+        const maisterServers =
+          args.mcpServers?.filter((server) => server.name === "maister") ?? [];
+        const facade =
+          maisterServers.length === 1 ? maisterServers[0] : undefined;
+        const controlPlaneDecision =
+          record.agentKind === "operational" &&
+          facade?.transport === "stdio" &&
+          Boolean(
+            facade.env?.MAISTER_PROJECT_TOKEN &&
+            facade.env?.MAISTER_API_BASE_URL,
+          ) &&
+          extractToolIdentity(tc).mcpServer === "maister" &&
+          tc.kind !== "execute" &&
+          !tc.locations?.length;
+        const sessionDecision = controlPlaneDecision
+          ? null
+          : resolveReadOnlySessionDecision(record.readOnlySession, tc, options);
 
         if (sessionDecision) {
           logger.info(

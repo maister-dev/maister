@@ -30,7 +30,11 @@ describe("core:triager definition (T5.1)", () => {
     expect(parsed).toMatchObject({
       id: "core:triager",
       name: "Triager",
-      workspace: "none",
+      workspace: "repo_read",
+      workspaceRef: "task_target",
+      taskQualification: { contract: "v1", role: "qualifier" },
+      kind: "operational",
+      completion: { contract: "operational_v1" },
       mode: "session",
       riskTier: "read_only",
       // No same-package flow: it runs as a standalone agent session.
@@ -94,7 +98,7 @@ describe("core:triager definition (T5.1)", () => {
     });
     expect(parsed.hooks).toMatchObject({ repetition: { max: 5 } });
     expect(parsed.prompt).toContain("ask_human");
-    expect(parsed.prompt).toContain("reTriggerMode: 'triage'");
+    expect(parsed.prompt).toContain("reTriggerMode: 'agent'");
   });
 
   // The flagged-hold invariant lives in the PROMPT — the agent's reasoning is

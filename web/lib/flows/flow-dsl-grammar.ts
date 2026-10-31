@@ -289,6 +289,19 @@ then clean up after itself — the coordinator only collects.
 At \`graph_completed\` a REQUIRED export with no valid result FAILS the run
 (\`run.failed{reason: "result_missing"}\`) instead of reaching Review.
 
+### Operational agents (engine 3.9.0, ADR-195)
+
+Package-root agents may declare \`kind: operational\` and
+\`completion: { contract: operational_v1 }\`; the PACKAGE must declare
+\`compat.engine_min >= 3.9.0\`. Omitted kind remains \`code_delivery\`.
+Operational agents are finite standalone sessions with their own completion
+boundary. Do not bind them as Flow personas/subagents or give them a delegated
+\`resultProfile\`, persistent session or shared writable workspace. Workspace
+access and permission approval remain separate axes. Their required final
+\`json maister:output\` value is validated against the frozen platform contract;
+complete success, including zero new work, finishes Done without code delivery.
+Partial/blocked/failed execution remains an actionable failure with evidence.
+
 ### Delegated agent results (\`result_profiles\` + \`resultProfile\`, ADR-165)
 
 A delegated AGENT child publishes its result under a NAMED contract the PACKAGE

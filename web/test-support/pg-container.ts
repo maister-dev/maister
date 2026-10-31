@@ -23,6 +23,10 @@ import {
 } from "./process-invocation";
 import { migrateTestDatabase } from "./migrate-test-database";
 
+import {
+  TASK_QUALIFICATION_WRITER_SETTING,
+  TASK_QUALIFICATION_WRITER_CAPABILITY,
+} from "@/lib/db/writer-capability";
 import * as mainSchema from "@/lib/db/schema";
 
 const MAIN_MIGRATIONS_FOLDER = "./lib/db/migrations";
@@ -238,7 +242,7 @@ async function removeFailedPostgresAllocation(
     );
 }
 
-async function startPostgresContainer(
+async function allocatePostgresContainer(
   options: TestDatabaseOptions,
   lane: TestDatabaseLane,
   startedAt: number,
@@ -324,6 +328,38 @@ async function startPostgresContainer(
       );
     }
     throw operationError;
+  }
+}
+
+/** Retry only a proven reclaimed pre-SQL allocation; all other startup failures remain fatal. */
+async function startPostgresContainer(
+  options: TestDatabaseOptions,
+  lane: TestDatabaseLane,
+  startedAt: number,
+): Promise<StartedPostgreSqlContainer> {
+  try {
+    return await allocatePostgresContainer(options, lane, startedAt);
+  } catch (error) {
+    if (
+      !(error instanceof TestDatabaseDockerUnavailableError) ||
+      !(error.cause instanceof Error) ||
+      !/^Timed out after \d+ms while waiting for container ports to be bound to the host$/u.test(
+        error.cause.message,
+      )
+    )
+      throw error;
+    logger.warn(
+      {
+        lane,
+        phase: "container-start-retry",
+        attempt: 1,
+        maxAttempts: 2,
+        reason: "reclaimed_port_binding_timeout",
+      },
+      "retrying reclaimed PostgreSQL allocation before SQL",
+    );
+
+    return allocatePostgresContainer(options, lane, startedAt);
   }
 }
 
@@ -494,6 +530,15 @@ export async function startMainPostgresTestDb(
 ): Promise<StartedPostgresTestDb> {
   const database = await startBarePostgresTestDb(options);
 
+  database.pool.on("connect", (client) => {
+    void client
+      .query(
+        `SET ${TASK_QUALIFICATION_WRITER_SETTING}='${TASK_QUALIFICATION_WRITER_CAPABILITY}'`,
+      )
+      .catch((error) =>
+        logger.error({ error }, "test qualification writer declaration failed"),
+      );
+  });
   try {
     await migrate(database.db, { migrationsFolder: "./lib/db/migrations" });
     logger.info(
@@ -688,6 +733,19 @@ export async function startMainAndBrainPostgresTestDbTemplate(
     const pool = new Pool({
       connectionString: databaseUrl.href,
       max: options.poolMax,
+    });
+
+    pool.on("connect", (client) => {
+      void client
+        .query(
+          `SET ${TASK_QUALIFICATION_WRITER_SETTING}='${TASK_QUALIFICATION_WRITER_CAPABILITY}'`,
+        )
+        .catch((error) =>
+          logger.error(
+            { error },
+            "test qualification writer declaration failed",
+          ),
+        );
     });
     const db = Object.assign(
       drizzle(pool),
