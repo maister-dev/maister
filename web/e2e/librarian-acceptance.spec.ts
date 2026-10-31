@@ -21,12 +21,15 @@ function scriptedTurn(input: { calls: ScriptCall[]; reply: string }): string {
   return `\`\`\`json\n${JSON.stringify(input)}\n\`\`\``;
 }
 
-function latestReply(page: Page) {
+function librarianReplies(page: Page) {
   return page
     .getByTestId("librarian-transcript")
     .locator("article")
-    .filter({ has: page.getByText("Librarian", { exact: true }) })
-    .last();
+    .filter({ has: page.getByText("Librarian", { exact: true }) });
+}
+
+function latestReply(page: Page) {
+  return librarianReplies(page).last();
 }
 
 async function loginAs(
@@ -104,10 +107,12 @@ async function sendScript(
   );
   await expect(page.getByTestId("librarian-send")).toBeEnabled();
   await page.getByTestId("librarian-composer").press("Enter");
-  await expect(latestReply(page)).toContainText(marker, {
+  const ownReply = librarianReplies(page).filter({ hasText: marker }).last();
+
+  await expect(ownReply).toContainText(marker, {
     timeout: 90_000,
   });
-  const reply = await latestReply(page).innerText();
+  const reply = await ownReply.innerText();
 
   if (calls.length > 0 && !options.expectToolErrors)
     expect(reply).not.toContain('"isError":true');
@@ -134,6 +139,13 @@ test("runner settings refresh both open panels and launch the saved executor", a
   const runnerId = `librarian-switch-${randomUUID()}`;
   const marker = randomUUID().slice(0, 8);
   const second = await context.newPage();
+  const runStreamRequests: string[] = [];
+
+  for (const tab of [page, second])
+    tab.on("request", (request) => {
+      if (/\/api\/runs\/[^/]+\/stream/.test(request.url()))
+        runStreamRequests.push(request.url());
+    });
   const save = async (selected: string) => {
     const response = await page.request.patch("/api/admin/platform/librarian", {
       data: { enabled: true, runnerId: selected },
@@ -198,13 +210,14 @@ test("runner settings refresh both open panels and launch the saved executor", a
         `draft ${marker}`,
       );
     }
-    await sendScript(page, [], `After runner switch ${marker}`);
-    await expect(second.getByTestId("librarian-transcript")).toContainText(
+    const switchedReply = sendScript(
+      page,
+      [{ tool: "project_list", args: {}, delayMs: 5_000 }],
       `After runner switch ${marker}`,
     );
-    await expect(second.getByTestId("librarian-composer")).toHaveValue(
-      `draft ${marker}`,
-    );
+
+    for (const tab of [page, second])
+      await expect(tab.getByTestId("librarian-responding")).toBeVisible();
     await withE2EDb(async (pool) => {
       const commands = await pool.query<{
         payload: {
@@ -226,6 +239,32 @@ test("runner settings refresh both open panels and launch the saved executor", a
         runner: { model: "claude-opus-4-6" },
       });
       expect(commands.rows[0].payload).not.toHaveProperty("resumeSessionId");
+    });
+    const queuedMarker = `Queued after runner switch ${marker}`;
+    const queued = await second.request.post("/api/librarian/messages", {
+      data: {
+        clientMessageId: randomUUID(),
+        body: scriptedTurn({ calls: [], reply: queuedMarker }),
+      },
+    });
+
+    expect(queued.status(), await queued.text()).toBe(202);
+    expect((await queued.json()).turn.status).toBe("queued");
+    await switchedReply;
+    await expect(second.getByTestId("librarian-transcript")).toContainText(
+      `After runner switch ${marker}`,
+    );
+    await expect(second.getByTestId("librarian-composer")).toHaveValue(
+      `draft ${marker}`,
+    );
+    for (const tab of [page, second]) {
+      await expect(librarianReplies(tab)).toContainText([queuedMarker], {
+        timeout: 90_000,
+      });
+      await expect(tab.getByTestId("librarian-responding")).toBeHidden();
+    }
+    expect(runStreamRequests).toEqual([]);
+    await withE2EDb(async (pool) => {
       const replies = await pool.query<{ count: number }>(
         `SELECT count(*)::int AS count FROM librarian_messages
         WHERE author_kind = 'librarian' AND body LIKE $1`,

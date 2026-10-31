@@ -520,6 +520,48 @@ describe("UT-LUI-01: the entry shows a state, never a number", () => {
 });
 
 describe("UT-LUI-06: arriving messages never move a reader who scrolled up", () => {
+  it("shows running and queued turn progress through the conversation stream alone", async () => {
+    activeTurn = { id: "turn-a", status: "running" };
+    await mount();
+    await openPanel();
+    const source = FakeEventSource.instances[0];
+
+    expect(q("librarian-responding")).not.toBeNull();
+    await act(async () => {
+      source.emit({
+        type: "librarian.turn",
+        turnId: "turn-b",
+        status: "queued",
+      });
+    });
+    await flush();
+    expect(q("librarian-responding")).not.toBeNull();
+    activeTurn = { id: "turn-b", status: "running" };
+    serverMessages = [...serverMessages, message(3)];
+    await act(async () => {
+      source.emit({ type: "librarian.message", messageId: message(3).id }, "3");
+      source.emit(
+        { type: "librarian.turn", turnId: "turn-b", status: "running" },
+        "3",
+      );
+    });
+    await flush();
+    expect(q("librarian-transcript")!.textContent).toContain("message 3");
+    expect(q("librarian-responding")).not.toBeNull();
+    activeTurn = null;
+    serverMessages = [...serverMessages, message(4)];
+    await act(async () => {
+      source.emit({ type: "librarian.message", messageId: message(4).id }, "4");
+    });
+    await flush();
+    expect(q("librarian-transcript")!.textContent).toContain("message 4");
+    expect(q("librarian-responding")).toBeNull();
+    expect(FakeEventSource.instances.map((entry) => entry.url)).toEqual([
+      expect.stringContaining("/api/librarian/stream"),
+    ]);
+    expect(source.closed).toBe(false);
+  });
+
   it("keeps the scroll position and offers jump-to-latest", async () => {
     await mount();
     await openPanel();

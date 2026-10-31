@@ -36,7 +36,6 @@ import { librarianPanelMode } from "@/components/librarian/panel-mode";
 import { TranscriptView } from "@/components/run-transcript/transcript-view";
 import { useModalA11y } from "@/components/use-modal-a11y";
 import { useIsClient } from "@/lib/use-is-client";
-import { useRunStream } from "@/lib/use-run-stream";
 
 const STICK_THRESHOLD_PX = 32;
 const PAGE_LIMIT = 50;
@@ -383,12 +382,6 @@ function LibrarianPanelBody(): ReactElement {
 
   const activeTurn = view?.activeTurn ?? null;
   const responding = open && activeTurn?.status === "running";
-  // ADR-191 D8: the run stream ticks while the turn runs; the durable reply
-  // arrives as a `librarian.message` frame and replaces the live line.
-  const { eventCount } = useRunStream(
-    responding ? (view?.conversation.runId ?? null) : null,
-    { retain: false },
-  );
 
   const sendBlock = sendBlockOf(view, draft, sending);
   const attachable = attachableSubject(pathname);
@@ -777,7 +770,6 @@ function LibrarianPanelBody(): ReactElement {
             {responding ? (
               <p
                 className="m-0 mt-2 font-mono text-[11px] text-mute"
-                data-events={eventCount}
                 data-testid="librarian-responding"
                 role="status"
               >
