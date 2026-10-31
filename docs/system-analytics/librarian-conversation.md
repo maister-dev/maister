@@ -189,9 +189,10 @@ flowchart TD
     TE -- yes --> TE1["park the run, idempotent"]
 ```
 
-The conversation stream replays durable rows and never carries live tokens; those
-ride the existing run stream, which authorizes a project-less run by
-`created_by_user_id` (Implemented).
+The conversation stream replays durable change pointers; an open panel refetches
+the owner's conversation and messages for the responding state and settled reply,
+without an additional run subscription (Implemented). Live token rendering is not
+implemented; see [ADR-191 D8](../decisions/adr-191.md).
 
 ```mermaid
 flowchart LR
@@ -202,9 +203,8 @@ flowchart LR
     D -- no --> F["poll every 2 s"]
     E --> G["close after 5 min quiet"]
     F --> G
-    H["GET /api/runs/runId/stream"] --> I{"created_by_user_id equals viewer?"}
-    I -- yes --> J["live tokens of the running turn"]
-    I -- no --> K["refused"]
+    C --> H["open panel refetches conversation and messages"]
+    H --> I["show current turn status and settled reply"]
 ```
 
 ## Expectations
@@ -220,7 +220,7 @@ flowchart LR
 - **LCV-09:** After a restart or adapter loss, a `running` turn with no live session MUST resolve to `failed{host_lost}` through the reconcile `librarian` arm with the run parked, and queued messages MUST stay queued and admit afterwards (Implemented).
 - **LCV-10:** The turn deadline, context character cap and per-user daily turn cap (`MAISTER_LIBRARIAN_TURN_MAX_MINUTES`, `MAISTER_LIBRARIAN_CONTEXT_MAX_CHARS`, `MAISTER_LIBRARIAN_DAILY_TURNS_PER_USER`) MUST be finite, exhaustion MUST refuse with `MaisterError("BUDGET_EXCEEDED")` in a visible state, and the owner's latest message MUST NEVER be truncated away by the composer (Implemented).
 - **LCV-11:** With the librarian disabled or no ready runner, admission MUST refuse with `MaisterError("CONFIG")` or `MaisterError("EXECUTOR_UNAVAILABLE")` while admitted operations still reconcile and nothing is deleted, enforced by the admission check over `platform_runtime_settings.librarian_enabled` and `librarian_runner_id` (Implemented).
-- **LCV-12:** `GET /api/librarian/stream` MUST emit only the owner's conversation and replay from durable `seq` via `lastEventId`; the existing run stream, whose project-less authz is `created_by_user_id = viewer`, supplies the running/responding state. Reply text appears after settlement (Implemented).
+- **LCV-12:** `GET /api/librarian/stream` MUST emit only the owner's conversation and replay from durable `seq` via `lastEventId`; the open panel MUST refetch conversation and messages on change pointers to show the current running/responding state and settled reply without an additional run subscription (Implemented).
 
 ## Edge cases
 

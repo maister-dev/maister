@@ -45,7 +45,7 @@ every implementation task is named by at least one row.
 | LCV-09 | reconcile librarian arm, turn failed host_lost, run parked | T2.3, T2.10, T2.11 | IT-LCV-09 | Implemented |
 | LCV-10 | MAISTER_LIBRARIAN_TURN_MAX_MINUTES, MAISTER_LIBRARIAN_CONTEXT_MAX_CHARS, MAISTER_LIBRARIAN_DAILY_TURNS_PER_USER; BUDGET_EXCEEDED; composer keeps the latest owner message | T2.5, T2.6, T2.11, T2.16 | IT-LCV-10 | Implemented |
 | LCV-11 | platform_runtime_settings.librarian_enabled and librarian_runner_id; PATCH /api/admin/platform/librarian; CONFIG and EXECUTOR_UNAVAILABLE admission refusals | T2.5, T2.13 | IT-LCV-11 | Implemented |
-| LCV-12 | GET /api/librarian/stream, librarian-stream AsyncAPI, lastEventId replay by seq; run stream authz created_by_user_id | T2.12 | IT-LCV-12 | Implemented |
+| LCV-12 | GET /api/librarian/stream, librarian-stream AsyncAPI, lastEventId replay by seq; panel refetches owner conversation/messages without a run subscription | T2.12, T2.15 | IT-LCV-12 plus runner settings refresh both open panels and launch the saved executor | Implemented |
 | EDGE-LCV-01 | librarian_messages_client_id_uq dedup across concurrent tabs | T2.4 | IT-EDGE-LCV-01 | Implemented |
 | EDGE-LCV-02 | queued delivery_state, FIFO by seq, admitted after the active turn | T2.5 | IT-EDGE-LCV-02 | Implemented |
 | EDGE-LCV-03 | admission runner-ready check, EXECUTOR_UNAVAILABLE, queue kept | T2.5 | IT-EDGE-LCV-03 | Implemented |
