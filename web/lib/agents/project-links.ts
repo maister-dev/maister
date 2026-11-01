@@ -7,6 +7,7 @@ import type { AgentExecutionPolicyRecommendation } from "@/lib/db/schema";
 import { and, eq, isNull } from "drizzle-orm";
 import pino from "pino";
 
+import { resolveScheduledRequestFlowRevision } from "@/lib/agents/scheduled-request-flow";
 import {
   assertAgentPackageAttachable,
   listEnabledPackageRefs,
@@ -35,6 +36,7 @@ const {
   agentSchedules,
   platformAcpRunners,
   projects,
+  flows,
 } = schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -581,6 +583,40 @@ export async function updateAgentLink(
     id: schedule.id,
     values: normalizeSchedule(schedule, now),
   }));
+
+  if (
+    normalizedSchedules?.some(({ values }) => Boolean(values.requestAtLaunch))
+  ) {
+    const definition = await resolveEffectiveAgentDefinition(
+      { projectId: input.projectId, agentId: input.agentId },
+      _db,
+    );
+
+    if (definition.parsed.mode !== "session") {
+      throw new MaisterError(
+        "CONFIG",
+        "A scheduled request requires a launchable session agent",
+      );
+    }
+    if (definition.parsed.flow) {
+      const [flow] = await _db
+        .select()
+        .from(flows)
+        .where(
+          and(
+            eq(flows.projectId, input.projectId),
+            eq(flows.flowRefId, definition.parsed.flow),
+          ),
+        );
+
+      if (!flow)
+        throw new MaisterError(
+          "CONFIG",
+          "Scheduled request Flow is not configured in this project",
+        );
+      await resolveScheduledRequestFlowRevision(_db, flow);
+    }
+  }
 
   if (
     normalizedSchedules !== undefined &&

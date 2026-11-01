@@ -1682,6 +1682,7 @@ async function executeNodeAction(
           },
           {
             ...common,
+            scheduledRequestSnapshot: loaded.run.scheduledRequestSnapshot,
             // Thread the caller's db — runner-agent's resolved_prompt persist
             // and event-consumer seams must never fall back to env getDb(),
             // which would query a different connection.

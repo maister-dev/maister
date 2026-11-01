@@ -4,10 +4,11 @@
 // rotation guarantee).
 
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -908,7 +909,8 @@ describe("project agent links (attach panel service)", () => {
     expect(schedules.rows[0].n).toBe(0);
   });
   it("normalizes independent cron requests and preserves omission/cadence before explicit clearing", async () => {
-    if (!(await getProjectAgentsView(fx.projectId, db)).attached.length) await attachAgent({ projectId: fx.projectId, agentId: fx.agentId }, db);
+    if (!(await getProjectAgentsView(fx.projectId, db)).attached.length)
+      await attachAgent({ projectId: fx.projectId, agentId: fx.agentId }, db);
     const revision = (await getProjectAgentsView(fx.projectId, db)).attached[0]
       .schedulesRevision;
 
@@ -1086,5 +1088,66 @@ describe("project agent links (attach panel service)", () => {
       (await getProjectAgentsView(fx.projectId, db)).attached[0].schedules[0]
         .requestAtLaunch,
     ).toBeNull();
+  });
+  it("refuses nonempty requests on subagents while explicit clearing remains available", async () => {
+    const [install] = await db
+      .select()
+      .from(schema.packageInstalls)
+      .where(eq(schema.packageInstalls.name, "test-pkg"));
+    const sourcePath = path.join(
+      install.installedPath,
+      "maister-agents",
+      "platform-helper.md",
+    );
+    const original = await readFile(sourcePath, "utf8");
+    const revision = (await getProjectAgentsView(fx.projectId, db)).attached[0]
+      .schedulesRevision;
+
+    try {
+      await writeFile(
+        sourcePath,
+        original.replace("mode: session", "mode: subagent"),
+      );
+      await expect(
+        updateAgentLink(
+          {
+            projectId: fx.projectId,
+            agentId: fx.agentId,
+            patch: {
+              schedulesRevision: revision,
+              schedules: [
+                {
+                  triggerType: "cron",
+                  cronExpr: "* * * * *",
+                  timezone: "UTC",
+                  requestAtLaunch: "Do the work",
+                },
+              ],
+            },
+          },
+          db,
+        ),
+      ).rejects.toMatchObject({ code: "CONFIG" });
+      await updateAgentLink(
+        {
+          projectId: fx.projectId,
+          agentId: fx.agentId,
+          patch: {
+            schedulesRevision: revision,
+            schedules: [
+              {
+                triggerType: "cron",
+                cronExpr: "* * * * *",
+                timezone: "UTC",
+                requestAtLaunch: null,
+              },
+            ],
+          },
+        },
+        db,
+      );
+    } finally {
+      await writeFile(sourcePath, original);
+    }
   });
 });

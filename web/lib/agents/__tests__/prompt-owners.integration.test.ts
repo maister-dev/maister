@@ -33,6 +33,7 @@ import {
   agentPermissionResumeSchema,
   assertAgentPermissionResumeSource,
 } from "@/lib/execution-host/agent-permission-handoff";
+import { readPromptRequest } from "@/lib/execution-host/command-request";
 import { agentPromptOwners } from "@/lib/agents/prompt-owner";
 import { reworkChildRun } from "@/lib/agents/launch";
 import { claimAgentResumeSlot, respondToHitl } from "@/lib/services/hitl";
@@ -157,6 +158,7 @@ afterEach(async () => {
 
 async function seedAgent(input: {
   bytes: number;
+  scheduledRequest?: string;
   operational?: boolean;
   workspace?: "none" | "worktree";
   terminalDelayMs?: number;
@@ -172,6 +174,7 @@ async function seedAgent(input: {
 }): Promise<string> {
   const {
     workspace: requestedWorkspace,
+    scheduledRequest,
     operational,
     ...fixtureOutput
   } = input;
@@ -191,6 +194,14 @@ async function seedAgent(input: {
     resultContract: operational ? null : contract,
     operational,
     persistent: input.persistent,
+    scheduledRequestSnapshot: scheduledRequest
+      ? {
+          version: 1,
+          scheduleId: randomUUID(),
+          triggerAttemptId: randomUUID(),
+          requestAtLaunch: scheduledRequest,
+        }
+      : null,
   });
 }
 
@@ -722,6 +733,8 @@ describe("Agent owned prompts through the production launcher", () => {
       const runId = await seedAgent({
         bytes: 0,
         permission: true,
+        scheduledRequest:
+          "scheduled-request-sentinel: Проверка {{ literal }} 😀",
         hookTrip: true,
         parallelPermission:
           window === "parallel_permission" || window === "fresh_permission",
@@ -764,6 +777,21 @@ describe("Agent owned prompts through the production launcher", () => {
         .from(agentTurns)
         .where(eq(agentTurns.runId, runId));
 
+      expect(source.prompt).toContain(
+        "scheduled-request-sentinel: Проверка {{ literal }} 😀",
+      );
+      expect(
+        source.prompt.split("## Current request (scheduled invocation)"),
+      ).toHaveLength(2);
+      const [ownedCommand] = await db
+        .select()
+        .from(executionCommands)
+        .where(eq(executionCommands.id, source.commandId!));
+
+      expect(
+        readPromptRequest(ownedCommand, (await localHost({ db })).hostKey)
+          .payload.prompt,
+      ).toBe(source.prompt);
       expect(hitl.schema).toMatchObject({
         agentPrompt: { commandId: source.commandId, turnId: source.id },
       });

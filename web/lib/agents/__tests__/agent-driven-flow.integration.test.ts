@@ -1,3 +1,4 @@
+import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
 // M39 (ADR-106) — optional-flow enrichment "agent drives a flow": a flow run
 // carrying runs.agent_id injects the driving agent's `.md` persona on EVERY
 // ai_coding node (augment-not-replace, persona-then-task). This proves the
@@ -13,7 +14,7 @@ import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { closeDb } from "@/lib/db/client";
 import * as fullSchema from "@/lib/db/schema";
@@ -64,6 +65,7 @@ workspace: worktree
 mode: session
 triggers:
   - manual
+  - flow
 risk_tier: read_only
 ---
 ${PERSONA_MARKER}
@@ -86,6 +88,12 @@ afterAll(async () => {
   await testDatabase?.stop();
 });
 
+beforeEach(async () => {
+  await db.delete(schema.agents);
+  await db.delete(schema.projectPackageAttachments);
+  await db.delete(schema.packageInstalls);
+});
+
 type Seeded = { runId: string; runtimeRoot: string };
 
 // Seeds a run_kind='flow' run carrying agent_id (the driving agent) + the
@@ -94,6 +102,7 @@ type Seeded = { runId: string; runtimeRoot: string };
 async function seedAgentDrivenFlowRun(
   manifest: unknown,
   agentId: string | null,
+  scheduledRequestSnapshot?: ScheduledAgentRequestSnapshot,
 ): Promise<Seeded> {
   const projectId = randomUUID();
   const slug = `proj-${projectId.slice(0, 8)}`;
@@ -180,7 +189,7 @@ async function seedAgentDrivenFlowRun(
       description: "d",
       workspace: "worktree",
       mode: "session",
-      triggers: ["manual"],
+      triggers: ["manual", "flow"],
       riskTier: "read_only",
       sourcePath: join(packageRoot, "maister-agents", "driver.md"),
     });
@@ -188,6 +197,7 @@ async function seedAgentDrivenFlowRun(
 
   await db.insert(schema.runs).values({
     id: runId,
+    scheduledRequestSnapshot,
     taskId,
     projectId,
     flowId,
@@ -227,6 +237,35 @@ async function makeCapturingSupervisor(
 }
 
 describe("agent drives a flow — persona on every ai_coding node (M39, ADR-106)", () => {
+  it("delivers frozen scheduled input literally after template and capability processing", async () => {
+    const manifest = await loadFlowManifest(join(FLOW_FIXTURE, "flow.yaml"));
+
+    manifest.nodes[0].settings = { agent: "persona-pkg:driver" };
+    const request = "Проверить {{ not_a_template }}\n😀 @unknown-capability";
+    const snapshot = {
+      version: 1 as const,
+      scheduleId: randomUUID(),
+      triggerAttemptId: randomUUID(),
+      requestAtLaunch: request,
+    };
+    const seeded = await seedAgentDrivenFlowRun(
+      manifest,
+      "persona-pkg:driver",
+      snapshot,
+    );
+    const prompts: string[] = [];
+
+    await runFlow(seeded.runId, {
+      runtimeRoot: seeded.runtimeRoot,
+      executionHosts: await makeCapturingSupervisor(seeded.runId, prompts),
+    });
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain(PERSONA_MARKER);
+    expect(prompts[0]).toContain("implement the node task");
+    expect(prompts[0]).toContain(request);
+    expect(prompts[0].split(request)).toHaveLength(2);
+  });
+
   it("injects the driving agent's persona (persona-then-task) on the ai_coding node prompt", async () => {
     const manifest = await loadFlowManifest(join(FLOW_FIXTURE, "flow.yaml"));
     const seeded = await seedAgentDrivenFlowRun(manifest, "persona-pkg:driver");

@@ -1,4 +1,7 @@
 import "server-only";
+
+import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
+import type { AgentTriggerReservation } from "@/lib/agents/scheduled-request-store";
 import type {
   ContextMountSnapshot,
   ContextRepoDecl,
@@ -67,6 +70,16 @@ import {
   operationalAgentRuntimePath,
 } from "./workspace-paths";
 
+import { resolveScheduledRequestFlowRevision } from "@/lib/agents/scheduled-request-flow";
+import { assertScheduledRequestMatches } from "@/lib/agents/scheduled-request-store";
+import {
+  loadCronLaunchEvidence,
+  liveAgentScheduleId,
+} from "@/lib/agents/scheduled-request-store";
+import {
+  parseScheduledRequestSnapshot,
+  scheduledRequestBlock,
+} from "@/lib/agents/scheduled-request";
 import {
   assertAgentRetryClaim,
   recordAgentRetrySuccessor,
@@ -301,6 +314,8 @@ export type LaunchAgentRunInput = {
   // The durable agent binding that owns this cron/event fire. Manual and
   // delegated launches leave it null.
   agentScheduleId?: string | null;
+  agentTriggerReservation?: AgentTriggerReservation;
+  scheduledRequestSnapshot?: ScheduledAgentRequestSnapshot | null;
   // M37 (ADR-098): orchestrator run-tree linkage. Set when this run is a
   // delegated child — parentRunId is the delegator, rootRunId the tree root,
   // launchMode distinguishes auto-DAG launches from manual delegations.
@@ -927,7 +942,7 @@ async function launchAgentDrivenFlowRun(
   // member flows — so the attached+trusted agent's flow resolves to the
   // project's enabled flow row of the same ref.
   const flowRows = await _db
-    .select({ id: flows.id })
+    .select()
     .from(flows)
     .where(
       and(eq(flows.projectId, input.projectId), eq(flows.flowRefId, flowRef)),
@@ -942,6 +957,10 @@ async function launchAgentDrivenFlowRun(
     );
   }
 
+  const scheduledFlowRevisionId = input.scheduledRequestSnapshot
+    ?.requestAtLaunch
+    ? await resolveScheduledRequestFlowRevision(_db, flow)
+    : undefined;
   let taskId = input.taskId ?? null;
 
   if (!taskId) {
@@ -1009,6 +1028,14 @@ async function launchAgentDrivenFlowRun(
       triggerSource: input.trigger.source,
       triggerEventId: input.trigger.eventId ?? null,
       triggerPayload: input.trigger.payload ?? null,
+      scheduledRequestSnapshot: input.scheduledRequestSnapshot ?? null,
+      agentTriggerReservation: input.agentTriggerReservation
+        ? {
+            ...input.agentTriggerReservation,
+            flowRevisionId: scheduledFlowRevisionId,
+          }
+        : undefined,
+      scheduledFlowRevisionId,
       agentScheduleId: input.agentScheduleId ?? null,
       ...(declaredBranchBase ? { baseBranch: declaredBranchBase } : {}),
       ...(agentPolicyOverlay ? { agentPolicyOverlay } : {}),
@@ -1061,6 +1088,37 @@ export async function launchAgentRun(
   assertUpgradeMaintenanceAllows("run_admission");
 
   const _db = input.db ?? getDb();
+
+  if (
+    input.agentTriggerReservation &&
+    (input.trigger.source !== "cron" ||
+      (input.runId != null &&
+        input.runId !== input.agentTriggerReservation.runId))
+  ) {
+    throw new MaisterError(
+      "CONFLICT",
+      "Cron reservation cannot be used by this launch",
+    );
+  }
+  const cronEvidence = input.agentTriggerReservation
+    ? await loadCronLaunchEvidence(_db, {
+        agentId: input.agentId,
+        projectId: input.projectId,
+        reservation: input.agentTriggerReservation,
+      })
+    : null;
+
+  if (cronEvidence && input.scheduledRequestSnapshot !== undefined) {
+    assertScheduledRequestMatches(
+      cronEvidence.snapshot,
+      parseScheduledRequestSnapshot(input.scheduledRequestSnapshot),
+    );
+  }
+  if (cronEvidence?.receipt) return cronEvidence.receipt;
+  const scheduledRequestSnapshot = cronEvidence
+    ? cronEvidence.snapshot
+    : parseScheduledRequestSnapshot(input.scheduledRequestSnapshot);
+  const launchInput = { ...input, scheduledRequestSnapshot };
   const currentContext = await loadAgentContext(_db, input);
   const retryIntent = input.retryClaim
     ? await _db.transaction((tx: ExecutionDb) =>
@@ -1113,7 +1171,7 @@ export async function launchAgentRun(
   // routing — an agent that declares a same-package flow drives that flow
   // (run_kind='flow', persona on every ai_coding node), not a standalone session.
   if (ctx.effective.parsed.flow) {
-    return launchAgentDrivenFlowRun(_db, ctx, input);
+    return launchAgentDrivenFlowRun(_db, ctx, launchInput);
   }
 
   const currentResolution = await resolveRunnerForAgent(
@@ -1182,7 +1240,8 @@ export async function launchAgentRun(
         sha: null,
       };
   }
-  const runId = input.runId ?? randomUUID();
+  const runId =
+    input.agentTriggerReservation?.runId ?? input.runId ?? randomUUID();
   // M37 (ADR-100): an explicit delegation `workspace` overrides the agent-def
   // axis; absent ⇒ the agent's declared default.
   const workspace = input.workspace ?? ctx.effective.parsed.workspace;
@@ -1593,6 +1652,7 @@ export async function launchAgentRun(
       triggerSource: input.trigger.source,
       triggerEventId: input.trigger.eventId ?? null,
       triggerPayload: input.trigger.payload ?? null,
+      scheduledRequestSnapshot,
       agentScheduleId: input.agentScheduleId ?? null,
       agentWorkspace: workspace,
       taskId: input.taskId ?? null,
@@ -1686,9 +1746,21 @@ export async function launchAgentRun(
         // check above (the deterministic path); the partial index is the
         // last-line backstop against a duplicate ROW (a true insert race just
         // dedups here — no duplicate is ever written).
+        const agentScheduleId = await liveAgentScheduleId(tx, {
+          scheduleId: cronEvidence?.scheduleId ?? input.agentScheduleId ?? null,
+          agentId: input.agentId,
+          projectId: input.projectId,
+        });
+
+        if (input.agentTriggerReservation)
+          await loadCronLaunchEvidence(tx, {
+            agentId: input.agentId,
+            projectId: input.projectId,
+            reservation: input.agentTriggerReservation,
+          });
         const rows = await tx
           .insert(runs)
-          .values(runRow)
+          .values({ ...runRow, agentScheduleId })
           .onConflictDoNothing()
           .returning({ id: runs.id });
 
@@ -2362,6 +2434,11 @@ export async function buildAgentPrompt(
     );
   if (commentTriggerBlock) sections.push(commentTriggerBlock);
   sections.push(triggerContextBlock(run));
+  const requestBlock = scheduledRequestBlock(
+    parseScheduledRequestSnapshot(run.scheduledRequestSnapshot),
+  );
+
+  if (requestBlock) sections.push(requestBlock);
 
   return sections.join("\n\n");
 }

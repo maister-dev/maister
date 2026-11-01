@@ -562,6 +562,7 @@ async function runOneGate(
           { id: gate.id, type: "agent", mode: "new-session", prompt },
           {
             ...common,
+            scheduledRequestSnapshot: loaded.run.scheduledRequestSnapshot,
             nodeAttemptId,
             promptOwner: {
               variant: gate.kind === "skill_check" ? "gate_skill" : "gate_ai",

@@ -124,7 +124,11 @@ afterAll(async () => {
 
 async function seedOwnerFlow(
   nodes: FlowYamlV1["nodes"],
-  options: { engineMin?: string; installedPath?: string } = {},
+  options: {
+    engineMin?: string;
+    installedPath?: string;
+    scheduledRequest?: string;
+  } = {},
 ) {
   const name = randomUUID();
   const repoPath = await initRepo(`${supervisor.runtimeRoot}/repo-${name}`);
@@ -144,6 +148,16 @@ async function seedOwnerFlow(
     },
     {
       repoPath,
+      run: options.scheduledRequest
+        ? {
+            scheduledRequestSnapshot: {
+              version: 1,
+              scheduleId: randomUUID(),
+              triggerAttemptId: randomUUID(),
+              requestAtLaunch: options.scheduledRequest,
+            },
+          }
+        : undefined,
       installedPath: options.installedPath,
       flowRevision: true,
       workspace: {
@@ -319,6 +333,66 @@ async function killAtDatabaseWrite(input: {
 }
 
 describe("Flow prompt owners through the production graph driver", () => {
+  it("delivers the scheduled request to a primary action and its AI gate", async () => {
+    const request = "scheduled-gate-sentinel: Проверить {{ literal }} 😀";
+    const gatePrompt = `fixture-output:${JSON.stringify({ bytes: 0, text: JSON.stringify({ verdict: "pass", confidence: 0.95, reasons: ["checked"] }) })}`;
+    const seeded = await seedOwnerFlow(
+      [
+        {
+          id: "work",
+          type: "ai_coding",
+          action: {
+            prompt: 'fixture-output:{"bytes":0,"text":"work completed"}',
+          },
+          pre_finish: {
+            gates: [
+              {
+                id: "review",
+                kind: "ai_judgment",
+                mode: "blocking",
+                prompt: gatePrompt,
+              },
+            ],
+          },
+          transitions: { success: "done" },
+        },
+      ],
+      { scheduledRequest: request },
+    );
+
+    await runFlow(seeded.runId, {
+      db: database.db,
+      runtimeRoot: supervisor.runtimeRoot,
+      executionHosts: createExecutionHosts({
+        db: database.db as unknown as Db,
+      }),
+    });
+    const prompts = await database.db
+      .select()
+      .from(executionCommands)
+      .where(
+        and(
+          eq(executionCommands.runId, seeded.runId),
+          eq(executionCommands.kind, "session.prompt"),
+        ),
+      );
+
+    expect(prompts).toHaveLength(2);
+    for (const command of prompts) {
+      expect(command.requestCanonicalJson).toContain("scheduled-gate-sentinel");
+      expect(
+        command.requestCanonicalJson?.split(
+          "## Current request (scheduled invocation)",
+        ),
+      ).toHaveLength(2);
+    }
+    expect(
+      (
+        await database.db.select().from(runs).where(eq(runs.id, seeded.runId))
+      )[0].status,
+    ).toBe("Review");
+  }, 60_000);
+
   it("reconcile and resume preserve an acknowledged prompt owned by a live driver", async () => {
     const seeded = await seedOwnerFlow([
       {

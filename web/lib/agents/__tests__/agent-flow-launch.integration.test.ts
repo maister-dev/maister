@@ -231,6 +231,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   if (originalWorktreesRoot === undefined)
     delete process.env.MAISTER_WORKTREES_ROOT;
   else process.env.MAISTER_WORKTREES_ROOT = originalWorktreesRoot;
@@ -487,5 +488,186 @@ describe("launchAgentRun — agent drives a flow (M39, ADR-106)", () => {
     );
 
     expect(taskRows.rows).toHaveLength(1);
+  });
+});
+
+describe("scheduled request admission", () => {
+  it.each([
+    {
+      label: "loop without a reachable consumer",
+      nodes: [
+        {
+          id: "loop",
+          type: "cli",
+          action: { command: "true" },
+          transitions: { success: "loop" },
+        },
+        { id: "code", type: "ai_coding", action: { prompt: "fix" } },
+      ],
+    },
+    {
+      label: "verdict gate with a successful bypass",
+      nodes: [
+        {
+          id: "review",
+          type: "cli",
+          action: { command: "true" },
+          pre_finish: {
+            gates: [
+              {
+                id: "judge",
+                kind: "ai_judgment",
+                mode: "blocking",
+                prompt: "judge",
+              },
+            ],
+          },
+          decide: {
+            from: "verdict",
+            cases: [
+              { when: "confidence >= 0.8", target: "approve" },
+              { default: true, target: "work" },
+            ],
+          },
+          transitions: { approve: "done", work: "code" },
+        },
+        { id: "code", type: "ai_coding", action: { prompt: "fix" } },
+      ],
+    },
+    {
+      label: "CLI-only",
+      nodes: [
+        {
+          id: "shell",
+          type: "cli",
+          action: { command: "true" },
+          transitions: { success: "done" },
+        },
+      ],
+    },
+    {
+      label: "implicit successful terminal with unreachable AI",
+      nodes: [
+        { id: "shell", type: "cli", action: { command: "true" } },
+        { id: "code", type: "ai_coding", action: { prompt: "fix" } },
+      ],
+    },
+    {
+      label: "successful bypass",
+      nodes: [
+        {
+          id: "choose",
+          type: "human",
+          transitions: { approve: "done", reject: "code" },
+        },
+        { id: "code", type: "ai_coding", action: { prompt: "fix" } },
+      ],
+    },
+  ])(
+    "refuses $label before creating a task or workspace",
+    async ({ nodes }) => {
+      const manifest = {
+        schemaVersion: 1,
+        name: "bugfix",
+        compat: { engine_min: "1.3.0" },
+        nodes,
+      };
+
+      await pool.query("UPDATE flow_revisions SET manifest=$1::jsonb", [
+        JSON.stringify(manifest),
+      ]);
+      const scheduledRequestSnapshot = {
+        version: 1 as const,
+        scheduleId: randomUUID(),
+        triggerAttemptId: randomUUID(),
+        requestAtLaunch: "Check this invocation",
+      };
+
+      await expect(
+        launchAgentRun({
+          agentId: "pkg:driver",
+          projectId,
+          trigger: { source: "cron" },
+          scheduledRequestSnapshot,
+          db,
+        }),
+      ).rejects.toMatchObject({ code: "CONFIG" });
+      expect(
+        (await pool.query("SELECT count(*)::int AS n FROM tasks")).rows[0].n,
+      ).toBe(0);
+      expect(
+        (await pool.query("SELECT count(*)::int AS n FROM runs")).rows[0].n,
+      ).toBe(0);
+    },
+  );
+
+  it("pins the admitted revision and preserves the reserved cron run identity", async () => {
+    const { claimCronAgentAttempt } =
+      await import("@/lib/agents/trigger-attempts");
+    const scheduleId = randomUUID();
+
+    await pool.query(
+      "INSERT INTO agent_schedules (id,agent_id,project_id,trigger_type,cron_expr,timezone,next_fire_at,request_at_launch) VALUES ($1,'pkg:driver',$2,'cron','* * * * *','UTC',now()-interval '1 minute','Check frozen request')",
+      [scheduleId, projectId],
+    );
+    const claim = await claimCronAgentAttempt(
+      testDatabase.db,
+      scheduleId,
+      new Date(),
+      new Date(Date.now() + 60_000),
+    );
+
+    expect(claim).not.toBeNull();
+    const revisionId = (
+      await pool.query(
+        "SELECT enabled_revision_id FROM flows WHERE project_id=$1",
+        [projectId],
+      )
+    ).rows[0].enabled_revision_id;
+    const replacement = randomUUID();
+
+    await pool.query(
+      "INSERT INTO flow_revisions SELECT (jsonb_populate_record(NULL::flow_revisions, to_jsonb(r) || jsonb_build_object('id',$1::text,'resolved_revision',$1::text))).* FROM flow_revisions r WHERE id=$2",
+      [replacement, revisionId],
+    );
+    const taskService = await import("@/lib/services/tasks");
+    const createTask = taskService.createTask;
+
+    vi.spyOn(taskService, "createTask").mockImplementation(async (...args) => {
+      const created = await createTask(...args);
+
+      await pool.query(
+        "UPDATE flows SET enabled_revision_id=$1 WHERE project_id=$2",
+        [replacement, projectId],
+      );
+
+      return created;
+    });
+    const launched = await launchAgentRun({
+      agentId: "pkg:driver",
+      projectId,
+      trigger: { source: "cron" },
+      agentScheduleId: scheduleId,
+      runId: claim!.reservedRunId,
+      agentTriggerReservation: {
+        attemptId: claim!.id,
+        runId: claim!.reservedRunId,
+      },
+      db,
+    });
+
+    if (!("runId" in launched)) throw new Error("Expected a launched cron run");
+    expect(launched.runId).toBe(claim!.reservedRunId);
+    const row = (
+      await pool.query(
+        "SELECT flow_revision_id,scheduled_request_snapshot FROM runs WHERE id=$1",
+        [launched.runId],
+      )
+    ).rows[0];
+
+    expect(row.flow_revision_id).toBe(revisionId);
+    expect(row.scheduled_request_snapshot).toEqual(
+      claim!.scheduledRequestSnapshot,
+    );
   });
 });

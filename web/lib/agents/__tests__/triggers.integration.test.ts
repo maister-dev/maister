@@ -216,6 +216,75 @@ async function seedTask(): Promise<string> {
 }
 
 describe("agent cron dispatcher (agent_tick.dispatcher)", () => {
+  it("captures committed request input at claim and retains it after schedule deletion", async () => {
+    const agentId = await seedAgent({
+      id: "request-claim",
+      triggers: ["cron"],
+    });
+    const scheduleId = randomUUID();
+    const now = new Date();
+
+    await pool.query(
+      "INSERT INTO agent_schedules(id,agent_id,project_id,trigger_type,cron_expr,timezone,next_fire_at,request_at_launch) VALUES($1,$2,$3,'cron','* * * * *','UTC',$4,'original')",
+      [scheduleId, agentId, projectId, now],
+    );
+    const writer = await pool.connect();
+    let pending: ReturnType<typeof claimCronAgentAttempt>;
+
+    await writer.query("BEGIN");
+    try {
+      await writer.query(
+        "UPDATE agent_schedules SET request_at_launch='committed current request' WHERE id=$1",
+        [scheduleId],
+      );
+      pending = claimCronAgentAttempt(
+        testDatabase.db,
+        scheduleId,
+        now,
+        new Date(now.getTime() + 60_000),
+      );
+      await expect
+        .poll(
+          async () =>
+            (
+              await pool.query(
+                "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'update %agent_schedules%') AS blocked",
+              )
+            ).rows[0].blocked,
+          { timeout: 5000 },
+        )
+        .toBe(true);
+    } finally {
+      await writer.query("COMMIT");
+      writer.release();
+    }
+    const claim = await pending!;
+
+    expect(claim?.scheduledRequestSnapshot).toEqual({
+      version: 1,
+      scheduleId,
+      triggerAttemptId: claim!.id,
+      requestAtLaunch: "committed current request",
+    });
+    await pool.query("DELETE FROM agent_schedules WHERE id=$1", [scheduleId]);
+    const retained = await pool.query(
+      "SELECT scheduled_request_snapshot FROM agent_trigger_attempts WHERE id=$1",
+      [claim!.id],
+    );
+
+    expect(retained.rows[0].scheduled_request_snapshot).toEqual(
+      claim!.scheduledRequestSnapshot,
+    );
+    await expect(
+      pool.query(
+        "UPDATE agent_trigger_attempts SET scheduled_request_snapshot=NULL WHERE id=$1",
+        [claim!.id],
+      ),
+    ).rejects.toMatchObject({
+      constraint: "agent_trigger_attempt_identity_immutable",
+    });
+  });
+
   it("IT-UX-21 rolls back the scheduled fire when its durable attempt cannot be written", async () => {
     const agentId = await seedAgent({
       id: "atomic-attempt",

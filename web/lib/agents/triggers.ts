@@ -193,11 +193,15 @@ export async function dispatchDueAgentSchedules(
 
     try {
       const result = await launch({
-        agentId: row.agentId,
-        projectId: row.projectId,
+        agentId: fence.sourceAgentId,
+        projectId: fence.projectId,
         trigger: { source: "cron" },
-        agentScheduleId: row.id,
+        agentScheduleId: fence.scheduleId,
         runId: fence.reservedRunId,
+        agentTriggerReservation: {
+          attemptId: fence.id,
+          runId: fence.reservedRunId,
+        },
         db: _db,
       });
 

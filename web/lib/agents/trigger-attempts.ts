@@ -30,9 +30,20 @@ async function insertClaim(
   deliveryKey: string,
   eventId: number | null,
 ): Promise<AgentTriggerClaim> {
+  const id = randomUUID();
   const [attempt] = await tx
     .insert(agentTriggerAttempts)
     .values({
+      id,
+      scheduledRequestSnapshot:
+        binding.triggerType === "cron"
+          ? {
+              version: 1,
+              scheduleId: binding.id,
+              triggerAttemptId: id,
+              requestAtLaunch: binding.requestAtLaunch,
+            }
+          : null,
       projectId: binding.projectId,
       sourceAgentId: binding.agentId,
       scheduleId: binding.id,
@@ -55,7 +66,12 @@ async function insertClaim(
     .returning();
 
   log.debug(
-    { attemptId: attempt.id, scheduleId: binding.id, fence: attempt.fence },
+    {
+      attemptId: attempt.id,
+      scheduleId: binding.id,
+      fence: attempt.fence,
+      requestPresent: Boolean(binding.requestAtLaunch),
+    },
     "agent-trigger-attempt-claimed",
   );
 
@@ -81,6 +97,7 @@ export async function claimCronAgentAttempt(
       .where(
         and(
           eq(agentSchedules.id, scheduleId),
+          eq(agentSchedules.triggerType, "cron"),
           eq(agentSchedules.enabled, true),
           lte(agentSchedules.nextFireAt, now),
         ),

@@ -158,6 +158,7 @@ workspace: none
 mode: session
 triggers:
   - manual
+  - cron
 risk_tier: read_only
 ${CONFIG_BLOCK}---
 Classify the task.
@@ -227,6 +228,68 @@ async function runAgentConfig(
 }
 
 describe("ADR-111 launch-time config snapshot", () => {
+  it("retains a claimed literal request through queued launch after schedule deletion", async () => {
+    const agentId = await seedTriager({ intake_mode: "triage_only" });
+    const scheduleId = randomUUID();
+    const request = "Check {{ literal }} and @capability tokens.\nПроверка 😀";
+    const now = new Date();
+
+    await pool.query(
+      "INSERT INTO agent_schedules(id,agent_id,project_id,trigger_type,cron_expr,timezone,next_fire_at,request_at_launch) VALUES($1,$2,$3,'cron','* * * * *','UTC',$4,$5)",
+      [scheduleId, agentId, projectId, now, request],
+    );
+    const { claimCronAgentAttempt } =
+      await import("@/lib/agents/trigger-attempts");
+    const claim = (await claimCronAgentAttempt(
+      testDatabase.db,
+      scheduleId,
+      now,
+      new Date(now.getTime() + 60_000),
+    ))!;
+
+    await pool.query("DELETE FROM agent_schedules WHERE id=$1", [scheduleId]);
+    const result = await launchAgentRun({
+      agentId,
+      projectId,
+      trigger: { source: "cron" },
+      agentScheduleId: scheduleId,
+      runId: claim.reservedRunId,
+      agentTriggerReservation: {
+        attemptId: claim.id,
+        runId: claim.reservedRunId,
+      },
+      db,
+    });
+
+    expect(result).toMatchObject({
+      runId: claim.reservedRunId,
+      status: "Pending",
+    });
+    const row = (
+      await pool.query("SELECT * FROM runs WHERE id=$1", [claim.reservedRunId])
+    ).rows[0];
+
+    expect(row.agent_schedule_id).toBeNull();
+    expect(row.scheduled_request_snapshot.requestAtLaunch).toBe(request);
+    const effective = await import("@/lib/agents/effective");
+    const definition = await effective.resolveEffectiveAgentDefinition(
+      { agentId, projectId },
+      db,
+    );
+    const prompt = await buildAgentPrompt(db, definition.parsed, {
+      ...row,
+      triggerSource: row.trigger_source,
+      scheduledRequestSnapshot: row.scheduled_request_snapshot,
+      agentConfig: row.agent_config,
+      projectId,
+    });
+
+    expect(prompt).toContain("## Current request (scheduled invocation)");
+    expect(prompt).toContain(request);
+    expect(prompt).toContain("triage_only");
+    expect(prompt.split(request)).toHaveLength(2);
+  });
+
   it("IT-UX-13 settles a persisted run after actual workspace preparation fails", async () => {
     const agentId = await seedTriager(null);
     const runId = randomUUID();

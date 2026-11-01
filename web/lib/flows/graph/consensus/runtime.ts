@@ -71,6 +71,11 @@ import {
   type ConsensusTextBounds,
 } from "./text";
 
+import {
+  parseScheduledRequestSnapshot,
+  scheduledRequestBlock,
+  appendScheduledRequest,
+} from "@/lib/agents/scheduled-request";
 import { ensureSubstepRunSession } from "@/lib/runs/substep-session";
 import { createHitlRequestIfAbsent } from "@/lib/runs/hitl-create";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
@@ -482,13 +487,19 @@ async function launchRound(
         })
       : null;
   const basePrompt = renderedNodePrompt(args);
+  const requestBlock = scheduledRequestBlock(
+    parseScheduledRequestSnapshot(args.loaded.run.scheduledRequestSnapshot),
+  );
   const prompts = args.def.participants.map((participant) => ({
     participantId: participant.id,
-    prompt: draftPrompt({
-      context: args.context,
-      basePrompt,
-      critique: critique?.participantPrompts.get(participant.id) ?? null,
-    }),
+    prompt: [
+      draftPrompt({
+        context: args.context,
+        basePrompt,
+        critique: critique?.participantPrompts.get(participant.id) ?? null,
+      }),
+      ...(requestBlock ? [requestBlock] : []),
+    ].join("\n\n"),
   }));
   const draftRuns = await launchConsensusDraftRuns({
     db: args.db,
@@ -635,12 +646,17 @@ async function runVerifier(
       sourceId: args.target.artifactId ?? args.target.runId,
       value: boundedTarget.text,
       renderPrompt: (slot) =>
-        renderStrict(
-          verifierPrompt(),
-          withConsensusVars(args.context, {
-            ...verifierVars,
-            target_draft: slot,
-          }) as unknown as Record<string, unknown>,
+        appendScheduledRequest(
+          renderStrict(
+            verifierPrompt(),
+            withConsensusVars(args.context, {
+              ...verifierVars,
+              target_draft: slot,
+            }) as unknown as Record<string, unknown>,
+          ),
+          parseScheduledRequestSnapshot(
+            args.loaded.run.scheduledRequestSnapshot,
+          ),
         ),
       textBounds: boundedTarget.bounds,
     });
@@ -656,6 +672,7 @@ async function runVerifier(
         runtimeRoot: args.runtimeRoot,
         projectSlug: args.loaded.projectSlug,
         runId: args.loaded.run.id,
+        scheduledRequestSnapshot: args.loaded.run.scheduledRequestSnapshot,
         stepId: `${args.node.id}-verify`,
         sessionName: args.sessionName,
         nodeAttemptId: args.nodeAttemptId,
@@ -1164,12 +1181,17 @@ async function synthesizeConsensus(
       sourceId: args.selectedSourceId ?? args.source,
       value: boundedSelected.text,
       renderPrompt: (slot) =>
-        renderStrict(
-          synthesisPrompt(),
-          withConsensusVars(args.context, {
-            ...synthesisVars,
-            selected_text: slot,
-          }) as unknown as Record<string, unknown>,
+        appendScheduledRequest(
+          renderStrict(
+            synthesisPrompt(),
+            withConsensusVars(args.context, {
+              ...synthesisVars,
+              selected_text: slot,
+            }) as unknown as Record<string, unknown>,
+          ),
+          parseScheduledRequestSnapshot(
+            args.loaded.run.scheduledRequestSnapshot,
+          ),
         ),
       textBounds: boundedSelected.bounds,
     });
@@ -1185,6 +1207,7 @@ async function synthesizeConsensus(
         runtimeRoot: args.runtimeRoot,
         projectSlug: args.loaded.projectSlug,
         runId: args.loaded.run.id,
+        scheduledRequestSnapshot: args.loaded.run.scheduledRequestSnapshot,
         stepId: `${args.node.id}-synthesize`,
         sessionName: `${args.node.id}-synthesize`,
         nodeAttemptId: args.nodeAttemptId,

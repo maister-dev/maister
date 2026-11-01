@@ -78,3 +78,13 @@ export function scheduledRequestBlock(
     snapshot.requestAtLaunch,
   ].join("\n\n");
 }
+
+/** Append only after ordinary template/capability rendering; request text is literal. */
+export function appendScheduledRequest(
+  prompt: string,
+  snapshot: ScheduledAgentRequestSnapshot | null,
+): string {
+  const block = scheduledRequestBlock(snapshot);
+
+  return block ? `${prompt}\n\n${block}` : prompt;
+}
