@@ -20,6 +20,7 @@ import path from "node:path";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { loadFlowScheduledRequestSource } from "@/lib/agents/scheduled-request-lineage";
 import { assertScheduledRequestMatches } from "@/lib/agents/scheduled-request-store";
 import { assertScheduledRequestConsumer } from "@/lib/agents/scheduled-request-flow";
 import {
@@ -640,6 +641,27 @@ export async function* launchRunStaged(
   // classification detail (incl. blocker KEY-N refs) must not leak to
   // callers without project access. AuthzError propagates untouched.
   await ctx.authorize(project.id);
+  const inheritanceSource = membershipSourceForLaunch(input);
+  const inheritedRequest = inheritanceSource
+    ? await loadFlowScheduledRequestSource(_db as unknown as ExecutionDb, {
+        sourceRunId: inheritanceSource.sourceRunId,
+        projectId: project.id,
+        taskId: task.id,
+      })
+    : null;
+
+  if (
+    inheritedRequest &&
+    input.agentId &&
+    input.agentId !== inheritedRequest.agentId
+  ) {
+    throw new MaisterError(
+      "CONFLICT",
+      "Driving agent differs from the scheduled request source",
+    );
+  }
+  const agentId = inheritedRequest?.agentId ?? input.agentId;
+
   const taskAdmission = await prepareTaskDeliveryAdmission(
     _db as unknown as import("@/lib/execution-host/db").Db,
     {
@@ -651,12 +673,12 @@ export async function* launchRunStaged(
         input.targetBranch ?? input.deliveryPolicy?.targetBranch ?? undefined,
     },
   );
-  const agentActivity = input.agentId
+  const agentActivity = agentId
     ? (input.agentActivity ??
       buildAgentActivitySnapshot(
-        input.agentId,
+        agentId,
         await resolveEffectiveAgentDefinition(
-          { agentId: input.agentId, projectId: project.id },
+          { agentId: agentId, projectId: project.id },
           _db,
         ),
       ))
@@ -667,7 +689,8 @@ export async function* launchRunStaged(
   // behind the privileged action. Snapshotted onto runs.execution_policy below;
   // resume/recover read the snapshot, never re-resolve.
   const basePolicy = resolveExecutionPolicy({
-    launchOverride: input.executionPolicy ?? null,
+    launchOverride:
+      input.executionPolicy ?? inheritedRequest?.executionPolicy ?? null,
     taskDefault: (task.executionPolicy as ExecutionPolicy | null) ?? null,
     projectDefault:
       (project.executionPolicyDefault as ExecutionPolicy | null) ?? null,
@@ -705,7 +728,7 @@ export async function* launchRunStaged(
   }
   const cronEvidence = input.agentTriggerReservation
     ? await loadCronLaunchEvidence(_db as unknown as ExecutionDb, {
-        agentId: input.agentId!,
+        agentId: agentId!,
         projectId: project.id,
         reservation: input.agentTriggerReservation,
       })
@@ -718,11 +741,16 @@ export async function* launchRunStaged(
     );
   }
   if (cronEvidence?.receipt) return cronEvidence.receipt;
+  if (inheritedRequest && input.scheduledRequestSnapshot !== undefined)
+    assertScheduledRequestMatches(
+      inheritedRequest.snapshot,
+      parseScheduledRequestSnapshot(input.scheduledRequestSnapshot),
+    );
   const scheduledRequestSnapshot = cronEvidence
     ? cronEvidence.snapshot
-    : parseScheduledRequestSnapshot(input.scheduledRequestSnapshot);
+    : (inheritedRequest?.snapshot ??
+      parseScheduledRequestSnapshot(input.scheduledRequestSnapshot));
 
-  const inheritanceSource = membershipSourceForLaunch(input);
   // ADR-146 D15: a relaunch/budget-restart of a LAUNCHED evaluation participant
   // mints a
   // SUCCESSOR participant row (same study/recipe lineage, new runId) in the
@@ -927,7 +955,7 @@ export async function* launchRunStaged(
   if (scheduledFlowRevisionId) {
     if (
       pinnedRevision ||
-      !input.agentId ||
+      !agentId ||
       !scheduledRequestSnapshot?.requestAtLaunch
     ) {
       throw new MaisterError(
@@ -1766,18 +1794,18 @@ export async function* launchRunStaged(
 
         // `runs` first: `workspaces.run_id` is a non-deferrable FK to `runs.id`,
         // so the workspace insert would violate it if it ran first.
-        const agentScheduleId = input.agentId
+        const agentScheduleId = agentId
           ? await liveAgentScheduleId(tx, {
               scheduleId:
                 cronEvidence?.scheduleId ?? input.agentScheduleId ?? null,
-              agentId: input.agentId,
+              agentId: agentId,
               projectId: project.id,
             })
           : null;
 
         if (input.agentTriggerReservation)
           await loadCronLaunchEvidence(tx, {
-            agentId: input.agentId!,
+            agentId: agentId!,
             projectId: project.id,
             reservation: input.agentTriggerReservation,
           });
@@ -1816,8 +1844,8 @@ export async function* launchRunStaged(
             // M39 (ADR-106): the driving agent of an agent-driven flow run (null for
             // a normal board launch). The graph runner reads it to inject the
             // agent's persona on every ai_coding node.
-            agentId: input.agentId ?? null,
-            sourceAgentId: input.agentId ?? null,
+            agentId: agentId ?? null,
+            sourceAgentId: agentId ?? null,
             launchedAt: agentActivity ? sql`CURRENT_TIMESTAMP` : null,
             activitySortAt: agentActivity ? sql`CURRENT_TIMESTAMP` : null,
             activityTimestampProvenance: agentActivity ? "launch" : null,
@@ -1926,7 +1954,7 @@ export async function* launchRunStaged(
 
           throw new MaisterError(
             "CONFLICT",
-            `trigger event ${input.triggerEventId} already claimed for agent ${input.agentId}`,
+            `trigger event ${input.triggerEventId} already claimed for agent ${agentId}`,
           );
         }
 

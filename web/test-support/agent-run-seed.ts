@@ -117,7 +117,7 @@ export async function seedAgentRun(
       ? { contract: "operational_v1" }
       : null,
     mode: "session",
-    triggers: ["manual"],
+    triggers: input.scheduledRequestSnapshot ? ["manual", "cron"] : ["manual"],
     riskTier: "read_only",
     sourcePath,
     enabled: true,

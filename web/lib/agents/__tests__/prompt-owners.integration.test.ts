@@ -174,7 +174,7 @@ async function seedAgent(input: {
 }): Promise<string> {
   const {
     workspace: requestedWorkspace,
-    scheduledRequest,
+    scheduledRequest = "scheduled-owner-sentinel: Original request 😀",
     operational,
     ...fixtureOutput
   } = input;
@@ -189,7 +189,7 @@ async function seedAgent(input: {
 
   return seedAgentRun(db, {
     runtimeRoot: supervisor.runtimeRoot,
-    definition: `---\nname: Researcher\ndescription: d\n${operational ? "kind: operational\ncompletion: {contract: operational_v1}\n" : ""}workspace: ${workspace}\nmode: session\nplatform_mcp: false\ntriggers:\n  - manual\nrisk_tier: read_only\n${input.hookTrip ? `hooks:\n  repetition:\n    max: ${input.parallelPermission ? 2 : 1}\n` : ""}---\n${prompt}\n`,
+    definition: `---\nname: Researcher\ndescription: d\n${operational ? "kind: operational\ncompletion: {contract: operational_v1}\n" : ""}workspace: ${workspace}\nmode: session\nplatform_mcp: false\ntriggers:\n  - manual\n${scheduledRequest ? "  - cron\n" : ""}risk_tier: read_only\n${input.hookTrip ? `hooks:\n  repetition:\n    max: ${input.parallelPermission ? 2 : 1}\n` : ""}---\n${prompt}\n`,
     workspace,
     resultContract: operational ? null : contract,
     operational,

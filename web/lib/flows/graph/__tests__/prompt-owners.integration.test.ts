@@ -394,17 +394,20 @@ describe("Flow prompt owners through the production graph driver", () => {
   }, 60_000);
 
   it("reconcile and resume preserve an acknowledged prompt owned by a live driver", async () => {
-    const seeded = await seedOwnerFlow([
-      {
-        id: "work",
-        type: "ai_coding",
-        action: {
-          prompt:
-            'fixture-output:{"bytes":0,"text":"original action","terminalDelayMs":5000}',
+    const seeded = await seedOwnerFlow(
+      [
+        {
+          id: "work",
+          type: "ai_coding",
+          action: {
+            prompt:
+              'fixture-output:{"bytes":0,"text":"original action","terminalDelayMs":5000}',
+          },
+          transitions: { success: "done" },
         },
-        transitions: { success: "done" },
-      },
-    ]);
+      ],
+      { scheduledRequest: "scheduled-recovery-sentinel: Original request 😀" },
+    );
     const driver = startDriver(seeded.runId);
     const hosts = createExecutionHosts({ db: database.db as unknown as Db });
     const reattachments: Promise<void>[] = [];
@@ -446,6 +449,9 @@ describe("Flow prompt owners through the production graph driver", () => {
         .from(runs)
         .where(eq(runs.id, seeded.runId));
 
+      expect(original.requestCanonicalJson).toContain(
+        "scheduled-recovery-sentinel",
+      );
       expect(before.flowDriverToken).not.toBeNull();
       const summary = await runReconcileSweep({
         db: database.db,

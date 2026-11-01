@@ -671,3 +671,93 @@ describe("scheduled request admission", () => {
     );
   });
 });
+
+describe("scheduled request successor lineage", () => {
+  it.each(["manual_relaunch", "budget_restart"] as const)(
+    "retains request and driving persona through %s",
+    async (kind) => {
+      const snapshot = {
+        version: 1 as const,
+        scheduleId: randomUUID(),
+        triggerAttemptId: randomUUID(),
+        requestAtLaunch: "Retain source request 😀",
+      };
+      const original = await launchAgentRun({
+        agentId: "pkg:driver",
+        projectId,
+        trigger: { source: "cron" },
+        scheduledRequestSnapshot: snapshot,
+        db,
+      });
+
+      if (!("runId" in original)) throw new Error("Expected source run");
+      await pool.query(
+        "UPDATE runs SET status='Failed',ended_at=now() WHERE id=$1",
+        [original.runId],
+      );
+      const source = (
+        await pool.query("SELECT task_id,flow_id FROM runs WHERE id=$1", [
+          original.runId,
+        ])
+      ).rows[0];
+      const { launchRun } = await import("@/lib/services/runs");
+      const successor = await launchRun(
+        {
+          taskId: source.task_id,
+          flowId: source.flow_id,
+          ...(kind === "manual_relaunch"
+            ? { relaunchOfRunId: original.runId }
+            : {
+                triggerPayload: {
+                  kind: "budget_restart",
+                  oldRunId: original.runId,
+                  hitlRequestId: randomUUID(),
+                },
+              }),
+        },
+        { authorize: async () => {}, actorUserId: null },
+        db,
+      );
+      const row = (
+        await pool.query(
+          "SELECT agent_id,source_agent_id,scheduled_request_snapshot FROM runs WHERE id=$1",
+          [successor.runId],
+        )
+      ).rows[0];
+
+      expect(row.scheduled_request_snapshot).toEqual(snapshot);
+      expect(row.agent_id).toBe("pkg:driver");
+      expect(row.source_agent_id).toBe("pkg:driver");
+      const { loadFlowScheduledRequestSource } =
+        await import("@/lib/agents/scheduled-request-lineage");
+
+      await expect(
+        loadFlowScheduledRequestSource(testDatabase.db, {
+          sourceRunId: original.runId,
+          projectId: randomUUID(),
+          taskId: source.task_id,
+        }),
+      ).rejects.toMatchObject({
+        code: "PRECONDITION",
+        details: { reason: "scheduled_request_source_mismatch" },
+      });
+
+      const unrelatedTask = randomUUID();
+
+      await pool.query(
+        "INSERT INTO tasks (id,project_id,number,title,prompt,flow_id) VALUES ($1,$2,99,'other','other',$3)",
+        [unrelatedTask, projectId, source.flow_id],
+      );
+      await expect(
+        launchRun(
+          { taskId: unrelatedTask, relaunchOfRunId: original.runId },
+          { authorize: async () => {}, actorUserId: null },
+          db,
+        ),
+      ).rejects.toMatchObject({
+        code: "PRECONDITION",
+        details: { reason: "scheduled_request_source_mismatch" },
+      });
+    },
+  );
+});

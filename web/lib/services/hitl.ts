@@ -23,6 +23,8 @@ import {
 import { NextResponse } from "next/server";
 import pino from "pino";
 
+import { parseScheduledRequestSnapshot } from "@/lib/agents/scheduled-request";
+import { assertScheduledRequestMatches } from "@/lib/agents/scheduled-request-store";
 import { requireProjectAction } from "@/lib/authz";
 import {
   claimAssignment,
@@ -4556,6 +4558,7 @@ async function findExistingBudgetRestartRun(args: {
       taskId: runs.taskId,
       agentId: runs.agentId,
       triggerPayload: runs.triggerPayload,
+      scheduledRequestSnapshot: runs.scheduledRequestSnapshot,
     })
     .from(runs)
     .where(and(...predicates))
@@ -4580,6 +4583,10 @@ async function findExistingBudgetRestartRun(args: {
     }) ?? null;
 
   if (!existing) return null;
+  assertScheduledRequestMatches(
+    parseScheduledRequestSnapshot(args.runRow.scheduledRequestSnapshot),
+    parseScheduledRequestSnapshot(existing.scheduledRequestSnapshot),
+  );
 
   log.info(
     {
@@ -4629,6 +4636,13 @@ async function launchBudgetRestart(args: {
         payload: triggerPayload,
       },
       workspace: args.runRow.agentWorkspace ?? null,
+      ...(args.runRow.scheduledRequestSnapshot
+        ? {
+            scheduledRequestSnapshot: parseScheduledRequestSnapshot(
+              args.runRow.scheduledRequestSnapshot,
+            ),
+          }
+        : {}),
       db: args.db,
     });
 

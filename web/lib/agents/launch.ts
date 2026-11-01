@@ -71,6 +71,7 @@ import {
 } from "./workspace-paths";
 
 import { resolveScheduledRequestFlowRevision } from "@/lib/agents/scheduled-request-flow";
+import { loadAgentBudgetRestartRequest } from "@/lib/agents/scheduled-request-lineage";
 import { assertScheduledRequestMatches } from "@/lib/agents/scheduled-request-store";
 import {
   loadCronLaunchEvidence,
@@ -1118,6 +1119,22 @@ export async function launchAgentRun(
   const scheduledRequestSnapshot = cronEvidence
     ? cronEvidence.snapshot
     : parseScheduledRequestSnapshot(input.scheduledRequestSnapshot);
+
+  if (input.trigger.payload?.kind === "budget_restart") {
+    if (typeof input.trigger.payload.oldRunId !== "string")
+      throw new MaisterError(
+        "PRECONDITION",
+        "Budget restart source is missing",
+      );
+    const originalRequest = await loadAgentBudgetRestartRequest(_db, {
+      sourceRunId: input.trigger.payload.oldRunId,
+      projectId: input.projectId,
+      taskId: input.taskId ?? null,
+      agentId: input.agentId,
+    });
+
+    assertScheduledRequestMatches(originalRequest, scheduledRequestSnapshot);
+  }
   const launchInput = { ...input, scheduledRequestSnapshot };
   const currentContext = await loadAgentContext(_db, input);
   const retryIntent = input.retryClaim
@@ -1140,6 +1157,14 @@ export async function launchAgentRun(
         },
       }
     : currentContext;
+
+  if (retryIntent)
+    assertScheduledRequestMatches(
+      scheduledRequestSnapshot,
+      parseScheduledRequestSnapshot(
+        retryIntent.recipe.scheduledRequestSnapshot,
+      ),
+    );
 
   // Fast trigger-event dedup BEFORE any side effect (task auto-create, worktree,
   // run insert) — covering BOTH the flow-driving and standalone paths. The
