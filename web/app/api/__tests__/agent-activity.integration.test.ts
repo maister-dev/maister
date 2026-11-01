@@ -10,7 +10,9 @@ import Ajv from "ajv";
 import { NextRequest } from "next/server";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
+import { GET as getCollection } from "@/app/api/projects/[slug]/agents/route";
 import { GET as getDetail } from "@/app/api/projects/[slug]/agents/[agentId]/route";
+import { GET as getAttempts } from "@/app/api/projects/[slug]/agents/[agentId]/attempts/route";
 import { GET as getHistory } from "@/app/api/projects/[slug]/agents/[agentId]/runs/route";
 import { GET as getIncidents } from "@/app/api/projects/[slug]/agents/[agentId]/incidents/route";
 import { POST as acknowledgeIncidents } from "@/app/api/projects/[slug]/agents/[agentId]/incidents/acknowledge/route";
@@ -67,6 +69,14 @@ it("IT-UX-07 enforces live database grants, shows pinned definitions only, and r
   const outsider = randomUUID();
   const install = randomUUID();
   const agentId = "activity:scan";
+  const attemptId = randomUUID();
+  const scheduleId = randomUUID();
+  const snapshot = {
+    version: 1,
+    scheduleId,
+    triggerAttemptId: attemptId,
+    requestAtLaunch: "PROTECTED SCHEDULE REQUEST 😀",
+  };
   const installPath = join(root, "pin");
 
   await mkdir(join(installPath, "maister-agents"), { recursive: true });
@@ -108,8 +118,27 @@ it("IT-UX-07 enforces live database grants, shows pinned definitions only, and r
     [randomUUID(), projectId, agentId],
   );
   await database.pool.query(
-    "INSERT INTO runs(id,project_id,flow_version,run_kind,source_agent_id,status,activity_sort_at,activity_timestamp_provenance) VALUES ($1,$2,'fixture','agent',$3,'Failed',now(),'legacy_estimate')",
-    [runId, projectId, agentId],
+    "INSERT INTO runs(id,project_id,flow_version,run_kind,source_agent_id,status,activity_sort_at,activity_timestamp_provenance,trigger_source,scheduled_request_snapshot) VALUES ($1,$2,'fixture','agent',$3,'Failed',now(),'legacy_estimate','cron',$4::jsonb)",
+    [runId, projectId, agentId, JSON.stringify(snapshot)],
+  );
+  await database.pool.query(
+    "INSERT INTO agent_trigger_attempts(id,project_id,source_agent_id,schedule_id,binding_snapshot,fence,delivery_key,trigger_source,reserved_run_id,claimed_at,due_at,scheduled_request_snapshot) VALUES ($1,$2,$3,$4,$5::jsonb,1,'cron:1','cron',$6,now(),now(),$7::jsonb)",
+    [
+      attemptId,
+      projectId,
+      agentId,
+      scheduleId,
+      JSON.stringify({
+        version: 1,
+        scheduleId,
+        triggerType: "cron",
+        cronExpr: "* * * * *",
+        timezone: "UTC",
+        eventKinds: [],
+      }),
+      randomUUID(),
+      JSON.stringify(snapshot),
+    ],
   );
   const params = {
     params: Promise.resolve({
@@ -123,6 +152,13 @@ it("IT-UX-07 enforces live database grants, shows pinned definitions only, and r
   actingUserId = outsider;
   expect((await getDetail(request, params)).status).toBe(403);
   actingUserId = viewer;
+  expect(
+    (
+      await getCollection(new NextRequest("http://localhost/api/a"), {
+        params: Promise.resolve({ slug: projectId }),
+      })
+    ).status,
+  ).toBe(403);
   const detail = await getDetail(request, params);
   const value = await detail.json();
 
@@ -140,6 +176,17 @@ it("IT-UX-07 enforces live database grants, shows pinned definitions only, and r
   );
   expect((await getDefinition(request, params)).status).toBe(403);
   expect((await getHistory(request, params)).status).toBe(200);
+  const hiddenRuns = await (await getHistory(request, params)).json();
+  const hiddenAttempts = await (await getAttempts(request, params)).json();
+
+  expect(hiddenRuns.items[0]).toMatchObject({
+    scheduledRequestState: "present",
+  });
+  expect(hiddenRuns.items[0]).not.toHaveProperty("scheduledRequest");
+  expect(JSON.stringify([hiddenRuns, hiddenAttempts])).not.toContain(
+    "PROTECTED SCHEDULE REQUEST",
+  );
+
   expect(
     (
       await getHistory(
@@ -157,6 +204,31 @@ it("IT-UX-07 enforces live database grants, shows pinned definitions only, and r
     ).status,
   ).toBe(400);
   actingUserId = member;
+  expect(
+    (
+      await getCollection(new NextRequest("http://localhost/api/a"), {
+        params: Promise.resolve({ slug: projectId }),
+      })
+    ).status,
+  ).toBe(200);
+  const protectedRuns = await (await getHistory(request, params)).json();
+  const protectedAttempts = await (await getAttempts(request, params)).json();
+
+  expect(protectedRuns.items[0].scheduledRequest).toEqual(snapshot);
+  expect(protectedAttempts.items[0].scheduledRequest).toEqual(snapshot);
+  contract("AgentHistoryItem", protectedRuns.items[0]);
+  contract("AgentAttemptItem", protectedAttempts.items[0]);
+  await database.pool.query(
+    "UPDATE project_members SET role='viewer' WHERE project_id=$1 AND user_id=$2",
+    [projectId, member],
+  );
+  expect(
+    JSON.stringify(await (await getHistory(request, params)).json()),
+  ).not.toContain("PROTECTED SCHEDULE REQUEST");
+  await database.pool.query(
+    "UPDATE project_members SET role='member' WHERE project_id=$1 AND user_id=$2",
+    [projectId, member],
+  );
   const definition = await getDefinition(request, params);
   const definitionValue = await definition.json();
 
@@ -203,6 +275,11 @@ it("IT-UX-07 enforces live database grants, shows pinned definitions only, and r
   const history = await (await getHistory(request, params)).json();
 
   expect(history.items).toHaveLength(1);
+  expect(history.items[0].scheduledRequest).toEqual(snapshot);
+  expect(
+    (await (await getAttempts(request, params)).json()).items[0]
+      .scheduledRequest,
+  ).toEqual(snapshot);
   contract("AgentHistoryItem", history.items[0]);
   const episodeId = randomUUID();
 

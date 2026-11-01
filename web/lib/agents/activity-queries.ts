@@ -7,7 +7,10 @@ import type {
   OperationalOutcome,
   OperationalTerminal,
 } from "@/lib/run-results/operational-types";
-import type { ScheduledRequestState } from "@/lib/agents/scheduled-request";
+import type {
+  ScheduledAgentRequestSnapshot,
+  ScheduledRequestState,
+} from "@/lib/agents/scheduled-request";
 import type { AgentTriggerAttemptOutcome } from "@/lib/agents/trigger-attempt-types";
 
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
@@ -28,6 +31,7 @@ import {
 import { TERMINAL_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 import { RUN_STATUS_VALUES } from "@/lib/runs/run-status-values";
 import { MaisterError } from "@/lib/errors";
+import { parseScheduledRequestSnapshot } from "@/lib/agents/scheduled-request";
 import { loadOperationalOutcomes } from "@/lib/run-results/operational-projection";
 
 type AgentOutcome = OperationalTerminal["effectiveOutcome"];
@@ -145,6 +149,7 @@ export type AgentHistoryItem = {
   outcome: AgentOutcome | null;
   retryOfRunId: string | null;
   scheduledRequestState: ScheduledRequestState;
+  scheduledRequest?: ScheduledAgentRequestSnapshot;
 };
 export type ActivityPage<T> = {
   items: T[];
@@ -266,22 +271,96 @@ export async function getAgentRunHistory(
 export async function loadAgentHistoryEvidence(
   db: Db,
   page: ActivityPage<AgentHistoryItem>,
+  scope: { projectId: string; agentId: string },
 ): Promise<
   ActivityPage<AgentHistoryItem & { operationalOutcome?: OperationalOutcome }>
 > {
-  const outcomes = await loadOperationalOutcomes(
-    db,
-    page.items.map((row) => row.runId),
+  const ids = page.items.map((row) => row.runId);
+  const [outcomes, snapshots] = await Promise.all([
+    loadOperationalOutcomes(db, ids),
+    ids.length
+      ? db
+          .select({ id: runs.id, snapshot: runs.scheduledRequestSnapshot })
+          .from(runs)
+          .where(
+            and(
+              eq(runs.projectId, scope.projectId),
+              eq(runs.sourceAgentId, scope.agentId),
+              inArray(runs.id, ids),
+            ),
+          )
+      : Promise.resolve([]),
+  ]);
+  const requests = new Map(
+    snapshots.map((row) => [
+      row.id,
+      parseScheduledRequestSnapshot(row.snapshot),
+    ]),
   );
 
   return {
     ...page,
     items: page.items.map((row) => {
       const operationalOutcome = outcomes.get(row.runId);
+      const scheduledRequest = requests.get(row.runId);
 
-      return operationalOutcome ? { ...row, operationalOutcome } : row;
+      return {
+        ...row,
+        ...(operationalOutcome ? { operationalOutcome } : {}),
+        ...(scheduledRequest ? { scheduledRequest } : {}),
+      };
     }),
   };
+}
+
+/** Call only after a live readRepoFiles grant; raw input never enters the base page projection. */
+export async function loadAgentAttemptEvidence(
+  db: Db,
+  page: ActivityPage<AgentAttemptItem>,
+  scope: { projectId: string; agentId: string },
+): Promise<ActivityPage<AgentAttemptItem>> {
+  const ids = page.items.map((row) => row.attemptId);
+
+  if (!ids.length) return page;
+  const rows = await db
+    .select({
+      id: agentTriggerAttempts.id,
+      snapshot: agentTriggerAttempts.scheduledRequestSnapshot,
+    })
+    .from(agentTriggerAttempts)
+    .where(
+      and(
+        eq(agentTriggerAttempts.projectId, scope.projectId),
+        eq(agentTriggerAttempts.sourceAgentId, scope.agentId),
+        inArray(agentTriggerAttempts.id, ids),
+      ),
+    );
+  const requests = new Map(
+    rows.map((row) => [row.id, parseScheduledRequestSnapshot(row.snapshot)]),
+  );
+
+  return {
+    ...page,
+    items: page.items.map((row) => {
+      const scheduledRequest = requests.get(row.attemptId);
+
+      return { ...row, ...(scheduledRequest ? { scheduledRequest } : {}) };
+    }),
+  };
+}
+
+/** Server-private execution evidence; the page owner must authorize repository-content access first. */
+export async function loadRunScheduledRequest(
+  db: Db,
+  runId: string,
+  projectId: string,
+): Promise<ScheduledAgentRequestSnapshot | null> {
+  const [row] = await db
+    .select({ snapshot: runs.scheduledRequestSnapshot })
+    .from(runs)
+    .where(and(eq(runs.id, runId), eq(runs.projectId, projectId)));
+
+  return parseScheduledRequestSnapshot(row?.snapshot);
 }
 
 export type AgentAttemptItem = {
@@ -294,6 +373,7 @@ export type AgentAttemptItem = {
   reasonCode: string | null;
   provenance: "recorded" | "legacy_latest";
   scheduledRequestState: ScheduledRequestState;
+  scheduledRequest?: ScheduledAgentRequestSnapshot;
 };
 
 export async function getAgentAttemptHistory(

@@ -60,6 +60,16 @@ async function seedRun(runKind: "flow" | "scratch") {
     executionDataPlaneMode: "canonical_events_v1",
     flowVersion: "v1",
     flowRevision: "test",
+    ...(runKind === "flow"
+      ? {
+          scheduledRequestSnapshot: {
+            version: 1,
+            scheduleId: randomUUID(),
+            triggerAttemptId: randomUUID(),
+            requestAtLaunch: SECRET,
+          },
+        }
+      : {}),
   });
 
   return { projectId, runId };

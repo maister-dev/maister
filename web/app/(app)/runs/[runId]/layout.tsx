@@ -8,6 +8,8 @@ import { getLocale, getTranslations } from "next-intl/server";
 import { notFound, redirect } from "next/navigation";
 import { ExclamationTriangleIcon } from "@heroicons/react/24/outline";
 
+import { loadRunScheduledRequest } from "@/lib/agents/activity-queries";
+import { ScheduledRequestEvidence } from "@/components/agents/scheduled-request-evidence";
 import { AgentRetryControl } from "@/components/agents/agent-retry-control";
 import { OperationalRunResult } from "@/components/runs/operational-run-result";
 import {
@@ -379,6 +381,9 @@ export default async function RunDetailLayout({
   );
   const [t, locale] = await Promise.all([getTranslations("run"), getLocale()]);
 
+  const scheduledRequest = canReadRepoFiles
+    ? await loadRunScheduledRequest(getDb(), runId, detail.projectId)
+    : null;
   const timeline = await getRunTimeline(runId);
   const costSummary = await getRunCostSummary(runId);
   const settings = await getRunSettings(runId);
@@ -1534,6 +1539,12 @@ export default async function RunDetailLayout({
         changeSummary={changeSummary}
         inspector={
           <>
+            {scheduledRequest ? (
+              <ScheduledRequestEvidence
+                snapshot={scheduledRequest}
+                state={scheduledRequest.requestAtLaunch ? "present" : "empty"}
+              />
+            ) : null}
             {/* ADR-165 (T8.1): renders nothing at all for a run with no public
                 result contract and no rows — most runs. */}
             <RunPublicResultPanel

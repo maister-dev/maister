@@ -8,6 +8,7 @@ import type { ReactElement } from "react";
 import { getLocale, getTranslations } from "next-intl/server";
 import Link from "next/link";
 
+import { ScheduledRequestEvidence } from "@/components/agents/scheduled-request-evidence";
 import { RUN_STATUS_VALUES } from "@/lib/runs/run-status-values";
 import { AgentRetryControl } from "@/components/agents/agent-retry-control";
 import {
@@ -194,6 +195,7 @@ export async function AgentRunHistory({
                   <tr
                     key={item.runId}
                     className="border-b border-line/60"
+                    data-agent-history-run-id={item.runId}
                     data-testid="agent-history-row"
                   >
                     {canRetry ? (
@@ -212,6 +214,7 @@ export async function AgentRunHistory({
                       >
                         {item.runId.slice(0, 8)}
                       </Link>
+                      <ScheduledRequestEvidence snapshot={item.scheduledRequest} state={item.scheduledRequestState} />
                       {item.retryOfRunId ? (
                         <span className="mt-1 block text-xs text-mute">
                           {t("retryOf")}{" "}
@@ -331,6 +334,7 @@ export async function AgentAttemptHistory({
                   </span>
                 ) : null}
               </span>
+              <ScheduledRequestEvidence snapshot={item.scheduledRequest} state={item.scheduledRequestState} />
               {item.runId ? (
                 <Link className={link} href={`/runs/${item.runId}`}>
                   {t("openDiagnosticRun")}

@@ -6,7 +6,10 @@ import {
   resolveAgentActivityAccess,
   agentActivityErrorResponse,
 } from "@/lib/agents/activity-access";
-import { getAgentAttemptHistory } from "@/lib/agents/activity-queries";
+import {
+  getAgentAttemptHistory,
+  loadAgentAttemptEvidence,
+} from "@/lib/agents/activity-queries";
 import { MaisterError } from "@/lib/errors";
 
 type RouteParams = { params: Promise<{ slug: string; agentId: string }> };
@@ -25,13 +28,20 @@ export async function GET(
         throw new MaisterError("CONFIG", "Invalid or duplicate attempt filter");
     }
 
+    const page = await getAgentAttemptHistory(access.db, {
+      projectId: access.projectId,
+      agentId: access.agentId,
+      ...(search.has("limit") ? { limit: Number(search.get("limit")) } : {}),
+      ...(search.has("cursor") ? { cursor: search.get("cursor")! } : {}),
+    });
+
     return NextResponse.json(
-      await getAgentAttemptHistory(access.db, {
-        projectId: access.projectId,
-        agentId: access.agentId,
-        ...(search.has("limit") ? { limit: Number(search.get("limit")) } : {}),
-        ...(search.has("cursor") ? { cursor: search.get("cursor")! } : {}),
-      }),
+      access.canReadDefinition
+        ? await loadAgentAttemptEvidence(access.db, page, {
+            projectId: access.projectId,
+            agentId: access.agentId,
+          })
+        : page,
     );
   } catch (error) {
     return agentActivityErrorResponse(error);
