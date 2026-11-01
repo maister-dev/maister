@@ -5541,6 +5541,11 @@ process ownership and cleanup recovery.
 
 ## Operational agents (Implemented)
 
+Agent retry recipe compatibility is defined in
+[agent activity persistence](db/agent-activity-domain.md): the additive
+`0210_agent_retry_strategies` CHECK supports existing v1 pre-work recipes and v2
+explicit retry/qualification strategies without rewriting retained intents.
+
 Main-lineage migrations 0199–0203 add definition kind/completion, frozen run
 kind/result contract, immutable integrity baseline generations and terminal
 receipts, durable cleanup intent, per-reader reason/revision acknowledgements,

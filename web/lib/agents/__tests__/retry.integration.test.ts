@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { rm, writeFile, readFile, access } from "node:fs/promises";
 import path from "node:path";
 
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
 import {
@@ -15,13 +15,23 @@ import { prepareUndispatchedAgentFailure } from "@/lib/agents/finalization";
 import { runs, runSessions, platformAcpRunners } from "@/lib/db/schema";
 import { allocateAgentRetryWorktree } from "@/lib/agents/retry-allocation";
 import { agentWorkdirPath } from "@/lib/agents/workspace-paths";
-import { agentWorktreeBranchName } from "@/lib/agents/launch";
+import { agentWorktreeBranchName, buildAgentPrompt } from "@/lib/agents/launch";
 import { git } from "@/test-support/git-fixture";
+import * as worktreeLifecycle from "@/lib/worktree";
 import { rearmAgentRetryCleanup } from "@/lib/agents/retry";
 import { mkdtempReal } from "@/test-support/worktree-test-root";
 import { testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 import { seedAgentRun } from "@/test-support/agent-run-seed";
 import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
+import { loadTaskQualificationInput } from "@/lib/tasks/qualification";
+import { qualificationFixture } from "@/test-support/task-qualification";
+import { insertCommand } from "@/lib/execution-host/commands";
+import {
+  prepareAgentRetry,
+  retryRecipeFor,
+  retryDigest,
+} from "@/lib/agents/retry-preparation";
+import { agentRetryIntents } from "@/lib/db/schema";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -68,6 +78,16 @@ async function fixture(workspace: "none" | "worktree" = "none"): Promise<{
     workspace,
     resultContract: null,
   });
+
+  return finishedFixture(runId);
+}
+
+async function finishedFixture(runId: string): Promise<{
+  runId: string;
+  userId: string;
+  projectId: string;
+  runnerId: string;
+}> {
   const [run] = await database.db.select().from(runs).where(eq(runs.id, runId));
   const [session] = await database.db
     .select()
@@ -101,6 +121,441 @@ async function fixture(workspace: "none" | "worktree" = "none"): Promise<{
     runnerId: session.runnerId!,
   };
 }
+
+it("accepts a positively proven operational pre-dispatch failure even when its outcome cause is operational_execution_failed", async () => {
+  const runId = await seedAgentRun(database.db, {
+    runtimeRoot: root,
+    definition:
+      "---\nname: Operator\ndescription: inspect\nkind: operational\ncompletion: {contract: operational_v1}\nmode: session\nworkspace: none\ntriggers: [manual]\nrisk_tier: read_only\nplatform_mcp: false\n---\nInspect.",
+    workspace: "none",
+    resultContract: null,
+    operational: true,
+  });
+  const source = await finishedFixture(runId);
+  const options = await getAgentRetryOptions(database.db, runId, source.userId);
+
+  expect(options).toMatchObject({ eligible: true, reason: null });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT payload->>'failurePhase' phase FROM domain_events WHERE run_id=$1 AND kind='run.failed' ORDER BY occurred_at DESC LIMIT 1",
+        [runId],
+      )
+    ).rows[0].phase,
+  ).toBe("before_dispatch");
+});
+
+async function failedQualificationFixture(): Promise<
+  Awaited<ReturnType<typeof fixture>> & { taskId: string; agentId: string }
+> {
+  const runId = await seedAgentRun(database.db, {
+    runtimeRoot: root,
+    definition:
+      "---\nname: Qualifier\ndescription: qualify\nkind: operational\ncompletion: {contract: operational_v1}\ntask_qualification: {contract: v1, role: qualifier}\nmode: session\nworkspace: repo_read\nworkspace_ref: task_target\ntriggers: [manual, domain_event]\nrisk_tier: read_only\nplatform_mcp: false\n---\nAssess the current task.",
+    workspace: "repo_read",
+    resultContract: null,
+  });
+  const source = await finishedFixture(runId);
+  const taskId = randomUUID();
+  const agent = await database.pool.query(
+    "SELECT agent_id FROM runs WHERE id=$1",
+    [runId],
+  );
+
+  await database.pool.query(
+    "UPDATE package_installs SET manifest=jsonb_build_object('spec',jsonb_build_object('schemaVersion',1,'name',name,'flows','[]'::jsonb,'capabilities','[]'::jsonb,'compat','{\"engine_min\":\"3.10.0\"}'::jsonb),'inventory','{\"skills\":[],\"agents\":[],\"platformAgents\":[\"researcher\"]}'::jsonb) WHERE id=(SELECT package_install_id FROM project_package_attachments WHERE project_id=$1)",
+    [source.projectId],
+  );
+  await database.pool.query(
+    "INSERT INTO tasks(id,project_id,number,title,prompt,triage_status) VALUES ($1,$2,1,'Imported issue','Inspect the issue','triaged')",
+    [taskId, source.projectId],
+  );
+  await database.pool.query(
+    "UPDATE projects SET task_qualification_override='required' WHERE id=$1",
+    [source.projectId],
+  );
+  await database.pool.query(
+    "UPDATE runs SET task_id=$2,trigger_source='domain_event',trigger_payload='{\"kind\":\"task.created\"}' WHERE id=$1",
+    [runId, taskId],
+  );
+  await database.pool.query(
+    "UPDATE run_sessions SET acp_session_id='legacy-failed-claude-session' WHERE run_id=$1",
+    [runId],
+  );
+
+  return { ...source, taskId, agentId: agent.rows[0].agent_id as string };
+}
+
+it("prepares a fresh current-task qualification for a legacy failed triager, opts the task in, and prevents duplicate old-run attempts", async () => {
+  const source = await failedQualificationFixture();
+  const options = await getAgentRetryOptions(
+    database.db,
+    source.runId,
+    source.userId,
+  );
+
+  expect(options).toMatchObject({
+    eligible: true,
+    reason: null,
+    strategy: "fresh_qualification",
+    qualificationOptIn: true,
+    selectedRunnerId: source.runnerId,
+  });
+  const request = {
+    runnerId: source.runnerId,
+    requestKey: randomUUID(),
+    previewFingerprint: options.previewFingerprint,
+    strategy: "fresh_qualification",
+  };
+  const receipt = await acceptAgentRetry(
+    database.db,
+    source.runId,
+    source.userId,
+    request,
+  );
+
+  expect(receipt.intentState).toBe("accepted");
+  expect(
+    (
+      await database.pool.query(
+        "SELECT qualification_mode,qualification_input_revision FROM tasks WHERE id=$1",
+        [source.taskId],
+      )
+    ).rows[0],
+  ).toEqual({
+    qualification_mode: "required",
+    qualification_input_revision: 1,
+  });
+  expect(
+    await acceptAgentRetry(database.db, source.runId, source.userId, request),
+  ).toEqual(receipt);
+  await runAgentRetryAdmissionSweep(database.db);
+  const settled = await getAgentRetryReceipt(
+    database.db,
+    source.runId,
+    receipt.retryIntentId,
+    source.userId,
+  );
+
+  expect(settled).toMatchObject({
+    intentState: "launched",
+    runStatus: "Pending",
+  });
+  const successor = (
+    await database.pool.query(
+      "SELECT task_id,trigger_source,task_qualification_snapshot FROM runs WHERE id=$1",
+      [settled.runId],
+    )
+  ).rows[0];
+
+  expect(successor).toMatchObject({
+    task_id: source.taskId,
+    trigger_source: "manual",
+    task_qualification_snapshot: { role: "qualifier", taskId: source.taskId },
+  });
+  const recipe = (
+    await database.pool.query(
+      "SELECT recipe FROM agent_retry_intents WHERE id=$1",
+      [receipt.retryIntentId],
+    )
+  ).rows[0].recipe;
+
+  expect(successor.task_qualification_snapshot.sha).toBe(
+    recipe.qualificationSha,
+  );
+  const [successorRun] = await database.db
+    .select()
+    .from(runs)
+    .where(eq(runs.id, settled.runId!));
+  expect(successorRun.executionPolicy).toEqual(recipe.policy);
+  expect(successorRun.agentConfig ?? {}).toEqual(recipe.configuration);
+  const prompt = await buildAgentPrompt(
+    database.db,
+    recipe.definition.parsed,
+    successorRun,
+  );
+
+  expect(prompt).toContain("## Fresh qualification request");
+  expect(
+    await buildAgentPrompt(database.db, recipe.definition.parsed, {
+      ...successorRun,
+      agentActivitySnapshot: {
+        ...successorRun.agentActivitySnapshot,
+        retryOrigin: {
+          sourceRunId: source.runId,
+          intentId: receipt.retryIntentId,
+          originalEventId: null,
+        },
+      },
+    }),
+  ).not.toContain("## Fresh qualification request");
+  expect(
+    (
+      await database.pool.query(
+        "SELECT acp_session_id FROM run_sessions WHERE run_id=$1",
+        [source.runId],
+      )
+    ).rows[0].acp_session_id,
+  ).toBe("legacy-failed-claude-session");
+});
+
+it("refuses a fresh assessment if its target moves between delivery preparation and launch", async () => {
+  const source = await failedQualificationFixture();
+  const options = await getAgentRetryOptions(
+    database.db,
+    source.runId,
+    source.userId,
+  );
+  const receipt = await acceptAgentRetry(
+    database.db,
+    source.runId,
+    source.userId,
+    {
+      runnerId: source.runnerId,
+      requestKey: randomUUID(),
+      previewFingerprint: options.previewFingerprint,
+      strategy: "fresh_qualification",
+    },
+  );
+  const resolve = worktreeLifecycle.resolveBaseCommit;
+  let resolutions = 0;
+  const race = vi
+    .spyOn(worktreeLifecycle, "resolveBaseCommit")
+    .mockImplementation(async (input) => {
+      resolutions += 1;
+      if (resolutions === 2)
+        await git(
+          input.projectRepoPath,
+          "commit",
+          "--allow-empty",
+          "-m",
+          "Advance qualification target during launch",
+        );
+
+      return resolve(input);
+    });
+
+  try {
+    await runAgentRetryAdmissionSweep(database.db);
+  } finally {
+    race.mockRestore();
+  }
+  const settled = await getAgentRetryReceipt(
+    database.db,
+    source.runId,
+    receipt.retryIntentId,
+    source.userId,
+  );
+
+  expect(resolutions).toBe(2);
+  expect(settled).toMatchObject({
+    intentState: "refused",
+    refusalReason: "retry_context_changed",
+    runId: null,
+  });
+});
+
+it("uses the changed configured runner and serializes different failed sources for the same task into one assessment", async () => {
+  const source = await failedQualificationFixture();
+  const alternativeId = randomUUID();
+  const alternative = testRunnerSnapshot(alternativeId, "codex");
+
+  await database.db.insert(platformAcpRunners).values({
+    id: alternativeId,
+    adapter: "codex",
+    capabilityAgent: "codex",
+    model: alternative.model,
+    provider: { kind: "openai" },
+    permissionPolicy: "default",
+    readinessStatus: "Ready",
+    readinessReasons: [],
+    enabled: true,
+  });
+  await database.pool.query(
+    "UPDATE agent_project_links SET runner_override_id=$2 WHERE project_id=$1",
+    [source.projectId, alternativeId],
+  );
+  const [original] = await database.db
+    .select()
+    .from(runs)
+    .where(eq(runs.id, source.runId));
+  const otherRunId = randomUUID();
+
+  await database.db.insert(runs).values({ ...original, id: otherRunId });
+  const first = await getAgentRetryOptions(
+    database.db,
+    source.runId,
+    source.userId,
+  );
+  const second = await getAgentRetryOptions(
+    database.db,
+    otherRunId,
+    source.userId,
+  );
+
+  expect(first.selectedRunnerId).toBe(alternativeId);
+  const requests = [
+    { sourceRunId: source.runId, options: first },
+    { sourceRunId: otherRunId, options: second },
+  ];
+  const outcomes = await Promise.allSettled(
+    requests.map((item) =>
+      acceptAgentRetry(database.db, item.sourceRunId, source.userId, {
+        runnerId: alternativeId,
+        requestKey: randomUUID(),
+        previewFingerprint: item.options.previewFingerprint,
+        strategy: "fresh_qualification",
+      }),
+    ),
+  );
+
+  expect(outcomes.filter((item) => item.status === "fulfilled")).toHaveLength(
+    1,
+  );
+  expect(outcomes.find((item) => item.status === "rejected")).toMatchObject({
+    reason: { details: { reason: "retry_task_busy" } },
+  });
+  await runAgentRetryAdmissionSweep(database.db);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int total FROM runs WHERE task_id=$1 AND status='Pending'",
+        [source.taskId],
+      )
+    ).rows[0].total,
+  ).toBe(1);
+});
+
+it("refuses unresolved source commands and active task work", async () => {
+  const unresolved = await failedQualificationFixture();
+  const assignment = (
+    await database.pool.query(
+      "SELECT * FROM execution_assignments WHERE run_id=$1 ORDER BY epoch DESC LIMIT 1",
+      [unresolved.runId],
+    )
+  ).rows[0];
+
+  await insertCommand(database.db, {
+    runId: unresolved.runId,
+    assignmentId: assignment.id,
+    hostId: assignment.execution_host_id,
+    assignmentEpoch: assignment.epoch,
+    kind: "session.cancel",
+    payload: {},
+    maxAttempts: 3,
+  });
+  expect(
+    await getAgentRetryOptions(
+      database.db,
+      unresolved.runId,
+      unresolved.userId,
+    ),
+  ).toMatchObject({ eligible: false, reason: "reconciliation_required" });
+  const active = await failedQualificationFixture();
+  const [old] = await database.db
+    .select()
+    .from(runs)
+    .where(eq(runs.id, active.runId));
+
+  await database.db
+    .insert(runs)
+    .values({ ...old, id: randomUUID(), status: "Running", endedAt: null });
+  expect(
+    await getAgentRetryOptions(database.db, active.runId, active.userId),
+  ).toMatchObject({ eligible: false, reason: "retry_task_busy" });
+});
+
+it.each(["ready", "needs_information"] as const)(
+  "skips an accepted current %s assessment and permits reassessment after repository evidence changes",
+  async (decision) => {
+    const complete = await failedQualificationFixture();
+    const repo = (
+      await database.pool.query("SELECT repo_path FROM projects WHERE id=$1", [
+        complete.projectId,
+      ])
+    ).rows[0].repo_path as string;
+    const sha = (await git(repo, "rev-parse", "main")).trim();
+
+    await database.pool.query(
+      "UPDATE tasks SET qualification_mode='required',triage_status=NULL WHERE id=$1",
+      [complete.taskId],
+    );
+    const input = await loadTaskQualificationInput(
+      database.db,
+      complete.projectId,
+      complete.taskId,
+    );
+    const qualificationId = randomUUID();
+    const assessment = {
+      ...qualificationFixture(),
+      decision,
+      ...(decision === "needs_information"
+        ? {
+            reasonCodes: ["scope_unclear"],
+            nextActions: ["Clarify the requested scope"],
+          }
+        : {}),
+    };
+
+    await database.db.transaction(async (tx) => {
+      await tx.execute(
+        sql`INSERT INTO task_qualifications(id,project_id,task_id,revision,input_revision,input_digest,request_key,payload_digest,author_kind,author_identity,evidence_target,evidence_sha,value,routing,publication_state,published_at) VALUES (${qualificationId},${complete.projectId},${complete.taskId},1,${input.inputRevision},${input.inputDigest},${randomUUID()},${"a".repeat(64)},'project_token','verified-human-token','main',${sha},${JSON.stringify(assessment)}::jsonb,'{"flowId":null,"runnerId":null,"baseBranch":null,"enqueue":false}'::jsonb,'accepted',now())`,
+      );
+      await tx.execute(
+        sql`UPDATE tasks SET current_qualification_id=${qualificationId},current_qualification_revision=1,qualification_revision_counter=1,triage_status=${decision === "ready" ? "triaged" : "flagged"} WHERE id=${complete.taskId}`,
+      );
+    });
+    expect(
+      await getAgentRetryOptions(database.db, complete.runId, complete.userId),
+    ).toMatchObject({ eligible: false, reason: "retry_qualification_current" });
+    await writeFile(
+      path.join(repo, "new-evidence.txt"),
+      "Updated repository evidence",
+    );
+    await git(repo, "add", "new-evidence.txt");
+    await git(repo, "commit", "-m", "Advance qualification target");
+    expect(
+      await getAgentRetryOptions(database.db, complete.runId, complete.userId),
+    ).toMatchObject({ eligible: true, strategy: "fresh_qualification" });
+  },
+);
+
+it("continues an already accepted version-one retry recipe without changing its frozen digest", async () => {
+  const source = await fixture();
+  const prepared = await prepareAgentRetry(
+    database.db,
+    source.runId,
+    source.userId,
+  );
+  const recipe = await retryRecipeFor(database.db, prepared, source.runnerId);
+  const { version: _version, ...current } = recipe;
+  const legacy = {
+    ...current,
+    version: 1 as const,
+    contextDigest: prepared.legacyContextDigest,
+  };
+  const id = randomUUID();
+
+  await database.db.insert(agentRetryIntents).values({
+    id,
+    projectId: source.projectId,
+    sourceAgentId: recipe.agentId,
+    sourceRunId: source.runId,
+    actorIdentity: `user:${source.userId}`,
+    actorUserId: source.userId,
+    requestKey: randomUUID(),
+    requestDigest: retryDigest({ id }),
+    selectedRunnerId: source.runnerId,
+    recipe: legacy,
+    previewFingerprint: prepared.options.previewFingerprint,
+    successorRunId: randomUUID(),
+    dueAt: new Date(Date.now() - 1000),
+  });
+  await runAgentRetryAdmissionSweep(database.db);
+  expect(
+    await getAgentRetryReceipt(database.db, source.runId, id, source.userId),
+  ).toMatchObject({ intentState: "launched", runStatus: "Pending" });
+});
 
 it("IT-UX-14 accepts one immutable retry of a proven pre-work failure, converges replay and concurrent admission, and leaves a capacity-queued child visible", async () => {
   const fixtureData = await fixture();

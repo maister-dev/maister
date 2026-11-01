@@ -2,20 +2,26 @@ import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
 import type { Run } from "@/lib/db/schema";
-import type { AgentRetryRecipe } from "@/lib/agents/retry-types";
+import type {
+  AgentRetryRecipe,
+  AgentRetryStrategy,
+} from "@/lib/agents/retry-types";
 import type { LoadedAgentContext } from "@/lib/agents/launch";
 import type { AgentTriggerSource } from "@/lib/agents/launch";
 
 import { z } from "zod";
 import { and, eq } from "drizzle-orm";
+import pino from "pino";
 
 import { runs, runSessions, platformAcpRunners, tasks } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import {
   assertRetryAuthority,
-  retrySafetyReason,
   retryRefusal,
   retryDigest,
+  retryStrategySafetyReason,
+  qualificationTaskRetryReason,
+  assertQualificationRetryAuthority,
 } from "@/lib/agents/retry-guards";
 export {
   assertRetryAuthority,
@@ -35,8 +41,15 @@ import {
 } from "@/lib/acp-runners/resolve";
 import { resolveAgentConfig } from "@/lib/agents/config";
 import { buildAgentActivitySnapshot } from "@/lib/agents/activity-snapshot";
+import { loadTaskQualificationInput } from "@/lib/tasks/qualification";
+import { resolveBaseCommit } from "@/lib/worktree";
 
 export const RETRY_PREVIEW_WINDOW_MS = 5 * 60_000;
+const log = pino({
+  name: "agent-retry-preview",
+  level: process.env.LOG_LEVEL ?? "info",
+});
+
 export type RetryRunnerOption = {
   id: string;
   label: string;
@@ -49,6 +62,9 @@ export type AgentRetryOptions = {
   expiresAt: string;
   previewFingerprint: string;
   sourceRunnerId: string | null;
+  selectedRunnerId: string | null;
+  strategy: AgentRetryStrategy;
+  qualificationOptIn: boolean;
   existingIntentId: string | null;
   runners: RetryRunnerOption[];
   differences: Array<{
@@ -68,6 +84,8 @@ export type RetryPreparation = {
   resolutions: ReadonlyMap<string, RunnerResolution>;
   taskRevision: number | null;
   contextDigest: string;
+  legacyContextDigest: string;
+  qualificationSha: string | null;
 };
 
 export async function prepareAgentRetry(
@@ -75,6 +93,7 @@ export async function prepareAgentRetry(
   runId: string,
   userId: string,
   now: Date = new Date(),
+  excludeIntentId?: string,
 ): Promise<RetryPreparation> {
   const [source] = await db.select().from(runs).where(eq(runs.id, runId));
 
@@ -106,7 +125,15 @@ export async function prepareAgentRetry(
       payload: source.triggerPayload,
     },
   });
-  let reason = await retrySafetyReason(db, source);
+  const strategy: AgentRetryStrategy =
+    context.effective.parsed.kind === "operational" &&
+    context.effective.parsed.taskQualification?.role === "qualifier" &&
+    context.effective.parsed.mode === "session" &&
+    context.effective.parsed.workspace === "repo_read" &&
+    context.effective.parsed.workspaceRef === "task_target"
+      ? "fresh_qualification"
+      : "pre_work_retry";
+  let reason = await retryStrategySafetyReason(db, source, strategy);
 
   if (context.effective.parsed.flow) reason = "retry_source_unsupported";
   const [task] = source.taskId
@@ -123,9 +150,35 @@ export async function prepareAgentRetry(
 
   if (
     source.taskId &&
-    (!task || task.status !== "Backlog" || task.triageStatus === "triaged")
+    (!task ||
+      task.status !== "Backlog" ||
+      (strategy === "pre_work_retry" && task.triageStatus === "triaged") ||
+      task.qualificationMode === "execution_child")
   )
     reason = "retry_task_changed";
+  let qualificationSha: string | null = null;
+
+  if (strategy === "fresh_qualification" && task) {
+    await assertQualificationRetryAuthority(db, source.projectId, userId);
+    const qualificationInput = await loadTaskQualificationInput(
+      db,
+      source.projectId,
+      task.id,
+    );
+
+    qualificationSha = await resolveBaseCommit({
+      projectRepoPath: context.project.repoPath,
+      baseRef: qualificationInput.target,
+    });
+    const qualificationReason = await qualificationTaskRetryReason(db, {
+      projectId: source.projectId,
+      taskId: task.id,
+      qualificationSha,
+      excludeIntentId,
+    });
+
+    if (!reason) reason = qualificationReason;
+  }
   const catalog = await db
     .select()
     .from(platformAcpRunners)
@@ -174,6 +227,29 @@ export async function prepareAgentRetry(
   });
 
   if (!resolutions.size && reason === null) reason = "retry_runner_unavailable";
+  let selectedRunnerId: string | null = null;
+
+  try {
+    const currentRunner = await resolveRunnerForAgent(
+      db,
+      context,
+      undefined,
+      context.effective.parsed.workspace,
+    );
+
+    selectedRunnerId = currentRunner.runnerId;
+  } catch (error) {
+    if (!(error instanceof MaisterError)) throw error;
+    log.warn(
+      {
+        runId,
+        projectId: source.projectId,
+        code: error.code,
+        reason: error.details?.reason ?? null,
+      },
+      "[FIX:agent-retry] configured runner unavailable for retry preview",
+    );
+  }
   const [sourceSession] = await db
     .select({ runnerId: runSessions.runnerId })
     .from(runSessions)
@@ -186,7 +262,7 @@ export async function prepareAgentRetry(
     context.link.config ?? null,
   );
   const taskRevision = task?.qualificationInputRevision ?? null;
-  const contextDigest = retryDigest({
+  const contextValues = {
     definition,
     configuration,
     taskRevision,
@@ -200,6 +276,12 @@ export async function prepareAgentRetry(
     },
     policy: resolveAgentContextExecutionPolicy(context),
     runners: [...resolutions.values()].map((value) => value.runnerSnapshot),
+  };
+  const legacyContextDigest = retryDigest(contextValues);
+  const contextDigest = retryDigest({
+    ...contextValues,
+    strategy,
+    qualificationSha,
   });
   const bucket = Math.floor(now.getTime() / RETRY_PREVIEW_WINDOW_MS);
   const differences: AgentRetryOptions["differences"] = [];
@@ -254,12 +336,19 @@ export async function prepareAgentRetry(
     resolutions,
     taskRevision,
     contextDigest,
+    legacyContextDigest,
+    qualificationSha,
     options: {
       eligible: reason === null,
       reason,
       expiresAt: new Date((bucket + 1) * RETRY_PREVIEW_WINDOW_MS).toISOString(),
       previewFingerprint: retryDigest({ runId, userId, contextDigest, bucket }),
       sourceRunnerId: sourceSession?.runnerId ?? null,
+      selectedRunnerId,
+      strategy,
+      qualificationOptIn:
+        strategy === "fresh_qualification" &&
+        task?.qualificationMode === "legacy",
       existingIntentId: null,
       runners,
       differences,
@@ -284,7 +373,9 @@ export async function retryRecipeFor(
     throw retryRefusal("retry_runner_unavailable");
 
   return {
-    version: 1,
+    version: 2,
+    strategy: preparation.options.strategy,
+    qualificationSha: preparation.qualificationSha,
     agentId: source.sourceAgentId ?? source.agentId!,
     projectId: source.projectId,
     taskId: source.taskId,

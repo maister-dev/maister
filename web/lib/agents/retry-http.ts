@@ -16,6 +16,7 @@ export function agentRetryErrorResponse(error: unknown): NextResponse {
       typeof error.details?.reason === "string" ? error.details.reason : null;
     const status =
       reason === "retry_source_unavailable" ||
+      reason === "retry_batch_source_unavailable" ||
       reason === "retry_intent_unavailable"
         ? 404
         : error.code === "CONFIG"

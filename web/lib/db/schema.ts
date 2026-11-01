@@ -9534,7 +9534,7 @@ export const agentRetryIntents = pgTable(
     ),
     recipeCheck: check(
       "agent_retry_recipe_check",
-      sql`(jsonb_typeof(${t.recipe}) = 'object' AND ${t.recipe}->'version' = '1'::jsonb AND ${t.recipe}->>'agentId' = ${t.sourceAgentId} AND ${t.recipe}->>'projectId' = ${t.projectId} AND ${t.requestDigest} ~ '^[a-f0-9]{64}$' AND ${t.previewFingerprint} ~ '^[a-f0-9]{64}$' AND pg_column_size(${t.recipe}) <= 1048576) IS TRUE`,
+      sql`(jsonb_typeof(${t.recipe}) = 'object' AND ${t.recipe}->'version' IN ('1'::jsonb,'2'::jsonb) AND (${t.recipe}->'version' = '1'::jsonb OR ${t.recipe}->>'strategy' IN ('pre_work_retry','fresh_qualification')) AND ${t.recipe}->>'agentId' = ${t.sourceAgentId} AND ${t.recipe}->>'projectId' = ${t.projectId} AND ${t.requestDigest} ~ '^[a-f0-9]{64}$' AND ${t.previewFingerprint} ~ '^[a-f0-9]{64}$' AND pg_column_size(${t.recipe}) <= 1048576) IS TRUE`,
     ),
     stateCheck: check(
       "agent_retry_state_check",

@@ -357,10 +357,13 @@ export async function prepareUndispatchedAgentFailure(
   runId: string,
   opts: AgentFinalizeOptions,
 ): Promise<PreparedAgentFinalization> {
-  const prepared = await prepareAgentFinalization(runId, "Failed", opts, [
-    "Pending",
-    "Running",
-  ]);
+  const prepared = await prepareAgentFinalization(
+    runId,
+    "Failed",
+    opts,
+    ["Pending", "Running"],
+    { failurePhase: "before_dispatch" },
+  );
 
   return {
     afterCommit: prepared.afterCommit,
@@ -428,6 +431,7 @@ async function prepareAgentFinalization(
   outcome: AgentTerminalOutcome,
   opts: AgentFinalizeOptions,
   sourceStatuses: Run["status"][],
+  failureEvidence?: { failurePhase: "before_dispatch" },
 ): Promise<PreparedAgentFinalization> {
   const _db = opts.db ?? getDb();
 
@@ -1019,6 +1023,7 @@ async function prepareAgentFinalization(
               }
             : {}),
           ...(opts.reason ? { reason: opts.reason } : {}),
+          ...failureEvidence,
           ...(resultDecision.kind === "invalid"
             ? {
                 reason:

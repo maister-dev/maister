@@ -3,8 +3,9 @@ import type { EffectiveAgentDefinition } from "@/lib/agents/effective";
 import type { AgentTriggerSource } from "@/lib/agents/launch";
 import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 
-export type AgentRetryRecipe = {
-  version: 1;
+export type AgentRetryStrategy = "pre_work_retry" | "fresh_qualification";
+
+type AgentRetryRecipeFields = {
   agentId: string;
   projectId: string;
   taskId: string | null;
@@ -25,6 +26,22 @@ export type AgentRetryRecipe = {
     branchBase: string | null;
   };
 };
+
+export type AgentRetryRecipe = AgentRetryRecipeFields &
+  (
+    | { version: 1 }
+    | {
+        version: 2;
+        strategy: AgentRetryStrategy;
+        qualificationSha: string | null;
+      }
+  );
+
+export function retryRecipeStrategy(
+  recipe: AgentRetryRecipe,
+): AgentRetryStrategy {
+  return recipe.version === 2 ? recipe.strategy : "pre_work_retry";
+}
 
 export type AgentRetryAllocation = {
   version: 1;
