@@ -114,7 +114,7 @@ beforeEach(async () => {
   );
 });
 
-describe("loadRunPublicResult gates the payload on the derived status", () => {
+describe("IT-PKD-03: loadRunPublicResult gates the payload on the derived status", () => {
   it("serves the value for a Review run holding a valid result", async () => {
     const runId = await seedRun("Review");
 

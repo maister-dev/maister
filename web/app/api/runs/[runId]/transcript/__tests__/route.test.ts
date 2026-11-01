@@ -68,6 +68,7 @@ beforeEach(() => {
     status: "projected",
     nodeAttempts: 1,
     rowsUpserted: 1,
+    throughSequence: null,
   });
   vi.mocked(getRunNodeTranscript).mockResolvedValue({
     messages: [

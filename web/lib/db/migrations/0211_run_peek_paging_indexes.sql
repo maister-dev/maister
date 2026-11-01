@@ -1,0 +1,3 @@
+CREATE INDEX "run_messages_peek_node_order_idx" ON "run_messages" USING btree ("run_id","node_attempt_id",(coalesce("supervisor_event_id", '0')::bigint),("prompt_dispatch_key" IS NOT NULL),"sequence","id") WHERE "run_messages"."node_attempt_id" IS NOT NULL;--> statement-breakpoint
+CREATE INDEX "run_messages_peek_run_order_idx" ON "run_messages" USING btree ("run_id","created_at","sequence","id");--> statement-breakpoint
+CREATE INDEX "runs_peek_parent_launch_idx" ON "runs" USING btree ("parent_run_id","launched_at","id");

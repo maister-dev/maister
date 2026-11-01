@@ -228,6 +228,7 @@ async function readProjectionEvents(
   after: bigint | null,
   limit: number,
   byteLimit: number,
+  throughSequence?: bigint,
 ): Promise<ExecutionEvent[]> {
   const candidates = await tx
     .select({
@@ -239,6 +240,9 @@ async function readProjectionEvents(
       and(
         eq(executionEvents.runId, runId),
         gt(executionEvents.runSequence, after ?? -1n),
+        throughSequence === undefined
+          ? undefined
+          : sql`${executionEvents.runSequence} <= ${throughSequence}`,
         eq(executionEvents.ingestDisposition, "accepted"),
       ),
     )
@@ -274,6 +278,7 @@ export async function projectExecutionEvents(input: {
   batchSize?: number;
   limits?: ProjectionLimits;
   signal?: AbortSignal;
+  throughSequence?: bigint;
 }): Promise<ExecutionEventProjectorSummary> {
   // A worker label is reusable; a claim token never is.
   const owner = `${input.owner ?? "execution-event-projector"}:${randomUUID()}`;
@@ -300,6 +305,7 @@ export async function applyClaimedExecutionProjection(input: {
   batchSize?: number;
   limits?: ProjectionLimits;
   signal?: AbortSignal;
+  throughSequence?: bigint;
 }): Promise<ExecutionEventProjectorSummary> {
   const owner = input.claim.claimOwner;
   const claim = input.claim;
@@ -332,6 +338,7 @@ export async function applyClaimedExecutionProjection(input: {
         claim.lastRunSequence,
         batchSize,
         limits.batchBytes,
+        input.throughSequence,
       ),
     );
     const prepared: ExecutionEvent[] = [];
@@ -412,6 +419,7 @@ export async function applyClaimedExecutionProjection(input: {
             consumer.lastRunSequence,
             batchSize,
             limits.batchBytes,
+            input.throughSequence,
           ));
         let last = consumer.lastRunSequence;
         let projected = 0;

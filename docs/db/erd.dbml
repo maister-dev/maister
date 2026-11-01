@@ -2407,6 +2407,8 @@ table run_messages {
   created_at "timestamp with time zone" [not null, default: `now()`]
 
   indexes {
+    (run_id, node_attempt_id, supervisor_event_id, prompt_dispatch_key, sequence, id) [name: 'run_messages_peek_node_order_idx']
+    (run_id, created_at, sequence, id) [name: 'run_messages_peek_run_order_idx']
     (run_id, node_attempt_id, projection_tool_key, sequence) [name: 'run_messages_projection_tool_idx']
     (run_id, node_attempt_id, sequence) [name: 'run_messages_run_node_attempt_sequence_uq', unique]
     via_operation_id [name: 'run_messages_via_operation_uq', unique]
@@ -2671,6 +2673,7 @@ table runs {
     (project_id, status, run_kind) [name: 'runs_project_status_kind_idx']
     task_id [name: 'runs_task_idx']
     (run_kind, task_id) [name: 'runs_kind_task_idx']
+    (parent_run_id, launched_at, id) [name: 'runs_peek_parent_launch_idx']
     parent_run_id [name: 'runs_parent_run_id_idx']
     root_run_id [name: 'runs_root_run_id_idx']
     promoted_head_sha [name: 'runs_promoted_head_sha_idx']

@@ -3,6 +3,8 @@ import "server-only";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 
+import { peekQuery, peekResponse, parsePeekRunId } from "@/lib/runs/peek-http";
+import { readTranscriptPage } from "@/lib/runs/transcript-page";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { compileManifest } from "@/lib/flows/graph/compile";
@@ -66,6 +68,28 @@ export async function GET(
   { params }: RouteParams,
 ): Promise<NextResponse> {
   const { runId } = await params;
+
+  if (
+    ["limit", "before", "after", "windowBefore", "windowAfter", "through"].some(
+      (key) => new URL(req.url).searchParams.has(key),
+    )
+  ) {
+    return peekResponse((userId) =>
+      readTranscriptPage(
+        userId,
+        parsePeekRunId(runId),
+        peekQuery(req, [
+          "node",
+          "limit",
+          "before",
+          "after",
+          "windowBefore",
+          "windowAfter",
+          "through",
+        ]),
+      ),
+    );
+  }
 
   try {
     await requireActiveSession();

@@ -2390,6 +2390,11 @@ export const runs = pgTable(
     ),
     idxTask: index("runs_task_idx").on(t.taskId),
     idxKindTask: index("runs_kind_task_idx").on(t.runKind, t.taskId),
+    idxPeekParentLaunch: index("runs_peek_parent_launch_idx").on(
+      t.parentRunId,
+      t.launchedAt.asc().nullsLast(),
+      t.id,
+    ),
     idxParentRun: index("runs_parent_run_id_idx").on(t.parentRunId),
     idxRootRun: index("runs_root_run_id_idx").on(t.rootRunId),
     idxPromotedHeadSha: index("runs_promoted_head_sha_idx")
@@ -5624,6 +5629,22 @@ export const runMessages = pgTable(
       .defaultNow(),
   },
   (t) => ({
+    idxPeekNodeOrder: index("run_messages_peek_node_order_idx")
+      .on(
+        t.runId,
+        t.nodeAttemptId,
+        sql`(coalesce(${t.supervisorEventId}, '0')::bigint)`,
+        sql`(${t.promptDispatchKey} IS NOT NULL)`,
+        t.sequence,
+        t.id,
+      )
+      .where(sql`${t.nodeAttemptId} IS NOT NULL`),
+    idxPeekRunOrder: index("run_messages_peek_run_order_idx").on(
+      t.runId,
+      t.createdAt,
+      t.sequence,
+      t.id,
+    ),
     idxProjectionTool: index("run_messages_projection_tool_idx")
       .on(t.runId, t.nodeAttemptId, t.projectionToolKey, t.sequence.desc())
       .where(sql`${t.projectionToolKey} IS NOT NULL`),

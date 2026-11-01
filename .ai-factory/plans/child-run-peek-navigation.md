@@ -334,7 +334,7 @@ Phase-0 exit: `pnpm validate:docs`, `pnpm validate:contracts` and the run-peek t
 
 ### Phase 1 — Bounded authorized reads
 
-- [ ] **T2. Build ancestry-safe child pages and selected snapshots through TDD.** Depends on T1.1–T1.3.
+- [x] **T2. Build ancestry-safe child pages and selected snapshots through TDD.** Depends on T1.1–T1.3.
 
   - Targets: new `web/lib/runs/{peek-types,peek-read-model}.ts`, bounded helpers in `web/lib/queries/run.ts`; new `web/app/api/runs/[runId]/{children,peek}/route.ts`.
   - RED: `IT-PKD-01/02/04/05/10` and `IT-PKN-05` in new `web/app/api/runs/[runId]/peek/__tests__/reads.integration.test.ts` and `web/lib/runs/__tests__/peek-read-model.integration.test.ts`. Positive HTTP/read cases must fail for the missing behavior; paired concealment/empty/no-mutation controls may already pass.
@@ -342,7 +342,7 @@ Phase-0 exit: `pnpm validate:docs`, `pnpm validate:contracts` and the run-peek t
   - REFACTOR: remove duplicated auth/relationship projection only where genuinely shared, then rerun owners and existing result DTO integration (`IT-PKD-03`). Never weaken per-content permissions or substitute root-ID equality for ancestry.
   - Logs: WARN typed refusals using safe resource disclosure; ERROR queries with correlation/operation/safe IDs; no DTO bodies.
 
-- [ ] **T3. Add paging indexes and bounded transcript windows through TDD.** Depends on T1.1–T1.3,T2; reuses T2's HTTP/auth fixture conventions.
+- [x] **T3. Add paging indexes and bounded transcript windows through TDD.** Depends on T1.1–T1.3,T2; reuses T2's HTTP/auth fixture conventions.
   - Targets: `web/lib/db/schema.ts`; migration `0210_run_peek_paging_indexes.sql`, journal and `0210_snapshot.json`; `web/lib/runs/run-transcript-projector.ts`, new `transcript-page.ts`, existing transcript route and shared DTOs; owned DB narrative/ERD references.
   - RED: `IT-PKD-06` extends `web/lib/runs/__tests__/run-transcript-projector.integration.test.ts`; `IT-PKD-11` in new `web/lib/db/__tests__/run-peek-migrations.integration.test.ts` first proves the missing indexes/upgrade behavior against 0209. HTTP paging/schema cases use the T2 route owner rather than duplicating all ordering tests.
   - GREEN: exact indexed canonical ordering, byte/count/page limits, explicit preview union, stable windows, latest-attempt cursor reset, usage independence and bounded captured-head projection progress. Preserve legacy API response when paging keys are absent. Test autonomous projection/no-progress/poisoned/late-last-message cases.
@@ -463,3 +463,12 @@ Keep each behavior commit GREEN after its RED/GREEN/REFACTOR receipts; do not la
 - Coverage owner tests: 12 passed; `--group run-peek`: 43 planned requirements/edges, 7 implementation tasks mapped bidirectionally.
 - Wire refinement: poisoned projection is an explicit 409; successful page projection has caught_up/pending only. Legacy standalone transcript response is documented as actually emitted.
 - Primary tests remain Planned until the owning slice executes RED/GREEN/REFACTOR. No behavioral implementation is marked complete.
+
+### Phase 1 — bounded read slices
+
+- T2 RED: real route assertions failed (12 failed/3 passed) against the explicit unimplemented read boundary, `/private/tmp/peek-t2-red.log`. GREEN: 15 passed, then expanded role/hierarchy/Flow controls.
+- T3 RED: `IT-PKD-06` expected a successful bounded page and received 400; `IT-PKD-11` expected three paging indexes and received none on 0209. Fixtures and PostgreSQL startup were already valid.
+- GREEN/REFACTOR: final read/migration owners: 27 passed; legacy transcript/result owners passed in the four-file run (32 tests before the additional edge cases). Snapshot-isolated message reads prevent concurrent updates from producing partial full records. Captured-head tests follow bounded progress rather than assuming every soft-deadline quantum consumes 100 events.
+- Migration 0210: generated snapshot/journal and three indexes; fresh installs and normal-migrator 0209 upgrades tested, retained rows unchanged, invalid indexed legacy positions refuse transactionally, forward retry succeeds, repeated migration leaves ledger unchanged.
+- `db:generate`: no schema changes. DBML regenerated and `validate:docs` passes. Typecheck and scoped ESLint pass (format-only cleanup remains before commit).
+- Full web unit checkpoint: 884 files / 9,234 passed. Complete integration regression is running in the background; this is not a claimed phase-exit receipt. Cross-process delivery work may proceed after the read-owner gates while that wider regression qualifies the checkpoint.

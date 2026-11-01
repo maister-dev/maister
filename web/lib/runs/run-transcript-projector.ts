@@ -25,6 +25,7 @@ export type ProjectRunTranscriptResult = {
   status: "projected" | "missing-run" | "missing-events" | "unchanged";
   nodeAttempts: number;
   rowsUpserted: number;
+  throughSequence: string | null;
 };
 
 // Reads may help with one bounded quantum. The autonomous worker owns eventual
@@ -32,12 +33,14 @@ export type ProjectRunTranscriptResult = {
 async function projectCanonicalRunTranscript(
   runId: string,
   client: DbClient,
+  throughSequence?: bigint,
 ): Promise<ProjectRunTranscriptResult> {
   const attempts = new Set<string>();
   let changed = 0;
   const summary = await projectExecutionEvents({
     db: client,
     runId,
+    throughSequence,
     projector: {
       consumerName: CANONICAL_PROJECTION_CONSUMERS.transcript,
       prepare: prepareTranscriptContent,
@@ -72,6 +75,7 @@ async function projectCanonicalRunTranscript(
           : "unchanged",
     nodeAttempts: rowsUpserted > 0 ? attempts.size : 0,
     rowsUpserted,
+    throughSequence: summary.lastRunSequence,
   };
 }
 
@@ -79,7 +83,11 @@ async function projectCanonicalRunTranscript(
 // runtime files are imported before cutover; this runtime path never reads one.
 export async function projectRunTranscript(
   runId: string,
-  opts: { client?: DbClient; runtimeRoot?: string } = {},
+  opts: {
+    client?: DbClient;
+    runtimeRoot?: string;
+    throughSequence?: bigint;
+  } = {},
 ): Promise<ProjectRunTranscriptResult> {
   const client = opts.client ?? db();
   const [run] = await client
@@ -87,9 +95,15 @@ export async function projectRunTranscript(
     .from(runs)
     .where(eq(runs.id, runId));
 
-  if (!run) return { status: "missing-run", nodeAttempts: 0, rowsUpserted: 0 };
+  if (!run)
+    return {
+      status: "missing-run",
+      nodeAttempts: 0,
+      rowsUpserted: 0,
+      throughSequence: null,
+    };
 
-  return projectCanonicalRunTranscript(runId, client);
+  return projectCanonicalRunTranscript(runId, client, opts.throughSequence);
 }
 
 export type RunNodeTranscript = {
