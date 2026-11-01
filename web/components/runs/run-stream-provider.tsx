@@ -29,6 +29,22 @@ export function RunStreamProvider({
   });
 
   return (
+    <RunStreamValueProvider runId={runId} stream={stream}>
+      {children}
+    </RunStreamValueProvider>
+  );
+}
+
+export function RunStreamValueProvider({
+  runId,
+  stream,
+  children,
+}: {
+  runId: string;
+  stream: UseRunStreamResult;
+  children: ReactNode;
+}): ReactNode {
+  return (
     <RunStreamContext.Provider value={{ runId, stream }}>
       {children}
     </RunStreamContext.Provider>
@@ -40,9 +56,12 @@ export function useRunPageStream(
   live: boolean,
 ): UseRunStreamResult {
   const context = useContext(RunStreamContext);
-  const fallback = useRunStream(context ? null : live ? runId : null, {
-    retain: false,
-  });
+  const fallback = useRunStream(
+    context?.runId === runId ? null : live ? runId : null,
+    {
+      retain: false,
+    },
+  );
 
   if (context?.runId === runId) return context.stream;
 

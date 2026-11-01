@@ -353,7 +353,7 @@ Phase exit: actual collection and RED/GREEN/REFACTOR receipts exist; the complet
 
 ### Phase 2 — Push delivery without connection exhaustion
 
-- [ ] **T4. Install complete transactional hints and the shared listener through TDD.** Depends on T1.1–T1.3 and T3 (migration order).
+- [x] **T4. Install complete transactional hints and the shared listener through TDD.** Depends on T1.1–T1.3 and T3 (migration order).
 
   - Targets: migration `0211_run_peek_notifications.sql`, journal/`0211_snapshot.json`; new `web/lib/runs/peek-wake.ts`; minimum DB client shutdown integration.
   - RED: `IT-PKD-08/09` in new `web/lib/runs/__tests__/peek-wake.integration.test.ts`; complete `IT-PKD-11` in the same migration owner. Exercise separate writer/listener clients/processes, delayed sequence acceptance and delayed autonomous projection, not just local events.
@@ -361,7 +361,7 @@ Phase exit: actual collection and RED/GREEN/REFACTOR receipts exist; the complet
   - REFACTOR: combine repeated safe notification composition; rerun rollback/noise controls, deletion/shared-workspace mapping, listener loss/claim race/abort/shutdown and query-pool-max-one progress. Test real migration SQL; handwritten test triggers do not qualify production migration wiring.
   - Logs: INFO listener ready/recovered/stopped with counts, WARN bounded retry/disconnect, ERROR exhaustion/catalog mismatch. Every acquired client/waiter has explicit release paths.
 
-- [ ] **T5. Supply one workbench SSE with isolated Run contexts through TDD.** Depends on T2,T4.
+- [x] **T5. Supply one workbench SSE with isolated Run contexts through TDD.** Depends on T2,T4.
   - Targets: new `web/app/api/runs/[runId]/peek/stream/route.ts`, `web/components/runs/run-workbench-stream-provider.tsx`, `run-children-provider.tsx`; minimal context-value extraction in `run-stream-provider.tsx`; new `web/lib/runs/peek-stream-contract.ts` and `web/lib/use-run-workbench-stream.ts`; `agent-run-transcript.tsx` provider consumption and its existing regression test; shared existing lifecycle/SSE helpers.
   - RED: `IT-PKD-08/09/10` wire cases in new `web/app/api/runs/[runId]/peek/__tests__/stream.integration.test.ts`. Validate real frames, auth races, ready/read dirty ordering, terminal result/projection after last event, child denial retaining parent and body cancellation cleanup. Browser E2E-PKD-12 starts in T6 when real panel wiring exists, not as a forward dependency of T5.
   - GREEN: one tick-only physical channel serving authorized parent/current child plus tree invalidation; no direct duplicate Run source in the workbench. Distinct context/generation state, canonical reload on ready/resync and child-channel removal on access loss. Retain legacy canonical SSE unchanged. Add no replay or per-descendant transcript subscription.
@@ -472,3 +472,12 @@ Keep each behavior commit GREEN after its RED/GREEN/REFACTOR receipts; do not la
 - Migration 0210: generated snapshot/journal and three indexes; fresh installs and normal-migrator 0209 upgrades tested, retained rows unchanged, invalid indexed legacy positions refuse transactionally, forward retry succeeds, repeated migration leaves ledger unchanged.
 - `db:generate`: no schema changes. DBML regenerated and `validate:docs` passes. Typecheck and scoped ESLint pass (format-only cleanup remains before commit).
 - Full web unit checkpoint: 884 files / 9,234 passed. Complete integration regression is running in the background; this is not a claimed phase-exit receipt. Cross-process delivery work may proceed after the read-owner gates while that wider regression qualifies the checkpoint.
+
+### Phase 2 — shared push delivery
+
+- T4 RED: `IT-PKD-08/09` failed at the absent listener boundary against migrated PostgreSQL. GREEN: four real database scenarios cover commit/rollback/noise, pool maximum one, all six source tables, external Node writer, late acceptance UPDATE, projected-message INSERT/UPDATE, shared workspace removal, listener termination/reacquisition, incomplete catalogs and owned-client release.
+- T5 RED: both real-response SSE tests expected 200 and received the unimplemented 503. GREEN/REFACTOR: actual serialized frames validate against the published AsyncAPI schema; child-only ticks, descendant creation, parent grant loss, unavailable child with live parent and cancellation pass. Three stream/listener/migration files: six tests passed before the additional all-sources scenario; final reads/listener run: 30 passed.
+- One process-shared autocommit notification client is created only in the DB module, has explicit shutdown ownership and does not borrow the query pool. Composite hooks retain no canonical payloads; current source/identity guards reject late callbacks. Child metadata cache is bounded to eight 25-row pages; only mounted slices refresh.
+- Full web unit checkpoint: 884 files / 9,234 passed. Legacy transcript route/renderer and migration-journal owners: 32 passed. Completed strict typecheck passed after correcting the installed Drizzle `accessMode` contract and typed fixtures; a formatting race was corrected and owner tests rerun before finalizing Phase 1 as `c8c563a32`.
+- Contract validation passed. Complete integration regression continues; no final all-suite/phase-exit pass is claimed yet.
+- Browser setup refusal (invalid activity snapshot fixture) was a setup failure, not RED. After using persisted delegation metadata, E2E-PKN-01/03/07 reached the real current UI and failed because clicking the child navigated to its full Run instead of retaining the anchor. This is the T6 navigation RED oracle.

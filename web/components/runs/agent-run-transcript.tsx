@@ -11,7 +11,7 @@ import {
   type TranscriptMessage,
 } from "@/components/run-transcript/transcript-view";
 import { CHANGE_SUMMARY_REFRESH_DEBOUNCE_MS } from "@/lib/runs/live-inspector";
-import { useRunStream } from "@/lib/use-run-stream";
+import { useRunPageStream } from "@/components/runs/run-stream-provider";
 
 function buildTranscriptLabels(
   labels: NodeTranscriptPanelLabels,
@@ -53,7 +53,7 @@ export function AgentRunTranscript({
   const [messages, setMessages] = useState<TranscriptMessage[] | null>(
     initialMessages ?? null,
   );
-  const { eventCount } = useRunStream(live ? runId : null, { retain: false });
+  const { eventCount } = useRunPageStream(runId, live);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reqIdRef = useRef(0);
 

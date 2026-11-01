@@ -53,37 +53,41 @@ export async function peekResponse<T>(
       headers: { "Cache-Control": "private, no-store" },
     });
   } catch (error) {
-    const code = isMaisterError(error) ? error.code : "CRASH";
-    const reason =
-      isMaisterError(error) && typeof error.details?.reason === "string"
-        ? error.details.reason
-        : "read_failed";
-    const status =
-      httpStatusForAuthz(code) ??
-      (reason === "run_unavailable"
-        ? 404
-        : code === "CONFIG"
-          ? 400
-          : code === "PRECONDITION" || code === "CONFLICT"
-            ? 409
-            : code === "EXECUTOR_UNAVAILABLE"
-              ? 503
-              : 500);
-
-    if (status >= 500)
-      log.error({ err: error, code, reason }, "peek read failed");
-    else log.warn({ code, reason, status }, "peek read refused");
-
-    return NextResponse.json(
-      {
-        code,
-        reason,
-        message:
-          status >= 500
-            ? "Run content could not be loaded"
-            : "Run content is unavailable",
-      },
-      { status, headers: { "Cache-Control": "private, no-store" } },
-    );
+    return peekFailure(error);
   }
+}
+
+export function peekFailure(error: unknown): NextResponse {
+  const code = isMaisterError(error) ? error.code : "CRASH";
+  const reason =
+    isMaisterError(error) && typeof error.details?.reason === "string"
+      ? error.details.reason
+      : "read_failed";
+  const status =
+    httpStatusForAuthz(code) ??
+    (reason === "run_unavailable"
+      ? 404
+      : code === "CONFIG"
+        ? 400
+        : code === "PRECONDITION" || code === "CONFLICT"
+          ? 409
+          : code === "EXECUTOR_UNAVAILABLE"
+            ? 503
+            : 500);
+
+  if (status >= 500)
+    log.error({ err: error, code, reason }, "peek read failed");
+  else log.warn({ code, reason, status }, "peek read refused");
+
+  return NextResponse.json(
+    {
+      code,
+      reason,
+      message:
+        status >= 500
+          ? "Run content could not be loaded"
+          : "Run content is unavailable",
+    },
+    { status, headers: { "Cache-Control": "private, no-store" } },
+  );
 }

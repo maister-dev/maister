@@ -1,7 +1,7 @@
 import "server-only";
 
 import { drizzle } from "drizzle-orm/node-postgres";
-import { Pool } from "pg";
+import { Client, Pool } from "pg";
 import pino from "pino";
 
 import { maskDbUrl, resolvePostgresDbUrl } from "./postgres-url";
@@ -58,7 +58,32 @@ export function getDb(): ReturnType<typeof buildClient> {
   return cached;
 }
 
+const shutdownCallbacks = new Set<() => Promise<void>>();
+
+/** Notification clients are autocommit and never borrow a query-pool slot. */
+export function createDbNotificationClient(): Client {
+  if (closing)
+    throw new MaisterError(
+      "EXECUTOR_UNAVAILABLE",
+      "web database is shutting down",
+    );
+
+  return new Client({
+    connectionString: resolvePostgresDbUrl(),
+    application_name: "maister-run-peek",
+  });
+}
+
+export function registerDbShutdown(callback: () => Promise<void>): () => void {
+  shutdownCallbacks.add(callback);
+
+  return () => {
+    shutdownCallbacks.delete(callback);
+  };
+}
+
 export async function closeDb(): Promise<void> {
+  await Promise.all([...shutdownCallbacks].map((callback) => callback()));
   if (cached === null) return;
 
   const client = cached.$client;
