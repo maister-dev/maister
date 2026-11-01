@@ -7474,15 +7474,28 @@ paths:
           schema: { type: string }
         - name: node
           in: query
-          required: true
+          required: false
           description: Node id belonging to this run's compiled flow graph.
           schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200 }
+        - name: before
+          in: query
+          schema: { type: string, maxLength: 2048 }
+        - name: after
+          in: query
+          schema: { type: string, maxLength: 2048 }
       responses:
         "200":
           description: Ordered transcript for the node's latest attempt.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/RunTranscriptResponse" }
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/RunTranscriptResponse"
+                  - $ref: "#/components/schemas/RunStandaloneTranscriptResponse"
+                  - $ref: "#/components/schemas/RunTranscriptPage"
         "400":
           $ref: "#/components/responses/Config"
         "401":
@@ -18311,8 +18324,256 @@ paths:
         "404": *a4
         "409": *a5
 
+  /api/runs/{runId}/children:
+    get:
+      tags:
+        - runs
+      summary: Designed — read-only child Run peek
+      description: "Auth.js active session required before resource lookup. Derive projects from persisted
+        Runs. Enforce readBoard and independent descendant ancestry; protected transcript/evidence
+        requires readRepoFiles. No lifecycle or result-collection writes. Cache-Control: private,
+        no-store. See run-peek-data.md for limits and refusal semantics."
+      operationId: getRunPeekChildren
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: parent
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 25
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 2048
+      responses:
+        "200":
+          description: Authorized no-store projection.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunPeekChildPage"
+        "400":
+          description: Explicit typed refusal or unavailable service.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunPeekError"
+        "401":
+          description: Explicit typed refusal or unavailable service.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunPeekError"
+        "403":
+          description: Explicit typed refusal or unavailable service.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunPeekError"
+        "404":
+          description: Explicit typed refusal or unavailable service.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunPeekError"
+        "409":
+          description: Explicit typed refusal or unavailable service.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunPeekError"
+        "500":
+          description: Explicit typed refusal or unavailable service.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunPeekError"
+        "503":
+          description: Explicit typed refusal or unavailable service.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunPeekError"
+  /api/runs/{runId}/peek:
+    get:
+      tags:
+        - runs
+      summary: Designed — read-only child Run peek
+      description: "Auth.js active session required before resource lookup. Derive projects from persisted
+        Runs. Enforce readBoard and independent descendant ancestry; protected transcript/evidence
+        requires readRepoFiles. No lifecycle or result-collection writes. Cache-Control: private,
+        no-store. See run-peek-data.md for limits and refusal semantics."
+      operationId: getRunPeekSnapshot
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: selected
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: node
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Authorized no-store projection.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunPeekSnapshot"
+        "400":
+          description: Explicit typed refusal or unavailable service.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunPeekError"
+        "401":
+          description: Explicit typed refusal or unavailable service.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunPeekError"
+        "403":
+          description: Explicit typed refusal or unavailable service.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunPeekError"
+        "404":
+          description: Explicit typed refusal or unavailable service.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunPeekError"
+        "409":
+          description: Explicit typed refusal or unavailable service.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunPeekError"
+        "500":
+          description: Explicit typed refusal or unavailable service.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunPeekError"
+        "503":
+          description: Explicit typed refusal or unavailable service.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunPeekError"
+  /api/runs/{runId}/peek/stream:
+    get:
+      tags:
+        - runs
+      summary: Designed — read-only child Run peek
+      description: Designed — one workbench tick-only SSE for the authorized anchor/current child and
+        subtree metadata. Advisory frames have no SSE id or replay cursor. Reconnect forces canonical
+        reads. Child denial retains the readable parent channel. Exact frames live in
+        web-runs.asyncapi.yaml. Connection acquisition failure returns 503 before headers.
+      operationId: subscribeRunPeek
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: selected
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Advisory workbench SSE; no content bodies.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "400":
+          description: Explicit typed refusal or unavailable service.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunPeekError"
+        "401":
+          description: Explicit typed refusal or unavailable service.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunPeekError"
+        "403":
+          description: Explicit typed refusal or unavailable service.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunPeekError"
+        "404":
+          description: Explicit typed refusal or unavailable service.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunPeekError"
+        "409":
+          description: Explicit typed refusal or unavailable service.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunPeekError"
+        "500":
+          description: Explicit typed refusal or unavailable service.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunPeekError"
+        "503":
+          description: Explicit typed refusal or unavailable service.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunPeekError"
+
 components:
   securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: authjs.session-token
+      description: Auth.js active browser session, including secure-cookie deployment variants. No project
+        bearer token grant.
     cronToken:
       type: apiKey
       in: header
@@ -18499,6 +18760,549 @@ components:
             properties:
               ok: { type: boolean, enum: [true] }
   schemas:
+    RunStandaloneTranscriptResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - messages
+        - usage
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/TranscriptMessage"
+        usage:
+          type: object
+          nullable: true
+          required:
+            - used
+            - size
+          properties:
+            used:
+              type: integer
+              minimum: 0
+            size:
+              type: integer
+              minimum: 0
+    RunPeekSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - runId
+        - label
+        - runKind
+        - taskRef
+        - status
+        - resultStatus
+        - launchedAt
+        - startedAt
+        - hasChildren
+        - fullRunHref
+      properties:
+        runId:
+          type: string
+        label:
+          type: string
+        runKind:
+          type: string
+          enum:
+            - flow
+            - agent
+            - scratch
+            - librarian
+        taskRef:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum:
+            - Pending
+            - Running
+            - NeedsInput
+            - NeedsInputIdle
+            - HumanWorking
+            - WaitingOnChildren
+            - Review
+            - Done
+            - Abandoned
+            - Crashed
+            - Failed
+        resultStatus:
+          type: string
+          enum:
+            - pending
+            - valid
+            - absent
+            - missing
+            - stale
+            - invalid
+            - unavailable
+          nullable: true
+        launchedAt:
+          type: string
+          nullable: true
+        startedAt:
+          type: string
+          nullable: true
+        hasChildren:
+          type: boolean
+        fullRunHref:
+          type: string
+      example:
+        runId: 00000000-0000-4000-8000-000000000002
+        label: Research · 00000000
+        runKind: agent
+        taskRef: null
+        status: Running
+        resultStatus: pending
+        launchedAt: 2026-11-02T00:00:00.000Z
+        startedAt: 2026-11-02T00:00:00.000Z
+        hasChildren: false
+        fullRunHref: /runs/00000000-0000-4000-8000-000000000002
+    RunPeekChildPage:
+      type: object
+      additionalProperties: false
+      required:
+        - anchorRunId
+        - parentRunId
+        - items
+        - nextCursor
+        - hasMore
+        - totalCount
+      properties:
+        anchorRunId:
+          type: string
+        parentRunId:
+          type: string
+        items:
+          type: array
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/RunPeekSummary"
+        nextCursor:
+          type: string
+          nullable: true
+        hasMore:
+          type: boolean
+        totalCount:
+          type: integer
+          minimum: 0
+      example:
+        anchorRunId: 00000000-0000-4000-8000-000000000001
+        parentRunId: 00000000-0000-4000-8000-000000000001
+        items:
+          - runId: 00000000-0000-4000-8000-000000000002
+            label: Research · 00000000
+            runKind: agent
+            taskRef: null
+            status: Running
+            resultStatus: pending
+            launchedAt: 2026-11-02T00:00:00.000Z
+            startedAt: 2026-11-02T00:00:00.000Z
+            hasChildren: false
+            fullRunHref: /runs/00000000-0000-4000-8000-000000000002
+        nextCursor: null
+        hasMore: false
+        totalCount: 1
+    RunPeekNode:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - label
+        - type
+        - status
+        - attempt
+        - failure
+        - startedAt
+        - endedAt
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        type:
+          type: string
+        status:
+          type: string
+        attempt:
+          type: integer
+          minimum: 0
+          nullable: true
+        failure:
+          type: string
+          nullable: true
+        startedAt:
+          type: string
+          nullable: true
+        endedAt:
+          type: string
+          nullable: true
+    RunPeekPublicResult:
+      type: object
+      additionalProperties: false
+      required:
+        - operationalOutcome
+        - schemaRef
+        - resultStatus
+        - revision
+        - supersededCount
+        - collectedAt
+        - value
+        - valueBytes
+        - failure
+        - completedWithoutPromotion
+      properties:
+        operationalOutcome:
+          type: object
+          nullable: true
+          additionalProperties: true
+        schemaRef:
+          type: string
+          nullable: true
+        resultStatus:
+          type: string
+          enum:
+            - pending
+            - valid
+            - absent
+            - missing
+            - stale
+            - invalid
+            - unavailable
+        revision:
+          type: integer
+          minimum: 0
+          nullable: true
+        supersededCount:
+          type: integer
+          minimum: 0
+        collectedAt:
+          type: string
+          nullable: true
+        value:
+          nullable: true
+        valueBytes:
+          type: integer
+          minimum: 0
+          nullable: true
+        failure:
+          type: object
+          nullable: true
+          required:
+            - reason
+          properties:
+            reason:
+              type: string
+          additionalProperties: false
+        completedWithoutPromotion:
+          type: boolean
+    RunPeekContent:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required:
+            - kind
+            - availability
+          properties:
+            kind:
+              type: string
+              enum:
+                - conversation
+                - operational
+            availability:
+              type: string
+              enum:
+                - ready
+                - forbidden
+        - type: object
+          additionalProperties: false
+          required:
+            - kind
+            - availability
+            - compatible
+            - incompatibility
+            - nodes
+            - selectedNodeId
+          properties:
+            kind:
+              type: string
+              enum:
+                - flow
+            availability:
+              type: string
+              enum:
+                - ready
+                - incompatible
+            compatible:
+              type: boolean
+            incompatibility:
+              type: object
+              nullable: true
+              additionalProperties: true
+            nodes:
+              type: array
+              items:
+                $ref: "#/components/schemas/RunPeekNode"
+            selectedNodeId:
+              type: string
+              nullable: true
+    RunPeekSnapshot:
+      type: object
+      additionalProperties: false
+      required:
+        - anchorRunId
+        - selectedRunId
+        - breadcrumbs
+        - summary
+        - capabilities
+        - workspace
+        - content
+        - publicResult
+        - fullRunHref
+      properties:
+        anchorRunId:
+          type: string
+        selectedRunId:
+          type: string
+        breadcrumbs:
+          type: array
+          maxItems: 65
+          items:
+            $ref: "#/components/schemas/RunPeekSummary"
+        summary:
+          $ref: "#/components/schemas/RunPeekSummary"
+        capabilities:
+          type: object
+          additionalProperties: false
+          required:
+            - canReadTranscript
+            - canReadEvidence
+          properties:
+            canReadTranscript:
+              type: boolean
+            canReadEvidence:
+              type: boolean
+        workspace:
+          type: string
+          enum:
+            - none
+            - present
+            - removed
+        content:
+          $ref: "#/components/schemas/RunPeekContent"
+        publicResult:
+          $ref: "#/components/schemas/RunPeekPublicResult"
+          nullable: true
+        fullRunHref:
+          type: string
+      example:
+        anchorRunId: 00000000-0000-4000-8000-000000000001
+        selectedRunId: 00000000-0000-4000-8000-000000000002
+        breadcrumbs:
+          - runId: 00000000-0000-4000-8000-000000000001
+            label: Research · 00000000
+            runKind: agent
+            taskRef: null
+            status: Running
+            resultStatus: pending
+            launchedAt: 2026-11-02T00:00:00.000Z
+            startedAt: 2026-11-02T00:00:00.000Z
+            hasChildren: false
+            fullRunHref: /runs/00000000-0000-4000-8000-000000000002
+          - runId: 00000000-0000-4000-8000-000000000002
+            label: Research · 00000000
+            runKind: agent
+            taskRef: null
+            status: Running
+            resultStatus: pending
+            launchedAt: 2026-11-02T00:00:00.000Z
+            startedAt: 2026-11-02T00:00:00.000Z
+            hasChildren: false
+            fullRunHref: /runs/00000000-0000-4000-8000-000000000002
+        summary:
+          runId: 00000000-0000-4000-8000-000000000002
+          label: Research · 00000000
+          runKind: agent
+          taskRef: null
+          status: Running
+          resultStatus: pending
+          launchedAt: 2026-11-02T00:00:00.000Z
+          startedAt: 2026-11-02T00:00:00.000Z
+          hasChildren: false
+          fullRunHref: /runs/00000000-0000-4000-8000-000000000002
+        capabilities:
+          canReadTranscript: true
+          canReadEvidence: true
+        workspace: none
+        content:
+          kind: conversation
+          availability: ready
+        publicResult: null
+        fullRunHref: /runs/00000000-0000-4000-8000-000000000002
+    RunPeekError:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - message
+        - reason
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        reason:
+          type: string
+    RunTranscriptPageMessage:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required:
+            - id
+            - role
+            - content
+            - createdAt
+          properties:
+            id:
+              type: string
+            role:
+              type: string
+              enum:
+                - user
+                - assistant
+                - tool
+                - system
+            content:
+              type: string
+            createdAt:
+              type: string
+              nullable: true
+        - type: object
+          additionalProperties: false
+          required:
+            - id
+            - role
+            - kind
+            - preview
+            - originalBytes
+            - truncated
+            - createdAt
+          properties:
+            id:
+              type: string
+            role:
+              type: string
+              enum:
+                - user
+                - assistant
+                - tool
+                - system
+            kind:
+              type: string
+              enum:
+                - bounded_preview
+            preview:
+              type: string
+            originalBytes:
+              type: integer
+              minimum: 0
+            truncated:
+              type: boolean
+              enum:
+                - true
+            createdAt:
+              type: string
+              nullable: true
+    RunTranscriptPage:
+      type: object
+      additionalProperties: false
+      required:
+        - compatible
+        - incompatibility
+        - messages
+        - usage
+        - attemptId
+        - beforeCursor
+        - afterCursor
+        - hasEarlier
+        - hasLater
+        - window
+        - projection
+      properties:
+        compatible:
+          type: boolean
+        incompatibility:
+          type: object
+          nullable: true
+          additionalProperties: true
+        messages:
+          type: array
+          maxItems: 200
+          items:
+            $ref: "#/components/schemas/RunTranscriptPageMessage"
+        usage:
+          type: object
+          nullable: true
+          additionalProperties: false
+          required:
+            - used
+            - size
+          properties:
+            used:
+              type: integer
+              minimum: 0
+            size:
+              type: integer
+              minimum: 0
+        attemptId:
+          type: string
+          nullable: true
+        beforeCursor:
+          type: string
+          nullable: true
+        afterCursor:
+          type: string
+          nullable: true
+        hasEarlier:
+          type: boolean
+        hasLater:
+          type: boolean
+        window:
+          type: object
+          additionalProperties: false
+          required:
+            - before
+            - after
+          properties:
+            before:
+              type: string
+              nullable: true
+            after:
+              type: string
+              nullable: true
+        projection:
+          type: object
+          additionalProperties: false
+          required:
+            - throughSequence
+            - observedHead
+            - state
+            - continuation
+          properties:
+            throughSequence:
+              type: string
+              nullable: true
+            observedHead:
+              type: string
+              nullable: true
+            state:
+              type: string
+              enum:
+                - caught_up
+                - pending
+            continuation:
+              type: boolean
     AgentActivitySummary:
       type: object
       additionalProperties: false

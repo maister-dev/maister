@@ -930,3 +930,7 @@ deterministic without an ACP permission session.
 ## Operational agents
 
 Operational runs freeze `agent_kind` and `result_contract`; integrity generations append exact platform materialization over immutable source witnesses. Effective terminal receipts refer to the exact run_results revision. Cleanup state progresses independently of business status. See [operational persistence](operational-agents-domain.md).
+
+## Peek paging and push hints (Designed)
+
+Migration 0210 adds three bounded page-order indexes; 0211 adds transactional advisory notification triggers on existing canonical tables. No entities, columns or lifecycle transitions are added. Exact indexes, sources and upgrade gates: [peek data contract](../system-analytics/run-peek-data.md).

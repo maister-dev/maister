@@ -29,6 +29,15 @@ export const repoRoot = resolve(here, "..");
 const analyticsRoot = join(repoRoot, "docs", "system-analytics");
 
 export const COVERAGE_GROUPS = {
+  "run-peek": {
+    label: "Child Run peek",
+    planPath: ".ai-factory/plans/child-run-peek-navigation.md",
+    documents: ["run-peek-navigation.md", "run-peek-data.md"],
+    prefixes: ["PKN", "PKD"],
+    matrixPath: "docs/system-analytics/run-peek-traceability.md",
+    implementationPhases: /^T[2-8]$/,
+    testRoots: ["web"],
+  },
   "agent-activity": {
     label: "Agent activity and qualification",
     planPath: ".ai-factory/plans/feature-operational-agent-kind.md",

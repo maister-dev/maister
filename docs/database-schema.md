@@ -5558,3 +5558,7 @@ source witnesses and exact terminal result revision.
 constraint, migration and upgrade contracts; the consolidated ERD reflects the
 current Drizzle schema. Qualification uses fresh and seeded incremental test
 databases; production migration remains a release operation.
+
+## Peek paging and push hints (Designed)
+
+Migration 0210 adds three bounded page-order indexes; 0211 adds transactional advisory notification triggers on existing canonical tables. No entities, columns or lifecycle transitions are added. Exact indexes, sources and upgrade gates: [peek data contract](system-analytics/run-peek-data.md).

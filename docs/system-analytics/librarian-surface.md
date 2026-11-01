@@ -157,3 +157,7 @@ as visible states rather than adding its own:
 - [Screen reference — librarian panel](../screens/chrome/librarian-panel.md) · [Screen reference — top nav](../screens/chrome/top-nav.md)
 - [Attention](attention.md) · [Home navigation](home-navigation.md) · [Scratch runs](scratch-runs.md)
 - [`web/components/chrome/top-nav.tsx`](../../web/components/chrome/top-nav.tsx) · [`web/components/run-transcript/transcript-view.tsx`](../../web/components/run-transcript/transcript-view.tsx) · `web/app/(app)/layout.tsx` (the panel's mount point)
+
+## Child Run peek (Designed)
+
+See the [navigation contract](run-peek-navigation.md) and [authorized data/live-delivery contract](run-peek-data.md). Existing execution/result lifecycle semantics remain authoritative.
