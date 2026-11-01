@@ -77,3 +77,32 @@ webhook-event retention. Cutover seeding is bounded, maintenance-fenced and
 insert-only on replay; normal publication updates the observed baseline even
 when no external notification is warranted. See the notification owner contract
 in [agent incidents](../system-analytics/agent-incidents.md).
+
+## Scheduled agent request input (Designed)
+
+The [owning input contract](../system-analytics/scheduled-agent-requests.md) defines normalization, claim serialization, authorized successor inheritance and release/rollback constraints.
+
+| Column | Additive contract |
+| --- | --- |
+| agent_schedules.request_at_launch | Nullable text; null default; cron-only nonempty strings of at most 8000 code points. Desired input for future claims. |
+| agent_trigger_attempts.scheduled_request_snapshot | Nullable jsonb; null default; strict version-1 envelope; IDs match the claim; immutable under the existing identity guard. Protected separately from safe binding metadata. |
+| runs.scheduled_request_snapshot | Nullable jsonb; null default; exact immutable copy, including authorized successors with a different current trigger source. |
+
+No historical input is inferred. Snapshot origin IDs are non-FK retained audit values. Existing schedule navigation FK remains SET NULL; key-share existence resolution makes deletion after claim harmless to launch. Guards permit unrelated settlement/lifecycle updates. CHECKs distinguish SQL NULL, JSON null and missing keys; schema, generated SQL, journal and matching snapshot must agree. No new table/index is introduced.
+
+The additive input fields have no independent lifecycle or cascade.
+
+```mermaid
+erDiagram
+  agent_schedules {
+    text request_at_launch "nullable cron input"
+  }
+  agent_trigger_attempts {
+    jsonb scheduled_request_snapshot "nullable immutable protected input"
+  }
+  runs {
+    jsonb scheduled_request_snapshot "nullable immutable protected input"
+  }
+  agent_schedules ||--o{ agent_trigger_attempts : "claim retains non-FK identity"
+  agent_trigger_attempts ||--o| runs : "reserved launch receipt"
+```

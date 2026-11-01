@@ -232,6 +232,11 @@ failed, late, and truncated counts. Per-intent logs use only
 `outcome`, `errorCode`, and `lateByMs`. They must not log request bodies,
 paths, branches, credentials, raw provider errors, or secret values.
 
+
+## Scheduled request input (Designed)
+
+Per-cron current input and immutable claim/run retention are specified in [scheduled agent requests](scheduled-agent-requests.md). Protected request bodies are stored separately from viewer-safe trigger telemetry; existing admission, completion and permission policies remain authoritative.
+
 ## Expectations
 
 - Creating, editing, or viewing an intent must not create a Run, reserve a

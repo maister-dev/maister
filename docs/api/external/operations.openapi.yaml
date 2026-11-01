@@ -9806,3 +9806,5 @@ components:
         projectCount:
           type: integer
           minimum: 0
+
+# Scheduled request privacy: runs:read and MCP run_get/run_collect never expose raw scheduled requests or request snapshots. No schedule CRUD scope or tool is added.

@@ -944,3 +944,7 @@ a global personal token with exact `hitl:respond:human`; `*` is insufficient.
   hash compare), `web/app/api/v1/ext/`, `web/app/api/projects/[slug]/tokens/`,
   `web/lib/flows/graph/evidence-readiness.ts` (extended for `external_check`),
   `mcp/` (`@maister/mcp` workspace package).
+
+## Scheduled request privacy (Designed)
+
+Existing runs:read and MCP run_get/run_collect exclude raw scheduled input and snapshots; no schedule CRUD tool or extra scope is introduced. The [owning request contract](scheduled-agent-requests.md) requires readRepoFiles for web history disclosure.

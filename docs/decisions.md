@@ -238,6 +238,7 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-194](#adr-194-explicit-reviewed-project-configuration-commits) | Explicit reviewed project configuration commits | Accepted | 2026-10-29 |
 | [ADR-195](#adr-195-operational-agents-with-frozen-completion-contracts) | Operational agents with frozen completion contracts | Accepted | 2026-10-29 |
 | [ADR-198](#adr-198-incoming-request-qualification-before-delivery) | Incoming request qualification before delivery | Accepted | 2026-10-30 |
+| [ADR-199](#adr-199-immutable-per-schedule-agent-requests) | Immutable per-schedule agent requests | Accepted | 2026-11-02 |
 | [ADR-197](#adr-197-explicit-fenced-agent-retry-admission) | Explicit fenced agent retry admission | Accepted | 2026-10-30 |
 | [ADR-196](#adr-196-agent-activity-history-and-grouped-incidents) | Agent activity history and grouped incidents | Accepted | 2026-10-30 |
 
@@ -2292,5 +2293,14 @@ Full record: [`decisions/adr-197.md`](decisions/adr-197.md)
 **Date:** 2026-10-30
 
 Full record: [`decisions/adr-198.md`](decisions/adr-198.md)
+
+---
+
+### ADR-199: Immutable per-schedule agent requests
+
+**Status:** Accepted
+**Date:** 2026-11-02
+
+Full record: [`decisions/adr-199.md`](decisions/adr-199.md)
 
 ---

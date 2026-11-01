@@ -22,6 +22,7 @@ One row per file — this table is the **canonical index** of the folder
 
 | Domain | File | What it covers |
 | ------ | ---- | -------------- |
+| Scheduled agent requests | [`scheduled-agent-requests.md`](scheduled-agent-requests.md) | Designed: immutable per-cron invocation input, delivery and protected history. |
 | Agent activity history | [`agent-activity-history.md`](agent-activity-history.md) | Implemented: active executions and retained run/attempt history. |
 | Agent incidents | [`agent-incidents.md`](agent-incidents.md) | Implemented: quiet grouped attention and causal recovery. |
 | Agent retries | [`agent-retry.md`](agent-retry.md) | Implemented: explicit fenced alternate-runner attempts. |

@@ -237,6 +237,11 @@ refusal feedback without manufacturing a run. Backfill only the latest proven
 legacy attempt with `legacy_latest` provenance; prior counts remain unavailable,
 not fabricated from lastAttemptFence.
 
+
+## Scheduled request input (Designed)
+
+Per-cron current input and immutable claim/run retention are specified in [scheduled agent requests](scheduled-agent-requests.md). Protected request bodies are stored separately from viewer-safe trigger telemetry; existing admission, completion and permission policies remain authoritative.
+
 ## Expectations
 
 - **UX-01:** a package update, schedule deletion, detach/reattach or catalog deletion does not reclassify or lose provably associated retained runs. An unresolved legacy identity is explicit and never merged into another agent's history. Enforced by the owning services/constraints below and primary acceptance in [traceability](agent-activity-traceability.md).
