@@ -188,6 +188,7 @@ table agent_schedules {
   agent_id text [not null]
   project_id text [not null]
   trigger_type text [not null]
+  request_at_launch text
   cron_expr text
   timezone text
   next_fire_at "timestamp with time zone"
@@ -204,6 +205,7 @@ table agent_schedules {
   updated_at "timestamp with time zone" [not null, default: `now()`]
 
   indexes {
+
     (project_id, agent_id) [name: 'agent_schedules_project_agent_idx']
     (trigger_type, enabled, next_fire_at) [name: 'agent_schedules_due_cron_idx']
 
@@ -217,6 +219,7 @@ table agent_trigger_attempts {
   source_agent_id text [not null]
   schedule_id text [not null]
   binding_snapshot jsonb [not null]
+  scheduled_request_snapshot jsonb
   fence integer [not null]
   delivery_key text [not null]
   trigger_source text [not null]
@@ -233,6 +236,7 @@ table agent_trigger_attempts {
   scope_key text [not null, default: 'unknown']
 
   indexes {
+
     (schedule_id, delivery_key) [name: 'agent_trigger_attempt_delivery_uq', unique]
     (schedule_id, fence) [name: 'agent_trigger_attempt_fence_uq', unique]
     reserved_run_id [name: 'agent_trigger_attempt_reserved_run_uq', unique]
@@ -2594,6 +2598,7 @@ table runs {
   agent_id text
   trigger_source text
   trigger_event_id bigint
+  scheduled_request_snapshot jsonb
   trigger_payload jsonb
   scheduled_launch_id text
   agent_schedule_id text
@@ -2657,6 +2662,7 @@ table runs {
 
     (project_id, status) [name: 'runs_project_status_idx']
     retry_of_run_id [name: 'runs_agent_retry_child_uq', unique]
+
     (project_id, source_agent_id, activity_sort_at, id) [name: 'runs_agent_activity_history_idx']
 
     (operational_cleanup, id) [name: 'runs_operational_cleanup_due_idx']

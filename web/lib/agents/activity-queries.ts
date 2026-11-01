@@ -7,6 +7,7 @@ import type {
   OperationalOutcome,
   OperationalTerminal,
 } from "@/lib/run-results/operational-types";
+import type { ScheduledRequestState } from "@/lib/agents/scheduled-request";
 import type { AgentTriggerAttemptOutcome } from "@/lib/agents/trigger-attempt-types";
 
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
@@ -143,6 +144,7 @@ export type AgentHistoryItem = {
   workspaceAvailable: boolean;
   outcome: AgentOutcome | null;
   retryOfRunId: string | null;
+  scheduledRequestState: ScheduledRequestState;
 };
 export type ActivityPage<T> = {
   items: T[];
@@ -198,6 +200,10 @@ export async function getAgentRunHistory(
       workspaceAvailable: sql<boolean>`${workspaces.id} IS NOT NULL`,
       outcome: sql<AgentOutcome | null>`${runs.operationalTerminal}->>'effectiveOutcome'`,
       retryOfRunId: runs.retryOfRunId,
+      scheduledRequestState: sql<ScheduledRequestState>`CASE
+        WHEN ${runs.scheduledRequestSnapshot} IS NOT NULL THEN CASE
+          WHEN ${runs.scheduledRequestSnapshot}->>'requestAtLaunch' IS NULL THEN 'empty' ELSE 'present' END
+        WHEN ${runs.triggerSource}='cron' THEN 'legacy_unrecorded' ELSE 'not_applicable' END`,
     })
     .from(runs)
     .leftJoin(
@@ -287,6 +293,7 @@ export type AgentAttemptItem = {
   runId: string | null;
   reasonCode: string | null;
   provenance: "recorded" | "legacy_latest";
+  scheduledRequestState: ScheduledRequestState;
 };
 
 export async function getAgentAttemptHistory(
@@ -312,6 +319,10 @@ export async function getAgentAttemptHistory(
       runId: agentTriggerAttempts.runId,
       reasonCode: agentTriggerAttempts.reasonCode,
       provenance: agentTriggerAttempts.provenance,
+      scheduledRequestState: sql<ScheduledRequestState>`CASE
+        WHEN ${agentTriggerAttempts.scheduledRequestSnapshot} IS NOT NULL THEN CASE
+          WHEN ${agentTriggerAttempts.scheduledRequestSnapshot}->>'requestAtLaunch' IS NULL THEN 'empty' ELSE 'present' END
+        WHEN ${agentTriggerAttempts.triggerSource}='cron' THEN 'legacy_unrecorded' ELSE 'not_applicable' END`,
     })
     .from(agentTriggerAttempts)
     .where(

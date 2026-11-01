@@ -172,3 +172,52 @@ describe("PATCH /api/projects/[slug]/agents/[agentId] config (ADR-111)", () => {
     expect(mocks.updateAgentLink).not.toHaveBeenCalled();
   });
 });
+
+describe("scheduled request HTTP input", () => {
+  it.each([null, "multiline\n{{literal}}", ""])(
+    "preserves explicit request presence through the aggregating boundary",
+    async (requestAtLaunch) => {
+      const schedule = {
+        triggerType: "cron",
+        cronExpr: "* * * * *",
+        timezone: "UTC",
+        requestAtLaunch,
+      };
+      const response = await route.PATCH(
+        jsonRequest("PATCH", { schedulesRevision: 1, schedules: [schedule] }),
+        params(),
+      );
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true });
+      expect(mocks.updateAgentLink).toHaveBeenCalledWith(
+        expect.objectContaining({
+          patch: { schedulesRevision: 1, schedules: [schedule] },
+        }),
+      );
+    },
+  );
+  it("rejects a nonstring request and public launch snapshots", async () => {
+    const invalid = [
+      {
+        schedulesRevision: 1,
+        schedules: [
+          {
+            triggerType: "cron",
+            cronExpr: "* * * * *",
+            timezone: "UTC",
+            requestAtLaunch: 4,
+          },
+        ],
+      },
+      { scheduledRequestSnapshot: { version: 1 } },
+    ];
+
+    for (const body of invalid) {
+      const response = await route.PATCH(jsonRequest("PATCH", body), params());
+
+      expect(response.status).toBe(422);
+    }
+    expect(mocks.updateAgentLink).not.toHaveBeenCalled();
+  });
+});

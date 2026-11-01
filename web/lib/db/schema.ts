@@ -1,3 +1,4 @@
+import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
 import type {
   TaskQualificationMode,
   TaskQualificationValue,
@@ -100,6 +101,7 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 
+import { scheduledRequestShape } from "@/lib/agents/scheduled-request-schema";
 import {
   CONFIG_PERSIST_STATES,
   CONFIG_PUSH_STATES,
@@ -1128,6 +1130,7 @@ export const agentSchedules = pgTable(
     triggerType: text("trigger_type", {
       enum: ["cron", "event", "mention"],
     }).notNull(),
+    requestAtLaunch: text("request_at_launch"),
     cronExpr: text("cron_expr"),
     timezone: text("timezone"),
     nextFireAt: timestamp("next_fire_at", {
@@ -1168,6 +1171,10 @@ export const agentSchedules = pgTable(
       .defaultNow(),
   },
   (t) => ({
+    requestShape: check(
+      "agent_schedules_request_shape",
+      sql`${t.requestAtLaunch} IS NULL OR (${t.triggerType} = 'cron' AND char_length(${t.requestAtLaunch}) BETWEEN 1 AND 8000)`,
+    ),
     idxProjectAgent: index("agent_schedules_project_agent_idx").on(
       t.projectId,
       t.agentId,
@@ -1202,6 +1209,9 @@ export const agentTriggerAttempts = pgTable(
     bindingSnapshot: jsonb("binding_snapshot")
       .$type<AgentTriggerBindingSnapshot>()
       .notNull(),
+    scheduledRequestSnapshot: jsonb(
+      "scheduled_request_snapshot",
+    ).$type<ScheduledAgentRequestSnapshot>(),
     fence: integer("fence").notNull(),
     deliveryKey: text("delivery_key").notNull(),
     triggerSource: text("trigger_source", {
@@ -1227,6 +1237,10 @@ export const agentTriggerAttempts = pgTable(
     scopeKey: text("scope_key").notNull().default("unknown"),
   },
   (t) => ({
+    requestShape: check(
+      "agent_trigger_attempts_scheduled_request_shape",
+      sql`${scheduledRequestShape(t.scheduledRequestSnapshot)} AND (${t.scheduledRequestSnapshot} IS NULL OR (${t.triggerSource} = 'cron' AND ${t.scheduledRequestSnapshot}->>'scheduleId' = ${t.scheduleId} AND ${t.scheduledRequestSnapshot}->>'triggerAttemptId' = ${t.id})) IS TRUE`,
+    ),
     delivery: unique("agent_trigger_attempt_delivery_uq").on(
       t.scheduleId,
       t.deliveryKey,
@@ -2025,6 +2039,9 @@ export const runs = pgTable(
     // domain_events.id claim key — partial UNIQUE (agent_id, trigger_event_id)
     // makes at-least-once redelivery converge to exactly one run.
     triggerEventId: bigint("trigger_event_id", { mode: "number" }),
+    scheduledRequestSnapshot: jsonb(
+      "scheduled_request_snapshot",
+    ).$type<ScheduledAgentRequestSnapshot>(),
     triggerPayload: jsonb("trigger_payload").$type<Record<string, unknown>>(),
     scheduledLaunchId: text("scheduled_launch_id").references(
       () => scheduledTaskLaunches.id,
@@ -2329,6 +2346,10 @@ export const runs = pgTable(
     agentRetryChildIndex: uniqueIndex("runs_agent_retry_child_uq")
       .on(t.retryOfRunId)
       .where(sql`${t.retryOfRunId} IS NOT NULL`),
+    scheduledRequestShape: check(
+      "runs_scheduled_request_shape",
+      scheduledRequestShape(t.scheduledRequestSnapshot),
+    ),
     agentActivityHistoryIndex: index("runs_agent_activity_history_idx")
       .on(t.projectId, t.sourceAgentId, t.activitySortAt.desc(), t.id.desc())
       .where(sql`${t.sourceAgentId} IS NOT NULL`),
