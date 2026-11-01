@@ -1463,33 +1463,38 @@ export default async function RunDetailLayout({
           />
         ) : (
           <>
-            {detail.sourceAgentId ? (
-              <Link
-                className="inline-flex text-sm text-mute underline"
-                href={`/projects/${detail.projectSlug}/agents/${encodeURIComponent(detail.sourceAgentId)}`}
-              >
-                {tActivity("history")}
-              </Link>
-            ) : null}
-            {detail.retryOfRunId ? (
-              <p className="text-xs text-mute">
-                {tActivity("retryOf")}{" "}
+            <div
+              className="mb-4 flex flex-wrap items-center gap-3"
+              data-testid="agent-run-actions"
+            >
+              {detail.sourceAgentId ? (
                 <Link
-                  className="underline"
-                  href={`/runs/${detail.retryOfRunId}`}
+                  className="inline-flex text-sm text-mute underline"
+                  href={`/projects/${detail.projectSlug}/agents/${encodeURIComponent(detail.sourceAgentId)}`}
                 >
-                  {detail.retryOfRunId.slice(0, 8)}
+                  {tActivity("history")}
                 </Link>
-              </p>
-            ) : null}
-            {canAct &&
-            detail.runKind === "agent" &&
-            ["Failed", "Crashed"].includes(detail.status) &&
-            (detail.agentKind === "operational" ||
-              detail.agentWorkspace === "none" ||
-              detail.agentWorkspace === "repo_read") ? (
-              <AgentRetryControl runId={detail.runId} />
-            ) : null}
+              ) : null}
+              {detail.retryOfRunId ? (
+                <p className="text-xs text-mute">
+                  {tActivity("retryOf")}{" "}
+                  <Link
+                    className="underline"
+                    href={`/runs/${detail.retryOfRunId}`}
+                  >
+                    {detail.retryOfRunId.slice(0, 8)}
+                  </Link>
+                </p>
+              ) : null}
+              {canAct &&
+              detail.runKind === "agent" &&
+              ["Failed", "Crashed"].includes(detail.status) &&
+              (detail.agentKind === "operational" ||
+                detail.agentWorkspace === "none" ||
+                detail.agentWorkspace === "repo_read") ? (
+                <AgentRetryControl runId={detail.runId} />
+              ) : null}
+            </div>
             {operational ? (
               <OperationalRunResult
                 canAct={canAct}

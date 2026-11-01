@@ -73,7 +73,6 @@ operation. Starting an operation again is a separate attempt. A package update
 changes future launches; existing Runs keep their original kind, contract and
 instructions. Historical code-delivery Runs retain their original review rules.
 
-
 ## Find activity and retry a failed runner
 
 The rail shows each active agent execution, including queued and parked runs,
@@ -88,12 +87,23 @@ Inbox groups problems by project and agent. A repeated cause increases its occur
 count without creating another card or notifying you again after acknowledgement.
 A new cause can require attention. Human decisions remain separate requests.
 
-**Run again…** previews a new attempt with a runner selected for that attempt.
-It is available only when durable evidence proves the previous execution did no work.
-Review changes in current inputs, choose a ready runner and accept the attempt.
+**Run again…** previews a new attempt and initially selects the current configured
+runner. A generic retry requires durable evidence that the previous execution did
+no work. A task qualifier can instead offer a new assessment of the current task;
+the preview explains when this also enables required qualification for a legacy task.
+Already assessed or active tasks are skipped. Review current inputs, choose a ready
+runner and accept the attempt. A refusal explains what needs to be resolved;
+**Refresh data** checks eligibility again and reports the result.
 A lost response can be recovered with the same request; it never authorizes a second
 successor. The original run, delivery runner and future defaults remain unchanged.
 Unknown effects require reconciliation. Cleanup retry disposes resources only.
+
+Select failed rows in agent history to preview a batch with one runner and a result
+for each task. Multiple failures of the same task produce one new assessment.
+After changing an enabled agent's runner, MAIster offers this batch immediately.
+Saving settings never starts retries: inspect the preview and confirm separately.
+Large histories are processed in successive batches. If a response is lost,
+recover that batch before starting another; accepted items are not duplicated.
 
 ## Qualify incoming requests
 

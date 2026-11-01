@@ -26,6 +26,15 @@ Use shared skeleton/error boundaries. Empty history says not run yet, zero succe
 
 Use HeroUI, packaged icons, existing feedback and confirmations, focus-trapped dialogs with focus restore/Escape behavior, aria-live async feedback, mobile overflow and keyboard access. Header/controller lifetime is independent of transient status refresh.
 
+Failed rows support selection and one batch runner preview. Repeated failures for
+one task yield one eligible assessment; every skipped row explains why. Single
+and batch dialogs show the source/current runner and compatible choices, retain
+precise blockers, announce refresh completion, and distinguish admission from
+queued or executing successors. A settled refusal can prepare another attempt;
+a lost response keeps its request key. Fresh qualification explicitly identifies
+current-task reassessment and any legacy-task qualification opt-in. See the
+[retry contract](../../system-analytics/agent-retry.md).
+
 ## EN/RU copy
 
 | EN | RU |

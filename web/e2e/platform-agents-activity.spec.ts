@@ -8,8 +8,8 @@ import { withE2EDb } from "./_seed/db";
 
 import { git, initRepo } from "@/test-support/git-fixture";
 
-// Browser projections only; the PG/Git and controlled-runtime integration owners
-// prove lifecycle, admission and resource safety through their real writers.
+// Projection scenarios cover retained history; the retry journey drives the real
+// API and controlled supervisor. PG/Git suites own adversarial lifecycle checks.
 const projectId = randomUUID();
 const slug = `agent-activity-${projectId.slice(0, 8)}`;
 const agentId = `fixture:triager-${projectId.slice(0, 8)}`;
@@ -301,6 +301,7 @@ test.describe("Agent execution visibility and retained history", () => {
     context,
     baseURL,
   }) => {
+    test.setTimeout(90_000);
     await context.addCookies([
       { name: "NEXT_LOCALE", value: "en", url: baseURL! },
     ]);
@@ -391,6 +392,25 @@ test.describe("Agent execution visibility and retained history", () => {
       await page.goto(
         `/projects/${slug}/agents/${encodeURIComponent(operationId)}`,
       );
+      await expect(
+        page.getByTestId("agent-retry-history-toolbar"),
+      ).toBeVisible();
+      await page.goto(`/runs/${source.runId}`);
+      const actions = page.getByTestId("agent-run-actions");
+      const historyBounds = await actions
+        .getByRole("link", { name: "History", exact: true })
+        .boundingBox();
+      const retryBounds = await actions
+        .getByRole("button", { name: "Run again…", exact: true })
+        .boundingBox();
+
+      expect(historyBounds).not.toBeNull();
+      expect(retryBounds).not.toBeNull();
+      if (historyBounds && retryBounds && historyBounds.y === retryBounds.y) {
+        expect(
+          retryBounds.x - historyBounds.x - historyBounds.width,
+        ).toBeGreaterThanOrEqual(8);
+      }
       await page
         .getByRole("button", { name: "Run again…", exact: true })
         .filter({ visible: true })
@@ -398,6 +418,9 @@ test.describe("Agent execution visibility and retained history", () => {
       const dialog = page.getByTestId("agent-retry-dialog");
 
       await expect(dialog).toContainText("Before operational work (verified)");
+      await expect(
+        dialog.getByLabel("Runner for this attempt", { exact: true }),
+      ).toHaveValue(bad);
       await dialog
         .getByLabel("Runner for this attempt", { exact: true })
         .selectOption(good);
@@ -452,6 +475,103 @@ test.describe("Agent execution visibility and retained history", () => {
       }));
 
       expect(state).toEqual({ successors: 1, runner: bad });
+
+      const pendingSources: string[] = [];
+
+      for (let index = 0; index < 2; index++) {
+        const failedLaunch = await page.request.post(
+          `/api/projects/${slug}/agents/${encodeURIComponent(operationId)}/launch`,
+          { data: {} },
+        );
+
+        expect(failedLaunch.status()).toBe(202);
+        pendingSources.push(
+          ((await failedLaunch.json()) as { runId: string }).runId,
+        );
+      }
+      await expect
+        .poll(
+          () =>
+            withE2EDb(
+              async (pool) =>
+                (
+                  await pool.query(
+                    "SELECT count(*)::integer AS amount FROM runs WHERE id=ANY($1::text[]) AND status='Failed'",
+                    [pendingSources],
+                  )
+                ).rows[0].amount,
+            ),
+          { timeout: 30000 },
+        )
+        .toBe(2);
+      await page.goto(
+        `/projects/${slug}/agents/${encodeURIComponent(operationId)}?tab=settings`,
+      );
+      await page.getByRole("button", { name: "Edit", exact: true }).click();
+      const settingsDialog = page.getByRole("dialog");
+
+      await expect(settingsDialog).toBeVisible();
+      await settingsDialog
+        .getByLabel("Runner override", { exact: true })
+        .selectOption(good);
+      await settingsDialog
+        .getByRole("button", { name: "Save", exact: true })
+        .click();
+      const batch = page.getByTestId("agent-retry-batch-dialog");
+
+      await expect(batch).toBeVisible();
+      await expect(
+        batch.getByLabel("Runner for this batch", { exact: true }),
+      ).toHaveValue(good);
+      await expect(batch.locator('input[type="checkbox"]:checked')).toHaveCount(
+        2,
+      );
+      expect(
+        await withE2EDb(
+          async (pool) =>
+            (
+              await pool.query(
+                "SELECT count(*)::integer AS amount FROM runs WHERE retry_of_run_id=ANY($1::text[])",
+                [pendingSources],
+              )
+            ).rows[0].amount,
+        ),
+      ).toBe(0);
+      await batch
+        .getByRole("button", { name: "Start eligible work (2)", exact: true })
+        .click();
+      await expect
+        .poll(
+          () =>
+            withE2EDb(
+              async (pool) =>
+                (
+                  await pool.query(
+                    "SELECT count(*)::integer AS amount FROM runs WHERE retry_of_run_id=ANY($1::text[]) AND status='Done'",
+                    [pendingSources],
+                  )
+                ).rows[0].amount,
+            ),
+          { timeout: 30000 },
+        )
+        .toBe(2);
+      await batch
+        .getByRole("button", { name: "Refresh current data", exact: true })
+        .click();
+      await expect(
+        batch.getByText("New attempt status: Done", { exact: true }),
+      ).toHaveCount(2);
+      expect(
+        await withE2EDb(
+          async (pool) =>
+            (
+              await pool.query(
+                "SELECT runner_override_id FROM agent_project_links WHERE project_id=$1 AND agent_id=$2",
+                [projectId, operationId],
+              )
+            ).rows[0].runner_override_id,
+        ),
+      ).toBe(good);
     } finally {
       await withE2EDb(async (pool) => {
         await pool.query(

@@ -93,7 +93,11 @@ export function AttachEditModal({
   // Attach mode (RD5): Save POSTs the attachment first, then the bindings.
   attachAgentId?: string;
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (change?: {
+    agentId: string;
+    runnerId: string | null;
+    runnerChanged: boolean;
+  }) => void;
 }): ReactElement {
   const t = useTranslations("agentsAttach");
   const rec = row.agent.recommended;
@@ -293,7 +297,14 @@ export function AttachEditModal({
               };
         }),
       });
-      onSaved();
+      onSaved({
+        agentId: row.agent.id,
+        runnerId: runnerOverrideId === "" ? null : runnerOverrideId,
+        runnerChanged:
+          !attachAgentId &&
+          enabled &&
+          (runnerOverrideId || null) !== row.runnerOverrideId,
+      });
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -361,6 +372,7 @@ export function AttachEditModal({
           <label className="flex flex-col gap-1.5">
             <span className={fieldLabel}>{t("runnerOverride")}</span>
             <select
+              aria-label={t("runnerOverride")}
               className={inputClass}
               value={runnerOverrideId}
               onChange={(event) => setRunnerOverrideId(event.target.value)}

@@ -10,6 +10,10 @@ import Link from "next/link";
 
 import { RUN_STATUS_VALUES } from "@/lib/runs/run-status-values";
 import { AgentRetryControl } from "@/components/agents/agent-retry-control";
+import {
+  AgentRetryHistorySelection,
+  AgentRetryHistoryCheckbox,
+} from "@/components/agents/agent-retry-history-selection";
 
 const link =
   "inline-flex min-h-8 items-center rounded-lg border border-line bg-ivory px-3 text-xs font-semibold text-ink hover:border-mute";
@@ -144,102 +148,130 @@ export async function AgentRunHistory({
           )}
         </p>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead className="border-b border-line text-xs text-mute">
-              <tr>
-                <th className="p-2" scope="col">
-                  {t("run")}
-                </th>
-                <th className="p-2" scope="col">
-                  {t("statusFilter")}
-                </th>
-                <th className="p-2" scope="col">
-                  {t("launchedAt")}
-                </th>
-                <th className="p-2" scope="col">
-                  {t("trigger")}
-                </th>
-                <th className="p-2" scope="col">
-                  {t("workspace")}
-                </th>
-                <th className="p-2" scope="col">
-                  {t("actions")}
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {page.items.map((item) => (
-                <tr
-                  key={item.runId}
-                  className="border-b border-line/60"
-                  data-testid="agent-history-row"
-                >
-                  <th className="p-2 font-mono font-normal" scope="row">
-                    <Link
-                      className="text-ink underline underline-offset-2"
-                      href={`/runs/${item.runId}`}
-                    >
-                      {item.runId.slice(0, 8)}
-                    </Link>
-                    {item.retryOfRunId ? (
-                      <span className="mt-1 block text-xs text-mute">
-                        {t("retryOf")}{" "}
-                        <Link
-                          className="underline"
-                          href={`/runs/${item.retryOfRunId}`}
-                        >
-                          {item.retryOfRunId.slice(0, 8)}
-                        </Link>
-                      </span>
-                    ) : null}
+        <AgentRetryHistorySelection
+          agentId={agentId}
+          canRetry={canRetry}
+          runIds={page.items
+            .filter(
+              (item) =>
+                item.runKind === "agent" &&
+                (item.status === "Failed" || item.status === "Crashed"),
+            )
+            .map((item) => item.runId)}
+          slug={slug}
+        >
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="border-b border-line text-xs text-mute">
+                <tr>
+                  {canRetry ? (
+                    <th className="w-10 p-2" scope="col">
+                      <span className="sr-only">{t("selectFailedOnPage")}</span>
+                    </th>
+                  ) : null}
+                  <th className="p-2" scope="col">
+                    {t("run")}
                   </th>
-                  <td className="p-2">
-                    <span>{t(`status.${item.status}`)}</span>
-                    {item.outcome ? (
-                      <span className="block text-xs text-mute">
-                        {t(`outcome.${item.outcome}`)}
-                      </span>
-                    ) : null}
-                    {item.runKind === "flow" ? (
-                      <span className="block text-xs text-mute">
-                        {t("flowPool")}
-                      </span>
-                    ) : null}
-                  </td>
-                  <td className="p-2">
-                    <time dateTime={item.launchedAt ?? item.sortAt}>
-                      {date.format(new Date(item.launchedAt ?? item.sortAt))}
-                    </time>
-                    {item.timestampProvenance !== "launch" &&
-                    item.timestampProvenance !== "verified_creation" ? (
-                      <span className="block text-xs text-mute">
-                        {t("estimatedTime")}
-                      </span>
-                    ) : null}
-                  </td>
-                  <td className="p-2">
-                    {item.triggerSource
-                      ? t(`triggerSource.${item.triggerSource}`)
-                      : t("unavailable")}
-                  </td>
-                  <td className="p-2 text-xs">
-                    {item.workspaceAvailable
-                      ? t("workspaceAvailable")
-                      : t("noWorkspace")}
-                  </td>
-                  <td className="p-2">
-                    {canRetry &&
-                    item.runKind === "agent" &&
-                    (item.status === "Failed" || item.status === "Crashed") ? (
-                      <AgentRetryControl runId={item.runId} />
-                    ) : null}
-                  </td>
+                  <th className="p-2" scope="col">
+                    {t("statusFilter")}
+                  </th>
+                  <th className="p-2" scope="col">
+                    {t("launchedAt")}
+                  </th>
+                  <th className="p-2" scope="col">
+                    {t("trigger")}
+                  </th>
+                  <th className="p-2" scope="col">
+                    {t("workspace")}
+                  </th>
+                  <th className="p-2" scope="col">
+                    {t("actions")}
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {page.items.map((item) => (
+                  <tr
+                    key={item.runId}
+                    className="border-b border-line/60"
+                    data-testid="agent-history-row"
+                  >
+                    {canRetry ? (
+                      <td className="p-2">
+                        {item.runKind === "agent" &&
+                        (item.status === "Failed" ||
+                          item.status === "Crashed") ? (
+                          <AgentRetryHistoryCheckbox runId={item.runId} />
+                        ) : null}
+                      </td>
+                    ) : null}
+                    <th className="p-2 font-mono font-normal" scope="row">
+                      <Link
+                        className="text-ink underline underline-offset-2"
+                        href={`/runs/${item.runId}`}
+                      >
+                        {item.runId.slice(0, 8)}
+                      </Link>
+                      {item.retryOfRunId ? (
+                        <span className="mt-1 block text-xs text-mute">
+                          {t("retryOf")}{" "}
+                          <Link
+                            className="underline"
+                            href={`/runs/${item.retryOfRunId}`}
+                          >
+                            {item.retryOfRunId.slice(0, 8)}
+                          </Link>
+                        </span>
+                      ) : null}
+                    </th>
+                    <td className="p-2">
+                      <span>{t(`status.${item.status}`)}</span>
+                      {item.outcome ? (
+                        <span className="block text-xs text-mute">
+                          {t(`outcome.${item.outcome}`)}
+                        </span>
+                      ) : null}
+                      {item.runKind === "flow" ? (
+                        <span className="block text-xs text-mute">
+                          {t("flowPool")}
+                        </span>
+                      ) : null}
+                    </td>
+                    <td className="p-2">
+                      <time dateTime={item.launchedAt ?? item.sortAt}>
+                        {date.format(new Date(item.launchedAt ?? item.sortAt))}
+                      </time>
+                      {item.timestampProvenance !== "launch" &&
+                      item.timestampProvenance !== "verified_creation" ? (
+                        <span className="block text-xs text-mute">
+                          {t("estimatedTime")}
+                        </span>
+                      ) : null}
+                    </td>
+                    <td className="p-2">
+                      {item.triggerSource
+                        ? t(`triggerSource.${item.triggerSource}`)
+                        : t("unavailable")}
+                    </td>
+                    <td className="p-2 text-xs">
+                      {item.workspaceAvailable
+                        ? t("workspaceAvailable")
+                        : t("noWorkspace")}
+                    </td>
+                    <td className="p-2">
+                      {canRetry &&
+                      item.runKind === "agent" &&
+                      (item.status === "Failed" ||
+                        item.status === "Crashed") ? (
+                        <AgentRetryControl runId={item.runId} />
+                      ) : null}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </AgentRetryHistorySelection>
       )}
       <nav aria-label={t("historyPages")} className="flex gap-2">
         {page.nextCursor ? (

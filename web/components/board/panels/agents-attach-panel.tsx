@@ -10,6 +10,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 
+import { AgentRetryBatchControl } from "@/components/agents/agent-retry-batch-control";
 import { AgentMemoryDrawer } from "@/components/board/panels/agent-memory-drawer";
 import {
   AttachEditModal,
@@ -220,8 +221,27 @@ export function AgentsAttachPanel({
   const [editing, setEditing] = useState<AttachedAgentRow | null>(null);
   const [memoryFor, setMemoryFor] = useState<AttachedAgentRow | null>(null);
   const [attaching, setAttaching] = useState<AvailableAgentRow | null>(null);
+  const [retryOffer, setRetryOffer] = useState<{
+    agentId: string;
+    runnerId: string | null;
+    revision: number;
+  } | null>(null);
 
   const refresh = (): void => startTransition(() => router.refresh());
+
+  function saved(change?: {
+    agentId: string;
+    runnerId: string | null;
+    runnerChanged: boolean;
+  }): void {
+    refresh();
+    if (change?.runnerChanged) {
+      setRetryOffer((previous) => ({
+        ...change,
+        revision: (previous?.revision ?? 0) + 1,
+      }));
+    }
+  }
 
   async function act(key: string, fn: () => Promise<void>): Promise<void> {
     setPending(key);
@@ -465,6 +485,17 @@ export function AgentsAttachPanel({
         />
       ) : null}
 
+      {retryOffer ? (
+        <div className="mt-4" data-testid="agent-retry-runner-offer">
+          <AgentRetryBatchControl
+            key={`${retryOffer.agentId}-${retryOffer.revision}`}
+            offerAfterRunnerChange
+            agentId={retryOffer.agentId}
+            initialRunnerId={retryOffer.runnerId}
+            slug={slug}
+          />
+        </div>
+      ) : null}
       {editing ? (
         <AttachEditModal
           eventKinds={eventKinds}
@@ -472,7 +503,7 @@ export function AgentsAttachPanel({
           runners={runners}
           slug={slug}
           onClose={() => setEditing(null)}
-          onSaved={refresh}
+          onSaved={saved}
         />
       ) : null}
       {attaching ? (
@@ -483,7 +514,7 @@ export function AgentsAttachPanel({
           runners={runners}
           slug={slug}
           onClose={() => setAttaching(null)}
-          onSaved={refresh}
+          onSaved={saved}
         />
       ) : null}
     </section>
