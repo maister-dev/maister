@@ -1,5 +1,7 @@
 # External operations domain
 
+**Designed admission extension:** [explicit task launch](task-launch-admission.md) separates manual authorization from qualification; the existing implementation below remains the v1 boundary until cutover. Qualification content/publication protections remain unchanged.
+
 > **Status: Implemented, expanded by migration `0031_token_actor_scope_support.sql`.**
 > Project API tokens, user-owned tokens, route-scope enforcement, token audit log,
 > the `/api/v1/ext` external REST surface, the `external_check` gate report loop,

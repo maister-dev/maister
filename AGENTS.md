@@ -189,6 +189,8 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | Decisions | `docs/decisions.md` | ADRs and locked technical decisions |
 | Agent activity design | `docs/system-analytics/agent-activity-history.md` | Active executions and retained history |
 | Task qualification design | `docs/system-analytics/task-qualification.md` | Incoming requests and admission contracts |
+| Task launch admission | `docs/system-analytics/task-launch-admission.md` | Explicit manual authority and qualified automation |
+| Agent preparation | `docs/system-analytics/agent-preparation.md` | Fenced checkout, baseline, handoff and cleanup |
 | System Analytics | `docs/system-analytics/` | Domain flows for projects, runs, HITL, executors, Flow DSL, and test database infrastructure |
 | Screens Reference | `docs/screens/README.md` | User-facing screens and shared chrome |
 | API Contracts | `docs/api/` | Web/supervisor OpenAPI and SSE AsyncAPI contracts |

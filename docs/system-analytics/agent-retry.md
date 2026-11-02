@@ -1,5 +1,7 @@
 # Explicit agent retries
 
+**Designed admission extension:** [explicit task launch](task-launch-admission.md) separates manual authorization from qualification; the existing implementation below remains the v1 boundary until cutover. Qualification content/publication protections remain unchanged.
+
 **Implemented — ADR-196–198.**
 
 ## Purpose

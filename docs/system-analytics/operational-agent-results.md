@@ -1,5 +1,7 @@
 # Operational agent results
 
+**Designed preparation extension:** [agent workspace preparation](agent-preparation.md) adds durable pre-session ownership and a shared physical disposal fence; the existing implementation below remains the current boundary until cutover.
+
 ## Purpose
 
 **Implemented.** Own operational_v1 validation, reported versus effective outcome,

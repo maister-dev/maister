@@ -1,5 +1,7 @@
 # Task queue (priority-ordered dependency-draining admission)
 
+**Designed admission extension:** [explicit task launch](task-launch-admission.md) separates manual authorization from qualification; the existing implementation below remains the v1 boundary until cutover. Qualification content/publication protections remain unchanged.
+
 ## Purpose
 
 This domain (**ADR-121**) covers the **activating layer** over the shipped

@@ -1,5 +1,7 @@
 # Execution hosts domain
 
+**Designed preparation extension:** [agent workspace preparation](agent-preparation.md) adds durable pre-session ownership and a shared physical disposal fence; the existing implementation below remains the current boundary until cutover.
+
 > **Status: Implemented foundations; stabilization in progress** (AB-01–17 below).
 > AB-01–04 qualified in S1 and AB-05–08/10 in S2 (prompt owners, single terminal
 > reconciliation, recoverable unknown admission, fenced create-derived writes and

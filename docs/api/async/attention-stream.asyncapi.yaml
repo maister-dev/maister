@@ -190,3 +190,10 @@ components:
 # and incident content changes contribute to the scanned signature even if group
 # identity and badge count are unchanged. Visibility is checked before the tick.
 # No new browser polling, event transport or diagnostic body is introduced.
+
+# Designed — ADR-200: task.launch_changed is a content-free transactional
+# invalidation fact for intent state before a run exists. Existing attention.tick
+# regions/counters and visibility filtering remain the browser wire contract;
+# refetch the scoped intent receipt on invalidation/reconnect. Existing run launch
+# success frames remain run-bound; compatibility launch_pending errors identify
+# durable acceptance by intentId and accepted:true, never by an invented runId.

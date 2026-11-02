@@ -268,3 +268,10 @@ components:
         as the content route; denial preserves a contentAvailable=false projection.
         Existing escaped text consumers fetch authorized bounded ranges, never
         execute supplied MIME or treat an absent reference body as successful output.
+
+# Designed — ADR-200: task.launch_changed is a content-free transactional
+# invalidation fact for intent state before a run exists. Existing attention.tick
+# regions/counters and visibility filtering remain the browser wire contract;
+# refetch the scoped intent receipt on invalidation/reconnect. Existing run launch
+# success frames remain run-bound; compatibility launch_pending errors identify
+# durable acceptance by intentId and accepted:true, never by an invented runId.

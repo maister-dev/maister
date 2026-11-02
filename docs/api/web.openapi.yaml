@@ -6174,6 +6174,13 @@ paths:
       tags: [runs]
       summary: Launch a new run or rerun for a task
       description: |
+        Designed compatibility upgrade (ADR-200): require Idempotency-Key before
+        any launch write; retain run-bound success schema. If a bounded wait ends
+        after durable acceptance, return 503 with allow-listed details.reason
+        launch_pending, accepted:true, intentId and Location. The separate
+        task-launch-intents resource returns an intent-only 202. Current v1
+        behavior below applies until this compatibility cutover is implemented.
+
         Requires an active session (`requireActiveSession` — authenticated and
         with no pending forced password change) AND project membership at
         `member` or above (`requireProjectAction("launchRun")`). The
@@ -18641,6 +18648,339 @@ paths:
               schema:
                 $ref: "#/components/schemas/RunPeekError"
 
+  /api/task-launch-intents:
+    post:
+      tags:
+        - runs
+      summary: "Designed — ADR-200: AcceptTaskLaunchIntent"
+      operationId: AcceptTaskLaunchIntent
+      description: Active session and live project launchRun/policy grants for writes; readBoard for
+        metadata and readRepoFiles before any source-bearing content. Explicit session Launch records
+        one-shot manual authority. Same-origin/CSRF protection is enforced at the human-action
+        boundary. Strict bounded request. Server derives project and actor from scoped task/auth
+        state. Persist immutable input/settings/basis, reservation, audit and task.launch_changed in
+        one transaction before effects. Same key/same payload returns original receipt after access
+        checks; changed payload conflicts. 202 describes intent acceptance, not a started run. Lost
+        response does not cancel accepted work.
+      security:
+        - sessionCookie: []
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+          description: Stable principal/project/operation request key; changed payload under the same key
+            conflicts before mutation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaskLaunchBody"
+      responses:
+        "202":
+          description: Durably accepted intent; runId may be null. Follow Location or existing authorized
+            attention invalidation.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchReceipt"
+          headers:
+            Location:
+              description: Authorized intent status resource.
+              schema:
+                type: string
+        "400":
+          description: Malformed body/header or unsupported fields; no intent accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "401":
+          description: Missing or invalid authentication.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "403":
+          description: Current principal lacks required operation permission.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "404":
+          description: Missing or inaccessible scoped resource.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "409":
+          description: Stale revision/state, changed key payload, competing work or committed dispatch; no
+            silent replacement.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "503":
+          description: No acceptance when storage is unavailable; replay the same key after recovery.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+  /api/task-launch-intents/{intentId}:
+    get:
+      tags:
+        - runs
+      summary: "Designed — ADR-200: ReadTaskLaunchIntent"
+      operationId: ReadTaskLaunchIntent
+      description: Active session and live project launchRun/policy grants for writes; readBoard for
+        metadata and readRepoFiles before any source-bearing content. Explicit session Launch records
+        one-shot manual authority. Same-origin/CSRF protection is enforced at the human-action
+        boundary. GET is a read-only projection. Return versioned receipt with immutable snapshot
+        summary; never full DB row, prompt, credentials or host paths. No recovery side effect.
+      security:
+        - sessionCookie: []
+      parameters:
+        - in: path
+          name: intentId
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+          description: Untrusted resource selector. Principal/project access derives from server lookup, never
+            this ID alone.
+      responses:
+        "200":
+          description: Current authorized receipt; absent runId is explicit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchReceipt"
+          headers:
+            Location:
+              description: Authorized intent status resource.
+              schema:
+                type: string
+        "400":
+          description: Malformed body/header or unsupported fields; no intent accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "401":
+          description: Missing or invalid authentication.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "403":
+          description: Current principal lacks required operation permission.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "404":
+          description: Missing or inaccessible scoped resource.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "409":
+          description: Stale revision/state, changed key payload, competing work or committed dispatch; no
+            silent replacement.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "503":
+          description: No acceptance when storage is unavailable; replay the same key after recovery.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+  /api/task-launch-intents/{intentId}/cancel:
+    post:
+      tags:
+        - runs
+      summary: "Designed — ADR-200: CancelTaskLaunchIntent"
+      operationId: CancelTaskLaunchIntent
+      description: Active session and live project launchRun/policy grants for writes; readBoard for
+        metadata and readRepoFiles before any source-bearing content. Explicit session Launch records
+        one-shot manual authority. Same-origin/CSRF protection is enforced at the human-action
+        boundary. Cancel only before dispatch commitment, using exact stateVersion and request key.
+        Bound never-dispatched run terminalizes through existing owner and arms cleanup; release
+        reservation and wake capacity atomically. A dispatch winner returns 409 and must use existing
+        Stop.
+      security:
+        - sessionCookie: []
+      parameters:
+        - in: path
+          name: intentId
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+          description: Untrusted resource selector. Principal/project access derives from server lookup, never
+            this ID alone.
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+          description: Stable principal/project/operation request key; changed payload under the same key
+            conflicts before mutation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaskLaunchCancelBody"
+      responses:
+        "200":
+          description: Cancellation receipt, or identical successful replay.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchReceipt"
+          headers:
+            Location:
+              description: Authorized intent status resource.
+              schema:
+                type: string
+        "400":
+          description: Malformed body/header or unsupported fields; no intent accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "401":
+          description: Missing or invalid authentication.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "403":
+          description: Current principal lacks required operation permission.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "404":
+          description: Missing or inaccessible scoped resource.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "409":
+          description: Stale revision/state, changed key payload, competing work or committed dispatch; no
+            silent replacement.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "503":
+          description: No acceptance when storage is unavailable; replay the same key after recovery.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+  /api/task-launch-intents/{intentId}/replace:
+    post:
+      tags:
+        - runs
+      summary: "Designed — ADR-200: ReplaceTaskLaunchIntent"
+      operationId: ReplaceTaskLaunchIntent
+      description: Active session and live project launchRun/policy grants for writes; readBoard for
+        metadata and readRepoFiles before any source-bearing content. Explicit session Launch records
+        one-shot manual authority. Same-origin/CSRF protection is enforced at the human-action
+        boundary. Lock old intent/task and any bound run in canonical order. Cancel old pre-dispatch
+        request and accept newly authorized immutable successor in the same transaction. Any failure
+        rolls back both. Changed input/settings require this fresh decision; no old authority is
+        reused.
+      security:
+        - sessionCookie: []
+      parameters:
+        - in: path
+          name: intentId
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+          description: Untrusted resource selector. Principal/project access derives from server lookup, never
+            this ID alone.
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+          description: Stable principal/project/operation request key; changed payload under the same key
+            conflicts before mutation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaskLaunchReplaceBody"
+      responses:
+        "202":
+          description: Successor receipt with supersedesIntentId. Old cancellation remains retained.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchReceipt"
+          headers:
+            Location:
+              description: Authorized intent status resource.
+              schema:
+                type: string
+        "400":
+          description: Malformed body/header or unsupported fields; no intent accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "401":
+          description: Missing or invalid authentication.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "403":
+          description: Current principal lacks required operation permission.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "404":
+          description: Missing or inaccessible scoped resource.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "409":
+          description: Stale revision/state, changed key payload, competing work or committed dispatch; no
+            silent replacement.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "503":
+          description: No acceptance when storage is unavailable; replay the same key after recovery.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+
 components:
   securitySchemes:
     sessionCookie:
@@ -18836,6 +19176,320 @@ components:
             properties:
               ok: { type: boolean, enum: [true] }
   schemas:
+    TaskLaunchBody:
+      type: object
+      additionalProperties: false
+      required:
+        - taskId
+        - expectedTaskRevision
+        - expectedSettingsToken
+      properties:
+        taskId:
+          type: string
+          minLength: 1
+          maxLength: 256
+        expectedTaskRevision:
+          type: integer
+          minimum: 0
+        expectedSettingsToken:
+          type: string
+          minLength: 1
+          maxLength: 256
+        flowId:
+          type: string
+          minLength: 1
+          maxLength: 256
+        runnerId:
+          type: string
+          minLength: 1
+          maxLength: 256
+        baseBranch:
+          type: string
+          minLength: 1
+          maxLength: 256
+        baseCommit:
+          type: string
+          minLength: 7
+          maxLength: 64
+        targetBranch:
+          type: string
+          minLength: 1
+          maxLength: 256
+        deliveryPolicy:
+          $ref: "#/components/schemas/DeliveryPolicy"
+        executionPolicy:
+          $ref: "#/components/schemas/ExecutionPolicy"
+        autoPromote:
+          type: boolean
+    TaskLaunchCancelBody:
+      type: object
+      additionalProperties: false
+      required:
+        - expectedStateVersion
+      properties:
+        expectedStateVersion:
+          type: integer
+          minimum: 1
+    TaskLaunchReplaceBody:
+      type: object
+      additionalProperties: false
+      required:
+        - taskId
+        - expectedTaskRevision
+        - expectedSettingsToken
+        - expectedStateVersion
+      properties:
+        taskId:
+          type: string
+          minLength: 1
+          maxLength: 256
+        expectedTaskRevision:
+          type: integer
+          minimum: 0
+        expectedSettingsToken:
+          type: string
+          minLength: 1
+          maxLength: 256
+        flowId:
+          type: string
+          minLength: 1
+          maxLength: 256
+        runnerId:
+          type: string
+          minLength: 1
+          maxLength: 256
+        baseBranch:
+          type: string
+          minLength: 1
+          maxLength: 256
+        baseCommit:
+          type: string
+          minLength: 7
+          maxLength: 64
+        targetBranch:
+          type: string
+          minLength: 1
+          maxLength: 256
+        deliveryPolicy:
+          $ref: "#/components/schemas/DeliveryPolicy"
+        executionPolicy:
+          $ref: "#/components/schemas/ExecutionPolicy"
+        autoPromote:
+          type: boolean
+        expectedStateVersion:
+          type: integer
+          minimum: 1
+    TaskLaunchReceipt:
+      type: object
+      additionalProperties: false
+      required:
+        - schemaVersion
+        - intentId
+        - taskId
+        - state
+        - stateVersion
+        - basis
+        - acceptedAt
+        - taskRevision
+        - inputRevision
+        - settingsDigest
+        - runId
+        - reason
+        - snapshot
+      properties:
+        schemaVersion:
+          type: integer
+          enum:
+            - 1
+        intentId:
+          type: string
+          minLength: 1
+          maxLength: 256
+        taskId:
+          type: string
+          minLength: 1
+          maxLength: 256
+        state:
+          type: string
+          enum:
+            - queued
+            - preparing
+            - run_bound
+            - held
+            - cancelled
+            - failed
+            - settled
+        stateVersion:
+          type: integer
+          minimum: 1
+        basis:
+          type: string
+          enum:
+            - manual
+            - automatic
+            - execution_child
+        acceptedAt:
+          type: string
+          format: date-time
+        taskRevision:
+          type: integer
+          minimum: 0
+        inputRevision:
+          type: integer
+          minimum: 1
+        settingsDigest:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        runId:
+          type: string
+          minLength: 1
+          maxLength: 256
+          nullable: true
+        reason:
+          type: string
+          nullable: true
+          maxLength: 256
+        runStatus:
+          type: string
+          enum:
+            - Pending
+            - Running
+            - NeedsInput
+            - NeedsInputIdle
+            - HumanWorking
+            - WaitingOnChildren
+            - Review
+            - Done
+            - Failed
+            - Crashed
+            - Abandoned
+        queuePosition:
+          type: integer
+          minimum: 1
+        queueReason:
+          type: string
+          maxLength: 256
+        snapshot:
+          type: object
+          additionalProperties: false
+          properties:
+            flowId:
+              type: string
+              minLength: 1
+              maxLength: 256
+            flowRevisionId:
+              type: string
+              minLength: 1
+              maxLength: 256
+            runnerIds:
+              type: array
+              maxItems: 64
+              items:
+                type: string
+                minLength: 1
+                maxLength: 256
+            baseCommit:
+              type: string
+              maxLength: 64
+            targetBranch:
+              type: string
+              minLength: 1
+              maxLength: 256
+            promotionMode:
+              type: string
+              enum:
+                - local_merge
+                - rebase_merge
+                - pull_request
+            autoPromote:
+              type: boolean
+          required:
+            - flowId
+            - flowRevisionId
+            - runnerIds
+            - baseCommit
+            - targetBranch
+            - promotionMode
+            - autoPromote
+        changedFields:
+          type: array
+          maxItems: 32
+          items:
+            type: string
+            enum:
+              - input
+              - clarifications
+              - flow
+              - runner
+              - delivery
+              - policy
+              - authority
+              - workspace
+        supersedesIntentId:
+          type: string
+          minLength: 1
+          maxLength: 256
+          nullable: true
+        terminalOutcome:
+          type: string
+          enum:
+            - Done
+            - Failed
+            - Crashed
+            - Abandoned
+      example:
+        schemaVersion: 1
+        intentId: launch-example
+        taskId: task-example
+        state: queued
+        stateVersion: 1
+        basis: manual
+        acceptedAt: 2026-11-02T12:00:00.000Z
+        taskRevision: 0
+        inputRevision: 1
+        settingsDigest: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        runId: null
+        reason: null
+        snapshot:
+          flowId: flow-example
+          flowRevisionId: revision-example
+          runnerIds:
+            - codex-sol
+          baseCommit: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+          targetBranch: main
+          promotionMode: pull_request
+          autoPromote: true
+      oneOf:
+        - properties:
+            state:
+              enum:
+                - queued
+                - preparing
+                - cancelled
+        - properties:
+            state:
+              enum:
+                - run_bound
+            runId:
+              type: string
+              minLength: 1
+        - properties:
+            state:
+              enum:
+                - held
+                - failed
+            reason:
+              type: string
+              minLength: 1
+        - required:
+            - terminalOutcome
+          properties:
+            state:
+              enum:
+                - settled
+            runId:
+              type: string
+              minLength: 1
     RunStandaloneTranscriptResponse:
       type: object
       additionalProperties: false

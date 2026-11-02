@@ -19,6 +19,7 @@ Two kinds of view live here (ADR-159):
 
 | File | Scope |
 | ---- | ----- |
+| [`task-launch-domain.md`](task-launch-domain.md) | Designed: immutable launch intents, ordinary reservations and preparation ownership. |
 | [`agent-activity-domain.md`](agent-activity-domain.md) | Designed: frozen history, incidents, trigger attempts and retry ownership. |
 | [`task-qualification-domain.md`](task-qualification-domain.md) | Designed: qualification inputs, immutable assessments and delivery admission. |
 | [`operational-agents-domain.md`](operational-agents-domain.md) | Implemented: frozen operational contracts, terminal/baseline/cleanup facts and per-reader acknowledgements. |
