@@ -254,7 +254,8 @@ vi.mock("@/lib/execution-host", async () => {
     createExecutionHosts: () => hosts,
   };
 });
-vi.mock("@/lib/instance-config", () => ({
+vi.mock("@/lib/instance-config", async (original) => ({
+  ...(await original<typeof import("@/lib/instance-config")>()),
   runtimeRoot: mocks.runtimeRoot,
 }));
 vi.mock("@/lib/scratch-runs/events", () => ({

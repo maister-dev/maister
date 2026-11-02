@@ -9,6 +9,7 @@ import type { BuildFlowRunResultDtoInput } from "@/lib/runs/flow-result-dto";
 
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { NextIntlClientProvider } from "next-intl";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -246,15 +247,21 @@ function render(
   locale = "en-US",
 ): string {
   return renderToStaticMarkup(
-    createElement(FlowRunCenter, {
-      result: buildFlowRunResultDto(input(over)),
-      labels: LABELS,
-      locale,
-      graphView: createElement(
-        "div",
-        { "data-testid": "graph-child" },
-        "Graph",
-      ),
+    // eslint-disable-next-line react/no-children-prop
+    createElement(NextIntlClientProvider, {
+      locale: "en",
+      messages,
+      timeZone: "UTC",
+      children: createElement(FlowRunCenter, {
+        result: buildFlowRunResultDto(input(over)),
+        labels: LABELS,
+        locale,
+        graphView: createElement(
+          "div",
+          { "data-testid": "graph-child" },
+          "Graph",
+        ),
+      }),
     }),
   );
 }
