@@ -10,11 +10,16 @@ import { useTranslations } from "next-intl";
 import Link from "next/link";
 
 import { ConfirmDialog } from "@/components/feedback/confirm-dialog";
+import {
+  retryRefusalKey,
+  retryResponseErrorKey,
+} from "@/components/agents/retry-refusal";
 
 type AcceptedRequest = {
   runnerId: string;
   requestKey: string;
   previewFingerprint: string;
+  strategy: AgentRetryOptions["strategy"];
 };
 const button =
   "inline-flex min-h-8 items-center rounded-lg border border-line bg-ivory px-3 text-xs font-semibold text-ink hover:border-mute disabled:opacity-50";
@@ -34,21 +39,15 @@ export function AgentRetryControl({ runId }: { runId: string }): ReactElement {
     requestKey: string;
   } | null>(null);
   const [previewRefused, setPreviewRefused] = useState(false);
-  const refusalKey = (reason: string | null): string =>
-    reason === "reconciliation_required"
-      ? "refusal.reconciliation"
-      : reason === "retry_task_changed"
-        ? "refusal.taskChanged"
-        : reason === "retry_runner_unavailable"
-          ? "refusal.runner"
-          : reason === "retry_source_not_failed"
-            ? "refusal.notFailed"
-            : "retryRefused";
+  const [refreshed, setRefreshed] = useState(false);
   const load = async (): Promise<void> => {
     setBusy(true);
     setError(null);
+    setRefreshed(false);
     try {
-      const response = await fetch(`/api/runs/${runId}/retry-options`);
+      const response = await fetch(`/api/runs/${runId}/retry-options`, {
+        cache: "no-store",
+      });
 
       if (!response.ok) {
         setError(
@@ -60,13 +59,20 @@ export function AgentRetryControl({ runId }: { runId: string }): ReactElement {
       const next = (await response.json()) as AgentRetryOptions;
 
       setOptions(next);
-      if (!next.existingIntentId && previewRefused) {
+      setRunnerId((current) =>
+        next.existingIntentId && request
+          ? request.runnerId
+          : next.runners.some((item) => item.id === current && item.ready)
+            ? current
+            : (next.selectedRunnerId ?? ""),
+      );
+      if (!next.existingIntentId) {
+        setReceipt(null);
         setRequest(null);
+        setCleanupRequest(null);
         setPreviewRefused(false);
       }
-      setRunnerId(
-        request?.runnerId ?? next.runners.find((item) => item.ready)?.id ?? "",
-      );
+      setRefreshed(true);
       if (next.existingIntentId) {
         const status = await fetch(
           `/api/runs/${runId}/retry/${next.existingIntentId}`,
@@ -91,6 +97,7 @@ export function AgentRetryControl({ runId }: { runId: string }): ReactElement {
       runnerId,
       requestKey: crypto.randomUUID(),
       previewFingerprint: options.previewFingerprint,
+      strategy: options.strategy,
     };
 
     setRequest(acceptedRequest);
@@ -104,16 +111,9 @@ export function AgentRetryControl({ runId }: { runId: string }): ReactElement {
       });
 
       if (!response.ok) {
-        if (response.status === 409) setPreviewRefused(true);
-        setError(
-          t(
-            response.status === 403
-              ? "permissionChanged"
-              : response.status === 409
-                ? "retryConflict"
-                : "retryError",
-          ),
-        );
+        if (response.status >= 400 && response.status < 500)
+          setPreviewRefused(true);
+        setError(t(await retryResponseErrorKey(response)));
 
         return;
       }
@@ -169,13 +169,37 @@ export function AgentRetryControl({ runId }: { runId: string }): ReactElement {
       );
 
       if (!response.ok) {
-        setError(
-          t(response.status === 409 ? "cleanupConflict" : "cleanupError"),
-        );
+        if (response.status === 409) {
+          setCleanupRequest(null);
+          setError(t("cleanupConflict"));
+          try {
+            const current = await fetch(
+              `/api/runs/${runId}/retry/${receipt.retryIntentId}`,
+              { cache: "no-store" },
+            );
+
+            if (current.ok)
+              setReceipt((await current.json()) as AgentRetryReceipt);
+            else setError(t("loadError"));
+          } catch {
+            setError(t("loadError"));
+          }
+        } else setError(t("cleanupError"));
 
         return;
       }
-      setReceipt((await response.json()) as AgentRetryReceipt);
+      const status = await fetch(
+        `/api/runs/${runId}/retry/${receipt.retryIntentId}`,
+        { cache: "no-store" },
+      );
+
+      if (!status.ok) {
+        setError(t("loadError"));
+
+        return;
+      }
+      setReceipt((await status.json()) as AgentRetryReceipt);
+      setCleanupRequest(null);
       router.refresh();
     } catch {
       setError(t("cleanupUnknown"));
@@ -191,7 +215,7 @@ export function AgentRetryControl({ runId }: { runId: string }): ReactElement {
         type="button"
         onClick={() => {
           setOpen(true);
-          void load();
+          if (!request || receipt || previewRefused) void load();
         }}
       >
         {t("retry")}
@@ -217,13 +241,24 @@ export function AgentRetryControl({ runId }: { runId: string }): ReactElement {
               </p>
             ) : null}
             {busy ? <p role="status">{t("loading")}</p> : null}
+            {refreshed && !busy ? (
+              <p className="text-xs text-mute" role="status">
+                {t("previewRefreshed")}
+              </p>
+            ) : null}
             {receipt ? (
               <>
                 <p data-testid="agent-retry-receipt">
                   {t(`retryState.${receipt.intentState}`)}
                 </p>
+                {receipt.runStatus ? (
+                  <p>
+                    {t("successorStatus")}: {t(`status.${receipt.runStatus}`)}
+                  </p>
+                ) : null}
+                {receipt.queueReason ? <p>{t("queuePending")}</p> : null}
                 {receipt.refusalReason ? (
-                  <p>{t(refusalKey(receipt.refusalReason))}</p>
+                  <p>{t(retryRefusalKey(receipt.refusalReason))}</p>
                 ) : null}
                 {receipt.cleanup ? (
                   <p>{t(`retryCleanup.${receipt.cleanup.state}`)}</p>
@@ -243,15 +278,24 @@ export function AgentRetryControl({ runId }: { runId: string }): ReactElement {
                     {t("openSuccessor")}
                   </Link>
                 ) : null}
-                {receipt.intentState === "accepted" ||
-                receipt.cleanup?.state === "armed" ? (
+                <button
+                  className={button}
+                  disabled={busy}
+                  type="button"
+                  onClick={() => void refreshReceipt()}
+                >
+                  {t("refresh")}
+                </button>
+
+                {receipt.intentState === "refused" &&
+                (!receipt.cleanup || receipt.cleanup.state === "released") ? (
                   <button
                     className={button}
                     disabled={busy}
                     type="button"
-                    onClick={() => void refreshReceipt()}
+                    onClick={() => void load()}
                   >
-                    {t("refresh")}
+                    {t("prepareAnotherAttempt")}
                   </button>
                 ) : null}
               </>
@@ -260,67 +304,100 @@ export function AgentRetryControl({ runId }: { runId: string }): ReactElement {
                 <p>
                   <span className="text-mute">{t("sourceRunner")}: </span>
                   {options.sourceRunnerId ?? t("unavailable")}
+                  <span className="mt-1 block">
+                    <span className="text-mute">{t("currentRunner")}: </span>
+                    {options.runners.find(
+                      (item) => item.id === options.selectedRunnerId,
+                    )?.label ?? t("unavailable")}
+                  </span>
                   <span className="mt-1 block text-mute">
-                    {t("failureStage")}:{" "}
                     {t(
-                      options.eligible
-                        ? "stageBeforeWork"
-                        : "stageInspectEvidence",
+                      options.strategy === "fresh_qualification"
+                        ? "retryAction"
+                        : "failureStage",
+                    )}
+                    :{" "}
+                    {t(
+                      options.strategy === "fresh_qualification"
+                        ? "freshQualification"
+                        : options.eligible
+                          ? "stageBeforeWork"
+                          : "stageInspectEvidence",
                     )}
                   </span>
                 </p>
                 {options.differences.length ? (
-                  <section>
-                    <h3 className="font-semibold">{t("currentDifferences")}</h3>
+                  <details>
+                    <summary className="font-semibold">
+                      {t("currentDifferences")}
+                    </summary>
                     <ul className="list-disc pl-5">
                       {options.differences.map((item) => (
                         <li key={item.field} className="break-words">
-                          {t(`difference.${item.field}`)}: {item.source ?? "—"}{" "}
-                          → {item.current ?? "—"}
+                          {t(`difference.${item.field}`)}:{" "}
+                          {item.source?.slice(0, 16) ?? "—"} →{" "}
+                          {item.current?.slice(0, 16) ?? "—"}
                         </li>
                       ))}
                     </ul>
-                  </section>
+                  </details>
                 ) : null}
                 {!options.eligible && !request ? (
-                  <p role="status">{t(refusalKey(options.reason))}</p>
-                ) : (
-                  <>
-                    <label
-                      className="block font-semibold"
-                      htmlFor={`retry-runner-${runId}`}
-                    >
-                      {t("oneOffRunner")}
-                    </label>
-                    <select
-                      className="w-full rounded-lg border border-line bg-paper p-2"
-                      disabled={busy || request !== null}
-                      id={`retry-runner-${runId}`}
-                      value={runnerId}
-                      onChange={(event) => setRunnerId(event.target.value)}
-                    >
-                      <option value="">{t("chooseRunner")}</option>
-                      {options.runners.map((item) => (
-                        <option
-                          key={item.id}
-                          disabled={!item.ready}
-                          value={item.id}
-                        >
-                          {item.label}
-                          {item.ready ? "" : ` · ${t("runnerUnavailable")}`}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      className={button}
-                      disabled={busy || !runnerId}
-                      type="button"
-                      onClick={() => void accept()}
-                    >
-                      {request ? t("retrySameRequest") : t("confirmRetry")}
-                    </button>
-                  </>
-                )}
+                  <p
+                    className="rounded-lg border border-amber/40 p-3"
+                    role="status"
+                  >
+                    {t(retryRefusalKey(options.reason))}
+                  </p>
+                ) : null}
+                {options.qualificationOptIn ? (
+                  <p className="rounded-lg border border-amber/40 p-3">
+                    {t("qualificationOptIn")}
+                  </p>
+                ) : null}
+                <>
+                  <label
+                    className="block font-semibold"
+                    htmlFor={`retry-runner-${runId}`}
+                  >
+                    {t("oneOffRunner")}
+                  </label>
+                  <select
+                    className="w-full rounded-lg border border-line bg-paper p-2"
+                    disabled={busy || request !== null}
+                    id={`retry-runner-${runId}`}
+                    value={runnerId}
+                    onChange={(event) => setRunnerId(event.target.value)}
+                  >
+                    <option value="">{t("chooseRunner")}</option>
+                    {options.runners.map((item) => (
+                      <option
+                        key={item.id}
+                        disabled={!item.ready}
+                        value={item.id}
+                      >
+                        {item.label}
+                        {item.ready ? "" : ` · ${t("runnerUnavailable")}`}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    className={button}
+                    disabled={
+                      busy ||
+                      !runnerId ||
+                      (!options.eligible && request === null)
+                    }
+                    type="button"
+                    onClick={() => void accept()}
+                  >
+                    {request
+                      ? t("retrySameRequest")
+                      : options.strategy === "fresh_qualification"
+                        ? t("confirmQualification")
+                        : t("confirmRetry")}
+                  </button>
+                </>
               </>
             ) : null}
             {!busy && !receipt && (!request || previewRefused) ? (

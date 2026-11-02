@@ -5893,6 +5893,100 @@
     "zeroWork": "Operation completed successfully; no new work.",
     "awaitingResult": "Waiting for the structured operation result.",
     "invalidResult": "The required result is missing or invalid. Inspect execution evidence before starting a new attempt.",
+    "validation": {
+      "title": "Result validation",
+      "field": "Field",
+      "rules": {
+        "result_missing": {
+          "message": "The required structured result is missing.",
+          "remediation": "Emit the required json maister:output block with the complete operational_v1 result."
+        },
+        "malformed_json": {
+          "message": "The structured result is not valid JSON.",
+          "remediation": "Correct the JSON syntax and emit one complete json maister:output block."
+        },
+        "oversize": {
+          "message": "The structured result exceeds the output limit.",
+          "remediation": "Reduce the result size; keep detailed execution evidence outside the structured result."
+        },
+        "unsupported_version": {
+          "message": "The operational contract version is unsupported.",
+          "remediation": "Use the semantic version pinned in this run's launch contract."
+        },
+        "field_required": {
+          "message": "A required result field is missing.",
+          "remediation": "Include every required field in the operational_v1 result."
+        },
+        "invalid_type": {
+          "message": "A result field has the wrong type.",
+          "remediation": "Use the field type defined by operational_v1; counts must be nonnegative safe integers."
+        },
+        "invalid_value": {
+          "message": "A result field has an invalid value.",
+          "remediation": "Use the permitted enum, range, length and URL format defined by operational_v1."
+        },
+        "unknown_fields": {
+          "message": "The result contains unsupported fields.",
+          "remediation": "Remove undeclared fields from this object; use only the operational_v1 schema."
+        },
+        "invalid_structure": {
+          "message": "The result violates structural safety limits.",
+          "remediation": "Use a JSON object within the size, nesting, key and array limits and remove unsafe keys."
+        },
+        "attempted_count_mismatch": {
+          "message": "Attempted must equal completed plus failed.",
+          "remediation": "Count each attempted operation as either completed or failed."
+        },
+        "scanned_count_exceeded": {
+          "message": "Attempted plus skipped exceeds scanned.",
+          "remediation": "Reconcile scan totals so every attempted or skipped item belongs to the scanned set."
+        },
+        "created_count_exceeded": {
+          "message": "Created exceeds attempted.",
+          "remediation": "Count creation attempts in attempted and report only confirmed creations in created."
+        },
+        "complete_coverage_remaining": {
+          "message": "Complete coverage requires remainingKnown to be zero.",
+          "remediation": "Report incomplete coverage while known work remains or its amount is unknown."
+        },
+        "not_started_has_scanned": {
+          "message": "Not-started coverage cannot include scanned work.",
+          "remediation": "Use incomplete or complete coverage when work was scanned."
+        },
+        "duplicate_reference": {
+          "message": "Reference identities must be unique.",
+          "remediation": "Keep one reference per kind and id."
+        },
+        "undeclared_diagnostic_reference": {
+          "message": "A diagnostic refers to an undeclared reference.",
+          "remediation": "Declare every referenced id in references or remove the invalid diagnostic link."
+        },
+        "success_inconsistent": {
+          "message": "Success requires complete coverage without failed work, errors or unresolved effects.",
+          "remediation": "Reconcile outstanding effects and errors, or report partial, blocked or failed as appropriate."
+        },
+        "partial_requires_progress": {
+          "message": "Partial completion requires confirmed progress.",
+          "remediation": "If nothing completed and no effect was confirmed, report blocked or failed with an actionable error diagnostic."
+        },
+        "partial_requires_incomplete_work": {
+          "message": "Partial completion requires incomplete or failed work.",
+          "remediation": "Report success when coverage is complete and no errors, failed work or unresolved effects remain."
+        },
+        "error_diagnostic_required": {
+          "message": "Blocked or failed outcomes require an actionable error diagnostic.",
+          "remediation": "Include an error diagnostic naming the operation, failure and concrete remediation."
+        },
+        "failed_work_requires_error": {
+          "message": "Failed work requires an actionable error diagnostic.",
+          "remediation": "Describe the failed operation and a concrete remediation in an error diagnostic."
+        },
+        "creation_reference_missing": {
+          "message": "Confirmed creations require confirmed references.",
+          "remediation": "Add a confirmed reference for every creation or correct the created count."
+        }
+      }
+    },
     "remediation": "Next step",
     "reasons": "Diagnostic codes",
     "integrity": "Source integrity",
@@ -5941,7 +6035,7 @@
     "flowPool": "Flow slots",
     "agentPool": "Agent slots",
     "workspaceAvailable": "Workspace retained",
-    "noWorkspace": "No delivery workspace",
+    "noWorkspace": "No retained workspace",
     "launchTimeUnavailable": "Launch time unavailable",
     "pendingInput": "{count, number} pending requests",
     "history": "History",
@@ -6085,7 +6179,20 @@
       "reconciliation": "The previous execution may have started work. Reconcile its effects before starting another attempt.",
       "taskChanged": "The task has changed or was already triaged. Open the task and use its current qualification or explicit requeue action.",
       "runner": "No compatible ready runner is available. Configure one, then refresh this preview.",
-      "notFailed": "This run is no longer in a retryable failed state."
+      "notFailed": "This run is no longer in a retryable failed state.",
+      "unsupported": "This execution type cannot use this retry action. Open the task or its original workflow to continue.",
+      "sourceUnavailable": "The source execution or retry receipt is no longer available. Refresh the history.",
+      "agentUnavailable": "The agent attachment or its pinned package is unavailable. Restore the attachment and refresh this preview.",
+      "configuration": "The current agent configuration is invalid. Correct its project settings, then refresh this preview.",
+      "contextChanged": "The agent, task or runner configuration changed before admission. Prepare a new preview using the saved settings.",
+      "previewStale": "This preview expired or changed. Refresh it before accepting a new attempt.",
+      "alreadyOwned": "A retry already exists for this source. Follow the accepted attempt instead of creating another.",
+      "duplicateTask": "Another selected failure belongs to this task. Only one new assessment is prepared.",
+      "assessmentActive": "This task already has an active assessment. Open it or wait for it to finish.",
+      "assessmentReady": "The current task inputs have already been assessed. Review that assessment instead of repeating an old failed run.",
+      "qualificationPolicy": "Enable required task qualification in project settings before running this qualifier.",
+      "qualificationRequired": "This legacy task must explicitly require qualification before it can be assessed.",
+      "taskBusy": "This task has active work or an accepted assessment request. Open the current execution or wait for it to finish."
     },
     "retryCleanup": {
       "armed": "Disposable allocation cleanup is scheduled.",
@@ -6097,7 +6204,35 @@
     "cleanupError": "Cleanup could not be scheduled. Inspect this intent and try again.",
     "cleanupUnknown": "The cleanup response was lost. Repeat the same request to recover its receipt.",
     "lastCompleted": "Last completed",
-    "notCompletedYet": "No completed runs"
+    "notCompletedYet": "No completed runs",
+    "previewRefreshed": "Current data checked. The eligibility and runner shown below are up to date.",
+    "prepareAnotherAttempt": "Prepare another attempt",
+    "currentRunner": "Current configured runner",
+    "successorStatus": "New attempt status",
+    "queuePending": "Admission is waiting for execution capacity or a workspace.",
+    "freshQualification": "New assessment of the current task",
+    "confirmQualification": "Assess the task again",
+    "qualificationOptIn": "Confirming will make the selected legacy tasks require qualification before delivery. The new assessment uses their current inputs; previous runs and effects remain in history.",
+    "retryAllFailed": "Review all failed tasks…",
+    "retrySelected": "Review selected ({count, number})…",
+    "retryBatchTitle": "Repeat failed work",
+    "runnerChangedRetryOffer": "The runner was saved. Review failed tasks below and choose which work to repeat on the new runner. Nothing starts until you confirm.",
+    "retryBatchHint": "Review eligibility and choose one runner for this batch. Repeated failures for the same task are assessed once; blocked items are listed with their reason.",
+    "batchPreviewSummary": "{eligible, number} selected · {total, number} inspected",
+    "batchRunner": "Runner for this batch",
+    "batchEligible": "Ready for a new attempt",
+    "batchMoreAvailable": "More failed work is available ({count, number} retained failures). Preview additional records or continue with another batch.",
+    "confirmBatchRetry": "Start eligible work ({count, number})",
+    "prepareAnotherBatch": "Refresh this batch preview",
+    "previewMoreFailed": "Preview more failed work",
+    "selectFailedOnPage": "Select failed runs on this page",
+    "selectFailedRun": "Select failed run {runId}",
+    "retryAction": "Action",
+    "nextFailedWindow": "Next batch of failed work",
+    "recoverPendingBatch": "Recover pending batch…",
+    "pendingBatchHint": "A previous batch request is still unresolved. Recover that same request first; changing the history selection does not change its tasks or request keys.",
+    "batchWindowRange": "Records {start, number}–{end, number} of {total, number} retained failures",
+    "latestFailedWork": "Latest failed work"
   },
   "taskQualification": {
     "incoming": "Incoming requests",

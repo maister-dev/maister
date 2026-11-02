@@ -80,6 +80,12 @@ reference, never merely a pending marker. Blocked/failed require an error diagno
 remediation; unknown writes without confirmed progress are blocked. A partial scan
 with unknown remaining size remains incomplete/null. A zero-item full scan succeeds.
 
+Verifying previously imported tasks counted as skipped does not establish progress.
+For example, scanned=18, attempted=4, completed=0, failed=4, skipped=14, created=0
+with only unresolved receipt references is blocked, not partial. Complete inspection
+can still report complete/0 coverage while business effects require reconciliation.
+Do not alter counters or relabel old receipts to satisfy the progress requirement.
+
 ### Terminal and read contract
 
 | Cause | Status | Effective outcome / collection |
@@ -100,6 +106,14 @@ error rolls back every write. Cleanup is post-commit. `operationalOutcome` joins
 the receipt to the exact validated revision after workspace removal. Failed keeps
 ordinary resultStatus=unavailable/result=null; diagnostic availability never makes
 a failed code-delivery result usable. Live operations expose pending, not success.
+
+Invalid output additionally records optional `validationDiagnostics` on the
+existing terminal receipt and shared OperationalOutcome DTO: up to 20 stable rule
+codes and schema-known field paths (128 characters, `$` at root). No rejected
+values, unknown property names or raw validator/provider messages are retained.
+Run details localize the violated rule and remediation; collect exposes the same
+safe diagnostics. Invalid output remains unavailable and failure-terminal. Legacy
+receipts without these optional details remain readable without invented reasons.
 
 ## Expectations
 

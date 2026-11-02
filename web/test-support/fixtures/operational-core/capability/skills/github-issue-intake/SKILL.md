@@ -236,12 +236,16 @@ Choose the terminal outcome from observed evidence:
 
 - `success`: complete coverage, no failed work/error diagnostic/unresolved
   effect. Zero new tasks is a valid success, including an empty source scan.
-- `partial`: confirmed progress (completed work, created task or confirmed
-  receipt) plus an incomplete or failed remainder. Include all confirmed tasks
-  even when posting their receipts failed.
-- `blocked`: authorization/configuration/missing-tool barrier before progress.
-  HTTP 401/403 requires an error diagnostic with actual status and precise
-  remediation. Do not claim an empty successful scan.
+- `partial`: confirmed progress in this run (`completed > 0`, `created > 0`,
+  or a confirmed `operation_receipt` reference) plus an incomplete or failed
+  remainder. Include all confirmed tasks even when posting their receipts failed.
+  Merely verifying prior imports counted as `skipped` is not new progress. Never
+  relabel old receipts or change counters to make an outcome validate.
+- `blocked`: authorization/configuration/missing-tool or unresolved prior-effect
+  barrier before progress. If every attempted pending-marker reconciliation is
+  still held and this run created/completed nothing, report `blocked`, not
+  `partial`. HTTP 401/403 requires an error diagnostic with actual status and
+  precise remediation. Do not claim an empty successful scan.
 - `failed`: execution/retry exhaustion without confirmed progress. A failed
   listing may have incomplete coverage with unknown remainingKnown. If progress
   exists, choose partial instead and explain the remaining error.
@@ -257,6 +261,15 @@ Canonical complete zero-work example (same object for gh and MCP):
 
 ```json maister:output
 {"schemaVersion":1,"outcome":"success","summary":"Complete scan; no new work.","coverage":{"state":"complete","remainingKnown":0},"counts":{"scanned":0,"attempted":0,"completed":0,"failed":0,"skipped":0,"created":0},"references":[],"diagnostics":[]}
+```
+
+Canonical held-source example: the scan is complete, but all four attempted
+reconciliations remain unresolved. Fourteen verified prior imports were skipped;
+they do not establish progress. Operator verification must precede any marker
+repair or retry. Normal HITL may still request an explicit decision when needed.
+
+```json maister:output
+{"schemaVersion":1,"outcome":"blocked","summary":"Complete scan; four prior intake effects require operator reconciliation.","coverage":{"state":"complete","remainingKnown":0},"counts":{"scanned":18,"attempted":4,"completed":0,"failed":4,"skipped":14,"created":0},"references":[{"kind":"external_issue","id":"source-2","state":"unresolved"},{"kind":"external_issue","id":"source-4","state":"unresolved"},{"kind":"external_issue","id":"source-5","state":"unresolved"},{"kind":"external_issue","id":"source-6","state":"unresolved"}],"diagnostics":[{"code":"intake_prior_effect_unresolved","severity":"error","operation":"reconcile_pending_receipt","message":"Pending markers have no verified task or completion receipt; one marker names another source.","retryable":false,"remediation":"Verify task provenance across all statuses and reconcile the existing marker identities before allowing a fresh import.","referenceIds":["source-2","source-4","source-5","source-6"]}]}
 ```
 
 Only the canonical fields are allowed. summary/message/remediation are at most

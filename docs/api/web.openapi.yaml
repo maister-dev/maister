@@ -442,14 +442,125 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/AgentEpisodeAcknowledgement"
+  /api/projects/{slug}/agents/{agentId}/retry-options:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string, minLength: 1, maxLength: 256 }
+      - name: agentId
+        in: path
+        required: true
+        schema: { type: string, minLength: 1, maxLength: 256 }
+    get:
+      operationId: getAgentRetryBatchOptions
+      summary: Preview failed agent runs for an explicit batch
+      description: >-
+        Requires current project launchRun authority. Lists at most 50 Failed/Crashed
+        standalone agent sources with a signed project/agent/actor-scoped cursor.
+        Reports individual blockers, deduplicates eligible task targets and intersects
+        ready runners. Viewing this preview never accepts or starts work.
+      parameters:
+        - name: cursor
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 2048 }
+      responses:
+        "200":
+          description: Current authorized batch preview
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentRetryBatchOptions" }
+        "400": *a7
+        "401": *a8
+        "403": *a9
+        "404": *a10
+        "409": *a11
+    post:
+      operationId: previewSelectedAgentRetries
+      summary: Preview selected failed sources before batch acceptance
+      description: >-
+        Resolves every source against the URL project/agent before inspecting it.
+        Rejects foreign or unavailable source IDs without disclosing their content.
+        runIds and cursor are mutually exclusive; omitted filters select the first page.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                runIds:
+                  type: array
+                  minItems: 1
+                  maxItems: 100
+                  uniqueItems: true
+                  items: { type: string, format: uuid }
+                cursor: { type: string, minLength: 1, maxLength: 2048 }
+      responses:
+        "200":
+          description: Current authorized selected-source preview
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentRetryBatchOptions" }
+        "400": *a7
+        "401": *a8
+        "403": *a9
+        "404": *a10
+        "409": *a11
+  /api/projects/{slug}/agents/{agentId}/retry:
+    post:
+      operationId: acceptAgentRetryBatch
+      summary: Explicitly accept keyed agent retries on one selected runner
+      description: >-
+        Authenticated actor and project/agent scope come from server state.
+        Validates all source IDs before accepting any item, then records each
+        independently through the single-retry owner. Task targets are deduplicated.
+        Per-item request keys and content guards survive partial/lost responses;
+        unknown results require replay with those same keys. No automatic retry or
+        runner-default change. Current scheduler capacity and permissions apply.
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 256 }
+        - name: agentId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 256 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AgentRetryBatchBody" }
+      responses:
+        "200":
+          description: All items refused or unresolved; inspect each receipt
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentRetryBatchResult" }
+        "202":
+          description: At least one durable acceptance; not a claim of execution
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentRetryBatchResult" }
+        "400": *a7
+        "401": *a8
+        "403": *a9
+        "404": *a10
+        "409": *a11
+        "503": *a12
   /api/runs/{runId}/retry-options:
     get:
       operationId: getAgentRetryOptions
       summary: (Implemented — ADR-196–198) getAgentRetryOptions
       description:
-        Designed. launchRun required. Prove source terminal quiescence and no dispatched work.
-        Partial/unknown effects return eligible=false and typed reason. The expiring preview binds
-        exact current recipe, task and runner policy.
+        launchRun required. Generic replay requires proven pre-dispatch failure.
+        A current read-only operational qualifier can instead advertise an explicit
+        fresh assessment of current task inputs; this does not replay or certify old effects.
+        Both require source quiescence and refuse unresolved commands/live work.
+        The preview binds current recipe/task policy and reports the resolved preferred
+        runner, strategy and whether accepting opts a legacy task into qualification.
       parameters:
         - name: runId
           in: path
@@ -18766,6 +18877,11 @@ components:
         previewFingerprint:
           type: string
           pattern: ^[a-f0-9]{64}$
+        strategy:
+          type: string
+          enum: [pre_work_retry, fresh_qualification]
+          default: pre_work_retry
+          description: Must match preview; fresh qualification requires explicit confirmation.
     AgentRetryOptions:
       type: object
       additionalProperties: false
@@ -18775,6 +18891,9 @@ components:
         - expiresAt
         - previewFingerprint
         - sourceRunnerId
+        - selectedRunnerId
+        - strategy
+        - qualificationOptIn
         - existingIntentId
         - runners
         - differences
@@ -18795,6 +18914,18 @@ components:
           minLength: 1
           maxLength: 256
           nullable: true
+        selectedRunnerId:
+          type: string
+          minLength: 1
+          maxLength: 256
+          nullable: true
+          description: Current effective attachment/project runner, never the first catalog row.
+        strategy:
+          type: string
+          enum: [pre_work_retry, fresh_qualification]
+        qualificationOptIn:
+          type: boolean
+          description: Acceptance explicitly converts a legacy task to required qualification.
         existingIntentId:
           type: string
           format: uuid
@@ -18842,6 +18973,73 @@ components:
                 minLength: 1
                 maxLength: 256
                 nullable: true
+    AgentRetryBatchBody:
+      type: object
+      additionalProperties: false
+      required: [runnerId, items]
+      properties:
+        runnerId: *a6
+        items:
+          type: array
+          minItems: 1
+          maxItems: 100
+          description: Source run IDs must be unique, each with its own stable request key.
+          items:
+            type: object
+            additionalProperties: false
+            required: [runId, requestKey, previewFingerprint, strategy]
+            properties:
+              runId: *a2
+              requestKey: *a2
+              previewFingerprint: { type: string, pattern: "^[a-f0-9]{64}$" }
+              strategy:
+                { type: string, enum: [pre_work_retry, fresh_qualification] }
+    AgentRetryBatchOptions:
+      type: object
+      additionalProperties: false
+      required:
+        [items, runners, selectedRunnerId, totalFailed, hasMore, nextCursor]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            additionalProperties: false
+            required: [runId, taskId, title, options, reason]
+            properties:
+              runId: *a2
+              taskId: { type: string, format: uuid, nullable: true }
+              title: { type: string }
+              options:
+                allOf: [{ $ref: "#/components/schemas/AgentRetryOptions" }]
+                nullable: true
+              reason: { type: string, nullable: true }
+        runners:
+          { $ref: "#/components/schemas/AgentRetryOptions/properties/runners" }
+        selectedRunnerId: { type: string, nullable: true }
+        totalFailed: { type: integer, minimum: 0 }
+        hasMore: { type: boolean }
+        nextCursor: { type: string, nullable: true }
+    AgentRetryBatchResult:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            additionalProperties: false
+            required: [runId, receipt, reason, state]
+            properties:
+              runId: *a2
+              receipt:
+                allOf: [{ $ref: "#/components/schemas/AgentRetryReceipt" }]
+                nullable: true
+              reason: { type: string, nullable: true }
+              state: { type: string, enum: [accepted, refused, unknown] }
     AgentRetryReceipt:
       type: object
       additionalProperties: false
@@ -19447,6 +19645,42 @@ components:
           type: array
           items: { type: string }
           description: Opaque retained diagnostic object IDs, authorized through the run object-content endpoint.
+    OperationalValidationDiagnostic:
+      type: object
+      additionalProperties: false
+      required: [code, path]
+      description: Platform-owned validation detail. Contains no rejected values, unknown property names or raw provider/validator messages.
+      properties:
+        code:
+          type: string
+          enum:
+            - result_missing
+            - malformed_json
+            - oversize
+            - unsupported_version
+            - field_required
+            - invalid_type
+            - invalid_value
+            - unknown_fields
+            - invalid_structure
+            - attempted_count_mismatch
+            - scanned_count_exceeded
+            - created_count_exceeded
+            - complete_coverage_remaining
+            - not_started_has_scanned
+            - duplicate_reference
+            - undeclared_diagnostic_reference
+            - success_inconsistent
+            - partial_requires_progress
+            - partial_requires_incomplete_work
+            - error_diagnostic_required
+            - failed_work_requires_error
+            - creation_reference_missing
+        path:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: Canonical schema-known field path with numeric indices, or $ for the root.
     OperationalOutcome:
       type: object
       additionalProperties: false
@@ -19520,6 +19754,12 @@ components:
             - type: object
               nullable: true
               enum: [null]
+        validationDiagnostics:
+          type: array
+          maxItems: 20
+          description: Optional safe rule/path details for invalid output; absent on legacy receipts. Does not make rejected output usable.
+          items:
+            $ref: "#/components/schemas/OperationalValidationDiagnostic"
         referenceLinks:
           type: array
           description: Safe declared external links and server-resolved task links within the Run project. The reported result remains unchanged.

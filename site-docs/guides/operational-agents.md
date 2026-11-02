@@ -47,6 +47,12 @@ A GitHub 403 is an authorization failure, never an empty successful scan.
 Unknown task or comment writes require reconciliation before retrying. Do not
 repeat an operation merely because a response was lost.
 
+Checking already imported tasks does not turn a blocked import into partial
+success. If every pending import still needs reconciliation and no new work was
+completed, the outcome is **Blocked**, even after a complete scan. Invalid results
+show safe validation details and the next step; older runs may retain only a
+generic validation code.
+
 The Run shows its operation result, diagnostics, references, integrity and
 cleanup state. Operational Runs have no review, promotion, merge or publication
 action. Unexpected source changes fail validation and are preserved for diagnosis.
@@ -73,7 +79,6 @@ operation. Starting an operation again is a separate attempt. A package update
 changes future launches; existing Runs keep their original kind, contract and
 instructions. Historical code-delivery Runs retain their original review rules.
 
-
 ## Find activity and retry a failed runner
 
 The rail shows each active agent execution, including queued and parked runs,
@@ -88,12 +93,23 @@ Inbox groups problems by project and agent. A repeated cause increases its occur
 count without creating another card or notifying you again after acknowledgement.
 A new cause can require attention. Human decisions remain separate requests.
 
-**Run again…** previews a new attempt with a runner selected for that attempt.
-It is available only when durable evidence proves the previous execution did no work.
-Review changes in current inputs, choose a ready runner and accept the attempt.
+**Run again…** previews a new attempt and initially selects the current configured
+runner. A generic retry requires durable evidence that the previous execution did
+no work. A task qualifier can instead offer a new assessment of the current task;
+the preview explains when this also enables required qualification for a legacy task.
+Already assessed or active tasks are skipped. Review current inputs, choose a ready
+runner and accept the attempt. A refusal explains what needs to be resolved;
+**Refresh data** checks eligibility again and reports the result.
 A lost response can be recovered with the same request; it never authorizes a second
 successor. The original run, delivery runner and future defaults remain unchanged.
 Unknown effects require reconciliation. Cleanup retry disposes resources only.
+
+Select failed rows in agent history to preview a batch with one runner and a result
+for each task. Multiple failures of the same task produce one new assessment.
+After changing an enabled agent's runner, MAIster offers this batch immediately.
+Saving settings never starts retries: inspect the preview and confirm separately.
+Large histories are processed in successive batches. If a response is lost,
+recover that batch before starting another; accepted items are not duplicated.
 
 ## Qualify incoming requests
 

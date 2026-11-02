@@ -13,6 +13,8 @@ import { lstat, open, readdir, readlink, realpath } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
+import pino from "pino";
+
 import { canonicalCommandJson } from "../../../runtime/command-json";
 
 import { MaisterError, isMaisterError } from "@/lib/errors";
@@ -21,8 +23,21 @@ const exec = promisify(execFile);
 const MAX_ENTRIES = 100_000;
 const MAX_BYTES = 256 * 1024 * 1024;
 const MAX_PROBE_MS = 30_000;
+const log = pino({ name: "operational-integrity" });
 
 type Limits = { maxEntries?: number; maxBytes?: number; maxProbeMs?: number };
+type ProbeLimitAxis = "time" | "bytes" | "entries" | "worktree_config_bytes";
+type ProbeLimitDetails = {
+  limitAxis: ProbeLimitAxis;
+  observed: number;
+  maximum: number;
+  observedEntries: number;
+  observedBytes: number;
+  elapsedMs: number;
+  maxEntries: number;
+  maxBytes: number;
+  maxProbeMs: number;
+};
 type Tree = Omit<
   OperationalIntegrityBaseline,
   "version" | "generation" | "resourceKind" | "capturedAt" | "platform"
@@ -43,11 +58,44 @@ const digest = (bytes: string | Uint8Array): string =>
 const entryKey = (entry: OperationalIntegrityEntry): string =>
   canonicalCommandJson(entry);
 
-function probeError(reason: string): MaisterError {
+function probeError(reason: string, details?: ProbeLimitDetails): MaisterError {
   return new MaisterError(
     "PRECONDITION",
     "operational integrity could not be established; preserve the workspace for diagnosis",
-    { details: { reason } },
+    { details: { reason, ...details } },
+  );
+}
+
+function logProbeFailure(
+  phase: "capture" | "verify",
+  resourceKind: OperationalResourceKind,
+  error: unknown,
+): void {
+  const details = isMaisterError(error) ? error.details : undefined;
+
+  log.warn(
+    {
+      phase,
+      resourceKind,
+      reason:
+        typeof details?.reason === "string"
+          ? details.reason
+          : "operational_integrity_probe_failed",
+      ...(details?.reason === "operational_integrity_limit"
+        ? {
+            limitAxis: details.limitAxis,
+            observed: details.observed,
+            maximum: details.maximum,
+            observedEntries: details.observedEntries,
+            observedBytes: details.observedBytes,
+            elapsedMs: details.elapsedMs,
+            maxEntries: details.maxEntries,
+            maxBytes: details.maxBytes,
+            maxProbeMs: details.maxProbeMs,
+          }
+        : {}),
+    },
+    "[FIX:operational-integrity] operational integrity probe refused",
   );
 }
 
@@ -62,25 +110,43 @@ async function captureTree(
   if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink())
     throw probeError("operational_integrity_root_replaced");
   const root = await realpath(candidate);
-  const deadline =
-    performance.now() +
-    Math.min(limits.maxProbeMs ?? MAX_PROBE_MS, MAX_PROBE_MS);
+  const startedAt = performance.now();
+  const maxProbeMs = Math.min(limits.maxProbeMs ?? MAX_PROBE_MS, MAX_PROBE_MS);
+  const deadline = startedAt + maxProbeMs;
   const maxEntries = Math.min(limits.maxEntries ?? MAX_ENTRIES, MAX_ENTRIES);
   const maxBytes = Math.min(limits.maxBytes ?? MAX_BYTES, MAX_BYTES);
   const source: OperationalIntegrityEntry[] = [];
   let bytes = 0;
+  let sharedBuffer: Buffer | null = null;
+  const limitError = (
+    limitAxis: ProbeLimitAxis,
+    observed: number,
+    maximum: number,
+  ): MaisterError =>
+    probeError("operational_integrity_limit", {
+      limitAxis,
+      observed,
+      maximum,
+      observedEntries: source.length,
+      observedBytes: bytes,
+      elapsedMs: Math.ceil(performance.now() - startedAt),
+      maxEntries,
+      maxBytes,
+      maxProbeMs,
+    });
   const check = (): void => {
-    if (
-      performance.now() >= deadline ||
-      bytes > maxBytes ||
-      source.length > maxEntries
-    )
-      throw probeError("operational_integrity_limit");
+    const now = performance.now();
+
+    if (now >= deadline)
+      throw limitError("time", Math.ceil(now - startedAt), maxProbeMs);
+    if (bytes > maxBytes) throw limitError("bytes", bytes, maxBytes);
+    if (source.length > maxEntries)
+      throw limitError("entries", source.length, maxEntries);
   };
   const visit = async (relative: string): Promise<void> => {
     check();
     if (source.length >= maxEntries)
-      throw probeError("operational_integrity_limit");
+      throw limitError("entries", source.length + 1, maxEntries);
     const absolute = path.join(root, relative);
     const info = await lstat(absolute);
     const mode = info.mode & 0o777;
@@ -124,7 +190,7 @@ async function captureTree(
         )
           throw probeError("operational_integrity_file_race");
         const hash = createHash("sha256");
-        const buffer = Buffer.alloc(1024 * 1024);
+        const buffer = (sharedBuffer ??= Buffer.alloc(1024 * 1024));
         let count = 0;
 
         while (true) {
@@ -135,7 +201,7 @@ async function captureTree(
           count += read.bytesRead;
           if (count > info.size)
             throw probeError("operational_integrity_file_race");
-          hash.update(new Uint8Array(buffer.subarray(0, read.bytesRead)));
+          hash.update(buffer.subarray(0, read.bytesRead));
         }
         const closed = await file.stat();
 
@@ -220,7 +286,7 @@ async function captureTree(
     try {
       const before = await handle.stat();
       const hash = createHash("sha256");
-      const buffer = Buffer.alloc(64 * 1024);
+      const buffer = (sharedBuffer ??= Buffer.alloc(1024 * 1024));
       let total = 0;
 
       while (true) {
@@ -234,7 +300,7 @@ async function captureTree(
         if (!bytesRead) break;
         total += bytesRead;
         if (total > 1024 * 1024)
-          throw probeError("operational_integrity_limit");
+          throw limitError("worktree_config_bytes", total, 1024 * 1024);
         hash.update(buffer.subarray(0, bytesRead));
         check();
       }
@@ -300,6 +366,7 @@ export async function captureOperationalBaseline(
       platform: [],
     };
   } catch (error) {
+    logProbeFailure("capture", resourceKind, error);
     if (isMaisterError(error)) throw error;
     throw new MaisterError(
       "PRECONDITION",
@@ -481,6 +548,8 @@ export async function verifyOperationalIntegrity(
       changedPaths,
     };
   } catch (error) {
+    logProbeFailure("verify", baseline.resourceKind, error);
+
     return {
       verdict: "indeterminate",
       reasonCodes: [

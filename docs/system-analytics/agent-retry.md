@@ -4,7 +4,7 @@
 
 ## Purpose
 
-Create one explicitly authorized new attempt on a selected runner after proven pre-work failure, with durable admission and safe resource ownership.
+Create an explicitly authorized attempt on a selected runner after proven pre-work failure, or a fresh qualification of current task inputs, with durable admission and safe resource ownership.
 
 ## Domain entities
 
@@ -67,21 +67,74 @@ would hit `(agentId,triggerEventId)` dedup and return the old failed run. Generi
 
 Retry safety is an explicit preview/action contract:
 
-| Source / state | Decision |
-| --- | --- |
-| Settled nonpersistent standalone agent Failed/Crashed; owned durable evidence proves prompt/work never dispatched and no source session/create can still execute | Allow a new attempt, including verified legacy workspace-less triager failures; retain original task and trigger context. |
-| Running, Pending, NeedsInput, NeedsInputIdle, HumanWorking, WaitingOnChildren, or any unresolved create/prompt delivery | Refuse; link to the source Stop/reconcile/HITL action. Never run two live attempts through this control. |
-| Post-dispatch failure, partial business work, unknown writes or incomplete audit evidence | `reconciliation_required`; preserve confirmed effects/references and refuse blind replay. Existing explicit task/business remediation may be used, but is not falsely presented as idempotent retry. |
-| Clean complete successful source or already-answered/claimed task, stale task revision, archived project, detached/disabled agent, unavailable/untrusted package, unsupported trigger, persistent/shared/delegated agent or driven Flow | Typed refusal with current-state remedy; use existing appropriate launch/Flow recovery paths. No implicit task reset/requeue or authority inherited from an expired parent. |
-| Same retry request delivered twice / concurrent callers for one source | Same-key replay returns the same receipt; a different request key conflicts with an existing accepted/launched intent. At most one retry child per source; retry a failed child from that child. |
+| Source / state                                                                                                                                                                                                                          | Decision                                                                                                                                                                                                                                                                                           |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Settled nonpersistent standalone agent Failed/Crashed; owned durable evidence proves prompt/work never dispatched and no source session/create can still execute                                                                        | Allow a new attempt, including verified legacy workspace-less triager failures; retain original task and trigger context.                                                                                                                                                                          |
+| Running, Pending, NeedsInput, NeedsInputIdle, HumanWorking, WaitingOnChildren, or any unresolved create/prompt delivery                                                                                                                 | Refuse; link to the source Stop/reconcile/HITL action. Never run two live attempts through this control.                                                                                                                                                                                           |
+| Post-dispatch failure, partial business work, unknown writes or incomplete audit evidence                                                                                                                                               | `reconciliation_required` for generic replay; preserve confirmed effects/references. A separately advertised fresh qualification evaluates current task state and does not certify or replay old effects. Unresolved delivery/application, active assignments or active incarnations still refuse. |
+| Clean complete successful source or already-answered/claimed task, stale task revision, archived project, detached/disabled agent, unavailable/untrusted package, unsupported trigger, persistent/shared/delegated agent or driven Flow | Typed refusal with current-state remedy; use existing appropriate launch/Flow recovery paths. No implicit task reset/requeue or authority inherited from an expired parent.                                                                                                                        |
+| Same retry request delivered twice / concurrent callers for one source                                                                                                                                                                  | Same-key replay returns the same receipt; a different request key conflicts with an existing accepted/launched intent. At most one retry child per source; retry a failed child from that child.                                                                                                   |
 
-The first release deliberately guarantees safe runner substitution for proven
-pre-work failures. It does not promise exactly-once replay of arbitrary MCP writes.
+Generic replay guarantees safe runner substitution for proven pre-work failures.
+Operational outcome classification must not erase the producer's positive
+`failurePhase: before_dispatch` evidence; the guarded undispatched-failure owner
+emits it only after checking that no source create/session/prompt can still run.
+This does not promise exactly-once replay of arbitrary MCP writes.
 The eligibility predicate uses command/assignment evidence, not “no result file”,
 empty diff, exit code, mere audit-log absence or an agent's statement. If legacy
 records cannot prove safety, show that reason and retain ordinary manual launch/
-task remediation as distinctly named existing actions. Keep task state unchanged
-until the new attempt performs an authorized operation.
+task remediation as distinctly named existing actions. In `pre_work_retry`, keep
+task state unchanged until the new attempt performs an authorized operation.
+Fresh qualification's explicit legacy-task opt-in commits with its accepted intent.
+
+### Fresh qualification and batch recovery
+
+The current pinned definition may advertise `fresh_qualification` only when it
+declares the operational qualifier contract with session mode, repo_read and
+task_target. It evaluates the current Backlog task against a new pinned repository
+SHA. Historical nonnull ACP identifiers alone do not make this distinct new
+assessment a replay of the old session. Source Failed/Crashed plus endedAt, no
+active assignment/incarnation, and no unresolved command delivery/application
+are required; arbitrary historical business effects are never claimed absent.
+
+The preview advertises `strategy`, resolved current `selectedRunnerId`, and
+`qualificationOptIn`. Explicitly accepting fresh qualification requires both
+`editTask` and `launchRun`. When opt-in is shown, the same intent transaction
+converts a legacy task to required qualification, clears stale legacy triage and
+automatic queue admission, and preserves the user's explicit launch intent.
+The request strategy must match its preview; an old client omitting strategy
+confirms only pre_work_retry. The new session receives a manual fresh-assessment
+request, while original trigger/event remains immutable lineage. No schedule
+is fired again and no old event payload is executed as a new event delivery.
+
+Any accepted assessment matching current input digest/revision, target and
+repository SHA refuses unnecessary repetition. Active task work and an accepted
+assessment intent also refuse. Source → task → intent locking serializes fresh
+assessment acceptance; the qualifier's actual run INSERT takes the task lock and
+checks active task work/intents, including ordinary event/manual launches.
+Several old failures for one task therefore cannot create simultaneous assessments.
+
+History offers selectable failed rows and one batch runner. After an enabled
+attachment's runner is changed successfully, the UI offers the same batch preview
+for its retained failed runs; saving settings never launches them automatically.
+The picker prefers the current effective attachment/project runner, lists compatible
+alternatives even with a hard blocker, and disables confirmation with a localized
+reason and remedy. Refresh announces that data was refreshed even if the blocker
+remains. Settled refusal without owned resources permits a new preview; unknown
+delivery retains the exact request key. Run detail groups history/retry controls
+in a spaced actions toolbar.
+
+Batch preview pages 50 records with the existing signed keyset cursor scoped to
+project/agent/actor; selected previews and acceptance are bounded to 100 distinct
+sources. Subsequent batch windows remain reachable after settling the first 100
+sources; retained failures do not force the picker back to the first window.
+It reports every blocker and suppresses repeated eligible task targets.
+The action validates every source's project/agent membership before any acceptance,
+then delegates each item to the single retry owner with its own durable key.
+Repeated HTTP requests converge on these same intents. Each item returns a receipt,
+a refusal, or an unknown result requiring the same-key replay. Independent tasks
+continue when one item refuses. Task deduplication and normal capacity limits
+remain enforced at the actual acceptance/launch seam, not only in the preview.
 
 Add `agent_retry_intents` with immutable ID, sourceRunId/project/agent/actor,
 request key and canonical request digest, selected runner, frozen current-definition/
@@ -101,10 +154,11 @@ Unique `(actor,requestKey)` and payload comparison reject key reuse
 with different contents. `runs.retryOfRunId`/retry-origin snapshot persist lineage
 and original trigger/event/schedule semantics. Derive every locator from source
 state; the new run's `triggerEventId` does not reuse the original delivery key.
-Keep the original trigger source/payload as semantic input with an explicit manual
-retry-origin envelope; no new trigger enum is necessary. The prompt builder must
-read this server-derived retry context rather than replacing an event with an
-empty manual prompt. Do not count a retry as another scheduled delivery or reset
+In `pre_work_retry`, keep the original trigger source/payload as semantic input
+with an explicit manual retry-origin envelope; no new trigger enum is necessary.
+The prompt builder reads this server-derived retry context. Fresh qualification
+instead uses its snapshotted strategy to request a new current-task assessment.
+Do not count a retry as another scheduled delivery or reset
 cron `nextFireAt`; history labels it as an explicit retry.
 
 Validate cheap preconditions first; then lock source run/task and revalidate source
@@ -175,7 +229,7 @@ New routes:
   project `launchRun` before disclosing compatible runners; protected original
   input remains behind its existing data grant. Return eligibility/refusal,
   compatible runner metadata, safe differences and expiring preview fingerprint.
-- `POST /api/runs/{runId}/retry`: body-controlled `{runnerId,requestKey,previewFingerprint}`
+- `POST /api/runs/{runId}/retry`: body-controlled `{runnerId,requestKey,previewFingerprint,strategy?}`
   only. runnerId must resolve in the authorized compatible set; request key UUID;
   no taskId/projectId/cwd/package path/eventId supplied by client. Server derives
   input. 202 `{retryIntentId,sourceRunId,runId,intentState,runStatus,queueReason}`
@@ -194,6 +248,15 @@ New routes:
   Post-acceptance delivery failure is recorded on intent/run; it is not a blind
   HTTP retry that creates another child. Exact same-key replay returns same receipt.
 
+- `GET /api/projects/{slug}/agents/{agentId}/retry-options`: current failed-source
+  page with optional signed cursor; existing launch grant and server-scoped identity.
+- `POST` to the same path previews `{runIds?}` or `{cursor?}` (mutually exclusive).
+- `POST /api/projects/{slug}/agents/{agentId}/retry`: strict
+  `{runnerId,items:[{runId,requestKey,previewFingerprint,strategy}]}` with at most
+  100 unique sources. 202 means some intent was accepted; 200 means inspect the
+  per-item refusal/unknown receipts. A foreign source rejects before any prefix
+  is accepted. A partial/lost response uses the identical item keys to recover.
+
 Specify these in web OpenAPI, agent/run analytics, error taxonomy and attention
 AsyncAPI. Reuse existing SSE for intent/new-run/terminal changes. No new MCP retry
 tool or external write scope in this release; grouped external decisions expose
@@ -211,6 +274,10 @@ authorized future-run setting with this distinction visible.
 
 ## Expectations
 
+- A saved runner change MUST offer failed-run batch recovery without automatically accepting any item, enforced by attachment-save UI and the existing explicit retry API.
+- Batch and single actions MUST share recipe validation, actor grants, task serialization and keyed receipts; generic replay MUST retain its positive pre-work evidence requirement.
+- A fresh assessment MUST bind current task/repository evidence and preserve original run/trigger history; active-work/current-assessment guards and final qualifier insertion enforce one active assessment.
+- Refresh MUST reveal current runner, blocker and admission/queue state; an unknown request MUST keep its original key while a safely refused intent can prepare a new one.
 - **UX-09:** a proven failed runner launch can create exactly one new attempt with selected runner B, same intended task/input and a new frozen current contract, while runner A's original record remains unchanged. Double click, timeout/replay, concurrent readers and process death cannot duplicate work. Unsafe/unknown effects and unauthorized/unready runners refuse with actionable reasons. Neither task Flow runner nor project defaults changes implicitly. Enforced by the owning services/constraints below and primary acceptance in [traceability](agent-activity-traceability.md).
 
 ## Edge cases

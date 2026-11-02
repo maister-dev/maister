@@ -74,6 +74,12 @@ include the frozen completion appendix, including overridePrompt, queued start a
 resume. Package update/detach/resync cannot replace these facts. Legacy null run
 kind means code_delivery; it never triggers operational reclassification.
 
+Instruction-only revisions of operational_v1 retain an exact supported-digest
+allowlist. Readers verify the frozen schema/appendix self-digest and definition
+provenance against known contracts; they do not require today's appendix or accept
+arbitrary self-signed instructions. Existing queued/checkpointed runs keep their
+original prompt after new guidance is shipped.
+
 ## Expectations
 
 - **OPA-01:** The definition parser, registry and Studio preserve kind independently of mode/workspace/completion and symmetrically handle SET, CLEAR and re-SET.

@@ -27,6 +27,10 @@ export function operationalTerminalDecision(input: {
     ...input.integrity.reasonCodes,
     ...(input.result.kind === "invalid" ? [input.result.reason] : []),
   ];
+  const validationDiagnostics =
+    input.result.kind === "invalid" && input.result.validationDiagnostics
+      ? { validationDiagnostics: input.result.validationDiagnostics }
+      : {};
 
   if (input.requested === "Abandoned" || input.requested === "Crashed")
     return {
@@ -40,6 +44,7 @@ export function operationalTerminalDecision(input: {
         input.requested === "Abandoned" ? "cancelled" : "crashed",
       successful: false,
       validation,
+      ...validationDiagnostics,
       integrity: input.integrity.verdict,
       reasonCodes: [...new Set(reasons)],
     };
@@ -65,6 +70,7 @@ export function operationalTerminalDecision(input: {
     effectiveOutcome,
     successful,
     validation,
+    ...validationDiagnostics,
     integrity: input.integrity.verdict,
     reasonCodes: [...new Set([...reasons, ...(successful ? [] : [cause])])],
   };

@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   lstat,
   mkdtemp,
@@ -13,7 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { materializeOperationalContextMounts } from "@/lib/context-mounts/service";
 import {
@@ -46,6 +47,75 @@ afterEach(async () => {
 });
 
 describe("operational source integrity", () => {
+  it("bounds concurrent probe buffers while hashing distinct multi-block, empty, short and tiny files exactly", async () => {
+    const fixtures = Array.from({ length: 4 }, (_, probe) => ({
+      plain: join(root, `probe-${probe}`),
+      files: [
+        {
+          name: "000-multi-block.bin",
+          content: Buffer.alloc(2 * 1024 * 1024 + 17 + probe, 65 + probe),
+        },
+        { name: "001-empty.txt", content: "" },
+        { name: "002-short.txt", content: `Short probe ${probe}\n` },
+        ...Array.from({ length: 128 }, (_, index) => ({
+          name: `source-${String(index).padStart(3, "0")}.txt`,
+          content: `Probe ${probe} source ${index}\n`,
+        })),
+      ],
+    }));
+
+    for (const fixture of fixtures) {
+      await mkdir(fixture.plain);
+      await Promise.all(
+        fixture.files.map((file) =>
+          writeFile(join(fixture.plain, file.name), file.content),
+        ),
+      );
+    }
+    const allocation = vi.spyOn(Buffer, "alloc");
+    let allocatedBytes = 0;
+
+    try {
+      const baselines = await Promise.all(
+        fixtures.map((fixture) =>
+          captureOperationalBaseline(fixture.plain, "plain_directory"),
+        ),
+      );
+
+      for (const [index, baseline] of baselines.entries()) {
+        const fixture = fixtures[index];
+        const ready = await captureOperationalGeneration(
+          fixture.plain,
+          baseline,
+          [],
+        );
+
+        expect(
+          await verifyOperationalIntegrity(fixture.plain, ready),
+        ).toMatchObject({
+          verdict: "clean",
+        });
+        expect(baseline.source).toEqual(
+          fixture.files.map((file) => ({
+            path: file.name,
+            type: "file",
+            sha256: createHash("sha256").update(file.content).digest("hex"),
+            mode: expect.any(Number),
+          })),
+        );
+      }
+      allocatedBytes = allocation.mock.calls.reduce(
+        (total, [size]) => total + size,
+        0,
+      );
+    } finally {
+      allocation.mockRestore();
+    }
+    expect(allocatedBytes).toBeLessThanOrEqual(
+      fixtures.length * 3 * 1024 * 1024,
+    );
+  });
+
   it("refuses existing operational context targets before creating or replacing any sibling", async () => {
     const first = join(root, "new-context");
     const head = (
@@ -194,11 +264,24 @@ describe("operational source integrity", () => {
     expect((await verifyOperationalIntegrity(cwd, null)).verdict).toBe(
       "indeterminate",
     );
-    await expect(
-      captureOperationalBaseline(cwd, "worktree", { maxBytes: 1 }),
-    ).rejects.toMatchObject({
-      details: { reason: "operational_integrity_limit" },
-    });
+    for (const [limits, limitAxis, maximum] of [
+      [{ maxBytes: 1 }, "bytes", 1],
+      [{ maxEntries: 1 }, "entries", 1],
+      [{ maxProbeMs: 0 }, "time", 0],
+    ] as const)
+      await expect(
+        captureOperationalBaseline(cwd, "worktree", limits),
+      ).rejects.toMatchObject({
+        details: {
+          reason: "operational_integrity_limit",
+          limitAxis,
+          maximum,
+          observed: expect.any(Number),
+          observedBytes: expect.any(Number),
+          observedEntries: expect.any(Number),
+          elapsedMs: expect.any(Number),
+        },
+      });
     await symlink(root, join(cwd, "external"));
     const snapshot = await captureOperationalBaseline(cwd, "worktree");
 
@@ -208,6 +291,33 @@ describe("operational source integrity", () => {
     expect(
       snapshot.source.some((entry) => entry.path.startsWith("external/")),
     ).toBe(false);
+  });
+
+  it("identifies the worktree configuration byte cap and still refuses final integrity", async () => {
+    const ready = await captureOperationalGeneration(
+      cwd,
+      await captureOperationalBaseline(cwd, "worktree"),
+      [],
+    );
+
+    await writeFile(
+      join(cwd, ".git", "config.worktree"),
+      "x".repeat(1024 * 1024 + 1),
+    );
+    await expect(
+      captureOperationalBaseline(cwd, "worktree"),
+    ).rejects.toMatchObject({
+      details: {
+        reason: "operational_integrity_limit",
+        limitAxis: "worktree_config_bytes",
+        observed: 1024 * 1024 + 1,
+        maximum: 1024 * 1024,
+      },
+    });
+    expect(await verifyOperationalIntegrity(cwd, ready)).toMatchObject({
+      verdict: "indeterminate",
+      reasonCodes: ["operational_integrity_limit"],
+    });
   });
 
   it("accepts only server-proven parallel allocation or disposal, never a changed foreign ref", async () => {

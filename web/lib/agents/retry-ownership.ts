@@ -22,7 +22,9 @@ import {
 } from "@/lib/db/schema";
 import {
   assertRetryAuthority,
-  retrySafetyReason,
+  retryStrategySafetyReason,
+  qualificationTaskRetryReason,
+  assertQualificationRetryAuthority,
   retryRefusal,
   retryDigest,
 } from "@/lib/agents/retry-guards";
@@ -30,6 +32,7 @@ import { resolveAgentConfig } from "@/lib/agents/config";
 import { resolveAgentLaunchExecutionPolicy } from "@/lib/agents/execution-policy";
 import { runnerCatalogEntry } from "@/lib/agents/runner-catalog";
 import { snapshotRunner } from "@/lib/acp-runners/resolve";
+import { retryRecipeStrategy } from "@/lib/agents/retry-types";
 
 /** Final source→task→intent lock order, reused before allocation and the atomic successor insertion. */
 export async function assertAgentRetryClaim(
@@ -49,6 +52,14 @@ export async function assertAgentRetryClaim(
     .for("update");
 
   if (!source) throw retryRefusal("retry_source_unavailable");
+  if (!candidate.actorUserId) throw retryRefusal("retry_authority_revoked");
+  await assertRetryAuthority(db, candidate.projectId, candidate.actorUserId);
+  if (retryRecipeStrategy(candidate.recipe) === "fresh_qualification")
+    await assertQualificationRetryAuthority(
+      db,
+      candidate.projectId,
+      candidate.actorUserId,
+    );
   const [task] = candidate.recipe.taskId
     ? await db
         .select()
@@ -72,7 +83,8 @@ export async function assertAgentRetryClaim(
     throw retryRefusal("retry_owner_stale");
   if (!intent.actorUserId) throw retryRefusal("retry_authority_revoked");
   await assertRetryAuthority(db, intent.projectId, intent.actorUserId);
-  const reason = await retrySafetyReason(db, source);
+  const strategy = retryRecipeStrategy(intent.recipe);
+  const reason = await retryStrategySafetyReason(db, source, strategy);
 
   if (reason) throw retryRefusal(reason);
   if (
@@ -80,9 +92,38 @@ export async function assertAgentRetryClaim(
     (!task ||
       task.qualificationInputRevision !== intent.recipe.taskRevision ||
       task.status !== "Backlog" ||
-      task.triageStatus === "triaged")
+      (strategy === "pre_work_retry" && task.triageStatus === "triaged"))
   )
     throw retryRefusal("retry_task_changed");
+  if (strategy === "fresh_qualification") {
+    const definition = intent.recipe.definition.parsed;
+
+    if (
+      definition.kind !== "operational" ||
+      definition.mode !== "session" ||
+      definition.workspace !== "repo_read" ||
+      definition.workspaceRef !== "task_target" ||
+      definition.taskQualification?.role !== "qualifier" ||
+      !task ||
+      task.qualificationMode !== "required" ||
+      intent.recipe.version !== 2 ||
+      !intent.recipe.qualificationSha
+    )
+      throw retryRefusal("retry_task_changed");
+    await assertQualificationRetryAuthority(
+      db,
+      intent.projectId,
+      intent.actorUserId,
+    );
+    const qualificationReason = await qualificationTaskRetryReason(db, {
+      projectId: intent.projectId,
+      taskId: task.id,
+      qualificationSha: intent.recipe.qualificationSha,
+      excludeIntentId: intent.id,
+    });
+
+    if (qualificationReason) throw retryRefusal(qualificationReason);
+  }
   await assertRetryRecipeCurrent(db, intent.recipe);
 
   return intent;
@@ -149,6 +190,12 @@ export async function assertRetryRecipeCurrent(
     runner.readinessStatus !== "Ready"
   )
     throw retryRefusal("retry_context_changed");
+  if (
+    retryRecipeStrategy(recipe) === "fresh_qualification" &&
+    (project.taskQualificationOverride ?? project.taskQualificationBaseline) !==
+      "required"
+  )
+    throw retryRefusal("qualification_policy_required");
   const policy = resolveAgentLaunchExecutionPolicy({
     instanceOverride: link.executionPolicyOverride,
     recommended: recipe.definition.parsed.recommended?.executionPolicy,

@@ -12,7 +12,7 @@ import { and, eq, sql } from "drizzle-orm";
 import pino from "pino";
 import { z } from "zod";
 
-import { agentRetryIntents, runs } from "@/lib/db/schema";
+import { agentRetryIntents, runs, runSessions, tasks } from "@/lib/db/schema";
 import {
   prepareAgentRetry,
   retryRecipeFor,
@@ -20,6 +20,8 @@ import {
   retryRefusal,
   assertRetryAuthority,
 } from "@/lib/agents/retry-preparation";
+import { assertQualificationRetryAuthority } from "@/lib/agents/retry-guards";
+import { retryRecipeStrategy } from "@/lib/agents/retry-types";
 import { assertAgentRetryClaim } from "@/lib/agents/retry-ownership";
 import { launchAgentRun } from "@/lib/agents/launch";
 import { assertUpgradeMaintenanceAllows } from "@/lib/maintenance/upgrade-fence";
@@ -43,6 +45,7 @@ const requestSchema = z
     runnerId: z.string().min(1).max(256),
     requestKey: z.string().uuid(),
     previewFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    strategy: z.enum(["pre_work_retry", "fresh_qualification"]).optional(),
   })
   .strict();
 
@@ -67,8 +70,7 @@ export async function getAgentRetryOptions(
   runId: string,
   userId: string,
 ): Promise<AgentRetryOptions> {
-  try {
-    const options = (await prepareAgentRetry(db, runId, userId)).options;
+  const existingIntent = async (): Promise<string | null> => {
     const [existing] = await db
       .select({ id: agentRetryIntents.id })
       .from(agentRetryIntents)
@@ -80,12 +82,19 @@ export async function getAgentRetryOptions(
       )
       .limit(1);
 
+    return existing?.id ?? null;
+  };
+
+  try {
+    const options = (await prepareAgentRetry(db, runId, userId)).options;
+    const existing = await existingIntent();
+
     return existing
       ? {
           ...options,
           eligible: false,
           reason: "retry_successor_already_owned",
-          existingIntentId: existing.id,
+          existingIntentId: existing,
         }
       : options;
   } catch (error) {
@@ -96,17 +105,34 @@ export async function getAgentRetryOptions(
     )
       throw error;
 
+    const [sourceSession] = await db
+      .select({ runnerId: runSessions.runnerId })
+      .from(runSessions)
+      .where(
+        and(
+          eq(runSessions.runId, runId),
+          eq(runSessions.sessionName, "default"),
+        ),
+      );
+    const reason =
+      typeof error.details?.reason === "string"
+        ? error.details.reason
+        : "retry_agent_unavailable";
+
     return {
       eligible: false,
-      reason: "retry_agent_unavailable",
+      reason,
       expiresAt: new Date().toISOString(),
       previewFingerprint: retryDigest({
         runId,
         userId,
-        reason: "retry_agent_unavailable",
+        reason,
       }),
-      sourceRunnerId: null,
-      existingIntentId: null,
+      sourceRunnerId: sourceSession?.runnerId ?? null,
+      selectedRunnerId: null,
+      strategy: "pre_work_retry",
+      qualificationOptIn: false,
+      existingIntentId: await existingIntent(),
       runners: [],
       differences: [],
     };
@@ -176,7 +202,7 @@ export async function acceptAgentRetry(
   if (!parsed.success)
     throw new MaisterError(
       "CONFIG",
-      "Expected runnerId, requestKey UUID and previewFingerprint only",
+      "Expected runnerId, requestKey UUID, previewFingerprint and optional retry strategy",
       { details: { reason: "retry_request_invalid" } },
     );
   const request = parsed.data;
@@ -203,6 +229,8 @@ export async function acceptAgentRetry(
   const prepared = await prepareAgentRetry(db, runId, userId);
 
   if (!prepared.options.eligible) throw retryRefusal(prepared.options.reason!);
+  if ((request.strategy ?? "pre_work_retry") !== prepared.options.strategy)
+    throw retryRefusal("retry_strategy_changed");
   if (prepared.options.previewFingerprint !== request.previewFingerprint)
     throw retryRefusal("retry_preview_stale");
   const recipe = await retryRecipeFor(db, prepared, request.runnerId);
@@ -217,6 +245,60 @@ export async function acceptAgentRetry(
         .where(eq(runs.id, runId))
         .for("update");
       await assertRetryAuthority(tx, prepared.source.projectId, userId);
+      if (recipe.version === 2 && recipe.strategy === "fresh_qualification") {
+        await assertQualificationRetryAuthority(
+          tx,
+          prepared.source.projectId,
+          userId,
+        );
+        const [task] = await tx
+          .select()
+          .from(tasks)
+          .where(
+            and(
+              eq(tasks.id, recipe.taskId!),
+              eq(tasks.projectId, recipe.projectId),
+            ),
+          )
+          .for("update");
+
+        if (
+          !task ||
+          task.qualificationInputRevision !== recipe.taskRevision ||
+          task.status !== "Backlog" ||
+          task.qualificationMode === "execution_child"
+        )
+          throw retryRefusal("retry_task_changed");
+        if (task.qualificationMode === "legacy") {
+          if (!prepared.options.qualificationOptIn)
+            throw retryRefusal("retry_preview_stale");
+          await tx
+            .update(tasks)
+            .set({
+              qualificationMode: "required",
+              qualificationChildProof: null,
+              triageStatus: null,
+              launchMode: null,
+              launchArmedAt: null,
+              queueClaimedAt: null,
+            })
+            .where(eq(tasks.id, task.id));
+          await emitDomainEvent({
+            db: tx,
+            kind: "task.qualification_changed",
+            projectId: recipe.projectId,
+            taskId: task.id,
+            actor: { type: "user", id: userId },
+            payload: {
+              projectId: recipe.projectId,
+              taskId: task.id,
+              inputRevision: task.qualificationInputRevision,
+              qualificationRevision: null,
+              reason: "qualification_retry_opt_in",
+            },
+          });
+        }
+      }
       const inserted = await tx
         .insert(agentRetryIntents)
         .values({
@@ -263,7 +345,7 @@ export async function acceptAgentRetry(
 
     log.info(
       { sourceRunId: runId, retryIntentId: id, runnerId: request.runnerId },
-      "agent retry accepted",
+      "[FIX:agent-retry] agent retry accepted",
     );
 
     return receiptFor(db, intent);
@@ -400,10 +482,16 @@ async function deliverClaim(db: Db, claim: AgentRetryClaim): Promise<void> {
     db,
     intent.sourceRunId,
     intent.actorUserId,
+    new Date(),
+    intent.id,
   );
 
   if (!current.options.eligible) throw retryRefusal(current.options.reason!);
-  if (current.contextDigest !== intent.recipe.contextDigest)
+  if (
+    (intent.recipe.version === 1
+      ? current.legacyContextDigest
+      : current.contextDigest) !== intent.recipe.contextDigest
+  )
     throw retryRefusal("retry_context_changed");
   await db.transaction((tx) => assertAgentRetryClaim(tx, claim));
   const outcome = await launchAgentRun({
@@ -414,8 +502,14 @@ async function deliverClaim(db: Db, claim: AgentRetryClaim): Promise<void> {
     launchOverrideRunnerId: intent.selectedRunnerId,
     runId: intent.successorRunId,
     trigger: {
-      source: intent.recipe.trigger.source,
-      payload: intent.recipe.trigger.payload,
+      source:
+        retryRecipeStrategy(intent.recipe) === "fresh_qualification"
+          ? "manual"
+          : intent.recipe.trigger.source,
+      payload:
+        retryRecipeStrategy(intent.recipe) === "fresh_qualification"
+          ? null
+          : intent.recipe.trigger.payload,
     },
     retryClaim: claim,
   });

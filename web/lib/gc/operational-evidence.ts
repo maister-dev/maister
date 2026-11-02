@@ -43,6 +43,7 @@ export async function preserveOperationalEvidence(input: {
   let parts: string[] = [];
   let size = 0;
   let total = 0;
+  let sharedBuffer: Buffer | null = null;
   const publish = async (
     bytes: Uint8Array,
     logicalName: string,
@@ -109,13 +110,13 @@ export async function preserveOperationalEvidence(input: {
 
       try {
         await append({ ...entry, record: "file" });
-        const buffer = Buffer.alloc(CHUNK_BYTES);
+        const buffer = (sharedBuffer ??= Buffer.alloc(CHUNK_BYTES));
 
         while (true) {
           const read = await handle.read(buffer, 0, buffer.length, null);
 
           if (!read.bytesRead) break;
-          hash.update(new Uint8Array(buffer.subarray(0, read.bytesRead)));
+          hash.update(buffer.subarray(0, read.bytesRead));
           await append({
             path: entry.path,
             offset,

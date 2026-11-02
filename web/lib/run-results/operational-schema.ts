@@ -1,5 +1,9 @@
 import type { FormSchema } from "@/lib/config.schema";
-import type { OperationalResultV1 } from "@/lib/run-results/operational-types";
+import type {
+  OperationalResultV1,
+  OperationalValidationCode,
+  OperationalValidationDiagnostic,
+} from "@/lib/run-results/operational-types";
 
 import { z } from "zod";
 
@@ -72,33 +76,70 @@ export const operationalResultV1Schema = z
   })
   .strict()
   .superRefine((value, context) => {
-    const fail = (message: string): void =>
-      context.addIssue({ code: z.ZodIssueCode.custom, message });
+    const fail = (
+      rule: OperationalValidationCode,
+      path: string[],
+      message: string,
+    ): void =>
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path,
+        message,
+        params: { operationalRule: rule },
+      });
     const { counts, coverage, references, diagnostics } = value;
 
     if (counts.attempted !== counts.completed + counts.failed)
-      fail("attempted must equal completed + failed");
+      fail(
+        "attempted_count_mismatch",
+        ["counts", "attempted"],
+        "attempted must equal completed + failed",
+      );
     if (counts.attempted + counts.skipped > counts.scanned)
-      fail("attempted + skipped must not exceed scanned");
+      fail(
+        "scanned_count_exceeded",
+        ["counts", "scanned"],
+        "attempted + skipped must not exceed scanned",
+      );
     if (counts.created > counts.attempted)
-      fail("created must not exceed attempted");
+      fail(
+        "created_count_exceeded",
+        ["counts", "created"],
+        "created must not exceed attempted",
+      );
     if (coverage.state === "complete" && coverage.remainingKnown !== 0)
-      fail("complete coverage requires remainingKnown=0");
+      fail(
+        "complete_coverage_remaining",
+        ["coverage", "remainingKnown"],
+        "complete coverage requires remainingKnown=0",
+      );
     if (coverage.state === "not_started" && counts.scanned !== 0)
-      fail("not_started coverage cannot report scanned work");
+      fail(
+        "not_started_has_scanned",
+        ["counts", "scanned"],
+        "not_started coverage cannot report scanned work",
+      );
     const ids = new Set(references.map((reference) => reference.id));
     const identities = references.map(
       (reference) => `${reference.kind}:${reference.id}`,
     );
 
     if (new Set(identities).size !== identities.length)
-      fail("reference identities must be unique");
+      fail(
+        "duplicate_reference",
+        ["references"],
+        "reference identities must be unique",
+      );
     if (
       diagnostics.some((diagnostic) =>
         diagnostic.referenceIds?.some((id) => !ids.has(id)),
       )
     )
-      fail("diagnostic referenceIds must resolve to declared references");
+      fail(
+        "undeclared_diagnostic_reference",
+        ["diagnostics"],
+        "diagnostic referenceIds must resolve to declared references",
+      );
     const error = diagnostics.some(
       (diagnostic) => diagnostic.severity === "error",
     );
@@ -122,27 +163,111 @@ export const operationalResultV1Schema = z
         unresolved)
     )
       fail(
+        "success_inconsistent",
+        ["outcome"],
         "success requires complete coverage without failed work, errors or unresolved effects",
+      );
+    if (value.outcome === "partial" && !progress)
+      fail(
+        "partial_requires_progress",
+        ["outcome"],
+        "partial requires confirmed progress",
       );
     if (
       value.outcome === "partial" &&
-      (!progress ||
-        (!error &&
-          coverage.state === "complete" &&
-          counts.failed === 0 &&
-          !unresolved))
+      !error &&
+      coverage.state === "complete" &&
+      counts.failed === 0 &&
+      !unresolved
     )
-      fail("partial requires confirmed progress and incomplete or failed work");
+      fail(
+        "partial_requires_incomplete_work",
+        ["outcome"],
+        "partial requires incomplete or failed work",
+      );
     if ((value.outcome === "blocked" || value.outcome === "failed") && !error)
-      fail("blocked/failed requires an actionable error diagnostic");
+      fail(
+        "error_diagnostic_required",
+        ["diagnostics"],
+        "blocked/failed requires an actionable error diagnostic",
+      );
     if (counts.failed > 0 && !error)
-      fail("failed work requires an actionable error diagnostic");
+      fail(
+        "failed_work_requires_error",
+        ["diagnostics"],
+        "failed work requires an actionable error diagnostic",
+      );
     if (
       counts.created >
       references.filter((reference) => reference.state === "confirmed").length
     )
-      fail("confirmed creations require their confirmed references");
+      fail(
+        "creation_reference_missing",
+        ["references"],
+        "confirmed creations require their confirmed references",
+      );
   });
+
+const validationPath =
+  /^(?:schemaVersion|outcome|summary|coverage(?:\.(?:state|remainingKnown))?|counts(?:\.(?:scanned|attempted|completed|failed|skipped|created))?|references(?:\[\d{1,4}\](?:\.(?:kind|id|state|url))?)?|diagnostics(?:\[\d{1,4}\](?:\.(?:code|severity|operation|message|retryable|remediation|service|httpStatus|referenceIds(?:\[\d{1,4}\])?))?)?)$/;
+
+function operationalIssueCode(issue: z.ZodIssue): OperationalValidationCode {
+  if (issue.code === "custom" && issue.params?.operationalRule)
+    return issue.params.operationalRule as OperationalValidationCode;
+
+  switch (issue.code) {
+    case "invalid_type":
+      return issue.input === undefined ? "field_required" : "invalid_type";
+    case "invalid_value":
+      if (issue.input === undefined) return "field_required";
+
+      return issue.path.length === 1 && issue.path[0] === "schemaVersion"
+        ? "unsupported_version"
+        : "invalid_value";
+    case "unrecognized_keys":
+      return "unknown_fields";
+    case "invalid_format":
+    case "too_small":
+    case "too_big":
+    case "not_multiple_of":
+    case "custom":
+      return "invalid_value";
+    default:
+      return "invalid_structure";
+  }
+}
+
+/** reportInput is used only to classify missing values; rejected data is discarded. */
+export function operationalValidationDiagnostics(
+  issues: readonly z.ZodIssue[],
+): OperationalValidationDiagnostic[] {
+  const diagnostics = issues
+    .slice(0, 20)
+    .map((issue): OperationalValidationDiagnostic => {
+      const path = issue.path.reduce<string>(
+        (result, segment) =>
+          typeof segment === "number"
+            ? `${result}[${segment}]`
+            : typeof segment === "string"
+              ? `${result}${result ? "." : ""}${segment}`
+              : "$",
+        "",
+      );
+
+      return {
+        code: operationalIssueCode(issue),
+        path: path.length <= 128 && validationPath.test(path) ? path : "$",
+      };
+    });
+
+  return diagnostics.filter(
+    (diagnostic, index) =>
+      diagnostics.findIndex(
+        (entry) =>
+          entry.code === diagnostic.code && entry.path === diagnostic.path,
+      ) === index,
+  );
+}
 
 /** Structural safety stays in the existing FormSchema/output validator. */
 export const OPERATIONAL_FORM_SCHEMA: FormSchema = {

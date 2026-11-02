@@ -135,6 +135,84 @@ describe("MCP stdio wire contract", () => {
     },
   );
 
+  it("publishes and forwards a complete qualification without dropping a null revision", async () => {
+    const { tools } = await client.listTools();
+    const triage = tools.find((tool) => tool.name === "triage_set");
+    const qualification = {
+      schemaVersion: 1,
+      requestType: "feature",
+      decision: "ready",
+      checks: [
+        "goal_scope",
+        "acceptance",
+        "consistency",
+        "constraints_dependencies",
+        "duplicates",
+        "relevance",
+        "bug_evidence",
+      ].map((dimension) => ({
+        dimension,
+        state: dimension === "bug_evidence" ? "not_applicable" : "pass",
+        rationale:
+          dimension === "bug_evidence"
+            ? "This feature request does not report a bug."
+            : "The request is supported by the current repository assessment.",
+        evidenceIds: dimension === "bug_evidence" ? [] : ["repository-1"],
+      })),
+      reasonCodes: [],
+      nextActions: [],
+      evidenceRefs: [
+        {
+          id: "repository-1",
+          kind: "repository",
+          reference: "src/feature.ts@0123456789abcdef",
+        },
+      ],
+    };
+    const verdict = {
+      requestKey: "b486bbac-b29a-4e1d-a384-a07a4202ad48",
+      expectedInputRevision: 3,
+      expectedQualificationRevision: null,
+      qualification,
+      flowId: "aif-dev",
+      runnerId: "claude-code",
+      baseBranch: "main",
+      enqueue: false,
+    };
+
+    expect(triage?.inputSchema).toMatchObject({
+      properties: {
+        requestKey: { type: "string", format: "uuid" },
+        expectedInputRevision: { type: "integer", minimum: 1 },
+        expectedQualificationRevision: { type: ["integer", "null"] },
+        qualification: {
+          type: "object",
+          required: [
+            "schemaVersion",
+            "requestType",
+            "decision",
+            "checks",
+            "reasonCodes",
+            "nextActions",
+            "evidenceRefs",
+          ],
+        },
+      },
+    });
+    const result = await client.callTool({
+      name: "triage_set",
+      arguments: { slug: "wire-project", taskId: "task-1", ...verdict },
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(requests.at(-1)).toEqual({
+      method: "POST",
+      url: "/api/v1/ext/projects/wire-project/tasks/task-1/triage",
+      authorization: "Bearer mai_wire_test",
+      body: verdict,
+    });
+  });
+
   it("rejects a call without credentials before reaching REST", async () => {
     const unauthenticated = await connectClient("");
     const count = requests.length;

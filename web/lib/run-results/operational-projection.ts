@@ -132,6 +132,9 @@ function projectOperationalOutcome(
     effectiveOutcome: receipt?.effectiveOutcome ?? null,
     successful: receipt?.successful ?? false,
     validation: receipt?.validation ?? "pending",
+    ...(receipt?.validationDiagnostics
+      ? { validationDiagnostics: receipt.validationDiagnostics }
+      : {}),
     integrity: receipt?.integrity ?? "pending",
     resultRevision: receipt?.resultRevision ?? null,
     reportedResult: result,

@@ -73,6 +73,11 @@ import {
   frozenRetryDefinition,
 } from "@/lib/agents/retry-ownership";
 import { allocateAgentRetryWorktree } from "@/lib/agents/retry-allocation";
+import { retryRecipeStrategy } from "@/lib/agents/retry-types";
+import {
+  concurrentQualificationReason,
+  retryRefusal,
+} from "@/lib/agents/retry-guards";
 import {
   prepareTaskDeliveryAdmission,
   assertTaskAdmissionForDispatch,
@@ -1062,8 +1067,20 @@ export async function launchAgentRun(
         assertAgentRetryClaim(tx, input.retryClaim!),
       )
     : null;
-  const ctx = retryIntent
-    ? { ...currentContext, effective: retryIntent.recipe.definition }
+  const ctx: LoadedAgentContext = retryIntent
+    ? {
+        ...currentContext,
+        effective: retryIntent.recipe.definition,
+        project: {
+          ...currentContext.project,
+          mainBranch: retryIntent.recipe.project.mainBranch,
+          branchPrefix: retryIntent.recipe.project.branchPrefix,
+        },
+        link: {
+          ...currentContext.link,
+          branchBase: retryIntent.recipe.project.branchBase,
+        },
+      }
     : currentContext;
 
   // Fast trigger-event dedup BEFORE any side effect (task auto-create, worktree,
@@ -1136,17 +1153,25 @@ export async function launchAgentRun(
         input.projectId,
         input.taskId,
       );
-      const sha = await resolveBaseCommit({
+      const currentSha = await resolveBaseCommit({
         projectRepoPath: ctx.project.repoPath,
         baseRef: qualificationInput.target,
       });
+      const frozenSha =
+        retryIntent?.recipe.version === 2 &&
+        retryIntent.recipe.strategy === "fresh_qualification"
+          ? retryIntent.recipe.qualificationSha
+          : null;
+
+      if (frozenSha && currentSha !== frozenSha)
+        throw retryRefusal("retry_context_changed");
 
       taskQualificationSnapshot = {
         version: 1,
         role: "qualifier",
         taskId: input.taskId,
         target: qualificationInput.target,
-        sha,
+        sha: frozenSha ?? currentSha,
       };
     } else
       taskQualificationSnapshot = {
@@ -1503,16 +1528,19 @@ export async function launchAgentRun(
     // The project base is load-bearing: it carries the budget axis the agent
     // recommendation never declares, so a project token ceiling actually binds an
     // agent run.
-    const executionPolicy = resolveAgentContextExecutionPolicy(ctx);
+    const executionPolicy =
+      retryIntent?.recipe.policy ?? resolveAgentContextExecutionPolicy(ctx);
 
     // ADR-111 (D5): resolve the effective agent config ONCE here and snapshot it
     // onto the run row. buildAgentPrompt reads THIS snapshot at spawn — never
     // re-resolving from the (mutable) definition/link. null when the agent
     // declares no config (the column stays null).
-    const resolvedConfig = resolveAgentConfig(
-      ctx.effective.parsed.config,
-      (ctx.link.config as Record<string, unknown> | null) ?? null,
-    );
+    const resolvedConfig =
+      retryIntent?.recipe.configuration ??
+      resolveAgentConfig(
+        ctx.effective.parsed.config,
+        (ctx.link.config as Record<string, unknown> | null) ?? null,
+      );
     const agentConfig =
       Object.keys(resolvedConfig).length > 0 ? resolvedConfig : null;
 
@@ -1542,6 +1570,7 @@ export async function launchAgentRun(
                   sourceRunId: retryIntent.sourceRunId,
                   intentId: retryIntent.id,
                   originalEventId: retryIntent.recipe.trigger.eventId,
+                  strategy: retryRecipeStrategy(retryIntent.recipe),
                 },
               }
             : {}),
@@ -1620,6 +1649,25 @@ export async function launchAgentRun(
     try {
       const inserted = await _db.transaction(async (tx: Db) => {
         if (input.retryClaim) await assertAgentRetryClaim(tx, input.retryClaim);
+        if (taskQualificationSnapshot?.role === "qualifier" && input.taskId) {
+          await tx
+            .select({ id: tasks.id })
+            .from(tasks)
+            .where(
+              and(
+                eq(tasks.id, input.taskId),
+                eq(tasks.projectId, input.projectId),
+              ),
+            )
+            .for("update");
+          const qualificationReason = await concurrentQualificationReason(tx, {
+            projectId: input.projectId,
+            taskId: input.taskId,
+            excludeIntentId: retryIntent?.id,
+          });
+
+          if (qualificationReason) throw retryRefusal(qualificationReason);
+        }
         if (taskAdmission) await taskAdmission.apply(tx);
         // ADR-163: a DELEGATED child's depth + shared fan-out bound is decided
         // here, in the same transaction as the run INSERT and under the
@@ -2304,6 +2352,13 @@ export async function buildAgentPrompt(
   if (run.taskQualificationSnapshot?.role === "qualifier")
     sections.push(
       `## Qualification evidence\nTask: ${run.taskQualificationSnapshot.taskId}\nTarget: ${run.taskQualificationSnapshot.target}\nPinned repository SHA: ${run.taskQualificationSnapshot.sha}\nInspect this read-only checkout. Read current task_get revisions and confirmed clarifications before submitting a qualification candidate. Reference its qualificationId in the final operational result; a candidate is not accepted work.`,
+    );
+  if (
+    run.taskQualificationSnapshot?.role === "qualifier" &&
+    run.agentActivitySnapshot?.retryOrigin?.strategy === "fresh_qualification"
+  )
+    sections.push(
+      "## Fresh qualification request\nA human requested a new assessment of the current task. Read its current inputs and confirmed effects. Do not replay the previous trigger or assume the failed source performed no work. The original execution remains historical evidence.",
     );
   if (commentTriggerBlock) sections.push(commentTriggerBlock);
   sections.push(triggerContextBlock(run));

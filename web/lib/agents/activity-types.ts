@@ -1,3 +1,5 @@
+import type { AgentRetryStrategy } from "@/lib/agents/retry-types";
+
 export type AgentActivitySnapshot = {
   version: 1;
   agentId: string;
@@ -11,6 +13,7 @@ export type AgentActivitySnapshot = {
     sourceRunId: string;
     intentId: string;
     originalEventId: number | null;
+    strategy?: AgentRetryStrategy;
   };
   comparisonScopes?: { business: string; infrastructure: string };
 };

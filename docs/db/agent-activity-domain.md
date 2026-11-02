@@ -1,6 +1,6 @@
 # Agent activity persistence
 
-**Implemented — additive main-lineage migrations 0204–0209; no Brain migration.**
+**Implemented — additive main-lineage migrations 0204–0210; no Brain migration.**
 
 The owning domain defines lifecycle and authority. SQL, Drizzle schema, journal and snapshot must agree; generated consolidated ERD changes only after the corresponding DDL phase.
 
@@ -37,9 +37,23 @@ erDiagram
 
 ## Transactions and indexes
 
+Retry recipe v1 remains readable as pre-work replay. Migration 0210 adds v2 with
+an explicit `pre_work_retry | fresh_qualification` strategy; the generated CHECK
+refuses a missing/unknown v2 strategy and preserves all v1 rows. The v2 fresh
+recipe freezes its qualification repository SHA. No table or status is added.
+Task row locks serialize fresh assessment intents and the final qualifier run
+insertion across different old source runs. The source-only unique index still
+protects permanent successor lineage independently of task-level contention.
+
 Index all hot project/agent/task/due/status and keyset paths; bounded scans use dueAt/id or timestamp/id. All current pointers, receipt uniqueness, payload comparison, state CHECKs and same-project relationships are database/service invariants with direct-write negative tests. Source run precedes task and agent-advisory/episode locks; task-only human writes do not lock a run later. No Git/host/network effect inside PostgreSQL transactions.
 
 ## Migration and recovery
+
+For 0210, pause admission and stop older web/scheduler writers before migrating,
+then start v2-aware code before reopening retries. Schema expansion preserves v1
+recipes, but older code must not consume a v2 fresh-assessment intent as generic
+replay. Rollback keeps 0210 and all receipts; fence retry admission/dispatch until
+a compatible version is restored rather than rewriting or deleting v2 recipes.
 
 Supported fresh/master0198/current0203 upgrades append new SQL. Old pre-rebase operational0194–0198 ledgers are unsupported and must refuse before mutation. Stop old writers, set maintenance, apply additive schema, resume bounded backfill, verify counts/schema, start compatible readers/writers, then reopen admission. Never forge historical success or launch time. Rollback retains additive evidence and fences incompatible admissions; no destructive down migration. Unknown/deleted ownership preserves diagnosis. A pre-run retry allocation is owned by its intent until atomic transfer to the created run.
 
