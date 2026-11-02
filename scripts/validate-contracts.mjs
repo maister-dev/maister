@@ -3,15 +3,18 @@
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { pathToFileURL } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 
 import SwaggerParser from "@apidevtools/swagger-parser";
 import { DiagnosticSeverity, Parser } from "@asyncapi/parser";
 import { parse } from "yaml";
+import Ajv from "ajv";
 
 const OPENAPI_FILES = [
   "docs/api/external/operations.openapi.yaml",
   "docs/api/web.openapi.yaml",
   "docs/api/supervisor.openapi.yaml",
+  "docs/api/external/stand-connector.openapi.yaml",
 ];
 
 const ASYNCAPI_FILES = [
@@ -542,9 +545,46 @@ export async function validateAsyncApi(file, { log = true } = {}) {
   if (log) console.log(`validate-contracts: ${basename(file)} ok`);
 }
 
+function validateCompanyBrainExamples() {
+  const surfaces = {
+    web: readYaml("docs/api/web.openapi.yaml"),
+    external: readYaml("docs/api/external/operations.openapi.yaml"),
+  };
+  const ajv = new Ajv({ strict: false, allErrors: true, validateFormats: false });
+  for (const [name, document] of Object.entries(surfaces)) ajv.addSchema(document, name);
+  for (const [name, schema] of Object.entries(surfaces.external.components.schemas)) {
+    if (name.startsWith("CB") && !isDeepStrictEqual(schema, surfaces.web.components.schemas[name])) {
+      throw new Error(`${name}: web/external schema parity failed`);
+    }
+  }
+  const { cases } = readYaml("docs/api/company-brain-examples.yaml");
+  if (!Array.isArray(cases) || cases.length === 0) throw new Error("company examples: no cases");
+  const seen = new Set();
+  let count = 0;
+  for (const entry of cases) {
+    if (typeof entry.id !== "string" || seen.has(entry.id)) throw new Error("company examples: missing or duplicate case id");
+    seen.add(entry.id);
+    if (typeof entry.valid !== "boolean" || !Array.isArray(entry.surfaces) || entry.surfaces.length === 0) {
+      throw new Error(`${entry.id}: expected boolean validity and explicit surfaces`);
+    }
+    for (const surface of entry.surfaces) {
+      if (!Object.hasOwn(surfaces, surface)) throw new Error(`${entry.id}: unknown surface`);
+      const validate = ajv.getSchema(`${surface}#/components/schemas/${entry.schema}`);
+      if (!validate) throw new Error(`${entry.id}: missing ${surface} schema ${entry.schema}`);
+      if (validate(entry.value) !== entry.valid) {
+        throw new Error(`${entry.id}: ${surface}/${entry.schema} example validity mismatch`);
+      }
+      count += 1;
+    }
+  }
+  return count;
+}
+
 export async function validateContracts({ log = true } = {}) {
   for (const file of OPENAPI_FILES) await validateOpenApi(file, { log });
   for (const file of ASYNCAPI_FILES) await validateAsyncApi(file, { log });
+  const count = validateCompanyBrainExamples();
+  if (log) console.log(`validate-contracts: ${count} Company Brain surface examples and schema parity ok`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

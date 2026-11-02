@@ -5617,3 +5617,15 @@ erDiagram
   agent_schedules ||--o{ agent_trigger_attempts : "claim retains non-FK identity"
   agent_trigger_attempts ||--o| runs : "reserved launch receipt"
 ```
+
+## Company Brain additive model (Designed)
+
+Main migration reservation `0230_company_ownership` adds installation company identity and explicit grants. Brain reservations `0007_company_records`, `0008_company_evidence`, `0009_knowledge_review` add exclusive company/project ownership, immutable record revisions, witnesses/independence groups, factual proposal review and confirmation decisions. These are design reservations, not applied migrations. [Company Brain persistence](db/company-brain-domain.md) specifies every column/key/index, preserving backfill, cascade boundary and separate main-before-Brain bootstrap. The generated DBML continues to describe implemented schema until these migrations land.
+
+## Specialist assignments and company execution (Designed)
+
+[Specialist persistence](db/specialist-assignments-domain.md) specifies reserved main migrations `0217`–`0221`, owner-aware bindings/triggers/actors/human waits, assignment/input/context/claim/work/acceptance/delivery rows and exact key/cascade/backfill rules. Existing `runs`, `node_attempts` and `run_results` remain the execution ledgers. A company result-only Flow pins installed `flow_revisions` with null project/task/project-flow fields; no project `flows` row is fabricated. These contracts are not implemented schema yet.
+
+## Stand operation model (Designed)
+
+[Stand operation persistence](db/stand-operations-domain.md) specifies main `0220_stand_operations` and separately hardened `0221_company_brain_constraints`: versioned targets/components, effect intents/receipts, canonical resource claims, current permits, independent probes and inspected recovery decisions. Unknown external effects outlive run cleanup. No operation success is inferred from process/HTTP status or current health.

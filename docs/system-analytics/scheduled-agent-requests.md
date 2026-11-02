@@ -255,6 +255,10 @@ EN label: **Request at launch**. Help: “Optional request for each invocation o
 
 Trigger payload keys do not establish scheduled lineage. Ordinary manual, event and webhook payloads retain their existing meaning; only the explicit internal input contract carries a protected envelope. Source derivation checks project/task/agent ownership, and origin equality includes captured-empty envelopes. Malformed or conflicting evidence is refused rather than reconstructed from a live schedule.
 
+### Company specialist extension (Designed)
+
+The [specialist runtime contract](specialist-runtime.md) specifies the owner-aware extension. Existing project/human/RAH behavior remains implemented; company scope and business-assignment behavior are not implied by those existing mechanisms.
+
 ## Expectations
 
 - Request input MUST belong to one cron schedule, enforced by its row and CHECK.

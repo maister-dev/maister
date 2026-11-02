@@ -132,6 +132,10 @@ Run details localize the violated rule and remediation; collect exposes the same
 safe diagnostics. Invalid output remains unavailable and failure-terminal. Legacy
 receipts without these optional details remain readable without invented reasons.
 
+### Structured specialist evidence (Designed)
+
+[Stand maintenance](stand-maintenance.md) and [native findings](evidence-findings.md) define a new versioned evidence contract resolving real operation/verification receipts. Model-reported confirmed state in operational_v1 remains a reported value, not new authority or effect proof.
+
 ## Expectations
 
 - **OPR-01:** Valid complete success, including zero new tasks, becomes Done without promotion/merge/publication, enforced by terminal classification and delivery guards.

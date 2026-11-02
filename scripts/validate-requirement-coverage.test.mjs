@@ -151,3 +151,38 @@ test("const-asserted parameter tables do not swallow following requirement-beari
   const source = 'it.each(["live"] as const)("owner %s", () => {});\nit("IT-UX-11 permissions", () => {});\nit("IT-UX-17 continuation", () => {});\nit.each([true])("other %s", () => {});';
   assert.deepEqual([...testIdsInSource(source, ["UX"])], ["IT-UX-11", "IT-UX-17"]);
 });
+
+test("CT-CBX-05 refuses empty discovery, duplicate identities and unresolvable status claims", () => {
+  const input = {
+    ids: ["LCV-01"],
+    rows: matrixRows(row("LCV-01", "T1.1", "IT-LCV-01"), PREFIXES),
+    tasks: ["T1.1"], suiteIds: new Set(), prefixes: PREFIXES,
+    implementationPhases: PHASES,
+  };
+  for (const [change, expected] of [
+    [{ ids: [] }, /no requirement ids/],
+    [{ tasks: [] }, /no plan tasks/],
+    [{ ids: ["LCV-01", "LCV-01"] }, /duplicate requirement LCV-01/],
+    [{ tasks: ["T1.1", "T1.1"] }, /duplicate task T1.1/],
+    [{ rows: matrixRows(row("LCV-01", "T1.1", "prose only", "Implemented"), PREFIXES) }, /no recognizable primary test id/],
+    [{ rows: matrixRows(row("LCV-01", "T1.1", "IT-LCV-01", "Ready"), PREFIXES) }, /unsupported status Ready/],
+  ]) {
+    assert.match(evaluateCoverage({ ...input, ...change }).join("\n"), expected);
+  }
+  assert.throws(
+    () => matrixRows(row("LCV-01", "T1.1", "IT-LCV-01") + "\n" + row("LCV-01", "T2.1", "IT-LCV-02"), PREFIXES),
+    /duplicate matrix row LCV-01/,
+  );
+});
+
+test("CT-CBX-05 company group discovers all 84 contracts and 44 enforcing tasks", () => {
+  const group = COVERAGE_GROUPS["company-brain-specialists"];
+  assert.ok(group, "company group must be registered");
+  const result = checkGroupCoverage(group);
+  assert.deepEqual(result.failures, []);
+  assert.equal(result.ids.length, 84);
+  assert.equal(result.rows.size, 84);
+  assert.equal(result.tasks.filter((id) => group.implementationPhases.test(id)).length, 44);
+  assert.ok(result.tasks.includes("T04.1"));
+  assert.ok(result.tasks.includes("T20.1"));
+});

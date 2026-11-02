@@ -60,3 +60,9 @@ the parent is mandatory (NOT NULL FK), the children are zero-or-more.
 
 Every FK is `ON DELETE CASCADE`. Deleting a project drops the entire
 descendant tree in one statement. See [`../database-schema.md#cascade-chain`](../database-schema.md#cascade-chain).
+
+- [Company Brain persistence](company-brain-domain.md) — Designed owner/revision/witness/confirmation model and lineage contract.
+
+- [Specialist assignment persistence](specialist-assignments-domain.md) — Designed company execution, durable inputs/context, responsibility and result links.
+
+- [Stand operation persistence](stand-operations-domain.md) — Designed durable intents, target receipts, exclusion, permits and health verification.

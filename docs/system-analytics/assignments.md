@@ -83,6 +83,10 @@ sequenceDiagram
     W->>DB: record artifacts, flip run Running, complete assignment
 ```
 
+### Company specialist extension (Designed)
+
+The [specialist assignments contract](specialist-assignments.md) specifies the owner-aware extension. Existing project/human/RAH behavior remains implemented; company scope and business-assignment behavior are not implied by those existing mechanisms.
+
 ## Expectations
 
 - Assignments are the read model for pending work; `runs.status` remains the

@@ -1,0 +1,38 @@
+✔ validates every registered contract through official parsers (1088.308708ms)
+✔ rejects an OpenAPI document that fails official meta-schema validation (14.149083ms)
+✔ rejects an AsyncAPI document that fails official meta-schema validation (42.531125ms)
+✔ librarian stream contract rejects a frame that carries a message body (48.083709ms)
+✔ librarian stream contract rejects a heartbeat that carries a frame id (46.131167ms)
+✔ HITL respond reason enums agree with the TypeScript contract (229.294209ms)
+✔ HITL refusal examples satisfy real JSON Schema validation (293.934083ms)
+✔ external HITL inbox example includes every required read-state field (51.645625ms)
+✔ external HITL success and pending bodies accept the shipped runStatus variants (56.823917ms)
+✖ CT-CBX-05 contract command enforces nested examples and public schema parity (1277.663417ms)
+ℹ tests 10
+ℹ suites 0
+ℹ pass 9
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3355.76375
+
+✖ failing tests:
+
+test at scripts/validate-contracts.test.mjs:220:1
+✖ CT-CBX-05 contract command enforces nested examples and public schema parity (1277.663417ms)
+  AssertionError [ERR_ASSERTION]: unvalidated nested example must fail the actual contract command
+      at TestContext.<anonymous> (file:///Users/kaa/.codex/worktrees/2599/mAIster/scripts/validate-contracts.test.mjs:231:12)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 0,
+    operator: 'notStrictEqual',
+    diff: 'simple'
+  }

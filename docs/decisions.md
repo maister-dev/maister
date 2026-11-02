@@ -241,6 +241,10 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-199](#adr-199-immutable-per-schedule-agent-requests) | Immutable per-schedule agent requests | Accepted | 2026-11-02 |
 | [ADR-200](#adr-200-explicit-task-launch-authorization) | Explicit task launch authorization | Accepted | 2026-11-02 |
 | [ADR-201](#adr-201-fenced-agent-workspace-preparation) | Fenced agent workspace preparation | Accepted | 2026-11-02 |
+| [ADR-202](#adr-202-company-ownership-and-evidence-linked-knowledge-revisions) | Company ownership and evidence-linked knowledge revisions | Accepted | 2026-11-02 |
+| [ADR-203](#adr-203-durable-specialist-assignments-and-company-coordinator-flows) | Durable specialist assignments and company coordinator Flows | Accepted | 2026-11-02 |
+| [ADR-204](#adr-204-native-evidence-findings-and-governed-reduction) | Native evidence findings and governed reduction | Accepted | 2026-11-02 |
+| [ADR-205](#adr-205-stand-operation-intents-and-independent-verification) | Stand operation intents and independent verification | Accepted | 2026-11-02 |
 | [ADR-197](#adr-197-explicit-fenced-agent-retry-admission) | Explicit fenced agent retry admission | Accepted | 2026-10-30 |
 | [ADR-196](#adr-196-agent-activity-history-and-grouped-incidents) | Agent activity history and grouped incidents | Accepted | 2026-10-30 |
 
@@ -2322,5 +2326,41 @@ Full record: [`decisions/adr-200.md`](decisions/adr-200.md)
 **Date:** 2026-11-02
 
 Full record: [`decisions/adr-201.md`](decisions/adr-201.md)
+
+---
+
+### ADR-202: Company ownership and evidence-linked knowledge revisions
+
+**Status:** Accepted
+**Date:** 2026-11-02
+
+Full record: [`decisions/adr-202.md`](decisions/adr-202.md)
+
+---
+
+### ADR-203: Durable specialist assignments and company coordinator Flows
+
+**Status:** Accepted
+**Date:** 2026-11-02
+
+Full record: [`decisions/adr-203.md`](decisions/adr-203.md)
+
+---
+
+### ADR-204: Native evidence findings and governed reduction
+
+**Status:** Accepted
+**Date:** 2026-11-02
+
+Full record: [`decisions/adr-204.md`](decisions/adr-204.md)
+
+---
+
+### ADR-205: Stand operation intents and independent verification
+
+**Status:** Accepted
+**Date:** 2026-11-02
+
+Full record: [`decisions/adr-205.md`](decisions/adr-205.md)
 
 ---

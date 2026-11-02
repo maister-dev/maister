@@ -696,6 +696,10 @@ makes the coordinator's job **collect only**:
   plus a `tools` allow-list omitting the subagent tool, enforced by
   `capability_guard` ([`guardrail-hooks.md`](guardrail-hooks.md)).
 
+### Company specialist extension (Designed)
+
+The [specialist cooperation contract](specialist-cooperation.md) specifies the owner-aware extension. Existing project/human/RAH behavior remains implemented; company scope and business-assignment behavior are not implied by those existing mechanisms.
+
 ## Expectations
 
 - An `orchestrator` node MUST require `compat.engine_min >= 1.6.0` (refused at

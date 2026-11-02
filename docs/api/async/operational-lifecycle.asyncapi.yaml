@@ -17,6 +17,9 @@ channels:
           - $ref: "#/components/messages/TaskQualificationChanged"
           - $ref: "#/components/messages/AttentionAcknowledged"
           - $ref: "#/components/messages/CleanupChanged"
+          - $ref: "#/components/messages/KnowledgeRecordChanged"
+          - $ref: "#/components/messages/SpecialistAssignmentChanged"
+          - $ref: "#/components/messages/StandOperationChanged"
 components:
   messages:
     AgentActivityChanged:
@@ -126,3 +129,185 @@ components:
             type: string
             enum:
               [retained, armed, preserving, removed, released, retry, exhausted]
+
+    KnowledgeRecordChanged:
+      name: knowledge.record_changed
+      summary: Designed — content-free accepted knowledge invalidation
+      payload:
+        type: object
+        additionalProperties: false
+        required:
+          - owner
+          - recordId
+          - revision
+          - cause
+        properties:
+          owner:
+            oneOf:
+              - type: object
+                additionalProperties: false
+                required:
+                  - kind
+                  - companyId
+                properties:
+                  kind:
+                    type: string
+                    enum:
+                      - company
+                  companyId:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+              - type: object
+                additionalProperties: false
+                required:
+                  - kind
+                  - projectId
+                properties:
+                  kind:
+                    type: string
+                    enum:
+                      - project
+                  projectId:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+          recordId:
+            type: string
+            minLength: 1
+            maxLength: 128
+          revision:
+            type: integer
+            minimum: 1
+            maximum: 9007199254740991
+          cause:
+            type: string
+            enum:
+              - published
+              - confirmed
+              - revoked
+              - retired
+    SpecialistAssignmentChanged:
+      name: specialist.assignment_changed
+      summary: Designed — durable responsibility/context/continuation invalidation
+      payload:
+        type: object
+        additionalProperties: false
+        required:
+          - owner
+          - assignmentId
+          - revision
+          - cause
+        properties:
+          owner:
+            oneOf:
+              - type: object
+                additionalProperties: false
+                required:
+                  - kind
+                  - companyId
+                properties:
+                  kind:
+                    type: string
+                    enum:
+                      - company
+                  companyId:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+              - type: object
+                additionalProperties: false
+                required:
+                  - kind
+                  - projectId
+                properties:
+                  kind:
+                    type: string
+                    enum:
+                      - project
+                  projectId:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+          assignmentId:
+            type: string
+            minLength: 1
+            maxLength: 128
+          revision:
+            type: integer
+            minimum: 1
+            maximum: 9007199254740991
+          cause:
+            type: string
+            enum:
+              - created
+              - input
+              - context
+              - work
+              - question
+              - continuation_ready
+              - acceptance
+              - cancelled
+              - ownership
+    StandOperationChanged:
+      name: stand.operation_changed
+      summary: Designed — operation/verification/recovery changed without implying success
+      payload:
+        type: object
+        additionalProperties: false
+        required:
+          - owner
+          - assignmentId
+          - operationId
+          - revision
+          - cause
+        properties:
+          owner:
+            oneOf:
+              - type: object
+                additionalProperties: false
+                required:
+                  - kind
+                  - companyId
+                properties:
+                  kind:
+                    type: string
+                    enum:
+                      - company
+                  companyId:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+              - type: object
+                additionalProperties: false
+                required:
+                  - kind
+                  - projectId
+                properties:
+                  kind:
+                    type: string
+                    enum:
+                      - project
+                  projectId:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+          assignmentId:
+            type: string
+            minLength: 1
+            maxLength: 128
+          operationId:
+            type: string
+            minLength: 1
+            maxLength: 128
+          revision:
+            type: integer
+            minimum: 1
+            maximum: 9007199254740991
+          cause:
+            type: string
+            enum:
+              - intent
+              - effect
+              - verification
+              - recovery

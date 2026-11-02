@@ -616,6 +616,10 @@ flowchart TD
 
 Per-cron current input and immutable claim/run retention are specified in [scheduled agent requests](scheduled-agent-requests.md). Protected request bodies are stored separately from viewer-safe trigger telemetry; existing admission, completion and permission policies remain authoritative.
 
+### Company specialist extension (Designed)
+
+The [specialist runtime contract](specialist-runtime.md) specifies the owner-aware extension. Existing project/human/RAH behavior remains implemented; company scope and business-assignment behavior are not implied by those existing mechanisms.
+
 ## Expectations
 
 - Identity MUST be package-qualified `<packageName>:<stem>` (packageName =

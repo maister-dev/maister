@@ -52,7 +52,7 @@ jobs:
       # generated ERD — and did (`execution_event_skips` in `schema.ts` with no
       # `docs/db/erd.dbml` row, found during M51's rebase). Docker-free: the ERD
       # check reads the Drizzle schema, not a database.
-      - name: Validate docs (repo-wide) + API contracts
+      - name: Validate docs, Company Brain traceability and API contracts
         run: |
           pnpm validate:docs:all
           pnpm validate:contracts

@@ -1,5 +1,6 @@
+import { spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -584,5 +585,33 @@ test("task launch receipts validate their real examples and distinguish Flow and
       }),
       false,
     );
+  }
+});
+
+// Exercise the public command so an unregistered examples file cannot pass by
+// testing a standalone helper that CI never invokes.
+test("CT-CBX-05 contract command enforces nested examples and public schema parity", () => {
+  const directory = mkdtempSync(join(tmpdir(), "maister-company-contract-"));
+  const command = new URL("./validate-contracts.mjs", import.meta.url);
+  try {
+    cpSync(new URL("../docs/api", import.meta.url), join(directory, "docs/api"), { recursive: true });
+    const examplesFile = join(directory, "docs/api/company-brain-examples.yaml");
+    const examples = YAML.parse(readFileSync(examplesFile, "utf8"));
+    const nested = examples.cases.find((entry) => entry.id === "assignment-question-preserves-nested-native-form");
+    nested.value.schema.fields[0].fields[0].type = "shell";
+    writeFileSync(examplesFile, YAML.stringify(examples));
+    const invalidExample = spawnSync(process.execPath, [command.pathname], { cwd: directory, encoding: "utf8" });
+    assert.notEqual(invalidExample.status, 0, "unvalidated nested example must fail the actual contract command");
+    assert.match(invalidExample.stderr, /assignment-question-preserves-nested-native-form/);
+    cpSync(new URL("../docs/api/company-brain-examples.yaml", import.meta.url), examplesFile);
+    const externalFile = join(directory, "docs/api/external/operations.openapi.yaml");
+    const external = YAML.parse(readFileSync(externalFile, "utf8"));
+    external.components.schemas.CBInputUpdate.properties.input.maxLength = 9000;
+    writeFileSync(externalFile, YAML.stringify(external));
+    const mismatched = spawnSync(process.execPath, [command.pathname], { cwd: directory, encoding: "utf8" });
+    assert.notEqual(mismatched.status, 0, "divergent public schema must fail the actual contract command");
+    assert.match(mismatched.stderr, /CBInputUpdate.*parity/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });

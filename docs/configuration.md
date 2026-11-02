@@ -1696,3 +1696,21 @@ an existing task's required hold. UI/settings/export show the effective value an
 its provenance. Required-policy activation is an explicit editSettings action;
 upgraded intake/qualifier attachment enablement refuses an incompatible project
 before scheduling. Unrelated core capabilities remain installable in legacy projects.
+
+## Company specialist and stand configuration (Designed)
+
+Company bindings resolve installed pinned definitions/revisions without a repository. `execution: {workspace: none, completion: result}` is the designed engine-3.11.0 result-only Flow declaration; current engine support is not implied. [Runtime](system-analytics/specialist-runtime.md) defines the allowed nodes, current authority and separate immutable input planes.
+
+A stand target is managed through `/api/stands` with explicit incarnation, HTTPS/TLS identity, environment credential references, systemd manager/scope/user/unit, allowed actions, exact runbook revision and health probe. Read/propose grants are separate from review/confirmation and target mutation. Global administrators manage explicit company grants through `/api/company/grants`; this management authority does not implicitly disclose knowledge. Submitted source capture through `/api/knowledge/sources` records actual received bytes/version witness, not proof of assertion truth.
+
+| Environment setting | Reader and required wiring | Designed value |
+| --- | --- | --- |
+| `MAISTER_STAND_CONNECTOR_CONFIG` | Target helper systemd EnvironmentFile; absolute regular config JSON | Required target identity/component/TLS/authority policy file |
+| `MAISTER_STAND_CONNECTOR_STATE_DIR` | Target helper service state directory | `/var/lib/maister-stand`, durable 0700 and journal quota |
+| `MAISTER_STAND_CONNECTOR_HOST` | Target helper listener | `127.0.0.1`; remote bind requires explicit firewall/TLS policy |
+| `MAISTER_STAND_CONNECTOR_PORT` | Target helper listener and host firewall | `7443`, collision-checked before readiness |
+| `MAISTER_STAND_CONNECTOR_JOURNAL_BYTES` | Target helper admission/retention | `268435456`; unknown/in-flight/tombstone protection retained |
+
+Target config references `env:NAME` for CA/certificate/key and distinct platform→helper and helper→platform service credentials. Values/paths are supplied only to the consuming host service; not stored plaintext in DB/prompts/logs. Platform mTLS for the authority callback is terminated by a configured trusted HTTPS reverse proxy, strips inbound verification headers and verifies the target certificate before forwarding to the private web listener; dedicated target-bound credential verification is still required. No public client header alone proves mTLS. Helper→platform callback URL/server identity is pinned in target configuration. Supervisor target RPC uses frozen registry endpoints/credential refs, never a caller URL.
+
+Deployment is host-run web/supervisor plus target helper; Postgres-only Compose has no application env blocks. Target helper execution is **not yet supported in Docker**; Phase-7 deployment wiring must explicitly qualify configured systemd/TLS/state access before enabling it. See [stand maintenance](system-analytics/stand-maintenance.md) for exact caps, approval and recovery.

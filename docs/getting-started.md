@@ -660,3 +660,7 @@ mAIster/
 - [Architecture](architecture.md) — folder structure,
   dependency rules, code examples
 - [Agent Map](../AGENTS.md) — structural map for AI agents
+
+## Specialist stand pilot availability (Designed)
+
+Structured company knowledge, durable specialist assignments and configured stand maintenance are under implementation. [The designed runtime](system-analytics/specialist-runtime.md) reuses existing installed package/graph/ACP mechanisms. The target helper is **not yet supported in Docker**: qualify the host systemd helper with explicit manager scope/unit/allowed restart, mutual TLS, durable journal, current-authority callback, pinned runbook and independent health probe before enabling the pilot. Local fixture/tests or a built image do not prove real package/stand readiness. [Configuration](configuration.md#company-specialist-and-stand-configuration-designed) names consuming env/service boundaries.

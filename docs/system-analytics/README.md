@@ -24,6 +24,15 @@ One row per file — this table is the **canonical index** of the folder
 | ------ | ---- | -------------- |
 | Task launch admission              | [`task-launch-admission.md`](task-launch-admission.md)                                   | Implemented locally: explicit manual authority, qualified automation, immutable requests and dispatch; final combined acceptance tracked by the active plan.                                                                                                                                                                                                                                                                                  |
 | Agent preparation                  | [`agent-preparation.md`](agent-preparation.md)                                           | Implemented locally: fenced physical preparation, baseline, session handoff and cleanup; deployed qualification is separate.                                                                                                                                                                                                                                                                                                                  |
+| Company Brain | [`company-brain.md`](company-brain.md) | Designed: owned records, separate publication and confirmation. |
+| Company Brain evidence | [`company-brain-evidence.md`](company-brain-evidence.md) | Designed: immutable witnesses, source independence and conflicts. |
+| Specialist runtime | [`specialist-runtime.md`](specialist-runtime.md) | Designed: company pinned bindings and result-only execution. |
+| Specialist assignments | [`specialist-assignments.md`](specialist-assignments.md) | Designed: durable business input and responsibility. |
+| Specialist cooperation | [`specialist-cooperation.md`](specialist-cooperation.md) | Designed: bounded delegation, context and recovery. |
+| Evidence findings | [`evidence-findings.md`](evidence-findings.md) | Designed: native findings, declared closure and access-safe reduction. |
+| Stand maintenance | [`stand-maintenance.md`](stand-maintenance.md) | Designed: configured restart, durable receipts and independent verification. |
+| Company Brain qualification | [`company-brain-specialists-qualification.md`](company-brain-specialists-qualification.md) | Designed: migrations, transport and real-package release proof. |
+| Company Brain traceability | [`company-brain-specialists-traceability.md`](company-brain-specialists-traceability.md) | Requirement/edge tasks, primary tests and execution status. |
 | Scheduled agent requests | [`scheduled-agent-requests.md`](scheduled-agent-requests.md) | Implemented: immutable per-cron invocation input, delivery and protected history. |
 | Agent activity history | [`agent-activity-history.md`](agent-activity-history.md) | Implemented: active executions and retained run/attempt history. |
 | Agent incidents | [`agent-incidents.md`](agent-incidents.md) | Implemented: quiet grouped attention and causal recovery. |

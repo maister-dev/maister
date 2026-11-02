@@ -187,6 +187,7 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | Product View | `docs/PRODUCT_VIEW.md` | Lean Canvas, JTBD, gaps, MVP / Phase 2 / Later |
 | Architecture | `docs/architecture.md` | Current system architecture, C4 diagrams, data flows |
 | Decisions | `docs/decisions.md` | ADRs and locked technical decisions |
+| Company Brain design | `docs/system-analytics/company-brain.md` | Designed structured ownership, review and evidence |
 | Agent activity design | `docs/system-analytics/agent-activity-history.md` | Active executions and retained history |
 | Task qualification design | `docs/system-analytics/task-qualification.md` | Incoming requests and admission contracts |
 | Task launch admission | `docs/system-analytics/task-launch-admission.md` | Explicit manual authority and qualified automation |

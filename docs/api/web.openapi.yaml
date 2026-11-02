@@ -19614,9 +19614,1901 @@ paths:
           {
             description: Unexpected infrastructure failure; replay the same original request.,
           }
+  /api/company/grants:
+    get:
+      operationId: companyGrantsList
+      summary: Designed — Inspect explicit installation company grants
+      description: Designed; no implementation is implied. Requires current global administrator. URL identifiers
+        are untrusted selectors resolved through current server ownership/access. Actors, grants, source
+        witnesses, target endpoint and execution ownership are derived from authenticated context/server state.
+        Writes compare canonical payload digest and expected revision; exact replay returns the original
+        currently accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: global administrator
+      responses:
+        "200":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBCompanyGrantPage"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: cursor
+          in: query
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2048
+          description: Opaque owner/filter/current-access-bound keyset cursor.
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+    post:
+      operationId: companyGrantCreate
+      summary: Designed — Grant explicit company authority without implicit content disclosure
+      description: Designed; no implementation is implied. Requires current global administrator. URL identifiers
+        are untrusted selectors resolved through current server ownership/access. Actors, grants, source
+        witnesses, target endpoint and execution ownership are derived from authenticated context/server state.
+        Writes compare canonical payload digest and expected revision; exact replay returns the original
+        currently accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: global administrator
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CBCompanyGrantInput"
+      responses:
+        "200":
+          description: Exact content-guarded replay returns the currently accessible prior receipt without repeating
+            work; state remains explicit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBCompanyGrantPage"
+        "201":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBCompanyGrantPage"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - sessionCookie: []
+  /api/company/grants/{grantId}:
+    delete:
+      operationId: companyGrantRevoke
+      summary: Designed — Revoke exact company grant revision
+      description: Designed; no implementation is implied. Requires current global administrator. URL identifiers
+        are untrusted selectors resolved through current server ownership/access. Actors, grants, source
+        witnesses, target endpoint and execution ownership are derived from authenticated context/server state.
+        Writes compare canonical payload digest and expected revision; exact replay returns the original
+        currently accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: global administrator
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CBControlInput"
+      responses:
+        "200":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBReceipt"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: grantId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: URL selector resolved and authorized against server state; no filesystem path.
+  /api/knowledge:
+    get:
+      operationId: knowledgeSearch
+      summary: Designed — Search accessible owned records
+      description: Designed; no implementation is implied. Requires current knowledge:read. URL identifiers are
+        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
+        target endpoint and execution ownership are derived from authenticated context/server state. Writes
+        compare canonical payload digest and expected revision; exact replay returns the original currently
+        accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: knowledge:read
+      responses:
+        "200":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBKnowledgePage"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: cursor
+          in: query
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2048
+          description: Opaque owner/filter/current-access-bound keyset cursor.
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+        - name: ownerKind
+          in: query
+          schema:
+            type: string
+            enum:
+              - company
+              - project
+        - name: ownerId
+          in: query
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+        - name: q
+          in: query
+          schema:
+            type: string
+            minLength: 0
+            maxLength: 2000
+        - name: kind
+          in: query
+          schema:
+            type: string
+            enum:
+              - assertion
+              - observation
+              - decision
+              - procedure
+              - lesson
+              - state_fact
+              - direction
+        - name: confirmation
+          in: query
+          schema:
+            type: string
+            enum:
+              - unconfirmed
+              - confirmed
+              - revoked
+        - name: conflict
+          in: query
+          schema:
+            type: string
+            enum:
+              - unresolved
+              - resolved
+        - name: freshness
+          in: query
+          schema:
+            type: string
+            enum:
+              - current
+              - stale
+              - unknown
+  /api/knowledge/{recordId}:
+    get:
+      operationId: knowledgeGet
+      summary: Designed — Inspect exact record revision
+      description: Designed; no implementation is implied. Requires current knowledge:read. URL identifiers are
+        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
+        target endpoint and execution ownership are derived from authenticated context/server state. Writes
+        compare canonical payload digest and expected revision; exact replay returns the original currently
+        accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: knowledge:read
+      responses:
+        "200":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBKnowledgeRecord"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: recordId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: URL selector resolved and authorized against server state; no filesystem path.
+        - name: revision
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 9007199254740991
+          description: Exact accepted revision; absent selects current authorized head.
+  /api/knowledge/{recordId}/evidence:
+    get:
+      operationId: knowledgeEvidence
+      summary: Designed — Inspect exact authorized evidence
+      description: Designed; no implementation is implied. Requires current knowledge:read. URL identifiers are
+        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
+        target endpoint and execution ownership are derived from authenticated context/server state. Writes
+        compare canonical payload digest and expected revision; exact replay returns the original currently
+        accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: knowledge:read
+      responses:
+        "200":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBWitnessPage"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: recordId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: URL selector resolved and authorized against server state; no filesystem path.
+        - name: cursor
+          in: query
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2048
+          description: Opaque owner/filter/current-access-bound keyset cursor.
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+  /api/knowledge/sources:
+    post:
+      operationId: knowledgeCaptureSource
+      summary: Designed — Capture bounded submitted source content
+      description: Designed; no implementation is implied. Requires current knowledge:propose. URL identifiers are
+        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
+        target endpoint and execution ownership are derived from authenticated context/server state. Writes
+        compare canonical payload digest and expected revision; exact replay returns the original currently
+        accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: knowledge:propose
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CBSourceCapture"
+      responses:
+        "200":
+          description: Exact content-guarded replay returns the currently accessible prior receipt without repeating
+            work; state remains explicit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBEvidenceWitness"
+        "201":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBEvidenceWitness"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - sessionCookie: []
+  /api/knowledge/proposals:
+    post:
+      operationId: knowledgePropose
+      summary: Designed — Propose new knowledge or exact correction
+      description: Designed; no implementation is implied. Requires current knowledge:propose. URL identifiers are
+        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
+        target endpoint and execution ownership are derived from authenticated context/server state. Writes
+        compare canonical payload digest and expected revision; exact replay returns the original currently
+        accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: knowledge:propose
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CBProposalInput"
+      responses:
+        "200":
+          description: Exact content-guarded replay returns the currently accessible prior receipt without repeating
+            work; state remains explicit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBReceipt"
+        "201":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBReceipt"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - sessionCookie: []
+  /api/knowledge/proposals/{proposalId}/decision:
+    post:
+      operationId: knowledgeDecide
+      summary: Designed — Accept or reject publication
+      description: Designed; no implementation is implied. Requires current knowledge:review. URL identifiers are
+        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
+        target endpoint and execution ownership are derived from authenticated context/server state. Writes
+        compare canonical payload digest and expected revision; exact replay returns the original currently
+        accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: knowledge:review
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CBProposalDecision"
+      responses:
+        "200":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBReceipt"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: proposalId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: URL selector resolved and authorized against server state; no filesystem path.
+  /api/knowledge/{recordId}/confirmations:
+    post:
+      operationId: knowledgeConfirm
+      summary: Designed — Confirm or revoke exact assertion
+      description: Designed; no implementation is implied. Requires current knowledge:confirm. URL identifiers are
+        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
+        target endpoint and execution ownership are derived from authenticated context/server state. Writes
+        compare canonical payload digest and expected revision; exact replay returns the original currently
+        accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: knowledge:confirm
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CBConfirmationInput"
+      responses:
+        "200":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBReceipt"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: recordId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: URL selector resolved and authorized against server state; no filesystem path.
+  /api/specialists:
+    get:
+      operationId: specialistsList
+      summary: Designed — List accessible specialist roles
+      description: Designed; no implementation is implied. Requires current specialists:read. URL identifiers are
+        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
+        target endpoint and execution ownership are derived from authenticated context/server state. Writes
+        compare canonical payload digest and expected revision; exact replay returns the original currently
+        accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: specialists:read
+      responses:
+        "200":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBSpecialistPage"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: cursor
+          in: query
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2048
+          description: Opaque owner/filter/current-access-bound keyset cursor.
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+  /api/specialists/{specialistId}/bindings:
+    post:
+      operationId: specialistBind
+      summary: Designed — Create explicit company pinned binding
+      description: Designed; no implementation is implied. Requires current specialists:manage. URL identifiers are
+        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
+        target endpoint and execution ownership are derived from authenticated context/server state. Writes
+        compare canonical payload digest and expected revision; exact replay returns the original currently
+        accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: specialists:manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CBBindingInput"
+      responses:
+        "200":
+          description: Exact content-guarded replay returns the currently accessible prior receipt without repeating
+            work; state remains explicit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBSpecialist"
+        "201":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBSpecialist"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: specialistId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: URL selector resolved and authorized against server state; no filesystem path.
+  /api/specialists/{specialistId}/bindings/{bindingId}:
+    patch:
+      operationId: specialistBindingUpdate
+      summary: Designed — Update pinned binding atomically
+      description: Designed; no implementation is implied. Requires current specialists:manage. URL identifiers are
+        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
+        target endpoint and execution ownership are derived from authenticated context/server state. Writes
+        compare canonical payload digest and expected revision; exact replay returns the original currently
+        accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: specialists:manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CBBindingInput"
+      responses:
+        "200":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBSpecialist"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: specialistId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: URL selector resolved and authorized against server state; no filesystem path.
+        - name: bindingId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: URL selector resolved and authorized against server state; no filesystem path.
+    delete:
+      operationId: specialistBindingDetach
+      summary: Designed — Detach without erasing history
+      description: Designed; no implementation is implied. Requires current specialists:manage. URL identifiers are
+        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
+        target endpoint and execution ownership are derived from authenticated context/server state. Writes
+        compare canonical payload digest and expected revision; exact replay returns the original currently
+        accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: specialists:manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CBControlInput"
+      responses:
+        "200":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBReceipt"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: specialistId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: URL selector resolved and authorized against server state; no filesystem path.
+        - name: bindingId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: URL selector resolved and authorized against server state; no filesystem path.
+  /api/specialist-assignments:
+    get:
+      operationId: specialistAssignmentsList
+      summary: Designed — List accessible durable work
+      description: Designed; no implementation is implied. Requires current assignments:read. URL identifiers are
+        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
+        target endpoint and execution ownership are derived from authenticated context/server state. Writes
+        compare canonical payload digest and expected revision; exact replay returns the original currently
+        accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: assignments:read
+      responses:
+        "200":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBAssignmentPage"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: cursor
+          in: query
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2048
+          description: Opaque owner/filter/current-access-bound keyset cursor.
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+    post:
+      operationId: specialistAssignmentCreate
+      summary: Designed — Submit scoped specialist work
+      description: Designed; no implementation is implied. Requires current assignments:submit. URL identifiers are
+        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
+        target endpoint and execution ownership are derived from authenticated context/server state. Writes
+        compare canonical payload digest and expected revision; exact replay returns the original currently
+        accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: assignments:submit
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CBAssignmentInput"
+      responses:
+        "200":
+          description: Exact content-guarded replay returns the currently accessible prior receipt without repeating
+            work; state remains explicit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBAssignment"
+        "201":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBAssignment"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - sessionCookie: []
+  /api/specialist-assignments/{assignmentId}:
+    get:
+      operationId: specialistAssignmentGet
+      summary: Designed — Inspect durable responsibility and progress
+      description: Designed; no implementation is implied. Requires current assignments:read. URL identifiers are
+        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
+        target endpoint and execution ownership are derived from authenticated context/server state. Writes
+        compare canonical payload digest and expected revision; exact replay returns the original currently
+        accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: assignments:read
+      responses:
+        "200":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBAssignment"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: assignmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: URL selector resolved and authorized against server state; no filesystem path.
+  /api/specialist-assignments/{assignmentId}/inputs:
+    post:
+      operationId: specialistAssignmentInput
+      summary: Designed — Append correlated input revision
+      description: Designed; no implementation is implied. Requires current assignments:update. URL identifiers are
+        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
+        target endpoint and execution ownership are derived from authenticated context/server state. Writes
+        compare canonical payload digest and expected revision; exact replay returns the original currently
+        accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: assignments:update
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CBInputUpdate"
+      responses:
+        "200":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBReceipt"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: assignmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: URL selector resolved and authorized against server state; no filesystem path.
+  /api/specialist-assignments/{assignmentId}/continue:
+    post:
+      operationId: specialistAssignmentContinue
+      summary: Designed — Continue authorized recoverable work
+      description: Designed; no implementation is implied. Requires current assignments:recover. URL identifiers are
+        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
+        target endpoint and execution ownership are derived from authenticated context/server state. Writes
+        compare canonical payload digest and expected revision; exact replay returns the original currently
+        accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: assignments:recover
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CBControlInput"
+      responses:
+        "200":
+          description: Exact content-guarded replay returns the currently accessible prior receipt without repeating
+            work; state remains explicit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBReceipt"
+        "202":
+          description: Accepted durable intent or explicit pending/unknown outcome, never proof of success.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBReceipt"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: assignmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: URL selector resolved and authorized against server state; no filesystem path.
+  /api/specialist-assignments/{assignmentId}/cancel:
+    post:
+      operationId: specialistAssignmentCancel
+      summary: Designed — Cancel owned execution while retaining effects
+      description: Designed; no implementation is implied. Requires current assignments:cancel. URL identifiers are
+        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
+        target endpoint and execution ownership are derived from authenticated context/server state. Writes
+        compare canonical payload digest and expected revision; exact replay returns the original currently
+        accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: assignments:cancel
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CBControlInput"
+      responses:
+        "200":
+          description: Exact content-guarded replay returns the currently accessible prior receipt without repeating
+            work; state remains explicit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBReceipt"
+        "202":
+          description: Accepted durable intent or explicit pending/unknown outcome, never proof of success.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBReceipt"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: assignmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: URL selector resolved and authorized against server state; no filesystem path.
+  /api/specialist-assignments/{assignmentId}/context:
+    get:
+      operationId: specialistContextGet
+      summary: Designed — Inspect authorized working context
+      description: Designed; no implementation is implied. Requires current assignments:read. URL identifiers are
+        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
+        target endpoint and execution ownership are derived from authenticated context/server state. Writes
+        compare canonical payload digest and expected revision; exact replay returns the original currently
+        accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: assignments:read
+      responses:
+        "200":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBContext"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: assignmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: URL selector resolved and authorized against server state; no filesystem path.
+    patch:
+      operationId: specialistContextUpdate
+      summary: Designed — Append context under exact revision CAS
+      description: Designed; no implementation is implied. Requires current assignments:update. URL identifiers are
+        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
+        target endpoint and execution ownership are derived from authenticated context/server state. Writes
+        compare canonical payload digest and expected revision; exact replay returns the original currently
+        accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: assignments:update
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CBContextInput"
+      responses:
+        "200":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBContext"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: assignmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: URL selector resolved and authorized against server state; no filesystem path.
+  /api/specialist-assignments/{assignmentId}/work:
+    get:
+      operationId: specialistWorkList
+      summary: Designed — Inspect bounded delegated work
+      description: Designed; no implementation is implied. Requires current assignments:read. URL identifiers are
+        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
+        target endpoint and execution ownership are derived from authenticated context/server state. Writes
+        compare canonical payload digest and expected revision; exact replay returns the original currently
+        accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: assignments:read
+      responses:
+        "200":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBWorkPage"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: assignmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: URL selector resolved and authorized against server state; no filesystem path.
+        - name: cursor
+          in: query
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2048
+          description: Opaque owner/filter/current-access-bound keyset cursor.
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+  /api/specialist-assignments/{assignmentId}/work/{workId}/decisions:
+    post:
+      operationId: specialistWorkDecide
+      summary: Designed — Accept clarify reject or rework exact child result
+      description: Designed; no implementation is implied. Requires current assignments:accept. URL identifiers are
+        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
+        target endpoint and execution ownership are derived from authenticated context/server state. Writes
+        compare canonical payload digest and expected revision; exact replay returns the original currently
+        accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: assignments:accept
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CBWorkDecision"
+      responses:
+        "200":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBReceipt"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: assignmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: URL selector resolved and authorized against server state; no filesystem path.
+        - name: workId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: URL selector resolved and authorized against server state; no filesystem path.
+  /api/specialist-assignments/{assignmentId}/questions:
+    post:
+      operationId: specialistQuestionAsk
+      summary: Designed — Request durable structured assignment clarification
+      description: Designed; no implementation is implied. Requires current assignments:update. URL identifiers are
+        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
+        target endpoint and execution ownership are derived from authenticated context/server state. Writes
+        compare canonical payload digest and expected revision; exact replay returns the original currently
+        accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: assignments:update
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CBQuestionInput"
+      responses:
+        "200":
+          description: Exact content-guarded replay returns the currently accessible prior receipt without repeating
+            work; state remains explicit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBReceipt"
+        "201":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBReceipt"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: assignmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: URL selector resolved and authorized against server state; no filesystem path.
+  /api/specialist-assignments/{assignmentId}/questions/{questionId}/respond:
+    post:
+      operationId: specialistQuestionRespond
+      summary: Designed — Answer exact assignment question
+      description: Designed; no implementation is implied. Requires current assignments:answer. URL identifiers are
+        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
+        target endpoint and execution ownership are derived from authenticated context/server state. Writes
+        compare canonical payload digest and expected revision; exact replay returns the original currently
+        accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: assignments:answer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CBQuestionResponse"
+      responses:
+        "200":
+          description: Exact content-guarded replay returns the currently accessible prior receipt without repeating
+            work; state remains explicit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBReceipt"
+        "202":
+          description: Accepted durable intent or explicit pending/unknown outcome, never proof of success.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBReceipt"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: assignmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: URL selector resolved and authorized against server state; no filesystem path.
+        - name: questionId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: URL selector resolved and authorized against server state; no filesystem path.
+  /api/specialist-assignments/{assignmentId}/acceptance:
+    post:
+      operationId: specialistAssignmentAccept
+      summary: Designed — Accept exact result and verification
+      description: Designed; no implementation is implied. Requires current assignments:accept. URL identifiers are
+        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
+        target endpoint and execution ownership are derived from authenticated context/server state. Writes
+        compare canonical payload digest and expected revision; exact replay returns the original currently
+        accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: assignments:accept
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CBAcceptance"
+      responses:
+        "200":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBReceipt"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: assignmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: URL selector resolved and authorized against server state; no filesystem path.
+  /api/stands:
+    get:
+      operationId: standsList
+      summary: Designed — List accessible configured stands
+      description: Designed; no implementation is implied. Requires current targets:read. URL identifiers are
+        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
+        target endpoint and execution ownership are derived from authenticated context/server state. Writes
+        compare canonical payload digest and expected revision; exact replay returns the original currently
+        accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: targets:read
+      responses:
+        "200":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBTargetPage"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: cursor
+          in: query
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2048
+          description: Opaque owner/filter/current-access-bound keyset cursor.
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+    post:
+      operationId: standCreate
+      summary: Designed — Register explicit stand component policy
+      description: Designed; no implementation is implied. Requires current targets:manage. URL identifiers are
+        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
+        target endpoint and execution ownership are derived from authenticated context/server state. Writes
+        compare canonical payload digest and expected revision; exact replay returns the original currently
+        accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: targets:manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CBTargetInput"
+      responses:
+        "200":
+          description: Exact content-guarded replay returns the currently accessible prior receipt without repeating
+            work; state remains explicit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBTarget"
+        "201":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBTarget"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - sessionCookie: []
+  /api/stands/{targetId}:
+    get:
+      operationId: standGet
+      summary: Designed — Inspect configured logical target
+      description: Designed; no implementation is implied. Requires current targets:read. URL identifiers are
+        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
+        target endpoint and execution ownership are derived from authenticated context/server state. Writes
+        compare canonical payload digest and expected revision; exact replay returns the original currently
+        accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: targets:read
+      responses:
+        "200":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBTarget"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: targetId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: URL selector resolved and authorized against server state; no filesystem path.
+    patch:
+      operationId: standUpdate
+      summary: Designed — Update reviewed stand configuration
+      description: Designed; no implementation is implied. Requires current targets:manage. URL identifiers are
+        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
+        target endpoint and execution ownership are derived from authenticated context/server state. Writes
+        compare canonical payload digest and expected revision; exact replay returns the original currently
+        accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: targets:manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CBTargetInput"
+      responses:
+        "200":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBTarget"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: targetId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: URL selector resolved and authorized against server state; no filesystem path.
+  /api/specialist-assignments/{assignmentId}/operations:
+    post:
+      operationId: standOperationCreate
+      summary: Designed — Persist exact allowed operation intent
+      description: "Designed; no implementation is implied. Requires current targets:read. URL identifiers are
+        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
+        target endpoint and execution ownership are derived from authenticated context/server state. Writes
+        compare canonical payload digest and expected revision; exact replay returns the original currently
+        accessible receipt, changed payload conflicts. Action-specific current target grants are mandatory: logs
+        requires targets:logs; restart requires targets:restart plus exact human approval or explicit bounded
+        unattended policy. targets:read alone never authorizes restart."
+      x-implementation-status: Designed
+      x-required-scope: targets:read
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CBOperationInput"
+      responses:
+        "200":
+          description: Exact content-guarded replay returns the currently accessible prior receipt without repeating
+            work; state remains explicit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBOperation"
+        "202":
+          description: Accepted durable intent or explicit pending/unknown outcome, never proof of success.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBOperation"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: assignmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: URL selector resolved and authorized against server state; no filesystem path.
+  /api/stand-operations/{operationId}:
+    get:
+      operationId: standOperationGet
+      summary: Designed — Inspect authorized effect and verification
+      description: Designed; no implementation is implied. Requires current targets:read. URL identifiers are
+        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
+        target endpoint and execution ownership are derived from authenticated context/server state. Writes
+        compare canonical payload digest and expected revision; exact replay returns the original currently
+        accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: targets:read
+      responses:
+        "200":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBOperation"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: URL selector resolved and authorized against server state; no filesystem path.
+  /api/stand-operations/{operationId}/reconcile:
+    post:
+      operationId: standOperationReconcile
+      summary: Designed — Reconcile same operation without blind retry
+      description: Designed; no implementation is implied. Requires current targets:recover. URL identifiers are
+        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
+        target endpoint and execution ownership are derived from authenticated context/server state. Writes
+        compare canonical payload digest and expected revision; exact replay returns the original currently
+        accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: targets:recover
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CBControlInput"
+      responses:
+        "200":
+          description: Exact content-guarded replay returns the currently accessible prior receipt without repeating
+            work; state remains explicit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBOperation"
+        "202":
+          description: Accepted durable intent or explicit pending/unknown outcome, never proof of success.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBOperation"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: URL selector resolved and authorized against server state; no filesystem path.
+  /api/stand-operations/{operationId}/recovery-decisions:
+    post:
+      operationId: standOperationRecovery
+      summary: Designed — Record hold or inspected successor intent
+      description: Designed; no implementation is implied. Requires current targets:recover. URL identifiers are
+        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
+        target endpoint and execution ownership are derived from authenticated context/server state. Writes
+        compare canonical payload digest and expected revision; exact replay returns the original currently
+        accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: targets:recover
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CBRecoveryDecision"
+      responses:
+        "200":
+          description: Exact content-guarded replay returns the currently accessible prior receipt without repeating
+            work; state remains explicit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBOperation"
+        "202":
+          description: Accepted durable intent or explicit pending/unknown outcome, never proof of success.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBOperation"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: URL selector resolved and authorized against server state; no filesystem path.
+  /api/stand-operations/{operationId}/authorizations/check:
+    post:
+      operationId: standOperationAuthorize
+      summary: Designed — Validate current exact target-side pre-effect authority
+      description: Designed; no implementation is implied. Requires current target-helper service principal. URL
+        identifiers are untrusted selectors resolved through current server ownership/access. Actors, grants,
+        source witnesses, target endpoint and execution ownership are derived from authenticated context/server
+        state. Writes compare canonical payload digest and expected revision; exact replay returns the original
+        currently accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: target-helper service principal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CBPermitCheck"
+      responses:
+        "200":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBPermit"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - cbHelperCredential: []
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: URL selector resolved and authorized against server state; no filesystem path.
+      x-mtls-required: true
 
 components:
   securitySchemes:
+    cbHelperCredential:
+      type: apiKey
+      in: header
+      name: X-Maister-Helper-Token
+      description: "Designed: target-bound helper service credential over required
+        mTLS; not an agent or user token."
     sessionCookie:
       type: apiKey
       in: cookie
@@ -19721,6 +21613,13 @@ components:
         Enforced by `web/lib/evaluations/route-helpers.ts:requireIfMatchRevision`.
       schema: { type: string }
   responses:
+    CBFailure:
+      description: Safe typed failure; no raw query, source contents, credential or
+        target stderr.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/CBError"
     Unauthenticated:
       description: No valid session (`UNAUTHENTICATED`).
       content:
@@ -32650,3 +34549,2743 @@ components:
           $ref: "#/components/schemas/ConfigPersistenceCleanupState"
         cleanupReason:
           $ref: "#/components/schemas/ConfigPersistenceCleanupReason"
+    CBCompanyGrantPage:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - nextCursor
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CBCompanyGrant"
+          maxItems: 50
+        nextCursor:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          nullable: true
+    CBCompanyGrant:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - principalKind
+        - principalId
+        - action
+        - revision
+        - revokedAt
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        principalKind:
+          type: string
+          enum:
+            - user
+            - agent
+            - system
+        principalId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        action:
+          type: string
+          enum:
+            - knowledge:read
+            - knowledge:propose
+            - knowledge:review
+            - knowledge:confirm
+            - knowledge:manage
+            - specialists:read
+            - specialists:manage
+            - assignments:read
+            - assignments:submit
+            - assignments:update
+            - assignments:answer
+            - assignments:accept
+            - assignments:cancel
+            - assignments:recover
+            - assignments:delegate
+            - targets:read
+            - targets:logs
+            - targets:restart
+            - targets:recover
+            - targets:manage
+        revision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        revokedAt:
+          type: string
+          format: date-time
+          nullable: true
+    CBCompanyGrantInput:
+      type: object
+      additionalProperties: false
+      required:
+        - principalKind
+        - principalId
+        - actions
+        - idempotencyKey
+      properties:
+        principalKind:
+          type: string
+          enum:
+            - user
+            - agent
+        principalId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        actions:
+          type: array
+          items:
+            type: string
+            enum:
+              - knowledge:read
+              - knowledge:propose
+              - knowledge:review
+              - knowledge:confirm
+              - knowledge:manage
+              - specialists:read
+              - specialists:manage
+              - assignments:read
+              - assignments:submit
+              - assignments:update
+              - assignments:answer
+              - assignments:accept
+              - assignments:cancel
+              - assignments:recover
+              - assignments:delegate
+              - targets:read
+              - targets:logs
+              - targets:restart
+              - targets:recover
+              - targets:manage
+          maxItems: 20
+          minItems: 1
+        confirmationClasses:
+          type: array
+          items:
+            type: string
+            enum:
+              - assertion
+              - observation
+              - decision
+              - procedure
+          maxItems: 4
+        expectedRevision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        idempotencyKey:
+          type: string
+          minLength: 8
+          maxLength: 128
+          pattern: ^[A-Za-z0-9._:-]+$
+    CBControlInput:
+      type: object
+      additionalProperties: false
+      required:
+        - expectedRevision
+        - reason
+        - idempotencyKey
+      properties:
+        expectedRevision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        idempotencyKey:
+          type: string
+          minLength: 8
+          maxLength: 128
+          pattern: ^[A-Za-z0-9._:-]+$
+    CBReceipt:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - revision
+        - status
+        - duplicate
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        revision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        status:
+          type: string
+          enum:
+            - pending
+            - queued
+            - active
+            - accepted
+            - rejected
+            - confirmed
+            - revoked
+            - cancelled
+            - failed
+            - unknown
+            - completed
+            - duplicate
+        duplicate:
+          type: boolean
+    CBKnowledgePage:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - nextCursor
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CBKnowledgeRecord"
+          maxItems: 50
+        nextCursor:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          nullable: true
+    CBKnowledgeRecord:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - owner
+        - revision
+        - title
+        - assertion
+        - kind
+        - basis
+        - lifecycle
+        - visibility
+        - evidence
+        - confirmation
+        - attribution
+        - freshness
+        - limitations
+        - conflict
+        - updatedAt
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        owner:
+          $ref: "#/components/schemas/CBOwner"
+        revision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        title:
+          type: string
+          minLength: 1
+          maxLength: 256
+        assertion:
+          type: string
+          minLength: 1
+          maxLength: 32000
+        kind:
+          type: string
+          enum:
+            - assertion
+            - observation
+            - decision
+            - procedure
+            - lesson
+            - state_fact
+            - direction
+        basis:
+          type: string
+          enum:
+            - observed
+            - inferred
+            - unknown
+        lifecycle:
+          type: string
+          enum:
+            - active
+            - expired
+            - superseded
+            - withdrawn
+        visibility:
+          type: string
+          enum:
+            - owner_grants
+            - restricted
+        evidence:
+          type: array
+          items:
+            $ref: "#/components/schemas/CBEvidenceWitness"
+          maxItems: 64
+        confirmation:
+          type: object
+          additionalProperties: false
+          required:
+            - state
+            - decisionId
+            - policyVersion
+            - confirmer
+            - witnessIds
+          properties:
+            state:
+              type: string
+              enum:
+                - unconfirmed
+                - confirmed
+                - revoked
+            decisionId:
+              type: string
+              minLength: 1
+              maxLength: 128
+              nullable: true
+            policyVersion:
+              type: integer
+              minimum: 1
+              maximum: 9007199254740991
+              nullable: true
+            confirmer:
+              type: object
+              additionalProperties: false
+              required:
+                - kind
+                - id
+                - runId
+                - attemptId
+              properties:
+                kind:
+                  type: string
+                  enum:
+                    - user
+                    - agent
+                    - system
+                    - legacy_unknown
+                id:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                  nullable: true
+                runId:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                  nullable: true
+                attemptId:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                  nullable: true
+              nullable: true
+            witnessIds:
+              type: array
+              items:
+                type: string
+                minLength: 1
+                maxLength: 128
+              maxItems: 64
+        attribution:
+          $ref: "#/components/schemas/CBActor"
+        freshness:
+          type: object
+          additionalProperties: false
+          required:
+            - state
+            - applicability
+            - observedAt
+            - sourceAt
+            - capturedAt
+          properties:
+            state:
+              type: string
+              enum:
+                - current
+                - stale
+                - unknown
+            applicability:
+              type: string
+              enum:
+                - known
+                - unknown
+            observedAt:
+              type: string
+              format: date-time
+              nullable: true
+            sourceAt:
+              type: string
+              format: date-time
+              nullable: true
+            capturedAt:
+              type: string
+              format: date-time
+        limitations:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 1000
+          maxItems: 32
+        conflict:
+          type: object
+          additionalProperties: false
+          required:
+            - state
+            - accessibleRecordIds
+            - incomplete
+          properties:
+            state:
+              type: string
+              enum:
+                - none_known
+                - unresolved
+                - resolved
+                - limited
+            accessibleRecordIds:
+              type: array
+              items:
+                type: string
+                minLength: 1
+                maxLength: 128
+              maxItems: 64
+            incomplete:
+              type: boolean
+        updatedAt:
+          type: string
+          format: date-time
+    CBOwner:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required:
+            - kind
+            - companyId
+          properties:
+            kind:
+              type: string
+              enum:
+                - company
+            companyId:
+              type: string
+              minLength: 1
+              maxLength: 128
+        - type: object
+          additionalProperties: false
+          required:
+            - kind
+            - projectId
+          properties:
+            kind:
+              type: string
+              enum:
+                - project
+            projectId:
+              type: string
+              minLength: 1
+              maxLength: 128
+    CBEvidenceWitness:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - sourceId
+        - sourceVersion
+        - sha256
+        - selector
+        - availability
+        - capturedAt
+        - observedAt
+        - sourceAt
+        - independenceGroupId
+        - attribution
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        sourceId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          nullable: true
+        sourceVersion:
+          type: string
+          minLength: 1
+          maxLength: 256
+          nullable: true
+        sha256:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+          nullable: true
+        selector:
+          type: string
+          minLength: 0
+          maxLength: 512
+        availability:
+          type: string
+          enum:
+            - available
+            - stale
+            - missing
+            - inaccessible
+            - unknown
+        capturedAt:
+          type: string
+          format: date-time
+        observedAt:
+          type: string
+          format: date-time
+          nullable: true
+        sourceAt:
+          type: string
+          format: date-time
+          nullable: true
+        independenceGroupId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          nullable: true
+        attribution:
+          $ref: "#/components/schemas/CBActor"
+    CBActor:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - id
+        - runId
+        - attemptId
+      properties:
+        kind:
+          type: string
+          enum:
+            - user
+            - agent
+            - system
+            - legacy_unknown
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          nullable: true
+        runId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          nullable: true
+        attemptId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          nullable: true
+    CBWitnessPage:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - nextCursor
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CBEvidenceWitness"
+          maxItems: 50
+        nextCursor:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          nullable: true
+    CBSourceCapture:
+      type: object
+      additionalProperties: false
+      required:
+        - owner
+        - title
+        - content
+        - idempotencyKey
+      properties:
+        owner:
+          $ref: "#/components/schemas/CBOwner"
+        title:
+          type: string
+          minLength: 1
+          maxLength: 256
+        content:
+          type: string
+          minLength: 1
+          maxLength: 32000
+        reportedSourceVersion:
+          type: string
+          minLength: 1
+          maxLength: 256
+        idempotencyKey:
+          type: string
+          minLength: 8
+          maxLength: 128
+          pattern: ^[A-Za-z0-9._:-]+$
+    CBProposalInput:
+      type: object
+      additionalProperties: false
+      required:
+        - idempotencyKey
+        - content
+      properties:
+        idempotencyKey:
+          type: string
+          minLength: 8
+          maxLength: 128
+          pattern: ^[A-Za-z0-9._:-]+$
+        content:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required:
+                - change
+                - owner
+                - title
+                - kind
+                - assertion
+                - basis
+                - evidence
+                - missingEvidence
+                - limitations
+              properties:
+                change:
+                  type: string
+                  enum:
+                    - add
+                owner:
+                  $ref: "#/components/schemas/CBOwner"
+                title:
+                  type: string
+                  minLength: 1
+                  maxLength: 256
+                kind:
+                  type: string
+                  enum:
+                    - assertion
+                    - observation
+                    - decision
+                    - procedure
+                    - lesson
+                    - state_fact
+                    - direction
+                assertion:
+                  type: string
+                  minLength: 1
+                  maxLength: 32000
+                basis:
+                  type: string
+                  enum:
+                    - observed
+                    - inferred
+                    - unknown
+                evidence:
+                  type: array
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required:
+                      - kind
+                      - id
+                    properties:
+                      kind:
+                        type: string
+                        enum:
+                          - knowledge
+                          - witness
+                          - result
+                          - operation
+                          - verification
+                      id:
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+                      revision:
+                        type: integer
+                        minimum: 1
+                        maximum: 9007199254740991
+                      version:
+                        type: string
+                        minLength: 1
+                        maxLength: 256
+                      sha256:
+                        type: string
+                        pattern: ^[a-f0-9]{64}$
+                  maxItems: 64
+                missingEvidence:
+                  type: array
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required:
+                      - state
+                      - reason
+                    properties:
+                      state:
+                        type: string
+                        enum:
+                          - absent
+                          - stale
+                          - missing
+                          - inaccessible
+                          - unknown
+                      reason:
+                        type: string
+                        minLength: 1
+                        maxLength: 1000
+                  maxItems: 32
+                limitations:
+                  type: array
+                  items:
+                    type: string
+                    minLength: 1
+                    maxLength: 1000
+                  maxItems: 32
+            - type: object
+              additionalProperties: false
+              required:
+                - change
+                - recordId
+                - expectedRevision
+                - title
+                - kind
+                - assertion
+                - basis
+                - evidence
+                - missingEvidence
+                - limitations
+              properties:
+                change:
+                  type: string
+                  enum:
+                    - correct
+                recordId:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                expectedRevision:
+                  type: integer
+                  minimum: 1
+                  maximum: 9007199254740991
+                title:
+                  type: string
+                  minLength: 1
+                  maxLength: 256
+                kind:
+                  type: string
+                  enum:
+                    - assertion
+                    - observation
+                    - decision
+                    - procedure
+                    - lesson
+                    - state_fact
+                    - direction
+                assertion:
+                  type: string
+                  minLength: 1
+                  maxLength: 32000
+                basis:
+                  type: string
+                  enum:
+                    - observed
+                    - inferred
+                    - unknown
+                evidence:
+                  type: array
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required:
+                      - kind
+                      - id
+                    properties:
+                      kind:
+                        type: string
+                        enum:
+                          - knowledge
+                          - witness
+                          - result
+                          - operation
+                          - verification
+                      id:
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+                      revision:
+                        type: integer
+                        minimum: 1
+                        maximum: 9007199254740991
+                      version:
+                        type: string
+                        minLength: 1
+                        maxLength: 256
+                      sha256:
+                        type: string
+                        pattern: ^[a-f0-9]{64}$
+                  maxItems: 64
+                missingEvidence:
+                  type: array
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required:
+                      - state
+                      - reason
+                    properties:
+                      state:
+                        type: string
+                        enum:
+                          - absent
+                          - stale
+                          - missing
+                          - inaccessible
+                          - unknown
+                      reason:
+                        type: string
+                        minLength: 1
+                        maxLength: 1000
+                  maxItems: 32
+                limitations:
+                  type: array
+                  items:
+                    type: string
+                    minLength: 1
+                    maxLength: 1000
+                  maxItems: 32
+    CBProposalDecision:
+      type: object
+      additionalProperties: false
+      required:
+        - expectedRevision
+        - decision
+        - reason
+        - idempotencyKey
+      properties:
+        expectedRevision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        decision:
+          type: string
+          enum:
+            - accept
+            - reject
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        idempotencyKey:
+          type: string
+          minLength: 8
+          maxLength: 128
+          pattern: ^[A-Za-z0-9._:-]+$
+    CBConfirmationInput:
+      type: object
+      additionalProperties: false
+      required:
+        - expectedRevision
+        - decision
+        - witnessIds
+        - reason
+        - idempotencyKey
+      properties:
+        expectedRevision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        decision:
+          type: string
+          enum:
+            - confirm
+            - revoke
+        witnessIds:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+          maxItems: 64
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        idempotencyKey:
+          type: string
+          minLength: 8
+          maxLength: 128
+          pattern: ^[A-Za-z0-9._:-]+$
+    CBSpecialistPage:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - nextCursor
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CBSpecialist"
+          maxItems: 50
+        nextCursor:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          nullable: true
+    CBSpecialist:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - bindingId
+        - owner
+        - responsibilities
+        - targetClasses
+        - packageRevision
+        - definitionSha256
+        - enabled
+        - configRevision
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        bindingId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        owner:
+          $ref: "#/components/schemas/CBOwner"
+        responsibilities:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 256
+          maxItems: 32
+        targetClasses:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 256
+          maxItems: 32
+        packageRevision:
+          type: string
+          minLength: 1
+          maxLength: 128
+        definitionSha256:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        enabled:
+          type: boolean
+        configRevision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+    CBBindingInput:
+      type: object
+      additionalProperties: false
+      required:
+        - owner
+        - packageInstallId
+        - revisionId
+        - definitionSha256
+        - enabled
+        - configuration
+        - grantActions
+      properties:
+        owner:
+          $ref: "#/components/schemas/CBCompanyOwner"
+        packageInstallId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        revisionId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        definitionSha256:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        enabled:
+          type: boolean
+        configuration:
+          type: object
+          additionalProperties: true
+          description: Keys and values strictly validated against this exact pinned agent definition configuration schema.
+        grantActions:
+          type: array
+          items:
+            type: string
+            enum:
+              - knowledge:read
+              - knowledge:propose
+              - knowledge:review
+              - knowledge:confirm
+              - knowledge:manage
+              - specialists:read
+              - specialists:manage
+              - assignments:read
+              - assignments:submit
+              - assignments:update
+              - assignments:answer
+              - assignments:accept
+              - assignments:cancel
+              - assignments:recover
+              - assignments:delegate
+              - targets:read
+              - targets:logs
+              - targets:restart
+              - targets:recover
+              - targets:manage
+          maxItems: 20
+        coordinatorFlowRevisionId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          nullable: true
+        expectedRevision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+    CBCompanyOwner:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - companyId
+      properties:
+        kind:
+          type: string
+          enum:
+            - company
+        companyId:
+          type: string
+          minLength: 1
+          maxLength: 128
+    CBAssignmentPage:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - nextCursor
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CBAssignment"
+          maxItems: 50
+        nextCursor:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          nullable: true
+    CBAssignment:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - owner
+        - objective
+        - expectedOutcome
+        - requester
+        - responsible
+        - inputRevision
+        - contextRevision
+        - status
+        - targetIds
+        - verification
+        - runIds
+        - blockers
+        - acceptedResult
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        owner:
+          $ref: "#/components/schemas/CBOwner"
+        objective:
+          type: string
+          minLength: 1
+          maxLength: 8000
+        expectedOutcome:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        requester:
+          $ref: "#/components/schemas/CBActor"
+        responsible:
+          $ref: "#/components/schemas/CBActor"
+        inputRevision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        contextRevision:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        status:
+          type: string
+          enum:
+            - queued
+            - active
+            - waiting_input
+            - waiting_children
+            - waiting_resource
+            - reconciling
+            - awaiting_acceptance
+            - completed
+            - failed
+            - cancelled
+        targetIds:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+          maxItems: 32
+        verification:
+          type: array
+          items:
+            $ref: "#/components/schemas/CBVerificationRequirement"
+          maxItems: 16
+        runIds:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+          maxItems: 256
+        blockers:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 2000
+          maxItems: 32
+        acceptedResult:
+          type: string
+          minLength: 1
+          maxLength: 128
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CBVerificationRequirement:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - referenceId
+        - required
+      properties:
+        kind:
+          type: string
+          enum:
+            - result
+            - effect
+            - health
+        referenceId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          nullable: true
+        required:
+          type: boolean
+    CBAssignmentInput:
+      type: object
+      additionalProperties: false
+      required:
+        - owner
+        - specialistBindingId
+        - objective
+        - expectedOutcome
+        - targetIds
+        - inputRefs
+        - constraints
+        - verification
+        - idempotencyKey
+      properties:
+        owner:
+          $ref: "#/components/schemas/CBOwner"
+        specialistBindingId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        objective:
+          type: string
+          minLength: 1
+          maxLength: 8000
+        expectedOutcome:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        targetIds:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+          maxItems: 32
+        inputRefs:
+          type: array
+          items:
+            $ref: "#/components/schemas/CBRef"
+          maxItems: 64
+        constraints:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 2000
+          maxItems: 32
+        verification:
+          type: array
+          items:
+            $ref: "#/components/schemas/CBVerificationRequirement"
+          maxItems: 16
+        idempotencyKey:
+          type: string
+          minLength: 8
+          maxLength: 128
+          pattern: ^[A-Za-z0-9._:-]+$
+    CBRef:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - id
+      properties:
+        kind:
+          type: string
+          enum:
+            - knowledge
+            - witness
+            - result
+            - operation
+            - verification
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        revision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        version:
+          type: string
+          minLength: 1
+          maxLength: 256
+        sha256:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+    CBInputUpdate:
+      type: object
+      additionalProperties: false
+      required:
+        - expectedRevision
+        - input
+        - references
+        - idempotencyKey
+      properties:
+        expectedRevision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        input:
+          type: string
+          minLength: 1
+          maxLength: 8000
+        references:
+          type: array
+          items:
+            $ref: "#/components/schemas/CBRef"
+          maxItems: 64
+        idempotencyKey:
+          type: string
+          minLength: 8
+          maxLength: 128
+          pattern: ^[A-Za-z0-9._:-]+$
+    CBContext:
+      type: object
+      additionalProperties: false
+      required:
+        - assignmentId
+        - revision
+        - entries
+      properties:
+        assignmentId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        revision:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        entries:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - entry
+              - actor
+              - ownerEpoch
+            properties:
+              entry:
+                $ref: "#/components/schemas/CBContextEntry"
+              actor:
+                $ref: "#/components/schemas/CBActor"
+              ownerEpoch:
+                type: integer
+                minimum: 1
+                maximum: 9007199254740991
+          maxItems: 256
+    CBContextEntry:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - kind
+        - text
+        - state
+        - references
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        kind:
+          type: string
+          enum:
+            - objective
+            - constraint
+            - source
+            - finding
+            - hypothesis
+            - question
+            - accepted
+            - decision
+            - work
+            - blocker
+        text:
+          type: string
+          minLength: 1
+          maxLength: 8000
+        state:
+          type: string
+          enum:
+            - open
+            - accepted
+            - resolved
+            - withdrawn
+        references:
+          type: array
+          items:
+            $ref: "#/components/schemas/CBRef"
+          maxItems: 64
+        supersedesEntryId:
+          type: string
+          minLength: 1
+          maxLength: 128
+    CBContextInput:
+      type: object
+      additionalProperties: false
+      required:
+        - expectedRevision
+        - updates
+        - idempotencyKey
+      properties:
+        expectedRevision:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        updates:
+          type: array
+          items:
+            $ref: "#/components/schemas/CBContextEntry"
+          maxItems: 64
+        idempotencyKey:
+          type: string
+          minLength: 8
+          maxLength: 128
+          pattern: ^[A-Za-z0-9._:-]+$
+    CBWorkPage:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - nextCursor
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CBWork"
+          maxItems: 50
+        nextCursor:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          nullable: true
+    CBWork:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - inputRevision
+        - workRevision
+        - state
+        - childRunId
+        - resultRevision
+        - limitations
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        inputRevision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        workRevision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        state:
+          type: string
+          enum:
+            - queued
+            - running
+            - needs_clarification
+            - result_ready
+            - accepted
+            - rework_requested
+            - interrupted
+            - cancelled
+        childRunId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          nullable: true
+        resultRevision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+          nullable: true
+        limitations:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 1000
+          maxItems: 32
+    CBWorkDecision:
+      type: object
+      additionalProperties: false
+      required:
+        - expectedRevision
+        - inputRevision
+        - decision
+        - reason
+        - idempotencyKey
+      properties:
+        expectedRevision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        inputRevision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        resultRevision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        decision:
+          type: string
+          enum:
+            - accept
+            - reject
+            - clarify
+            - rework
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        idempotencyKey:
+          type: string
+          minLength: 8
+          maxLength: 128
+          pattern: ^[A-Za-z0-9._:-]+$
+      oneOf:
+        - type: object
+          required:
+            - decision
+          properties:
+            decision:
+              type: string
+              enum:
+                - clarify
+        - type: object
+          required:
+            - decision
+            - resultRevision
+          properties:
+            decision:
+              type: string
+              enum:
+                - accept
+                - reject
+                - rework
+    CBQuestionInput:
+      type: object
+      additionalProperties: false
+      required:
+        - expectedRevision
+        - inputRevision
+        - question
+        - schema
+        - idempotencyKey
+      properties:
+        expectedRevision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        inputRevision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        question:
+          type: string
+          minLength: 1
+          maxLength: 10000
+        schema:
+          type: object
+          properties:
+            schemaVersion:
+              type: number
+              enum:
+                - 1
+            fields:
+              type: array
+              items:
+                $ref: "#/components/schemas/CBFormNode0"
+          required:
+            - schemaVersion
+            - fields
+          additionalProperties: {}
+          description: "MAIster form schema: {schemaVersion:1,fields:[{name,type,required?,label?,options?}]}. This is
+            not JSON Schema. For open questions use string fields with optional suggested options. Nested object
+            fields use fields; arrays use items."
+        reTriggerMode:
+          type: string
+          enum:
+            - agent
+        idempotencyKey:
+          type: string
+          minLength: 8
+          maxLength: 128
+          pattern: ^[A-Za-z0-9._:-]+$
+    CBFormNode0:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+        label:
+          type: string
+          minLength: 1
+        type:
+          type: string
+          enum:
+            - string
+            - number
+            - boolean
+            - enum
+            - array
+            - object
+            - json
+        required:
+          type: boolean
+        default: {}
+        options:
+          type: array
+          items:
+            type: string
+        fields:
+          type: array
+          items:
+            $ref: "#/components/schemas/CBFormNode0"
+        items:
+          allOf:
+            - $ref: "#/components/schemas/CBFormNode1"
+      required:
+        - name
+        - type
+      additionalProperties: {}
+    CBFormNode1:
+      type: object
+      properties:
+        type:
+          type: string
+          enum:
+            - string
+            - number
+            - boolean
+            - enum
+            - array
+            - object
+            - json
+        options:
+          type: array
+          items:
+            type: string
+        fields:
+          type: array
+          items:
+            $ref: "#/components/schemas/CBFormNode0"
+        items:
+          allOf:
+            - $ref: "#/components/schemas/CBFormNode1"
+      required:
+        - type
+      additionalProperties: {}
+    CBQuestionResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - expectedRevision
+        - inputRevision
+        - response
+        - idempotencyKey
+      properties:
+        expectedRevision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        inputRevision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        response:
+          type: object
+          maxProperties: 64
+          additionalProperties: true
+          description: Bounded JSON validated against this exact stored human-question FormSchema; suggested string
+            choices remain suggestions, not permission enums. Existing unsafe-key/depth/byte limits apply.
+        idempotencyKey:
+          type: string
+          minLength: 8
+          maxLength: 128
+          pattern: ^[A-Za-z0-9._:-]+$
+    CBAcceptance:
+      type: object
+      additionalProperties: false
+      required:
+        - expectedRevision
+        - inputRevision
+        - contextRevision
+        - result
+        - verificationIds
+        - reason
+        - idempotencyKey
+      properties:
+        expectedRevision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        inputRevision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        contextRevision:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        result:
+          type: object
+          additionalProperties: false
+          required:
+            - runId
+            - revision
+          properties:
+            runId:
+              type: string
+              minLength: 1
+              maxLength: 128
+            revision:
+              type: integer
+              minimum: 1
+              maximum: 9007199254740991
+        verificationIds:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+          maxItems: 16
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        idempotencyKey:
+          type: string
+          minLength: 8
+          maxLength: 128
+          pattern: ^[A-Za-z0-9._:-]+$
+    CBTargetPage:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - nextCursor
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CBTarget"
+          maxItems: 50
+        nextCursor:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          nullable: true
+    CBTarget:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - owner
+        - incarnationId
+        - configRevision
+        - enabled
+        - componentIds
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        owner:
+          $ref: "#/components/schemas/CBCompanyOwner"
+        incarnationId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        configRevision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        enabled:
+          type: boolean
+        componentIds:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+          maxItems: 32
+    CBTargetInput:
+      type: object
+      additionalProperties: false
+      required:
+        - owner
+        - incarnationId
+        - endpoint
+        - serverIdentity
+        - caEnv
+        - certificateEnv
+        - keyEnv
+        - platformCredentialEnv
+        - helperCredentialEnv
+        - enabled
+        - components
+      properties:
+        owner:
+          $ref: "#/components/schemas/CBCompanyOwner"
+        incarnationId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        endpoint:
+          type: string
+          format: uri
+          maxLength: 2048
+        serverIdentity:
+          type: string
+          minLength: 1
+          maxLength: 256
+        caEnv:
+          type: string
+          pattern: ^env:[A-Z_][A-Z0-9_]{0,127}$
+        certificateEnv:
+          type: string
+          pattern: ^env:[A-Z_][A-Z0-9_]{0,127}$
+        keyEnv:
+          type: string
+          pattern: ^env:[A-Z_][A-Z0-9_]{0,127}$
+        platformCredentialEnv:
+          type: string
+          pattern: ^env:[A-Z_][A-Z0-9_]{0,127}$
+        helperCredentialEnv:
+          type: string
+          pattern: ^env:[A-Z_][A-Z0-9_]{0,127}$
+        enabled:
+          type: boolean
+        components:
+          type: array
+          items:
+            $ref: "#/components/schemas/CBComponentConfig"
+          maxItems: 32
+        expectedRevision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+    CBComponentConfig:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - serviceManager
+        - scope
+        - user
+        - unit
+        - actions
+        - runbook
+        - healthProbe
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        serviceManager:
+          type: string
+          enum:
+            - systemd
+        scope:
+          type: string
+          enum:
+            - system
+            - user
+        user:
+          type: string
+          minLength: 1
+          maxLength: 128
+          nullable: true
+        unit:
+          type: string
+          pattern: ^[A-Za-z0-9_.@-]{1,240}\.service$
+        actions:
+          type: array
+          items:
+            type: string
+            enum:
+              - inspect
+              - logs
+              - restart
+              - verify
+          maxItems: 4
+        runbook:
+          type: object
+          additionalProperties: false
+          required:
+            - recordId
+            - revision
+            - witnessId
+          properties:
+            recordId:
+              type: string
+              minLength: 1
+              maxLength: 128
+            revision:
+              type: integer
+              minimum: 1
+              maximum: 9007199254740991
+            witnessId:
+              type: string
+              minLength: 1
+              maxLength: 128
+        healthProbe:
+          $ref: "#/components/schemas/CBProbeConfig"
+    CBProbeConfig:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required:
+            - kind
+            - url
+            - expectedStatus
+            - expectedIdentity
+          properties:
+            kind:
+              type: string
+              enum:
+                - http
+            url:
+              type: string
+              format: uri
+              maxLength: 2048
+            expectedStatus:
+              type: integer
+              minimum: 100
+              maximum: 599
+            expectedIdentity:
+              type: string
+              minLength: 1
+              maxLength: 256
+        - type: object
+          additionalProperties: false
+          required:
+            - kind
+            - expectedState
+          properties:
+            kind:
+              type: string
+              enum:
+                - systemd
+            expectedState:
+              type: string
+              enum:
+                - active
+    CBOperationInput:
+      type: object
+      additionalProperties: false
+      required:
+        - expectedRevision
+        - inputRevision
+        - componentId
+        - action
+        - idempotencyKey
+      properties:
+        expectedRevision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        inputRevision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        componentId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        action:
+          type: string
+          enum:
+            - inspect
+            - logs
+            - restart
+            - verify
+        idempotencyKey:
+          type: string
+          minLength: 8
+          maxLength: 128
+          pattern: ^[A-Za-z0-9._:-]+$
+    CBOperation:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - assignmentId
+        - componentId
+        - targetIncarnation
+        - requestDigest
+        - effectState
+        - verificationState
+        - disposition
+        - receiptIds
+        - verificationIds
+        - predecessorId
+        - successorId
+        - revision
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        assignmentId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        componentId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        targetIncarnation:
+          type: string
+          minLength: 1
+          maxLength: 128
+        requestDigest:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        effectState:
+          type: string
+          enum:
+            - not_dispatched
+            - dispatching
+            - confirmed_applied
+            - confirmed_not_applied
+            - unknown
+        verificationState:
+          type: string
+          enum:
+            - not_checked
+            - healthy
+            - unhealthy
+            - inconclusive
+        disposition:
+          type: string
+          enum:
+            - pending
+            - proved_applied
+            - proved_not_applied
+            - unresolved_hold
+            - authorized_successor
+        receiptIds:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+          maxItems: 32
+        verificationIds:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+          maxItems: 32
+        predecessorId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          nullable: true
+        successorId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          nullable: true
+        revision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+    CBRecoveryDecision:
+      type: object
+      additionalProperties: false
+      required:
+        - expectedRevision
+        - decision
+        - inspectionIds
+        - reason
+        - idempotencyKey
+      properties:
+        expectedRevision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        decision:
+          type: string
+          enum:
+            - hold
+            - authorize_successor
+        inspectionIds:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+          maxItems: 16
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        idempotencyKey:
+          type: string
+          minLength: 8
+          maxLength: 128
+          pattern: ^[A-Za-z0-9._:-]+$
+    CBPermitCheck:
+      type: object
+      additionalProperties: false
+      required:
+        - targetIncarnation
+        - resourceKey
+        - requestDigest
+        - ownerEpoch
+        - nonce
+        - purpose
+      properties:
+        targetIncarnation:
+          type: string
+          minLength: 1
+          maxLength: 128
+        resourceKey:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        requestDigest:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        ownerEpoch:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        nonce:
+          type: string
+          minLength: 8
+          maxLength: 128
+          pattern: ^[A-Za-z0-9._:-]+$
+        purpose:
+          type: string
+          enum:
+            - dispatch
+            - reconcile
+            - logs
+            - verify
+    CBPermit:
+      type: object
+      additionalProperties: false
+      required:
+        - permitId
+        - operationId
+        - targetIncarnation
+        - resourceKey
+        - requestDigest
+        - ownerEpoch
+        - nonce
+        - purpose
+        - expiresAt
+        - allowed
+      properties:
+        permitId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        operationId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        targetIncarnation:
+          type: string
+          minLength: 1
+          maxLength: 128
+        resourceKey:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        requestDigest:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        ownerEpoch:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        nonce:
+          type: string
+          minLength: 8
+          maxLength: 128
+          pattern: ^[A-Za-z0-9._:-]+$
+        purpose:
+          type: string
+          enum:
+            - dispatch
+            - reconcile
+            - logs
+            - verify
+        expiresAt:
+          type: string
+          format: date-time
+        allowed:
+          type: boolean
+          enum:
+            - true
+    CBFindings:
+      type: object
+      additionalProperties: false
+      required:
+        - schemaVersion
+        - findings
+        - knowledgeProposals
+        - selection
+      properties:
+        schemaVersion:
+          type: integer
+          enum:
+            - 1
+        findings:
+          type: array
+          items:
+            $ref: "#/components/schemas/CBFinding"
+          maxItems: 32
+        knowledgeProposals:
+          type: array
+          items:
+            oneOf:
+              - type: object
+                additionalProperties: false
+                required:
+                  - change
+                  - owner
+                  - title
+                  - kind
+                  - assertion
+                  - basis
+                  - evidence
+                  - missingEvidence
+                  - limitations
+                properties:
+                  change:
+                    type: string
+                    enum:
+                      - add
+                  owner:
+                    $ref: "#/components/schemas/CBOwner"
+                  title:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                  kind:
+                    type: string
+                    enum:
+                      - assertion
+                      - observation
+                      - decision
+                      - procedure
+                      - lesson
+                      - state_fact
+                      - direction
+                  assertion:
+                    type: string
+                    minLength: 1
+                    maxLength: 32000
+                  basis:
+                    type: string
+                    enum:
+                      - observed
+                      - inferred
+                      - unknown
+                  evidence:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required:
+                        - kind
+                        - id
+                      properties:
+                        kind:
+                          type: string
+                          enum:
+                            - knowledge
+                            - witness
+                            - result
+                            - operation
+                            - verification
+                        id:
+                          type: string
+                          minLength: 1
+                          maxLength: 128
+                        revision:
+                          type: integer
+                          minimum: 1
+                          maximum: 9007199254740991
+                        version:
+                          type: string
+                          minLength: 1
+                          maxLength: 256
+                        sha256:
+                          type: string
+                          pattern: ^[a-f0-9]{64}$
+                    maxItems: 64
+                  missingEvidence:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required:
+                        - state
+                        - reason
+                      properties:
+                        state:
+                          type: string
+                          enum:
+                            - absent
+                            - stale
+                            - missing
+                            - inaccessible
+                            - unknown
+                        reason:
+                          type: string
+                          minLength: 1
+                          maxLength: 1000
+                    maxItems: 32
+                  limitations:
+                    type: array
+                    items:
+                      type: string
+                      minLength: 1
+                      maxLength: 1000
+                    maxItems: 32
+              - type: object
+                additionalProperties: false
+                required:
+                  - change
+                  - recordId
+                  - expectedRevision
+                  - title
+                  - kind
+                  - assertion
+                  - basis
+                  - evidence
+                  - missingEvidence
+                  - limitations
+                properties:
+                  change:
+                    type: string
+                    enum:
+                      - correct
+                  recordId:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                  expectedRevision:
+                    type: integer
+                    minimum: 1
+                    maximum: 9007199254740991
+                  title:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                  kind:
+                    type: string
+                    enum:
+                      - assertion
+                      - observation
+                      - decision
+                      - procedure
+                      - lesson
+                      - state_fact
+                      - direction
+                  assertion:
+                    type: string
+                    minLength: 1
+                    maxLength: 32000
+                  basis:
+                    type: string
+                    enum:
+                      - observed
+                      - inferred
+                      - unknown
+                  evidence:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required:
+                        - kind
+                        - id
+                      properties:
+                        kind:
+                          type: string
+                          enum:
+                            - knowledge
+                            - witness
+                            - result
+                            - operation
+                            - verification
+                        id:
+                          type: string
+                          minLength: 1
+                          maxLength: 128
+                        revision:
+                          type: integer
+                          minimum: 1
+                          maximum: 9007199254740991
+                        version:
+                          type: string
+                          minLength: 1
+                          maxLength: 256
+                        sha256:
+                          type: string
+                          pattern: ^[a-f0-9]{64}$
+                    maxItems: 64
+                  missingEvidence:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required:
+                        - state
+                        - reason
+                      properties:
+                        state:
+                          type: string
+                          enum:
+                            - absent
+                            - stale
+                            - missing
+                            - inaccessible
+                            - unknown
+                        reason:
+                          type: string
+                          minLength: 1
+                          maxLength: 1000
+                    maxItems: 32
+                  limitations:
+                    type: array
+                    items:
+                      type: string
+                      minLength: 1
+                      maxLength: 1000
+                    maxItems: 32
+          maxItems: 16
+        selection:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - childRunId
+              - resultRevision
+              - findingId
+              - disposition
+              - outputFindingIds
+            properties:
+              childRunId:
+                type: string
+                minLength: 1
+                maxLength: 128
+              resultRevision:
+                type: integer
+                minimum: 1
+                maximum: 9007199254740991
+              findingId:
+                type: string
+                minLength: 1
+                maxLength: 128
+              disposition:
+                type: string
+                enum:
+                  - retained
+                  - combined
+                  - omitted
+              outputFindingIds:
+                type: array
+                items:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                maxItems: 32
+              reason:
+                type: string
+                minLength: 1
+                maxLength: 1000
+          maxItems: 256
+    CBFinding:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - assertion
+        - basis
+        - supporting
+        - contradicting
+        - missingEvidence
+        - limitations
+        - openQuestions
+        - sourceFindings
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        assertion:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        basis:
+          type: string
+          enum:
+            - observed
+            - inferred
+            - unknown
+        supporting:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - kind
+              - id
+            properties:
+              kind:
+                type: string
+                enum:
+                  - knowledge
+                  - witness
+                  - result
+                  - operation
+                  - verification
+              id:
+                type: string
+                minLength: 1
+                maxLength: 128
+              revision:
+                type: integer
+                minimum: 1
+                maximum: 9007199254740991
+              version:
+                type: string
+                minLength: 1
+                maxLength: 256
+              sha256:
+                type: string
+                pattern: ^[a-f0-9]{64}$
+          maxItems: 64
+        contradicting:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - kind
+              - id
+            properties:
+              kind:
+                type: string
+                enum:
+                  - knowledge
+                  - witness
+                  - result
+                  - operation
+                  - verification
+              id:
+                type: string
+                minLength: 1
+                maxLength: 128
+              revision:
+                type: integer
+                minimum: 1
+                maximum: 9007199254740991
+              version:
+                type: string
+                minLength: 1
+                maxLength: 256
+              sha256:
+                type: string
+                pattern: ^[a-f0-9]{64}$
+          maxItems: 64
+        missingEvidence:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - state
+              - reason
+            properties:
+              state:
+                type: string
+                enum:
+                  - absent
+                  - stale
+                  - missing
+                  - inaccessible
+                  - unknown
+              reason:
+                type: string
+                minLength: 1
+                maxLength: 1000
+          maxItems: 32
+        limitations:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 1000
+          maxItems: 32
+        openQuestions:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 1000
+          maxItems: 32
+        sourceFindings:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - childRunId
+              - resultRevision
+              - findingId
+            properties:
+              childRunId:
+                type: string
+                minLength: 1
+                maxLength: 128
+              resultRevision:
+                type: integer
+                minimum: 1
+                maximum: 9007199254740991
+              findingId:
+                type: string
+                minLength: 1
+                maxLength: 128
+          maxItems: 64
+    CBOperationalEvidenceV2:
+      type: object
+      additionalProperties: false
+      required:
+        - schemaVersion
+        - outcome
+        - summary
+        - coverage
+        - counts
+        - references
+        - diagnostics
+        - findings
+        - operationIds
+        - verificationIds
+      properties:
+        schemaVersion:
+          type: integer
+          enum:
+            - 2
+        outcome:
+          type: string
+          enum:
+            - success
+            - partial
+            - blocked
+            - failed
+        summary:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        coverage:
+          type: object
+          additionalProperties: false
+          required:
+            - state
+            - remainingKnown
+          properties:
+            state:
+              type: string
+              enum:
+                - complete
+                - incomplete
+                - not_started
+            remainingKnown:
+              type: integer
+              minimum: 0
+              maximum: 9007199254740991
+              nullable: true
+        counts:
+          type: object
+          additionalProperties: false
+          required:
+            - scanned
+            - attempted
+            - completed
+            - failed
+            - skipped
+            - created
+          properties:
+            scanned:
+              type: integer
+              minimum: 0
+              maximum: 9007199254740991
+            attempted:
+              type: integer
+              minimum: 0
+              maximum: 9007199254740991
+            completed:
+              type: integer
+              minimum: 0
+              maximum: 9007199254740991
+            failed:
+              type: integer
+              minimum: 0
+              maximum: 9007199254740991
+            skipped:
+              type: integer
+              minimum: 0
+              maximum: 9007199254740991
+            created:
+              type: integer
+              minimum: 0
+              maximum: 9007199254740991
+        references:
+          type: array
+          maxItems: 1000
+          items:
+            $ref: "#/components/schemas/OperationalReference"
+        diagnostics:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/OperationalDiagnostic"
+        findings:
+          $ref: "#/components/schemas/CBFindings"
+        operationIds:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+          maxItems: 32
+        verificationIds:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+          maxItems: 32
+      description: Designed — separate immutable operational_evidence_v2 contract. Existing v1 remains unchanged;
+        every effect/health ID is server-resolved.
+    CBError:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          minLength: 1
+          maxLength: 64
+        message:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        details:
+          type: object
+          additionalProperties: false
+          required:
+            - reason
+          properties:
+            reason:
+              type: string
+              minLength: 1
+              maxLength: 128
+            currentRevision:
+              type: integer
+              minimum: 1
+              maximum: 9007199254740991

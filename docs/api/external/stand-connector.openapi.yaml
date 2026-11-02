@@ -1,0 +1,533 @@
+openapi: 3.0.3
+info:
+  title: MAIster configured stand helper
+  version: 1.0.0
+  description: Designed — ADR-203. Narrow configured systemd helper. mTLS and target-bound service credentials
+    are required. Accepted/pending HTTP status is not restart or health proof.
+servers:
+  - url: https://127.0.0.1:7443
+security:
+  - platformCredential: []
+paths:
+  /identity:
+    get:
+      operationId: standHelperIdentity
+      summary: Designed — Inspect exact configured helper identity
+      description: Designed; no implementation is implied. Requires current authenticated platform service
+        principal. URL identifiers are untrusted selectors resolved through current server ownership/access.
+        Actors, grants, source witnesses, target endpoint and execution ownership are derived from
+        authenticated context/server state. Writes compare canonical payload digest and expected revision;
+        exact replay returns the original currently accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: authenticated platform service principal
+      responses:
+        "200":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBTarget"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "429":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - platformCredential: []
+      x-mtls-required: true
+  /operations:
+    post:
+      operationId: standHelperExecute
+      summary: Designed — Admit exact configured target operation
+      description: Designed; no implementation is implied. Requires current authenticated platform service
+        principal. URL identifiers are untrusted selectors resolved through current server ownership/access.
+        Actors, grants, source witnesses, target endpoint and execution ownership are derived from
+        authenticated context/server state. Writes compare canonical payload digest and expected revision;
+        exact replay returns the original currently accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: authenticated platform service principal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CBTargetOperation"
+      responses:
+        "202":
+          description: Accepted durable intent or explicit pending/unknown outcome, never proof of success.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBTargetReceipt"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "429":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - platformCredential: []
+      x-mtls-required: true
+  /operations/{operationId}:
+    get:
+      operationId: standHelperReceipt
+      summary: Designed — Inspect same original operation receipt
+      description: Designed; no implementation is implied. Requires current authenticated platform service
+        principal. URL identifiers are untrusted selectors resolved through current server ownership/access.
+        Actors, grants, source witnesses, target endpoint and execution ownership are derived from
+        authenticated context/server state. Writes compare canonical payload digest and expected revision;
+        exact replay returns the original currently accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: authenticated platform service principal
+      responses:
+        "200":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBTargetReceipt"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "429":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - platformCredential: []
+      x-mtls-required: true
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+  /operations/{operationId}/logs:
+    get:
+      operationId: standHelperLogs
+      summary: Designed — Read bounded sanitized authorized logs
+      description: Designed; no implementation is implied. Requires current operation-bound targets:logs. URL
+        identifiers are untrusted selectors resolved through current server ownership/access. Actors, grants,
+        source witnesses, target endpoint and execution ownership are derived from authenticated
+        context/server state. Writes compare canonical payload digest and expected revision; exact replay
+        returns the original currently accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: operation-bound targets:logs
+      responses:
+        "200":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBLogResponse"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "429":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - platformCredential: []
+      x-mtls-required: true
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+  /operations/{operationId}/verification:
+    post:
+      operationId: standHelperVerify
+      summary: Designed — Perform separate configured health observation
+      description: Designed; no implementation is implied. Requires current operation-bound verification authority.
+        URL identifiers are untrusted selectors resolved through current server ownership/access. Actors,
+        grants, source witnesses, target endpoint and execution ownership are derived from authenticated
+        context/server state. Writes compare canonical payload digest and expected revision; exact replay
+        returns the original currently accessible receipt, changed payload conflicts.
+      x-implementation-status: Designed
+      x-required-scope: operation-bound verification authority
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CBTargetOperation"
+      responses:
+        "200":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBVerification"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "429":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - platformCredential: []
+      x-mtls-required: true
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+components:
+  securitySchemes:
+    platformCredential:
+      type: apiKey
+      in: header
+      name: X-Maister-Platform-Token
+      description: Target-configured platform service credential over mandatory mTLS.
+  responses:
+    CBFailure:
+      description: Safe typed failure; no raw query, source contents, credential or target stderr.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/CBError"
+  schemas:
+    CBTarget:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - owner
+        - incarnationId
+        - configRevision
+        - enabled
+        - componentIds
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        owner:
+          $ref: "#/components/schemas/CBCompanyOwner"
+        incarnationId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        configRevision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        enabled:
+          type: boolean
+        componentIds:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+          maxItems: 32
+    CBCompanyOwner:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - companyId
+      properties:
+        kind:
+          type: string
+          enum:
+            - company
+        companyId:
+          type: string
+          minLength: 1
+          maxLength: 128
+    CBTargetOperation:
+      type: object
+      additionalProperties: false
+      required:
+        - operationId
+        - targetIncarnation
+        - componentId
+        - action
+        - requestDigest
+        - ownerEpoch
+      properties:
+        operationId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        targetIncarnation:
+          type: string
+          minLength: 1
+          maxLength: 128
+        componentId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        action:
+          type: string
+          enum:
+            - inspect
+            - logs
+            - restart
+            - verify
+        requestDigest:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        ownerEpoch:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        verificationNonce:
+          type: string
+          minLength: 8
+          maxLength: 128
+          pattern: ^[A-Za-z0-9._:-]+$
+    CBTargetReceipt:
+      type: object
+      additionalProperties: false
+      required:
+        - operationId
+        - targetIncarnation
+        - requestDigest
+        - receiptRevision
+        - sequence
+        - effectState
+        - permitId
+        - beforeInvocation
+        - afterInvocation
+        - observedState
+        - capturedAt
+        - reason
+      properties:
+        operationId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        targetIncarnation:
+          type: string
+          minLength: 1
+          maxLength: 128
+        requestDigest:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        receiptRevision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        sequence:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        effectState:
+          type: string
+          enum:
+            - not_dispatched
+            - dispatching
+            - confirmed_applied
+            - confirmed_not_applied
+            - unknown
+        permitId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          nullable: true
+        beforeInvocation:
+          type: string
+          minLength: 1
+          maxLength: 128
+          nullable: true
+        afterInvocation:
+          type: string
+          minLength: 1
+          maxLength: 128
+          nullable: true
+        observedState:
+          type: string
+          enum:
+            - active
+            - inactive
+            - failed
+            - unknown
+        capturedAt:
+          type: string
+          format: date-time
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 128
+          nullable: true
+    CBLogResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - operationId
+        - targetIncarnation
+        - text
+        - truncated
+        - sanitized
+        - capturedAt
+      properties:
+        operationId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        targetIncarnation:
+          type: string
+          minLength: 1
+          maxLength: 128
+        text:
+          type: string
+          minLength: 0
+          maxLength: 262144
+        truncated:
+          type: boolean
+        sanitized:
+          type: boolean
+          enum:
+            - true
+        capturedAt:
+          type: string
+          format: date-time
+    CBVerification:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - operationId
+        - targetIncarnation
+        - nonce
+        - state
+        - issuedAt
+        - observedAt
+        - targetSequence
+        - evidenceIds
+        - reason
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        operationId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        targetIncarnation:
+          type: string
+          minLength: 1
+          maxLength: 128
+        nonce:
+          type: string
+          minLength: 8
+          maxLength: 128
+          pattern: ^[A-Za-z0-9._:-]+$
+        state:
+          type: string
+          enum:
+            - healthy
+            - unhealthy
+            - inconclusive
+        issuedAt:
+          type: string
+          format: date-time
+        observedAt:
+          type: string
+          format: date-time
+        targetSequence:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        evidenceIds:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+          maxItems: 16
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 128
+          nullable: true
+    CBError:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          minLength: 1
+          maxLength: 64
+        message:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        details:
+          type: object
+          additionalProperties: false
+          required:
+            - reason
+          properties:
+            reason:
+              type: string
+              minLength: 1
+              maxLength: 128
+            currentRevision:
+              type: integer
+              minimum: 1
+              maximum: 9007199254740991

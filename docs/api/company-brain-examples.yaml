@@ -1,0 +1,262 @@
+status: Designed
+description: >-
+  Synthetic grammar examples, not execution, source, permission or pilot evidence.
+  Schema examples do not prove referenced identities, current grants, causal
+  effects, semantic support or confirmation; owning integration tests do so.
+cases:
+  - id: company-proposal-with-explicit-missing-evidence
+    surfaces: [web, external]
+    schema: CBProposalInput
+    valid: true
+    value:
+      idempotencyKey: request_example_001
+      content:
+        change: add
+        owner: { kind: company, companyId: company_example }
+        title: Restart verification procedure
+        kind: procedure
+        assertion: A restart requires a separate configured health observation.
+        basis: inferred
+        evidence: []
+        missingEvidence:
+          - state: absent
+            reason: No authorized stand observation has been collected yet.
+        limitations: [This example is proposed knowledge and is not confirmed.]
+  - id: correction-binds-exact-record-revision
+    surfaces: [web, external]
+    schema: CBProposalInput
+    valid: true
+    value:
+      idempotencyKey: correction_example_001
+      content:
+        change: correct
+        recordId: record_example
+        expectedRevision: 3
+        title: Health observation requirement
+        kind: procedure
+        assertion: Preserve uncertain effect history when authorizing successor work.
+        basis: inferred
+        evidence: []
+        missingEvidence: []
+        limitations: [Review is required before publication.]
+  - id: finding-without-fabricated-citation
+    surfaces: [web, external]
+    schema: CBFindings
+    valid: true
+    value:
+      schemaVersion: 1
+      findings:
+        - id: finding_health_unknown
+          assertion: Target health is unknown because no authorized probe result is available.
+          basis: inferred
+          supporting: []
+          contradicting: []
+          missingEvidence:
+            - state: unknown
+              reason: Collect the configured independent health observation.
+          limitations: [No restart or health success is established.]
+          openQuestions: [Which configured component is the requested target?]
+          sourceFindings: []
+      knowledgeProposals: []
+      selection: []
+  - id: empty-bounded-research-result
+    surfaces: [web, external]
+    schema: CBFindings
+    valid: true
+    value: { schemaVersion: 1, findings: [], knowledgeProposals: [], selection: [] }
+  - id: submitting-source-captures-bytes-not-truth
+    surfaces: [web, external]
+    schema: CBSourceCapture
+    valid: true
+    value:
+      owner: { kind: company, companyId: company_example }
+      title: Proposed stand runbook
+      content: Inspect the configured service and verify independent health after an allowed restart.
+      reportedSourceVersion: submitted-example-version
+      idempotencyKey: source_example_001
+  - id: exact-restart-intent-does-not-self-authorize
+    surfaces: [web, external]
+    schema: CBOperationInput
+    valid: true
+    value:
+      expectedRevision: 4
+      inputRevision: 2
+      componentId: component_example
+      action: restart
+      idempotencyKey: operation_example_001
+  - id: context-patch-is-a-revisioned-request-not-an-authority-claim
+    surfaces: [web, external]
+    schema: CBContextInput
+    valid: true
+    value:
+      expectedRevision: 3
+      updates:
+        - id: question_example
+          kind: question
+          text: Which configured stand component should be inspected?
+          state: open
+          references: []
+      idempotencyKey: context_example_001
+  - id: human-recovery-retains-unknown-predecessor
+    surfaces: [web, external]
+    schema: CBRecoveryDecision
+    valid: true
+    value:
+      expectedRevision: 5
+      decision: authorize_successor
+      inspectionIds: [inspection_example]
+      reason: Request a separate permitted operation after inspecting current target state.
+      idempotencyKey: recovery_example_001
+  - id: ownership-cannot-name-company-and-project
+    surfaces: [web, external]
+    schema: CBOwner
+    valid: false
+    value: { kind: company, companyId: company_example, projectId: project_example }
+  - id: producer-cannot-claim-confirmation-or-authorship
+    surfaces: [web, external]
+    schema: CBFindings
+    valid: false
+    value:
+      schemaVersion: 1
+      findings: []
+      knowledgeProposals: []
+      selection: []
+      confirmed: true
+      author: administrator
+  - id: observation-basis-is-not-proposal-review-state
+    surfaces: [web, external]
+    schema: CBFinding
+    valid: false
+    value:
+      id: finding_example
+      assertion: This claim has not been reviewed.
+      basis: confirmed
+      supporting: []
+      contradicting: []
+      missingEvidence: []
+      limitations: []
+      openQuestions: []
+      sourceFindings: []
+  - id: wrong-native-version-refuses
+    surfaces: [web, external]
+    schema: CBFindings
+    valid: false
+    value: { schemaVersion: 2, findings: [], knowledgeProposals: [], selection: [] }
+  - id: unsafe-candidate-reference-cannot-carry-a-path-or-grant
+    surfaces: [web, external]
+    schema: CBRef
+    valid: false
+    value:
+      kind: witness
+      id: witness_example
+      path: /private/credential-file
+      permissions: [confirm]
+  - id: assignment-revision-must-be-positive
+    surfaces: [web, external]
+    schema: CBInputUpdate
+    valid: false
+    value:
+      expectedRevision: 0
+      input: Updated request
+      references: []
+      idempotencyKey: update_example_001
+  - id: helper-does-not-accept-arbitrary-shell-action
+    surfaces: [web, external]
+    schema: CBOperationInput
+    valid: false
+    value:
+      expectedRevision: 1
+      inputRevision: 1
+      componentId: component_example
+      action: shell
+      idempotencyKey: operation_example_002
+  - id: correction-requires-exact-target-revision
+    surfaces: [web, external]
+    schema: CBProposalInput
+    valid: false
+    value:
+      idempotencyKey: correction_example_002
+      content:
+        change: correct
+        recordId: record_example
+        title: Missing base
+        kind: assertion
+        assertion: A correction cannot silently replace the latest claim.
+        basis: inferred
+        evidence: []
+        missingEvidence: []
+        limitations: []
+  - id: authority-check-cannot-nominate-user
+    surfaces: [web]
+    schema: CBPermitCheck
+    valid: false
+    value:
+      targetIncarnation: stand_example
+      resourceKey: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      requestDigest: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+      ownerEpoch: 2
+      nonce: authority_example_001
+      purpose: dispatch
+      userId: administrator
+  - id: authority-check-is-operation-bound
+    surfaces: [web]
+    schema: CBPermitCheck
+    valid: true
+    value:
+      targetIncarnation: stand_example
+      resourceKey: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      requestDigest: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+      ownerEpoch: 2
+      nonce: authority_example_001
+      purpose: dispatch
+  - id: clarify-may-precede-child-result
+    surfaces: [web, external]
+    schema: CBWorkDecision
+    valid: true
+    value:
+      expectedRevision: 1
+      inputRevision: 1
+      decision: clarify
+      reason: Resolve the target before executing diagnostic work.
+      idempotencyKey: clarification_example_001
+  - id: acceptance-cannot-omit-child-result
+    surfaces: [web, external]
+    schema: CBWorkDecision
+    valid: false
+    value:
+      expectedRevision: 1
+      inputRevision: 1
+      decision: accept
+      reason: No ready result has been identified.
+      idempotencyKey: acceptance_example_001
+  - id: assignment-question-preserves-nested-native-form
+    surfaces: [web, external]
+    schema: CBQuestionInput
+    valid: true
+    value:
+      expectedRevision: 2
+      inputRevision: 1
+      question: Which configured component requires diagnosis?
+      schema:
+        schemaVersion: 1
+        fields:
+          - name: target
+            type: object
+            required: true
+            fields:
+              - name: componentId
+                type: string
+                options: [configured-component]
+      reTriggerMode: agent
+      idempotencyKey: question_example_001
+  - id: company-question-cannot-create-project-triage
+    surfaces: [web, external]
+    schema: CBQuestionInput
+    valid: false
+    value:
+      expectedRevision: 2
+      inputRevision: 1
+      question: Which component?
+      schema: {schemaVersion: 1, fields: []}
+      reTriggerMode: triage
+      idempotencyKey: question_example_002

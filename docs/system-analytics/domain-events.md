@@ -459,6 +459,10 @@ The cause reaches the flow/agent run page, the scratch
 detail, the external `RunDTO.terminalCause` and MCP `run_get`; the webhook
 `data` is unchanged.
 
+### Company knowledge and specialist extension (Designed)
+
+The [operational lifecycle AsyncAPI](../api/async/operational-lifecycle.asyncapi.yaml) adds content-free `knowledge.record_changed`, `specialist.assignment_changed` and `stand.operation_changed` facts. Emit in the same owner transition transaction and consume through the existing durable dispatcher. These are internal projection facts, excluded from ordinary agent trigger selection to avoid self-invocation loops. `brain_record_projection` consumes accepted knowledge revision invalidation for existing Brain indexing/projection; `specialist_assignment_wake` consumes continuation-ready work under current assignment epoch; `stand_operation_reconcile` consumes intent/effect/probe changes under existing command/recovery claims. Exact revision/epoch and unique receipt guard duplicate delivery. Source/target bodies and credentials never enter payloads. Current project-only events keep their schema; company events carry an explicit owner union. Taxonomy, CHECK, emitters, consumer registration and restart recovery change together in their owning slices.
+
 ## Expectations
 
 - The `emitDomainEvent` INSERT MUST share the transaction of its domain write

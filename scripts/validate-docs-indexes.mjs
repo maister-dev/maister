@@ -4,8 +4,10 @@
 // primary test ownership are documentation contracts, not optional prose.
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { COVERAGE_GROUPS } from "./validate-requirement-coverage.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const repoRoot = resolve(here, "..");
@@ -71,6 +73,10 @@ export const LIBRARIAN_GROUP = {
 };
 
 const ANALYTICS_GROUPS = [
+  {
+    ...COVERAGE_GROUPS["company-brain-specialists"],
+    traceabilityFile: basename(COVERAGE_GROUPS["company-brain-specialists"].matrixPath),
+  },
   {
     label: "Agent activity",
     documents: ["agent-activity-history.md", "agent-incidents.md", "agent-retry.md", "task-qualification.md"],

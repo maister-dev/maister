@@ -214,6 +214,10 @@ collects. Hidden adapter subagents are excluded by `enforcement.tools: strict`
 plus a `tools` allow-list that omits the subagent tool
 ([`guardrail-hooks.md`](guardrail-hooks.md), ADR-130).
 
+### Structured specialist evidence (Designed)
+
+[Evidence findings](evidence-findings.md) specifies native evidence_findings_v1, bounded declared-source closure and the separate operational_evidence_v2 contract. Existing profiles/results/operational_v1 remain unchanged until this designed extension is implemented.
+
 ## Expectations
 
 1. `run_results` MUST hold at most one `valid` row per run
