@@ -112,6 +112,12 @@ async function seedRun(
     capabilityAgent: "claude",
     runnerSnapshot: testRunnerSnapshot(executorId, "claude"),
     status: "Running",
+    scheduledRequestSnapshot: {
+      version: 1,
+      scheduleId: randomUUID(),
+      triggerAttemptId: randomUUID(),
+      requestAtLaunch: "PROTECTED-SCHEDULED-REQUEST",
+    },
     flowVersion: "v1.0.0",
   });
 
@@ -252,6 +258,8 @@ describe("GET /api/v1/ext/runs/[runId]", () => {
     // B6: a Running run has no terminal cause.
     expect(body.terminalCause).toBeNull();
 
+    expect(JSON.stringify(body)).not.toContain("PROTECTED-SCHEDULED-REQUEST");
+    expect(body).not.toHaveProperty("scheduledRequestSnapshot");
     // Verify no leaked fields
     expect((body as any).acp_session_id).toBeUndefined();
     expect((body as any).worktree_path).toBeUndefined();

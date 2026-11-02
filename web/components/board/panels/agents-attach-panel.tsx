@@ -24,6 +24,7 @@ export type AttachScheduleView = {
   timezone?: string;
   eventKinds?: string[];
   enabled: boolean;
+  requestAtLaunch?: string | null;
 };
 
 export type AutoApplyMode = "off" | "permissions" | "full";

@@ -7,6 +7,7 @@ import type { AgentExecutionPolicyRecommendation } from "@/lib/db/schema";
 import { and, eq, isNull } from "drizzle-orm";
 import pino from "pino";
 
+import { resolveScheduledRequestFlowRevision } from "@/lib/agents/scheduled-request-flow";
 import {
   assertAgentPackageAttachable,
   listEnabledPackageRefs,
@@ -20,6 +21,7 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isAgentTriggerEventKind } from "@/lib/domain-events/taxonomy";
 import { MaisterError } from "@/lib/errors";
+import { normalizeScheduledRequest } from "@/lib/agents/scheduled-request";
 import {
   nextFireAt,
   validateCronExpression,
@@ -34,6 +36,7 @@ const {
   agentSchedules,
   platformAcpRunners,
   projects,
+  flows,
 } = schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -51,6 +54,7 @@ export type AgentScheduleInput = {
   timezone?: string;
   eventKinds?: string[];
   enabled?: boolean;
+  requestAtLaunch?: string | null;
 };
 
 export type AttachedAgentView = {
@@ -85,6 +89,7 @@ export type AttachedAgentView = {
     timezone?: string;
     eventKinds?: string[];
     enabled: boolean;
+    requestAtLaunch: string | null;
   }>;
 };
 
@@ -116,6 +121,17 @@ function normalizeSchedule(
   input: AgentScheduleInput,
   now: Date,
 ): Record<string, unknown> {
+  const requestAtLaunch =
+    input.requestAtLaunch === undefined
+      ? undefined
+      : normalizeScheduledRequest(input.requestAtLaunch);
+
+  if (input.triggerType !== "cron" && requestAtLaunch != null) {
+    throw new MaisterError(
+      "CONFIG",
+      "Request at launch is supported only for cron schedules",
+    );
+  }
   // ADR-151: a mention binding is a bare grant — it carries no cron and no
   // event columns. Stray fields are refused rather than dropped so an author
   // never believes a schedule or kind filter is in effect.
@@ -129,6 +145,7 @@ function normalizeSchedule(
 
     return {
       triggerType: "mention",
+      requestAtLaunch,
       cronExpr: null,
       timezone: null,
       nextFireAt: null,
@@ -149,6 +166,7 @@ function normalizeSchedule(
 
     return {
       triggerType: "cron",
+      requestAtLaunch,
       cronExpr: input.cronExpr,
       timezone: input.timezone,
       nextFireAt: nextFireAt(input.cronExpr, input.timezone, now),
@@ -173,6 +191,7 @@ function normalizeSchedule(
 
   return {
     triggerType: "event",
+    requestAtLaunch,
     cronExpr: null,
     timezone: null,
     nextFireAt: null,
@@ -188,10 +207,12 @@ function scheduleToView(row: Record<string, any>): {
   timezone?: string;
   eventKinds?: string[];
   enabled: boolean;
+  requestAtLaunch: string | null;
 } {
   if (row.triggerType === "mention") {
     return {
       id: row.id as string,
+      requestAtLaunch: (row.requestAtLaunch as string | null) ?? null,
       triggerType: "mention",
       enabled: row.enabled as boolean,
     };
@@ -200,6 +221,7 @@ function scheduleToView(row: Record<string, any>): {
   if (row.triggerType === "cron") {
     return {
       id: row.id as string,
+      requestAtLaunch: (row.requestAtLaunch as string | null) ?? null,
       triggerType: "cron",
       cronExpr: row.cronExpr as string,
       timezone: row.timezone as string,
@@ -209,6 +231,7 @@ function scheduleToView(row: Record<string, any>): {
 
   return {
     id: row.id as string,
+    requestAtLaunch: null,
     triggerType: "event",
     eventKinds: (row.eventMatch?.kinds ?? []) as string[],
     enabled: row.enabled as boolean,
@@ -562,6 +585,40 @@ export async function updateAgentLink(
   }));
 
   if (
+    normalizedSchedules?.some(({ values }) => Boolean(values.requestAtLaunch))
+  ) {
+    const definition = await resolveEffectiveAgentDefinition(
+      { projectId: input.projectId, agentId: input.agentId },
+      _db,
+    );
+
+    if (definition.parsed.mode !== "session") {
+      throw new MaisterError(
+        "CONFIG",
+        "A scheduled request requires a launchable session agent",
+      );
+    }
+    if (definition.parsed.flow) {
+      const [flow] = await _db
+        .select()
+        .from(flows)
+        .where(
+          and(
+            eq(flows.projectId, input.projectId),
+            eq(flows.flowRefId, definition.parsed.flow),
+          ),
+        );
+
+      if (!flow)
+        throw new MaisterError(
+          "CONFIG",
+          "Scheduled request Flow is not configured in this project",
+        );
+      await resolveScheduledRequestFlowRevision(_db, flow);
+    }
+  }
+
+  if (
     normalizedSchedules !== undefined &&
     input.patch.schedulesRevision !== linkRows[0].schedulesRevision
   ) {
@@ -729,9 +786,38 @@ export async function updateAgentLink(
 
       for (const schedule of normalizedSchedules) {
         if (schedule.id) {
+          const previous = existingSchedules.find(
+            (row: { id: string }) => row.id === schedule.id,
+          );
+          const requestAtLaunch =
+            schedule.values.requestAtLaunch === undefined
+              ? (previous.requestAtLaunch ?? null)
+              : schedule.values.requestAtLaunch;
+
+          if (
+            schedule.values.triggerType !== "cron" &&
+            requestAtLaunch !== null
+          ) {
+            throw new MaisterError(
+              "CONFIG",
+              "Clear request at launch before changing trigger type",
+            );
+          }
+          const unchangedTiming =
+            previous.triggerType === schedule.values.triggerType &&
+            previous.cronExpr === schedule.values.cronExpr &&
+            previous.timezone === schedule.values.timezone &&
+            previous.enabled === schedule.values.enabled;
+          const { nextFireAt: next, ...values } = schedule.values;
+
           await tx
             .update(agentSchedules)
-            .set({ ...schedule.values, updatedAt: now })
+            .set({
+              ...values,
+              requestAtLaunch,
+              ...(unchangedTiming ? {} : { nextFireAt: next }),
+              updatedAt: now,
+            })
             .where(eq(agentSchedules.id, schedule.id));
         } else {
           await tx.insert(agentSchedules).values({

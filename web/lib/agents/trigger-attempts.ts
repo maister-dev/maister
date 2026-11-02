@@ -8,6 +8,10 @@ import { createHash, randomUUID } from "node:crypto";
 import { and, eq, isNull, lte, or, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { assertScheduledRequestMatches } from "@/lib/agents/scheduled-request-store";
+import { parseScheduledRequestSnapshot } from "@/lib/agents/scheduled-request";
+import { isMaisterError, MaisterError } from "@/lib/errors";
+import { pgErrorOf } from "@/lib/db/pg-error";
 import { agentSchedules, agentTriggerAttempts, runs } from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import {
@@ -30,9 +34,20 @@ async function insertClaim(
   deliveryKey: string,
   eventId: number | null,
 ): Promise<AgentTriggerClaim> {
+  const id = randomUUID();
   const [attempt] = await tx
     .insert(agentTriggerAttempts)
     .values({
+      id,
+      scheduledRequestSnapshot:
+        binding.triggerType === "cron"
+          ? {
+              version: 1,
+              scheduleId: binding.id,
+              triggerAttemptId: id,
+              requestAtLaunch: binding.requestAtLaunch,
+            }
+          : null,
       projectId: binding.projectId,
       sourceAgentId: binding.agentId,
       scheduleId: binding.id,
@@ -55,7 +70,12 @@ async function insertClaim(
     .returning();
 
   log.debug(
-    { attemptId: attempt.id, scheduleId: binding.id, fence: attempt.fence },
+    {
+      attemptId: attempt.id,
+      scheduleId: binding.id,
+      fence: attempt.fence,
+      requestPresent: Boolean(binding.requestAtLaunch),
+    },
     "agent-trigger-attempt-claimed",
   );
 
@@ -68,35 +88,45 @@ export async function claimCronAgentAttempt(
   now: Date,
   next: Date,
 ): Promise<AgentTriggerClaim | null> {
-  return db.transaction(async (tx) => {
-    const [binding] = await tx
-      .update(agentSchedules)
-      .set({
-        nextFireAt: next,
-        lastFiredAt: now,
-        lastAttemptAt: now,
-        lastAttemptFence: sql`COALESCE(${agentSchedules.lastAttemptFence}, 0) + 1`,
-        updatedAt: now,
-      })
-      .where(
-        and(
-          eq(agentSchedules.id, scheduleId),
-          eq(agentSchedules.enabled, true),
-          lte(agentSchedules.nextFireAt, now),
-        ),
-      )
-      .returning();
+  return db
+    .transaction(async (tx) => {
+      const [binding] = await tx
+        .update(agentSchedules)
+        .set({
+          nextFireAt: next,
+          lastFiredAt: now,
+          lastAttemptAt: now,
+          lastAttemptFence: sql`COALESCE(${agentSchedules.lastAttemptFence}, 0) + 1`,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(agentSchedules.id, scheduleId),
+            eq(agentSchedules.triggerType, "cron"),
+            eq(agentSchedules.enabled, true),
+            lte(agentSchedules.nextFireAt, now),
+          ),
+        )
+        .returning();
 
-    if (!binding) return null;
+      if (!binding) return null;
 
-    return insertClaim(
-      tx,
-      binding,
-      now,
-      `cron:${binding.lastAttemptFence}`,
-      null,
-    );
-  });
+      return insertClaim(
+        tx,
+        binding,
+        now,
+        `cron:${binding.lastAttemptFence}`,
+        null,
+      );
+    })
+    .catch((error: unknown): never => {
+      if (isMaisterError(error)) throw error;
+      const pg = pgErrorOf(error);
+
+      throw new MaisterError("CRASH", "Agent cron claim persistence failed", {
+        details: { scheduleId, sqlState: pg?.code, constraint: pg?.constraint },
+      });
+    });
 }
 
 export async function claimEventAgentAttempt(
@@ -176,7 +206,11 @@ export async function settleAgentTriggerAttempt(
   await db.transaction(async (tx) => {
     // A run receipt is read before the attempt lock, matching source-run -> agent lock order.
     const [run] = await tx
-      .select({ id: runs.id, status: runs.status })
+      .select({
+        id: runs.id,
+        status: runs.status,
+        scheduledRequestSnapshot: runs.scheduledRequestSnapshot,
+      })
       .from(runs)
       .where(
         and(
@@ -186,6 +220,22 @@ export async function settleAgentTriggerAttempt(
         ),
       )
       .for("update");
+
+    if (run) {
+      try {
+        assertScheduledRequestMatches(
+          parseScheduledRequestSnapshot(attempt.scheduledRequestSnapshot),
+          parseScheduledRequestSnapshot(run.scheduledRequestSnapshot),
+        );
+      } catch (error) {
+        if (isMaisterError(error))
+          log.warn(
+            { attemptId: attempt.id, runId: run.id, code: error.code },
+            "agent-trigger-receipt-conflict",
+          );
+        throw error;
+      }
+    }
     const settlement =
       run && input.runId === null
         ? {

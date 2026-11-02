@@ -2910,8 +2910,13 @@ paths:
                           branch. Resolved at launch with NO auto-fetch; an
                           unresolvable ref refuses the launch with
                           `PRECONDITION`.
+                schedulesRevision:
+                  type: integer
+                  minimum: 1
+                  description: Required with schedules; exact revision CAS.
                 schedules:
                   type: array
+                  maxItems: 16
                   items: { $ref: "#/components/schemas/AgentScheduleBody" }
             example:
               enabled: true
@@ -2922,12 +2927,14 @@ paths:
               contextRepos:
                 - { project: api-gateway, ref: main }
                 - { project: shared-contracts }
+              schedulesRevision: 1
               schedules:
                 - {
                     triggerType: cron,
                     cronExpr: "0 9 * * 1",
                     timezone: "Europe/Amsterdam",
                     enabled: true,
+                    requestAtLaunch: "Review the weekly project status.\nReport unresolved blockers.",
                   }
       responses:
         "200":
@@ -2948,7 +2955,7 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "422":
           description: |
-            Invalid cron expression / timezone / event kinds (`CONFIG`).
+            Invalid cron/timezone/event kinds/request, noncron request or unsupported input mode (`CONFIG`). Omission preserves retained request; explicit null/empty clears.
             **(Implemented — ADR-157)** Also `PRECONDITION` when a
             `contextRepos[].project` slug does not resolve to an active project,
             or the acting admin lacks `readRepoFiles` on a referenced sibling
@@ -19442,6 +19449,7 @@ components:
       type: object
       additionalProperties: false
       required:
+        - scheduledRequestState
         - runId
         - agentId
         - runKind
@@ -19454,6 +19462,11 @@ components:
         - outcome
         - retryOfRunId
       properties:
+        scheduledRequestState:
+          $ref: "#/components/schemas/ScheduledRequestState"
+        scheduledRequest:
+          $ref: "#/components/schemas/ScheduledAgentRequestSnapshot"
+          description: Omitted without live readRepoFiles; retained after schedule deletion.
         operationalOutcome:
           $ref: "#/components/schemas/OperationalOutcome"
           description: Present only with readRepoFiles; safe metadata remains available without protected result bodies.
@@ -19499,6 +19512,7 @@ components:
       type: object
       additionalProperties: false
       required:
+        - scheduledRequestState
         - attemptId
         - triggerSource
         - claimedAt
@@ -19508,6 +19522,11 @@ components:
         - reasonCode
         - provenance
       properties:
+        scheduledRequestState:
+          $ref: "#/components/schemas/ScheduledRequestState"
+        scheduledRequest:
+          $ref: "#/components/schemas/ScheduledAgentRequestSnapshot"
+          description: Omitted without live readRepoFiles; retained after schedule deletion.
         attemptId: *a2
         triggerSource: *a6
         claimedAt: *a4
@@ -21130,6 +21149,7 @@ components:
         - linkId
         - enabled
         - schedules
+        - schedulesRevision
       properties:
         agent:
           $ref: "#/components/schemas/AgentSummary"
@@ -21170,10 +21190,11 @@ components:
             store from Brain — neither `canReadBrain` nor `canWriteBrain` implies
             it. Seeded server-side from the effective definition's `memory:` field
             on attach, effective thereafter.
+        schedulesRevision: { type: integer, minimum: 1 }
         schedules:
           type: array
           items:
-            $ref: "#/components/schemas/AgentScheduleBody"
+            $ref: "#/components/schemas/AgentScheduleView"
     AgentMemoryState:
       type: object
       description: |
@@ -21204,21 +21225,51 @@ components:
         current: { $ref: "#/components/schemas/AgentMemoryState" }
     AgentScheduleBody:
       type: object
+      additionalProperties: false
       description: |
-        (M34 — Implemented) One trigger binding. Cron rows require
-        `cronExpr` + `timezone`; event rows require `eventKinds` (subset of
-        the ADR-086 taxonomy).
+        Implemented — one trigger binding. Cron requires cronExpr/timezone; event
+        requires eventKinds; mention accepts neither. Request is cron-only.
+        Normalize CRLF/CR to LF and trim outer whitespace; empty becomes null.
+        Limit is 8000 Unicode code points AFTER normalization; reject NUL and
+        unpaired surrogates without truncation. Omitted request preserves a
+        retained ID's value; new IDs default null. Explicit null/empty clears.
       required: [triggerType]
       properties:
-        triggerType: { type: string, enum: [cron, event] }
-        cronExpr:
-          { type: string, description: "5-field cron, croner-validated." }
-        timezone: { type: string, description: "IANA timezone." }
+        id: { type: string, format: uuid }
+        triggerType: { type: string, enum: [cron, event, mention] }
+        cronExpr: { type: string, minLength: 1, maxLength: 255 }
+        timezone: { type: string, minLength: 1, maxLength: 64 }
         eventKinds:
           type: array
-          items: { type: string }
-          description: Domain-event kinds (ADR-086 taxonomy subset).
+          maxItems: 16
+          items: { type: string, minLength: 1 }
         enabled: { type: boolean, default: true }
+        requestAtLaunch:
+          type: string
+          nullable: true
+          description: Optional literal cron request; limit applies after normalization.
+    AgentScheduleView:
+      allOf:
+        - $ref: "#/components/schemas/AgentScheduleBody"
+        - type: object
+          required: [id, enabled, requestAtLaunch]
+          properties:
+            requestAtLaunch: { type: string, nullable: true, maxLength: 8000 }
+    ScheduledRequestState:
+      type: string
+      enum: [present, empty, legacy_unrecorded, not_applicable]
+      description: Safe metadata; never a request body, snippet or digest.
+    ScheduledAgentRequestSnapshot:
+      type: object
+      additionalProperties: false
+      required: [version, scheduleId, triggerAttemptId, requestAtLaunch]
+      description: Implemented — immutable original cron input; readRepoFiles required.
+      properties:
+        version: { type: integer, enum: [1] }
+        scheduleId: { type: string, minLength: 1, maxLength: 256 }
+        triggerAttemptId: { type: string, minLength: 1, maxLength: 256 }
+        requestAtLaunch:
+          { type: string, nullable: true, minLength: 1, maxLength: 8000 }
     AgentLaunchResult:
       type: object
       description: (M34 — Implemented) Result of an agent-run launch.

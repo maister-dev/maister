@@ -1,3 +1,4 @@
+import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
 import type { Db } from "@/lib/execution-host/db";
 import type { RunResultContract } from "@/lib/run-results/types";
 
@@ -34,6 +35,7 @@ export type SeedAgentRunInput = Readonly<{
   workspace: "none" | "repo_read" | "worktree";
   resultContract: RunResultContract | null;
   persistent?: boolean;
+  scheduledRequestSnapshot?: ScheduledAgentRequestSnapshot | null;
   operational?: boolean;
 }>;
 
@@ -115,7 +117,7 @@ export async function seedAgentRun(
       ? { contract: "operational_v1" }
       : null,
     mode: "session",
-    triggers: ["manual"],
+    triggers: input.scheduledRequestSnapshot ? ["manual", "cron"] : ["manual"],
     riskTier: "read_only",
     sourcePath,
     enabled: true,
@@ -159,7 +161,8 @@ export async function seedAgentRun(
           execTrust: "trusted",
         })
       : input.resultContract,
-    triggerSource: "manual",
+    triggerSource: input.scheduledRequestSnapshot ? "cron" : "manual",
+    scheduledRequestSnapshot: input.scheduledRequestSnapshot ?? null,
     persistent: input.persistent ?? false,
     addressableKey: input.persistent ? "researcher" : null,
   });

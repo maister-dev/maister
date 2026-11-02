@@ -90,6 +90,28 @@ let worker: ProjectionWorker;
 let restoreUrl: () => void = () => {};
 let priorRuntimeRoot: string | undefined;
 
+const logLines = vi.hoisted(
+  () => [] as Array<{ fields: unknown; message?: string }>,
+);
+
+vi.mock("pino", () => {
+  const record = (fields: unknown, message?: string): void => {
+    logLines.push({ fields, message });
+  };
+  const logger = {
+    info: record,
+    warn: record,
+    error: record,
+    debug: record,
+    trace: record,
+    fatal: record,
+    child: () => logger,
+    flush: (callback: (error?: Error) => void): void => callback(),
+  };
+
+  return { default: () => logger };
+});
+
 beforeAll(async () => {
   database = await startMainPostgresTestDb({
     databaseName: "flow_prompt_owners",
@@ -124,7 +146,11 @@ afterAll(async () => {
 
 async function seedOwnerFlow(
   nodes: FlowYamlV1["nodes"],
-  options: { engineMin?: string; installedPath?: string } = {},
+  options: {
+    engineMin?: string;
+    installedPath?: string;
+    scheduledRequest?: string;
+  } = {},
 ) {
   const name = randomUUID();
   const repoPath = await initRepo(`${supervisor.runtimeRoot}/repo-${name}`);
@@ -144,6 +170,16 @@ async function seedOwnerFlow(
     },
     {
       repoPath,
+      run: options.scheduledRequest
+        ? {
+            scheduledRequestSnapshot: {
+              version: 1,
+              scheduleId: randomUUID(),
+              triggerAttemptId: randomUUID(),
+              requestAtLaunch: options.scheduledRequest,
+            },
+          }
+        : undefined,
       installedPath: options.installedPath,
       flowRevision: true,
       workspace: {
@@ -319,18 +355,157 @@ async function killAtDatabaseWrite(input: {
 }
 
 describe("Flow prompt owners through the production graph driver", () => {
-  it("reconcile and resume preserve an acknowledged prompt owned by a live driver", async () => {
-    const seeded = await seedOwnerFlow([
-      {
-        id: "work",
-        type: "ai_coding",
-        action: {
-          prompt:
-            'fixture-output:{"bytes":0,"text":"original action","terminalDelayMs":5000}',
+  it.each(["projections", "owned-command"] as const)(
+    "keeps request-bearing %s failures out of diagnostics",
+    async (failureAt) => {
+      const request = "private-flow-prompt-persistence-sentinel";
+      const seeded = await seedOwnerFlow(
+        [
+          {
+            id: "work",
+            type: "ai_coding",
+            action: {
+              prompt: 'fixture-output:{"bytes":0,"text":"work completed"}',
+            },
+            transitions: { success: "done" },
+          },
+        ],
+        { scheduledRequest: request },
+      );
+      const trigger = `request_privacy_${randomUUID().replaceAll("-", "")}`;
+      const targets =
+        failureAt === "projections"
+          ? [
+              { table: "run_messages", event: "INSERT" },
+              { table: "node_attempts", event: "UPDATE" },
+            ]
+          : [{ table: "execution_commands", event: "INSERT" }];
+
+      await database.pool
+        .query(`CREATE FUNCTION ${trigger}() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF to_jsonb(NEW)->>'run_id' = '${seeded.runId}' AND to_jsonb(NEW)::text LIKE '%${request}%' THEN
+          RAISE EXCEPTION 'private-flow-prompt-persistence-sentinel' USING ERRCODE='23514', CONSTRAINT='test_prompt_privacy';
+        END IF;
+        RETURN NEW;
+      END $$`);
+      for (const target of targets)
+        await database.pool.query(
+          `CREATE TRIGGER ${trigger} BEFORE ${target.event} ON ${target.table} FOR EACH ROW EXECUTE FUNCTION ${trigger}()`,
+        );
+      logLines.length = 0;
+      try {
+        await runFlow(seeded.runId, {
+          db: database.db,
+          runtimeRoot: supervisor.runtimeRoot,
+          executionHosts: createExecutionHosts({
+            db: database.db as unknown as Db,
+          }),
+        });
+        const [run] = await database.db
+          .select()
+          .from(runs)
+          .where(eq(runs.id, seeded.runId));
+
+        expect(run.status).toBe(
+          failureAt === "projections" ? "Review" : "Crashed",
+        );
+        if (failureAt === "projections") {
+          expect(logLines.map((line) => line.message)).toEqual(
+            expect.arrayContaining([
+              "[prompt-record] dispatched prompt was not recorded",
+              "[runner-agent] resolved_prompt persist failed",
+            ]),
+          );
+        }
+        expect(JSON.stringify(logLines)).not.toContain(request);
+        expect(JSON.stringify(logLines)).toContain("23514");
+      } finally {
+        for (const target of targets)
+          await database.pool.query(
+            `DROP TRIGGER ${trigger} ON ${target.table}`,
+          );
+        await database.pool.query(`DROP FUNCTION ${trigger}()`);
+      }
+    },
+    60_000,
+  );
+
+  it("delivers the scheduled request to a primary action and its AI gate", async () => {
+    const request = "scheduled-gate-sentinel: Проверить {{ literal }} 😀";
+    const gatePrompt = `fixture-output:${JSON.stringify({ bytes: 0, text: JSON.stringify({ verdict: "pass", confidence: 0.95, reasons: ["checked"] }) })}`;
+    const seeded = await seedOwnerFlow(
+      [
+        {
+          id: "work",
+          type: "ai_coding",
+          action: {
+            prompt: 'fixture-output:{"bytes":0,"text":"work completed"}',
+          },
+          pre_finish: {
+            gates: [
+              {
+                id: "review",
+                kind: "ai_judgment",
+                mode: "blocking",
+                prompt: gatePrompt,
+              },
+            ],
+          },
+          transitions: { success: "done" },
         },
-        transitions: { success: "done" },
-      },
-    ]);
+      ],
+      { scheduledRequest: request },
+    );
+
+    await runFlow(seeded.runId, {
+      db: database.db,
+      runtimeRoot: supervisor.runtimeRoot,
+      executionHosts: createExecutionHosts({
+        db: database.db as unknown as Db,
+      }),
+    });
+    const prompts = await database.db
+      .select()
+      .from(executionCommands)
+      .where(
+        and(
+          eq(executionCommands.runId, seeded.runId),
+          eq(executionCommands.kind, "session.prompt"),
+        ),
+      );
+
+    expect(prompts).toHaveLength(2);
+    for (const command of prompts) {
+      expect(command.requestCanonicalJson).toContain("scheduled-gate-sentinel");
+      expect(
+        command.requestCanonicalJson?.split(
+          "## Current request (scheduled invocation)",
+        ),
+      ).toHaveLength(2);
+    }
+    expect(
+      (
+        await database.db.select().from(runs).where(eq(runs.id, seeded.runId))
+      )[0].status,
+    ).toBe("Review");
+  }, 60_000);
+
+  it("reconcile and resume preserve an acknowledged prompt owned by a live driver", async () => {
+    const seeded = await seedOwnerFlow(
+      [
+        {
+          id: "work",
+          type: "ai_coding",
+          action: {
+            prompt:
+              'fixture-output:{"bytes":0,"text":"original action","terminalDelayMs":5000}',
+          },
+          transitions: { success: "done" },
+        },
+      ],
+      { scheduledRequest: "scheduled-recovery-sentinel: Original request 😀" },
+    );
     const driver = startDriver(seeded.runId);
     const hosts = createExecutionHosts({ db: database.db as unknown as Db });
     const reattachments: Promise<void>[] = [];
@@ -372,6 +547,9 @@ describe("Flow prompt owners through the production graph driver", () => {
         .from(runs)
         .where(eq(runs.id, seeded.runId));
 
+      expect(original.requestCanonicalJson).toContain(
+        "scheduled-recovery-sentinel",
+      );
       expect(before.flowDriverToken).not.toBeNull();
       const summary = await runReconcileSweep({
         db: database.db,

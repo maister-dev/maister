@@ -39,6 +39,7 @@ export async function ProjectAgentsPanel({
   slug,
   projectId,
   canManage,
+  canReadRepoFiles,
   runners,
   mcpRequirements,
   agentId,
@@ -46,6 +47,7 @@ export async function ProjectAgentsPanel({
   slug: string;
   projectId: string;
   canManage: boolean;
+  canReadRepoFiles: boolean;
   agentId?: string;
   runners: Array<{ id: string; label: string }>;
   mcpRequirements: Array<{
@@ -83,7 +85,11 @@ export async function ProjectAgentsPanel({
           memoryEnabled: row.memoryEnabled,
           crossProjectReach: row.crossProjectReach,
           schedulesRevision: row.schedulesRevision,
-          schedules: row.schedules,
+          schedules: canReadRepoFiles
+            ? row.schedules
+            : row.schedules.map(
+                ({ requestAtLaunch: _request, ...schedule }) => schedule,
+              ),
           agent: {
             id: row.agent.id as string,
             name: row.agent.name as string,

@@ -44,7 +44,10 @@ export async function GET(
 
     return NextResponse.json(
       access.canReadDefinition
-        ? await loadAgentHistoryEvidence(access.db, page)
+        ? await loadAgentHistoryEvidence(access.db, page, {
+            projectId: access.projectId,
+            agentId: access.agentId,
+          })
         : page,
     );
   } catch (error) {

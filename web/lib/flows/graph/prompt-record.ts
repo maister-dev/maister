@@ -12,6 +12,7 @@ import { consensusPromptOperationKey } from "./consensus/prompt-owner";
 import { nodePromptOperationKey } from "./node-prompt-owner";
 import { gatePromptOperationKey } from "./prompt-owner";
 
+import { queryErrorDiagnostics } from "@/lib/db/pg-error";
 import { executionEvents, runs } from "@/lib/db/schema";
 import { appendRunMessage } from "@/lib/execution-host/events/run-message-store";
 
@@ -230,7 +231,7 @@ export async function recordDispatchedPrompt(input: {
         runId: input.runId,
         stepId: input.stepId,
         ownerVariant: input.owner?.variant ?? null,
-        err: (err as Error).message,
+        ...queryErrorDiagnostics(err),
       },
       "[prompt-record] dispatched prompt was not recorded",
     );

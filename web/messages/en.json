@@ -5140,7 +5140,11 @@
     "crossProjectInert": "Applies only while this attachment is enabled — enable it above, or the grant stays inert.",
     "crossProjectActive": "Grant is live for this project",
     "kindOperational": "Operational",
-    "kindCodeDelivery": "Code delivery"
+    "kindCodeDelivery": "Code delivery",
+    "requestAtLaunch": "Request at launch",
+    "requestHint": "Optional current request for this schedule, alongside the agent’s standing instructions. Up to {limit} characters. Blank keeps the default behavior. Permissions and human approvals still apply.",
+    "requestTooLong": "Use at most {limit} characters.",
+    "requestInvalid": "Remove invalid text characters."
   },
   "autoPromotion": {
     "reason": {
@@ -6232,7 +6236,13 @@
     "recoverPendingBatch": "Recover pending batch…",
     "pendingBatchHint": "A previous batch request is still unresolved. Recover that same request first; changing the history selection does not change its tasks or request keys.",
     "batchWindowRange": "Records {start, number}–{end, number} of {total, number} retained failures",
-    "latestFailedWork": "Latest failed work"
+    "latestFailedWork": "Latest failed work",
+    "scheduledRequest": "Scheduled request",
+    "scheduledRequestState": {
+      "present": "Scheduled request recorded; repository-content access is required to view it.",
+      "empty": "No additional request was captured.",
+      "legacy_unrecorded": "Legacy invocation: scheduled request was not recorded."
+    }
   },
   "taskQualification": {
     "incoming": "Incoming requests",

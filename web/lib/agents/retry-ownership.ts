@@ -9,6 +9,8 @@ import type {
 
 import { and, eq } from "drizzle-orm";
 
+import { assertScheduledRequestMatches } from "@/lib/agents/scheduled-request-store";
+import { parseScheduledRequestSnapshot } from "@/lib/agents/scheduled-request";
 import {
   agentRetryIntents,
   runs,
@@ -124,6 +126,10 @@ export async function assertAgentRetryClaim(
 
     if (qualificationReason) throw retryRefusal(qualificationReason);
   }
+  assertScheduledRequestMatches(
+    parseScheduledRequestSnapshot(source.scheduledRequestSnapshot),
+    parseScheduledRequestSnapshot(intent.recipe.scheduledRequestSnapshot),
+  );
   await assertRetryRecipeCurrent(db, intent.recipe);
 
   return intent;
@@ -265,6 +271,16 @@ export async function recordAgentRetrySuccessor(
 
   if (!intent || intent.successorRunId !== runId)
     throw retryRefusal("retry_successor_mismatch");
+  const [successor] = await db
+    .select({ snapshot: runs.scheduledRequestSnapshot })
+    .from(runs)
+    .where(eq(runs.id, runId));
+
+  if (!successor) throw retryRefusal("retry_successor_mismatch");
+  assertScheduledRequestMatches(
+    parseScheduledRequestSnapshot(intent.recipe.scheduledRequestSnapshot),
+    parseScheduledRequestSnapshot(successor.snapshot),
+  );
   const updated = await db
     .update(agentRetryIntents)
     .set({

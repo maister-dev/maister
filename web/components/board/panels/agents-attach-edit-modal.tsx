@@ -13,6 +13,11 @@ import type { AgentConfigParam } from "@/lib/agents/definition";
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 
+import {
+  normalizeScheduledRequest,
+  SCHEDULED_REQUEST_MAX_CODE_POINTS,
+} from "@/lib/agents/scheduled-request";
+import { MaisterError } from "@/lib/errors-core";
 import { useLatestRef } from "@/lib/use-latest-ref";
 
 // (ADR-111) Seed each control from the effective value: the instance config
@@ -63,6 +68,7 @@ type EditableSchedule = {
   cronExpr: string;
   timezone: string;
   eventKinds: string[];
+  requestAtLaunch: string;
   enabled: boolean;
 };
 
@@ -73,6 +79,7 @@ function toEditable(s: AttachScheduleView): EditableSchedule {
     cronExpr: s.cronExpr ?? "",
     timezone: s.timezone ?? "UTC",
     eventKinds: s.eventKinds ?? [],
+    requestAtLaunch: s.requestAtLaunch ?? "",
     enabled: s.enabled,
   };
 }
@@ -225,13 +232,34 @@ export function AttachEditModal({
 
   // (ADR-151) A mention row is a bare grant — it has nothing to fill in, so it
   // is always valid; only cron and event rows carry required input.
-  const valid = schedules.every((s) => {
-    if (s.triggerType === "mention") return true;
+  const requestLengths = schedules.map(
+    (schedule) =>
+      [...schedule.requestAtLaunch.replace(/\r\n?/g, "\n").trim()].length,
+  );
+  const requestErrors = schedules.map(
+    (schedule, index): "length" | "invalid" | null => {
+      if (schedule.triggerType !== "cron") return null;
+      if (requestLengths[index] > SCHEDULED_REQUEST_MAX_CODE_POINTS)
+        return "length";
+      try {
+        normalizeScheduledRequest(schedule.requestAtLaunch);
 
-    return s.triggerType === "cron"
-      ? s.cronExpr.trim() !== "" && s.timezone.trim() !== ""
-      : s.eventKinds.length > 0;
-  });
+        return null;
+      } catch (error) {
+        if (error instanceof MaisterError) return "invalid";
+        throw error;
+      }
+    },
+  );
+  const valid =
+    requestErrors.every((error) => error === null) &&
+    schedules.every((s) => {
+      if (s.triggerType === "mention") return true;
+
+      return s.triggerType === "cron"
+        ? s.cronExpr.trim() !== "" && s.timezone.trim() !== ""
+        : s.eventKinds.length > 0;
+    });
 
   async function save(): Promise<void> {
     setBusy(true);
@@ -277,6 +305,7 @@ export function AttachEditModal({
             return {
               ...(s.id ? { id: s.id } : {}),
               triggerType: "mention",
+              requestAtLaunch: null,
               enabled: s.enabled,
             };
           }
@@ -287,12 +316,14 @@ export function AttachEditModal({
                 triggerType: "cron",
                 cronExpr: s.cronExpr.trim(),
                 timezone: s.timezone.trim(),
+                requestAtLaunch: normalizeScheduledRequest(s.requestAtLaunch),
                 enabled: s.enabled,
               }
             : {
                 ...(s.id ? { id: s.id } : {}),
                 triggerType: "event",
                 eventKinds: s.eventKinds,
+                requestAtLaunch: null,
                 enabled: s.enabled,
               };
         }),
@@ -549,6 +580,7 @@ export function AttachEditModal({
                       cronExpr: "*/30 * * * *",
                       timezone: "UTC",
                       eventKinds: [],
+                      requestAtLaunch: "",
                       enabled: true,
                     },
                   ])
@@ -567,6 +599,7 @@ export function AttachEditModal({
                       cronExpr: "",
                       timezone: "UTC",
                       eventKinds: [],
+                      requestAtLaunch: "",
                       enabled: true,
                     },
                   ])
@@ -585,6 +618,7 @@ export function AttachEditModal({
                       cronExpr: "",
                       timezone: "UTC",
                       eventKinds: [],
+                      requestAtLaunch: "",
                       enabled: true,
                     },
                   ])
@@ -661,6 +695,45 @@ export function AttachEditModal({
                         patchSchedule(index, { timezone: event.target.value })
                       }
                     />
+                  </label>
+
+                  <label className="flex flex-col gap-1 sm:col-span-2">
+                    <span className={fieldLabel}>{t("requestAtLaunch")}</span>
+                    <textarea
+                      aria-describedby={`schedule-request-help-${index}`}
+                      aria-invalid={requestErrors[index] !== null}
+                      aria-label={t("requestAtLaunch")}
+                      className={inputClass}
+                      rows={4}
+                      value={schedule.requestAtLaunch}
+                      onChange={(event) =>
+                        patchSchedule(index, {
+                          requestAtLaunch: event.target.value,
+                        })
+                      }
+                    />
+                    <span
+                      className="text-xs text-mute"
+                      id={`schedule-request-help-${index}`}
+                    >
+                      {t("requestHint", {
+                        limit: SCHEDULED_REQUEST_MAX_CODE_POINTS,
+                      })}
+                    </span>
+                    <span className="text-xs text-mute">
+                      {requestLengths[index]} /{" "}
+                      {SCHEDULED_REQUEST_MAX_CODE_POINTS}
+                    </span>
+                    {requestErrors[index] ? (
+                      <span className="text-xs text-red-700" role="alert">
+                        {t(
+                          requestErrors[index] === "length"
+                            ? "requestTooLong"
+                            : "requestInvalid",
+                          { limit: SCHEDULED_REQUEST_MAX_CODE_POINTS },
+                        )}
+                      </span>
+                    ) : null}
                   </label>
                 </div>
               ) : (

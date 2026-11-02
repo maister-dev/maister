@@ -60,6 +60,7 @@ export async function GET(
     const project = await resolveProject(slug);
 
     await requireProjectRole(project.id, "member");
+    await requireProjectAction(project.id, "readRepoFiles");
 
     const view = await getProjectAgentsView(project.id);
 

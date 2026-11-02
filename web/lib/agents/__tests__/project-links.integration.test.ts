@@ -4,10 +4,11 @@
 // rotation guarantee).
 
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -325,6 +326,7 @@ describe("project agent links (attach panel service)", () => {
     expect(view.attached[0].schedules).toEqual([
       {
         id: expect.any(String),
+        requestAtLaunch: null,
         triggerType: "mention",
         enabled: true,
       },
@@ -905,5 +907,247 @@ describe("project agent links (attach panel service)", () => {
     );
 
     expect(schedules.rows[0].n).toBe(0);
+  });
+  it("normalizes independent cron requests and preserves omission/cadence before explicit clearing", async () => {
+    if (!(await getProjectAgentsView(fx.projectId, db)).attached.length)
+      await attachAgent({ projectId: fx.projectId, agentId: fx.agentId }, db);
+    const revision = (await getProjectAgentsView(fx.projectId, db)).attached[0]
+      .schedulesRevision;
+
+    await updateAgentLink(
+      {
+        projectId: fx.projectId,
+        agentId: fx.agentId,
+        patch: {
+          schedulesRevision: revision,
+          schedules: [
+            {
+              triggerType: "cron",
+              cronExpr: "*/15 * * * *",
+              timezone: "UTC",
+              requestAtLaunch: "  Отчёт\r\n😀  ",
+            },
+            {
+              triggerType: "cron",
+              cronExpr: "0 9 * * *",
+              timezone: "UTC",
+              requestAtLaunch: "Second",
+            },
+          ],
+        },
+      },
+      db,
+    );
+    const attached = (await getProjectAgentsView(fx.projectId, db)).attached[0];
+
+    expect(attached.schedules.map((row) => row.requestAtLaunch)).toEqual([
+      "Отчёт\n😀",
+      "Second",
+    ]);
+    const first = attached.schedules.find(
+      (row) => row.cronExpr === "*/15 * * * *",
+    )!;
+    const future = new Date("2040-01-01T00:00:00Z");
+
+    await pool.query("UPDATE agent_schedules SET next_fire_at=$2 WHERE id=$1", [
+      first.id,
+      future,
+    ]);
+    await updateAgentLink(
+      {
+        projectId: fx.projectId,
+        agentId: fx.agentId,
+        patch: {
+          schedulesRevision: attached.schedulesRevision,
+          schedules: attached.schedules.map(
+            ({ requestAtLaunch: _text, ...row }) => row,
+          ),
+        },
+      },
+      db,
+    );
+    const preserved = (await getProjectAgentsView(fx.projectId, db))
+      .attached[0];
+
+    expect(preserved.schedules.map((row) => row.requestAtLaunch)).toEqual(
+      expect.arrayContaining(["Отчёт\n😀", "Second"]),
+    );
+    expect(
+      (
+        await pool.query(
+          "SELECT next_fire_at FROM agent_schedules WHERE id=$1",
+          [first.id],
+        )
+      ).rows[0].next_fire_at,
+    ).toEqual(future);
+    await updateAgentLink(
+      {
+        projectId: fx.projectId,
+        agentId: fx.agentId,
+        patch: {
+          schedulesRevision: preserved.schedulesRevision,
+          schedules: preserved.schedules.map((row) => ({
+            ...row,
+            requestAtLaunch: row.id === first.id ? " \n " : row.requestAtLaunch,
+          })),
+        },
+      },
+      db,
+    );
+    expect(
+      (await getProjectAgentsView(fx.projectId, db)).attached[0].schedules.map(
+        (row) => row.requestAtLaunch,
+      ),
+    ).toEqual(expect.arrayContaining([null, "Second"]));
+  });
+
+  it.each(["😀".repeat(8001), "bad\0text", "\ud800"])(
+    "rejects invalid request input before persistence",
+    async (requestAtLaunch) => {
+      const revision = (await getProjectAgentsView(fx.projectId, db))
+        .attached[0].schedulesRevision;
+
+      await expect(
+        updateAgentLink(
+          {
+            projectId: fx.projectId,
+            agentId: fx.agentId,
+            patch: {
+              schedulesRevision: revision,
+              schedules: [
+                {
+                  triggerType: "cron",
+                  cronExpr: "* * * * *",
+                  timezone: "UTC",
+                  requestAtLaunch,
+                },
+              ],
+            },
+          },
+          db,
+        ),
+      ).rejects.toMatchObject({ code: "CONFIG" });
+    },
+  );
+
+  it("accepts the Unicode limit and requires explicit clear when converting a cron binding", async () => {
+    const attached = (await getProjectAgentsView(fx.projectId, db)).attached[0];
+
+    await updateAgentLink(
+      {
+        projectId: fx.projectId,
+        agentId: fx.agentId,
+        patch: {
+          schedulesRevision: attached.schedulesRevision,
+          schedules: [
+            {
+              triggerType: "cron",
+              cronExpr: "* * * * *",
+              timezone: "UTC",
+              requestAtLaunch: "😀".repeat(8000),
+            },
+          ],
+        },
+      },
+      db,
+    );
+    const saved = (await getProjectAgentsView(fx.projectId, db)).attached[0];
+
+    expect(saved.schedules[0].requestAtLaunch).toBe("😀".repeat(8000));
+    await expect(
+      updateAgentLink(
+        {
+          projectId: fx.projectId,
+          agentId: fx.agentId,
+          patch: {
+            schedulesRevision: saved.schedulesRevision,
+            schedules: [{ id: saved.schedules[0].id, triggerType: "mention" }],
+          },
+        },
+        db,
+      ),
+    ).rejects.toMatchObject({ code: "CONFIG" });
+    await updateAgentLink(
+      {
+        projectId: fx.projectId,
+        agentId: fx.agentId,
+        patch: {
+          schedulesRevision: saved.schedulesRevision,
+          schedules: [
+            {
+              id: saved.schedules[0].id,
+              triggerType: "mention",
+              requestAtLaunch: null,
+            },
+          ],
+        },
+      },
+      db,
+    );
+    expect(
+      (await getProjectAgentsView(fx.projectId, db)).attached[0].schedules[0]
+        .requestAtLaunch,
+    ).toBeNull();
+  });
+  it("refuses nonempty requests on subagents while explicit clearing remains available", async () => {
+    const [install] = await db
+      .select()
+      .from(schema.packageInstalls)
+      .where(eq(schema.packageInstalls.name, "test-pkg"));
+    const sourcePath = path.join(
+      install.installedPath,
+      "maister-agents",
+      "platform-helper.md",
+    );
+    const original = await readFile(sourcePath, "utf8");
+    const revision = (await getProjectAgentsView(fx.projectId, db)).attached[0]
+      .schedulesRevision;
+
+    try {
+      await writeFile(
+        sourcePath,
+        original.replace("mode: session", "mode: subagent"),
+      );
+      await expect(
+        updateAgentLink(
+          {
+            projectId: fx.projectId,
+            agentId: fx.agentId,
+            patch: {
+              schedulesRevision: revision,
+              schedules: [
+                {
+                  triggerType: "cron",
+                  cronExpr: "* * * * *",
+                  timezone: "UTC",
+                  requestAtLaunch: "Do the work",
+                },
+              ],
+            },
+          },
+          db,
+        ),
+      ).rejects.toMatchObject({ code: "CONFIG" });
+      await updateAgentLink(
+        {
+          projectId: fx.projectId,
+          agentId: fx.agentId,
+          patch: {
+            schedulesRevision: revision,
+            schedules: [
+              {
+                triggerType: "cron",
+                cronExpr: "* * * * *",
+                timezone: "UTC",
+                requestAtLaunch: null,
+              },
+            ],
+          },
+        },
+        db,
+      );
+    } finally {
+      await writeFile(sourcePath, original);
+    }
   });
 });

@@ -1,3 +1,4 @@
+import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
 import type { RunnerSnapshot } from "@/lib/acp-runners/resolve";
 import type { EffectiveAgentDefinition } from "@/lib/agents/effective";
 import type { AgentTriggerSource } from "@/lib/agents/launch";
@@ -6,6 +7,7 @@ import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 export type AgentRetryStrategy = "pre_work_retry" | "fresh_qualification";
 
 type AgentRetryRecipeFields = {
+  scheduledRequestSnapshot?: ScheduledAgentRequestSnapshot;
   agentId: string;
   projectId: string;
   taskId: string | null;

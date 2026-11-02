@@ -512,6 +512,7 @@ async function deliverClaim(db: Db, claim: AgentRetryClaim): Promise<void> {
           : intent.recipe.trigger.payload,
     },
     retryClaim: claim,
+    scheduledRequestSnapshot: intent.recipe.scheduledRequestSnapshot ?? null,
   });
 
   if ("deduped" in outcome) throw retryRefusal("retry_successor_mismatch");

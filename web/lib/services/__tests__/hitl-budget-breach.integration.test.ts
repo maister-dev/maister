@@ -35,6 +35,7 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import { seedAgentRun } from "@/test-support/agent-run-seed";
 import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 
 const schema = schemaModule as unknown as Record<string, any>;
@@ -613,6 +614,90 @@ describe("respondToHitl infra_recovery abandon — terminal cause", () => {
 });
 
 describe("respondToHitl budget_breach integration — restart and park composites", () => {
+  it("persists the original scheduled request through the actual standalone budget restart launcher", async () => {
+    await fakeExecutionHosts(testDatabase.db);
+    const previousWorktrees = process.env.MAISTER_WORKTREES_ROOT;
+
+    process.env.MAISTER_WORKTREES_ROOT = join(runtimeRoot, "worktrees");
+    const snapshot = {
+      version: 1 as const,
+      scheduleId: randomUUID(),
+      triggerAttemptId: randomUUID(),
+      requestAtLaunch: "Budget restart request 😀",
+    };
+    const runId = await seedAgentRun(testDatabase.db, {
+      runtimeRoot,
+      definition:
+        "---\nname: Researcher\ndescription: inspect\nmode: session\nworkspace: worktree\ntriggers: [manual, cron]\nrisk_tier: read_only\nplatform_mcp: false\n---\nStanding instructions.",
+      workspace: "worktree",
+      resultContract: null,
+      scheduledRequestSnapshot: snapshot,
+    });
+    const projectId = (
+      await testDatabase.pool.query("SELECT project_id FROM runs WHERE id=$1", [
+        runId,
+      ])
+    ).rows[0].project_id;
+    const flowId = await seedFlow(projectId);
+    const taskId = await seedTask(projectId, flowId);
+
+    await testDatabase.pool.query(
+      "UPDATE runs SET status='NeedsInput',task_id=$2 WHERE id=$1",
+      [runId, taskId],
+    );
+    const runnerId = (
+      await testDatabase.pool.query(
+        "SELECT runner_id FROM run_sessions WHERE run_id=$1",
+        [runId],
+      )
+    ).rows[0].runner_id;
+
+    await testDatabase.pool.query(
+      "INSERT INTO platform_runtime_settings(id,default_runner_id) VALUES ('singleton',$1) ON CONFLICT(id) DO UPDATE SET default_runner_id=excluded.default_runner_id",
+      [runnerId],
+    );
+    const hitlRequestId = await seedBudgetBreachHitl(runId);
+    const actual = await vi.importActual<typeof import("@/lib/agents/launch")>(
+      "@/lib/agents/launch",
+    );
+    const mocked = await import("@/lib/agents/launch");
+
+    vi.mocked(mocked.launchAgentRun).mockImplementationOnce(
+      actual.launchAgentRun,
+    );
+    const scheduler = await import("@/lib/scheduler");
+    const capacity = vi
+      .spyOn(scheduler, "tryStartRun")
+      .mockResolvedValue({ started: false, queuePosition: 1 });
+
+    try {
+      const response = await respondToHitl(
+        { runId, hitlRequestId, body: { optionId: "restart" } },
+        userActor,
+        { db },
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(202);
+      const successor = (
+        await testDatabase.pool.query(
+          "SELECT scheduled_request_snapshot,trigger_source FROM runs WHERE id=$1",
+          [body.newRunId],
+        )
+      ).rows[0];
+
+      expect(successor).toEqual({
+        scheduled_request_snapshot: snapshot,
+        trigger_source: "manual",
+      });
+    } finally {
+      capacity.mockRestore();
+      if (previousWorktrees === undefined)
+        delete process.env.MAISTER_WORKTREES_ROOT;
+      else process.env.MAISTER_WORKTREES_ROOT = previousWorktrees;
+    }
+  });
+
   it("restart terminalizes the old run, launches through launchRun, and records lineage", async () => {
     const { flowId, runId, taskId } =
       await seedTaskBoundFlowRun("budget-restart");

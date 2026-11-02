@@ -1,3 +1,5 @@
+import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
+
 import { randomUUID } from "node:crypto";
 import { rm, writeFile, readFile, access } from "node:fs/promises";
 import path from "node:path";
@@ -66,7 +68,10 @@ afterAll(async () => {
   if (root) await rm(root, { recursive: true, force: true });
 });
 
-async function fixture(workspace: "none" | "worktree" = "none"): Promise<{
+async function fixture(
+  workspace: "none" | "worktree" = "none",
+  scheduledRequestSnapshot?: ScheduledAgentRequestSnapshot,
+): Promise<{
   runId: string;
   userId: string;
   projectId: string;
@@ -74,7 +79,8 @@ async function fixture(workspace: "none" | "worktree" = "none"): Promise<{
 }> {
   const runId = await seedAgentRun(database.db, {
     runtimeRoot: root,
-    definition: `---\nname: Researcher\ndescription: inspect\nmode: session\nworkspace: ${workspace}\ntriggers: [manual]\nrisk_tier: read_only\nplatform_mcp: false\n---\nInspect the task.`,
+    scheduledRequestSnapshot,
+    definition: `---\nname: Researcher\ndescription: inspect\nmode: session\nworkspace: ${workspace}\ntriggers: [manual, cron]\nrisk_tier: read_only\nplatform_mcp: false\n---\nInspect the task.`,
     workspace,
     resultContract: null,
   });
@@ -267,6 +273,7 @@ it("prepares a fresh current-task qualification for a legacy failed triager, opt
     .select()
     .from(runs)
     .where(eq(runs.id, settled.runId!));
+
   expect(successorRun.executionPolicy).toEqual(recipe.policy);
   expect(successorRun.agentConfig ?? {}).toEqual(recipe.configuration);
   const prompt = await buildAgentPrompt(
@@ -520,45 +527,105 @@ it.each(["ready", "needs_information"] as const)(
   },
 );
 
-it("continues an already accepted version-one retry recipe without changing its frozen digest", async () => {
-  const source = await fixture();
-  const prepared = await prepareAgentRetry(
-    database.db,
-    source.runId,
-    source.userId,
-  );
-  const recipe = await retryRecipeFor(database.db, prepared, source.runnerId);
-  const { version: _version, ...current } = recipe;
-  const legacy = {
-    ...current,
-    version: 1 as const,
-    contextDigest: prepared.legacyContextDigest,
-  };
-  const id = randomUUID();
+it.each(["absent", "captured"] as const)(
+  "continues a version-one retry with %s request input without changing its bytes or digest",
+  async (input) => {
+    const snapshot =
+      input === "captured"
+        ? {
+            version: 1 as const,
+            scheduleId: randomUUID(),
+            triggerAttemptId: randomUUID(),
+            requestAtLaunch: "Original legacy retry request 😀",
+          }
+        : undefined;
+    const source = await fixture("none", snapshot);
+    const prepared = await prepareAgentRetry(
+      database.db,
+      source.runId,
+      source.userId,
+    );
+    const recipe = await retryRecipeFor(database.db, prepared, source.runnerId);
 
-  await database.db.insert(agentRetryIntents).values({
-    id,
-    projectId: source.projectId,
-    sourceAgentId: recipe.agentId,
-    sourceRunId: source.runId,
-    actorIdentity: `user:${source.userId}`,
-    actorUserId: source.userId,
-    requestKey: randomUUID(),
-    requestDigest: retryDigest({ id }),
-    selectedRunnerId: source.runnerId,
-    recipe: legacy,
-    previewFingerprint: prepared.options.previewFingerprint,
-    successorRunId: randomUUID(),
-    dueAt: new Date(Date.now() - 1000),
-  });
-  await runAgentRetryAdmissionSweep(database.db);
-  expect(
-    await getAgentRetryReceipt(database.db, source.runId, id, source.userId),
-  ).toMatchObject({ intentState: "launched", runStatus: "Pending" });
-});
+    if (recipe.version !== 2)
+      throw new Error("Expected current version-two recipe");
+    const {
+      version: _version,
+      strategy: _strategy,
+      qualificationSha: _sha,
+      ...current
+    } = recipe;
+    const legacy = {
+      ...current,
+      version: 1 as const,
+      contextDigest: prepared.legacyContextDigest,
+    };
+    const id = randomUUID();
+
+    await database.db.insert(agentRetryIntents).values({
+      id,
+      projectId: source.projectId,
+      sourceAgentId: recipe.agentId,
+      sourceRunId: source.runId,
+      actorIdentity: `user:${source.userId}`,
+      actorUserId: source.userId,
+      requestKey: randomUUID(),
+      requestDigest: retryDigest({ id }),
+      selectedRunnerId: source.runnerId,
+      recipe: legacy,
+      previewFingerprint: prepared.options.previewFingerprint,
+      successorRunId: randomUUID(),
+      dueAt: new Date(Date.now() - 1000),
+    });
+    const before = (
+      await database.pool.query(
+        "SELECT recipe::text AS recipe FROM agent_retry_intents WHERE id=$1",
+        [id],
+      )
+    ).rows[0].recipe;
+
+    expect(JSON.parse(before).version).toBe(1);
+    if (!snapshot)
+      expect(JSON.parse(before)).not.toHaveProperty("scheduledRequestSnapshot");
+    await runAgentRetryAdmissionSweep(database.db);
+    const receipt = await getAgentRetryReceipt(
+      database.db,
+      source.runId,
+      id,
+      source.userId,
+    );
+
+    expect(receipt).toMatchObject({
+      intentState: "launched",
+      runStatus: "Pending",
+    });
+    const after = (
+      await database.pool.query(
+        "SELECT recipe::text AS recipe FROM agent_retry_intents WHERE id=$1",
+        [id],
+      )
+    ).rows[0].recipe;
+
+    expect(after).toBe(before);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT scheduled_request_snapshot FROM runs WHERE id=$1",
+          [receipt.runId],
+        )
+      ).rows[0].scheduled_request_snapshot,
+    ).toEqual(snapshot ?? null);
+  },
+);
 
 it("IT-UX-14 accepts one immutable retry of a proven pre-work failure, converges replay and concurrent admission, and leaves a capacity-queued child visible", async () => {
-  const fixtureData = await fixture();
+  const snapshot = {
+    version: 1 as const,
+    scheduleId: randomUUID(),
+    triggerAttemptId: randomUUID(),
+    requestAtLaunch: "Original retry request: Отчёт 😀",
+  };
+  const fixtureData = await fixture("none", snapshot);
   const alternativeId = randomUUID();
   const alternative = testRunnerSnapshot(alternativeId, "codex");
 
@@ -624,15 +691,28 @@ it("IT-UX-14 accepts one immutable retry of a proven pre-work failure, converges
   });
   const children = (
     await database.pool.query(
-      "SELECT retry_of_run_id,trigger_source,trigger_event_id,agent_config,status FROM runs WHERE retry_of_run_id=$1",
+      "SELECT retry_of_run_id,trigger_source,trigger_event_id,agent_config,status,scheduled_request_snapshot FROM runs WHERE retry_of_run_id=$1",
       [fixtureData.runId],
     )
   ).rows;
 
   expect(children).toHaveLength(1);
+  expect(children[0].scheduled_request_snapshot).toEqual(snapshot);
+  const recipe = (
+    await database.pool.query(
+      "SELECT recipe FROM agent_retry_intents WHERE id=$1",
+      [first.retryIntentId],
+    )
+  ).rows[0].recipe;
+
+  expect(recipe).toMatchObject({
+    version: 2,
+    strategy: "pre_work_retry",
+    scheduledRequestSnapshot: snapshot,
+  });
   expect(children[0]).toMatchObject({
     retry_of_run_id: fixtureData.runId,
-    trigger_source: "manual",
+    trigger_source: "cron",
     trigger_event_id: null,
     status: "Pending",
   });

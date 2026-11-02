@@ -40,6 +40,7 @@ import {
   type RunnerResolution,
 } from "@/lib/acp-runners/resolve";
 import { resolveAgentConfig } from "@/lib/agents/config";
+import { parseScheduledRequestSnapshot } from "@/lib/agents/scheduled-request";
 import { buildAgentActivitySnapshot } from "@/lib/agents/activity-snapshot";
 import { loadTaskQualificationInput } from "@/lib/tasks/qualification";
 import { resolveBaseCommit } from "@/lib/worktree";
@@ -265,6 +266,13 @@ export async function prepareAgentRetry(
   const contextValues = {
     definition,
     configuration,
+    ...(source.scheduledRequestSnapshot
+      ? {
+          scheduledRequestSnapshot: parseScheduledRequestSnapshot(
+            source.scheduledRequestSnapshot,
+          ),
+        }
+      : {}),
     taskRevision,
     taskId: source.taskId,
     triggerSource: source.triggerSource,
@@ -376,6 +384,13 @@ export async function retryRecipeFor(
     version: 2,
     strategy: preparation.options.strategy,
     qualificationSha: preparation.qualificationSha,
+    ...(source.scheduledRequestSnapshot
+      ? {
+          scheduledRequestSnapshot: parseScheduledRequestSnapshot(
+            source.scheduledRequestSnapshot,
+          )!,
+        }
+      : {}),
     agentId: source.sourceAgentId ?? source.agentId!,
     projectId: source.projectId,
     taskId: source.taskId,

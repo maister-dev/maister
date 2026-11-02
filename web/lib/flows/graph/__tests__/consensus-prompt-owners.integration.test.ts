@@ -259,6 +259,7 @@ async function seedConsensusFlow(
     mode: "single_pass",
     max: 1,
   },
+  scheduledRequest?: string,
 ) {
   const name = randomUUID();
   const repoPath = await initRepo(`${supervisor.runtimeRoot}/repo-${name}`);
@@ -283,6 +284,13 @@ async function seedConsensusFlow(
     },
   ] as unknown as FlowYamlV1["nodes"];
 
+  if (scheduledRequest)
+    nodes.unshift({
+      id: "prepare",
+      type: "ai_coding",
+      action: { prompt: 'fixture-output:{"bytes":0,"text":"prepared"}' },
+      transitions: { success: "decide" },
+    });
   const manifest = {
     schemaVersion: 1,
     name: "consensus-owner-flow",
@@ -291,6 +299,16 @@ async function seedConsensusFlow(
   };
   const seeded = await seedGraphRun(database.db, manifest, {
     repoPath,
+    run: scheduledRequest
+      ? {
+          scheduledRequestSnapshot: {
+            version: 1,
+            scheduleId: randomUUID(),
+            triggerAttemptId: randomUUID(),
+            requestAtLaunch: scheduledRequest,
+          },
+        }
+      : undefined,
     flowRevision: true,
     workspace: {
       worktreePath,
@@ -587,7 +605,11 @@ async function childRuns(parentRunId: string) {
 
 describe("Consensus prompt owners through the production graph driver", () => {
   it("owner-consensus-draft: the draft artifact comes from the durable command output", async () => {
-    const seeded = await seedConsensusFlow(consensusPrompt("agree"));
+    const seeded = await seedConsensusFlow(
+      consensusPrompt("agree"),
+      undefined,
+      "scheduled-consensus-sentinel: {{ literal }} 😀",
+    );
 
     await drive(seeded.runId);
     await expect
@@ -609,7 +631,12 @@ describe("Consensus prompt owners through the production graph driver", () => {
     const [attempt] = await database.db
       .select()
       .from(nodeAttempts)
-      .where(eq(nodeAttempts.runId, seeded.runId));
+      .where(
+        and(
+          eq(nodeAttempts.runId, seeded.runId),
+          eq(nodeAttempts.nodeType, "consensus"),
+        ),
+      );
     const children = await database.db
       .select()
       .from(runs)
@@ -641,6 +668,14 @@ describe("Consensus prompt owners through the production graph driver", () => {
           ),
         );
 
+      expect(command?.requestCanonicalJson).toContain(
+        "scheduled-consensus-sentinel",
+      );
+      expect(
+        command?.requestCanonicalJson?.split(
+          "## Current request (scheduled invocation)",
+        ),
+      ).toHaveLength(2);
       expect(command?.ownerKind).toBe("agent_turn");
       expect(command?.ownerRef).toMatchObject({
         variant: "consensus_draft",
@@ -741,14 +776,23 @@ describe("Consensus prompt owners through the production graph driver", () => {
     ).toBe(true);
   }, 180_000);
   it("owner-consensus-verify: every matrix cell owns its own command", async () => {
-    const seeded = await seedConsensusFlow(consensusPrompt("agree"));
+    const seeded = await seedConsensusFlow(
+      consensusPrompt("agree"),
+      undefined,
+      "scheduled-consensus-sentinel: {{ literal }} 😀",
+    );
 
     await drive(seeded.runId);
     await settleDraftsAndResume(seeded.runId);
     const [attempt] = await database.db
       .select()
       .from(nodeAttempts)
-      .where(eq(nodeAttempts.runId, seeded.runId));
+      .where(
+        and(
+          eq(nodeAttempts.runId, seeded.runId),
+          eq(nodeAttempts.nodeType, "consensus"),
+        ),
+      );
     const verdicts = await database.db
       .select()
       .from(consensusRoundVerdicts)
@@ -772,6 +816,14 @@ describe("Consensus prompt owners through the production graph driver", () => {
           ),
         );
 
+      expect(command?.requestCanonicalJson).toContain(
+        "scheduled-consensus-sentinel",
+      );
+      expect(
+        command?.requestCanonicalJson?.split(
+          "## Current request (scheduled invocation)",
+        ),
+      ).toHaveLength(2);
       expect(command?.ownerKind).toBe("flow_node_attempt");
       expect(command?.ownerRef).toMatchObject({
         variant: "consensus_verifier",
@@ -2154,14 +2206,23 @@ describe("Consensus prompt owners through the production graph driver", () => {
     });
   }, 180_000);
   it("owner-consensus-synthesis: the plan comes from its own applied generation", async () => {
-    const seeded = await seedConsensusFlow(consensusPrompt("agree"));
+    const seeded = await seedConsensusFlow(
+      consensusPrompt("agree"),
+      undefined,
+      "scheduled-consensus-sentinel: {{ literal }} 😀",
+    );
 
     await drive(seeded.runId);
     await settleDraftsAndResume(seeded.runId);
     const [attempt] = await database.db
       .select()
       .from(nodeAttempts)
-      .where(eq(nodeAttempts.runId, seeded.runId));
+      .where(
+        and(
+          eq(nodeAttempts.runId, seeded.runId),
+          eq(nodeAttempts.nodeType, "consensus"),
+        ),
+      );
     const synthesisId = `run:${attempt.id}:consensus-synthesis:r1:consensus`;
     const [synthesis] = await database.db
       .select()
@@ -2185,6 +2246,14 @@ describe("Consensus prompt owners through the production graph driver", () => {
         ),
       );
 
+    expect(command?.requestCanonicalJson).toContain(
+      "scheduled-consensus-sentinel",
+    );
+    expect(
+      command?.requestCanonicalJson?.split(
+        "## Current request (scheduled invocation)",
+      ),
+    ).toHaveLength(2);
     expect(command?.ownerKind).toBe("flow_node_attempt");
     expect(command?.ownerRef).toMatchObject({
       variant: "consensus_synthesis",

@@ -29,6 +29,7 @@ const scheduleSchema = z
     timezone: z.string().min(1).max(64).optional(),
     eventKinds: z.array(z.string().min(1)).max(16).optional(),
     enabled: z.boolean().optional(),
+    requestAtLaunch: z.string().nullable().optional(),
   })
   .strict();
 

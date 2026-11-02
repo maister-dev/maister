@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
+import type { AgentTriggerReservation } from "@/lib/agents/scheduled-request-store";
 import type { AgentActivitySnapshot } from "@/lib/agents/activity-types";
 import type { CapabilityAgent } from "@/lib/config.schema";
 import type { ProjectAction } from "@/lib/authz";
@@ -18,6 +20,15 @@ import path from "node:path";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { queryErrorDiagnostics, redactQueryError } from "@/lib/db/pg-error";
+import { loadFlowScheduledRequestSource } from "@/lib/agents/scheduled-request-lineage";
+import { assertScheduledRequestMatches } from "@/lib/agents/scheduled-request-store";
+import { assertScheduledRequestConsumer } from "@/lib/agents/scheduled-request-flow";
+import {
+  loadCronLaunchEvidence,
+  liveAgentScheduleId,
+} from "@/lib/agents/scheduled-request-store";
+import { parseScheduledRequestSnapshot } from "@/lib/agents/scheduled-request";
 import { prepareTaskDeliveryAdmission } from "@/lib/tasks/qualification-admission";
 import {
   capabilityRefIdSetsFromRecords,
@@ -324,6 +335,9 @@ export type LaunchRunInput = {
   // Owner binding for an agent cron/domain-event launch. This is server-owned
   // trigger provenance, never a browser field.
   agentScheduleId?: string | null;
+  agentTriggerReservation?: AgentTriggerReservation;
+  scheduledFlowRevisionId?: string;
+  scheduledRequestSnapshot?: ScheduledAgentRequestSnapshot | null;
   // ADR-139: server-only durable identity allocated by the scheduled-launch
   // claim transaction. Routes never accept this shape; retaining it through the
   // ordinary launch path closes the pre-Run Git crash window without a second
@@ -628,6 +642,29 @@ export async function* launchRunStaged(
   // classification detail (incl. blocker KEY-N refs) must not leak to
   // callers without project access. AuthzError propagates untouched.
   await ctx.authorize(project.id);
+  const inheritanceSource = membershipSourceForLaunch(input);
+  const inheritedRequest =
+    inheritanceSource &&
+    (input.relaunchOfRunId || (input.triggerSource ?? "manual") === "manual")
+      ? await loadFlowScheduledRequestSource(_db as unknown as ExecutionDb, {
+          sourceRunId: inheritanceSource.sourceRunId,
+          projectId: project.id,
+          taskId: task.id,
+        })
+      : null;
+
+  if (
+    inheritedRequest &&
+    input.agentId &&
+    input.agentId !== inheritedRequest.agentId
+  ) {
+    throw new MaisterError(
+      "CONFLICT",
+      "Driving agent differs from the scheduled request source",
+    );
+  }
+  const agentId = inheritedRequest?.agentId ?? input.agentId;
+
   const taskAdmission = await prepareTaskDeliveryAdmission(
     _db as unknown as import("@/lib/execution-host/db").Db,
     {
@@ -639,12 +676,12 @@ export async function* launchRunStaged(
         input.targetBranch ?? input.deliveryPolicy?.targetBranch ?? undefined,
     },
   );
-  const agentActivity = input.agentId
+  const agentActivity = agentId
     ? (input.agentActivity ??
       buildAgentActivitySnapshot(
-        input.agentId,
+        agentId,
         await resolveEffectiveAgentDefinition(
-          { agentId: input.agentId, projectId: project.id },
+          { agentId: agentId, projectId: project.id },
           _db,
         ),
       ))
@@ -683,7 +720,50 @@ export async function* launchRunStaged(
     throw new MaisterError("PRECONDITION", "project is archived");
   }
 
-  const inheritanceSource = membershipSourceForLaunch(input);
+  const scheduledReservation = input.scheduledReservation;
+
+  if (scheduledReservation && input.agentTriggerReservation) {
+    throw new MaisterError(
+      "CONFLICT",
+      "Task and agent trigger reservations cannot share a launch",
+    );
+  }
+  const cronEvidence = input.agentTriggerReservation
+    ? await loadCronLaunchEvidence(_db as unknown as ExecutionDb, {
+        agentId: agentId!,
+        projectId: project.id,
+        reservation: input.agentTriggerReservation,
+      })
+    : null;
+
+  if (cronEvidence && input.scheduledRequestSnapshot !== undefined) {
+    assertScheduledRequestMatches(
+      cronEvidence.snapshot,
+      parseScheduledRequestSnapshot(input.scheduledRequestSnapshot),
+    );
+  }
+  if (cronEvidence?.receipt) return cronEvidence.receipt;
+  if (inheritedRequest && input.scheduledRequestSnapshot !== undefined)
+    assertScheduledRequestMatches(
+      inheritedRequest.snapshot,
+      parseScheduledRequestSnapshot(input.scheduledRequestSnapshot),
+    );
+  const scheduledRequestSnapshot = cronEvidence
+    ? cronEvidence.snapshot
+    : (inheritedRequest?.snapshot ??
+      parseScheduledRequestSnapshot(input.scheduledRequestSnapshot));
+
+  if (
+    scheduledRequestSnapshot &&
+    !cronEvidence &&
+    !inheritedRequest &&
+    !(input.triggerSource === "cron" && agentId)
+  )
+    throw new MaisterError(
+      "CONFIG",
+      "Scheduled request requires an authorized invocation source",
+    );
+
   // ADR-146 D15: a relaunch/budget-restart of a LAUNCHED evaluation participant
   // mints a
   // SUCCESSOR participant row (same study/recipe lineage, new runId) in the
@@ -881,6 +961,39 @@ export async function* launchRunStaged(
     pinnedRevision = evalRevision;
   }
 
+  const scheduledFlowRevisionId =
+    input.agentTriggerReservation?.flowRevisionId ??
+    input.scheduledFlowRevisionId;
+
+  if (scheduledFlowRevisionId) {
+    if (
+      pinnedRevision ||
+      !agentId ||
+      !scheduledRequestSnapshot?.requestAtLaunch
+    ) {
+      throw new MaisterError(
+        "CONFLICT",
+        "Scheduled Flow revision conflicts with launch provenance",
+      );
+    }
+    const [revision] = await _db
+      .select()
+      .from(flowRevisions)
+      .where(eq(flowRevisions.id, scheduledFlowRevisionId));
+
+    if (
+      !revision ||
+      revision.flowRefId !== flow.flowRefId ||
+      revision.source !== flow.source
+    ) {
+      throw new MaisterError(
+        "PRECONDITION",
+        "Scheduled Flow revision does not belong to the selected Flow",
+      );
+    }
+    pinnedRevision = revision;
+  }
+
   // M39 Stream B (ADR-107): apply the launcher's version-adopt choices for the
   // project's attached centralized packages BEFORE the enablement check reads
   // flow.enabled_revision_id — adopt/cut_and_adopt advance the project
@@ -902,8 +1015,10 @@ export async function* launchRunStaged(
 
   // Hoisted above the outer try so the post-compensation tryStartRun / return
   // block can still read it (the try opens right after the adopt).
-  const scheduledReservation = input.scheduledReservation;
-  const runId = scheduledReservation?.runId ?? randomUUID();
+  const runId =
+    input.agentTriggerReservation?.runId ??
+    scheduledReservation?.runId ??
+    randomUUID();
   // ADR-150: set inside the run-insert tx when a controlled-launch re-drive
   // adopts an already-launched batch item instead of inserting. Non-null after
   // the tx means THIS attempt is a duplicate — its fresh worktree is an orphan
@@ -1016,6 +1131,9 @@ export async function* launchRunStaged(
     await checkFlowRequirements(manifest.requirements, project.repoPath);
 
     const compiled = compileManifest(manifest);
+
+    if (scheduledRequestSnapshot?.requestAtLaunch)
+      assertScheduledRequestConsumer(compiled);
 
     // ADR-165 (T4.1 / R12): the run's PUBLIC result contract, resolved from the
     // PINNED revision's install path BEFORE any worktree exists. An unresolvable
@@ -1689,6 +1807,21 @@ export async function* launchRunStaged(
 
         // `runs` first: `workspaces.run_id` is a non-deferrable FK to `runs.id`,
         // so the workspace insert would violate it if it ran first.
+        const agentScheduleId = agentId
+          ? await liveAgentScheduleId(tx, {
+              scheduleId:
+                cronEvidence?.scheduleId ?? input.agentScheduleId ?? null,
+              agentId: agentId,
+              projectId: project.id,
+            })
+          : null;
+
+        if (input.agentTriggerReservation)
+          await loadCronLaunchEvidence(tx, {
+            agentId: agentId!,
+            projectId: project.id,
+            reservation: input.agentTriggerReservation,
+          });
         const insertedRun = await tx
           .insert(runs)
           .values({
@@ -1724,8 +1857,8 @@ export async function* launchRunStaged(
             // M39 (ADR-106): the driving agent of an agent-driven flow run (null for
             // a normal board launch). The graph runner reads it to inject the
             // agent's persona on every ai_coding node.
-            agentId: input.agentId ?? null,
-            sourceAgentId: input.agentId ?? null,
+            agentId: agentId ?? null,
+            sourceAgentId: agentId ?? null,
             launchedAt: agentActivity ? sql`CURRENT_TIMESTAMP` : null,
             activitySortAt: agentActivity ? sql`CURRENT_TIMESTAMP` : null,
             activityTimestampProvenance: agentActivity ? "launch" : null,
@@ -1741,8 +1874,9 @@ export async function* launchRunStaged(
               : (input.triggerSource ?? null),
             triggerEventId: input.triggerEventId ?? null,
             triggerPayload: input.triggerPayload ?? null,
+            scheduledRequestSnapshot,
             scheduledLaunchId: scheduledReservation?.scheduledLaunchId ?? null,
-            agentScheduleId: input.agentScheduleId ?? null,
+            agentScheduleId,
             // ADR-150: the controlled-launch idempotency handle. The partial
             // UNIQUE `runs_evaluation_batch_item_uq` makes a re-driven batch item
             // hit onConflictDoNothing → the empty-insert branch below ADOPTS the
@@ -1833,7 +1967,7 @@ export async function* launchRunStaged(
 
           throw new MaisterError(
             "CONFLICT",
-            `trigger event ${input.triggerEventId} already claimed for agent ${input.agentId}`,
+            `trigger event ${input.triggerEventId} already claimed for agent ${agentId}`,
           );
         }
 
@@ -1970,7 +2104,7 @@ export async function* launchRunStaged(
       // so the next launch can recreate the same branch+path without a PRECONDITION
       // "already exists". The pin is re-pinned by the outer catch on rethrow.
       log.warn(
-        { runId, err: (err as Error).message },
+        { runId, ...queryErrorDiagnostics(err) },
         "launch setup failed after addWorktree — removing worktree",
       );
       await removeWorktree({
@@ -1983,7 +2117,7 @@ export async function* launchRunStaged(
           "compensating removeWorktree failed (manual cleanup may be required)",
         ),
       );
-      throw err;
+      throw redactQueryError(err);
     }
   } catch (err) {
     // Outer (ADR-107): any failure after the adopt re-pins the advanced

@@ -376,6 +376,11 @@ flowchart TD
     Schedules --> Link["Open owning project<br/>/projects/{slug}?tab=schedules"]
 ```
 
+
+## Scheduled request input (Implemented)
+
+Per-cron current input and immutable claim/run retention are specified in [scheduled agent requests](scheduled-agent-requests.md). Protected request bodies are stored separately from viewer-safe trigger telemetry; existing admission, completion and permission policies remain authoritative.
+
 ## Expectations
 
 - The tick route MUST be stateless; all idempotence comes from DB claims and

@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
 import type { CapabilityAgent } from "@/lib/config.schema";
 import type { ScratchAdapterLaunch } from "@/lib/db/schema";
 import type { ExecutionCommand } from "@/lib/db/schema";
@@ -63,6 +64,11 @@ import {
   type FlowPermissionOwner,
 } from "./graph/prompt-permission";
 
+import { queryErrorDiagnostics, redactQueryError } from "@/lib/db/pg-error";
+import {
+  parseScheduledRequestSnapshot,
+  appendScheduledRequest,
+} from "@/lib/agents/scheduled-request";
 import { normalizeCapabilityTokens } from "@/lib/capabilities/token-normalizer";
 import { createHitlRequest } from "@/lib/runs/hitl-create";
 import { appendCapped } from "@/lib/flows/capped-text";
@@ -136,6 +142,7 @@ export type RunAgentStepCtx = {
   runtimeRoot: string;
   projectSlug: string;
   runId: string;
+  scheduledRequestSnapshot?: ScheduledAgentRequestSnapshot | null;
   stepId: string;
   nodeAttemptId?: string;
   // S2.12: required. A node dispatch that cannot name its owner has no
@@ -1248,16 +1255,40 @@ async function reattachConsensusPrompt(
   return { ok: true, stdout: "", vars: {}, durationMs: 0 };
 }
 
+type AgentStepResult = StepResult & {
+  acpSessionId?: string;
+  sessionFallback?: boolean;
+};
+
 export async function runAgentStep(
   step: AgentStepLike,
   ctx: RunAgentStepCtx,
   execution?: AgentExecution,
-): Promise<
-  StepResult & {
-    acpSessionId?: string;
-    sessionFallback?: boolean;
+): Promise<AgentStepResult> {
+  try {
+    return await dispatchAgentStep(step, ctx, execution);
+  } catch (error) {
+    const failure = redactQueryError(error);
+
+    if (failure !== error && !isFlowDriverClaimLost(failure)) {
+      log.error(
+        {
+          runId: ctx.runId,
+          stepId: ctx.stepId,
+          ...queryErrorDiagnostics(error),
+        },
+        "agent step persistence failed",
+      );
+    }
+    throw failure;
   }
-> {
+}
+
+async function dispatchAgentStep(
+  step: AgentStepLike,
+  ctx: RunAgentStepCtx,
+  execution?: AgentExecution,
+): Promise<AgentStepResult> {
   // Existing immutable requests do not depend on today's template or context.
   // A consensus cell re-enters through its own logical operation key instead.
   if (ctx.promptOwner) {
@@ -1333,13 +1364,17 @@ export async function runAgentStep(
     );
   }
 
+  const ordinaryPrompt = appendScheduledRequest(
+    normalized.text,
+    parseScheduledRequestSnapshot(ctx.scheduledRequestSnapshot),
+  );
   const actionPrompt =
     ctx.promptOwner?.variant === "permission_resume" ||
     ((ctx.promptOwner?.variant === "gate_ai" ||
       ctx.promptOwner?.variant === "gate_skill") &&
       ctx.promptOwner.promptOrdinal > 0)
       ? PERMISSION_RESUME_PROMPT
-      : normalized.text;
+      : ordinaryPrompt;
   const resolvedPrompt = ctx.resumeSessionId
     ? RESUME_READONLY_LIFT + actionPrompt
     : actionPrompt;
@@ -1408,7 +1443,7 @@ export async function runAgentStep(
         {
           runId: ctx.runId,
           nodeAttemptId: ctx.nodeAttemptId,
-          err: (err as Error).message,
+          ...queryErrorDiagnostics(err),
         },
         "[runner-agent] resolved_prompt persist failed",
       );

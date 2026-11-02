@@ -13,6 +13,8 @@ import {
 import {
   getAgentRunHistory,
   getAgentAttemptHistory,
+  loadAgentAttemptEvidence,
+  loadAgentHistoryEvidence,
 } from "@/lib/agents/activity-queries";
 import { RUN_STATUS_VALUES } from "@/lib/runs/run-status-values";
 import {
@@ -94,7 +96,7 @@ export default async function ProjectAgentPage({
     query.tab === "definition" && access.canReadDefinition
       ? await getAgentDefinitionView(access)
       : null;
-  const history =
+  const rawHistory =
     query.tab === "history"
       ? await getAgentRunHistory(access.db, {
           projectId: access.projectId,
@@ -105,7 +107,7 @@ export default async function ProjectAgentPage({
           outcome: query.outcome,
         })
       : null;
-  const attempts =
+  const rawAttempts =
     query.tab === "attempts"
       ? await getAgentAttemptHistory(access.db, {
           projectId: access.projectId,
@@ -113,6 +115,16 @@ export default async function ProjectAgentPage({
           cursor: query.cursor,
         })
       : null;
+
+  const scope = { projectId: access.projectId, agentId: access.agentId };
+  const history =
+    rawHistory && access.canReadDefinition
+      ? await loadAgentHistoryEvidence(access.db, rawHistory, scope)
+      : rawHistory;
+  const attempts =
+    rawAttempts && access.canReadDefinition
+      ? await loadAgentAttemptEvidence(access.db, rawAttempts, scope)
+      : rawAttempts;
 
   return (
     <div

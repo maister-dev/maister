@@ -16,6 +16,7 @@ import { resolveAgentChainDepth } from "@/lib/agents/chain-depth";
 import { launchAgentRun, type LaunchAgentRunResult } from "@/lib/agents/launch";
 import { MENTION_SUPPRESSION_STATUSES } from "@/lib/agents/summonability";
 import { getDb } from "@/lib/db/client";
+import { pgErrorOf } from "@/lib/db/pg-error";
 import { isAgentTriggerEventKind } from "@/lib/domain-events/taxonomy";
 import { isGraphOnlyCutoverFailure } from "@/lib/domain-events/cutover";
 import * as schemaModule from "@/lib/db/schema";
@@ -193,11 +194,15 @@ export async function dispatchDueAgentSchedules(
 
     try {
       const result = await launch({
-        agentId: row.agentId,
-        projectId: row.projectId,
+        agentId: fence.sourceAgentId,
+        projectId: fence.projectId,
         trigger: { source: "cron" },
-        agentScheduleId: row.id,
+        agentScheduleId: fence.scheduleId,
         runId: fence.reservedRunId,
+        agentTriggerReservation: {
+          attemptId: fence.id,
+          runId: fence.reservedRunId,
+        },
         db: _db,
       });
 
@@ -237,7 +242,9 @@ export async function dispatchDueAgentSchedules(
           scheduleId: row.id,
           agentId: row.agentId,
           code: isMaisterError(err) ? err.code : "UNKNOWN",
-          err: err instanceof Error ? err.message : String(err),
+          errorType: err instanceof Error ? err.name : typeof err,
+          sqlState: pgErrorOf(err)?.code,
+          constraint: pgErrorOf(err)?.constraint,
         },
         "agent cron fire refused",
       );
