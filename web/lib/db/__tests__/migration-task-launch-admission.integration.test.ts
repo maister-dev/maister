@@ -235,7 +235,7 @@ it("DB01 persists one immutable task reservation and rejects malformed launch sn
       principalKind: "project_token",
     }),
   ).rejects.toMatchObject({
-    cause: { constraint: "task_launch_intents_snapshot_check" },
+    cause: { constraint: "task_launch_intents_token_origin_current" },
   });
   await expect(
     database.db.insert(taskLaunchIntents).values({

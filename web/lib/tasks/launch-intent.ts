@@ -10,6 +10,7 @@ import type {
   TaskLaunchSettingsSnapshot,
 } from "./launch-types";
 import type { TaskLaunchRequest } from "./launch-schema";
+import type { TokenTaskLaunchPrincipal } from "./launch-token";
 
 import { randomUUID } from "node:crypto";
 
@@ -25,7 +26,14 @@ import { taskLaunchBodySchema } from "./launch-schema";
 import { loadTaskSemanticInput } from "./launch-input";
 import { launchRefusal, resolveFlowLaunchSettings } from "./launch-resolution";
 import { emitTaskLaunchChanged } from "./launch-events";
-import { automaticTaskLaunchBasis } from "./launch-automatic";
+import { armedAutomaticTaskLaunchBasis } from "./launch-automatic";
+import {
+  assertTokenTaskLaunchPrincipal,
+  assertTaskLaunchTokenAuthentication,
+  assertTaskLaunchTokenAuthority,
+  assertTaskLaunchTokenVisibility,
+  taskLaunchTokenActorUserId,
+} from "./launch-token";
 import { lockTaskLaunchReservation } from "./launch-locks";
 import { taskLaunchReceipt } from "./launch-receipt";
 
@@ -520,6 +528,68 @@ export async function acceptInteractiveTaskLaunch(
   );
 }
 
+export async function acceptTokenTaskLaunch(
+  db: Db,
+  principal: TokenTaskLaunchPrincipal,
+  request: TaskLaunchRequest,
+  requestKey: string,
+): Promise<TaskLaunchReceipt> {
+  assertTokenTaskLaunchPrincipal(principal);
+  log.debug(
+    { tokenId: principal.origin.tokenId },
+    "task-launch-token-authenticating",
+  );
+  try {
+    await assertTaskLaunchTokenAuthentication(db, principal);
+  } catch (error) {
+    if (isMaisterError(error))
+      log.warn(
+        {
+          tokenId: principal.origin.tokenId,
+          code: error.code,
+          reason: error.details?.reason,
+        },
+        "task-launch-token-authentication-refused",
+      );
+    else
+      log.error(
+        { tokenId: principal.origin.tokenId, ...queryErrorDiagnostics(error) },
+        "task-launch-token-authentication-failed",
+      );
+    throw error;
+  }
+  const actorUserId = taskLaunchTokenActorUserId(principal.origin);
+
+  return acceptTaskLaunch(
+    db,
+    {
+      [launchAuthority]: true,
+      operation: "launch",
+      replacesIntentId: null,
+      expectedStateVersion: null,
+      principalKind: "project_token",
+      principalId: principal.origin.tokenId,
+      actorUserId,
+      launchSource: "api",
+      actor: actorUserId
+        ? { type: "user", id: actorUserId }
+        : principal.origin.agentId
+          ? { type: "agent", id: principal.origin.agentId }
+          : { type: "system", id: null },
+      assertVisibility: (tx, projectId) =>
+        assertTaskLaunchTokenVisibility(tx, principal, projectId),
+      assert: (tx, projectId, actions) =>
+        assertTaskLaunchTokenAuthority(tx, principal, projectId, actions),
+      admit: async (tx, task, settings) => ({
+        ...(await armedAutomaticTaskLaunchBasis(tx, task, settings)),
+        origin: principal.origin,
+      }),
+    },
+    request,
+    requestKey,
+  );
+}
+
 /** Internal constructor; session proof stays opaque even to other launch adapters. */
 export function interactiveTaskLaunchAuthority(
   principal: InteractiveTaskLaunchPrincipal,
@@ -578,19 +648,7 @@ export async function acceptAutomaticTaskLaunch(
             },
           );
       },
-      admit: async (tx, task, settings) => {
-        const basis = await automaticTaskLaunchBasis(tx, task, settings);
-
-        if (
-          task.launchMode !== "auto" ||
-          task.triageStatus !== "triaged" ||
-          (task.launchIntent !== null &&
-            task.launchIntent !== "triage_then_launch")
-        )
-          throw launchRefusal("launch_automation_not_armed", "PRECONDITION");
-
-        return basis;
-      },
+      admit: armedAutomaticTaskLaunchBasis,
     },
     request,
     requestKey,

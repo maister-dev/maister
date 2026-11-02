@@ -62,3 +62,21 @@ export async function automaticTaskLaunchBasis(
     evidenceSha: assessment.evidenceSha,
   };
 }
+
+/** A current assessment is necessary, and the task must independently opt into automatic execution. */
+export async function armedAutomaticTaskLaunchBasis(
+  db: Db,
+  task: typeof tasks.$inferSelect,
+  settings: TaskLaunchSettingsSnapshot,
+): Promise<Extract<TaskLaunchBasis, { kind: "automatic" }>> {
+  const basis = await automaticTaskLaunchBasis(db, task, settings);
+
+  if (
+    task.launchMode !== "auto" ||
+    task.triageStatus !== "triaged" ||
+    (task.launchIntent !== null && task.launchIntent !== "triage_then_launch")
+  )
+    throw launchRefusal("launch_automation_not_armed", "PRECONDITION");
+
+  return basis;
+}

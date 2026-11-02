@@ -167,3 +167,40 @@ fenced. Git preflight completes before replacement's SQL transaction. Applicatio
 then acquires the scoped key and task reservation before run, assignment, intent
 and task rows; no key is acquired after the reservation. A cancellation that wins
 during preflight prevents the prepared replacement from committing.
+
+## Automated adapter contract (Designed)
+
+The internal constructor/admission and SQL origin guard are implemented. External
+HTTP/MCP, schedule/child adapters and dispatch consumption remain designed; their
+existing launch paths have not yet been cut over by this checkpoint.
+
+The bearer constructor verifies the presented secret through the existing token
+verifier and returns an opaque server principal. Only its durable token identity
+and credential-free origin enter the intent: token kind, original project scope,
+owner, agent, bound run and Librarian turn. Acceptance and dispatch re-read those
+bindings, current scopes, expiry/revocation, active owner/project grants and live
+turn/parent state. Identity drift refuses; attribution to a user never becomes a
+session decision. A project token without a privileged user grant cannot authorize
+an elevated unattended policy; no silent policy downgrade or new implicit token
+scope is introduced.
+
+Bearer root requests require `runs:launch`, a current accepted ready assessment
+and the task's explicit automatic-launch intent. A parent-bound execution child
+uses the existing delegation scope/proof instead. Cancelling accepted work does
+not require a new positive assessment or auto arm; it requires current scoped
+write authority. Replacement creates new work and must independently satisfy its
+current automatic/child admission. A copied manual intent ID never supplies that
+basis. Metadata uses `runs:read`; source-bearing operations retain their existing
+separate permissions.
+
+| Existing producer | Required authority at the common admission boundary |
+| --- | --- |
+| `app/api/runs/route.ts` and staged response | Opaque interactive session for an explicit request; preserve run-bound compatibility responses and request keys. |
+| `app/api/v1/ext/runs/route.ts`, MCP HTTP client | Verified token; automatic root admission, existing external idempotency/audit and Librarian operation receipts. |
+| `app/api/v1/ext/runs/delegate/route.ts`, `runs/plan/route.ts` | Server-derived live bound parent, plan/relation/child digest; no body parent authority. |
+| `scheduler.ts`, `scheduler/handlers/flow-run.ts`, auto-triage handler | System automatic principal; accepted qualification and independent auto arm. |
+| `scheduled-launches/service.ts`, `run-schedules/dispatch.ts` | Existing durable scheduled occurrence/settings plus automatic root admission; no inherited human decision. |
+| `evaluations/launch-seam.ts`, evaluator agent launch | Existing controlled recipe/judge ownership and technical gates; independent task roots qualify, derived children use parent proof. |
+| `services/hitl.ts` successor launch | Carry authenticated decision authority from its route and create fresh retry lineage; same-run continuation retains its original admission. |
+| `agents/launch.ts`, project agent launch/event routes | Task-bound code delivery derives session, automation or parent authority from its entry point; operational agents retain their own preparation contract. |
+| `agents/retry.ts` | Operational retry policy remains separate; a code-delivery successor earns fresh task admission rather than borrowing a source run's manual grant. |

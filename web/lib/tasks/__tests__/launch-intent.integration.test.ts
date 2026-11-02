@@ -21,8 +21,11 @@ import { interactiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
 import {
   acceptInteractiveTaskLaunch,
   acceptAutomaticTaskLaunch,
+  acceptTokenTaskLaunch,
   taskLaunchSettingsToken,
 } from "@/lib/tasks/launch-intent";
+import { tokenTaskLaunchPrincipal } from "@/lib/tasks/launch-token";
+import { issueToken } from "@/lib/tokens/issue";
 import { updateTask } from "@/lib/services/tasks";
 import {
   prepareTaskQualification,
@@ -44,10 +47,11 @@ let projectId: string;
 let flowId: string;
 let runnerId: string;
 let sequence = 0;
+let sessionUserOverride: string | null = null;
 
 vi.mock("@/lib/authz", async (original) => ({
   ...(await original<typeof import("@/lib/authz")>()),
-  requireActiveSession: async () => ({ id: userId }),
+  requireActiveSession: async () => ({ id: sessionUserOverride ?? userId }),
 }));
 
 beforeAll(async () => {
@@ -102,6 +106,23 @@ async function task(): Promise<string> {
 
   return id;
 }
+async function publishReadyQualification(taskId: string): Promise<void> {
+  const prepared = await prepareTaskQualification(database.db, {
+    projectId,
+    taskId,
+    author: { kind: "user", identity: userId, userId },
+    request: {
+      requestKey: randomUUID(),
+      expectedInputRevision: 1,
+      expectedQualificationRevision: null,
+      qualification: qualificationFixture(),
+      enqueue: false,
+    },
+  });
+
+  await database.db.transaction(prepared.apply);
+}
+
 async function cancelFixture(db: Db, id: string): Promise<void> {
   await db
     .update(taskLaunchIntents)
@@ -458,20 +479,7 @@ it("LA01/03 requires current accepted qualification for automatic admission and 
   await expect(
     acceptAutomaticTaskLaunch(database.db, await request(taskId), randomUUID()),
   ).rejects.toMatchObject({ details: { reason: "qualification_required" } });
-  const prepared = await prepareTaskQualification(database.db, {
-    projectId,
-    taskId,
-    author: { kind: "user", identity: userId, userId },
-    request: {
-      requestKey: randomUUID(),
-      expectedInputRevision: 1,
-      expectedQualificationRevision: null,
-      qualification: qualificationFixture(),
-      enqueue: false,
-    },
-  });
-
-  await database.db.transaction(prepared.apply);
+  await publishReadyQualification(taskId);
   await expect(
     acceptAutomaticTaskLaunch(database.db, await request(taskId), randomUUID()),
   ).rejects.toMatchObject({
@@ -667,4 +675,262 @@ it("LA05 refuses an inherited revision-runner default changed after the user pre
       randomUUID(),
     ),
   ).rejects.toMatchObject({ details: { reason: "launch_settings_changed" } });
+});
+
+it("LA07 verifies a real user token without treating its owner as a human launch, and refuses revoked receipt replay", async () => {
+  const taskId = await task();
+  const issued = await issueToken(
+    {
+      projectId: null,
+      tokenKind: "user",
+      ownerUserId: userId,
+      name: "Task admission bearer",
+      scopes: ["runs:launch"],
+    },
+    database.db,
+  );
+  const principal = await tokenTaskLaunchPrincipal(database.db, issued.secret);
+
+  await expect(
+    acceptTokenTaskLaunch(
+      database.db,
+      principal,
+      await request(taskId),
+      randomUUID(),
+    ),
+  ).rejects.toMatchObject({ details: { reason: "qualification_required" } });
+  await publishReadyQualification(taskId);
+  await database.db
+    .update(tasks)
+    .set({ launchIntent: "triage_then_launch", launchMode: "auto" })
+    .where(eq(tasks.id, taskId));
+  const input = await request(taskId);
+  const key = randomUUID();
+  const accepted = await acceptTokenTaskLaunch(
+    database.db,
+    principal,
+    input,
+    key,
+  );
+
+  expect(accepted.basis).toBe("automatic");
+  const [intent] = await database.db
+    .select()
+    .from(taskLaunchIntents)
+    .where(eq(taskLaunchIntents.id, accepted.intentId));
+
+  expect(intent).toMatchObject({
+    principalKind: "project_token",
+    principalId: issued.tokenId,
+    actorUserId: userId,
+    basis: {
+      kind: "automatic",
+      origin: {
+        kind: "token",
+        tokenKind: "user",
+        tokenId: issued.tokenId,
+        ownerUserId: userId,
+      },
+    },
+  });
+  expect(JSON.stringify(intent)).not.toContain(issued.secret);
+  expect(
+    await acceptTokenTaskLaunch(database.db, principal, input, key),
+  ).toEqual(accepted);
+  await cancelFixture(database.db, intent.id);
+  if (intent.basis.kind !== "automatic" || !intent.basis.origin)
+    throw new Error("Missing automatic token origin fixture");
+  const { origin, ...basis } = intent.basis;
+
+  for (const forged of [
+    basis,
+    { ...basis, origin: { ...origin, ownerUserId: randomUUID() } },
+  ]) {
+    await expect(
+      database.db.insert(taskLaunchIntents).values({
+        ...intent,
+        id: randomUUID(),
+        requestKey: randomUUID(),
+        basis: forged,
+      }),
+    ).rejects.toMatchObject({
+      cause: { constraint: "task_launch_intents_token_origin_current" },
+    });
+  }
+  await database.pool.query(
+    "UPDATE project_tokens SET revoked_at=clock_timestamp() WHERE id=$1",
+    [issued.tokenId],
+  );
+  await expect(
+    acceptTokenTaskLaunch(database.db, principal, input, key),
+  ).rejects.toMatchObject({
+    code: "UNAUTHORIZED",
+    details: { reason: "launch_authority_revoked" },
+  });
+});
+
+it("LA07 serializes membership revocation with an uncommitted human acceptance and rechecks access on replay", async () => {
+  const memberId = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO users(id,email,role,account_status,must_change_password) VALUES($1,$2,'viewer','active',false)",
+    [memberId, `${memberId}@test.local`],
+  );
+  await database.pool.query(
+    "INSERT INTO project_members(id,project_id,user_id,role) VALUES($1,$2,$3,'member')",
+    [randomUUID(), projectId, memberId],
+  );
+  sessionUserOverride = memberId;
+  const principal = await interactiveTaskLaunchPrincipal();
+
+  sessionUserOverride = null;
+  const taskId = await task();
+  const input = await request(taskId);
+  const key = randomUUID();
+  const entered = Promise.withResolvers<void>();
+  const commit = Promise.withResolvers<void>();
+  const db: Db = database.db;
+  const accepting = db.transaction(async (tx) => {
+    const result = await acceptInteractiveTaskLaunch(tx, principal, input, key);
+
+    entered.resolve();
+    await commit.promise;
+
+    return result;
+  });
+
+  await entered.promise;
+  let revoked = false;
+  const revoking = database.pool
+    .query("DELETE FROM project_members WHERE project_id=$1 AND user_id=$2", [
+      projectId,
+      memberId,
+    ])
+    .then(() => {
+      revoked = true;
+    });
+
+  try {
+    await expect
+      .poll(async () => {
+        if (revoked) return "revoked";
+        const blocked = await database.pool.query(
+          "SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'DELETE FROM project_members%'",
+        );
+
+        return blocked.rows.length ? "blocked" : "pending";
+      })
+      .toBe("blocked");
+  } finally {
+    commit.resolve();
+    await Promise.all([accepting, revoking]);
+  }
+  await expect(
+    acceptInteractiveTaskLaunch(database.db, principal, input, key),
+  ).rejects.toMatchObject({
+    details: { reason: "launch_not_found" },
+  });
+});
+
+it("LA07 keeps project-token scope, identity, expiry and elevated-policy boundaries live on acceptance and replay", async () => {
+  const taskId = await task();
+
+  await publishReadyQualification(taskId);
+  await database.db
+    .update(tasks)
+    .set({ launchIntent: "triage_then_launch", launchMode: "auto" })
+    .where(eq(tasks.id, taskId));
+  const input = await request(taskId);
+  const issued = await issueToken(
+    { projectId, name: "Scoped task launch", scopes: ["runs:read"] },
+    database.db,
+  );
+  const principal = await tokenTaskLaunchPrincipal(database.db, issued.secret);
+
+  await expect(
+    acceptTokenTaskLaunch(database.db, principal, input, randomUUID()),
+  ).rejects.toMatchObject({
+    code: "UNAUTHORIZED",
+    details: { reason: "launch_authority_revoked" },
+  });
+  await database.pool.query(
+    "UPDATE project_tokens SET scopes='[\"runs:launch\"]'::jsonb WHERE id=$1",
+    [issued.tokenId],
+  );
+  await expect(
+    acceptTokenTaskLaunch(
+      database.db,
+      {
+        ...principal,
+        origin: { ...principal.origin, tokenKind: "user" },
+      },
+      input,
+      randomUUID(),
+    ),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  await expect(
+    acceptTokenTaskLaunch(
+      database.db,
+      principal,
+      {
+        ...input,
+        executionPolicy: { preset: "unattended" },
+      },
+      randomUUID(),
+    ),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  const outsideProject = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO projects(id,slug,name,repo_path,task_key) VALUES($1,$1,'Outside token scope',$2,'OUTSIDE')",
+    [outsideProject, root],
+  );
+  const outside = await issueToken(
+    {
+      projectId: outsideProject,
+      name: "Outside task launch",
+      scopes: ["runs:launch"],
+    },
+    database.db,
+  );
+
+  await expect(
+    acceptTokenTaskLaunch(
+      database.db,
+      await tokenTaskLaunchPrincipal(database.db, outside.secret),
+      input,
+      randomUUID(),
+    ),
+  ).rejects.toMatchObject({ details: { reason: "launch_not_found" } });
+  const key = randomUUID();
+  const accepted = await acceptTokenTaskLaunch(
+    database.db,
+    principal,
+    input,
+    key,
+  );
+  const [intent] = await database.db
+    .select()
+    .from(taskLaunchIntents)
+    .where(eq(taskLaunchIntents.id, accepted.intentId));
+
+  expect(intent).toMatchObject({
+    principalKind: "project_token",
+    actorUserId: null,
+    basis: { kind: "automatic", origin: { tokenKind: "project" } },
+  });
+  await database.pool.query(
+    "UPDATE project_tokens SET scopes='[\"runs:read\"]'::jsonb WHERE id=$1",
+    [issued.tokenId],
+  );
+  await expect(
+    acceptTokenTaskLaunch(database.db, principal, input, key),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  await database.pool.query(
+    "UPDATE project_tokens SET scopes='[\"runs:launch\"]'::jsonb,expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",
+    [issued.tokenId],
+  );
+  await expect(
+    acceptTokenTaskLaunch(database.db, principal, input, key),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
 });

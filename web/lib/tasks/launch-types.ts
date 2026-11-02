@@ -15,6 +15,17 @@ export const TASK_LAUNCH_STATES = [
   "settled",
 ] as const;
 export type TaskLaunchState = (typeof TASK_LAUNCH_STATES)[number];
+export type TaskLaunchTokenOrigin = Readonly<{
+  version: 1;
+  kind: "token";
+  tokenId: string;
+  tokenKind: "project" | "user" | "agent" | "librarian";
+  projectId: string | null;
+  ownerUserId: string | null;
+  agentId: string | null;
+  boundRunId: string | null;
+  librarianTurnId: string | null;
+}>;
 export type TaskLaunchBasis =
   | Readonly<{ kind: "manual"; userId: string }>
   | Readonly<{
@@ -24,6 +35,7 @@ export type TaskLaunchBasis =
       qualificationInputDigest: string;
       evidenceTarget: string;
       evidenceSha: string;
+      origin?: TaskLaunchTokenOrigin;
     }>
   | Readonly<{ kind: "execution_child"; parent: TaskExecutionChildProof }>;
 

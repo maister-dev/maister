@@ -1,6 +1,6 @@
 # Task launch and preparation persistence
 
-**Persistence implemented; admission services designed — ADR-200/201.** Main-lineage migration `0215_agent_preparation` adds preparation ownership. `0216_task_launch_admission` adds immutable intents, v2 run bindings and writer guards; `0217_task_launch_events` extends the complete event-kind constraint. Each has a matching generated schema/journal/snapshot; services and dispatch cutover remain in progress. No Brain migration or historical assessment/run snapshot rewrite. Test databases apply these migrations; this task performs no production migration.
+**Persistence and acceptance slice implemented; dispatch cutover designed — ADR-200/201.** Main-lineage migration `0215_agent_preparation` adds preparation ownership. `0216_task_launch_admission` adds immutable intents, v2 run bindings and writer guards; `0217_task_launch_events` extends the complete event-kind constraint. `0218_task_launch_commit_shape` restricts canonical commit IDs; `0219_task_launch_execution_snapshots` freezes complete execution input/capability identities; INSERT-only `0220_task_launch_token_origin` validates bearer-origin identity. Each has matching generated schema/journal/snapshot metadata; transport and dispatch cutover remain in progress. No Brain migration or historical assessment/run snapshot rewrite. Test databases apply these migrations; this task performs no production migration.
 
 ## Entities and cardinalities
 
@@ -83,3 +83,16 @@ requires input/settings v2 for new intent/run bindings, and raises the launch
 writer floor to v2. The public receipt remains schemaVersion 1 and exposes only
 its existing metadata fields. This change does not version the seven-check result
 or alter existing qualification digests.
+
+## Bearer-origin identity (internal acceptance implemented)
+
+An automatic bearer basis additionally retains a bounded version-1 origin object:
+`kind=token`, token ID/kind, original nullable project scope, owner user, agent,
+bound run and Librarian turn. These are identifiers only; no token secret, hash,
+prefix, label or credential enters an intent. Its token ID matches the intent's
+principal ID; owner attribution matches actorUserId. SQL validates identity shape
+and current durable token binding on insert; the domain also checks current
+scope, grants, expiry, owner and turn/parent availability. Dispatch repeats those
+checks. Existing system automatic bases and all historical receipts remain
+unchanged; no absent historical bearer identity is reconstructed from mutable
+token rows.
