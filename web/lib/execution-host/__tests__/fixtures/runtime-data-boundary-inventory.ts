@@ -94,6 +94,27 @@ function wrappers(
 export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
   [
     ...classified(
+      "scripts/generate-ask-human-json.ts",
+      "build-tooling",
+      "Build-time generated public schema; never reads execution-host runtime",
+      [
+        ["<module>", "node:fs/promises.readFile", "read"],
+        ["<module>", "node:fs/promises.writeFile", "write"],
+      ],
+    ),
+    ...classified(
+      "lib/agents/preparation-ownership.ts",
+      "repository-worktree",
+      "Preparation resolves only server-owned repository identity under the physical fence",
+      [["claimAgentPreparation", "node:fs/promises.realpath", "stat"]],
+    ),
+    ...classified(
+      "lib/agents/preparation-workspace.ts",
+      "repository-worktree",
+      "Stable physical mutex outside disposable operational trees",
+      [["acquirePreparationWorkspace", "node:fs/promises.mkdir", "write"]],
+    ),
+    ...classified(
       "lib/agents/retry-allocation.ts",
       "repository-worktree",
       "Intent-fenced allocation checks only server-owned execution worktrees",
@@ -155,7 +176,6 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ["preserveOperationalEvidence", "node:fs/promises.readlink", "read"],
         ["preserveOperationalEvidence", "node:fs.constants", "unresolved"],
         ["preserveOperationalEvidence", "node:fs/promises.open", "open"],
-        ["git", "node:child_process.execFile", "spawn", "git"],
       ],
     ),
     ...classified(
@@ -174,7 +194,6 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ["visit", "node:fs.constants", "unresolved"],
         ["visit", "node:fs/promises.open", "open"],
         ["captureTree", "node:fs/promises.readdir", "list"],
-        ["git", "node:child_process.execFile", "spawn", "git"],
       ],
     ),
     ...classified(
@@ -571,7 +590,8 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       [
         ["packageSkillMaterializationRoots", "node:fs/promises.stat", "stat"],
         ["launchAgentRun", "node:fs/promises.mkdir", "write"],
-        ["driveAgentSession", "node:fs/promises.mkdir", "write"],
+        ["prepareAndDispatch", "node:fs/promises.mkdir", "write"],
+        ["prepareAndDispatch", "node:fs/promises.lstat", "stat"],
         [
           "applyAgentMemoryForLaunch",
           "lib/atomic.ts#atomicWriteText",
@@ -1274,12 +1294,6 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ["removeOwnedPlainAgentDirectory", "node:fs/promises.lstat", "stat"],
         ["removeOwnedPlainAgentDirectory", "node:fs/promises.rm", "remove"],
       ],
-    ),
-    ...classified(
-      "lib/gc/preserve.ts",
-      "repository-worktree",
-      "worktree, repository, package and capability materialization on the shared checkout — Stage C repository cut",
-      [["git", "node:child_process.execFile", "spawn", "git"]],
     ),
     ...classified(
       "lib/gc/revision-gc.ts",
@@ -2067,13 +2081,9 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ["fetchRemote", "node:child_process.execFile", "spawn", "git"],
         ["remoteBranchHead", "node:child_process.execFile", "spawn", "git"],
         ["pruneWorktrees", "node:child_process.execFile", "spawn", "git"],
-        ["removeWorktree", "node:child_process.execFile", "spawn", "git"],
-        ["listWorktrees", "node:child_process.execFile", "spawn", "git"],
-        ["logRange", "node:child_process.execFile", "spawn", "git"],
         ["diffRange", "node:child_process.execFile", "spawn", "git"],
         ["streamGitTruncatedTo", "node:child_process.spawn", "spawn", "git"],
         ["withTempIndexCopy", "node:fs/promises.mkdtemp", "write"],
-        ["withTempIndexCopy", "node:child_process.execFile", "spawn", "git"],
         ["withTempIndexCopy", "node:fs/promises.copyFile", "write"],
         ["withTempIndexCopy", "node:fs/promises.rm", "remove"],
         [
@@ -2082,9 +2092,6 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
           "spawn",
           "git",
         ],
-        // ADR-181 D8: the rescue commit is staged through a COPY of the index.
-        ["writeRescueRef", "node:child_process.execFile", "spawn", "git"],
-        ["commitTree", "node:child_process.execFile", "spawn", "git"],
         ["diffWorkingTree", "node:child_process.execFile", "spawn", "git"],
         [
           "diffWorkingTreeChangeStats",
@@ -2092,7 +2099,6 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
           "spawn",
           "git",
         ],
-        ["statusPorcelain", "node:child_process.execFile", "spawn", "git"],
         ["resolveBaseRef", "node:child_process.execFile", "spawn", "git"],
         ["resolveRefSha", "node:child_process.execFile", "spawn", "git"],
         ["readBlob", "node:child_process.execFile", "spawn", "git"],
@@ -2476,6 +2482,18 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["sendAgentMessage", false],
     ["startAgentSession", false],
   ]),
+  ...wrappers("lib/agents/preparation-ownership.ts", "repository-worktree", [
+    ["claimAgentPreparation", false],
+  ]),
+  ...wrappers("lib/agents/preparation-workspace.ts", "repository-worktree", [
+    ["acquirePreparationWorkspace", false],
+    ["openAgentPreparation", false],
+  ]),
+  ...wrappers(
+    "lib/project-config-persistence/repository-lock.ts",
+    "repository-worktree",
+    [["acquireRepositoryMutationFence", false]],
+  ),
   ...wrappers("lib/agents/materialization-lock.ts", "repository-worktree", [
     ["tryAcquireMaterializationLock", false],
   ]),
@@ -2667,10 +2685,6 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
   ...wrappers("lib/gc/plain-agent-directory-gc.ts", "repository-worktree", [
     ["removeOwnedPlainAgentDirectory", true],
   ]),
-  ...wrappers("lib/gc/preserve.ts", "repository-worktree", [
-    ["preserveWorktree", false],
-    ["rescueStagedWorkBeforeSnapshot", false],
-  ]),
   ...wrappers("lib/gc/revision-gc.ts", "repository-worktree", [
     ["runRevisionGcSweep", false],
   ]),
@@ -2829,22 +2843,15 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["fetchRemote", false],
     ["forceWithLeasePush", false],
     ["hasConflictMarkers", false],
-    ["listWorktrees", false],
-    ["logRange", false],
     ["logRangeBounded", false],
     ["pruneWorktrees", false],
-    ["pullRemote", false],
     ["pushBranch", false],
     ["readBlob", false],
     ["remoteBranchExists", false],
     ["remoteBranchHead", false],
-    ["removeOwnedWorktree", false],
-    ["removeWorktree", false],
     ["resolveBaseRef", false],
     ["resolveRefSha", false],
     ["restoreWorktreeToCommit", false],
-    ["snapshotDirtyWorktree", false],
-    ["statusPorcelain", false],
     ["syncOperationInProgress", false],
     ["writeRescueRef", false],
   ]),

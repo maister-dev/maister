@@ -469,6 +469,13 @@ export async function withRepositoryMutationFence<T>(
   }
 }
 
+/** Ordinary owners share the same recovery identity and recorded-child proof. */
+export async function acquireRepositoryMutationFence(
+  repo: string,
+): Promise<RepositoryFence> {
+  return acquireRepositoryFence(repo, ORDINARY_MUTATION_ID);
+}
+
 /** A recorded PID is evidence for refusal, never authority to signal another process. */
 export async function assertConfigGitOwnerRetired(
   ownerProcessId: number | null,

@@ -3,7 +3,7 @@
 Branch: `codex/manual-launch-triager-reliability`
 Created: 2026-11-02 (Europe/Moscow)
 Inspected source: `cb183968df5bac9b9ce652a6bdb6aa2bb79b45ff`
-Status: **In progress.** Current task: B1 — application reproducer and safe probe diagnostics. Checkboxes record verified completion only.
+Status: **In progress.** Current task: B6 — complete reliability qualification and full-suite checks. Checkboxes record verified completion only.
 
 ## Settings
 
@@ -357,7 +357,7 @@ Every code task inherits the logging/redaction and TDD contracts and must name i
 
 ### Track B — Restore Triager reliability
 
-- [ ] **B1. Reproduce application concurrency and retain primary causes** (depends P0 gate).
+- [x] **B1. Reproduce application concurrency and retain primary causes** (depends P0 gate).
   - Files: `web/lib/agents/__tests__/operational-integrity.integration.test.ts`, `agent-queue-terminal.integration.test.ts`, `web/lib/gc/__tests__/operational-disposition.integration.test.ts`; new `web/lib/agents/__tests__/preparation-ownership.integration.test.ts` only if existing files cannot hold the focused fixture; `web/lib/agents/operational-integrity.ts`, `launch.ts`, `web/lib/worktree.ts` for minimal operation/cause instrumentation.
   - Port the local mechanism reproducer into supported fixtures. Seed a real operational Triager run/assignment with no baseline/generation turn. Race direct entry against the actual continuation worker, not only two hand-written `start` calls. Use bounded barriers around actual capture/Git operations; no arbitrary sleeps or mocked worktree effects. Record which driver initiates each remove/add. Add concurrent terminal cleanup control.
   - Preserve native safe cause/operation in `MaisterError` details and durable terminal diagnosis without losing structured error category. Include real Git failure and inaccessible/disappearing file cases; secrets sentinel must not appear in logs/API output.
@@ -547,6 +547,12 @@ Use local/test DB only for migration commands; verify `db:generate` reports no u
 No commit, push, PR merge or deployment is performed by this plan. Implementation completion requires both tracks and their combined acceptance; local mechanism reproduction alone is not Triager qualification.
 
 ## Execution evidence
+
+- B1–B5 coupled ownership regression now GREEN on Node 24/Postgres/Git: actual continuation cannot remove a checkout during baseline; terminal cleanup defers with zero failure-budget consumption while capture is active; late callbacks cannot dispatch/recreate; identity forgery, duplicate resource claim, old writer, and stale assignment publication refuse. Populated 0214→0215 upgrade/replay preserves historical run JSON and invents no preparation rows. Candidate 0215 is generated with schema/journal/snapshot plus guard triggers. Full phase exit remains pending, so B2–B6 are not marked complete yet.
+- B3 reuses the durable repository/Git-group fence rather than adding a new helper. Acquisition precedes the short preparation claim to prove retired physical ownership; no checkout effect precedes that claim. Plain-directory mutexes reuse persistent runtime storage. Sanitized start/end/failure operation IDs now correlate checkout work with run/assignment/epoch/preparation identity. Add/remove, integrity capture and cleanup Git execute through the recorded gate.
+- B6 local qualification: four focused files / 47 tests pass, including the real supervisor + fixture ACP preparation→trusted generation→candidate→clean terminal→accepted assessment→cleanup path, repository parent-SIGKILL/child retirement tests, disposition and preparation regressions (`/tmp/maister-preparation-qualified.log`). This is actual supervisor/provider-fixture evidence, not a live model or production deployment. Combined automatic Flow delivery remains A4/V1 work.
+- Full unit run initially exposed sandbox socket refusals; the unrestricted run established unrelated existing fixture drift (missing i18n provider, incomplete config mock, missing build-script inventory). These fixtures are repaired without changing their behavior assertions. Full unit result after reconciliation: **886 files / 9259 tests passed** (`/tmp/maister-preparation-unit-green.log`). Final preparation/integrity/populated migration checks pass **25/25**; journaled checkout reuse and terminal pruning also pass. Full integration run is still executing; no full integration green claim yet.
+- A1 independent persistence slice has started while the broad B6 regression suite runs: the real Postgres schema contract is RED because the intent relation is absent (`/tmp/maister-launch-schema-red.log`). No manual bypass or launch endpoint is enabled by this intermediate state.
 
 - B1 diagnostics: supported Node 24 + real Postgres/Git direct-driver/actual-continuation regression reproduces checkout deletion during paused baseline (`ENOENT`). This proves the current application defect, not MAI-27's lost historical exception. TB05 durable failure regression went RED → GREEN: terminal receipt retains `baseline/lstat/ENOENT`, zero create/prompt commands; existing integrity suite 17/17 passes. Ownership RED remains open for B2–B5. Logs: `/tmp/maister-preparation-red.log`, `/tmp/maister-preparation-diagnostic-green.log`, `/tmp/maister-integrity-green.log`.
 - B3 feasibility discovery: existing `project-config-persistence/repository-lock.ts` and `git-process.ts` already durably register gated Git process groups before effects and refuse takeover until retirement. Reuse this stable common-Git-directory fence across preparation and disposal; it deliberately serializes preparation in the same repository. Existing real-process `IT-CPC-10` tests kill the manager while Git runs and verify takeover refusal until child completion/timeout. No new helper, dependency, port or mount is needed; preparation must route Git probes through the same registered executor. B3 remains unverified until those tests and the preparation integration execute.

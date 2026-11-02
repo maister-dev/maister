@@ -1,6 +1,6 @@
 [← Getting Started](getting-started.md) · [Back to README](../README.md) · [Error Taxonomy →](error-taxonomy.md)
 
-**Designed additive extension:** [task launch and preparation](db/task-launch-domain.md) defines the new main-lineage intent, immutable input and preparation ownership contracts. These entities are not part of the implemented schema until their migrations land.
+**Additive extension:** [task launch and preparation](db/task-launch-domain.md) defines preparation ownership implemented in migration 0215 and the designed intent/immutable-input contracts. Historical run/assessment receipts are unchanged.
 
 # Database Schema
 

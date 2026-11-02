@@ -7,12 +7,10 @@ import type {
 } from "@/lib/run-results/operational-types";
 import type { OperationalProbeContext } from "@/lib/agents/operational-diagnostics";
 
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, open, readdir, readlink, realpath } from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
 
 import pino from "pino";
 
@@ -20,8 +18,8 @@ import { canonicalCommandJson } from "../../../runtime/command-json";
 
 import { MaisterError, isMaisterError } from "@/lib/errors";
 import { operationalCauseChain } from "@/lib/agents/operational-diagnostics";
+import { executeRepositoryGit } from "@/lib/project-config-persistence/git-process";
 
-const exec = promisify(execFile);
 const MAX_ENTRIES = 100_000;
 const MAX_BYTES = 256 * 1024 * 1024;
 const MAX_PROBE_MS = 30_000;
@@ -284,7 +282,7 @@ async function captureTree(
   const git = async (args: string[]): Promise<string> => {
     check();
     const result = await probeOperation(`git.${args[0]}`, () =>
-      exec("git", ["-C", root, "-c", "core.fsmonitor=false", ...args], {
+      executeRepositoryGit(root, ["-c", "core.fsmonitor=false", ...args], {
         env: { ...process.env, LC_ALL: "C", GIT_OPTIONAL_LOCKS: "0" },
         timeout: Math.max(1, Math.ceil(deadline - performance.now())),
         maxBuffer: 8 * 1024 * 1024,
@@ -318,23 +316,22 @@ async function captureTree(
   let worktreeConfigDigest: string | null = null;
 
   try {
-    const handle = await open(
-      path.join(gitDirectory.trim(), "config.worktree"),
-      constants.O_RDONLY | constants.O_NOFOLLOW,
+    const handle = await probeOperation("open", () =>
+      open(
+        path.join(gitDirectory.trim(), "config.worktree"),
+        constants.O_RDONLY | constants.O_NOFOLLOW,
+      ),
     );
 
     try {
-      const before = await handle.stat();
+      const before = await probeOperation("stat", () => handle.stat());
       const hash = createHash("sha256");
       const buffer = (sharedBuffer ??= Buffer.alloc(1024 * 1024));
       let total = 0;
 
       while (true) {
-        const { bytesRead } = await handle.read(
-          buffer,
-          0,
-          buffer.length,
-          total,
+        const { bytesRead } = await probeOperation("read", () =>
+          handle.read(buffer, 0, buffer.length, total),
         );
 
         if (!bytesRead) break;
@@ -344,7 +341,7 @@ async function captureTree(
         hash.update(buffer.subarray(0, bytesRead));
         check();
       }
-      const after = await handle.stat();
+      const after = await probeOperation("stat", () => handle.stat());
 
       if (
         !before.isFile() ||
@@ -356,14 +353,16 @@ async function captureTree(
         throw probeError("operational_integrity_file_race");
       worktreeConfigDigest = hash.digest("hex");
     } finally {
-      await handle.close();
+      await probeOperation("close", () => handle.close());
     }
   } catch (error) {
+    const native = isMaisterError(error) ? error.cause : error;
+
     if (!(
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      error.code === "ENOENT"
+      native &&
+      typeof native === "object" &&
+      "code" in native &&
+      native.code === "ENOENT"
     ))
       throw error;
   }

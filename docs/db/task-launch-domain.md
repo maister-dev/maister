@@ -1,6 +1,6 @@
 # Task launch and preparation persistence
 
-**Designed — ADR-200/201.** Additive main-lineage migrations follow current journal index 214; allocate preparation 0215, admission 0216 and a separate shared guard migration if needed. These are not applied schema yet. No Brain migration or historical assessment/run snapshot rewrite.
+**Preparation implemented; admission designed — ADR-200/201.** Main-lineage migration `0215_agent_preparation` adds preparation ownership with its schema/journal/snapshot and fenced progress/invalidation/writer guards. Admission remains planned for 0216 and a separate shared guard migration if needed. No Brain migration or historical assessment/run snapshot rewrite. Test databases apply 0215; this task performs no production migration.
 
 ## Entities and cardinalities
 

@@ -15,7 +15,7 @@ export async function declareWriterCapability(
   client: SessionClient,
 ): Promise<void> {
   await client.query(
-    `SET ${WRITER_CAPABILITY_SETTING} = '${EXECUTION_AB_WRITER_CAPABILITY}'; SET ${TASK_QUALIFICATION_WRITER_SETTING} = '${TASK_QUALIFICATION_WRITER_CAPABILITY}'`,
+    `SET ${WRITER_CAPABILITY_SETTING} = '${EXECUTION_AB_WRITER_CAPABILITY}'; SET ${TASK_QUALIFICATION_WRITER_SETTING} = '${TASK_QUALIFICATION_WRITER_CAPABILITY}'; SET maister.agent_preparation_writer = 'v1'`,
   );
 }
 

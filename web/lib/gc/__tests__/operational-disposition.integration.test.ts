@@ -1127,9 +1127,17 @@ describe("operational disposition through existing lifecycle owners", () => {
       .where(eq(workspaces.runId, seeded.runId));
     expect(
       await disposeOperationalRun(seeded.runId, { db, hosts: seam.hosts }),
-    ).toBe("released");
+    ).toBe("deferred");
+    expect((await lstat(seeded.context.cwd)).isDirectory()).toBe(true);
     resume();
     expect(await first).toBe("deferred");
+    expect(
+      await disposeOperationalRun(seeded.runId, {
+        db,
+        hosts: seam.hosts,
+        now: new Date(Date.now() + 360_000),
+      }),
+    ).toBe("released");
     expect((await row(seeded.runId)).operationalCleanup?.state).toBe(
       "released",
     );

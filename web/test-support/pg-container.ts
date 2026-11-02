@@ -573,7 +573,7 @@ export async function startMainPostgresTestDb(
   database.pool.on("connect", (client) => {
     void client
       .query(
-        `SET ${TASK_QUALIFICATION_WRITER_SETTING}='${TASK_QUALIFICATION_WRITER_CAPABILITY}'`,
+        `SET ${TASK_QUALIFICATION_WRITER_SETTING}='${TASK_QUALIFICATION_WRITER_CAPABILITY}'; SET maister.agent_preparation_writer='v1'`,
       )
       .catch((error) =>
         logger.error({ error }, "test qualification writer declaration failed"),
@@ -778,7 +778,7 @@ export async function startMainAndBrainPostgresTestDbTemplate(
     pool.on("connect", (client) => {
       void client
         .query(
-          `SET ${TASK_QUALIFICATION_WRITER_SETTING}='${TASK_QUALIFICATION_WRITER_CAPABILITY}'`,
+          `SET ${TASK_QUALIFICATION_WRITER_SETTING}='${TASK_QUALIFICATION_WRITER_CAPABILITY}'; SET maister.agent_preparation_writer='v1'`,
         )
         .catch((error) =>
           logger.error(

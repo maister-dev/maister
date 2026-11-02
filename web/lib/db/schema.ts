@@ -1,4 +1,5 @@
 import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
+import type { OperationalFailureDiagnostic } from "@/lib/agents/operational-diagnostics";
 import type {
   TaskQualificationMode,
   TaskQualificationValue,
@@ -2964,6 +2965,64 @@ export const executionCommands = pgTable(
 
 export type ExecutionHost = typeof executionHosts.$inferSelect;
 export type ExecutionAssignment = typeof executionAssignments.$inferSelect;
+
+export const AGENT_PREPARATION_PHASES = [
+  "claimed",
+  "checkout_ready",
+  "baseline_ready",
+  "materialized",
+  "handed_off",
+  "fenced",
+  "failed",
+  "cancelled",
+] as const;
+
+export const agentPreparationOperations = pgTable(
+  "agent_preparation_operations",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    assignmentId: text("assignment_id")
+      .notNull()
+      .references(() => executionAssignments.id, { onDelete: "restrict" }),
+    assignmentEpoch: integer("assignment_epoch").notNull(),
+    resourceId: text("resource_id").notNull(),
+    incarnation: text("incarnation").notNull(),
+    resolvedCommit: text("resolved_commit"),
+    phase: text("phase", { enum: AGENT_PREPARATION_PHASES }).notNull(),
+    leaseExpiresAt: timestamp("lease_expires_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    generation: integer("generation"),
+    turnId: text("turn_id"),
+    failure: jsonb("failure").$type<OperationalFailureDiagnostic>(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    activeResource: uniqueIndex("agent_preparation_active_resource_uq")
+      .on(t.resourceId)
+      .where(
+        sql`${t.phase} IN ('claimed','checkout_ready','baseline_ready','materialized')`,
+      ),
+    runHistory: index("agent_preparation_run_idx").on(t.runId, t.createdAt),
+    phaseCheck: check(
+      "agent_preparation_phase_check",
+      inLiteralList(t.phase, AGENT_PREPARATION_PHASES),
+    ),
+    shapeCheck: check(
+      "agent_preparation_shape_check",
+      sql`(${t.assignmentEpoch} > 0 AND length(${t.resourceId}) = 64 AND ${t.resourceId} ~ '^[0-9a-f]{64}$' AND length(${t.incarnation}) BETWEEN 1 AND 256 AND (${t.resolvedCommit} IS NULL OR ${t.resolvedCommit} ~ '^[0-9a-f]{40,64}$') AND (${t.generation} IS NULL OR ${t.generation} >= 0) AND ((${t.phase} IN ('claimed','checkout_ready','baseline_ready','materialized')) = (${t.leaseExpiresAt} IS NOT NULL)) AND (${t.phase} NOT IN ('baseline_ready','materialized','handed_off') OR ${t.generation} IS NOT NULL) AND (${t.phase} <> 'handed_off' OR ${t.turnId} IS NOT NULL)) IS TRUE`,
+    ),
+  }),
+);
 export type ExecutionCommand = typeof executionCommands.$inferSelect;
 
 // --- Evaluation Lab (M46, ADR-142..145) ------------------------------------

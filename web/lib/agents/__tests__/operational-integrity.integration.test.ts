@@ -72,6 +72,31 @@ describe("operational source integrity", () => {
     ).not.toContain(root);
   });
 
+  it("TB05 retains a real Git exit category while redacting command diagnostics", async () => {
+    await rename(join(cwd, ".git", "HEAD"), join(root, "saved-head"));
+    let failure: unknown;
+
+    try {
+      await captureOperationalBaseline(cwd, "ephemeral_checkout");
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({
+      code: "PRECONDITION",
+      details: {
+        reason: "operational_integrity_probe_failed",
+        probeOperation: expect.stringMatching(/^git\./),
+        causeChain: expect.arrayContaining([
+          expect.objectContaining({ code: 128 }),
+        ]),
+      },
+    });
+    const details = JSON.stringify((failure as { details: object }).details);
+
+    expect(details).not.toContain(root);
+    expect(details).not.toContain("stderr");
+  });
+
   it("bounds concurrent probe buffers while hashing distinct multi-block, empty, short and tiny files exactly", async () => {
     const fixtures = Array.from({ length: 4 }, (_, probe) => ({
       plain: join(root, `probe-${probe}`),

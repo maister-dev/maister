@@ -8,7 +8,7 @@ import { MaisterError } from "@/lib/errors";
 
 const execute = promisify(execFile);
 const ownership = new AsyncLocalStorage<
-  (processGroup: number) => Promise<void>
+  ((processGroup: number) => Promise<void>) | undefined
 >();
 
 // The child cannot start Git until the owner has durably recorded its group.
@@ -60,6 +60,11 @@ export function withGitOwnership<T>(
   action: () => Promise<T>,
 ): Promise<T> {
   return ownership.run(register, action);
+}
+
+/** A durable handoff ends preparation ownership before host/model operations. */
+export function withoutGitOwnership<T>(action: () => Promise<T>): Promise<T> {
+  return ownership.run(undefined, action);
 }
 
 type GitExecutionOptions = {

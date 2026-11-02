@@ -1,14 +1,10 @@
 import "server-only";
 
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-
 import pino from "pino";
 
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { logRange, statusPorcelain, writeRescueRef } from "@/lib/worktree";
-
-const execFileAsync = promisify(execFile);
+import { executeRepositoryGit } from "@/lib/project-config-persistence/git-process";
 
 const log = pino({
   name: "gc-preserve",
@@ -42,9 +38,10 @@ async function git(
   worktreePath: string,
   args: readonly string[],
 ): Promise<string> {
-  const { stdout } = await execFileAsync("git", ["-C", worktreePath, ...args], {
-    signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
+  const { stdout } = await executeRepositoryGit(worktreePath, args, {
+    timeout: GIT_TIMEOUT_MS,
     maxBuffer: EXEC_MAX_BUFFER,
+    env: { ...process.env, LC_ALL: "C" },
   });
 
   return stdout;

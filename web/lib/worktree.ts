@@ -17,6 +17,7 @@ import { z } from "zod";
 import { branchNameSchema } from "@/lib/git-ref-names";
 import { withRepositoryMutationFence } from "@/lib/project-config-persistence/repository-lock";
 import { executeRepositoryGit } from "@/lib/project-config-persistence/git-process";
+import { tracePreparationOperation } from "@/lib/agents/preparation-trace";
 import { MaisterError } from "@/lib/errors";
 import {
   DELIVERY_PATHSPEC,
@@ -310,14 +311,10 @@ export async function addDetachedWorktree(
   );
 
   try {
-    const { stdout, stderr } = await runGit(repo, [
-      "worktree",
-      "add",
-      "--detach",
-      "--",
-      wt,
-      committish,
-    ]);
+    const { stdout, stderr } = await tracePreparationOperation(
+      "checkout.add_detached",
+      () => runGit(repo, ["worktree", "add", "--detach", "--", wt, committish]),
+    );
 
     log.debug({ stdout, stderr }, "addDetachedWorktree done");
   } catch (err) {
@@ -2048,7 +2045,7 @@ export async function removeWorktree(args: RemoveWorktreeArgs): Promise<void> {
   );
   const wt = validate(absolutePathSchema, args.worktreePath, "worktreePath");
 
-  const cmdArgs = ["-C", repo, "worktree", "remove"];
+  const cmdArgs = ["worktree", "remove"];
 
   if (args.force) cmdArgs.push("--force");
   cmdArgs.push(wt);
@@ -2059,10 +2056,10 @@ export async function removeWorktree(args: RemoveWorktreeArgs): Promise<void> {
   );
 
   try {
-    const { stdout, stderr } = await execFileAsync("git", cmdArgs, {
-      signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
-      maxBuffer: EXEC_MAX_BUFFER,
-    });
+    const { stdout, stderr } = await tracePreparationOperation(
+      "checkout.remove",
+      () => runGit(repo, cmdArgs),
+    );
 
     log.debug({ stdout, stderr }, "removeWorktree done");
   } catch (err) {
@@ -2180,14 +2177,7 @@ export async function listWorktrees(
   log.debug({ projectRepoPath: repo }, "listWorktrees");
 
   try {
-    const { stdout } = await execFileAsync(
-      "git",
-      ["-C", repo, "worktree", "list", "--porcelain"],
-      {
-        signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
-        maxBuffer: EXEC_MAX_BUFFER,
-      },
-    );
+    const { stdout } = await runGit(repo, ["worktree", "list", "--porcelain"]);
 
     return parsePorcelain(stdout);
   } catch (err) {
@@ -2215,22 +2205,13 @@ export async function logRange(args: LogRangeArgs): Promise<string> {
   log.debug({ worktreePath: wt, baseRef: base, branch: br }, "logRange");
 
   try {
-    const { stdout } = await execFileAsync(
-      "git",
-      [
-        "-C",
-        wt,
-        "log",
-        "--oneline",
-        "--no-color",
-        "--end-of-options",
-        `${base}..${br}`,
-      ],
-      {
-        signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
-        maxBuffer: EXEC_MAX_BUFFER,
-      },
-    );
+    const { stdout } = await runGit(wt, [
+      "log",
+      "--oneline",
+      "--no-color",
+      "--end-of-options",
+      `${base}..${br}`,
+    ]);
 
     const commitCount = stdout.split("\n").filter((l) => l.length > 0).length;
 
@@ -2460,12 +2441,13 @@ async function withTempIndexCopy<T>(
     let indexPathRaw: string;
 
     try {
-      ({ stdout: indexPathRaw } = await execFileAsync(
-        "git",
-        ["-C", worktreePath, "rev-parse", "--git-path", "index"],
+      ({ stdout: indexPathRaw } = await executeRepositoryGit(
+        worktreePath,
+        ["rev-parse", "--git-path", "index"],
         {
-          signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
+          timeout: GIT_TIMEOUT_MS,
           maxBuffer: EXEC_MAX_BUFFER,
+          env: cLocaleGitEnv(),
         },
       ));
     } catch (err) {
@@ -3076,21 +3058,12 @@ export async function statusPorcelain(
   log.debug({ worktreePath: wt }, "statusPorcelain");
 
   try {
-    const { stdout } = await execFileAsync(
-      "git",
-      [
-        "-C",
-        wt,
-        "status",
-        "--porcelain=v1",
-        "--untracked-files=all",
-        "--end-of-options",
-      ],
-      {
-        signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
-        maxBuffer: EXEC_MAX_BUFFER,
-      },
-    );
+    const { stdout } = await runGit(wt, [
+      "status",
+      "--porcelain=v1",
+      "--untracked-files=all",
+      "--end-of-options",
+    ]);
 
     return stdout;
   } catch (err) {
@@ -3352,7 +3325,7 @@ export async function writeRescueRef(args: {
   const { sha, indexCommit } = await withTempIndexCopy(wt, async (indexEnv) => {
     const env = { ...indexEnv, LC_ALL: "C" };
     const opts = {
-      signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
+      timeout: GIT_TIMEOUT_MS,
       maxBuffer: EXEC_MAX_BUFFER,
       env,
     };
@@ -3361,11 +3334,9 @@ export async function writeRescueRef(args: {
       parents: string[],
       message: string,
     ): Promise<string> => {
-      const { stdout } = await execFileAsync(
-        "git",
+      const { stdout } = await executeRepositoryGit(
+        wt,
         [
-          "-C",
-          wt,
           ...identityArgs,
           "commit-tree",
           tree,
@@ -3379,18 +3350,14 @@ export async function writeRescueRef(args: {
       return validate(gitCommitSchema, stdout.trim(), "commit");
     };
 
-    const indexTree = await execFileAsync(
-      "git",
-      ["-C", wt, "write-tree"],
-      opts,
-    ).then(
+    const indexTree = await executeRepositoryGit(wt, ["write-tree"], opts).then(
       ({ stdout }) => stdout.trim(),
       () => null,
     );
 
-    await execFileAsync("git", ["-C", wt, "add", "-A"], opts);
+    await executeRepositoryGit(wt, ["add", "-A"], opts);
     const workTree = (
-      await execFileAsync("git", ["-C", wt, "write-tree"], opts)
+      await executeRepositoryGit(wt, ["write-tree"], opts)
     ).stdout.trim();
     const index =
       indexTree !== null && indexTree !== headTree && indexTree !== workTree

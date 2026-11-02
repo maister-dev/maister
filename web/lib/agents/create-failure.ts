@@ -1,7 +1,6 @@
 import "server-only";
 
 import type { AgentFinalizeOptions } from "@/lib/agents/finalization";
-
 import type { Db } from "@/lib/execution-host/db";
 import type { AgentTurn } from "@/lib/db/schema";
 import type { BoundClient } from "@/lib/execution-host/client";
