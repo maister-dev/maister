@@ -55,6 +55,7 @@ export function useRunStream(
   const sourceRef = useRef<EventSource | null>(null);
   const lastEventIdRef = useRef<string | null>(null);
   const lifecycleRef = useRef(initialRunStreamLifecycle);
+  const cursorRunRef = useRef<string | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [reconnectKey, setReconnectKey] = useState(0);
 
@@ -79,6 +80,10 @@ export function useRunStream(
   // The effect owns the EventSource; status and liveness mirror the lifecycle of
   // the connection it opens and closes.
   useEffect(() => {
+    if (cursorRunRef.current !== runId) {
+      cursorRunRef.current = runId;
+      lastEventIdRef.current = null;
+    }
     if (!runId) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setStatus("closed");
@@ -105,6 +110,7 @@ export function useRunStream(
 
     sourceRef.current = es;
     es.onopen = () => {
+      if (sourceRef.current !== es) return;
       lifecycleRef.current = advanceRunStreamLifecycle(
         lifecycleRef.current,
         "opened",
@@ -114,6 +120,7 @@ export function useRunStream(
       setError(null);
     };
     es.onmessage = (msg) => {
+      if (sourceRef.current !== es) return;
       try {
         const parsed = JSON.parse(msg.data) as RunStreamEvent;
 
@@ -128,8 +135,8 @@ export function useRunStream(
       }
     };
     es.onerror = () => {
-      setError("eventsource error");
       if (sourceRef.current !== es) return;
+      setError("eventsource error");
 
       es.close();
       sourceRef.current = null;

@@ -47,6 +47,26 @@ dispatched initial, resume, rework, and message prompts alongside responses.
 Steered messages appear in the same conversation. Open full artifacts when a
 node or consensus result only shows a bounded excerpt.
 
+## Inspect a delegated child Run
+
+Select a child in the Run tree or inspector to open a read-only peek beside the
+main Run. Its status, conversation or Flow execution, and public result update
+while the parent remains open. Execution status and public-result availability
+are separate: a completed Run may still have a missing or invalid result.
+
+Use the hierarchy, sibling list, child list, and **Previous selection** to inspect
+related Runs in the same panel. The main Run stays the navigation anchor. The URL
+preserves the selected child and view; browser Back and Forward restore them.
+
+Closing peek keeps the parent's view, scroll position, inspector state, and draft,
+and returns focus to the child entry. On narrower screens peek is a modal sheet;
+Escape closes it. The personal librarian is temporarily hidden with its draft
+retained; after resizing to a narrow screen, reopen it explicitly when needed.
+
+Choose **Open full Run** to message an eligible agent, answer a human request,
+review, promote, or use lifecycle controls. Peek offers inspection only. Content
+remains subject to your project permissions and retained data availability.
+
 ## Understand why a Run ended
 
 Failed, crashed, or abandoned Runs show a recorded terminal reason when one is

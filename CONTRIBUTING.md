@@ -90,6 +90,17 @@ tests require Docker; see [Getting Started](docs/getting-started.md) for their
 environment and exact commands. Do not hide a failing check. Explain a known,
 pre-existing failure and provide evidence that the change did not introduce it.
 
+For concurrent E2E invocations in separate checkouts, choose free `E2E_PORT`
+and `E2E_SUPERVISOR_PORT` values. The existing E2E wrapper owns its Postgres
+container and places seeded fixture files under its invocation's test-worktree
+root, so independent invocations do not overwrite each other's Flow fixtures.
+
+Production test fixtures allocate a fresh port again on a confirmed
+`EADDRINUSE` startup race, after the failed owned process group has retired.
+Automatic allocation is bounded to three starts and logs each retry; other
+startup errors fail immediately. An explicitly supplied port is never silently
+reassigned.
+
 ## AI-assisted contributions
 
 AI assistance is welcome, but the contributor remains responsible for every

@@ -34,6 +34,7 @@ import { DELEGATED_FLOW_RELEASE } from "./delegated-release";
 import { resetFakeGhState } from "./fake-gh";
 import { E2E_EXECUTION_HOST_SLUG } from "./fixtures";
 
+import { resolveTestWorktreesRoot } from "@/test-support/worktree-test-root";
 import { LEGACY_STEPS_REFUSAL_MESSAGE } from "@/lib/flows/manifest-shape";
 
 const execFileAsync = promisify(execFile);
@@ -65,7 +66,10 @@ const HUMAN_ASK_SLUG = "e2e-human-ask";
 const HUMAN_ASK_QUESTION =
   "Which deployment environment should receive this release?";
 
-const RUNTIME_ROOT = "/tmp/maister-e2e";
+const RUNTIME_ROOT = path.join(
+  resolveTestWorktreesRoot("e2e", process.env),
+  "fixtures",
+);
 const PLATFORM_DEFAULT_RUNNER_ID = "claude-code";
 const CODEX_RUNNER_ID = "codex-openai";
 const NOT_READY_RUNNER_ID = "codex-zai-glm";
@@ -883,7 +887,7 @@ const M11C_REFUSE_MANIFEST = {
 };
 
 // --- Flow Studio Phase 2 (T2.5) fixture: installed-package viewer + fork ----
-// A REAL on-disk immutable bundle (written to /tmp/maister-e2e/flows/...) plus
+// A REAL on-disk immutable bundle (written to ${RUNTIME_ROOT}/flows/...) plus
 // the `flows` + enabled `flow_revisions` rows that point at it. The nav-path
 // e2e (flow-package-viewer.spec.ts) clicks: board → Packages tab → package card
 // → viewer (static graph + raw flow.yaml + a file from the list) → Fork → the
@@ -2262,7 +2266,7 @@ async function seedM11aFixture(
     hitl: randomUUID(),
     member: randomUUID(),
   };
-  const repoPath = `/tmp/maister-e2e/${ids.project}`;
+  const repoPath = `${RUNTIME_ROOT}/${ids.project}`;
   const worktreePath = `${repoPath}/.worktrees/e2e-review`;
 
   await pool.query(`DELETE FROM projects WHERE slug = $1`, [M11A_SLUG]);
@@ -2295,7 +2299,7 @@ async function seedM11aFixture(
       ids.flow,
       ids.project,
       "github.com/maister/maister-flow-aif",
-      `/tmp/maister-e2e/flows/aif@v0.0.1`,
+      `${RUNTIME_ROOT}/flows/aif@v0.0.1`,
       JSON.stringify(M11A_MANIFEST),
     ],
   );
@@ -2369,7 +2373,7 @@ async function seedM12EvidenceFixture(
     judgeVerdict: randomUUID(),
     gate: randomUUID(),
   };
-  const repoPath = `/tmp/maister-e2e/${ids.project}`;
+  const repoPath = `${RUNTIME_ROOT}/${ids.project}`;
   const worktreePath = `${repoPath}/.worktrees/e2e-evidence`;
 
   await pool.query(`DELETE FROM projects WHERE slug = $1`, [M12_SLUG]);
@@ -2401,7 +2405,7 @@ async function seedM12EvidenceFixture(
       ids.flow,
       ids.project,
       "github.com/maister/maister-flow-aif",
-      `/tmp/maister-e2e/flows/aif-m12@v0.0.1`,
+      `${RUNTIME_ROOT}/flows/aif-m12@v0.0.1`,
       JSON.stringify(M12_MANIFEST),
     ],
   );
@@ -2569,7 +2573,7 @@ async function seedM11bFixture(
     reviewAttempt: randomUUID(),
     gate: randomUUID(),
   };
-  const repoPath = `/tmp/maister-e2e/${ids.project}`;
+  const repoPath = `${RUNTIME_ROOT}/${ids.project}`;
   const worktreePath = `${repoPath}/.worktrees/e2e-takeover`;
 
   await pool.query(`DELETE FROM projects WHERE slug = $1`, [M11B_SLUG]);
@@ -2606,7 +2610,7 @@ async function seedM11bFixture(
       ids.flow,
       ids.project,
       "github.com/maister/maister-flow-aif",
-      `/tmp/maister-e2e/flows/aif-takeover@v0.0.1`,
+      `${RUNTIME_ROOT}/flows/aif-takeover@v0.0.1`,
       JSON.stringify(M11B_MANIFEST),
     ],
   );
@@ -2700,7 +2704,7 @@ async function seedAdr159ReworkClaimFixture(
     reviewAttempt: randomUUID(),
     gate: randomUUID(),
   };
-  const repoPath = `/tmp/maister-e2e/${ids.project}`;
+  const repoPath = `${RUNTIME_ROOT}/${ids.project}`;
   const worktreePath = `${repoPath}/.worktrees/e2e-rework-claim`;
 
   await pool.query(`DELETE FROM projects WHERE slug = $1`, [ADR159_SLUG]);
@@ -2735,7 +2739,7 @@ async function seedAdr159ReworkClaimFixture(
       ids.flow,
       ids.project,
       "github.com/maister/maister-flow-aif",
-      `/tmp/maister-e2e/flows/aif-rework-claim@v0.0.1`,
+      `${RUNTIME_ROOT}/flows/aif-rework-claim@v0.0.1`,
       JSON.stringify(M11B_MANIFEST),
     ],
   );
@@ -2827,7 +2831,7 @@ async function seedAdr160NodeInterruptFixture(
     parkedAttempt: randomUUID(),
     hitl: randomUUID(),
   };
-  const repoPath = `/tmp/maister-e2e/${ids.project}`;
+  const repoPath = `${RUNTIME_ROOT}/${ids.project}`;
   const worktreePath = `${repoPath}/.worktrees/e2e-node-interrupt`;
 
   await pool.query(`DELETE FROM projects WHERE slug = $1`, [ADR160_SLUG]);
@@ -2862,7 +2866,7 @@ async function seedAdr160NodeInterruptFixture(
       ids.flow,
       ids.project,
       "github.com/maister/maister-flow-aif",
-      `/tmp/maister-e2e/flows/aif-node-interrupt@v0.0.1`,
+      `${RUNTIME_ROOT}/flows/aif-node-interrupt@v0.0.1`,
       JSON.stringify(M11B_MANIFEST),
     ],
   );
@@ -3011,7 +3015,7 @@ async function seedReviewCommentsFixture(
     threadSecond: randomUUID(),
     threadOutdated: randomUUID(),
   };
-  const repoPath = `/tmp/maister-e2e/${ids.project}`;
+  const repoPath = `${RUNTIME_ROOT}/${ids.project}`;
   const worktreePath = `${repoPath}/.worktrees/e2e-review-comments`;
 
   await pool.query(`DELETE FROM projects WHERE slug = $1`, [RC_SLUG]);
@@ -3049,7 +3053,7 @@ async function seedReviewCommentsFixture(
       ids.flow,
       ids.project,
       "github.com/maister/maister-flow-aif",
-      `/tmp/maister-e2e/flows/aif-review-comments@v0.0.1`,
+      `${RUNTIME_ROOT}/flows/aif-review-comments@v0.0.1`,
       JSON.stringify(RC_MANIFEST),
     ],
   );
@@ -3495,7 +3499,7 @@ async function seedHumanAskFixture(
         mode, triggers, risk_tier, source_path)
      VALUES ($1, 'e2e-human-ask', 'v1.0.0', 'authored', 'Release agent',
         'Requests a deployment target from a human.', 'none', 'session',
-        '[]'::jsonb, 'standard', '/tmp/maister-e2e/human-ask/release-agent.md')
+        '[]'::jsonb, 'standard', '${RUNTIME_ROOT}/human-ask/release-agent.md')
      ON CONFLICT (id) DO UPDATE SET version_label = EXCLUDED.version_label`,
     [ids.agent],
   );
@@ -3603,7 +3607,7 @@ async function seedM11cVisibleFixture(
     hitl: randomUUID(),
     member: randomUUID(),
   };
-  const repoPath = `/tmp/maister-e2e/${ids.project}`;
+  const repoPath = `${RUNTIME_ROOT}/${ids.project}`;
   const worktreePath = `${repoPath}/.worktrees/e2e-m11c-visible`;
 
   await pool.query(`DELETE FROM projects WHERE slug = $1`, [M11C_VISIBLE_SLUG]);
@@ -3635,7 +3639,7 @@ async function seedM11cVisibleFixture(
       ids.flow,
       ids.project,
       "github.com/maister/maister-flow-aif",
-      `/tmp/maister-e2e/flows/aif-m11c-visible@v0.0.1`,
+      `${RUNTIME_ROOT}/flows/aif-m11c-visible@v0.0.1`,
       JSON.stringify(M11C_VISIBLE_MANIFEST),
     ],
   );
@@ -3704,8 +3708,8 @@ async function seedM11cRefuseFixture(
     task: randomUUID(),
     member: randomUUID(),
   };
-  const repoPath = `/tmp/maister-e2e/${ids.project}`;
-  const installedPath = `/tmp/maister-e2e/flows/aif-m11c-refuse@v0.0.1`;
+  const repoPath = `${RUNTIME_ROOT}/${ids.project}`;
+  const installedPath = `${RUNTIME_ROOT}/flows/aif-m11c-refuse@v0.0.1`;
 
   // The ADR-087 launch dialog loads /api/runs/launch-options, which lists the
   // project repo's branches — the refusal path now needs a REAL git repo even
@@ -3852,7 +3856,7 @@ async function seedM19Fixture(
     dueRun: randomUUID(),
     dueWorkspace: randomUUID(),
   };
-  const repoPath = `/tmp/maister-e2e/${ids.project}`;
+  const repoPath = `${RUNTIME_ROOT}/${ids.project}`;
   const now = Date.now();
   const DAY_MS = 86_400_000;
   // gcWarningDays defaults to 2 → warning deadline 1 day out (inside window).
@@ -3893,7 +3897,7 @@ async function seedM19Fixture(
       ids.flow,
       ids.project,
       "github.com/maister/maister-flow-aif",
-      `/tmp/maister-e2e/flows/aif-m19@v0.0.1`,
+      `${RUNTIME_ROOT}/flows/aif-m19@v0.0.1`,
       JSON.stringify(M19_MANIFEST),
     ],
   );
@@ -4101,7 +4105,7 @@ async function seedM15Fixture(
     overriddenGate: randomUUID(),
     member: randomUUID(),
   };
-  const repoPath = `/tmp/maister-e2e/${ids.project}`;
+  const repoPath = `${RUNTIME_ROOT}/${ids.project}`;
   const failedWorktreePath = `${repoPath}/.worktrees/e2e-m15-failed`;
   const overriddenWorktreePath = `${repoPath}/.worktrees/e2e-m15-overridden`;
 
@@ -4134,7 +4138,7 @@ async function seedM15Fixture(
       ids.flow,
       ids.project,
       "github.com/maister/maister-flow-aif",
-      `/tmp/maister-e2e/flows/aif-readiness@v0.0.1`,
+      `${RUNTIME_ROOT}/flows/aif-readiness@v0.0.1`,
       JSON.stringify(M15_MANIFEST),
     ],
   );
@@ -4332,7 +4336,7 @@ async function seedM16Fixture(
       ids.flow,
       base.projectId,
       "github.com/maister/maister-flow-aif",
-      `/tmp/maister-e2e/flows/aif-external@v0.0.1`,
+      `${RUNTIME_ROOT}/flows/aif-external@v0.0.1`,
       JSON.stringify(M16_MANIFEST),
     ],
   );
@@ -4479,8 +4483,8 @@ async function seedM17Fixture(
     reviewAttempt2: randomUUID(),
   };
 
-  const repoPath1 = `/tmp/maister-e2e/${ids.project1}`;
-  const repoPath2 = `/tmp/maister-e2e/${ids.project2}`;
+  const repoPath1 = `${RUNTIME_ROOT}/${ids.project1}`;
+  const repoPath2 = `${RUNTIME_ROOT}/${ids.project2}`;
   const worktreePath1 = `${repoPath1}/.worktrees/e2e-m17-proj1`;
   const worktreePath2 = `${repoPath2}/.worktrees/e2e-m17-proj2`;
 
@@ -4509,7 +4513,7 @@ async function seedM17Fixture(
       ids.flow1,
       ids.project1,
       "github.com/maister/maister-flow-aif",
-      `/tmp/maister-e2e/flows/aif-m17@v0.0.1`,
+      `${RUNTIME_ROOT}/flows/aif-m17@v0.0.1`,
       JSON.stringify(M17_MANIFEST),
     ],
   );
@@ -4588,7 +4592,7 @@ async function seedM17Fixture(
       ids.flow2,
       ids.project2,
       "github.com/maister/maister-flow-aif",
-      `/tmp/maister-e2e/flows/aif-m17-proj2@v0.0.1`,
+      `${RUNTIME_ROOT}/flows/aif-m17-proj2@v0.0.1`,
       JSON.stringify(M17_MANIFEST),
     ],
   );
@@ -4684,7 +4688,7 @@ async function seedPlanReviewFixture(
     decisionA: randomUUID(),
     decisionB: randomUUID(),
   };
-  const repoPath = `/tmp/maister-e2e/${ids.project}`;
+  const repoPath = `${RUNTIME_ROOT}/${ids.project}`;
   const worktreePath = `${repoPath}/.worktrees/e2e-plan-review`;
   const parentSchema = {
     review: true,
@@ -4712,7 +4716,7 @@ async function seedPlanReviewFixture(
     [
       ids.flow,
       ids.project,
-      `/tmp/maister-e2e/flows/plan-review@v0.0.1`,
+      `${RUNTIME_ROOT}/flows/plan-review@v0.0.1`,
       JSON.stringify(M17_MANIFEST),
     ],
   );
@@ -4812,7 +4816,7 @@ async function seedBudgetForkFixture(
     implAttempt: randomUUID(),
     reviewAttempt: randomUUID(),
   };
-  const repoPath = `/tmp/maister-e2e/${ids.project}`;
+  const repoPath = `${RUNTIME_ROOT}/${ids.project}`;
   const worktreePath = `${repoPath}/.worktrees/e2e-budget-fork`;
 
   await pool.query(`DELETE FROM projects WHERE slug = $1`, [BUDGET_FORK_SLUG]);
@@ -4834,7 +4838,7 @@ async function seedBudgetForkFixture(
       ids.flow,
       ids.project,
       "github.com/maister/maister-flow-aif",
-      `/tmp/maister-e2e/flows/aif-budget-fork@v0.0.1`,
+      `${RUNTIME_ROOT}/flows/aif-budget-fork@v0.0.1`,
       JSON.stringify(M17_MANIFEST),
     ],
   );
@@ -4996,7 +5000,7 @@ async function seedM40HookTripRun(
     hitl: randomUUID(),
     implAttempt: randomUUID(),
   };
-  const repoPath = `/tmp/maister-e2e/${projectId}`;
+  const repoPath = `${RUNTIME_ROOT}/${projectId}`;
   const worktreePath = `${repoPath}/.worktrees/${branch.split("/").pop()}`;
 
   await pool.query(
@@ -5040,7 +5044,7 @@ async function seedM40Fixture(
 ): Promise<M40FixtureRecord> {
   const projectId = randomUUID();
   const flowId = randomUUID();
-  const repoPath = `/tmp/maister-e2e/${projectId}`;
+  const repoPath = `${RUNTIME_ROOT}/${projectId}`;
 
   await pool.query(`DELETE FROM projects WHERE slug = $1`, [M40_PROJECT_SLUG]);
 
@@ -5062,7 +5066,7 @@ async function seedM40Fixture(
       flowId,
       projectId,
       "github.com/maister/maister-flow-aif",
-      `/tmp/maister-e2e/flows/aif-m40@v0.0.1`,
+      `${RUNTIME_ROOT}/flows/aif-m40@v0.0.1`,
       JSON.stringify(M40_MANIFEST),
     ],
   );
@@ -5178,7 +5182,7 @@ async function seedCapabilityEnforcementFixture(
 ): Promise<CapabilityEnforcementFixtureRecord> {
   const projectId = randomUUID();
   const flowId = randomUUID();
-  const repoPath = `/tmp/maister-e2e/${projectId}`;
+  const repoPath = `${RUNTIME_ROOT}/${projectId}`;
 
   await pool.query(`DELETE FROM projects WHERE slug = $1`, [CAP_ENFORCE_SLUG]);
 
@@ -5200,7 +5204,7 @@ async function seedCapabilityEnforcementFixture(
       flowId,
       projectId,
       "github.com/maister/maister-flow-aif",
-      `/tmp/maister-e2e/flows/aif-cap@v0.0.1`,
+      `${RUNTIME_ROOT}/flows/aif-cap@v0.0.1`,
       JSON.stringify(CAP_ENFORCE_MANIFEST),
     ],
   );
@@ -5451,7 +5455,7 @@ async function seedM18Fixture(
     prImpl: randomUUID(),
     prReview: randomUUID(),
   };
-  const repoPath = `/tmp/maister-e2e/${ids.project}`;
+  const repoPath = `${RUNTIME_ROOT}/${ids.project}`;
 
   await pool.query(`DELETE FROM projects WHERE slug = $1`, [M18_SLUG]);
 
@@ -5519,7 +5523,7 @@ async function seedM18Fixture(
       ids.flow,
       ids.project,
       "github.com/maister/maister-flow-aif",
-      `/tmp/maister-e2e/flows/aif-m18@v0.0.1`,
+      `${RUNTIME_ROOT}/flows/aif-m18@v0.0.1`,
       JSON.stringify(M18_MANIFEST),
     ],
   );
@@ -5695,8 +5699,8 @@ async function seedM27Fixture(
     scratchRun: randomUUID(),
     scratchWorkspace: randomUUID(),
   };
-  const repoPath = `/tmp/maister-e2e/${ids.project}`;
-  const remotePath = `/tmp/maister-e2e/${ids.project}.origin.git`;
+  const repoPath = `${RUNTIME_ROOT}/${ids.project}`;
+  const remotePath = `${RUNTIME_ROOT}/${ids.project}.origin.git`;
   // Under `MAISTER_WORKTREES_ROOT`, which `playwright.config.ts` sets before
   // this seed runs — NOT a path inside the repo.
   //
@@ -5754,7 +5758,7 @@ async function seedM27Fixture(
       ids.flow,
       ids.project,
       "github.com/maister/maister-flow-aif",
-      `/tmp/maister-e2e/flows/aif-m27@v0.0.1`,
+      `${RUNTIME_ROOT}/flows/aif-m27@v0.0.1`,
       JSON.stringify(M27_MANIFEST),
     ],
   );
@@ -5975,7 +5979,7 @@ async function seedM22Fixture(
     reviewAttempt: randomUUID(),
     gate: randomUUID(),
   };
-  const repoPath = `/tmp/maister-e2e/${ids.project}`;
+  const repoPath = `${RUNTIME_ROOT}/${ids.project}`;
   const worktreePath = `${repoPath}/.worktrees/e2e-m22-workbench`;
   const oversizedFile = "big.txt";
 
@@ -6016,7 +6020,7 @@ async function seedM22Fixture(
       ids.flow,
       ids.project,
       "github.com/maister/maister-flow-aif",
-      `/tmp/maister-e2e/flows/aif-m22@v0.0.1`,
+      `${RUNTIME_ROOT}/flows/aif-m22@v0.0.1`,
       JSON.stringify(M22_MANIFEST),
     ],
   );
@@ -6216,7 +6220,7 @@ async function seedScratchDetailFixture(
     workspace: randomUUID(),
     member: randomUUID(),
   };
-  const repoPath = `/tmp/maister-e2e/${ids.project}`;
+  const repoPath = `${RUNTIME_ROOT}/${ids.project}`;
   const worktreePath = `${repoPath}/.worktrees/e2e-scratch-detail`;
 
   await pool.query(`DELETE FROM projects WHERE slug = $1`, [
@@ -6432,7 +6436,7 @@ async function seedM23Fixture(
     prOpenWorkspace: randomUUID(),
     abandonedWorkspace: randomUUID(),
   };
-  const repoPath = `/tmp/maister-e2e/${ids.project}`;
+  const repoPath = `${RUNTIME_ROOT}/${ids.project}`;
 
   await pool.query(`DELETE FROM projects WHERE slug = $1`, [M23_SLUG]);
   await pool.query(`DELETE FROM projects WHERE slug = $1`, [M23_NO_CACHE_SLUG]);
@@ -6455,8 +6459,8 @@ async function seedM23Fixture(
     [
       ids.noCacheProject,
       M23_NO_CACHE_SLUG,
-      `/tmp/maister-e2e/no-cache-${ids.noCacheProject}`,
-      `/tmp/maister-e2e/no-cache-${ids.noCacheProject}/maister.yaml`,
+      `${RUNTIME_ROOT}/no-cache-${ids.noCacheProject}`,
+      `${RUNTIME_ROOT}/no-cache-${ids.noCacheProject}/maister.yaml`,
     ],
   );
   await pool.query(
@@ -6511,7 +6515,7 @@ async function seedM23Fixture(
       ids.flow,
       ids.project,
       "github.com/maister/maister-flow-aif",
-      `/tmp/maister-e2e/flows/aif-observatory@v0.0.1`,
+      `${RUNTIME_ROOT}/flows/aif-observatory@v0.0.1`,
       JSON.stringify(M23_MANIFEST),
     ],
   );
@@ -6526,7 +6530,7 @@ async function seedM23Fixture(
       `rev-${ids.revision}`,
       `digest-${ids.revision}`,
       JSON.stringify(M23_MANIFEST),
-      `/tmp/maister-e2e/flows/aif-observatory@v0.0.1`,
+      `${RUNTIME_ROOT}/flows/aif-observatory@v0.0.1`,
     ],
   );
   await pool.query(
@@ -6811,7 +6815,7 @@ async function seedM27FlowEditorFixture(
     cap: randomUUID(),
     revision: randomUUID(),
   };
-  const repoPath = `/tmp/maister-e2e/${ids.project}`;
+  const repoPath = `${RUNTIME_ROOT}/${ids.project}`;
 
   await pool.query(`DELETE FROM projects WHERE slug = $1`, [M27_EDITOR_SLUG]);
   await pool.query(
@@ -6908,7 +6912,7 @@ async function seedFlowsAuthoringFixture(
     cap: randomUUID(),
     revision: randomUUID(),
   };
-  const repoPath = `/tmp/maister-e2e/${ids.project}`;
+  const repoPath = `${RUNTIME_ROOT}/${ids.project}`;
   const body = {
     flowYaml: FLOWS_AUTHORING_FLOW_YAML,
     manifest: null,
@@ -8021,7 +8025,7 @@ async function seedWorkTableFixture(
   ): Promise<{ projectId: string; flowId: string }> {
     const projectId = randomUUID();
     const flowId = randomUUID();
-    const repoPath = `/tmp/maister-e2e/${projectId}`;
+    const repoPath = `${RUNTIME_ROOT}/${projectId}`;
 
     await pool.query(
       `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path, task_key)
@@ -8035,7 +8039,7 @@ async function seedWorkTableFixture(
         flowId,
         projectId,
         "github.com/maister/maister-flow-aif",
-        `/tmp/maister-e2e/flows/aif-work@v0.0.1`,
+        `${RUNTIME_ROOT}/flows/aif-work@v0.0.1`,
         JSON.stringify({ schemaVersion: 1, name: "aif", nodes: [] }),
       ],
     );
@@ -8094,8 +8098,8 @@ async function seedWorkTableFixture(
           project.projectId,
           runId,
           `maister/work-${number}-${runId.slice(0, 8)}`,
-          `/tmp/maister-e2e/wt-${runId}`,
-          `/tmp/maister-e2e/${project.projectId}`,
+          `${RUNTIME_ROOT}/wt-${runId}`,
+          `${RUNTIME_ROOT}/${project.projectId}`,
         ],
       );
     }
@@ -8214,7 +8218,7 @@ async function seedActivityFeedFixture(
 
   const projectId = randomUUID();
   const flowId = randomUUID();
-  const repoPath = `/tmp/maister-e2e/${projectId}`;
+  const repoPath = `${RUNTIME_ROOT}/${projectId}`;
   const taskKey = "ACT";
 
   await pool.query(
@@ -8236,7 +8240,7 @@ async function seedActivityFeedFixture(
       flowId,
       projectId,
       "github.com/maister/maister-flow-aif",
-      `/tmp/maister-e2e/flows/aif-activity@v0.0.1`,
+      `${RUNTIME_ROOT}/flows/aif-activity@v0.0.1`,
       JSON.stringify({ schemaVersion: 1, name: "aif", nodes: [] }),
     ],
   );
@@ -8384,7 +8388,7 @@ async function seedM38DecideFixture(
     cap: randomUUID(),
     revision: randomUUID(),
   };
-  const studioRepoPath = `/tmp/maister-e2e/${studioIds.project}`;
+  const studioRepoPath = `${RUNTIME_ROOT}/${studioIds.project}`;
 
   await pool.query(`DELETE FROM projects WHERE slug = $1`, [M38_STUDIO_SLUG]);
   await pool.query(

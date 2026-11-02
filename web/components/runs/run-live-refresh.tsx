@@ -9,6 +9,7 @@ import {
   RunStreamLiveness,
   type RunStreamLivenessLabels,
 } from "@/components/feedback/run-stream-liveness";
+import { useWorkbenchStream } from "@/components/runs/run-workbench-stream-provider";
 import { useRunPageStream } from "@/components/runs/run-stream-provider";
 import { isLiveRunStatus } from "@/lib/runs/live-inspector";
 import { runViewKey, shouldRefreshRunView } from "@/lib/runs/live-refresh";
@@ -36,11 +37,21 @@ export function RunLiveRefresh({
   livenessLabels: RunStreamLivenessLabels;
 }): ReactElement | null {
   const router = useRouter();
+  const workbench = useWorkbenchStream();
   const live = isLiveRunStatus(runStatus);
   const { eventCount, liveness, reconnect } = useRunPageStream(runId, live);
   const seenRef = useRef<string | null>(
     runViewKey({ runStatus, currentStepId }),
   );
+  const metadataVersion = workbench
+    ? `${workbench.mainSummaryTick}:${live ? 0 : workbench.mainExecutionTick}`
+    : "legacy";
+  const metadataRef = useRef(metadataVersion);
+  const seenMetadataRef = useRef("legacy");
+
+  useEffect(() => {
+    metadataRef.current = metadataVersion;
+  }, [metadataVersion]);
   const scheduleRef = useRef<(() => void) | null>(null);
 
   // A completed server re-render delivers fresh props — adopt them as the new
@@ -51,7 +62,7 @@ export function RunLiveRefresh({
   }, [runId, runStatus, currentStepId]);
 
   useEffect(() => {
-    if (!live) return;
+    if (!live && !workbench) return;
 
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -71,6 +82,15 @@ export function RunLiveRefresh({
       pending = false;
       inFlight = true;
       try {
+        if (
+          metadataRef.current !== "legacy" &&
+          metadataRef.current !== seenMetadataRef.current
+        ) {
+          seenMetadataRef.current = metadataRef.current;
+          router.refresh();
+
+          return;
+        }
         const res = await fetch(`/api/runs/${runId}/graph-status`, {
           signal: controller.signal,
         });
@@ -83,10 +103,12 @@ export function RunLiveRefresh({
 
         if (controller.signal.aborted) return;
         if (
+          metadataRef.current !== seenMetadataRef.current ||
           seenRef.current === null ||
           shouldRefreshRunView(seenRef.current, snap)
         ) {
           seenRef.current = runViewKey(snap);
+          seenMetadataRef.current = metadataRef.current;
           router.refresh();
         }
       } catch {
@@ -104,19 +126,19 @@ export function RunLiveRefresh({
       if (timer !== null) clearTimeout(timer);
       scheduleRef.current = null;
     };
-  }, [live, runId, router]);
+  }, [live, runId, router, !!workbench]);
 
   useEffect(() => {
-    if (liveness === "live") seenRef.current = null;
-  }, [liveness, runId]);
+    if (liveness === "live" && !workbench) seenRef.current = null;
+  }, [liveness, runId, !!workbench]);
 
   useEffect(() => {
-    if (live && (eventCount > 0 || liveness === "live")) {
+    if ((live || workbench) && (eventCount > 0 || liveness === "live")) {
       scheduleRef.current?.();
     }
-  }, [eventCount, live, liveness, runId]);
+  }, [eventCount, live, liveness, runId, !!workbench]);
 
-  if (!live) return null;
+  if (!live && !workbench) return null;
 
   return (
     <div className="mx-auto w-full max-w-[1440px] px-4 pt-3 sm:px-6">

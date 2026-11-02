@@ -60,8 +60,49 @@ channels:
           - $ref: "#/components/messages/CanonicalRunEvent"
           - $ref: "#/components/messages/SessionStreamReady"
           - $ref: "#/components/messages/SessionStreamTimeout"
+  /api/runs/{runId}/peek/stream:
+    parameters:
+      runId:
+        description: Authorized immutable workbench anchor.
+        schema:
+          type: string
+    subscribe:
+      operationId: subscribeRunPeekChanges
+      summary: Designed — content-free workbench change notifications
+      description: Active browser session. At most the anchor and admitted selected descendant receive
+        run.changed ticks. No SSE id/replay cursor; ready/resync causes canonical projection reads.
+        New metadata and final projection changes remain observable after execution settles. HTTP
+        heartbeats perform no data polling.
+      message:
+        oneOf:
+          - $ref: "#/components/messages/RunPeekReady"
+          - $ref: "#/components/messages/RunPeekChanged"
+          - $ref: "#/components/messages/RunPeekRunChanged"
+          - $ref: "#/components/messages/RunPeekResync"
+          - $ref: "#/components/messages/RunPeekSelectionUnavailable"
+
 components:
   messages:
+    RunPeekReady:
+      name: RunPeekReady
+      payload:
+        $ref: "#/components/schemas/RunPeekReady"
+    RunPeekChanged:
+      name: RunPeekChanged
+      payload:
+        $ref: "#/components/schemas/RunPeekChanged"
+    RunPeekRunChanged:
+      name: RunPeekRunChanged
+      payload:
+        $ref: "#/components/schemas/RunPeekRunChanged"
+    RunPeekResync:
+      name: RunPeekResync
+      payload:
+        $ref: "#/components/schemas/RunPeekResync"
+    RunPeekSelectionUnavailable:
+      name: RunPeekSelectionUnavailable
+      payload:
+        $ref: "#/components/schemas/RunPeekSelectionUnavailable"
     CanonicalRunEvent:
       name: canonical.run.event
       title: Manager-owned canonical run event metadata
@@ -81,6 +122,76 @@ components:
       payload:
         $ref: "#/components/schemas/SessionStreamTimeoutEvent"
   schemas:
+    RunPeekReady:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - anchorRunId
+        - selectedRunId
+        - selectionState
+      properties:
+        type:
+          const: peek.ready
+        anchorRunId:
+          type: string
+        selectedRunId:
+          type:
+            - string
+            - "null"
+        selectionState:
+          enum:
+            - none
+            - ready
+            - unavailable
+    RunPeekChanged:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+      properties:
+        type:
+          const: peek.changed
+    RunPeekRunChanged:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - runId
+        - kind
+      properties:
+        type:
+          const: run.changed
+        runId:
+          type: string
+        kind:
+          enum:
+            - execution
+            - summary
+            - transcript
+    RunPeekResync:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - reason
+      properties:
+        type:
+          const: peek.resync
+        reason:
+          enum:
+            - listener_reconnected
+            - visibility
+            - manual
+            - transport
+    RunPeekSelectionUnavailable:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+      properties:
+        type:
+          const: peek.selection_unavailable
     BrowserCanonicalRunEvent:
       type: object
       additionalProperties: false

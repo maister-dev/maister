@@ -1,9 +1,13 @@
+"use client";
+
 import type { ResultStatus } from "@/lib/run-results/types";
 import type { RunStatusKey } from "@/lib/runs/run-status-tone";
 import type { ReactElement } from "react";
 
 import clsx from "clsx";
 
+import { useRunPeek } from "@/components/runs/run-peek-controller";
+import { RunChildPageList } from "@/components/runs/run-peek-navigation";
 import {
   RUN_STATUS_DOT_CLASS,
   runStatusTone,
@@ -12,6 +16,7 @@ import {
 export interface RunInspectorChildRun {
   runId: string;
   status: string;
+  label?: string;
   // KEY-N back-reference; null for a task-less ("as-run") child.
   taskRef: string | null;
   // ADR-165: the child's public-result state, or null when it has no contract.
@@ -68,6 +73,20 @@ export function RunInspectorChildRunsList({
   childRuns,
   labels,
 }: RunInspectorChildRunsListProps): ReactElement {
+  const peek = useRunPeek();
+
+  if (peek)
+    return (
+      <details
+        open
+        className="rounded border border-line p-2"
+        data-testid="run-inspector-child-runs"
+      >
+        <summary>{peek.t("children")}</summary>
+        <RunChildPageList parentId={peek.anchor} />
+      </details>
+    );
+
   return (
     <details
       open

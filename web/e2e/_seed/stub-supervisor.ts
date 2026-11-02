@@ -30,7 +30,17 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import path from "node:path";
 
-export const STUB_SUPERVISOR_PORT = 7788;
+export const STUB_SUPERVISOR_PORT = Number(
+  process.env.E2E_SUPERVISOR_PORT ?? 7788,
+);
+if (
+  !Number.isInteger(STUB_SUPERVISOR_PORT) ||
+  STUB_SUPERVISOR_PORT < 1 ||
+  STUB_SUPERVISOR_PORT > 65535
+)
+  throw new RangeError(
+    "E2E_SUPERVISOR_PORT must be an integer from 1 to 65535",
+  );
 export const STUB_SUPERVISOR_URL = `http://127.0.0.1:${STUB_SUPERVISOR_PORT}`;
 export const STUB_SESSIONS_DIR = path.resolve("e2e/.runtime/stub-sessions");
 // ADR-182 (T4.6): a scratch prompt carrying this marker keeps its turn open on

@@ -229,3 +229,7 @@ reviewable changes. Other scope controls remain forensic and explicitly named.
 ## Operational agents
 
 Operational Runs use the canonical operational outcome projection. Acknowledge exact failure revisions per reader or re-arm exhausted cleanup with the current revision; neither action repeats the external operation. Evidence links keep their repository-read authorization.
+
+## Child Run peek (Implemented)
+
+Descendant entries open the [read-only peek](child-run-peek.md); interactive actions require the full selected Run.

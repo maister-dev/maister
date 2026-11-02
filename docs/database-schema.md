@@ -5448,6 +5448,11 @@ order.
 `MAISTER_DB_POOL_MAX` env var controls the Postgres pool size
 (default `10`). Set in `.env` for production; tune per host.
 
+Run workbenches share at most one additional lazy, autocommit LISTEN connection
+per web process outside this query pool. Budget that socket even when the pool
+maximum is one; its lifetime and shutdown belong to the
+[peek listener contract](system-analytics/run-peek-data.md).
+
 ## Public API (`web/lib/db/client.ts`)
 
 | Export          | Type      | Use                                                                                                 |
@@ -5558,3 +5563,7 @@ source witnesses and exact terminal result revision.
 constraint, migration and upgrade contracts; the consolidated ERD reflects the
 current Drizzle schema. Qualification uses fresh and seeded incremental test
 databases; production migration remains a release operation.
+
+## Peek paging and push hints (Implemented)
+
+Migration 0211 adds three bounded page-order indexes; 0212 adds transactional advisory notification triggers on existing canonical tables. No entities, columns or lifecycle transitions are added. Exact indexes, sources and upgrade gates: [peek data contract](system-analytics/run-peek-data.md).

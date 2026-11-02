@@ -5,6 +5,8 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 import clsx from "clsx";
 
+import { useRunPeek } from "@/components/runs/run-peek-controller";
+import { RunPeekPanel } from "@/components/runs/run-peek-panel";
 import {
   RunHeader,
   type RunHeaderLabels,
@@ -62,11 +64,16 @@ export function RunShell({
   inspector,
   children,
 }: RunShellProps): ReactNode {
+  const peek = useRunPeek();
+  const peeking = !!peek?.ready && peek.selected !== null;
   const [inspectorOpen, setInspectorOpen] = useState(defaultInspectorOpen);
 
   return (
     <section
-      className="flex w-full min-w-0 max-w-full flex-col gap-5 px-2 py-5 md:px-3"
+      className={clsx(
+        "flex w-full min-w-0 max-w-full flex-col gap-5 px-2 py-5 md:px-3 [overflow-anchor:none]",
+        peeking && "overflow-x-clip",
+      )}
       data-inspector-open={inspectorOpen ? "true" : "false"}
       data-testid="run-shell"
     >
@@ -75,6 +82,9 @@ export function RunShell({
         budgetStatus={budgetStatus}
         canReopen={canReopen}
         changeSummary={changeSummary}
+        inspectorDisabledReason={
+          peeking ? peek.t("inspectorSuspended") : undefined
+        }
         inspectorOpen={inspectorOpen}
         keyRef={keyRef}
         labels={labels}
@@ -96,9 +106,11 @@ export function RunShell({
       <div
         className={clsx(
           "grid min-w-0 max-w-full grid-cols-1 gap-4",
-          inspectorOpen
-            ? "xl:grid-cols-[minmax(0,1fr)_380px]"
-            : "xl:grid-cols-1",
+          peeking
+            ? "2xl:grid-cols-[minmax(0,1fr)_480px]"
+            : inspectorOpen
+              ? "xl:grid-cols-[minmax(0,1fr)_380px]"
+              : "xl:grid-cols-1",
         )}
         data-testid="run-shell-body"
       >
@@ -109,10 +121,12 @@ export function RunShell({
           <aside
             className="min-w-0 max-w-full border-t border-line pt-4 xl:border-l xl:border-t-0 xl:pl-4 xl:pt-0"
             data-testid="run-shell-inspector"
+            hidden={peeking}
           >
             {inspector}
           </aside>
         ) : null}
+        {peeking ? <RunPeekPanel /> : null}
       </div>
     </section>
   );

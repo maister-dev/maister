@@ -527,3 +527,7 @@ run-detail card. The primary card shows the total outstanding-request count;
 after an answer refreshes the page, focus moves to the first remaining pending
 card so keyboard users continue the decision sequence without searching the
 page.
+
+## Child Run peek (Implemented)
+
+Descendant entries open the [read-only peek](child-run-peek.md); interactive actions require the full selected Run.

@@ -24,7 +24,6 @@ export function OperationalRunResult({
   const router = useRouter();
   const feedback = useFeedback();
   const [busy, setBusy] = useState(false);
-  const reported = outcome.reportedResult;
 
   async function mutate(
     path: "acknowledge" | "cleanup/retry",
@@ -64,6 +63,101 @@ export function OperationalRunResult({
       className="rounded-xl border border-line bg-paper p-5"
       data-testid="operational-result"
     >
+      <OperationalOutcomeDetails outcome={outcome} />
+      {outcome.cleanup?.evidenceIds.length ? (
+        <details>
+          <summary>{t("evidence")}</summary>
+          <ul>
+            {outcome.cleanup.evidenceIds.map((id) => (
+              <li key={id}>
+                <a
+                  href={`/api/runs/${encodeURIComponent(runId)}/runtime-objects/${encodeURIComponent(id)}/content`}
+                >
+                  {id}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+      {canAct && outcome.state === "terminal" ? (
+        <div className="mt-3 flex gap-3">
+          {!outcome.successful && outcome.effectiveOutcome !== "cancelled" ? (
+            <Button
+              isDisabled={busy}
+              size="sm"
+              variant="secondary"
+              onClick={() =>
+                void mutate(
+                  "acknowledge",
+                  {
+                    reason: "operation_failure",
+                    revision: 1,
+                  },
+                  t("operationAcknowledged"),
+                )
+              }
+            >
+              <CheckIcon aria-hidden="true" className="size-4" />
+              {t("acknowledge")}
+            </Button>
+          ) : null}
+          {outcome.cleanup?.state === "exhausted" ? (
+            <>
+              <Button
+                isDisabled={busy}
+                size="sm"
+                variant="secondary"
+                onClick={() =>
+                  void mutate(
+                    "acknowledge",
+                    {
+                      reason: "cleanup_failure",
+                      revision: outcome.cleanup!.revision,
+                    },
+                    t("cleanupAcknowledged"),
+                  )
+                }
+              >
+                <CheckIcon aria-hidden="true" className="size-4" />
+                {t("acknowledgeCleanup")}
+              </Button>
+              <Button
+                isDisabled={busy}
+                size="sm"
+                variant="secondary"
+                onClick={() =>
+                  void mutate(
+                    "cleanup/retry",
+                    {
+                      expectedRevision: outcome.cleanup!.revision,
+                    },
+                    t("cleanupScheduled"),
+                  )
+                }
+              >
+                <ArrowPathIcon aria-hidden="true" className="size-4" />
+                {t("retryCleanup")}
+              </Button>
+            </>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+/** Read-only operational projection; evidence and actions keep their separate grants. */
+export function OperationalOutcomeDetails({
+  outcome,
+}: {
+  outcome: OperationalOutcome;
+}): ReactElement {
+  const t = useTranslations("operationalAgents");
+  const reported = outcome.reportedResult;
+
+  return (
+    <>
       <h2 className="text-lg font-semibold">{t("title")}</h2>
       <p data-testid="operational-outcome" role="status">
         {t(outcome.effectiveOutcome ?? "pending")}
@@ -166,85 +260,6 @@ export function OperationalRunResult({
           {outcome.cleanup.errorCode ? ` · ${outcome.cleanup.errorCode}` : ""}
         </p>
       ) : null}
-      {outcome.cleanup?.evidenceIds.length ? (
-        <details>
-          <summary>{t("evidence")}</summary>
-          <ul>
-            {outcome.cleanup.evidenceIds.map((id) => (
-              <li key={id}>
-                <a
-                  href={`/api/runs/${encodeURIComponent(runId)}/runtime-objects/${encodeURIComponent(id)}/content`}
-                >
-                  {id}
-                </a>
-              </li>
-            ))}
-          </ul>
-        </details>
-      ) : null}
-      {canAct && outcome.state === "terminal" ? (
-        <div className="mt-3 flex gap-3">
-          {!outcome.successful && outcome.effectiveOutcome !== "cancelled" ? (
-            <Button
-              isDisabled={busy}
-              size="sm"
-              variant="secondary"
-              onClick={() =>
-                void mutate(
-                  "acknowledge",
-                  {
-                    reason: "operation_failure",
-                    revision: 1,
-                  },
-                  t("operationAcknowledged"),
-                )
-              }
-            >
-              <CheckIcon aria-hidden="true" className="size-4" />
-              {t("acknowledge")}
-            </Button>
-          ) : null}
-          {outcome.cleanup?.state === "exhausted" ? (
-            <>
-              <Button
-                isDisabled={busy}
-                size="sm"
-                variant="secondary"
-                onClick={() =>
-                  void mutate(
-                    "acknowledge",
-                    {
-                      reason: "cleanup_failure",
-                      revision: outcome.cleanup!.revision,
-                    },
-                    t("cleanupAcknowledged"),
-                  )
-                }
-              >
-                <CheckIcon aria-hidden="true" className="size-4" />
-                {t("acknowledgeCleanup")}
-              </Button>
-              <Button
-                isDisabled={busy}
-                size="sm"
-                variant="secondary"
-                onClick={() =>
-                  void mutate(
-                    "cleanup/retry",
-                    {
-                      expectedRevision: outcome.cleanup!.revision,
-                    },
-                    t("cleanupScheduled"),
-                  )
-                }
-              >
-                <ArrowPathIcon aria-hidden="true" className="size-4" />
-                {t("retryCleanup")}
-              </Button>
-            </>
-          ) : null}
-        </div>
-      ) : null}
-    </section>
+    </>
   );
 }

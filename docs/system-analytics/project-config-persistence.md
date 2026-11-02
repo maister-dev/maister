@@ -261,11 +261,16 @@ A review binds both the project row's exact registered repository path and the r
 
 The live ownership registry survives Next.js module reloads; a reload cannot
 adopt a still-running same-process intent between Git subprocesses. Each managed
-Git group has parent and independent child deadlines. A one-shot group check on
-Git exit refuses unnoticed surviving hook children; a signalled Git exit remains
+Git group has parent and independent child deadlines. On normal Git exit, a
+command-local group check allows at most 500 ms for children to retire, within
+the original command deadline. It succeeds only after no non-zombie child
+remains; active children at that boundary and unreadable process evidence still
+fail closed. This accommodates short-lived exiting OS processes without treating
+an exiting process as already dead. A signalled Git exit remains
 uncertain even if a commit object already exists. Recovery inspects that object
-and the published branch before deciding an outcome. No process watcher or
-polling loop is added, and arbitrary detached hook daemons are not a containment
+and the published branch before deciding an outcome. Retirement inspection is
+bounded to the owned command; no background process watcher or periodic job is
+added, and arbitrary detached hook daemons are not a containment
 boundary of this workflow.
 
 ## Linked artifacts

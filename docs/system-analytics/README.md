@@ -111,3 +111,7 @@ One row per file — this table is the **canonical index** of the folder
 | Execution data-plane cutover | [`execution-data-cutover.md`](execution-data-cutover.md) | Immutable per-run data-plane modes, rolling upgrade compatibility, legacy import/drain, and bounded B4 removal (ADR-167, Implemented). |
 | Project configuration persistence | [project-config-persistence.md](project-config-persistence.md) | Implemented: explicit export, review, commit, recovery and optional push. |
 | Project configuration traceability | [project-config-persistence-traceability.md](project-config-persistence-traceability.md) | Requirement, edge, task and primary-test coverage. |
+
+- [Child Run peek navigation](run-peek-navigation.md) — Implemented UI, hierarchy, routing and focus contract.
+- [Child Run peek data](run-peek-data.md) — Implemented authorization, bounded reads and live delivery.
+- [Child Run peek traceability](run-peek-traceability.md) — Planned requirements, edges and primary tests.

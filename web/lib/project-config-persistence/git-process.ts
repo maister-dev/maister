@@ -33,16 +33,23 @@ process.once('message', message => {
   child.once('error', () => process.exit(127));
   child.once('exit', code => {
     if (code === null) return uncertain('signalled_git');
-    if (Date.now() >= deadline) return uncertain('deadline');
-    const report = spawnSync('ps', ['-g', String(process.pid), '-o', 'pid=,pgid=,stat='], { encoding: 'utf8', timeout: Math.max(1, Math.min(deadline - Date.now(), 5000)), maxBuffer: 1048576 });
-    if (report.error || report.status !== 0) return uncertain('process_table_unavailable', { code: report.error?.code, status: report.status });
-    for (const line of report.stdout.split('\\n').filter(value => value.trim())) {
-      const entry = /^\\s*(\\d+)\\s+(\\d+)\\s+(\\S+)/.exec(line);
-      if (!entry) return uncertain('process_table_unparseable');
-      const pid = Number(entry[1]);
-      if (Number(entry[2]) === process.pid && pid !== process.pid && pid !== report.pid && !entry[3].startsWith('Z')) return uncertain('active_child', { pid, state: entry[3], exitedGitPid: child.pid });
+    const retirementDeadline = Math.min(deadline, Date.now() + 500);
+    function inspectRetirement() {
+      if (Date.now() >= deadline) return uncertain('deadline');
+      const report = spawnSync('ps', ['-g', String(process.pid), '-o', 'pid=,pgid=,stat='], { encoding: 'utf8', timeout: Math.max(1, Math.min(retirementDeadline - Date.now(), deadline - Date.now(), 5000)), maxBuffer: 1048576 });
+      if (report.error || report.status !== 0) return uncertain('process_table_unavailable', { code: report.error?.code, status: report.status });
+      for (const line of report.stdout.split('\\n').filter(value => value.trim())) {
+        const entry = /^\\s*(\\d+)\\s+(\\d+)\\s+(\\S+)/.exec(line);
+        if (!entry) return uncertain('process_table_unparseable');
+        const pid = Number(entry[1]);
+        if (Number(entry[2]) === process.pid && pid !== process.pid && pid !== report.pid && !entry[3].startsWith('Z')) {
+          if (Date.now() + 10 < retirementDeadline) return setTimeout(inspectRetirement, 10);
+          return uncertain('active_child', { pid, state: entry[3], exitedGitPid: child.pid });
+        }
+      }
+      process.exit(code);
     }
-    process.exit(code);
+    inspectRetirement();
   });
 });
 process.send('ready');

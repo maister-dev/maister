@@ -82,6 +82,7 @@ export interface RunHeaderProps {
   promotionOperation?: (PromotionOperationInput & { runId: string }) | null;
   labels: RunHeaderLabels;
   onToggleInspector?: () => void;
+  inspectorDisabledReason?: string;
 }
 
 export function formatRunChangeSummary(
@@ -130,6 +131,7 @@ export function RunHeader({
   promotionOperation,
   labels,
   onToggleInspector,
+  inspectorDisabledReason,
 }: RunHeaderProps): ReactElement {
   const changes = formatRunChangeSummary(changeSummary, labels);
   const budgetBadge =
@@ -279,6 +281,8 @@ export function RunHeader({
           aria-expanded={inspectorOpen}
           className="rounded-[6px] border border-line bg-paper px-2.5 py-1.5 font-mono text-[11px] font-semibold text-ink-2 hover:bg-ivory"
           data-testid="run-header-inspector-toggle"
+          disabled={!!inspectorDisabledReason}
+          title={inspectorDisabledReason}
           type="button"
           onClick={onToggleInspector}
         >

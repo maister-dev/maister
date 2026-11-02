@@ -55,6 +55,10 @@ token interface below.
 
 ## Message a persistent child agent
 
+When inspecting a child through [Run peek](/product-tour/run-history-and-workbench#inspect-a-delegated-child-run),
+choose **Open full Run** before messaging or answering a human request. Peek is
+read-only and preserves the parent Run's current view and draft.
+
 A coordinator using the external API or MCP `run_message` can address its own
 persistent agent child with exactly one of `addressableKey` or `childRunId`.
 `childRunId` must be a UUID. Set `mode: "steer"` to attempt delivery to its

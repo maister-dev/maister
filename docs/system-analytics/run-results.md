@@ -368,3 +368,7 @@ The result value reuses the ADR-162 limits through ONE validator
 ## Operational agents
 
 Operational contracts reuse this ledger. The exact terminal revision is also projected as diagnostic `operationalOutcome` on failed Runs; the ordinary failure result remains unavailable. See [operational results](operational-agent-results.md).
+
+## Child Run peek (Implemented)
+
+See the [navigation contract](run-peek-navigation.md) and [authorized data/live-delivery contract](run-peek-data.md). Existing execution/result lifecycle semantics remain authoritative.

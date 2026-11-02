@@ -81,56 +81,62 @@ test("flow-graph view renders node statuses and the current-node emphasis", asyn
   page,
 }) => {
   const fx = loadM22Fixture();
+  const workbench = page.locator('[data-testid="run-shell"]:visible');
 
   // Default run view: the Flow result is primary. React Flow renders nodes
   // inside the fitView viewport; the 4-node graph fits entirely.
   await page.goto(`/runs/${fx.runId}`);
 
   await expect(
-    page.locator('[data-testid="run-primary-result"]'),
+    workbench.locator('[data-testid="run-primary-result"]'),
   ).toBeVisible();
   await expect(
-    page.locator('[data-testid="flow-run-selected-node"]'),
+    workbench.locator('[data-testid="flow-run-selected-node"]'),
   ).toContainText("Implement");
-  await expect(page.locator('[data-testid="flow-graph-view"]')).toBeVisible();
+  await expect(
+    workbench.locator('[data-testid="flow-graph-view"]'),
+  ).toBeVisible();
 
   // The `plan` node reflects its seeded Succeeded node_attempt status.
   await expect(
-    page
+    workbench
       .locator('[data-testid="flow-node"][data-node-status="Succeeded"]')
       .first(),
   ).toBeVisible();
 
   // The current node (`implement` = current_step_id) carries data-current.
   await expect(
-    page.locator('[data-testid="flow-node"][data-current="true"]'),
+    workbench.locator('[data-testid="flow-node"][data-current="true"]'),
   ).toBeVisible();
 
-  await expect(page.locator('[data-node-role="agent"]').first()).toContainText(
-    "Agent",
-  );
-  await expect(page.locator('[data-node-role="check"]').first()).toContainText(
-    "Check",
-  );
   await expect(
-    page.locator('[data-testid="declared-gate-summary"]', {
+    workbench.locator('[data-node-role="agent"]').first(),
+  ).toContainText("Agent");
+  await expect(
+    workbench.locator('[data-node-role="check"]').first(),
+  ).toContainText("Check");
+  await expect(
+    workbench.locator('[data-testid="declared-gate-summary"]', {
       hasText: "1 declared gates",
     }),
   ).toBeVisible();
   await expect(
-    page.locator('[data-testid="runtime-gate-summary"]', {
+    workbench.locator('[data-testid="runtime-gate-summary"]', {
       hasText: "1 gates",
     }),
   ).toBeVisible();
   await expect(
-    page.locator('[data-testid="blocking-gate-summary"]', {
+    workbench.locator('[data-testid="blocking-gate-summary"]', {
       hasText: "1 blocking",
     }),
   ).toBeVisible();
   await expect(
-    page.locator('[data-testid="flow-edge-label"][data-edge-role="rework"]', {
-      hasText: "Rework",
-    }),
+    workbench.locator(
+      '[data-testid="flow-edge-label"][data-edge-role="rework"]',
+      {
+        hasText: "Rework",
+      },
+    ),
   ).toBeVisible();
 });
 
@@ -141,20 +147,30 @@ test("run shell inspector toggles and workbench exposes evidence and timeline ta
 
   await page.goto(`/runs/${fx.runId}`);
 
-  await expect(page.locator('[data-testid="run-shell"]')).toBeVisible();
+  await expect(page.locator('[data-testid="run-shell"]:visible')).toBeVisible();
   await expect(
-    page.locator('[data-testid="run-shell-inspector"]'),
+    page.locator(
+      '[data-testid="run-shell"]:visible [data-testid="run-shell-inspector"]',
+    ),
   ).toBeVisible();
-  await expect(page.locator('[data-testid="run-inspector"]')).toBeVisible();
+  await expect(
+    page.locator(
+      '[data-testid="run-shell"]:visible [data-testid="run-inspector"]',
+    ),
+  ).toBeVisible();
 
   await page.getByRole("button", { name: "Close inspector" }).click();
-  await expect(page.locator('[data-testid="run-shell-inspector"]')).toHaveCount(
-    0,
-  );
+  await expect(
+    page.locator(
+      '[data-testid="run-shell"]:visible [data-testid="run-shell-inspector"]',
+    ),
+  ).toHaveCount(0);
 
   await page.getByRole("button", { name: "Open inspector" }).click();
   await expect(
-    page.locator('[data-testid="run-shell-inspector"]'),
+    page.locator(
+      '[data-testid="run-shell"]:visible [data-testid="run-shell-inspector"]',
+    ),
   ).toBeVisible();
 
   // Timeline/Evidence are the always-visible workbench tabs.
@@ -219,7 +235,7 @@ test("file-tree opens a file into the Shiki code-view and flags the oversized bl
 
   await page.goto(`/runs/${fx.runId}?wb=files`);
 
-  await expect(page.locator('[data-testid="file-tree"]')).toBeVisible();
+  await expect(page.locator('[data-testid="file-tree"]:visible')).toBeVisible();
 
   // Tracked root entries appear (README.md, src/, big.txt).
   await expect(
@@ -270,30 +286,37 @@ test("?file= cold deep-link renders the file pane; traversal + .git are hidden",
   page,
 }) => {
   const fx = loadM22Fixture();
+  const workbench = page.locator('[data-testid="run-shell"]:visible');
 
   // Cold deep-link straight to a tracked Markdown file → the server pane renders
   // the rich Markdown view directly (no client fetch round-trip). A `.md` file
   // routes to MarkdownRichView, not the Shiki code-view.
   await page.goto(`/runs/${fx.runId}?wb=files&file=README.md`);
   await expect(
-    page.locator('[data-testid="markdown-rich-view"]'),
+    workbench.locator('[data-testid="markdown-rich-view"]'),
   ).toBeVisible();
   // The README's ```mermaid fence renders the client Mermaid diagram (T6.2).
-  await expect(page.locator('[data-testid="mermaid-diagram"]')).toBeVisible();
+  await expect(
+    workbench.locator('[data-testid="mermaid-diagram"]'),
+  ).toBeVisible();
 
   // A `..` traversal is rejected by repoRelPathSchema BEFORE any read → the
   // not-found state, never the code-view and never the rejected path.
   await page.goto(
     `/runs/${fx.runId}?wb=files&file=${encodeURIComponent("../etc")}`,
   );
-  await expect(page.locator('[data-testid="file-not-found"]')).toBeVisible();
-  await expect(page.locator('[data-testid="code-view"]')).toHaveCount(0);
+  await expect(
+    workbench.locator('[data-testid="file-not-found"]'),
+  ).toBeVisible();
+  await expect(workbench.locator('[data-testid="code-view"]')).toHaveCount(0);
 
   // A non-tracked git-internal path surfaces as not-found (existence-hiding) —
   // the same uniform state, so `.git` is indistinguishable from a missing file.
   await page.goto(`/runs/${fx.runId}?wb=files&file=.git%2Fconfig`);
-  await expect(page.locator('[data-testid="file-not-found"]')).toBeVisible();
-  await expect(page.locator('[data-testid="code-view"]')).toHaveCount(0);
+  await expect(
+    workbench.locator('[data-testid="file-not-found"]'),
+  ).toBeVisible();
+  await expect(workbench.locator('[data-testid="code-view"]')).toHaveCount(0);
 });
 
 test("an expanded dir survives a ?file= soft-nav (FINDING B tree state)", async ({
@@ -302,7 +325,7 @@ test("an expanded dir survives a ?file= soft-nav (FINDING B tree state)", async 
   const fx = loadM22Fixture();
 
   await page.goto(`/runs/${fx.runId}?wb=files`);
-  await expect(page.locator('[data-testid="file-tree"]')).toBeVisible();
+  await expect(page.locator('[data-testid="file-tree"]:visible')).toBeVisible();
 
   // Expand `src`, then open the file inside it (a ?file= soft-nav).
   await page
@@ -388,7 +411,7 @@ test("theme toggle recolors the code-view without refetching the run/file route"
 
         return stable;
       },
-      { intervals: [250], timeout: 15_000 },
+      { intervals: [1000], timeout: 15_000 },
     )
     .toBe(true);
 
@@ -564,7 +587,7 @@ test("project repo tab renders the file-tree of tracked repo files", async ({
 
   await page.goto(`/projects/${fx.projectSlug}?tab=repo`);
 
-  await expect(page.locator('[data-testid="file-tree"]')).toBeVisible();
+  await expect(page.locator('[data-testid="file-tree"]:visible')).toBeVisible();
   await expect(
     page.locator('[data-testid="file-tree-entry"]', { hasText: "README.md" }),
   ).toBeVisible();

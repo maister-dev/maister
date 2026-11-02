@@ -841,6 +841,52 @@ describe("shared Testcontainers Postgres helper", () => {
       );
   });
 
+  it("retires every PostgreSQL connection before stopping its owned container", async () => {
+    const database = await startBarePostgresTestDb({
+      databaseName: "test_support_socket_retirement",
+      poolMax: 4,
+    });
+    let connected = 0;
+    let ended = 0;
+    let endedAtStop = -1;
+    let stopped = false;
+    const errors: Error[] = [];
+    const stopContainer = database.container.stop.bind(database.container);
+
+    database.pool.on("connect", (client) => {
+      connected += 1;
+      client.once("end", () => {
+        ended += 1;
+      });
+    });
+    database.pool.on("error", (error) => errors.push(error));
+    const observation = vi
+      .spyOn(database.container, "stop")
+      .mockImplementation(async () => {
+        endedAtStop = ended;
+        const result = await stopContainer();
+
+        stopped = true;
+
+        return result;
+      });
+
+    try {
+      await Promise.all(
+        Array.from({ length: 4 }, () =>
+          database.pool.query("SELECT pg_sleep(0.01)"),
+        ),
+      );
+      await database.stop();
+      expect(connected).toBe(4);
+      expect(endedAtStop).toBe(connected);
+      expect(errors).toEqual([]);
+    } finally {
+      observation.mockRestore();
+      if (!stopped) await database.stop();
+    }
+  });
+
   it("stops the container when its already-closed pool rejects teardown", async () => {
     const database = await startBarePostgresTestDb({
       databaseName: "test_support_cleanup_failure",

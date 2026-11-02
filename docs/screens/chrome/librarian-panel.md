@@ -230,3 +230,7 @@ Work-stage chips reuse `workStage`.
   `web/components/run-transcript/transcript-view.tsx` (reused),
   `web/lib/use-run-stream.ts` (reused),
   `web/components/feedback/use-modal-focus-trap.ts` (reused).
+
+## Run peek coexistence (Implemented)
+
+The [peek navigation contract](../../system-analytics/run-peek-navigation.md) owns temporary visibility/transport suspension and state-preserving restoration.
