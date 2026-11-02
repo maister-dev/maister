@@ -29,16 +29,22 @@ observe its failed child; success-gated dependents do not launch.
 
 - **`domain_events`** (Implemented) — the append-only fact log. One row per
   emitted domain fact: `{ id (bigint identity, dispatch ordering key), kind,
-  project_id, task_id?, run_id?, actor_type?, actor_id?, payload, occurred_at,
-  created_at, tx_id (xid8, commit-visibility horizon) }`. The polymorphic
+project_id, task_id?, run_id?, actor_type?, actor_id?, payload, occurred_at,
+created_at, tx_id (xid8, commit-visibility horizon) }`. The polymorphic
   `(actor_type, actor_id)` pair mirrors `task_activity` (ADR-083). No
   UPDATE/DELETE app paths; FKs cascade on project/task/run delete (events are
   trigger material, not the audit log). See [db/domain-events.md](../db/domain-events.md).
 - **`domain_event_consumers`** (Implemented) — one cursor row per registered
   consumer: `{ consumer_id (PK), cursor_event_id, lease_expires_at?,
-  last_dispatched_at?, last_error?, consecutive_failures }`. Claim/advance
+last_dispatched_at?, last_error?, consecutive_failures }`. Claim/advance
   mechanics below. See [db/domain-events.md](../db/domain-events.md).
-- **Kind taxonomy** (Implemented) — exactly 15 kinds:
+- **Internal projection events** — `agent.activity_changed`, `agent.incident_changed`,
+  `task.qualification_changed` and `task.launch_changed` invalidate read models
+  without triggering agents or inflating update counts. Launch-state events carry
+  intent ID, state/version, admission basis and a bounded reason; no task content,
+  runner credentials or assessment evidence. Their emitter is the launch-intent
+  transaction described in [task-launch-admission.md](task-launch-admission.md).
+- **Execution and task taxonomy** (Implemented):
   `task.created`, `task.comment_added`, `task.triage_requeued`,
   `task.clarification_answered`, `run.done`,
   `run.failed`, `run.crashed`, `run.abandoned`, `run.review`,
@@ -97,44 +103,44 @@ observe its failed child; success-gated dependents do not launch.
   ZERO — no delegated flow child exists before it. The widened population's
   consumer sweep:
 
-  | Consumer | Filter | Effect of a FLOW `run.review` |
-  | --- | --- | --- |
-  | `orchestrator_resume` | `isRunSettledEventKind`; branches on the PARENT's `run_kind`, child-agnostic | works unchanged — this is the wake path the emit exists for |
-  | `auto_launch_run_plan` | `isRunSettledEventKind` AND `payload.runKind ∈ {agent, flow}` (an allow-list — `scratch` and any later kind stay out) | dispatches a released dependent on its `delegation_spec` kind and auto-promotes an as-plan flow child's `Review` when `payload.cause` is a completion cause |
-  | `agent_triggers` | generic `eventMatch.kinds` allow-list | an agent bound to `run.review` now ALSO fires on delegated flow children — an intended widening |
-  | `ralph_loop` | `run.failed` only | unaffected |
-  | `cost_rollup_reconcile` | `isRunTerminalEventKind` | unaffected (`run.review` is settled-not-terminal, so excluded) |
-  | `memory_harvest` | run-terminal + `gate.failed` | unaffected |
-  | `source_reindex` | brain kinds | unaffected |
-  **(ADR-151 — Implemented)** `task.comment_added` has its `payload` **widened**
-  with an optional `mentionedAgentIds: string[]` (deduped resolved agent ids,
-  omitted when empty) — a migration-free widening, since the payload is
-  free-form jsonb with no runtime validation. It carries directed summons to
-  the `agent_triggers` consumer's additive mention branch; see
-  [agent-mentions.md](agent-mentions.md).
+  | Consumer                                                                       | Filter                                                                                                                | Effect of a FLOW `run.review`                                                                                                                               |
+  | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | `orchestrator_resume`                                                          | `isRunSettledEventKind`; branches on the PARENT's `run_kind`, child-agnostic                                          | works unchanged — this is the wake path the emit exists for                                                                                                 |
+  | `auto_launch_run_plan`                                                         | `isRunSettledEventKind` AND `payload.runKind ∈ {agent, flow}` (an allow-list — `scratch` and any later kind stay out) | dispatches a released dependent on its `delegation_spec` kind and auto-promotes an as-plan flow child's `Review` when `payload.cause` is a completion cause |
+  | `agent_triggers`                                                               | generic `eventMatch.kinds` allow-list                                                                                 | an agent bound to `run.review` now ALSO fires on delegated flow children — an intended widening                                                             |
+  | `ralph_loop`                                                                   | `run.failed` only                                                                                                     | unaffected                                                                                                                                                  |
+  | `cost_rollup_reconcile`                                                        | `isRunTerminalEventKind`                                                                                              | unaffected (`run.review` is settled-not-terminal, so excluded)                                                                                              |
+  | `memory_harvest`                                                               | run-terminal + `gate.failed`                                                                                          | unaffected                                                                                                                                                  |
+  | `source_reindex`                                                               | brain kinds                                                                                                           | unaffected                                                                                                                                                  |
+  | **(ADR-151 — Implemented)** `task.comment_added` has its `payload` **widened** |
+  | with an optional `mentionedAgentIds: string[]` (deduped resolved agent ids,    |
+  | omitted when empty) — a migration-free widening, since the payload is          |
+  | free-form jsonb with no runtime validation. It carries directed summons to     |
+  | the `agent_triggers` consumer's additive mention branch; see                   |
+  | [agent-mentions.md](agent-mentions.md).                                        |
 
   **(Implemented — ADR-165)** three further **migration-free** payload widenings on
   existing kinds (no new kind, no CHECK change, free-form jsonb):
 
-  | Kind | Added field | Values |
-  | --- | --- | --- |
-  | `run.review` | `resultStatus` | `pending \| valid \| absent \| missing \| stale \| invalid \| unavailable` |
-  | `run.done` | `resultStatus`, `completion` | `completion ∈ {promoted, result_only}` |
-  | `run.failed` | `resultStatus`; `reason` gains two values | `reason += result_missing \| result_invalid` |
+  | Kind         | Added field                               | Values                                                                     |
+  | ------------ | ----------------------------------------- | -------------------------------------------------------------------------- |
+  | `run.review` | `resultStatus`                            | `pending \| valid \| absent \| missing \| stale \| invalid \| unavailable` |
+  | `run.done`   | `resultStatus`, `completion`              | `completion ∈ {promoted, result_only}`                                     |
+  | `run.failed` | `resultStatus`; `reason` gains two values | `reason += result_missing \| result_invalid`                               |
 
   Consumer sweep for the widening — every consumer either ignores the new fields
   or is explicitly changed:
 
-  | Consumer | Filter | Effect |
-  | --- | --- | --- |
-  | `orchestrator_resume` | settled set, routed by `parentRunId` | **reads nothing new**; a `run.done{completion:"result_only"}` wakes the parent exactly like any success-side settle, and `run.failed{reason:"result_missing"}` wakes it unconditionally |
-  | `auto_launch_run_plan` | settled set | unchanged — it branches on `cause`, not `resultStatus`; a result-only `run.done` advances the as-plan task and releases its `requires` dependents like any `run.done` |
-  | `agent_triggers` | generic kind allow-list | unaffected |
-  | `ralph_loop` | `run.failed` only | **changed** — see the D18 row below |
-  | `cost_rollup_reconcile` | `isRunTerminalEventKind` | unaffected |
-  | `memory_harvest` | run-terminal + `gate.failed` | unaffected |
-  | `brain_source_reindex` | run-terminal | unaffected |
-  | `mapDomainEvent` (ext activity) | kind switch | unaffected — it never reads unknown payload keys |
+  | Consumer                        | Filter                               | Effect                                                                                                                                                                                  |
+  | ------------------------------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | `orchestrator_resume`           | settled set, routed by `parentRunId` | **reads nothing new**; a `run.done{completion:"result_only"}` wakes the parent exactly like any success-side settle, and `run.failed{reason:"result_missing"}` wakes it unconditionally |
+  | `auto_launch_run_plan`          | settled set                          | unchanged — it branches on `cause`, not `resultStatus`; a result-only `run.done` advances the as-plan task and releases its `requires` dependents like any `run.done`                   |
+  | `agent_triggers`                | generic kind allow-list              | unaffected                                                                                                                                                                              |
+  | `ralph_loop`                    | `run.failed` only                    | **changed** — see the D18 row below                                                                                                                                                     |
+  | `cost_rollup_reconcile`         | `isRunTerminalEventKind`             | unaffected                                                                                                                                                                              |
+  | `memory_harvest`                | run-terminal + `gate.failed`         | unaffected                                                                                                                                                                              |
+  | `brain_source_reindex`          | run-terminal                         | unaffected                                                                                                                                                                              |
+  | `mapDomainEvent` (ext activity) | kind switch                          | unaffected — it never reads unknown payload keys                                                                                                                                        |
 
   **(Implemented)** `run.failed | run.crashed | run.abandoned` payloads carry a
   typed `cause` block (the run's terminal cause) — see
@@ -222,9 +228,9 @@ observe its failed child; success-gated dependents do not launch.
   ADR-098/100.
 - **`cost-rollup-reconcile` consumer** (ADR-117 — Implemented) — a low-latency
   fast-path that reconciles
-  `run_cost_rollups` seconds after a terminal that *does* emit. Subscribes to the
+  `run_cost_rollups` seconds after a terminal that _does_ emit. Subscribes to the
   existing run-terminal kinds (`run.done | run.failed | run.crashed |
-  run.abandoned`; NO new event kind), `startFrom: "now"` (forward-only — the
+run.abandoned`; NO new event kind), `startFrom: "now"` (forward-only — the
   `system_sweep` backstop owns historical backfill; see [scheduler.md](scheduler.md)
   and [observatory.md](observatory.md)). `handle(events[])` filters to terminal
   kinds, dedupes `runId`, and calls `reconcileRunCostRollups` for each **inside a
@@ -256,14 +262,14 @@ observe its failed child; success-gated dependents do not launch.
   [ADR-187](../decisions.md#adr-187-librarian-operation-ledger-confirmation-cards-and-launch-intent))
   — the personal librarian's follow-up delivery (`startFrom: "now"`), registered
   in `DOMAIN_EVENT_CONSUMERS`. Kinds: `run.done | run.failed | run.crashed |
-  run.abandoned | run.review | run.review_opened | run.needs_input |
-  run.escalated | run.rework_claimed | run.rework_returned | gate.failed |
-  task.clarification_answered | task.clarification_cancelled` (there is no
+run.abandoned | run.review | run.review_opened | run.needs_input |
+run.escalated | run.rework_claimed | run.rework_returned | gate.failed |
+task.clarification_answered | task.clarification_cancelled` (there is no
   `run.launched`; a queued run's start is read live when the card renders). A
   task is followed by a conversation when a `librarian_task_links` row or a
   succeeded `librarian_operations` row targets it. For each follower it inserts
   one `librarian_updates` row, idempotent under UNIQUE `(conversation_id,
-  domain_event_id)`, and an `author_kind='update'` message carrying a
+domain_event_id)`, and an `author_kind='update'` message carrying a
   deterministic card — no model turn, no token. The owner's read access to the
   task is checked at insert and again at render; lost access records
   `skipped_no_access`. Delivery retries at most 5 times with backoff, then
@@ -373,9 +379,22 @@ domain event. The payload of `run.failed | run.crashed | run.abandoned` gains
 
 ```ts
 type TerminalCauseSource =
-  | "graph" | "hitl" | "sweeper" | "scratch" | "agent" | "reconcile"
-  | "resume" | "operator" | "orchestrator" | "workbench" | "legacy";
-type TerminalCause = { code: MaisterErrorCode | null; reason?: string; source: TerminalCauseSource };
+  | "graph"
+  | "hitl"
+  | "sweeper"
+  | "scratch"
+  | "agent"
+  | "reconcile"
+  | "resume"
+  | "operator"
+  | "orchestrator"
+  | "workbench"
+  | "legacy";
+type TerminalCause = {
+  code: MaisterErrorCode | null;
+  reason?: string;
+  source: TerminalCauseSource;
+};
 ```
 
 `emitDomainEvent`'s input is discriminated on kind, so a terminal emit without
@@ -452,7 +471,7 @@ detail, the external `RunDTO.terminalCause` and MCP `run_get`; the webhook
   `task.triage_requeued` MUST be emitted only by the "Send to triage"
   action (Implemented) — no other emitter.
 - The dispatch read window MUST be exactly `id > cursor_event_id AND tx_id <
-  pg_snapshot_xmin(pg_current_snapshot()) ORDER BY id LIMIT batch` — a
+pg_snapshot_xmin(pg_current_snapshot()) ORDER BY id LIMIT batch` — a
   late-committing lower id MUST hold back all later ids until it resolves.
 - A consumer claim MUST be a CAS on `lease_expires_at` (claim only when NULL or
   expired); concurrent dispatch passes MUST yield exactly one active claimer
@@ -469,13 +488,13 @@ detail, the external `RunDTO.terminalCause` and MCP `run_get`; the webhook
   `launchAgentRun` (cap admission inside that call), and auto-promote an
   as-plan child reaching `Review`; `orchestrator_resume` MUST be the only
   consumer that wakes the parent out of `WaitingOnChildren` (single-winner CAS
-  + `session/resume`). **(Implemented — ADR-163)** `auto_launch_run_plan`'s
-  `run_kind` gate MUST be an ALLOW-LIST (`agent | flow`), never a deny-check, so
-  a kind added later stays rejected by default; it MUST dispatch the candidate
-  launch on the task's `delegation_spec` kind; the depth/fan-out bound is decided
-  by `admitDelegatedChild()` inside the launcher's run-insert transaction (this
-  edge has no fast path); and a typed release-time refusal MUST be posted as a
-  system comment on the task, which stays `Backlog`/`auto`.
+  - `session/resume`). **(Implemented — ADR-163)** `auto_launch_run_plan`'s
+    `run_kind` gate MUST be an ALLOW-LIST (`agent | flow`), never a deny-check, so
+    a kind added later stays rejected by default; it MUST dispatch the candidate
+    launch on the task's `delegation_spec` kind; the depth/fan-out bound is decided
+    by `admitDelegatedChild()` inside the launcher's run-insert transaction (this
+    edge has no fast path); and a typed release-time refusal MUST be posted as a
+    system comment on the task, which stays `Backlog`/`auto`.
 - A handler failure MUST increment `consecutive_failures`, set `last_error`,
   release the lease, and leave the cursor unchanged; a subsequent success MUST
   reset `consecutive_failures` to 0. Redelivery of the failed window MUST wait
@@ -486,7 +505,7 @@ detail, the external `RunDTO.terminalCause` and MCP `run_get`; the webhook
   inside its own window). Backoff delays the same window, never skips past it.
   There is NO auto-disable in this stage.
 - Consumer registration MUST seed the cursor row idempotently (`ON CONFLICT DO
-  NOTHING`) honoring `startFrom`: `"beginning"` = 0, `"now"` = current
+NOTHING`) honoring `startFrom`: `"beginning"` = 0, `"now"` = current
   `MAX(id)`.
 - `domain_event_dispatch` MUST be a seeded singleton (60s cadence, budget 1)
   and MUST be rejected by `createSchedulerJobSchema` (not user-creatable).
@@ -511,10 +530,10 @@ detail, the external `RunDTO.terminalCause` and MCP `run_get`; the webhook
   consumer waits on that nothing emits is a deadlock, not a missing feature.
   **(Implemented — ADR-163 amendment)** every `run.review` payload MUST carry
   `cause ∈ RUN_REVIEW_CAUSES` (`graph_completed | agent_exit | operator_stop |
-  rework_released | sync_returned`); the emit helper requires it at the type
+rework_released | sync_returned`); the emit helper requires it at the type
   level so no writer can default to "completed". **(Implemented)** every
   `run.failed | run.crashed | run.abandoned` payload MUST carry `cause:
-  {code, reason?, source}`, required by the emit helper's type, and `cause`
+{code, reason?, source}`, required by the emit helper's type, and `cause`
   MUST carry tokens only (a `MaisterErrorCode`, a snake_case reason token, a
   source) — never a message or other text, enforced by `emitDomainEvent`'s
   `terminalCauseReason()` normalizer.

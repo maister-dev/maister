@@ -18654,7 +18654,8 @@ paths:
         - runs
       summary: "Designed — ADR-200: AcceptTaskLaunchIntent"
       operationId: AcceptTaskLaunchIntent
-      description: Active session and live project launchRun/policy grants for writes; readBoard for
+      description:
+        Active session and live project launchRun/policy grants for writes; readBoard for
         metadata and readRepoFiles before any source-bearing content. Explicit session Launch records
         one-shot manual authority. Same-origin/CSRF protection is enforced at the human-action
         boundary. Strict bounded request. Server derives project and actor from scoped task/auth
@@ -18672,7 +18673,8 @@ paths:
             type: string
             minLength: 1
             maxLength: 256
-          description: Stable principal/project/operation request key; changed payload under the same key
+          description:
+            Stable principal/project/operation request key; changed payload under the same key
             conflicts before mutation.
       requestBody:
         required: true
@@ -18682,7 +18684,8 @@ paths:
               $ref: "#/components/schemas/TaskLaunchBody"
       responses:
         "202":
-          description: Durably accepted intent; runId may be null. Follow Location or existing authorized
+          description:
+            Durably accepted intent; runId may be null. Follow Location or existing authorized
             attention invalidation.
           content:
             application/json:
@@ -18718,7 +18721,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/MaisterErrorBody"
         "409":
-          description: Stale revision/state, changed key payload, competing work or committed dispatch; no
+          description:
+            Stale revision/state, changed key payload, competing work or committed dispatch; no
             silent replacement.
           content:
             application/json:
@@ -18736,7 +18740,8 @@ paths:
         - runs
       summary: "Designed — ADR-200: ReadTaskLaunchIntent"
       operationId: ReadTaskLaunchIntent
-      description: Active session and live project launchRun/policy grants for writes; readBoard for
+      description:
+        Active session and live project launchRun/policy grants for writes; readBoard for
         metadata and readRepoFiles before any source-bearing content. Explicit session Launch records
         one-shot manual authority. Same-origin/CSRF protection is enforced at the human-action
         boundary. GET is a read-only projection. Return versioned receipt with immutable snapshot
@@ -18751,7 +18756,8 @@ paths:
             type: string
             minLength: 1
             maxLength: 256
-          description: Untrusted resource selector. Principal/project access derives from server lookup, never
+          description:
+            Untrusted resource selector. Principal/project access derives from server lookup, never
             this ID alone.
       responses:
         "200":
@@ -18790,7 +18796,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/MaisterErrorBody"
         "409":
-          description: Stale revision/state, changed key payload, competing work or committed dispatch; no
+          description:
+            Stale revision/state, changed key payload, competing work or committed dispatch; no
             silent replacement.
           content:
             application/json:
@@ -18808,7 +18815,8 @@ paths:
         - runs
       summary: "Designed — ADR-200: CancelTaskLaunchIntent"
       operationId: CancelTaskLaunchIntent
-      description: Active session and live project launchRun/policy grants for writes; readBoard for
+      description:
+        Active session and live project launchRun/policy grants for writes; readBoard for
         metadata and readRepoFiles before any source-bearing content. Explicit session Launch records
         one-shot manual authority. Same-origin/CSRF protection is enforced at the human-action
         boundary. Cancel only before dispatch commitment, using exact stateVersion and request key.
@@ -18825,7 +18833,8 @@ paths:
             type: string
             minLength: 1
             maxLength: 256
-          description: Untrusted resource selector. Principal/project access derives from server lookup, never
+          description:
+            Untrusted resource selector. Principal/project access derives from server lookup, never
             this ID alone.
         - in: header
           name: Idempotency-Key
@@ -18834,7 +18843,8 @@ paths:
             type: string
             minLength: 1
             maxLength: 256
-          description: Stable principal/project/operation request key; changed payload under the same key
+          description:
+            Stable principal/project/operation request key; changed payload under the same key
             conflicts before mutation.
       requestBody:
         required: true
@@ -18879,7 +18889,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/MaisterErrorBody"
         "409":
-          description: Stale revision/state, changed key payload, competing work or committed dispatch; no
+          description:
+            Stale revision/state, changed key payload, competing work or committed dispatch; no
             silent replacement.
           content:
             application/json:
@@ -18897,7 +18908,8 @@ paths:
         - runs
       summary: "Designed — ADR-200: ReplaceTaskLaunchIntent"
       operationId: ReplaceTaskLaunchIntent
-      description: Active session and live project launchRun/policy grants for writes; readBoard for
+      description:
+        Active session and live project launchRun/policy grants for writes; readBoard for
         metadata and readRepoFiles before any source-bearing content. Explicit session Launch records
         one-shot manual authority. Same-origin/CSRF protection is enforced at the human-action
         boundary. Lock old intent/task and any bound run in canonical order. Cancel old pre-dispatch
@@ -18914,7 +18926,8 @@ paths:
             type: string
             minLength: 1
             maxLength: 256
-          description: Untrusted resource selector. Principal/project access derives from server lookup, never
+          description:
+            Untrusted resource selector. Principal/project access derives from server lookup, never
             this ID alone.
         - in: header
           name: Idempotency-Key
@@ -18923,7 +18936,8 @@ paths:
             type: string
             minLength: 1
             maxLength: 256
-          description: Stable principal/project/operation request key; changed payload under the same key
+          description:
+            Stable principal/project/operation request key; changed payload under the same key
             conflicts before mutation.
       requestBody:
         required: true
@@ -18968,7 +18982,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/MaisterErrorBody"
         "409":
-          description: Stale revision/state, changed key payload, competing work or committed dispatch; no
+          description:
+            Stale revision/state, changed key payload, competing work or committed dispatch; no
             silent replacement.
           content:
             application/json:
@@ -19373,14 +19388,29 @@ components:
           type: object
           additionalProperties: false
           properties:
+            kind:
+              type: string
+              enum:
+                - flow
+                - agent
+            workspace:
+              type: string
+              enum: [none, repo_read, worktree]
+            agentId:
+              type: string
+              nullable: true
+              minLength: 1
+              maxLength: 256
             flowId:
               type: string
               minLength: 1
               maxLength: 256
+              nullable: true
             flowRevisionId:
               type: string
               minLength: 1
               maxLength: 256
+              nullable: true
             runnerIds:
               type: array
               maxItems: 64
@@ -19390,6 +19420,7 @@ components:
                 maxLength: 256
             baseCommit:
               type: string
+              nullable: true
               maxLength: 64
             targetBranch:
               type: string
@@ -19404,6 +19435,9 @@ components:
             autoPromote:
               type: boolean
           required:
+            - kind
+            - workspace
+            - agentId
             - flowId
             - flowRevisionId
             - runnerIds
@@ -19411,6 +19445,44 @@ components:
             - targetBranch
             - promotionMode
             - autoPromote
+          oneOf:
+            - properties:
+                kind:
+                  enum:
+                    - flow
+                workspace:
+                  enum: [worktree]
+                baseCommit:
+                  type: string
+                  nullable: false
+                agentId:
+                  type: string
+                  nullable: true
+                  enum:
+                    - null
+                flowId:
+                  type: string
+                  nullable: false
+                flowRevisionId:
+                  type: string
+                  nullable: false
+            - properties:
+                kind:
+                  enum:
+                    - agent
+                agentId:
+                  type: string
+                  nullable: false
+                flowId:
+                  type: string
+                  nullable: true
+                  enum:
+                    - null
+                flowRevisionId:
+                  type: string
+                  nullable: true
+                  enum:
+                    - null
         changedFields:
           type: array
           maxItems: 32
@@ -19455,6 +19527,7 @@ components:
           flowRevisionId: revision-example
           runnerIds:
             - codex-sol
+          workspace: worktree
           baseCommit: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
           targetBranch: main
           promotionMode: pull_request
@@ -21243,7 +21316,7 @@ components:
         assignmentEpoch: { type: integer, minimum: 1 }
         preparationId: { type: string, minLength: 1, maxLength: 256 }
         stage: { type: string, minLength: 1, maxLength: 64 }
-        probeOperation: { type: string, pattern: '^[a-z.-]{1,64}$' }
+        probeOperation: { type: string, pattern: "^[a-z.-]{1,64}$" }
         causeChain:
           type: array
           maxItems: 4
@@ -21252,13 +21325,14 @@ components:
             additionalProperties: false
             required: [name]
             properties:
-              name: { type: string, pattern: '^[A-Za-z_][A-Za-z0-9_]{0,63}$' }
+              name: { type: string, pattern: "^[A-Za-z_][A-Za-z0-9_]{0,63}$" }
               code:
                 oneOf:
                   - { type: integer }
-                  - { type: string, pattern: '^[A-Za-z_][A-Za-z0-9_]{0,63}$' }
-              syscall: { type: string, pattern: '^[A-Za-z_][A-Za-z0-9_]{0,63}$' }
-              signal: { type: string, pattern: '^[A-Za-z_][A-Za-z0-9_]{0,63}$' }
+                  - { type: string, pattern: "^[A-Za-z_][A-Za-z0-9_]{0,63}$" }
+              syscall:
+                { type: string, pattern: "^[A-Za-z_][A-Za-z0-9_]{0,63}$" }
+              signal: { type: string, pattern: "^[A-Za-z_][A-Za-z0-9_]{0,63}$" }
     OperationalOutcome:
       type: object
       additionalProperties: false

@@ -1485,6 +1485,20 @@
       "when": 1793650944183,
       "tag": "0215_agent_preparation",
       "breakpoints": true
+    },
+    {
+      "idx": 216,
+      "version": "7",
+      "when": 1793655463733,
+      "tag": "0216_task_launch_admission",
+      "breakpoints": true
+    },
+    {
+      "idx": 217,
+      "version": "7",
+      "when": 1793655588868,
+      "tag": "0217_task_launch_events",
+      "breakpoints": true
     }
   ]
 }

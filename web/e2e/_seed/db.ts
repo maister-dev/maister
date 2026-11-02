@@ -6,7 +6,7 @@ export async function withE2EDb<T>(fn: (pool: Pool) => Promise<T>): Promise<T> {
   const pool = new Pool({
     connectionString: resolvePostgresDbUrl(),
     options:
-      "-c maister.task_qualification_writer=v1 -c maister.agent_preparation_writer=v1",
+      "-c maister.task_qualification_writer=v1 -c maister.agent_preparation_writer=v1 -c maister.task_launch_writer=v1",
   });
 
   try {

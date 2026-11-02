@@ -141,6 +141,7 @@ describe("domain-event taxonomy", () => {
       "agent.activity_changed",
       "agent.incident_changed",
       "task.qualification_changed",
+      "task.launch_changed",
       "task.created",
       "task.comment_added",
       "task.triage_requeued",

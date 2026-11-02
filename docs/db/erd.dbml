@@ -2611,6 +2611,7 @@ table runs {
   task_qualification_snapshot jsonb
   task_admission_checked_at "timestamp with time zone"
   task_admission_snapshot jsonb
+  task_launch_intent_id text
   retry_of_run_id text
   source_agent_id text
   launched_at "timestamp with time zone"
@@ -2686,6 +2687,7 @@ table runs {
   indexes {
 
 
+    task_launch_intent_id [name: 'runs_task_launch_intent_uq', unique]
     (project_id, status) [name: 'runs_project_status_idx']
     retry_of_run_id [name: 'runs_agent_retry_child_uq', unique]
 
@@ -2999,6 +3001,58 @@ table task_comments {
   indexes {
     (task_id, created_at) [name: 'task_comments_task_created_idx']
     via_operation_id [name: 'task_comments_via_operation_uq', unique]
+
+
+  }
+}
+
+table task_launch_intents {
+  id text [pk, not null]
+  schema_version integer [not null, default: 1]
+  project_id text [not null]
+  task_id text [not null]
+  principal_kind text [not null]
+  principal_id text [not null]
+  actor_user_id text
+  launch_source text [not null]
+  operation text [not null]
+  request_key text [not null]
+  payload_digest text [not null]
+  task_revision integer [not null]
+  input_revision integer [not null]
+  input_digest text [not null]
+  input_snapshot jsonb [not null]
+  settings_digest text [not null]
+  settings_snapshot jsonb [not null]
+  basis jsonb [not null]
+  reservation_lane text [not null, default: 'ordinary']
+  replaces_intent_id text
+  source_run_id text
+  run_id text
+  original_run_id text
+  state text [not null, default: 'queued']
+  state_version integer [not null, default: 1]
+  attempts integer [not null, default: 0]
+  due_at "timestamp with time zone"
+  lease_token text
+  lease_expires_at "timestamp with time zone"
+  reason text
+  terminal_outcome text
+  dispatch_committed_at "timestamp with time zone"
+  cancellation_receipt jsonb
+  accepted_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (principal_kind, principal_id, project_id, operation, request_key) [name: 'task_launch_intents_request_key_uq', unique]
+    (project_id, cancellation_receipt) [name: 'task_launch_intents_cancel_key_uq', unique]
+    task_id [name: 'task_launch_intents_active_task_uq', unique]
+    original_run_id [name: 'task_launch_intents_run_binding_uq', unique]
+    replaces_intent_id [name: 'task_launch_intents_replace_uq', unique]
+    (state, due_at, id) [name: 'task_launch_intents_recovery_idx']
+    (project_id, task_id, accepted_at) [name: 'task_launch_intents_history_idx']
+
+
 
 
   }
@@ -4105,6 +4159,8 @@ ref run_transcript_states_run_id_runs_id_fk: run_transcript_states.run_id > runs
 
 ref run_transcript_states_node_attempt_id_node_attempts_id_fk: run_transcript_states.node_attempt_id > node_attempts.id [delete: cascade, update: no action]
 
+ref runs_task_launch_intent_id_task_launch_intents_id_fk: runs.task_launch_intent_id > task_launch_intents.id [delete: restrict, update: no action]
+
 ref runs_agent_id_agents_id_fk: runs.agent_id > agents.id [delete: set null, update: no action]
 
 ref runs_scheduled_launch_id_scheduled_task_launches_id_fk: runs.scheduled_launch_id > scheduled_task_launches.id [delete: set null, update: no action]
@@ -4174,6 +4230,18 @@ ref task_clarifications_source_message_id_librarian_messages_id_fk: task_clarifi
 ref task_comments_task_id_tasks_id_fk: task_comments.task_id > tasks.id [delete: cascade, update: no action]
 
 ref task_comments_project_id_projects_id_fk: task_comments.project_id > projects.id [delete: cascade, update: no action]
+
+ref task_launch_intents_project_id_projects_id_fk: task_launch_intents.project_id > projects.id [delete: restrict, update: no action]
+
+ref task_launch_intents_task_id_tasks_id_fk: task_launch_intents.task_id > tasks.id [delete: restrict, update: no action]
+
+ref task_launch_intents_actor_user_id_users_id_fk: task_launch_intents.actor_user_id > users.id [delete: restrict, update: no action]
+
+ref task_launch_intents_replaces_intent_id_task_launch_intents_id_fk: task_launch_intents.replaces_intent_id > task_launch_intents.id [delete: restrict, update: no action]
+
+ref task_launch_intents_source_run_id_runs_id_fk: task_launch_intents.source_run_id > runs.id [delete: restrict, update: no action]
+
+ref task_launch_intents_run_id_runs_id_fk: task_launch_intents.run_id > runs.id [delete: set null, update: no action]
 
 ref task_qualifications_project_id_projects_id_fk: task_qualifications.project_id > projects.id [delete: cascade, update: no action]
 

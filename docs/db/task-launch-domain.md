@@ -1,6 +1,6 @@
 # Task launch and preparation persistence
 
-**Preparation implemented; admission designed — ADR-200/201.** Main-lineage migration `0215_agent_preparation` adds preparation ownership with its schema/journal/snapshot and fenced progress/invalidation/writer guards. Admission remains planned for 0216 and a separate shared guard migration if needed. No Brain migration or historical assessment/run snapshot rewrite. Test databases apply 0215; this task performs no production migration.
+**Persistence implemented; admission services designed — ADR-200/201.** Main-lineage migration `0215_agent_preparation` adds preparation ownership. `0216_task_launch_admission` adds immutable intents, v2 run bindings and writer guards; `0217_task_launch_events` extends the complete event-kind constraint. Each has a matching generated schema/journal/snapshot; services and dispatch cutover remain in progress. No Brain migration or historical assessment/run snapshot rewrite. Test databases apply these migrations; this task performs no production migration.
 
 ## Entities and cardinalities
 
@@ -29,6 +29,12 @@ erDiagram
 | Event                  | task.launch_changed has project/task/intent/stateVersion and no content; fact plus mutation/audit commit together. Complete domain-kind CHECK/taxonomy preserves all existing kinds.                                                                                                                                                                                                                                    |
 
 ## Transactions and indexes
+
+Frozen settings distinguish Flow and task-bound code-delivery-agent targets. Flow settings carry real Flow/ref/revision IDs and null agent identity; agent settings carry real agent ID and definition SHA-256 with null Flow IDs. Shared runner metadata excludes `env` and credential-bearing `provider` objects, retaining a server profile digest for exact dispatch revalidation. Run binding must match the target kind/identity and execution policy; no synthetic Flow IDs or human-decision backfill are permitted.
+
+An intent has at most one immutable cancellation receipt: cancelling principal/actor, key/payload digest, expected state version and DB acceptance time. An expression unique index scopes cancellation keys by principal/project/operation independently of the original launch key. This permits an authorized different actor to cancel, supports exact replay after response loss, and rejects reuse of one cancellation key for another intent. Replacement keys belong to the uniquely linked successor intent. Neither cancellation nor replacement rewrites the original execution authority.
+
+The intent input digest covers its semantic input snapshot, excluding mutable qualification counters/pointers and task status/priority. Automatic basis separately freezes the assessment's qualification input digest and revision; these use the existing qualification algorithm. This separation prevents requalification or evidence-head invalidation from changing an accepted manual request whose frozen content/settings remain identical. Automatic dispatch still revalidates all assessment/evidence freshness rules.
 
 ### Bounds and lease arithmetic
 

@@ -1,6 +1,12 @@
 import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
 import type { OperationalFailureDiagnostic } from "@/lib/agents/operational-diagnostics";
 import type {
+  TaskLaunchBasis,
+  TaskLaunchInputSnapshot,
+  TaskLaunchSettingsSnapshot,
+  TaskLaunchCancellationReceipt,
+} from "@/lib/tasks/launch-types";
+import type {
   TaskQualificationMode,
   TaskQualificationValue,
   TaskQualificationRouting,
@@ -103,6 +109,7 @@ import {
 } from "drizzle-orm/pg-core";
 
 import { scheduledRequestShape } from "@/lib/agents/scheduled-request-schema";
+import { TASK_LAUNCH_STATES } from "@/lib/tasks/launch-types";
 import {
   CONFIG_PERSIST_STATES,
   CONFIG_PUSH_STATES,
@@ -2004,6 +2011,10 @@ export const runs = pgTable(
     taskAdmissionSnapshot: jsonb(
       "task_admission_snapshot",
     ).$type<TaskAdmissionSnapshot>(),
+    taskLaunchIntentId: text("task_launch_intent_id").references(
+      (): AnyPgColumn => taskLaunchIntents.id,
+      { onDelete: "restrict" },
+    ),
     retryOfRunId: text("retry_of_run_id"),
     sourceAgentId: text("source_agent_id"),
     launchedAt: timestamp("launched_at", { withTimezone: true, mode: "date" }),
@@ -2338,7 +2349,10 @@ export const runs = pgTable(
     ),
     taskAdmissionShape: check(
       "runs_task_admission_snapshot_check",
-      sql`${t.taskAdmissionSnapshot} IS NULL OR (${t.taskId} IS NOT NULL AND jsonb_typeof(${t.taskAdmissionSnapshot}) = 'object' AND ${t.taskAdmissionSnapshot}->'version' = '1'::jsonb AND ${t.taskAdmissionSnapshot}->>'mode' IN ('legacy','required','execution_child') AND ${t.taskAdmissionSnapshot}->'policyVersion' = '1'::jsonb AND jsonb_typeof(${t.taskAdmissionSnapshot}->'inputRevision') = 'number' AND (${t.taskAdmissionSnapshot}->>'mode' <> 'required' OR jsonb_typeof(${t.taskAdmissionSnapshot}->'qualificationId') = 'string' AND jsonb_typeof(${t.taskAdmissionSnapshot}->'qualificationRevision') = 'number' AND ${t.taskAdmissionSnapshot}->>'evidenceSha' ~ '^[a-f0-9]{40}([a-f0-9]{24})?$') AND (${t.taskAdmissionSnapshot}->>'mode' <> 'execution_child' OR jsonb_typeof(${t.taskAdmissionSnapshot}->'parent') = 'object')) IS TRUE`,
+      sql`${t.taskAdmissionSnapshot} IS NULL OR (${t.taskId} IS NOT NULL AND jsonb_typeof(${t.taskAdmissionSnapshot})='object' AND jsonb_typeof(${t.taskAdmissionSnapshot}->'inputRevision')='number' AND (${t.taskAdmissionSnapshot}->>'mode'<>'required' OR jsonb_typeof(${t.taskAdmissionSnapshot}->'qualificationId')='string' AND jsonb_typeof(${t.taskAdmissionSnapshot}->'qualificationRevision')='number' AND ${t.taskAdmissionSnapshot}->>'evidenceSha' ~ '^[a-f0-9]{40}([a-f0-9]{24})?$') AND (${t.taskAdmissionSnapshot}->>'mode'<>'execution_child' OR jsonb_typeof(${t.taskAdmissionSnapshot}->'parent')='object') AND ((${t.taskLaunchIntentId} IS NULL AND ${t.taskAdmissionSnapshot}->'version'='1'::jsonb AND ${t.taskAdmissionSnapshot}->'policyVersion'='1'::jsonb AND ${t.taskAdmissionSnapshot}->>'mode' IN ('legacy','required','execution_child')) OR (${t.taskLaunchIntentId} IS NOT NULL AND ${t.taskAdmissionSnapshot}->'version'='2'::jsonb AND ${t.taskAdmissionSnapshot}->'policyVersion'='2'::jsonb AND ${t.taskAdmissionSnapshot}->>'intentId'=${t.taskLaunchIntentId} AND ${t.taskAdmissionSnapshot}->>'mode' IN ('manual','required','execution_child') AND ${t.taskAdmissionSnapshot}->>'basis'=CASE ${t.taskAdmissionSnapshot}->>'mode' WHEN 'manual' THEN 'manual' WHEN 'required' THEN 'automatic' ELSE 'execution_child' END AND ${t.taskAdmissionSnapshot}-ARRAY['version','policyVersion','mode','inputRevision','qualificationId','qualificationRevision','evidenceTarget','evidenceSha','parent','intentId','basis']='{}'::jsonb AND (${t.taskAdmissionSnapshot}->>'mode'<>'manual' OR ${t.taskAdmissionSnapshot}->'qualificationId'='null'::jsonb AND ${t.taskAdmissionSnapshot}->'qualificationRevision'='null'::jsonb AND ${t.taskAdmissionSnapshot}->'parent'='null'::jsonb AND (${t.taskAdmissionSnapshot}->>'evidenceSha' ~ '^[a-f0-9]{40}([a-f0-9]{24})?$' OR ${t.runKind}='agent' AND ${t.agentWorkspace}='none' AND ${t.taskAdmissionSnapshot}->'evidenceSha'='null'::jsonb))))) IS TRUE`,
+    ),
+    launchIntentUnique: unique("runs_task_launch_intent_uq").on(
+      t.taskLaunchIntentId,
     ),
     idxProjectStatus: index("runs_project_status_idx").on(
       t.projectId,
@@ -2959,6 +2973,150 @@ export const executionCommands = pgTable(
       AND (${t.applicationClaimOwner} IS NULL) = (${t.applicationClaimExpiresAt} IS NULL)
       AND ${t.applicationAttempts} >= 0
       AND (${t.applicationState} != 'poisoned' OR ${t.applicationNextRetryAt} IS NULL)`,
+    ),
+  }),
+);
+
+export const taskLaunchIntents = pgTable(
+  "task_launch_intents",
+  {
+    id: text("id").primaryKey(),
+    schemaVersion: integer("schema_version").notNull().default(1),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "restrict" }),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "restrict" }),
+    principalKind: text("principal_kind", {
+      enum: ["session_user", "project_token", "agent", "system"],
+    }).notNull(),
+    principalId: text("principal_id").notNull(),
+    actorUserId: text("actor_user_id").references(() => users.id, {
+      onDelete: "restrict",
+    }),
+    launchSource: text("launch_source", {
+      enum: [
+        "web",
+        "api",
+        "mcp",
+        "scheduler",
+        "retry",
+        "execution_child",
+        "recovery",
+      ],
+    }).notNull(),
+    operation: text("operation", {
+      enum: ["launch", "retry", "replace"],
+    }).notNull(),
+    requestKey: text("request_key").notNull(),
+    payloadDigest: text("payload_digest").notNull(),
+    taskRevision: integer("task_revision").notNull(),
+    inputRevision: integer("input_revision").notNull(),
+    inputDigest: text("input_digest").notNull(),
+    inputSnapshot: jsonb("input_snapshot")
+      .$type<TaskLaunchInputSnapshot>()
+      .notNull(),
+    settingsDigest: text("settings_digest").notNull(),
+    settingsSnapshot: jsonb("settings_snapshot")
+      .$type<TaskLaunchSettingsSnapshot>()
+      .notNull(),
+    basis: jsonb("basis").$type<TaskLaunchBasis>().notNull(),
+    reservationLane: text("reservation_lane", {
+      enum: ["ordinary", "concurrent"],
+    })
+      .notNull()
+      .default("ordinary"),
+    replacesIntentId: text("replaces_intent_id").references(
+      (): AnyPgColumn => taskLaunchIntents.id,
+      { onDelete: "restrict" },
+    ),
+    sourceRunId: text("source_run_id").references(() => runs.id, {
+      onDelete: "restrict",
+    }),
+    runId: text("run_id").references(() => runs.id, { onDelete: "set null" }),
+    originalRunId: text("original_run_id"),
+    state: text("state", { enum: TASK_LAUNCH_STATES })
+      .notNull()
+      .default("queued"),
+    stateVersion: integer("state_version").notNull().default(1),
+    attempts: integer("attempts").notNull().default(0),
+    dueAt: timestamp("due_at", { withTimezone: true, mode: "date" }),
+    leaseToken: text("lease_token"),
+    leaseExpiresAt: timestamp("lease_expires_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    reason: text("reason"),
+    terminalOutcome: text("terminal_outcome", {
+      enum: ["Done", "Failed", "Crashed", "Abandoned"],
+    }),
+    dispatchCommittedAt: timestamp("dispatch_committed_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    cancellationReceipt: jsonb(
+      "cancellation_receipt",
+    ).$type<TaskLaunchCancellationReceipt>(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    requestKeyUnique: unique("task_launch_intents_request_key_uq").on(
+      t.principalKind,
+      t.principalId,
+      t.projectId,
+      t.operation,
+      t.requestKey,
+    ),
+    cancellationKey: uniqueIndex("task_launch_intents_cancel_key_uq")
+      .on(
+        t.projectId,
+        sql`(${t.cancellationReceipt}->>'principalKind')`,
+        sql`(${t.cancellationReceipt}->>'principalId')`,
+        sql`(${t.cancellationReceipt}->>'requestKey')`,
+      )
+      .where(sql`${t.cancellationReceipt} IS NOT NULL`),
+    activeTask: uniqueIndex("task_launch_intents_active_task_uq")
+      .on(t.taskId)
+      .where(
+        sql`${t.reservationLane}='ordinary' AND ${t.state} IN ('queued','preparing','run_bound','held')`,
+      ),
+    runBinding: unique("task_launch_intents_run_binding_uq").on(
+      t.originalRunId,
+    ),
+    replaceBinding: unique("task_launch_intents_replace_uq").on(
+      t.replacesIntentId,
+    ),
+    recovery: index("task_launch_intents_recovery_idx").on(
+      t.state,
+      t.dueAt,
+      t.id,
+    ),
+    history: index("task_launch_intents_history_idx").on(
+      t.projectId,
+      t.taskId,
+      t.acceptedAt,
+    ),
+    stateCheck: check(
+      "task_launch_intents_state_check",
+      inLiteralList(t.state, TASK_LAUNCH_STATES),
+    ),
+    cancellationCheck: check(
+      "task_launch_intents_cancellation_check",
+      sql`${t.cancellationReceipt} IS NULL OR (${t.state}='cancelled' AND jsonb_typeof(${t.cancellationReceipt})='object' AND ${t.cancellationReceipt}->'version'='1'::jsonb AND ${t.cancellationReceipt}->>'principalKind' IN ('session_user','project_token','agent','system') AND length(${t.cancellationReceipt}->>'principalId') BETWEEN 1 AND 256 AND length(${t.cancellationReceipt}->>'requestKey') BETWEEN 1 AND 256 AND ${t.cancellationReceipt}->>'payloadDigest' ~ '^[0-9a-f]{64}$' AND jsonb_typeof(${t.cancellationReceipt}->'expectedStateVersion')='number' AND (${t.cancellationReceipt}->>'expectedStateVersion')::numeric>0 AND (${t.cancellationReceipt}->>'expectedStateVersion')::numeric=trunc((${t.cancellationReceipt}->>'expectedStateVersion')::numeric) AND jsonb_typeof(${t.cancellationReceipt}->'cancelledAt')='string' AND ${t.cancellationReceipt}->>'cancelledAt' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' AND ${t.cancellationReceipt}->'actorUserId' IS NOT NULL AND octet_length(${t.cancellationReceipt}::text)<=8192 AND ${t.cancellationReceipt}-ARRAY['version','principalKind','principalId','actorUserId','requestKey','payloadDigest','expectedStateVersion','cancelledAt']='{}'::jsonb) IS TRUE`,
+    ),
+    shapeCheck: check(
+      "task_launch_intents_shape_check",
+      sql`(${t.schemaVersion}=1 AND ${t.taskRevision}>=0 AND ${t.inputRevision}>0 AND ${t.stateVersion}>0 AND ${t.attempts} BETWEEN 0 AND 3 AND length(${t.requestKey}) BETWEEN 1 AND 256 AND length(${t.principalId}) BETWEEN 1 AND 256 AND ${t.payloadDigest} ~ '^[0-9a-f]{64}$' AND ${t.inputDigest} ~ '^[0-9a-f]{64}$' AND ${t.settingsDigest} ~ '^[0-9a-f]{64}$' AND ${t.principalKind} IN ('session_user','project_token','agent','system') AND ${t.launchSource} IN ('web','api','mcp','scheduler','retry','execution_child','recovery') AND ${t.operation} IN ('launch','retry','replace') AND ${t.reservationLane} IN ('ordinary','concurrent') AND (${t.reason} IS NULL OR length(${t.reason}) BETWEEN 1 AND 256) AND ((${t.state}='preparing')=(${t.leaseToken} IS NOT NULL AND ${t.leaseExpiresAt} IS NOT NULL)) AND ((${t.leaseToken} IS NULL)=(${t.leaseExpiresAt} IS NULL)) AND (${t.state}<>'queued' OR ${t.dueAt} IS NOT NULL) AND (${t.state} NOT IN ('held','failed') OR ${t.reason} IS NOT NULL) AND (${t.state}<>'run_bound' OR ${t.runId} IS NOT NULL AND ${t.originalRunId}=${t.runId}) AND (${t.runId} IS NULL OR ${t.originalRunId}=${t.runId}) AND ((${t.state}='settled')=(${t.terminalOutcome} IS NOT NULL)) AND (${t.terminalOutcome} IS NULL OR ${t.terminalOutcome} IN ('Done','Failed','Crashed','Abandoned'))) IS TRUE`,
+    ),
+    snapshotCheck: check(
+      "task_launch_intents_snapshot_check",
+      sql`(jsonb_typeof(${t.inputSnapshot})='object' AND ${t.inputSnapshot}->'version'='1'::jsonb AND ${t.inputSnapshot}->>'projectId'=${t.projectId} AND ${t.inputSnapshot}->>'taskId'=${t.taskId} AND jsonb_typeof(${t.inputSnapshot}->'title')='string' AND jsonb_typeof(${t.inputSnapshot}->'prompt')='string' AND jsonb_typeof(${t.inputSnapshot}->'clarifications')='array' AND jsonb_array_length(${t.inputSnapshot}->'clarifications')<=1000 AND octet_length(${t.inputSnapshot}::text)<=262144 AND jsonb_typeof(${t.settingsSnapshot})='object' AND ${t.settingsSnapshot}->'version'='1'::jsonb AND (${t.settingsSnapshot}->>'kind'='flow' AND jsonb_typeof(${t.settingsSnapshot}->'flowId')='string' AND jsonb_typeof(${t.settingsSnapshot}->'flowRevisionId')='string' AND ${t.settingsSnapshot}->'agentId'='null'::jsonb AND ${t.settingsSnapshot}->'definitionSha256'='null'::jsonb OR ${t.settingsSnapshot}->>'kind'='agent' AND ${t.settingsSnapshot}->'flowId'='null'::jsonb AND ${t.settingsSnapshot}->'flowRefId'='null'::jsonb AND ${t.settingsSnapshot}->'flowRevisionId'='null'::jsonb AND jsonb_typeof(${t.settingsSnapshot}->'agentId')='string' AND ${t.settingsSnapshot}->>'definitionSha256' ~ '^[0-9a-f]{64}$') AND jsonb_typeof(${t.settingsSnapshot}->'sessions')='array' AND jsonb_array_length(${t.settingsSnapshot}->'sessions') BETWEEN 1 AND 64 AND (${t.settingsSnapshot}->>'baseCommit' ~ '^[0-9a-f]{40,64}$' OR ${t.settingsSnapshot}->>'kind'='agent' AND ${t.settingsSnapshot}->>'workspace'='none' AND ${t.settingsSnapshot}->'baseCommit'='null'::jsonb) AND jsonb_typeof(${t.settingsSnapshot}->'autoPromote')='boolean' AND jsonb_typeof(${t.settingsSnapshot}->'executionPolicy')='object' AND jsonb_typeof(${t.settingsSnapshot}->'deliveryPolicy')='object' AND octet_length(${t.settingsSnapshot}::text)<=131072 AND jsonb_typeof(${t.basis})='object' AND ${t.basis}->>'kind' IN ('manual','automatic','execution_child') AND (${t.basis}->>'kind'<>'manual' OR ${t.principalKind}='session_user' AND ${t.actorUserId}=${t.principalId} AND ${t.basis}->>'userId'=${t.actorUserId}) AND (${t.basis}->>'kind'<>'automatic' OR jsonb_typeof(${t.basis}->'qualificationId')='string' AND jsonb_typeof(${t.basis}->'qualificationRevision')='number' AND ${t.basis}->>'qualificationInputDigest' ~ '^[0-9a-f]{64}$' AND ${t.basis}->>'evidenceSha' ~ '^[0-9a-f]{40,64}$') AND (${t.basis}->>'kind'<>'execution_child' OR jsonb_typeof(${t.basis}->'parent')='object')) IS TRUE`,
     ),
   }),
 );
@@ -8335,7 +8493,7 @@ export const domainEvents = pgTable(
   (t) => ({
     kindCheck: check(
       "domain_events_kind_check",
-      sql`${t.kind} in ('agent.activity_changed', 'agent.incident_changed', 'task.qualification_changed', 'task.created', 'task.comment_added', 'task.triage_requeued', 'task.clarification_requested', 'task.clarification_answered', 'task.clarification_cancelled', 'run.done', 'run.failed', 'run.crashed', 'run.abandoned', 'run.review', 'run.review_opened', 'run.needs_input', 'run.escalated', 'run.rework_claimed', 'run.rework_returned', 'gate.failed', 'run.operational_attention_acknowledged', 'run.operational_cleanup_changed')`,
+      sql`${t.kind} in ('agent.activity_changed', 'agent.incident_changed', 'task.qualification_changed', 'task.launch_changed', 'task.created', 'task.comment_added', 'task.triage_requeued', 'task.clarification_requested', 'task.clarification_answered', 'task.clarification_cancelled', 'run.done', 'run.failed', 'run.crashed', 'run.abandoned', 'run.review', 'run.review_opened', 'run.needs_input', 'run.escalated', 'run.rework_claimed', 'run.rework_returned', 'gate.failed', 'run.operational_attention_acknowledged', 'run.operational_cleanup_changed')`,
     ),
     actorTypeCheck: check(
       "domain_events_actor_type_check",

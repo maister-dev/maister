@@ -49,7 +49,7 @@ export type TaskExecutionChildProof = {
   childInputDigest: string;
   relationId: string | null;
 };
-export type TaskAdmissionSnapshot = {
+export type TaskAdmissionV1Snapshot = {
   version: 1;
   mode: "legacy" | "required" | "execution_child";
   policyVersion: 1;
@@ -60,6 +60,16 @@ export type TaskAdmissionSnapshot = {
   evidenceSha: string | null;
   parent: TaskExecutionChildProof | null;
 };
+
+export type TaskAdmissionSnapshot =
+  | TaskAdmissionV1Snapshot
+  | (Omit<TaskAdmissionV1Snapshot, "version" | "policyVersion" | "mode"> & {
+      version: 2;
+      policyVersion: 2;
+      mode: "manual" | "required" | "execution_child";
+      intentId: string;
+      basis: "manual" | "automatic" | "execution_child";
+    });
 
 export type TaskQualificationLaunchSnapshot = {
   version: 1;

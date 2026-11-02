@@ -1,6 +1,6 @@
 [← Getting Started](getting-started.md) · [Back to README](../README.md) · [Error Taxonomy →](error-taxonomy.md)
 
-**Additive extension:** [task launch and preparation](db/task-launch-domain.md) defines preparation ownership implemented in migration 0215 and the designed intent/immutable-input contracts. Historical run/assessment receipts are unchanged.
+**Additive extension:** [task launch and preparation](db/task-launch-domain.md) defines preparation ownership (0215), immutable launch intent/run binding (0216), and launch-state event registration (0217). Admission service and dispatch integration remain in progress. Historical run/assessment receipts are unchanged.
 
 # Database Schema
 

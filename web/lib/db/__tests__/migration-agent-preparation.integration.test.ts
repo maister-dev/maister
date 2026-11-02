@@ -1,10 +1,11 @@
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 import { readMigrationFiles } from "drizzle-orm/migrator";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { afterAll, beforeAll, expect, it } from "vitest";
 
-import { seedProjectRow, seedRun } from "@/test-support/execution-host-seed";
+import { seedProjectRow } from "@/test-support/execution-host-seed";
 import {
   startMainPostgresTestDbUpTo,
   type StartedPostgresTestDb,
@@ -20,12 +21,33 @@ beforeAll(async () => {
     "0214_transcript_creation_order",
   );
   const project = await seedProjectRow(database.db);
-  const run = await seedRun(database.db, {
-    projectId: project.id,
-    runKind: "agent",
-  });
 
-  runId = run;
+  runId = randomUUID();
+  const taskId = `${runId}-task`;
+
+  await database.pool.query(
+    "INSERT INTO tasks(id,project_id,number,title,prompt) VALUES($1,$2,1,'Historical request','Frozen historical input')",
+    [taskId, project.id],
+  );
+  await database.pool.query(
+    "INSERT INTO runs(id,project_id,task_id,run_kind,status,flow_version,flow_revision,task_admission_snapshot) VALUES($1,$2,$3,'agent','Running','agent','manual',$4::jsonb)",
+    [
+      runId,
+      project.id,
+      taskId,
+      JSON.stringify({
+        version: 1,
+        policyVersion: 1,
+        mode: "legacy",
+        inputRevision: 1,
+        qualificationId: null,
+        qualificationRevision: null,
+        evidenceTarget: null,
+        evidenceSha: null,
+        parent: null,
+      }),
+    ],
+  );
   before = (
     await database.pool.query(
       "SELECT to_jsonb(r) AS value FROM runs r WHERE id=$1",
@@ -67,7 +89,7 @@ it("DB01 populated upgrade and journal replay preserve historical run bytes with
   expect(
     (
       await database.pool.query(
-        "SELECT to_jsonb(r) AS value FROM runs r WHERE id=$1",
+        "SELECT to_jsonb(r)-'task_launch_intent_id' AS value FROM runs r WHERE id=$1",
         [runId],
       )
     ).rows[0].value,
