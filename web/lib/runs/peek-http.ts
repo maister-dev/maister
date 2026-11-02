@@ -1,5 +1,7 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
+
 import { NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
@@ -43,21 +45,36 @@ export function peekQuery(
 }
 
 export async function peekResponse<T>(
+  operation: "children" | "snapshot" | "transcript",
   load: (userId: string) => Promise<T>,
 ): Promise<NextResponse> {
+  const requestId = randomUUID();
+  const startedAt = Date.now();
+
   try {
     const user = await requireActiveSession();
     const body = await load(user.id);
+
+    log.info(
+      { requestId, operation, status: 200, durationMs: Date.now() - startedAt },
+      "peek read completed",
+    );
 
     return NextResponse.json(body, {
       headers: { "Cache-Control": "private, no-store" },
     });
   } catch (error) {
-    return peekFailure(error);
+    return peekFailure(error, { requestId, operation });
   }
 }
 
-export function peekFailure(error: unknown): NextResponse {
+export function peekFailure(
+  error: unknown,
+  context: { requestId: string; operation: string } = {
+    requestId: randomUUID(),
+    operation: "stream",
+  },
+): NextResponse {
   const code = isMaisterError(error) ? error.code : "CRASH";
   const reason =
     isMaisterError(error) && typeof error.details?.reason === "string"
@@ -76,8 +93,8 @@ export function peekFailure(error: unknown): NextResponse {
             : 500);
 
   if (status >= 500)
-    log.error({ err: error, code, reason }, "peek read failed");
-  else log.warn({ code, reason, status }, "peek read refused");
+    log.error({ ...context, err: error, code, reason }, "peek read failed");
+  else log.warn({ ...context, code, reason, status }, "peek read refused");
 
   return NextResponse.json(
     {

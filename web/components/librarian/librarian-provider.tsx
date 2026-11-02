@@ -22,6 +22,8 @@ type LibrarianContextValue = {
   /** Bumped on conversation or settings changes; the open panel refetches. */
   changeTick: number;
   hostComposerVisible: boolean;
+  suspended: boolean;
+  suspendForPeek: (onSwitch: () => void) => () => void;
   openPanel: (opener: HTMLElement | null) => void;
   closePanel: () => void;
   takeOpener: () => HTMLElement | null;
@@ -82,11 +84,41 @@ export function LibrarianProvider({
     useState<LibrarianIndicatorState>(initialIndicator);
   const [changeTick, setChangeTick] = useState(0);
   const [hostComposers, setHostComposers] = useState(0);
+  const [peekSuspensions, setPeekSuspensions] = useState(0);
+  const peekSwitchRef = useRef<(() => void) | null>(null);
+  const switchingRef = useRef(false);
+  const composersRef = useRef(hostComposers);
+
+  useEffect(() => {
+    composersRef.current = hostComposers;
+  }, [hostComposers]);
+  const suspendForPeek = useCallback((onSwitch: () => void): (() => void) => {
+    peekSwitchRef.current = onSwitch;
+    setPeekSuspensions((count) => count + 1);
+    let released = false;
+
+    return () => {
+      if (released) return;
+      released = true;
+      peekSwitchRef.current = null;
+      setPeekSuspensions((count) => Math.max(0, count - 1));
+      if (
+        !switchingRef.current &&
+        (window.innerWidth < 1536 || composersRef.current > 0)
+      )
+        setOpen(false);
+      switchingRef.current = false;
+    };
+  }, []);
   const openerRef = useRef<HTMLElement | null>(null);
   const lastEventIdRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (typeof window === "undefined" || typeof EventSource === "undefined")
+    if (
+      peekSuspensions > 0 ||
+      typeof window === "undefined" ||
+      typeof EventSource === "undefined"
+    )
       return undefined;
     let source: EventSource | null = null;
 
@@ -131,9 +163,13 @@ export function LibrarianProvider({
       document.removeEventListener("visibilitychange", onVisibility);
       disconnect();
     };
-  }, []);
+  }, [peekSuspensions]);
 
   const openPanel = useCallback((opener: HTMLElement | null) => {
+    if (peekSwitchRef.current) {
+      switchingRef.current = true;
+      peekSwitchRef.current();
+    }
     openerRef.current = opener;
     setOpen(true);
   }, []);
@@ -158,6 +194,8 @@ export function LibrarianProvider({
       indicator,
       changeTick,
       hostComposerVisible: hostComposers > 0,
+      suspended: peekSuspensions > 0,
+      suspendForPeek,
       openPanel,
       closePanel,
       takeOpener,
@@ -170,6 +208,8 @@ export function LibrarianProvider({
       indicator,
       changeTick,
       hostComposers,
+      peekSuspensions,
+      suspendForPeek,
       openPanel,
       closePanel,
       takeOpener,

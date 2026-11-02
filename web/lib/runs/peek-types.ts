@@ -1,3 +1,5 @@
+import type { ChildRunRef } from "@/lib/queries/run";
+import type { TerminalCause } from "@/lib/domain-events/taxonomy";
 import type { FlowManifestIncompatibility } from "@/lib/flows/manifest-parser";
 import type { RunKind } from "@/lib/db/schema";
 import type { RunPublicResultDto } from "@/lib/runs/run-result-dto";
@@ -13,6 +15,7 @@ export interface RunPeekSummary {
   launchedAt: string | null;
   startedAt: string | null;
   hasChildren: boolean;
+  delegationTarget: ChildRunRef["delegationTarget"];
   fullRunHref: string;
 }
 
@@ -59,5 +62,6 @@ export interface RunPeekSnapshot {
   workspace: "none" | "present" | "removed";
   content: RunPeekContent;
   publicResult: RunPublicResultDto | null;
+  terminalCause: TerminalCause | null;
   fullRunHref: string;
 }

@@ -11,6 +11,7 @@ import {
   type TranscriptMessage,
 } from "@/components/run-transcript/transcript-view";
 import { CHANGE_SUMMARY_REFRESH_DEBOUNCE_MS } from "@/lib/runs/live-inspector";
+import { useWorkbenchStream } from "@/components/runs/run-workbench-stream-provider";
 import { useRunPageStream } from "@/components/runs/run-stream-provider";
 
 function buildTranscriptLabels(
@@ -49,6 +50,7 @@ export function AgentRunTranscript({
   // Test/SSR seam — when provided, skips the initial client fetch.
   initialMessages?: TranscriptMessage[];
 }): ReactElement {
+  const workbench = useWorkbenchStream() !== null;
   const [open, setOpen] = useState(defaultOpen);
   const [messages, setMessages] = useState<TranscriptMessage[] | null>(
     initialMessages ?? null,
@@ -79,7 +81,7 @@ export function AgentRunTranscript({
   }, [open, initialMessages, load]);
 
   useEffect(() => {
-    if (!open || !live || eventCount === 0) return;
+    if (!open || (!live && !workbench) || eventCount === 0) return;
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(
       () => void load(),
@@ -89,7 +91,7 @@ export function AgentRunTranscript({
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [eventCount, open, live, load]);
+  }, [eventCount, open, live, load, workbench]);
 
   return (
     <section

@@ -18797,6 +18797,7 @@ components:
         - launchedAt
         - startedAt
         - hasChildren
+        - delegationTarget
         - fullRunHref
       properties:
         runId:
@@ -18846,6 +18847,18 @@ components:
           nullable: true
         hasChildren:
           type: boolean
+        delegationTarget:
+          type: object
+          nullable: true
+          additionalProperties: false
+          required: [kind, ref]
+          properties:
+            kind:
+              type: string
+              enum: [agent, flow, runner]
+            ref:
+              type: string
+          description: Existing frozen delegation target identity; null for records without a delegation snapshot.
         fullRunHref:
           type: string
       example:
@@ -18858,6 +18871,7 @@ components:
         launchedAt: 2026-11-02T00:00:00.000Z
         startedAt: 2026-11-02T00:00:00.000Z
         hasChildren: false
+        delegationTarget: null
         fullRunHref: /runs/00000000-0000-4000-8000-000000000002
     RunPeekChildPage:
       type: object
@@ -18900,6 +18914,7 @@ components:
             launchedAt: 2026-11-02T00:00:00.000Z
             startedAt: 2026-11-02T00:00:00.000Z
             hasChildren: false
+            delegationTarget: null
             fullRunHref: /runs/00000000-0000-4000-8000-000000000002
         nextCursor: null
         hasMore: false
@@ -19059,6 +19074,7 @@ components:
         - workspace
         - content
         - publicResult
+        - terminalCause
         - fullRunHref
       properties:
         anchorRunId:
@@ -19092,8 +19108,16 @@ components:
         content:
           $ref: "#/components/schemas/RunPeekContent"
         publicResult:
-          $ref: "#/components/schemas/RunPeekPublicResult"
+          type: object
           nullable: true
+          allOf:
+            - $ref: "#/components/schemas/RunPeekPublicResult"
+        terminalCause:
+          type: object
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/TerminalCause"
+          description: Existing token-only terminal cause projection for the selected Run; null when no matching recorded cause exists.
         fullRunHref:
           type: string
       example:
@@ -19109,6 +19133,7 @@ components:
             launchedAt: 2026-11-02T00:00:00.000Z
             startedAt: 2026-11-02T00:00:00.000Z
             hasChildren: false
+            delegationTarget: null
             fullRunHref: /runs/00000000-0000-4000-8000-000000000002
           - runId: 00000000-0000-4000-8000-000000000002
             label: Research · 00000000
@@ -19119,6 +19144,7 @@ components:
             launchedAt: 2026-11-02T00:00:00.000Z
             startedAt: 2026-11-02T00:00:00.000Z
             hasChildren: false
+            delegationTarget: null
             fullRunHref: /runs/00000000-0000-4000-8000-000000000002
         summary:
           runId: 00000000-0000-4000-8000-000000000002
@@ -19130,6 +19156,7 @@ components:
           launchedAt: 2026-11-02T00:00:00.000Z
           startedAt: 2026-11-02T00:00:00.000Z
           hasChildren: false
+          delegationTarget: null
           fullRunHref: /runs/00000000-0000-4000-8000-000000000002
         capabilities:
           canReadTranscript: true
@@ -19139,6 +19166,7 @@ components:
           kind: conversation
           availability: ready
         publicResult: null
+        terminalCause: null
         fullRunHref: /runs/00000000-0000-4000-8000-000000000002
     RunPeekError:
       type: object

@@ -143,7 +143,7 @@ export function RunChildrenProvider({
         count: (previous?.count ?? 0) + 1,
         version: previous?.version ?? 0,
       });
-      if (!cache.current.has(key)) void load(parent, cursor);
+      if (!previous || !cache.current.has(key)) void load(parent, cursor);
 
       return () => {
         const entry = owners.current.get(key);

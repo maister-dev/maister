@@ -22,7 +22,8 @@ export function LibrarianTrigger(): ReactElement | null {
   const librarian = useLibrarian();
 
   if (!librarian) return null;
-  const { indicator, open } = librarian;
+  const { indicator } = librarian;
+  const open = librarian.open && !librarian.suspended;
   const label =
     indicator === "none"
       ? t("entryLabel")

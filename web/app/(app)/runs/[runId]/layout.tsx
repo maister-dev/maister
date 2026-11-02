@@ -62,7 +62,8 @@ import {
 } from "@/components/runs/flow-run-center";
 import { LiveRunInspector } from "@/components/runs/live-run-inspector";
 import { RunLiveRefresh } from "@/components/runs/run-live-refresh";
-import { RunStreamProvider } from "@/components/runs/run-stream-provider";
+import { RunPeekController } from "@/components/runs/run-peek-controller";
+import { readRunPeekChildren } from "@/lib/runs/peek-read-model";
 import {
   OrchestratorRunSubtree,
   type OrchestratorRunSubtreeLabels,
@@ -129,7 +130,6 @@ import { getRunNodeStatuses } from "@/lib/queries/run-node-status";
 import { loadRunManifest } from "@/lib/queries/run-manifest";
 import { getRunReadiness } from "@/lib/queries/readiness";
 import {
-  getChildRuns,
   getRunCapabilityProfiles,
   getRunCostSummary,
   getRunDetail,
@@ -391,7 +391,8 @@ export default async function RunDetailLayout({
   const packageProvenance = await getRunPackageProvenance(runId);
   // M37 Phase 6 (ADR-098): the orchestrator run-tree children. Empty for an
   // ordinary run — the subtree/inspector sections then render nothing.
-  const childRuns = await getChildRuns(runId);
+  const initialChildPage = await readRunPeekChildren(user.id, runId, {});
+  const childRuns = initialChildPage.items;
   const tRunStatus = await getTranslations("run.runStatus");
   const runStatusLabels = Object.fromEntries(
     RUN_STATUS_KEYS.map((key) => [key, tRunStatus(key)]),
@@ -401,7 +402,7 @@ export default async function RunDetailLayout({
     // across the RSC → Client boundary into the OrchestratorRunSubtree client
     // subtree, and `childRuns` is the same static list the subtree renders (so
     // the count is exact). The message is a plain `{count}` interpolation.
-    title: t("subtreeTitle", { count: childRuns.length }),
+    title: t("subtreeTitle", { count: initialChildPage.totalCount }),
     agent: t("subtreeAgent"),
     flow: t("subtreeFlow"),
     runner: t("subtreeRunner"),
@@ -412,10 +413,8 @@ export default async function RunDetailLayout({
   const inspectorChildRuns: RunInspectorChildRun[] = childRuns.map((child) => ({
     runId: child.runId,
     status: child.status,
-    taskRef:
-      child.taskKey !== null && child.taskNumber !== null
-        ? `${child.taskKey}-${child.taskNumber}`
-        : null,
+    taskRef: child.taskRef,
+    label: child.label,
     // ADR-165: null for a child that publishes no public result — the row then
     // renders no glyph at all.
     resultStatus: child.resultStatus,
@@ -451,7 +450,7 @@ export default async function RunDetailLayout({
     // Render the title string server-side (same RSC→Client serialization
     // reason): the inspector renders `inspectorChildRuns` (length ===
     // childRuns.length).
-    title: t("spawnedRunsTitle", { count: childRuns.length }),
+    title: t("spawnedRunsTitle", { count: initialChildPage.totalCount }),
     asRun: t("subtreeAsRun"),
     status: runStatusLabels,
     resultStatus: resultStatusLabels,
@@ -580,10 +579,6 @@ export default async function RunDetailLayout({
     diffLabels: RunDiffLabels;
   } | null = null;
 
-  // M37 Phase 6 (ADR-098): true when the run's current node is an orchestrator —
-  // drives the run-tree subtree even before the first child spawns.
-  let currentNodeIsOrchestrator = false;
-
   if (detail.runKind === "flow") {
     const loadedM = await loadRunManifest(runId);
 
@@ -592,11 +587,6 @@ export default async function RunDetailLayout({
       const topology = buildGraphTopology(compiled);
       const graphLayout = presentationLayout(loadedM.manifest);
       const nodeStatuses = await getRunNodeStatuses(runId);
-
-      if (detail.currentStepId) {
-        currentNodeIsOrchestrator =
-          compiled.nodes.get(detail.currentStepId)?.nodeType === "orchestrator";
-      }
 
       flowGraphData = {
         topology,
@@ -610,8 +600,6 @@ export default async function RunDetailLayout({
       };
     }
   }
-
-  const isOrchestratorRun = childRuns.length > 0 || currentNodeIsOrchestrator;
 
   const settingsClassLabel: Record<EnforcementSnapshotEntry["class"], string> =
     {
@@ -1515,17 +1503,19 @@ export default async function RunDetailLayout({
             />
           </>
         )}
-        {isOrchestratorRun ? (
-          <OrchestratorRunSubtree
-            childRuns={childRuns}
-            labels={orchestratorSubtreeLabels}
-          />
-        ) : null}
+        <OrchestratorRunSubtree
+          childRuns={[]}
+          labels={orchestratorSubtreeLabels}
+        />
       </section>
     ) : null;
 
   return (
-    <RunStreamProvider runId={detail.runId} runStatus={detail.status}>
+    <RunPeekController
+      key={detail.runId}
+      anchorRunId={detail.runId}
+      initialChildPage={initialChildPage}
+    >
       <RunLiveRefresh
         currentStepId={detail.currentStepId}
         livenessLabels={{
@@ -2170,6 +2160,6 @@ export default async function RunDetailLayout({
           />
         </div>
       </RunShell>
-    </RunStreamProvider>
+    </RunPeekController>
   );
 }

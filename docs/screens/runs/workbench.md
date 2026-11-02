@@ -276,6 +276,6 @@ recovery. A non-review or scratch URL state has an explicit unavailable state.
 
 Operational agents show the structured operation result, actionable diagnostics, counts, references, source integrity and cleanup evidence. The workbench exposes Timeline and Evidence; Files/Diff and Git delivery actions are absent. Authorized users retain Stop for active operational runs; stopping records cancellation and uses the normal operational cleanup owner. Server-side frozen-kind guards independently refuse promotion, sync, merge, publication and reattachment.
 
-## Child Run peek (Designed)
+## Child Run peek (Implemented)
 
 Descendant entries open the [read-only peek](child-run-peek.md); interactive actions require the full selected Run.

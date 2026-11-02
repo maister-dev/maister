@@ -163,7 +163,8 @@ function LibrarianPanelBody(): ReactElement {
   const runStatusT = useTranslations("run.runStatus");
   const pathname = usePathname() ?? "/";
   const {
-    open,
+    open: logicalOpen,
+    suspended,
     ownerId,
     changeTick,
     hostComposerVisible,
@@ -171,6 +172,8 @@ function LibrarianPanelBody(): ReactElement {
     takeOpener,
     setIndicator,
   } = librarian;
+  const open = logicalOpen && !suspended;
+  const wasPeekSuspended = useRef(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -364,9 +367,24 @@ function LibrarianPanelBody(): ReactElement {
   // LUI-05: opening focuses the composer (after the modal hook's own initial
   // focus); closing returns focus to whatever opened the panel.
   useEffect(() => {
+    if (suspended) {
+      wasPeekSuspended.current = true;
+
+      return;
+    }
+    const resumed = wasPeekSuspended.current;
+
+    wasPeekSuspended.current = false;
+    if (resumed && !open) {
+      wasOpenRef.current = false;
+
+      return;
+    }
     if (open) {
+      const opening = !wasOpenRef.current;
+
       wasOpenRef.current = true;
-      composerRef.current?.focus();
+      if (opening) composerRef.current?.focus();
       const list = listRef.current;
 
       if (list && savedScrollRef.current !== null)
@@ -378,7 +396,7 @@ function LibrarianPanelBody(): ReactElement {
       wasOpenRef.current = false;
       takeOpener()?.focus();
     }
-  }, [open, modal, takeOpener]);
+  }, [open, modal, takeOpener, suspended]);
 
   const activeTurn = view?.activeTurn ?? null;
   const responding = open && activeTurn?.status === "running";

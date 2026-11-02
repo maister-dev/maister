@@ -163,6 +163,11 @@ export function buildRunSearchParams(
   setOptionalParam(params, "node", patch.node);
   setOptionalParam(params, "inspector", patch.inspector);
   setOptionalParam(params, "flow", patch.flow);
+  if (patch.flow === "fullscreen") {
+    params.delete("peek");
+    params.delete("peekView");
+    params.delete("peekNode");
+  }
 
   return params;
 }
@@ -216,4 +221,48 @@ export function runReviewHref(runId: string): string {
     wb: "review",
     scope: "review",
   });
+}
+
+export type RunPeekView = "conversation" | "execution" | "result";
+export function readRunPeekQuery(input: RunSearchParamsInput): {
+  selected: string | null;
+  view: RunPeekView | null;
+  node: string | null;
+} {
+  const params = toRunSearchParams(input);
+
+  return {
+    selected: params.get("peek"),
+    view: enumOrNull(params.get("peekView"), [
+      "conversation",
+      "execution",
+      "result",
+    ]),
+    node: params.get("peekNode"),
+  };
+}
+export function buildRunPeekHref(
+  pathname: string,
+  input: RunSearchParamsInput,
+  patch: {
+    selected: string | null;
+    view?: RunPeekView | null;
+    node?: string | null;
+  },
+): string {
+  const params = toRunSearchParams(input);
+
+  setOptionalParam(params, "peek", patch.selected);
+  setOptionalParam(
+    params,
+    "peekView",
+    patch.selected === null ? null : patch.view,
+  );
+  setOptionalParam(
+    params,
+    "peekNode",
+    patch.selected === null ? null : patch.node,
+  );
+
+  return params.size ? `${pathname}?${params}` : pathname;
 }

@@ -987,7 +987,7 @@ export interface ChildRunRef {
   resultStatus: ResultStatus | null;
 }
 
-function delegationTarget(
+export function delegationTarget(
   snapshot: DelegationSnapshot | null,
 ): ChildRunRef["delegationTarget"] {
   if (!snapshot) return null;

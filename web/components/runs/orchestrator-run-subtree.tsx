@@ -1,3 +1,5 @@
+"use client";
+
 import type { ChildRunRef } from "@/lib/queries/run";
 import type { RunStatusKey } from "@/lib/runs/run-status-tone";
 import type { ReactElement } from "react";
@@ -5,6 +7,8 @@ import type { ReactElement } from "react";
 import Link from "next/link";
 import clsx from "clsx";
 
+import { useRunPeek } from "@/components/runs/run-peek-controller";
+import { RunChildPageList } from "@/components/runs/run-peek-navigation";
 import {
   RUN_STATUS_DOT_CLASS,
   runStatusTone,
@@ -52,6 +56,20 @@ export function OrchestratorRunSubtree({
   childRuns,
   labels,
 }: OrchestratorRunSubtreeProps): ReactElement {
+  const peek = useRunPeek();
+
+  if (peek)
+    return (
+      <section
+        aria-label={peek.t("children")}
+        className="mt-3 min-w-0 rounded-lg border border-dashed border-line p-3"
+        data-testid="orchestrator-run-subtree"
+      >
+        <h2>{peek.t("children")}</h2>
+        <RunChildPageList parentId={peek.anchor} />
+      </section>
+    );
+
   return (
     <section
       aria-label={labels.title}

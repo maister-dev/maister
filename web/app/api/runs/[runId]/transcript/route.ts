@@ -74,7 +74,7 @@ export async function GET(
       (key) => new URL(req.url).searchParams.has(key),
     )
   ) {
-    return peekResponse((userId) =>
+    return peekResponse("transcript", (userId) =>
       readTranscriptPage(
         userId,
         parsePeekRunId(runId),

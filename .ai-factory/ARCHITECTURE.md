@@ -289,7 +289,8 @@ Representative members: `errors-core`, `config.schema`,
 (pure reducers), `flows/artifact-frontmatter`, `flows/artifact-validate`,
 `flows/shell-lint`, `flows/authored-lint`, the `board/*-layout`
 projections, and the client UI utilities (`theme`, `i18n`,
-`use-run-stream`). Everything else in `lib/` stays server-only and
+`use-run-stream`, `use-run-workbench-stream`), plus the zod-only
+`runs/peek-stream-contract` and type-only `runs/peek-types`. Everything else in `lib/` stays server-only and
 should carry the `"server-only"` guard when it touches `node:*`, db, or
 secrets.
 

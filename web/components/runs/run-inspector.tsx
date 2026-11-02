@@ -20,6 +20,7 @@ import {
 } from "@heroicons/react/24/outline";
 import clsx from "clsx";
 
+import { useRunPeek } from "@/components/runs/run-peek-controller";
 import { Tabs } from "@/components/navigation/tabs";
 import {
   RunInspectorChildRunsList,
@@ -240,6 +241,7 @@ export function RunInspector({
   childRuns,
   childRunsLabels,
 }: RunInspectorProps): ReactElement {
+  const peekAvailable = useRunPeek() !== null;
   const [activeTab, setActiveTab] = useState<RunInspectorTab>("overview");
   const changeText = summaryText(changeSummary);
   // ADR-181 C34: only actions with a target are listed, each as a link; a
@@ -265,7 +267,9 @@ export function RunInspector({
         onSelect={(key) => setActiveTab(key as RunInspectorTab)}
       />
 
-      {childRuns && childRuns.length > 0 && childRunsLabels ? (
+      {childRuns &&
+      (childRuns.length > 0 || peekAvailable) &&
+      childRunsLabels ? (
         <RunInspectorChildRunsList
           childRuns={childRuns}
           labels={childRunsLabels}

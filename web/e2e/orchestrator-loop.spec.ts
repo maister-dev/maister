@@ -172,7 +172,9 @@ test("orchestrator loop: launch → park with child subtree → resume to termin
 
   // ---- The workbench renders the dynamic run-tree subtree (Phase 6). -------
   await page.goto(`/runs/${runId}`);
-  const subtree = page.getByTestId("orchestrator-run-subtree");
+  const subtree = page.locator(
+    '[data-testid="orchestrator-run-subtree"]:visible',
+  );
 
   await expect(subtree).toBeVisible();
   // Two subordinate child cards, each carrying the delegation target agent id.

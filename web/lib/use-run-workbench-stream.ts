@@ -11,6 +11,8 @@ import { peekFrameSchema } from "@/lib/runs/peek-stream-contract";
 type WorkbenchState = {
   selection: string | null;
   mainTick: number;
+  mainSummaryTick: number;
+  mainExecutionTick: number;
   childTick: number;
   treeTick: number;
   liveness: RunStreamLifecycleKind;
@@ -21,6 +23,8 @@ export type WorkbenchStream = {
   main: UseRunStreamResult;
   child: UseRunStreamResult;
   treeTick: number;
+  mainSummaryTick: number;
+  mainExecutionTick: number;
   selectionUnavailable: boolean;
 };
 
@@ -32,6 +36,8 @@ export function useRunWorkbenchStream(
   const [state, setState] = useState<WorkbenchState>({
     selection: selected,
     mainTick: 0,
+    mainSummaryTick: 0,
+    mainExecutionTick: 0,
     childTick: 0,
     treeTick: 0,
     liveness: "connecting",
@@ -115,6 +121,7 @@ export function useRunWorkbenchStream(
           ...value,
           selection: selected,
           mainTick: value.mainTick + 1,
+          mainSummaryTick: value.mainSummaryTick + 1,
           childTick: value.childTick + 1,
           treeTick: value.treeTick + 1,
           liveness: "live",
@@ -131,6 +138,12 @@ export function useRunWorkbenchStream(
         setState((value) => ({
           ...value,
           mainTick: value.mainTick + (frame.runId === anchor ? 1 : 0),
+          mainSummaryTick:
+            value.mainSummaryTick +
+            (frame.runId === anchor && frame.kind === "summary" ? 1 : 0),
+          mainExecutionTick:
+            value.mainExecutionTick +
+            (frame.runId === anchor && frame.kind === "execution" ? 1 : 0),
           childTick: value.childTick + (frame.runId === selected ? 1 : 0),
         }));
       } else if (frame.type === "peek.changed")
@@ -200,6 +213,8 @@ export function useRunWorkbenchStream(
         eventCount: state.selection === selected ? state.childTick : 0,
       },
       treeTick: state.treeTick,
+      mainSummaryTick: state.mainSummaryTick,
+      mainExecutionTick: state.mainExecutionTick,
       selectionUnavailable: state.selection === selected && state.unavailable,
     };
   }, [state, selected, reconnect]);

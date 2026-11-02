@@ -283,6 +283,16 @@ C4Component
 | `app/api/runs/[runId]/stream`                       | `web/app/api/runs/[runId]/stream/route.ts` | Browser-facing durable run SSE replaying only manager-owned `execution_events` by run sequence.                                                                                                                                                                                                                                                                                                                       | `db`, `execution_events`.                                                               |
 | `app/api/runs/[runId]/hitl/[hitlRequestId]/respond` | Route Handler                              | HITL response two-phase claim, permission delivery or atomic artifact write, runner wake-up.                                                                                                                                                                                                                                                                                                                                                                                                   | `db`, `atomic`, `execution-host` (Implemented — ADR-166; was `supervisor-client`), `flows/runner`.      |
 
+Run workbench peek reads are owned by `web/lib/runs/peek-read-model.ts` and
+`transcript-page.ts`, using the existing authorization, transcript, result and
+terminal-cause projections. `peek-wake.ts` owns the shared PostgreSQL listener;
+`app/api/runs/[runId]/peek/stream` supplies isolated main/selected contexts through
+one workbench transport. The controlled `components/runs/run-peek-*` components
+own navigation and panel presentation. See the [navigation](system-analytics/run-peek-navigation.md),
+[data](system-analytics/run-peek-data.md), [HTTP](api/web.openapi.yaml) and
+[SSE](api/async/web-runs.asyncapi.yaml) contracts. The canonical per-Run replay
+stream remains available to its existing consumers.
+
 ## Component map — remaining pieces
 
 These components are implemented unless the status column says otherwise:

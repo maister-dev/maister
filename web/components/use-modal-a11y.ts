@@ -37,13 +37,15 @@ export function useModalA11y(
         ? Array.from(dialogRef.current.querySelectorAll<HTMLElement>(FOCUSABLE))
         : [];
 
-    focusable()[0]?.focus();
+    if (!dialogRef.current?.contains(document.activeElement))
+      focusable()[0]?.focus();
 
     const previousOverflow = document.body.style.overflow;
 
     document.body.style.overflow = "hidden";
 
     function onKeyDown(event: KeyboardEvent): void {
+      if (event.defaultPrevented) return;
       if (event.key === "Escape") {
         event.preventDefault();
         onCloseRef.current();

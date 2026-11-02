@@ -1,5 +1,7 @@
 import type { StartedPostgresTestDb } from "@/test-support/pg-container";
 
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -118,4 +120,56 @@ it("IT-PKD-11: upgrades 0209 with retained data, exact paging indexes and repeat
       )
     ).rows,
   ).toEqual(ledger);
+});
+
+it("IT-PKD-11: paging plans use the migrated indexes and the normal database check accepts both lineages", async () => {
+  const run = randomUUID(),
+    attempt = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO runs(id,run_kind,status,flow_version,flow_revision) VALUES($1,'flow','Running','v1','r')",
+    [run],
+  );
+  await database.pool.query(
+    "INSERT INTO node_attempts(id,run_id,node_id,node_type,status) VALUES($1,$2,'work','ai_coding','Running')",
+    [attempt, run],
+  );
+  await database.pool.query(
+    "INSERT INTO run_messages(id,run_id,node_attempt_id,sequence,role,content,supervisor_event_id) SELECT gen_random_uuid()::text,$1,$2,n,'assistant','retained',n::text FROM generate_series(1,3000)n",
+    [run, attempt],
+  );
+  await database.pool.query("ANALYZE run_messages");
+  const plan = (
+    await database.pool.query(
+      `EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) SELECT id FROM run_messages WHERE run_id=$1 AND node_attempt_id=$2 ORDER BY coalesce(supervisor_event_id,'0')::bigint,(prompt_dispatch_key IS NOT NULL),sequence,id LIMIT 100`,
+      [run, attempt],
+    )
+  ).rows;
+
+  expect(JSON.stringify(plan)).toContain("run_messages_peek_node_order_idx");
+  const whole = (
+    await database.pool.query(
+      "EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) SELECT id FROM run_messages WHERE run_id=$1 ORDER BY created_at,sequence,id LIMIT 100",
+      [run],
+    )
+  ).rows;
+
+  expect(JSON.stringify(whole)).toContain("run_messages_peek_run_order_idx");
+  await migrate(database.db, {
+    migrationsFolder: "lib/db/brain-migrations",
+    migrationsTable: "__drizzle_brain_migrations",
+  });
+  const result = await promisify(execFile)(
+    process.execPath,
+    [
+      "--import",
+      "tsx",
+      "--import",
+      "./scripts/_register-shim.mjs",
+      "lib/db/check.ts",
+    ],
+    { env: { ...process.env, DB_URL: database.databaseUrl } },
+  );
+
+  expect(result.stdout).toContain("all journal migrations are applied");
 });

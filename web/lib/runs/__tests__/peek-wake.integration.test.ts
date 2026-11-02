@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
+import { Client } from "pg";
 
 import { startMainPostgresTestDb } from "@/test-support/pg-container";
 
@@ -97,6 +98,45 @@ it("IT-PKD-08 IT-PKD-09: committed cross-connection hints wake shared listeners 
     expect(JSON.stringify(hints)).not.toContain("secret content");
   } finally {
     await releaseSecond();
+    await release();
+  }
+});
+
+it("IT-PKD-09: independent transactions committing in reverse creation order both invalidate without a replay cursor", async () => {
+  const { subscribePeekChanges } = await import("@/lib/runs/peek-wake");
+  const hints: PeekHint[] = [];
+  const release = await subscribePeekChanges(
+    (hint) => hints.push(hint),
+    () => {},
+  );
+  const first = new Client({ connectionString: database.databaseUrl });
+  const second = new Client({ connectionString: database.databaseUrl });
+  const one = randomUUID(),
+    two = randomUUID();
+
+  try {
+    await first.connect();
+    await second.connect();
+    await first.query("BEGIN");
+    await second.query("BEGIN");
+    await first.query(
+      "INSERT INTO runs(id,run_kind,status,flow_version,flow_revision) VALUES($1,'agent','Done','v1','r')",
+      [one],
+    );
+    await second.query(
+      "INSERT INTO runs(id,run_kind,status,flow_version,flow_revision) VALUES($1,'agent','Done','v1','r')",
+      [two],
+    );
+    await second.query("COMMIT");
+    await vi.waitFor(() =>
+      expect(hints.map((hint) => hint.runId)).toEqual([two]),
+    );
+    await first.query("COMMIT");
+    await vi.waitFor(() =>
+      expect(hints.map((hint) => hint.runId)).toEqual([two, one]),
+    );
+  } finally {
+    await Promise.all([first.end(), second.end()]);
     await release();
   }
 });

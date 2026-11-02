@@ -355,6 +355,6 @@ flowchart LR
   `web/components/board/flow-graph-view.tsx`,
   `web/components/workbench/*`, `web/lib/worktree.ts` (`listTree`/`readBlob`/`diffNameStatus`).
 
-## Child Run peek (Designed)
+## Child Run peek (Implemented)
 
 See the [navigation contract](run-peek-navigation.md) and [authorized data/live-delivery contract](run-peek-data.md). Existing execution/result lifecycle semantics remain authoritative.

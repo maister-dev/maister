@@ -1,7 +1,7 @@
-# Child Run peek (Designed)
+# Child Run peek (Implemented)
 
 Route: `/runs/:main?peek=:selected&peekView=conversation|execution|result&peekNode=:node`.
-Source: `web/components/runs/run-peek-panel.tsx` (Designed).
+Source: `web/components/runs/run-peek-panel.tsx` (Implemented).
 
 ## JTBD
 

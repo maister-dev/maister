@@ -51,7 +51,10 @@ const positionSchema = z
     event: z
       .string()
       .regex(/^\d{1,19}$/)
-      .refine((value) => BigInt(value) <= 9223372036854775807n),
+      .refine(
+        (value) =>
+          /^\d{1,19}$/.test(value) && BigInt(value) <= 9223372036854775807n,
+      ),
     prompt: z.boolean(),
     sequence: z.number().int().min(-2147483648).max(2147483647),
   })
@@ -281,14 +284,15 @@ async function readWindow(
   const bounds = sql`${before ? sql`AND ${order}<${tuple(before, node)}` : sql``} ${after ? sql`AND ${order}>${tuple(after, node)}` : sql``} ${lower ? sql`AND ${order}>=${tuple(lower, node)}` : sql``} ${upper ? sql`AND ${order}<=${tuple(upper, node)}` : sql``}`;
   const ascending = after !== null || lower !== null;
   const rows = await db.execute<Metadata>(
-    sql`SELECT id,role,created_at AS "createdAt",${node ? sql`coalesce(supervisor_event_id,'0')` : sql`'0'`} AS event,(prompt_dispatch_key IS NOT NULL) AS prompt,sequence,octet_length(content)::int AS bytes FROM run_messages WHERE ${scope} ${bounds} ORDER BY ${node ? sql`coalesce(supervisor_event_id,'0')::bigint ${ascending ? sql`ASC` : sql`DESC`},(prompt_dispatch_key IS NOT NULL) ${ascending ? sql`ASC` : sql`DESC`},` : sql`created_at ${ascending ? sql`ASC` : sql`DESC`},`} sequence ${ascending ? sql`ASC` : sql`DESC`},id ${ascending ? sql`ASC` : sql`DESC`} LIMIT ${limit}`,
+    sql`SELECT id,role,to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "createdAt",${node ? sql`coalesce(supervisor_event_id,'0')` : sql`'0'`} AS event,(prompt_dispatch_key IS NOT NULL) AS prompt,sequence,octet_length(content)::int AS bytes FROM run_messages WHERE ${scope} ${bounds} ORDER BY ${node ? sql`coalesce(supervisor_event_id,'0')::bigint ${ascending ? sql`ASC` : sql`DESC`},(prompt_dispatch_key IS NOT NULL) ${ascending ? sql`ASC` : sql`DESC`},` : sql`created_at ${ascending ? sql`ASC` : sql`DESC`},`} sequence ${ascending ? sql`ASC` : sql`DESC`},id ${ascending ? sql`ASC` : sql`DESC`} LIMIT ${limit}`,
   );
+  const usage = await readUsage(db, scope, node);
   const metadata = ascending ? rows.rows : rows.rows.toReversed();
 
-  if (!metadata.length) return empty;
+  if (!metadata.length) return { ...empty, usage };
   const positions = metadata.map((row): Position => ({
     id: row.id,
-    createdAt: new Date(row.createdAt).toISOString(),
+    createdAt: row.createdAt,
     event: row.event,
     prompt: row.prompt,
     sequence: row.sequence,
@@ -310,28 +314,6 @@ async function readWindow(
         position,
       } satisfies Cursor),
     ).toString("base64url");
-  const usageRows = await db.execute<{ content: string }>(
-    sql`SELECT left(content,4096) AS content FROM run_messages WHERE ${scope} AND role='system' AND content LIKE '%"kind"%"usage"%' ORDER BY created_at DESC,sequence DESC LIMIT 1`,
-  );
-  let usage: TranscriptPage["usage"] = null;
-
-  if (usageRows.rows[0]) {
-    try {
-      const parsed: unknown = JSON.parse(usageRows.rows[0].content);
-      const result = z
-        .object({
-          kind: z.literal("usage"),
-          used: z.number().int().nonnegative(),
-          size: z.number().int().nonnegative(),
-        })
-        .safeParse(parsed);
-
-      if (result.success)
-        usage = { used: result.data.used, size: result.data.size };
-    } catch {
-      /* A system message need not be a usage record. */
-    }
-  }
 
   return {
     ...empty,
@@ -343,6 +325,28 @@ async function readWindow(
     afterCursor: counts.rows[0].later ? encode(last, "after") : null,
     window: { before: encode(first, "lower"), after: encode(last, "upper") },
   };
+}
+
+async function readUsage(
+  db: ReadDb,
+  scope: SQL,
+  node: string | null,
+): Promise<TranscriptPage["usage"]> {
+  const validJson = sql`CASE WHEN pg_input_is_valid(content, 'jsonb') THEN content::jsonb ELSE '{}'::jsonb END`;
+  const rows = await db.execute<{ used: unknown; size: unknown }>(
+    sql`SELECT (${validJson})->'used' AS used, (${validJson})->'size' AS size FROM run_messages WHERE ${scope} AND role='system' AND (${validJson})->>'kind'='usage' ORDER BY ${node ? sql`coalesce(supervisor_event_id,'0')::bigint DESC,(prompt_dispatch_key IS NOT NULL) DESC,` : sql`created_at DESC,`} sequence DESC,id DESC LIMIT 1`,
+  );
+  const row = rows.rows[0];
+
+  if (!row) return null;
+  const parsed = z
+    .object({
+      used: z.number().int().nonnegative(),
+      size: z.number().int().nonnegative(),
+    })
+    .safeParse({ used: row.used ?? 0, size: row.size ?? 0 });
+
+  return parsed.success ? parsed.data : null;
 }
 
 async function readMessageBodies(

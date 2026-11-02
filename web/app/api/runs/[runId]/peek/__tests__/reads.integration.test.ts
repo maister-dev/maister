@@ -1,4 +1,5 @@
 import type { TranscriptPage } from "@/lib/runs/transcript-page";
+import type { RunResultContract } from "@/lib/run-results/types";
 import type { SessionUser } from "@/lib/authz";
 import type { RunPeekChildPage, RunPeekSnapshot } from "@/lib/runs/peek-types";
 import type { StartedPostgresTestDb } from "@/test-support/pg-container";
@@ -60,6 +61,21 @@ function normalizeSchema(value: unknown): unknown {
   return "nullable" in value && value.nullable === true
     ? { anyOf: [record, { type: "null" }] }
     : record;
+}
+
+const apiDocument = parse(
+  readFileSync(resolve(process.cwd(), "../docs/api/web.openapi.yaml"), "utf8"),
+) as { components: { schemas: Record<string, object> } };
+const apiValidator = new Ajv({ strict: false, validateFormats: false });
+
+function expectContract(name: string, value: unknown): void {
+  const schema = normalizeSchema({
+    components: apiDocument.components,
+    $ref: `#/components/schemas/${name}`,
+  }) as object;
+  const validate = apiValidator.compile(schema);
+
+  expect(validate(value), JSON.stringify(validate.errors)).toBe(true);
 }
 
 async function seedRun(
@@ -162,6 +178,34 @@ describe("authorized descendant projections", () => {
     expect(body.publicResult).toBeNull();
   });
 
+  it("IT-PKD-04: failed snapshots reuse the matching token-only terminal cause without exposing raw event content", async () => {
+    const cause = {
+      code: "BUDGET_EXCEEDED",
+      reason: "budget_breach",
+      source: "sweeper",
+    };
+
+    await database.pool.query("UPDATE runs SET status='Failed' WHERE id=$1", [
+      child,
+    ]);
+    await database.pool.query(
+      "INSERT INTO domain_events(kind,project_id,run_id,payload,occurred_at) VALUES('run.failed',$1,$2,$3,now())",
+      [
+        projectId,
+        child,
+        { cause, privateMessage: "do not disclose this raw payload" },
+      ],
+    );
+    const response = await requestSnapshot(root, child);
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+
+    expect(body.terminalCause).toEqual(cause);
+    expect(JSON.stringify(body)).not.toContain("do not disclose");
+    expectContract("RunPeekSnapshot", body);
+  });
+
   it("IT-PKD-02: validates against a nested main anchor rather than shared root identity", async () => {
     expect((await requestSnapshot(child, grandchild)).status).toBe(200);
     const sibling = await seedRun(root);
@@ -210,31 +254,138 @@ describe("authorized descendant projections", () => {
     expect(body.totalCount).toBe(1);
   });
 
-  it("IT-PKD-05: pages equal/null launch keys without duplicates when a pending Run starts", async () => {
-    const extra = await seedRun(root);
+  it.each([null, "2026-01-01T00:00:00.000123Z"])(
+    "IT-PKD-05: pages equal/null launch keys without duplicates when a pending Run starts: %s",
+    async (launched) => {
+      const extra = await seedRun(root);
+
+      if (launched)
+        await database.pool.query(
+          "UPDATE runs SET launched_at=$1 WHERE id=ANY($2::text[])",
+          [launched, [child, extra]],
+        );
+      const first = (await (
+        await requestChildren(root, "?limit=1")
+      ).json()) as RunPeekChildPage;
+
+      expect(first.items).toHaveLength(1);
+      expect(first.totalCount).toBe(2);
+      expect(first.hasMore).toBe(true);
+      await database.pool.query(
+        "UPDATE runs SET started_at=now() WHERE id=ANY($1::text[])",
+        [[child, extra]],
+      );
+      const second = (await (
+        await requestChildren(root, `?limit=1&cursor=${first.nextCursor}`)
+      ).json()) as RunPeekChildPage;
+
+      expect(
+        new Set([...first.items, ...second.items].map((item) => item.runId))
+          .size,
+      ).toBe(2);
+      expect(second.hasMore).toBe(false);
+      expect(second.nextCursor).toBeNull();
+      expect(
+        (await requestChildren(child, `?cursor=${first.nextCursor}`)).status,
+      ).toBe(400);
+    },
+  );
+
+  it("IT-PKD-02 IT-PKD-05: full-page insertion, deletion and reparenting preserve immutable keyset order and off-page selection", async () => {
+    const ids: string[] = [];
+
+    for (let index = 0; index < 35; index++) {
+      const id = await seedRun(root);
+
+      ids.push(id);
+      await database.pool.query("UPDATE runs SET launched_at=$1 WHERE id=$2", [
+        new Date(1700000000000 + index),
+        id,
+      ]);
+    }
     const first = (await (
-      await requestChildren(root, "?limit=1")
+      await requestChildren(root)
     ).json()) as RunPeekChildPage;
 
-    expect(first.items).toHaveLength(1);
-    expect(first.totalCount).toBe(2);
-    expect(first.hasMore).toBe(true);
-    await database.pool.query(
-      "UPDATE runs SET started_at=now() WHERE id=ANY($1::text[])",
-      [[child, extra]],
-    );
+    expect(first.items.map((item) => item.runId)).toEqual(ids.slice(0, 25));
+    const inserted = await seedRun(root);
+
+    await database.pool.query("UPDATE runs SET launched_at=$1 WHERE id=$2", [
+      new Date(1700000000035),
+      inserted,
+    ]);
+    await database.pool.query("DELETE FROM runs WHERE id=$1", [ids[0]]);
     const second = (await (
-      await requestChildren(root, `?limit=1&cursor=${first.nextCursor}`)
+      await requestChildren(root, `?cursor=${first.nextCursor}`)
     ).json()) as RunPeekChildPage;
 
-    expect(
-      new Set([...first.items, ...second.items].map((item) => item.runId)).size,
-    ).toBe(2);
-    expect(second.hasMore).toBe(false);
-    expect(second.nextCursor).toBeNull();
-    expect(
-      (await requestChildren(child, `?cursor=${first.nextCursor}`)).status,
-    ).toBe(400);
+    expect(second.items.map((item) => item.runId)).toEqual([
+      ...ids.slice(25),
+      inserted,
+      ...[child].sort(),
+    ]);
+    const selected = (await (
+      await requestSnapshot(root, ids[34])
+    ).json()) as RunPeekSnapshot;
+
+    expect(selected.selectedRunId).toBe(ids[34]);
+    await database.pool.query("UPDATE runs SET parent_run_id=$1 WHERE id=$2", [
+      child,
+      ids[34],
+    ]);
+    const children = (await (
+      await requestChildren(root, `?parent=${child}`)
+    ).json()) as RunPeekChildPage;
+
+    expect(children.items.some((item) => item.runId === ids[34])).toBe(true);
+    const moved = (await (
+      await requestSnapshot(root, ids[34])
+    ).json()) as RunPeekSnapshot;
+
+    expect(moved.breadcrumbs.map((item) => item.runId)).toEqual([
+      root,
+      child,
+      ids[34],
+    ]);
+  });
+
+  it("IT-PKD-01: a private local-package scratch child uses its positive owner grant and conceals another owner", async () => {
+    const localPackage = randomUUID();
+    const scratch = await seedRun(root);
+
+    try {
+      await database.pool.query(
+        "INSERT INTO local_packages(id,name,slug,working_dir,created_by) VALUES($1,'Private package',$2,'/tmp/peek-private',$3)",
+        [localPackage, `peek-${localPackage}`, userId],
+      );
+      await database.pool.query(
+        "UPDATE runs SET run_kind='scratch',project_id=NULL,local_package_id=$1,created_by_user_id=$2 WHERE id=$3",
+        [localPackage, userId, scratch],
+      );
+      const response = await requestSnapshot(root, scratch);
+
+      expect(response.status).toBe(200);
+      expect((await response.json()).capabilities.canReadTranscript).toBe(true);
+      const page = (await (
+        await requestChildren(root)
+      ).json()) as RunPeekChildPage;
+
+      expect(page.items.some((item) => item.runId === scratch)).toBe(true);
+      await database.pool.query(
+        "UPDATE runs SET created_by_user_id=NULL WHERE id=$1",
+        [scratch],
+      );
+      expect((await requestSnapshot(root, scratch)).status).toBe(404);
+      const hidden = (await (
+        await requestChildren(root)
+      ).json()) as RunPeekChildPage;
+
+      expect(hidden.items.some((item) => item.runId === scratch)).toBe(false);
+    } finally {
+      await database.pool.query("DELETE FROM local_packages WHERE id=$1", [
+        localPackage,
+      ]);
+    }
   });
 
   it("IT-PKD-02: refuses a corrupt ancestor cycle with bounded traversal", async () => {
@@ -319,7 +470,7 @@ describe("authorized descendant projections", () => {
 
     for (let sequence = 1; sequence <= 205; sequence++) {
       await database.pool.query(
-        "INSERT INTO run_messages(id,run_id,sequence,role,content,created_at) VALUES($1,$2,$3,'assistant',$4,'2026-01-01')",
+        "INSERT INTO run_messages(id,run_id,sequence,role,content,created_at) VALUES($1,$2,$3,'assistant',$4,'2026-01-01T00:00:00.000123Z')",
         [
           randomUUID(),
           child,
@@ -333,8 +484,24 @@ describe("authorized descendant projections", () => {
     expect(response.status).toBe(200);
     const page: TranscriptPage = await response.json();
 
+    expect(page.hasEarlier).toBe(true);
+    const tampered = JSON.parse(
+      Buffer.from(page.beforeCursor!, "base64url").toString("utf8"),
+    ) as { position: { event: string } };
+
+    tampered.position.event = "x";
+    expect(
+      (
+        await get(
+          `limit=100&before=${Buffer.from(JSON.stringify(tampered)).toString("base64url")}`,
+        )
+      ).status,
+    ).toBe(400);
+
     expect(page.messages).toHaveLength(100);
-    expect("content" in page.messages[0] ? page.messages[0].content : null).toBe("message-106");
+    expect(
+      "content" in page.messages[0] ? page.messages[0].content : null,
+    ).toBe("message-106");
     expect(page.messages[99]).toMatchObject({
       kind: "bounded_preview",
       truncated: true,
@@ -369,6 +536,46 @@ describe("authorized descendant projections", () => {
       [userId],
     );
     expect((await get("limit=100")).status).toBe(403);
+  });
+
+  it("IT-PKD-06: usage remains independent of page windows and ignores newer non-usage JSON", async () => {
+    const { GET } = await import("../../transcript/route");
+    const get = (query: string) =>
+      GET(
+        new NextRequest(
+          `http://localhost/api/runs/${child}/transcript?limit=1&${query}`,
+        ),
+        { params: Promise.resolve({ runId: child }) },
+      );
+
+    for (const [sequence, content] of [
+      [1, JSON.stringify({ kind: "usage", used: 12, size: 100 })],
+      [2, JSON.stringify({ kind: "info", note: '"kind" "usage"' })],
+      [3, '{"kind":"usage"broken}'],
+    ] as const)
+      await database.pool.query(
+        "INSERT INTO run_messages(id,run_id,sequence,role,content,created_at) VALUES($1,$2,$3,'system',$4,$5)",
+        [
+          randomUUID(),
+          child,
+          sequence,
+          content,
+          new Date(1700000000000 + sequence),
+        ],
+      );
+    const page = await (await get("")).json();
+
+    expect(page.usage).toEqual({ used: 12, size: 100 });
+    const earlier = await (await get(`before=${page.beforeCursor}`)).json();
+
+    await database.pool.query(
+      "DELETE FROM run_messages WHERE run_id=$1 AND sequence=3",
+      [child],
+    );
+    const empty = await (await get(`after=${earlier.afterCursor}`)).json();
+
+    expect(empty.messages).toEqual([]);
+    expect(empty.usage).toEqual({ used: 12, size: 100 });
   });
 
   it("IT-PKD-04 IT-PKD-06: Flow facts, empty attempts, prompt ties and changed-attempt cursors retain canonical semantics", async () => {
@@ -568,15 +775,77 @@ describe("authorized descendant projections", () => {
     );
   });
 
-  it("IT-PKD-10: actual child and snapshot responses conform to the published schemas", async () => {
-    const document = parse(
-      readFileSync(
-        resolve(process.cwd(), "../docs/api/web.openapi.yaml"),
-        "utf8",
-      ),
-    ) as { components: { schemas: Record<string, object> } };
-    const ajv = new Ajv({ strict: false, validateFormats: false });
+  it.each([
+    ["Running", true, null, "pending"],
+    ["Done", false, null, "absent"],
+    ["Done", true, null, "missing"],
+    ["Done", true, "stale", "stale"],
+    ["Done", true, "invalid", "invalid"],
+    ["Failed", true, "valid", "unavailable"],
+    ["Done", true, "valid", "valid"],
+    ["Done", true, "superseded", "missing"],
+    ["Done", null, null, null],
+  ] as const)(
+    "IT-PKD-03: child HTTP metadata and payload retain result state %s / %s / %s",
+    async (status, required, validity, expected) => {
+      const contract: RunResultContract | null =
+        required === null
+          ? null
+          : {
+              kind: "flow_export",
+              producerNodeIds: ["work"],
+              schemaRef: "fixture@abcdef123456:research-result.v1",
+              schemaVersion: 1,
+              sha256: "a".repeat(64),
+              required,
+              schema: {
+                schemaVersion: 1,
+                fields: [{ name: "summary", type: "string", required: true }],
+              },
+              flowRevisionId: "peek",
+            };
 
+      await database.pool.query(
+        "UPDATE runs SET run_kind='flow',status=$1,result_contract=$2 WHERE id=$3",
+        [status, contract, child],
+      );
+      if (validity)
+        await database.pool.query(
+          "INSERT INTO run_results(id,run_id,revision,validity,schema_ref,schema_version,schema_sha256,value,value_bytes,producer_kind,producer_ref,invalid_reason,engine_version) VALUES($1,$2,1,$3,'result',1,$4,$5::jsonb,40,'flow_node','work',$6,'3.10.0')",
+          [
+            randomUUID(),
+            child,
+            validity,
+            "a".repeat(64),
+            validity === "invalid"
+              ? null
+              : JSON.stringify({ summary: "authorized value" }),
+            validity === "invalid" ? "schema_mismatch" : null,
+          ],
+        );
+      const response = await requestSnapshot(root, child);
+
+      expect(response.status).toBe(200);
+      const snapshot = (await response.json()) as RunPeekSnapshot;
+
+      expectContract("RunPeekSnapshot", snapshot);
+      expect(snapshot.summary.resultStatus).toBe(expected);
+      expect(snapshot.publicResult?.resultStatus ?? null).toBe(expected);
+      expect(snapshot.publicResult?.value ?? null).toEqual(
+        expected === "valid" ? { summary: "authorized value" } : null,
+      );
+      const page = (await (
+        await requestChildren(root)
+      ).json()) as RunPeekChildPage;
+
+      expect(
+        page.items.find((item) => item.runId === child)?.resultStatus,
+      ).toBe(expected);
+      expect(JSON.stringify(page)).not.toContain("authorized value");
+    },
+  );
+
+  it("IT-PKD-10: actual child and snapshot responses conform to the published schemas", async () => {
     const { GET: transcriptGet } = await import("../../transcript/route");
     const transcriptResponse = await transcriptGet(
       new NextRequest(
@@ -591,16 +860,7 @@ describe("authorized descendant projections", () => {
       ["RunTranscriptPage", transcriptResponse],
     ] as const) {
       expect(response.status).toBe(200);
-      const schema = normalizeSchema({
-        components: document.components,
-        $ref: `#/components/schemas/${name}`,
-      }) as object;
-      const validate = ajv.compile(schema);
-
-      expect(
-        validate(await response.json()),
-        JSON.stringify(validate.errors),
-      ).toBe(true);
+      expectContract(name, await response.json());
     }
   });
 });

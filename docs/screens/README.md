@@ -219,4 +219,4 @@ Going forward, **each screen work-item updates its screens doc** in the same
 phase that ships the screen. New screens add a row here and a file following the
 template above.
 
-- [Child Run peek](runs/child-run-peek.md) — Designed read-only descendant panel.
+- [Child Run peek](runs/child-run-peek.md) — Implemented read-only descendant panel.

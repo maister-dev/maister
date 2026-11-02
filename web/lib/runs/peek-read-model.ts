@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { SessionUser } from "@/lib/authz";
-import type { RunKind } from "@/lib/db/schema";
+import type { RunKind, DelegationSnapshot } from "@/lib/db/schema";
 import type { ResultStatus, RunResultContract } from "@/lib/run-results/types";
 import type {
   RunPeekChildPage,
@@ -22,11 +22,13 @@ import {
 import { getDb } from "@/lib/db/client";
 import { runs, workspaces } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { delegationTarget } from "@/lib/queries/run";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { loadRunManifest } from "@/lib/queries/run-manifest";
 import { deriveResultStatus } from "@/lib/run-results/status";
 import { parsePeekRunId } from "@/lib/runs/peek-http";
 import { loadRunPublicResult } from "@/lib/runs/run-result-dto";
+import { loadRunTerminalCause } from "@/lib/runs/terminal-cause";
 import { findSharedTreeWorkspace } from "@/lib/runs/shared-tree";
 
 const cursorSchema = z
@@ -76,6 +78,7 @@ type SummaryRow = {
   taskTitle: string | null;
   displayName: string | null;
   hasChildren: boolean;
+  delegationSnapshot: DelegationSnapshot | null;
   resultContract: RunResultContract | null;
   newestValidity: string | null;
   hasValid: boolean;
@@ -224,7 +227,7 @@ function resultState(row: SummaryRow): ResultStatus | null {
 function summaryDto(row: SummaryRow): RunPeekSummary {
   const name = row.taskTitle ?? row.displayName;
   const identity = name
-    ? `${row.taskRef ? `${row.taskRef} · ` : ""}${name}`
+    ? `${row.taskRef ? `${row.taskRef} · ` : ""}${name}${row.taskRef ? "" : ` · ${row.id.slice(0, 8)}`}`
     : `${row.runKind} · ${row.id.slice(0, 8)}`;
 
   return {
@@ -234,13 +237,10 @@ function summaryDto(row: SummaryRow): RunPeekSummary {
     taskRef: row.taskRef,
     status: row.status,
     resultStatus: resultState(row),
-    launchedAt: row.launchedAt
-      ? new Date(row.launchedAt).toISOString()
-      : null,
-    startedAt: row.startedAt
-      ? new Date(row.startedAt).toISOString()
-      : null,
+    launchedAt: row.launchedAt,
+    startedAt: row.startedAt ? new Date(row.startedAt).toISOString() : null,
     hasChildren: row.hasChildren,
+    delegationTarget: delegationTarget(row.delegationSnapshot),
     fullRunHref: `/runs/${row.id}`,
   };
 }
@@ -252,11 +252,11 @@ function visibility(user: SessionUser, alias: "r" | "child"): SQL {
 }
 
 function summaryColumns(user: SessionUser): SQL {
-  return sql`r.id,r.run_kind AS "runKind",r.status,r.started_at AS "startedAt",r.launched_at AS "launchedAt",
+  return sql`r.id,r.run_kind AS "runKind",r.status,r.started_at AS "startedAt",to_char(r.launched_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "launchedAt",
   CASE WHEN t.number IS NOT NULL THEN p.task_key || '-' || t.number::text ELSE NULL END AS "taskRef",
   t.title AS "taskTitle",COALESCE(r.agent_activity_snapshot->>'displayName',r.delegation_snapshot->>'agentDefinitionId',r.delegation_snapshot->>'flowRefId',r.delegation_snapshot->>'runnerId') AS "displayName",
   EXISTS(SELECT 1 FROM runs child WHERE child.parent_run_id=r.id AND ${visibility(user, "child")}) AS "hasChildren",
-  r.result_contract AS "resultContract",
+  r.delegation_snapshot AS "delegationSnapshot",r.result_contract AS "resultContract",
   (SELECT validity FROM run_results rr WHERE rr.run_id=r.id ORDER BY revision DESC LIMIT 1) AS "newestValidity",
   EXISTS(SELECT 1 FROM run_results rr WHERE rr.run_id=r.id AND rr.validity='valid') AS "hasValid"`;
 }
@@ -390,6 +390,11 @@ async function flowContent(
       selectedNodeId: null,
     };
   const graph = compileManifest(loaded.manifest);
+
+  if (node !== undefined && !graph.nodes.has(node))
+    throw new MaisterError("CONFIG", "Unknown Flow node", {
+      details: { reason: "invalid_node" },
+    });
   const attempts = await getDb().execute<{
     nodeId: string;
     attempt: number;
@@ -413,9 +418,7 @@ async function flowContent(
       status: attempt?.status ?? "Pending",
       attempt: attempt?.attempt ?? null,
       failure: attempt?.failure ?? null,
-      startedAt: attempt
-        ? new Date(attempt.startedAt).toISOString()
-        : null,
+      startedAt: attempt ? new Date(attempt.startedAt).toISOString() : null,
       endedAt: attempt?.endedAt
         ? new Date(attempt.endedAt).toISOString()
         : null,
@@ -471,6 +474,11 @@ export async function readRunPeekSnapshot(
   if (selectedId === anchorId) throw unavailablePeekRun();
   const path = await peekPath(userId, anchorId, selectedId);
   const access = await authorizePeekRun(userId, selectedId);
+
+  if (access.run.runKind !== "flow" && query.node !== undefined)
+    throw new MaisterError("CONFIG", "This Run has no Flow nodes", {
+      details: { reason: "invalid_node" },
+    });
   const [breadcrumbs, publicResult, workspace, content] = await Promise.all([
     peekSummaries(access.user, path),
     loadRunPublicResult(getDb(), selectedId),
@@ -501,6 +509,11 @@ export async function readRunPeekSnapshot(
     workspace,
     content,
     publicResult,
+    terminalCause: await loadRunTerminalCause(
+      getDb(),
+      selectedId,
+      summary.status,
+    ),
     fullRunHref: summary.fullRunHref,
   };
 }

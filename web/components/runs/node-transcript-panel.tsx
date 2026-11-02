@@ -9,6 +9,7 @@ import {
   type TranscriptLabels,
   type TranscriptMessage,
 } from "@/components/run-transcript/transcript-view";
+import { useWorkbenchStream } from "@/components/runs/run-workbench-stream-provider";
 import { useRunPageStream } from "@/components/runs/run-stream-provider";
 import { CHANGE_SUMMARY_REFRESH_DEBOUNCE_MS } from "@/lib/runs/live-inspector";
 
@@ -67,6 +68,7 @@ export function NodeTranscriptPanel({
   // Test/SSR seam — when provided, skips the initial client fetch.
   initialMessages?: TranscriptMessage[];
 }): ReactElement {
+  const workbench = useWorkbenchStream() !== null;
   const [open, setOpen] = useState(defaultOpen);
   const [messages, setMessages] = useState<TranscriptMessage[] | null>(
     initialMessages ?? null,
@@ -102,7 +104,7 @@ export function NodeTranscriptPanel({
 
   // Live refetch on stream content ticks (debounced), only while open + live.
   useEffect(() => {
-    if (!open || !live || eventCount === 0) return;
+    if (!open || (!live && !workbench) || eventCount === 0) return;
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(
       () => void load(),
@@ -112,7 +114,7 @@ export function NodeTranscriptPanel({
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [eventCount, open, live, load]);
+  }, [eventCount, open, live, load, workbench]);
 
   return (
     <section

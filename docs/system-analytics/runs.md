@@ -1516,6 +1516,6 @@ resume or depend on supervisor availability.
 - Source: `web/lib/db/schema.ts` (runs table),
   `supervisor/src/heartbeat.ts`, `supervisor/src/spawn.ts`.
 
-## Child Run peek (Designed)
+## Child Run peek (Implemented)
 
 See the [navigation contract](run-peek-navigation.md) and [authorized data/live-delivery contract](run-peek-data.md). Existing execution/result lifecycle semantics remain authoritative.

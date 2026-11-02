@@ -7,7 +7,7 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ runId: string }> },
 ): Promise<Response> {
-  return peekResponse(async (userId) =>
+  return peekResponse("children", async (userId) =>
     readRunPeekChildren(
       userId,
       parsePeekRunId((await params).runId),

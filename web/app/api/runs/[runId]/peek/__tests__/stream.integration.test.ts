@@ -209,3 +209,97 @@ it("IT-PKD-09: an unrelated selected Run is unavailable while the authorized par
     await reader.cancel();
   }
 });
+
+it("IT-PKD-09 IT-PKD-10: revoking only the selected child's grant clears that channel while parent frames continue", async () => {
+  const foreign = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO projects(id,slug,name,repo_path,main_branch,branch_prefix,maister_yaml_path,task_key) VALUES($1,$2,'Other',$3,'main','maister/','/tmp/maister.yaml',$4)",
+    [
+      foreign,
+      `peek-${foreign}`,
+      `/tmp/peek-${foreign}`,
+      `F${foreign.replaceAll("-", "").slice(0, 7).toUpperCase()}`,
+    ],
+  );
+  await database.pool.query(
+    "INSERT INTO project_members(id,user_id,project_id,role) VALUES($1,$2,$3,'member')",
+    [randomUUID(), userId, foreign],
+  );
+  const selected = await seedRun(root, foreign);
+  const response = await streamGet(
+    new NextRequest(
+      `http://localhost/api/runs/${root}/peek/stream?selected=${selected}`,
+    ),
+    { params: Promise.resolve({ runId: root }) },
+  );
+  const reader = response.body!.getReader();
+
+  try {
+    expect(await frame(reader)).toMatchObject({
+      type: "peek.ready",
+      selectionState: "ready",
+    });
+    await database.pool.query(
+      "DELETE FROM project_members WHERE user_id=$1 AND project_id=$2",
+      [userId, foreign],
+    );
+    await database.pool.query("UPDATE runs SET status='Review' WHERE id=$1", [
+      root,
+    ]);
+    const frames = [
+      await frame(reader),
+      await frame(reader),
+      await frame(reader),
+    ];
+
+    expect(frames).toContainEqual({ type: "peek.selection_unavailable" });
+    expect(frames).toContainEqual({
+      type: "run.changed",
+      runId: root,
+      kind: "summary",
+    });
+    expect(frames).not.toContainEqual(
+      expect.objectContaining({ runId: selected }),
+    );
+  } finally {
+    await reader.cancel();
+  }
+});
+
+it("IT-PKD-09: request abort and database shutdown terminate owned streams and allow a new listener", async () => {
+  const aborted = new AbortController();
+  const first = await streamGet(
+    new NextRequest(`http://localhost/api/runs/${root}/peek/stream`, {
+      signal: aborted.signal,
+    }),
+    { params: Promise.resolve({ runId: root }) },
+  );
+  const reader = first.body!.getReader();
+
+  await frame(reader);
+  aborted.abort();
+  expect((await reader.read()).done).toBe(true);
+  await reader.cancel();
+  const second = await streamGet(
+    new NextRequest(`http://localhost/api/runs/${root}/peek/stream`),
+    { params: Promise.resolve({ runId: root }) },
+  );
+  const next = second.body!.getReader();
+
+  await frame(next);
+  const { closeDb } = await import("@/lib/db/client");
+
+  await closeDb();
+  expect(await frame(next)).toMatchObject({ type: "peek.resync" });
+  expect((await next.read()).done).toBe(true);
+  await next.cancel();
+  const third = await streamGet(
+    new NextRequest(`http://localhost/api/runs/${root}/peek/stream`),
+    { params: Promise.resolve({ runId: root }) },
+  );
+  const fresh = third.body!.getReader();
+
+  expect(await frame(fresh)).toMatchObject({ type: "peek.ready" });
+  await fresh.cancel();
+});
