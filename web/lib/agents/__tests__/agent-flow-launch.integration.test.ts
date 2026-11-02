@@ -7,7 +7,7 @@
 // supervisor and fails harmlessly (caught by launchRun) — not observed here.
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -36,6 +36,25 @@ import {
 import { expandExecutionPolicy } from "@/lib/runs/execution-policy";
 
 const exec = promisify(execFile);
+
+const logLines = vi.hoisted(() => [] as unknown[]);
+
+vi.mock("pino", () => {
+  const record = (fields: unknown, message?: string): void => {
+    logLines.push({ fields, message });
+  };
+  const logger = {
+    info: record,
+    warn: record,
+    error: record,
+    debug: record,
+    trace: record,
+    fatal: record,
+    child: () => logger,
+  };
+
+  return { default: () => logger };
+});
 
 // Stub the scheduler so the flow launch stays Pending and never fires the
 // fire-and-forget background runFlow (which has no live supervisor + would race
@@ -124,6 +143,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  logLines.length = 0;
   worktreesTmp = await mkdtemp(
     path.join(os.homedir(), ".maister-aflaunch-wt-"),
   );
@@ -493,6 +513,87 @@ describe("launchAgentRun — agent drives a flow (M39, ADR-106)", () => {
 });
 
 describe("scheduled request admission", () => {
+  it.each(["flow", "standalone"] as const)(
+    "redacts a real %s request-bearing INSERT failure and compensates its worktree",
+    async (mode) => {
+      const definitionPath = path.join(
+        agentsRoot,
+        "maister-agents",
+        "driver.md",
+      );
+      const definition = await readFile(definitionPath, "utf8");
+
+      if (mode === "standalone")
+        await writeFile(
+          definitionPath,
+          definition.replace("flow: bugfix\n", ""),
+        );
+      const request = "private-flow-insert-failure-sentinel";
+      const snapshot = {
+        version: 1 as const,
+        scheduleId: randomUUID(),
+        triggerAttemptId: randomUUID(),
+        requestAtLaunch: request,
+      };
+
+      await pool.query(`CREATE FUNCTION reject_scheduled_test_run() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.scheduled_request_snapshot IS NOT NULL THEN
+          RAISE EXCEPTION 'request-bearing insert rejected: %', NEW.scheduled_request_snapshot
+            USING ERRCODE='23514', CONSTRAINT='test_scheduled_run_failure';
+        END IF;
+        RETURN NEW;
+      END $$`);
+      await pool.query(
+        "CREATE TRIGGER reject_scheduled_test_run BEFORE INSERT ON runs FOR EACH ROW EXECUTE FUNCTION reject_scheduled_test_run()",
+      );
+      try {
+        const failure: unknown = await launchAgentRun({
+          agentId: "pkg:driver",
+          projectId,
+          trigger: { source: "cron" },
+          scheduledRequestSnapshot: snapshot,
+          db,
+        }).catch((error: unknown) => error);
+
+        if (mode === "flow")
+          expect(logLines).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                message:
+                  "launch setup failed after addWorktree — removing worktree",
+              }),
+            ]),
+          );
+        expect(JSON.stringify(logLines)).not.toContain(request);
+        expect(failure).toMatchObject({
+          code: "CRASH",
+          details: {
+            sqlState: "23514",
+            constraint: "test_scheduled_run_failure",
+          },
+        });
+        expect(String(failure)).not.toContain(request);
+        expect(JSON.stringify(failure)).not.toContain(request);
+        expect(failure).not.toHaveProperty("cause");
+        expect((await pool.query("SELECT id FROM runs")).rows).toEqual([]);
+        const worktrees = await exec("git", [
+          "-C",
+          repoPath,
+          "worktree",
+          "list",
+          "--porcelain",
+        ]);
+
+        expect(worktrees.stdout.match(/^worktree /gm)).toHaveLength(1);
+      } finally {
+        await pool.query("DROP TRIGGER reject_scheduled_test_run ON runs");
+        await pool.query("DROP FUNCTION reject_scheduled_test_run()");
+        await writeFile(definitionPath, definition);
+      }
+    },
+  );
+
   it.each([
     {
       label: "loop without a reachable consumer",

@@ -20,6 +20,7 @@ import path from "node:path";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { queryErrorDiagnostics, redactQueryError } from "@/lib/db/pg-error";
 import { loadFlowScheduledRequestSource } from "@/lib/agents/scheduled-request-lineage";
 import { assertScheduledRequestMatches } from "@/lib/agents/scheduled-request-store";
 import { assertScheduledRequestConsumer } from "@/lib/agents/scheduled-request-flow";
@@ -2103,7 +2104,7 @@ export async function* launchRunStaged(
       // so the next launch can recreate the same branch+path without a PRECONDITION
       // "already exists". The pin is re-pinned by the outer catch on rethrow.
       log.warn(
-        { runId, err: (err as Error).message },
+        { runId, ...queryErrorDiagnostics(err) },
         "launch setup failed after addWorktree — removing worktree",
       );
       await removeWorktree({
@@ -2116,7 +2117,7 @@ export async function* launchRunStaged(
           "compensating removeWorktree failed (manual cleanup may be required)",
         ),
       );
-      throw err;
+      throw redactQueryError(err);
     }
   } catch (err) {
     // Outer (ADR-107): any failure after the adopt re-pins the advanced

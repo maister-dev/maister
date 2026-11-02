@@ -1,3 +1,7 @@
+import { DrizzleQueryError } from "drizzle-orm";
+
+import { MaisterError } from "@/lib/errors-core";
+
 /** The Postgres driver error fields MAIster branches on. */
 export type PgDriverError = {
   code: string;
@@ -35,4 +39,28 @@ export function isUniqueViolation(err: unknown, constraint?: string): boolean {
     pg?.code === "23505" &&
     (constraint === undefined || pg.constraint === constraint)
   );
+}
+
+/** Safe diagnostics for queries whose parameters may contain protected input. */
+export function queryErrorDiagnostics(error: unknown): {
+  errorType: string;
+  sqlState?: string;
+  constraint?: string;
+} {
+  const pg = pgErrorOf(error);
+
+  return {
+    errorType: error instanceof Error ? error.name : typeof error,
+    sqlState: pg?.code,
+    constraint: pg?.constraint,
+  };
+}
+
+/** Drop query parameters and the raw cause before errors reach logs or public state. */
+export function redactQueryError(error: unknown): unknown {
+  if (!(error instanceof DrizzleQueryError)) return error;
+
+  return new MaisterError("CRASH", "Database operation failed", {
+    details: queryErrorDiagnostics(error),
+  });
 }

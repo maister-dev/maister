@@ -29,7 +29,7 @@ export async function ScheduledRequestEvidence({
       <summary className="cursor-pointer text-sm">
         {t("scheduledRequest")}
       </summary>
-      <pre className="mt-2 whitespace-pre-wrap break-words text-sm">
+      <pre className="mt-2 whitespace-pre-wrap wrap-anywhere text-sm">
         {snapshot.requestAtLaunch ?? t("scheduledRequestState.empty")}
       </pre>
     </details>

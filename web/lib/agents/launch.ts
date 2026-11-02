@@ -265,7 +265,11 @@ import {
   admitConsensusDraftPrompt,
   waitForConsensusDraftPrompt,
 } from "@/lib/flows/graph/consensus/draft-prompt-owner";
-import { pgErrorOf } from "@/lib/db/pg-error";
+import {
+  pgErrorOf,
+  queryErrorDiagnostics,
+  redactQueryError,
+} from "@/lib/db/pg-error";
 
 export {
   agentReadOnlyWorkdirPath,
@@ -1881,7 +1885,7 @@ export async function launchAgentRun(
           worktreePath,
         }).catch(() => undefined);
       }
-      throw err;
+      throw redactQueryError(err);
     }
 
     return true;
@@ -2656,7 +2660,7 @@ async function startConsensusRunnerDraftSession(args: {
       return;
     }
     log.error(
-      { runId, err: err instanceof Error ? err.message : String(err) },
+      { runId, ...queryErrorDiagnostics(err) },
       "consensus runner draft session spawn/prompt failed",
     );
     await finalizeAgentRun(runId, "Failed", {

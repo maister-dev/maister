@@ -64,6 +64,8 @@ import {
   type FlowPermissionOwner,
 } from "./graph/prompt-permission";
 
+import { queryErrorDiagnostics, redactQueryError } from "@/lib/db/pg-error";
+
 import {
   parseScheduledRequestSnapshot,
   appendScheduledRequest,
@@ -1254,16 +1256,40 @@ async function reattachConsensusPrompt(
   return { ok: true, stdout: "", vars: {}, durationMs: 0 };
 }
 
+type AgentStepResult = StepResult & {
+  acpSessionId?: string;
+  sessionFallback?: boolean;
+};
+
 export async function runAgentStep(
   step: AgentStepLike,
   ctx: RunAgentStepCtx,
   execution?: AgentExecution,
-): Promise<
-  StepResult & {
-    acpSessionId?: string;
-    sessionFallback?: boolean;
+): Promise<AgentStepResult> {
+  try {
+    return await dispatchAgentStep(step, ctx, execution);
+  } catch (error) {
+    const failure = redactQueryError(error);
+
+    if (failure !== error) {
+      log.error(
+        {
+          runId: ctx.runId,
+          stepId: ctx.stepId,
+          ...queryErrorDiagnostics(error),
+        },
+        "agent step persistence failed",
+      );
+    }
+    throw failure;
   }
-> {
+}
+
+async function dispatchAgentStep(
+  step: AgentStepLike,
+  ctx: RunAgentStepCtx,
+  execution?: AgentExecution,
+): Promise<AgentStepResult> {
   // Existing immutable requests do not depend on today's template or context.
   // A consensus cell re-enters through its own logical operation key instead.
   if (ctx.promptOwner) {
@@ -1418,7 +1444,7 @@ export async function runAgentStep(
         {
           runId: ctx.runId,
           nodeAttemptId: ctx.nodeAttemptId,
-          err: (err as Error).message,
+          ...queryErrorDiagnostics(err),
         },
         "[runner-agent] resolved_prompt persist failed",
       );

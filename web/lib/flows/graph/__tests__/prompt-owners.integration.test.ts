@@ -90,6 +90,28 @@ let worker: ProjectionWorker;
 let restoreUrl: () => void = () => {};
 let priorRuntimeRoot: string | undefined;
 
+const logLines = vi.hoisted(
+  () => [] as Array<{ fields: unknown; message?: string }>,
+);
+
+vi.mock("pino", () => {
+  const record = (fields: unknown, message?: string): void => {
+    logLines.push({ fields, message });
+  };
+  const logger = {
+    info: record,
+    warn: record,
+    error: record,
+    debug: record,
+    trace: record,
+    fatal: record,
+    child: () => logger,
+    flush: (callback: (error?: Error) => void): void => callback(),
+  };
+
+  return { default: () => logger };
+});
+
 beforeAll(async () => {
   database = await startMainPostgresTestDb({
     databaseName: "flow_prompt_owners",
@@ -333,6 +355,82 @@ async function killAtDatabaseWrite(input: {
 }
 
 describe("Flow prompt owners through the production graph driver", () => {
+  it.each(["projections", "owned-command"] as const)(
+    "keeps request-bearing %s failures out of diagnostics",
+    async (failureAt) => {
+      const request = "private-flow-prompt-persistence-sentinel";
+      const seeded = await seedOwnerFlow(
+        [
+          {
+            id: "work",
+            type: "ai_coding",
+            action: {
+              prompt: 'fixture-output:{"bytes":0,"text":"work completed"}',
+            },
+            transitions: { success: "done" },
+          },
+        ],
+        { scheduledRequest: request },
+      );
+      const trigger = `request_privacy_${randomUUID().replaceAll("-", "")}`;
+      const targets =
+        failureAt === "projections"
+          ? [
+              { table: "run_messages", event: "INSERT" },
+              { table: "node_attempts", event: "UPDATE" },
+            ]
+          : [{ table: "execution_commands", event: "INSERT" }];
+
+      await database.pool
+        .query(`CREATE FUNCTION ${trigger}() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF to_jsonb(NEW)->>'run_id' = '${seeded.runId}' AND to_jsonb(NEW)::text LIKE '%${request}%' THEN
+          RAISE EXCEPTION 'private-flow-prompt-persistence-sentinel' USING ERRCODE='23514', CONSTRAINT='test_prompt_privacy';
+        END IF;
+        RETURN NEW;
+      END $$`);
+      for (const target of targets)
+        await database.pool.query(
+          `CREATE TRIGGER ${trigger} BEFORE ${target.event} ON ${target.table} FOR EACH ROW EXECUTE FUNCTION ${trigger}()`,
+        );
+      logLines.length = 0;
+      try {
+        await runFlow(seeded.runId, {
+          db: database.db,
+          runtimeRoot: supervisor.runtimeRoot,
+          executionHosts: createExecutionHosts({
+            db: database.db as unknown as Db,
+          }),
+        });
+        const [run] = await database.db
+          .select()
+          .from(runs)
+          .where(eq(runs.id, seeded.runId));
+
+        expect(run.status).toBe(
+          failureAt === "projections" ? "Review" : "Crashed",
+        );
+        if (failureAt === "projections") {
+          expect(logLines.map((line) => line.message)).toEqual(
+            expect.arrayContaining([
+              "[prompt-record] dispatched prompt was not recorded",
+              "[runner-agent] resolved_prompt persist failed",
+            ]),
+          );
+        }
+        expect(JSON.stringify(logLines)).not.toContain(request);
+        expect(JSON.stringify(logLines)).toContain("23514");
+      } finally {
+        for (const target of targets)
+          await database.pool.query(
+            `DROP TRIGGER ${trigger} ON ${target.table}`,
+          );
+        await database.pool.query(`DROP FUNCTION ${trigger}()`);
+      }
+    },
+    60_000,
+  );
+
   it("delivers the scheduled request to a primary action and its AI gate", async () => {
     const request = "scheduled-gate-sentinel: Проверить {{ literal }} 😀";
     const gatePrompt = `fixture-output:${JSON.stringify({ bytes: 0, text: JSON.stringify({ verdict: "pass", confidence: 0.95, reasons: ["checked"] }) })}`;

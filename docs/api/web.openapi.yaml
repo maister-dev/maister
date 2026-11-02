@@ -21227,7 +21227,7 @@ components:
       type: object
       additionalProperties: false
       description: |
-        Designed — one trigger binding. Cron requires cronExpr/timezone; event
+        Implemented — one trigger binding. Cron requires cronExpr/timezone; event
         requires eventKinds; mention accepts neither. Request is cron-only.
         Normalize CRLF/CR to LF and trim outer whitespace; empty becomes null.
         Limit is 8000 Unicode code points AFTER normalization; reject NUL and
@@ -21263,7 +21263,7 @@ components:
       type: object
       additionalProperties: false
       required: [version, scheduleId, triggerAttemptId, requestAtLaunch]
-      description: Designed — immutable original cron input; readRepoFiles required.
+      description: Implemented — immutable original cron input; readRepoFiles required.
       properties:
         version: { type: integer, enum: [1] }
         scheduleId: { type: string, minLength: 1, maxLength: 256 }

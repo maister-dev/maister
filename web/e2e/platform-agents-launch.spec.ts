@@ -141,7 +141,9 @@ test("E2E-SR-01 create, edit, clear and execute independent scheduled requests (
       [fx.helperAgentId],
     ),
   );
-  const requestA = "Scheduled browser request A\nПроверить {{ literal }} 😀";
+  const requestPrefix =
+    "Scheduled browser request A\nПроверить {{ literal }} 😀\n";
+  const requestA = requestPrefix + "x".repeat(8000 - [...requestPrefix].length);
   const requestB = "Independent browser request B";
   const open = async (): Promise<void> => {
     await page.goto(`${detailUrl}?tab=settings`);
@@ -275,6 +277,20 @@ test("E2E-SR-01 create, edit, clear and execute independent scheduled requests (
         .click();
       await expect(row).toContainText(requestA);
       await expect(row).not.toContainText("Changed after claim");
+      const layout = await row.locator("pre").evaluate((element) => {
+        const container = element.closest("table")?.parentElement;
+
+        if (!container) throw new Error("Missing history table container");
+
+        return {
+          width: container.clientWidth,
+          scrollWidth: container.scrollWidth,
+          requestHeight: element.getBoundingClientRect().height,
+        };
+      });
+
+      expect(layout.scrollWidth).toBeLessThanOrEqual(layout.width + 1);
+      expect(layout.requestHeight).toBeGreaterThan(40);
       await open();
       await expect(fieldA).toHaveValue("Changed after claim");
     }
