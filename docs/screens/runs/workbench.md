@@ -283,9 +283,16 @@ Descendant entries open the [read-only peek](child-run-peek.md); interactive act
 ## Transcript loading (Implemented)
 
 Run and Flow-node activity share the bounded transcript reader used by child Run
-peek. The first view loads the latest 100 messages; Earlier and Latest controls
-navigate history while retaining at most five windows. Loading, failed reads,
+peek. The first view opens at the latest messages, with each portion bounded by
+100 records and serialized response bytes. Scrolling near the top or choosing
+**Load earlier messages** uses the same cursor-based loading path. At most five
+portions are retained; unloaded records remain reachable in either direction.
+Loading, failed reads with explicit retry,
 projection catch-up and empty history have distinct states. Live notifications
 coalesce behind an in-flight read so a completed response is displayed even
 while new events arrive. Loading earlier messages preserves the visible document
-or peek-panel scroll position.
+or peek-panel scroll position. Live changes follow the tail only while the user
+is at the bottom. Reading history preserves the visible message and offers
+**Jump to latest**, with an indicator when new messages arrive. Individually
+oversized records retain their normal message/tool presentation with a bounded
+preview and an authorized **Download complete content** action.

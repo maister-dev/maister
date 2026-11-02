@@ -92,11 +92,12 @@ it("IT-PKD-11: upgrades 0209 with retained data, exact paging indexes and repeat
   ).rows as { indexname: string; indexdef: string }[];
 
   expect(indexes.map((row) => row.indexname)).toEqual([
+    "run_messages_peek_node_creation_order_idx",
     "run_messages_peek_node_order_idx",
     "run_messages_peek_run_order_idx",
     "runs_peek_parent_launch_idx",
   ]);
-  expect(indexes[0].indexdef).toContain("supervisor_event_id");
+  expect(indexes[0].indexdef).toContain("first_supervisor_event_id");
   expect(indexes[0].indexdef).toContain("WHERE (node_attempt_id IS NOT NULL)");
   expect(
     (
@@ -105,7 +106,15 @@ it("IT-PKD-11: upgrades 0209 with retained data, exact paging indexes and repeat
         [id],
       )
     ).rows,
-  ).toEqual(before);
+  ).toEqual(
+    before.map((row) => ({
+      ...row,
+      first_supervisor_event_id:
+        row.node_attempt_id !== null && row.prompt_dispatch_key === null
+          ? row.supervisor_event_id
+          : null,
+    })),
+  );
   const ledger = (
     await database.pool.query(
       "SELECT * FROM drizzle.__drizzle_migrations ORDER BY id",
@@ -141,12 +150,14 @@ it("IT-PKD-11: paging plans use the migrated indexes and the normal database che
   await database.pool.query("ANALYZE run_messages");
   const plan = (
     await database.pool.query(
-      `EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) SELECT id FROM run_messages WHERE run_id=$1 AND node_attempt_id=$2 ORDER BY coalesce(supervisor_event_id,'0')::bigint,(prompt_dispatch_key IS NOT NULL),sequence,id LIMIT 100`,
+      `EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) SELECT id FROM run_messages WHERE run_id=$1 AND node_attempt_id=$2 ORDER BY coalesce(first_supervisor_event_id,supervisor_event_id,'0')::bigint,(prompt_dispatch_key IS NOT NULL),sequence,id LIMIT 100`,
       [run, attempt],
     )
   ).rows;
 
-  expect(JSON.stringify(plan)).toContain("run_messages_peek_node_order_idx");
+  expect(JSON.stringify(plan)).toContain(
+    "run_messages_peek_node_creation_order_idx",
+  );
   const whole = (
     await database.pool.query(
       "EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) SELECT id FROM run_messages WHERE run_id=$1 ORDER BY created_at,sequence,id LIMIT 100",

@@ -3443,10 +3443,23 @@ runs), so `sequence` is arrival order, not causal order. `supervisor_event_id`
 is the shared axis that carries causality: the transcript projector stores the
 `run_sequence` of the event a row was projected FROM, and the flow dispatcher
 stores the run's ingested-event horizon a prompt was issued AFTER (`-1` before
-the first event). The node transcript orders on
-`(supervisor_event_id, prompt_dispatch_key IS NOT NULL, sequence)` — the middle
-term placing a prompt anchored at `E` after the reply projected from `E`
-(EDGE-TRC-08). → [`system-analytics/run-trace.md`](system-analytics/run-trace.md).
+the first event). `supervisor_event_id` advances when content coalesces and
+remains the external activity feed's last-mutation evidence. Canonical rows also
+store `first_supervisor_event_id`, their immutable creation-event anchor. Paged
+node history and its index order on
+`(coalesce(first_supervisor_event_id, supervisor_event_id, '0')::bigint,
+prompt_dispatch_key IS NOT NULL, sequence, id)`, so a late tool result updates
+its original message without moving it across history boundaries. Migration
+0214 initializes retained non-prompt node rows from their current observed
+anchor; subsequent mutations leave that position fixed.
+
+Prompt rows leave the first-event field null and retain their causal horizon,
+including explicit corrections after late host-span confirmation. The middle
+term places a prompt anchored at `E` after the reply projected from `E`
+(EDGE-TRC-08). Paged reads validate cursor scope and resolve boundary IDs against
+the current repeatable-read snapshot before comparing positions, so an old
+prompt cursor follows its corrected horizon. Inclusive refresh windows reorder
+corrected endpoints and report neighbor flags for the actual returned records. → [`system-analytics/run-trace.md`](system-analytics/run-trace.md).
 
 Studio assistant action results (ADR-110) are stored as server-produced system
 messages with `kind = "flow_action_result"`. They contain relative touched

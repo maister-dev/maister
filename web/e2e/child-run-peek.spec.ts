@@ -1,5 +1,5 @@
 import type { RunResultContract } from "@/lib/run-results/types";
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -58,6 +58,24 @@ test.afterEach(async () => {
 });
 function peek(page: Page) {
   return page.getByTestId("run-peek-panel");
+}
+
+async function scrollWithinPeek(
+  message: Locator,
+  viewportFraction: number,
+): Promise<void> {
+  await message.evaluate((element, fraction) => {
+    const root = element.closest('[data-testid="run-peek-scroll"]');
+
+    if (!(root instanceof HTMLElement))
+      throw new Error("Transcript message has no peek scroll owner");
+    const bounds = root.getBoundingClientRect();
+    const top = Math.max(0, bounds.top);
+    const height = Math.min(window.innerHeight, bounds.bottom) - top;
+
+    root.scrollTop +=
+      element.getBoundingClientRect().top - top - height * fraction;
+  }, viewportFraction);
 }
 
 async function trackFetchSignals(page: Page): Promise<void> {
@@ -672,97 +690,198 @@ test("E2E-PKN-04 E2E-PKN-10: an unsent parent HITL draft survives child navigati
   }
 });
 
-test("E2E-PKD-07: long histories bound rendering, preserve earlier windows and display explicit tool previews", async ({
+test("E2E-PKD-07: nested history preserves scroll, bounds retained pages and downloads oversized tools", async ({
   page,
 }) => {
-  await withE2EDb((pool) =>
-    pool.query(
+  const tool = {
+    v: 1,
+    kind: "tool",
+    name: "Read",
+    toolKind: "read",
+    status: "completed",
+    arg: "oversized.txt",
+    rawInput: { file_path: "oversized.txt" },
+    result: "界".repeat(200_000),
+  };
+
+  await withE2EDb(async (pool) => {
+    await pool.query(
       "UPDATE run_messages SET created_at='2026-01-01T00:00:00.000123Z' WHERE run_id=$1",
       [fixture.child],
-    ),
-  );
-  await withE2EDb((pool) =>
-    pool.query(
-      `INSERT INTO run_messages(id,run_id,sequence,role,content,created_at) SELECT gen_random_uuid()::text,$1,n,CASE WHEN n=650 THEN 'tool' ELSE 'assistant' END,CASE WHEN n=650 THEN repeat('界',200000) ELSE 'History ' || n::text END,'2026-01-01T00:00:00.000123Z' FROM generate_series(2,650)n`,
+    );
+    await pool.query(
+      "INSERT INTO run_messages(id,run_id,sequence,role,content,created_at) SELECT gen_random_uuid()::text,$1,n,'assistant','History ' || n::text,'2026-01-01T00:00:00.000123Z' FROM generate_series(2,650)n",
       [fixture.child],
-    ),
-  );
+    );
+    await pool.query(
+      "UPDATE run_messages SET role='tool',content=$1 WHERE run_id=$2 AND sequence=650",
+      [JSON.stringify(tool), fixture.child],
+    );
+  });
+  await page.setViewportSize({ width: 1600, height: 1000 });
   await page.goto(`/runs/${fixture.anchor}?peek=${fixture.child}`);
-  await expect(peek(page).getByTestId("peek-bounded-preview")).toBeVisible();
-  await expect(peek(page)).toContainText("600000");
-  await expect(peek(page).getByText(/^History \d+$/)).toHaveCount(99);
-  const earlier = peek(page).getByRole("button", {
-    name: "Load earlier messages",
+  const transcript = peek(page).getByTestId("run-transcript-history");
+  const scroller = peek(page).getByTestId("run-peek-scroll");
+  const messages = transcript.getByText(/^History \d+$/);
+
+  const toolButton = transcript.getByRole("button", {
+    name: /Read.*oversized.txt/,
   });
 
-  await earlier.click();
-  await expect(peek(page).getByText(/^History \d+$/)).toHaveCount(199);
-  await peek(page)
-    .getByText("History 451", { exact: true })
-    .scrollIntoViewIfNeeded();
-  await withE2EDb((pool) =>
-    pool.query(
-      "UPDATE run_messages SET content='Updated visible earlier message' WHERE run_id=$1 AND sequence=451",
-      [fixture.child],
-    ),
-  );
-  await expect(peek(page)).toContainText("Updated visible earlier message");
-  const reading = peek(page).getByText("History 500", { exact: true });
+  await expect(toolButton).toBeInViewport();
+  await toolButton.click();
+  await expect(transcript.getByTestId("peek-bounded-preview")).toBeVisible();
+  await expect(messages).toHaveCount(99);
+  const full = transcript.getByRole("link", {
+    name: "Download complete content",
+    exact: true,
+  });
+  const downloading = page.waitForEvent("download");
 
-  await reading.scrollIntoViewIfNeeded();
+  await full.click();
+  const download = await downloading;
+  const content = await download.createReadStream();
+  const chunks: Buffer[] = [];
+
+  for await (const chunk of content) chunks.push(Buffer.from(chunk));
+  expect(Buffer.concat(chunks).toString("utf8")).toBe(JSON.stringify(tool));
+  const parentScroll = await page.evaluate(() => window.scrollY);
+  const initialReading = transcript.getByText("History 551", { exact: true });
+
+  await scrollWithinPeek(initialReading, 0);
+  const initialTop = (await initialReading.boundingBox())!.y;
+
+  await expect(messages).toHaveCount(199);
+  await expect
+    .poll(async () =>
+      Math.abs((await initialReading.boundingBox())!.y - initialTop),
+    )
+    .toBeLessThan(2);
+  expect(await page.evaluate(() => window.scrollY)).toBe(parentScroll);
+  const readingText = transcript.getByText("History 500", { exact: true });
+
+  await scrollWithinPeek(readingText, 0);
+  const readingId = await readingText.evaluate((element) =>
+    element
+      .closest("[data-transcript-message-id]")
+      ?.getAttribute("data-transcript-message-id"),
+  );
+
+  if (!readingId) throw new Error("Reading message has no transcript anchor");
+  const reading = transcript.locator(
+    `[data-transcript-message-id="${readingId}"]`,
+  );
   const readingTop = (await reading.boundingBox())!.y;
 
   await withE2EDb((pool) =>
     pool.query(
-      "UPDATE run_messages SET content=$1 WHERE run_id=$2 AND sequence=451",
+      "UPDATE run_messages SET content=$1 WHERE run_id=$2 AND sequence=500",
       ["Expanded earlier detail\n".repeat(50), fixture.child],
     ),
   );
-  await expect(peek(page)).toContainText("Expanded earlier detail");
+  await expect(transcript).toContainText("Expanded earlier detail");
   await expect
     .poll(async () => Math.abs((await reading.boundingBox())!.y - readingTop))
     .toBeLessThan(2);
-
   await withE2EDb((pool) =>
     pool.query(
-      `INSERT INTO run_messages(id,run_id,sequence,role,content,created_at) SELECT gen_random_uuid()::text,$1,n,'assistant','History ' || n::text,'2026-01-01T00:00:00.000123Z' FROM generate_series(651,850)n`,
+      "INSERT INTO run_messages(id,run_id,sequence,role,content,created_at) SELECT gen_random_uuid()::text,$1,n,'assistant','History ' || n::text,'2026-01-01T00:00:00.000123Z' FROM generate_series(651,850)n",
       [fixture.child],
     ),
   );
-  await expect(peek(page)).toContainText("Newer messages are available");
+  await expect(transcript).toContainText("Newer messages are available");
+  await expect(
+    transcript.getByTestId("transcript-jump-latest"),
+  ).toHaveAttribute("data-new-messages", "true");
   await expect
     .poll(async () => Math.abs((await reading.boundingBox())!.y - readingTop))
     .toBeLessThan(2);
   await expect(
-    peek(page).getByText("History 551", { exact: true }),
+    transcript.getByText("History 850", { exact: true }),
+  ).toHaveCount(1);
+  // Read progressively toward the beginning so the opposite end can be evicted.
+  for (let boundary = 451; boundary >= 151; boundary -= 100) {
+    const first = transcript.locator("[data-transcript-message-id]").first();
+
+    await scrollWithinPeek(first, 0);
+    await expect(
+      transcript.getByText(`History ${boundary - 100}`, { exact: true }),
+    ).toHaveCount(1);
+    expect(
+      await transcript.locator("[data-transcript-message-id]").count(),
+    ).toBeLessThanOrEqual(500);
+  }
+  await expect(
+    transcript.getByRole("button", { name: "Load later messages" }),
+  ).toHaveCount(1);
+  const oldestReading = transcript.getByText("History 100", { exact: true });
+
+  await scrollWithinPeek(oldestReading, 0.5);
+  const oldestTop = (await oldestReading.boundingBox())!.y;
+
+  await transcript
+    .getByRole("button", { name: "Load earlier messages" })
+    .evaluate((element: HTMLButtonElement) => element.click());
+  await expect(
+    transcript.getByText("Conversation of Researcher Alpha", { exact: true }),
   ).toHaveCount(1);
   await expect(
-    peek(page).getByText("History 850", { exact: true }),
+    transcript.getByRole("button", { name: "Load earlier messages" }),
   ).toHaveCount(0);
-  await expect(peek(page).getByText(/^History \d+$/)).toHaveCount(198);
-  for (let count = 2; count <= 5; count++) {
-    await earlier.click();
-    await expect(peek(page).getByText(/^History \d+$/)).toHaveCount(
-      count === 5 ? 499 : Math.min(count + 1, 5) * 100 - 2,
-    );
-  }
-  await expect(peek(page)).toContainText("Newer displayed pages were unloaded");
-  const displayed = await peek(page)
-    .getByText(/^History \d+$/)
-    .allTextContents();
-
+  await expect
+    .poll(async () =>
+      Math.abs((await oldestReading.boundingBox())!.y - oldestTop),
+    )
+    .toBeLessThan(2);
+  await scrollWithinPeek(
+    transcript.getByText("History 450", { exact: true }),
+    0.5,
+  );
+  await expect(
+    transcript.getByText("History 550", { exact: true }),
+  ).toHaveCount(1);
+  await transcript
+    .getByRole("button", { name: "Load later messages" })
+    .evaluate((element: HTMLButtonElement) => element.click());
+  await expect(
+    transcript.getByText("History 649", { exact: true }),
+  ).toHaveCount(1);
   expect(
-    displayed.map((text) => Number(text.slice("History ".length))),
-  ).toEqual(
-    Array.from({ length: 500 }, (_, index) => index + 51).filter(
-      (value) => value !== 451,
+    await transcript.locator("[data-transcript-message-id]").count(),
+  ).toBeLessThanOrEqual(500);
+  await transcript
+    .getByRole("button", { name: "Jump to latest", exact: true })
+    .click();
+  await expect(messages).toHaveCount(100);
+  await expect(
+    transcript.getByText("History 850", { exact: true }),
+  ).toBeInViewport();
+  await expect
+    .poll(() =>
+      scroller.evaluate((element) => {
+        const tail = element.querySelector('[data-testid="transcript-tail"]');
+
+        if (!tail) throw new Error("Transcript tail is missing");
+
+        return Math.abs(
+          tail.getBoundingClientRect().bottom -
+            Math.min(
+              element.getBoundingClientRect().bottom,
+              window.innerHeight,
+            ),
+        );
+      }),
+    )
+    .toBeLessThan(10);
+  await withE2EDb((pool) =>
+    pool.query(
+      "INSERT INTO run_messages(id,run_id,sequence,role,content,created_at) VALUES($1,$2,851,'assistant','History 851','2026-01-01T00:00:00.000123Z')",
+      [randomUUID(), fixture.child],
     ),
   );
-  await peek(page).getByRole("button", { name: "Latest messages" }).click();
-  await expect(peek(page).getByText(/^History \d+$/)).toHaveCount(100);
   await expect(
-    peek(page).getByText("History 850", { exact: true }),
-  ).toHaveCount(1);
+    transcript.getByText("History 851", { exact: true }),
+  ).toBeInViewport();
 });
 
 test("E2E-PKD-07: delayed history cannot override Latest messages or a newer Flow attempt", async ({
@@ -845,16 +964,16 @@ test("E2E-PKD-07: delayed history cannot override Latest messages or a newer Flo
     ).toHaveCount(1);
     await peek(page)
       .getByRole("button", { name: "Load earlier messages" })
-      .click();
+      .evaluate((element: HTMLButtonElement) => element.click());
     await expect(
       peek(page).getByText("Prior attempt 21", { exact: true }),
     ).toHaveCount(1);
     hold = true;
     await peek(page)
       .getByRole("button", { name: "Load earlier messages" })
-      .click();
+      .evaluate((element: HTMLButtonElement) => element.click());
     await ready;
-    await peek(page).getByRole("button", { name: "Latest messages" }).click();
+    await peek(page).getByRole("button", { name: "Jump to latest" }).click();
     const lastEarlierAborted = (): Promise<boolean> =>
       page.evaluate((id) => {
         const state = window as typeof window & {
@@ -887,7 +1006,7 @@ test("E2E-PKD-07: delayed history cannot override Latest messages or a newer Flo
     });
     await peek(page)
       .getByRole("button", { name: "Load earlier messages" })
-      .click();
+      .evaluate((element: HTMLButtonElement) => element.click());
     await ready;
     await withE2EDb(async (pool) => {
       await pool.query(
@@ -914,6 +1033,7 @@ test("E2E-PKD-07: delayed history cannot override Latest messages or a newer Flo
     ).toHaveCount(1);
   } finally {
     release();
+    await page.unrouteAll({ behavior: "wait" });
     await withE2EDb(async (pool) => {
       await pool.query(
         "UPDATE runs SET flow_id=NULL,run_kind='agent' WHERE id=$1",

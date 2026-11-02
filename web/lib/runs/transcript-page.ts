@@ -15,17 +15,9 @@ import { loadRunManifest } from "@/lib/queries/run-manifest";
 import { authorizePeekRun } from "@/lib/runs/peek-read-model";
 import { projectRunTranscript } from "@/lib/runs/run-transcript-projector";
 
-export type TranscriptPageMessage =
-  | TranscriptMessage
-  | {
-      id: string;
-      role: TranscriptMessage["role"];
-      createdAt: string;
-      kind: "bounded_preview";
-      preview: string;
-      originalBytes: number;
-      truncated: true;
-    };
+export type TranscriptPageMessage = TranscriptMessage & {
+  preview?: { originalBytes: number; fullContentHref: string };
+};
 export type TranscriptPage = {
   compatible: boolean;
   incompatibility: FlowManifestIncompatibility | null;
@@ -50,10 +42,12 @@ const positionSchema = z
     createdAt: z.string().datetime(),
     event: z
       .string()
-      .regex(/^\d{1,19}$/)
+      .regex(/^-?\d{1,19}$/)
       .refine(
         (value) =>
-          /^\d{1,19}$/.test(value) && BigInt(value) <= 9223372036854775807n,
+          /^-?\d{1,19}$/.test(value) &&
+          BigInt(value) >= -9223372036854775808n &&
+          BigInt(value) <= 9223372036854775807n,
       ),
     prompt: z.boolean(),
     sequence: z.number().int().min(-2147483648).max(2147483647),
@@ -72,7 +66,16 @@ const cursorSchema = z
 
 type Cursor = z.infer<typeof cursorSchema>;
 type Position = z.infer<typeof positionSchema>;
-type Metadata = Position & { role: TranscriptMessage["role"]; bytes: number };
+type Metadata = Position & {
+  role: TranscriptMessage["role"];
+  bytes: number;
+  wireBytes: number;
+};
+
+export const TRANSCRIPT_PAGE_BYTES = 380 * 1024;
+// Preview SQL limits the total extracted text to 1,504 characters. This bound
+// includes UTF-8, JSON escaping twice (payload inside content), and metadata.
+const PREVIEW_MESSAGE_BYTES = 16 * 1024;
 
 function invalid(reason = "invalid_cursor"): MaisterError {
   return new MaisterError("CONFIG", "Invalid transcript paging request", {
@@ -112,8 +115,8 @@ function decode(
 }
 function tuple(position: Position, node: string | null): SQL {
   return node
-    ? sql`(${position.event}::bigint,${position.prompt},${position.sequence},${position.id})`
-    : sql`(${position.createdAt}::timestamptz,${position.sequence},${position.id})`;
+    ? sql`(${position.event}::bigint,${position.prompt}::boolean,${position.sequence}::int,${position.id}::text)`
+    : sql`(${position.createdAt}::timestamptz,${position.sequence}::int,${position.id}::text)`;
 }
 
 export async function readTranscriptPage(
@@ -133,12 +136,20 @@ export async function readTranscriptPage(
   if (!Number.isInteger(limit) || limit < 1 || limit > 200)
     throw invalid("invalid_limit");
   if (
-    ((query.before !== undefined || query.after !== undefined) &&
+    ((query.before !== undefined ||
+      query.after !== undefined ||
+      query.anchor !== undefined) &&
       query.limit === undefined) ||
     (query.before !== undefined && query.after !== undefined) ||
     (query.windowBefore !== undefined) !== (query.windowAfter !== undefined) ||
     (query.windowBefore !== undefined &&
-      (query.before !== undefined || query.after !== undefined))
+      (query.before !== undefined || query.after !== undefined)) ||
+    (query.anchor !== undefined &&
+      (query.anchor.length === 0 ||
+        query.anchor.length > 512 ||
+        query.before !== undefined ||
+        query.after !== undefined ||
+        query.windowBefore !== undefined))
   )
     throw invalid("invalid_query");
   const node = query.node ?? null;
@@ -259,50 +270,85 @@ async function readWindow(
   const attemptId = attempts?.rows[0]?.id ?? null;
   const empty: TranscriptPage = { ...input.empty, attemptId };
   // Decode even empty scopes so a stale attempt can never masquerade as empty history.
-  const before =
+  const beforePosition =
     query.before === undefined
       ? null
       : decode(query.before, runId, node, attemptId, "before");
-  const after =
+  const afterPosition =
     query.after === undefined
       ? null
       : decode(query.after, runId, node, attemptId, "after");
-  const lower =
+  const lowerPosition =
     query.windowBefore === undefined
       ? null
       : decode(query.windowBefore, runId, node, attemptId, "lower");
-  const upper =
+  const upperPosition =
     query.windowAfter === undefined
       ? null
       : decode(query.windowAfter, runId, node, attemptId, "upper");
 
-  if (empty.incompatibility || (node && !attemptId)) return empty;
+  if (empty.incompatibility || (node && !attemptId)) {
+    if (query.anchor !== undefined) throw invalid("invalid_anchor");
+
+    return empty;
+  }
   const scope = sql`run_id=${runId} ${node ? sql`AND node_attempt_id=${attemptId}` : sql``}`;
+  const cursorIds = [
+    ...new Set(
+      [beforePosition, afterPosition, lowerPosition, upperPosition].flatMap(
+        (position) => (position ? [position.id] : []),
+      ),
+    ),
+  ];
+  const currentCursorRows =
+    cursorIds.length === 0
+      ? []
+      : (
+          await db.execute<Position>(
+            sql`SELECT id,to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "createdAt",${node ? sql`coalesce(first_supervisor_event_id,supervisor_event_id,'0')` : sql`'0'`} AS event,(prompt_dispatch_key IS NOT NULL) AS prompt,sequence FROM run_messages WHERE ${scope} AND id IN (${sql.join(
+              cursorIds.map((id) => sql`${id}`),
+              sql`,`,
+            )})`,
+          )
+        ).rows;
+  const currentPositions = new Map(
+    currentCursorRows.map((row) => [row.id, row]),
+  );
+  const resolvePosition = (position: Position | null): Position | null => {
+    if (position === null) return null;
+    const current = currentPositions.get(position.id);
+
+    if (current === undefined) throw invalid("cursor_record_missing");
+
+    return current;
+  };
+  // Prompt horizons may be explicitly corrected after late event ingestion.
+  // Resolve each scoped ID in this repeatable-read snapshot, rather than use
+  // an obsolete tuple from a previously issued cursor.
+  const before = resolvePosition(beforePosition);
+  const after = resolvePosition(afterPosition);
+  const lower = resolvePosition(lowerPosition);
+  const upper = resolvePosition(upperPosition);
+  const anchors =
+    query.anchor === undefined
+      ? null
+      : await db.execute<Position>(
+          sql`SELECT id,to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "createdAt",${node ? sql`coalesce(first_supervisor_event_id,supervisor_event_id,'0')` : sql`'0'`} AS event,(prompt_dispatch_key IS NOT NULL) AS prompt,sequence FROM run_messages WHERE ${scope} AND id=${query.anchor} LIMIT 1`,
+        );
+  const anchor = anchors?.rows[0] ?? null;
+
+  if (query.anchor !== undefined && anchor === null)
+    throw invalid("invalid_anchor");
   const order = node
-    ? sql`(coalesce(supervisor_event_id,'0')::bigint,(prompt_dispatch_key IS NOT NULL),sequence,id)`
+    ? sql`(coalesce(first_supervisor_event_id,supervisor_event_id,'0')::bigint,(prompt_dispatch_key IS NOT NULL),sequence,id)`
     : sql`(created_at,sequence,id)`;
-  const bounds = sql`${before ? sql`AND ${order}<${tuple(before, node)}` : sql``} ${after ? sql`AND ${order}>${tuple(after, node)}` : sql``} ${lower ? sql`AND ${order}>=${tuple(lower, node)}` : sql``} ${upper ? sql`AND ${order}<=${tuple(upper, node)}` : sql``}`;
-  const ascending = after !== null || lower !== null;
+  const bounds = sql`${before ? sql`AND ${order}<${tuple(before, node)}` : sql``} ${after ? sql`AND ${order}>${tuple(after, node)}` : sql``} ${lower && upper ? sql`AND ${order}>=LEAST(${tuple(lower, node)},${tuple(upper, node)}) AND ${order}<=GREATEST(${tuple(lower, node)},${tuple(upper, node)})` : sql``} ${anchor ? sql`AND ${order}>=${tuple(anchor, node)}` : sql``}`;
+  const ascending = after !== null || lower !== null || anchor !== null;
   const rows = await db.execute<Metadata>(
-    sql`SELECT id,role,to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "createdAt",${node ? sql`coalesce(supervisor_event_id,'0')` : sql`'0'`} AS event,(prompt_dispatch_key IS NOT NULL) AS prompt,sequence,octet_length(content)::int AS bytes FROM run_messages WHERE ${scope} ${bounds} ORDER BY ${node ? sql`coalesce(supervisor_event_id,'0')::bigint ${ascending ? sql`ASC` : sql`DESC`},(prompt_dispatch_key IS NOT NULL) ${ascending ? sql`ASC` : sql`DESC`},` : sql`created_at ${ascending ? sql`ASC` : sql`DESC`},`} sequence ${ascending ? sql`ASC` : sql`DESC`},id ${ascending ? sql`ASC` : sql`DESC`} LIMIT ${limit}`,
+    sql`SELECT id,role,to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "createdAt",${node ? sql`coalesce(first_supervisor_event_id,supervisor_event_id,'0')` : sql`'0'`} AS event,(prompt_dispatch_key IS NOT NULL) AS prompt,sequence,octet_length(content)::int AS bytes,CASE WHEN octet_length(content)>${TRANSCRIPT_PAGE_BYTES} THEN octet_length(content)+2 ELSE octet_length(to_json(content)::text) END::int AS "wireBytes" FROM run_messages WHERE ${scope} ${bounds} ORDER BY ${node ? sql`coalesce(first_supervisor_event_id,supervisor_event_id,'0')::bigint ${ascending ? sql`ASC` : sql`DESC`},(prompt_dispatch_key IS NOT NULL) ${ascending ? sql`ASC` : sql`DESC`},` : sql`created_at ${ascending ? sql`ASC` : sql`DESC`},`} sequence ${ascending ? sql`ASC` : sql`DESC`},id ${ascending ? sql`ASC` : sql`DESC`} LIMIT ${limit}`,
   );
   const usage = await readUsage(db, scope, node);
-  const metadata = ascending ? rows.rows : rows.rows.toReversed();
-
-  if (!metadata.length) return { ...empty, usage };
-  const positions = metadata.map((row): Position => ({
-    id: row.id,
-    createdAt: row.createdAt,
-    event: row.event,
-    prompt: row.prompt,
-    sequence: row.sequence,
-  }));
-  const messages = await readMessageBodies(db, runId, metadata, positions);
-  const first = positions[0];
-  const last = positions.at(-1)!;
-  const counts = await db.execute<{ earlier: boolean; later: boolean }>(
-    sql`SELECT EXISTS(SELECT 1 FROM run_messages WHERE ${scope} AND ${order}<${tuple(first, node)}) AS earlier, EXISTS(SELECT 1 FROM run_messages WHERE ${scope} AND ${order}>${tuple(last, node)}) AS later`,
-  );
+  const envelope: TranscriptPage = { ...empty, usage };
   const encode = (position: Position, direction: Cursor["direction"]): string =>
     Buffer.from(
       JSON.stringify({
@@ -311,20 +357,89 @@ async function readWindow(
         node,
         attempt: attemptId,
         direction,
-        position,
+        position: positionOf(position),
       } satisfies Cursor),
     ).toString("base64url");
+  const pageBoundary = (first: Position, last: Position): TranscriptPage => ({
+    ...envelope,
+    // false is one byte longer than true, making this a conservative envelope
+    // until the existence queries below determine the actual flags.
+    hasEarlier: false,
+    hasLater: false,
+    beforeCursor: encode(first, "before"),
+    afterCursor: encode(last, "after"),
+    window: { before: encode(first, "lower"), after: encode(last, "upper") },
+  });
+  const admitted: { row: Metadata; preview: boolean }[] = [];
+  let messageBytes = 0;
 
-  return {
-    ...empty,
+  // Admit in the database's traversal direction. In particular the initial
+  // DESC read spends its budget on the newest records, not the oldest of 100.
+  for (const row of rows.rows) {
+    const fullBytes =
+      Buffer.byteLength(JSON.stringify(messageOf(row, ""))) - 2 + row.wireBytes;
+    const individualEnvelope = Buffer.byteLength(
+      JSON.stringify(pageBoundary(row, row)),
+    );
+    const preview = fullBytes + individualEnvelope > TRANSCRIPT_PAGE_BYTES;
+    const size = preview ? PREVIEW_MESSAGE_BYTES : fullBytes;
+    const first = ascending ? (admitted[0]?.row ?? row) : row;
+    const last = ascending ? row : (admitted[0]?.row ?? row);
+    const responseBytes =
+      Buffer.byteLength(JSON.stringify(pageBoundary(first, last))) +
+      messageBytes +
+      size +
+      admitted.length;
+
+    // A cumulative limit is a page boundary, never a reason to replace an
+    // otherwise complete record with an empty or partial preview.
+    if (responseBytes > TRANSCRIPT_PAGE_BYTES) break;
+    admitted.push({ row, preview });
+    messageBytes += size;
+  }
+  if (!admitted.length) return envelope;
+  const chronological = ascending ? admitted : admitted.toReversed();
+  const messages = await readMessageBodies(db, runId, chronological, attemptId);
+  const first = chronological[0].row;
+  const last = chronological.at(-1)!.row;
+  const counts = await db.execute<{ earlier: boolean; later: boolean }>(
+    sql`SELECT EXISTS(SELECT 1 FROM run_messages WHERE ${scope} AND ${order}<${tuple(first, node)}) AS earlier, EXISTS(SELECT 1 FROM run_messages WHERE ${scope} AND ${order}>${tuple(last, node)}) AS later`,
+  );
+  const page: TranscriptPage = {
+    ...pageBoundary(first, last),
     messages,
-    usage,
     hasEarlier: counts.rows[0].earlier,
     hasLater: counts.rows[0].later,
-    beforeCursor: counts.rows[0].earlier ? encode(first, "before") : null,
-    afterCursor: counts.rows[0].later ? encode(last, "after") : null,
-    window: { before: encode(first, "lower"), after: encode(last, "upper") },
   };
+
+  if (Buffer.byteLength(JSON.stringify(page)) > TRANSCRIPT_PAGE_BYTES)
+    throw new MaisterError(
+      "PRECONDITION",
+      "Transcript page exceeded its byte budget",
+      {
+        details: {
+          reason: "transcript_page_budget_exceeded",
+          runId,
+          messageCount: messages.length,
+        },
+      },
+    );
+
+  return page;
+}
+
+function positionOf(row: Position): Position {
+  return {
+    id: row.id,
+    createdAt: row.createdAt,
+    event: row.event,
+    prompt: row.prompt,
+    sequence: row.sequence,
+  };
+}
+
+function messageOf(row: Metadata, content: string): TranscriptPageMessage {
+  return { id: row.id, role: row.role, content, createdAt: row.createdAt };
 }
 
 async function readUsage(
@@ -349,49 +464,66 @@ async function readUsage(
   return parsed.success ? parsed.data : null;
 }
 
+/** Build valid payload previews in Postgres without transferring the full record. */
+function previewContent(): SQL {
+  const json = sql`CASE WHEN pg_input_is_valid(m.content, 'jsonb') THEN m.content::jsonb ELSE '{}'::jsonb END`;
+
+  return sql`CASE
+    WHEN m.role IN ('user','assistant') THEN left(m.content,1024)
+    WHEN m.role='tool' THEN jsonb_build_object(
+      'v',1,'kind','tool',
+      'name',left(coalesce((${json})->>'name','tool'),128),
+      'toolKind',left(coalesce((${json})->>'toolKind','other'),64),
+      'status',left(coalesce((${json})->>'status','pending'),32),
+      'arg',left(coalesce((${json})->>'arg',''),256),
+      'rawInput',null,
+      'result',left(coalesce((${json})->>'result',''),1024)
+    )::text
+    WHEN (${json})->>'kind'='thought' THEN jsonb_build_object('v',1,'kind','thought','text',left(coalesce((${json})->>'text',''),1024))::text
+    WHEN (${json})->>'kind'='permission' THEN jsonb_build_object('v',1,'kind','permission','prompt',left(coalesce((${json})->>'prompt',''),1024))::text
+    ELSE jsonb_build_object('v',1,'kind',left(coalesce((${json})->>'kind','system'),64))::text
+  END`;
+}
+
 async function readMessageBodies(
   db: ReadDb,
   runId: string,
-  metadata: Metadata[],
-  positions: Position[],
+  records: { row: Metadata; preview: boolean }[],
+  attemptId: string | null,
 ): Promise<TranscriptPageMessage[]> {
-  let budget = 380 * 1024;
-  const allocations = metadata.map((row) => {
-    const full = row.bytes * 6 + 512 <= budget && row.bytes <= 65536;
-    const cap = full
-      ? row.bytes
-      : Math.max(0, Math.min(4096, Math.floor((budget - 512) / 6)));
-
-    budget -= cap * 6 + 512;
-
-    return { row, full, cap };
-  });
   const bodies = await db.execute<{ id: string; content: string }>(
-    sql`SELECT m.id,left(m.content,a.cap) AS content FROM run_messages m JOIN (VALUES ${sql.join(
-      allocations.map(({ row, cap }) => sql`(${row.id},${cap}::int)`),
+    sql`SELECT m.id,CASE WHEN a.preview THEN ${previewContent()} ELSE m.content END AS content FROM run_messages m JOIN (VALUES ${sql.join(
+      records.map(({ row, preview }) => sql`(${row.id},${preview}::boolean)`),
       sql`,`,
-    )}) AS a(id,cap) ON a.id=m.id WHERE m.run_id=${runId}`,
+    )}) AS a(id,preview) ON a.id=m.id WHERE m.run_id=${runId}`,
   );
   const content = new Map(bodies.rows.map((row) => [row.id, row.content]));
-  const messages: TranscriptPageMessage[] = allocations.map(
-    ({ row, full }, index) =>
-      full
-        ? {
-            id: row.id,
-            role: row.role,
-            content: content.get(row.id)!,
-            createdAt: positions[index].createdAt,
-          }
-        : {
-            id: row.id,
-            role: row.role,
-            kind: "bounded_preview",
-            preview: content.get(row.id)!,
-            originalBytes: row.bytes,
-            truncated: true,
-            createdAt: positions[index].createdAt,
-          },
-  );
 
-  return messages;
+  return records.map(({ row, preview }): TranscriptPageMessage => {
+    const body = content.get(row.id);
+
+    if (body === undefined)
+      throw new MaisterError(
+        "PRECONDITION",
+        "Transcript record disappeared during a snapshot read",
+        {
+          details: {
+            reason: "transcript_message_missing",
+            runId,
+            messageId: row.id,
+          },
+        },
+      );
+    const message = messageOf(row, body);
+
+    return preview
+      ? {
+          ...message,
+          preview: {
+            originalBytes: row.bytes,
+            fullContentHref: `/api/runs/${runId}/transcript/messages/${encodeURIComponent(row.id)}${attemptId ? `?attempt=${encodeURIComponent(attemptId)}` : ""}`,
+          },
+        }
+      : message;
+  });
 }
