@@ -219,9 +219,7 @@ export function RunPeekController({
         restoreScroll.current = { x: window.scrollX, y: window.scrollY };
         opener.current = trigger ?? (document.activeElement as HTMLElement);
         const surface = opener.current
-          ?.closest(
-            '[data-testid="orchestrator-run-subtree"],[data-testid="run-inspector-child-runs"]',
-          )
+          ?.closest('[data-testid="run-inspector-child-runs"]')
           ?.getAttribute("data-testid");
 
         openerIdentity.current = surface ? { id, surface } : null;

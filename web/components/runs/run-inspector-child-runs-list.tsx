@@ -79,11 +79,15 @@ export function RunInspectorChildRunsList({
     return (
       <details
         open
-        className="rounded border border-line p-2"
+        className="min-w-0 rounded-[8px] border border-line bg-paper"
         data-testid="run-inspector-child-runs"
       >
-        <summary>{peek.t("children")}</summary>
-        <RunChildPageList parentId={peek.anchor} />
+        <summary className="cursor-pointer px-2 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.04em] text-mute">
+          {peek.t("children")}
+        </summary>
+        <div className="p-2 pt-0">
+          <RunChildPageList parentId={peek.anchor} />
+        </div>
       </details>
     );
 

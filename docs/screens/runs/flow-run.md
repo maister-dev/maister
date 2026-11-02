@@ -477,9 +477,9 @@ A `Done` run whose `workspaces.promotion_state` is still `'none'` and which has
 no `promoted_head_sha` shows a "completed without promotion" fact — derived, no
 new column.
 
-**Child result glyphs** — the orchestrator subtree and the inspector's child-runs
-list carry the same per-`resultStatus` glyph on each child row, so a coordinator's
-fan-out is readable at a glance without opening each child.
+**Child results** — the inspector's child-runs list shows execution and public-result
+status independently on each child row, so a coordinator's fan-out is readable
+without opening each child. See the [child Run peek](child-run-peek.md).
 
 **Tree cost facts** — the run cost panel gains "Tree total tokens" and "Tree
 wall-clock" beside the per-run facts, shown ONLY for a tree root that has

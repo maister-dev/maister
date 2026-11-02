@@ -47,7 +47,7 @@ See the navigation state machine above.
 
 ### Entries, hierarchy and selected content
 
-- Use the same enriched entry model in the inspector, subtree and peek lists: task key plus task title when present; otherwise immutable launch/agent/Flow/runner display name, plus short Run ID. Generic localized Run-kind text plus short ID is the explicit label for older records without a name. Do not expose raw prompts as labels.
+- Use the same enriched entry model in the inspector and peek lists: task key plus task title when present; otherwise immutable launch/agent/Flow/runner display name, plus short Run ID. Generic localized Run-kind text plus short ID is the explicit label for older records without a name. Do not expose raw prompts as labels.
 - Show localized execution status as text plus dot; independently show public-result status with existing accessible glyph/label semantics. No glyph for no result contract/history. Use existing Run status helpers rather than another terminal-status set.
 - Panel header: selected label, short ID, kind, execution status, public-result indicator, Close and **Open full Run**. A breadcrumb starts with the original main Run, followed by authorized persisted ancestors and selected Run; abbreviate visually on narrow screens while retaining accessible full labels.
 - Provide a Previous-selection button, ancestor breadcrumbs, a paginated sibling chooser and the selected Run's paginated direct children. The main-anchor breadcrumb closes peek. Selection history is temporal; breadcrumbs express ancestry. They must not be confused.

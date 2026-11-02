@@ -170,10 +170,10 @@ test("orchestrator loop: launch → park with child subtree → resume to termin
 
   expect(childIds).toHaveLength(2);
 
-  // ---- The workbench renders the dynamic run-tree subtree (Phase 6). -------
+  // ---- The inspector renders the dynamic run-tree children. -------
   await page.goto(`/runs/${runId}`);
   const subtree = page.locator(
-    '[data-testid="orchestrator-run-subtree"]:visible',
+    '[data-testid="run-inspector-child-runs"]:visible',
   );
 
   await expect(subtree).toBeVisible();

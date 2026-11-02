@@ -67,10 +67,6 @@ import { RunLiveRefresh } from "@/components/runs/run-live-refresh";
 import { RunPeekController } from "@/components/runs/run-peek-controller";
 import { readRunPeekChildren } from "@/lib/runs/peek-read-model";
 import {
-  OrchestratorRunSubtree,
-  type OrchestratorRunSubtreeLabels,
-} from "@/components/runs/orchestrator-run-subtree";
-import {
   type RunInspectorAction,
   type RunInspectorChangeSummary,
   type RunInspectorChildRun,
@@ -394,27 +390,13 @@ export default async function RunDetailLayout({
   // M39 Stream B (ADR-107): provenance for a flow that came from a centralized
   // local-package cut — "from <package> @ <version>". Null otherwise.
   const packageProvenance = await getRunPackageProvenance(runId);
-  // M37 Phase 6 (ADR-098): the orchestrator run-tree children. Empty for an
-  // ordinary run — the subtree/inspector sections then render nothing.
+  // Seed the inspector's live, paginated child-run list.
   const initialChildPage = await readRunPeekChildren(user.id, runId, {});
   const childRuns = initialChildPage.items;
   const tRunStatus = await getTranslations("run.runStatus");
   const runStatusLabels = Object.fromEntries(
     RUN_STATUS_KEYS.map((key) => [key, tRunStatus(key)]),
   ) as Record<RunStatusKey, string>;
-  const orchestratorSubtreeLabels: OrchestratorRunSubtreeLabels = {
-    // Render the title string server-side: a function prop would not serialize
-    // across the RSC → Client boundary into the OrchestratorRunSubtree client
-    // subtree, and `childRuns` is the same static list the subtree renders (so
-    // the count is exact). The message is a plain `{count}` interpolation.
-    title: t("subtreeTitle", { count: initialChildPage.totalCount }),
-    agent: t("subtreeAgent"),
-    flow: t("subtreeFlow"),
-    runner: t("subtreeRunner"),
-    asRun: t("subtreeAsRun"),
-    status: runStatusLabels,
-    empty: t("subtreeEmpty"),
-  };
   const inspectorChildRuns: RunInspectorChildRun[] = childRuns.map((child) => ({
     runId: child.runId,
     status: child.status,
@@ -1508,10 +1490,6 @@ export default async function RunDetailLayout({
             />
           </>
         )}
-        <OrchestratorRunSubtree
-          childRuns={[]}
-          labels={orchestratorSubtreeLabels}
-        />
       </section>
     ) : null;
 

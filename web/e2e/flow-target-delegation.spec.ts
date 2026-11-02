@@ -175,10 +175,10 @@ test("flow-target delegation: launch → flow children in Review → the parked 
     ),
   ).toBe("2");
 
-  // ---- The workbench renders the flow children in the run-tree. ------------
+  // ---- The inspector renders the flow children in the run-tree. ------------
   await page.goto(`/runs/${runId}`);
   const subtree = page.locator(
-    '[data-testid="orchestrator-run-subtree"]:visible',
+    '[data-testid="run-inspector-child-runs"]:visible',
   );
 
   await expect(subtree).toBeVisible();

@@ -13,7 +13,7 @@ Project viewers can inspect authorized metadata and public results; transcript/e
 
 ## Navigation
 
-Both child lists open one anchored peek. Breadcrumbs, sibling selection, descendants and Previous change its content. Close returns focus. Open full Run goes to the selected Run's normal page without parent query keys.
+The child-run list lives only in the Run inspector and opens one anchored peek. Pagination uses compact arrow buttons with localized accessible names and tooltips; it is hidden for empty and single-page lists. Breadcrumbs, sibling selection, descendants and Previous change its content. Close returns focus. Open full Run goes to the selected Run's normal page without parent query keys.
 
 ## Layout and regions
 

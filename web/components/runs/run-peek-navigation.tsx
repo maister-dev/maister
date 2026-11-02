@@ -3,6 +3,12 @@
 import type { ReactNode } from "react";
 import type { ResultStatus } from "@/lib/run-results/types";
 
+import { Button } from "@heroui/react";
+import {
+  ChevronDoubleLeftIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+} from "@heroicons/react/24/outline";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 
@@ -122,40 +128,63 @@ export function RunChildPageList({
           ))}
         </ul>
       )}
-      <nav aria-label={t("pages")} className="flex flex-wrap gap-3 text-sm">
-        <button
-          disabled={cursor === null || result.loading}
-          type="button"
-          onClick={() => {
-            setPrevious([]);
-            setCursor(null);
-          }}
+      {cursor !== null || page.hasMore ? (
+        <nav
+          aria-label={t("pages")}
+          className="flex items-center justify-end gap-1"
         >
-          {t("firstPage")}
-        </button>
-        <button
-          disabled={previous.length === 0 || result.loading}
-          type="button"
-          onClick={() => {
-            const stack = [...previous];
+          <span title={t("firstPage")}>
+            <Button
+              isIconOnly
+              aria-label={t("firstPage")}
+              isDisabled={cursor === null || result.loading}
+              size="sm"
+              type="button"
+              variant="tertiary"
+              onClick={() => {
+                setPrevious([]);
+                setCursor(null);
+              }}
+            >
+              <ChevronDoubleLeftIcon aria-hidden className="h-4 w-4" />
+            </Button>
+          </span>
+          <span title={t("earlierPage")}>
+            <Button
+              isIconOnly
+              aria-label={t("earlierPage")}
+              isDisabled={previous.length === 0 || result.loading}
+              size="sm"
+              type="button"
+              variant="tertiary"
+              onClick={() => {
+                const stack = [...previous];
 
-            setCursor(stack.pop() ?? null);
-            setPrevious(stack);
-          }}
-        >
-          {t("earlierPage")}
-        </button>
-        <button
-          disabled={!page.hasMore || result.loading}
-          type="button"
-          onClick={() => {
-            setPrevious((items) => [...items, cursor].slice(-32));
-            setCursor(page.nextCursor);
-          }}
-        >
-          {t("next")}
-        </button>
-      </nav>
+                setCursor(stack.pop() ?? null);
+                setPrevious(stack);
+              }}
+            >
+              <ChevronLeftIcon aria-hidden className="h-4 w-4" />
+            </Button>
+          </span>
+          <span title={t("next")}>
+            <Button
+              isIconOnly
+              aria-label={t("next")}
+              isDisabled={!page.hasMore || result.loading}
+              size="sm"
+              type="button"
+              variant="tertiary"
+              onClick={() => {
+                setPrevious((items) => [...items, cursor].slice(-32));
+                setCursor(page.nextCursor);
+              }}
+            >
+              <ChevronRightIcon aria-hidden className="h-4 w-4" />
+            </Button>
+          </span>
+        </nav>
+      ) : null}
     </div>
   );
 }

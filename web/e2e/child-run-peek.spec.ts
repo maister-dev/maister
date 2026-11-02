@@ -83,8 +83,15 @@ test("E2E-PKN-01 E2E-PKN-03 E2E-PKN-07: nested navigation keeps the original Run
 }) => {
   await page.setViewportSize({ width: 1600, height: 1000 });
   await page.goto(`/runs/${fixture.anchor}?wb=files&file=README.md#inspect`);
+  await expect(page.getByTestId("orchestrator-run-subtree")).toHaveCount(0);
+  const children = page.getByTestId("run-inspector-child-runs");
+
+  await expect(children).toHaveCount(1);
+  await expect(
+    children.getByRole("navigation", { name: "Child Run pages" }),
+  ).toHaveCount(0);
   const trigger = page
-    .getByTestId("orchestrator-run-subtree")
+    .getByTestId("run-inspector-child-runs")
     .locator(`[data-child-run-id="${fixture.child}"] a`);
 
   await trigger.click();
@@ -163,7 +170,7 @@ test("E2E-PKN-04 E2E-PKN-08 E2E-PKN-10: parent file, inspector and librarian dra
     element.setAttribute("data-preservation-probe", "retained"),
   );
   const trigger = page
-    .getByTestId("orchestrator-run-subtree")
+    .getByTestId("run-inspector-child-runs")
     .locator(`[data-child-run-id="${fixture.child}"] a`);
 
   await trigger.scrollIntoViewIfNeeded();
@@ -525,10 +532,12 @@ test("E2E-PKD-07: late A responses cannot overwrite B or a newer A selection", a
   });
   try {
     await page.goto(`/runs/${fixture.anchor}`);
-    const list = page.getByTestId("orchestrator-run-subtree");
+    const list = page.getByTestId("run-inspector-child-runs");
 
     await list.locator(`[data-child-run-id="${fixture.child}"] a`).click();
     await expect.poll(() => intercepted).toBe(true);
+    await page.keyboard.press("Escape");
+    await expect(peek(page)).toHaveCount(0);
     await list.locator(`[data-child-run-id="${fixture.sibling}"] a`).click();
     await expect(peek(page)).toContainText("Conversation of Researcher Beta");
     await withE2EDb((pool) =>
@@ -642,7 +651,7 @@ test("E2E-PKN-04 E2E-PKN-10: an unsent parent HITL draft survives child navigati
     await expect(draft).toBeVisible();
     await draft.fill("Unsent parent instruction");
     const trigger = page
-      .getByTestId("orchestrator-run-subtree")
+      .getByTestId("run-inspector-child-runs")
       .locator(`[data-child-run-id="${child}"] a`);
 
     await trigger.click();
@@ -1044,6 +1053,12 @@ test("E2E-PKD-07 E2E-PKN-12: post-completion parent publication refreshes indepe
 test("E2E-PKN-03 E2E-PKN-07: Previous restores two prior visits and their views without oscillation after browser history", async ({
   page,
 }) => {
+  await withE2EDb((pool) =>
+    pool.query("UPDATE runs SET parent_run_id=$1 WHERE id=$2", [
+      fixture.child,
+      fixture.sibling,
+    ]),
+  );
   await page.setViewportSize({ width: 1600, height: 1000 });
   await page.goto(`/runs/${fixture.anchor}?peek=${fixture.child}`);
   await peek(page).getByRole("tab", { name: "Execution", exact: true }).click();
@@ -1053,8 +1068,7 @@ test("E2E-PKN-03 E2E-PKN-07: Previous restores two prior visits and their views 
   await peek(page)
     .getByRole("tab", { name: "Public result", exact: true })
     .click();
-  await page
-    .getByTestId("orchestrator-run-subtree")
+  await peek(page)
     .locator(`[data-child-run-id="${fixture.sibling}"] a`)
     .click();
   await expect(peek(page)).toHaveAttribute(
@@ -1276,7 +1290,13 @@ test("E2E-PKN-02 E2E-PKD-07: paged siblings pin an off-page selection and discov
       /budget/i,
     );
     const siblings = peek(page).getByRole("region", { name: "Siblings" });
+    const pagination = siblings.getByRole("navigation", {
+      name: "Child Run pages",
+    });
 
+    await expect(pagination.getByRole("button")).toHaveCount(3);
+    await expect(pagination).toHaveText("");
+    await expect(pagination.locator("svg")).toHaveCount(3);
     await expect(siblings.locator("[data-child-run-id]")).toHaveCount(25);
     await expect(
       siblings.locator(`[data-child-run-id="${selected}"]`),
@@ -1455,8 +1475,7 @@ test("E2E-PKD-07 E2E-PKN-04 E2E-PKN-07: a delayed parent refresh cannot replace 
       ]),
     );
     await expect.poll(() => intercepted).toBe(true);
-    await page
-      .getByTestId("orchestrator-run-subtree")
+    await peek(page)
       .locator(`[data-child-run-id="${fixture.sibling}"] a`)
       .click();
     await expect(peek(page)).toContainText("Conversation of Researcher Beta");
