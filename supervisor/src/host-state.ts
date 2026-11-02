@@ -120,7 +120,7 @@ export type ReceiptRetirementOutcome =
     };
 export const EXECUTION_HOST_PROTOCOL_VERSION = 1;
 // `PRAGMA user_version` of the state file; bumped with every migration below.
-export const HOST_STATE_SCHEMA_VERSION = 14;
+export const HOST_STATE_SCHEMA_VERSION = 15;
 const MAX_HOST_EVENT_SEQUENCE = (1n << 63n) - 1n;
 const HOST_EVENT_SEQUENCE_SORT_WIDTH = 20;
 
@@ -561,6 +561,12 @@ const WORKSPACES_COLUMNS = `
 const WORKSPACES_ACTIVE_INDEX = `CREATE UNIQUE INDEX IF NOT EXISTS workspaces_active_uq
   ON workspaces (run_id, real_path) WHERE released_at IS NULL`;
 
+// Inventory probes paths across all runs; index only the exceptional corrupt rows.
+const RUNTIME_OBJECTS_CORRUPT_PATH_INDEX = `
+CREATE INDEX IF NOT EXISTS runtime_objects_corrupt_path_idx
+  ON runtime_objects (private_path) WHERE state = 'corrupt';
+`;
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS host_identity (
   id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -624,6 +630,7 @@ CREATE TABLE IF NOT EXISTS runtime_objects (
 );
 CREATE INDEX IF NOT EXISTS runtime_objects_run_state_idx ON runtime_objects (run_id, state, created_at);
 CREATE INDEX IF NOT EXISTS runtime_objects_expiry_idx ON runtime_objects (expires_at) WHERE expires_at IS NOT NULL;
+${RUNTIME_OBJECTS_CORRUPT_PATH_INDEX}
 CREATE TABLE IF NOT EXISTS runtime_event_streams (
   stream_id TEXT PRIMARY KEY,
   next_sequence TEXT NOT NULL,
@@ -867,6 +874,13 @@ function migrateV13ToV14(db: DatabaseSync): void {
   }
 }
 
+const MIGRATE_V14_TO_V15 = `
+BEGIN IMMEDIATE;
+${RUNTIME_OBJECTS_CORRUPT_PATH_INDEX}
+PRAGMA user_version = 15;
+COMMIT;
+`;
+
 function applySchema(db: DatabaseSync): void {
   const fresh =
     db
@@ -906,6 +920,7 @@ function applySchema(db: DatabaseSync): void {
   if (Number(user_version) < 12) db.exec(MIGRATE_V11_TO_V12);
   if (Number(user_version) < 13) db.exec(MIGRATE_V12_TO_V13);
   if (Number(user_version) < 14) migrateV13ToV14(db);
+  if (Number(user_version) < 15) db.exec(MIGRATE_V14_TO_V15);
 }
 
 export function openHostState(opts: OpenHostStateOptions = {}): HostState {
