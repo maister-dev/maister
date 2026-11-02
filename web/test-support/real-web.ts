@@ -32,7 +32,11 @@ import {
   logInvocation,
   signalInvocationProcess,
 } from "./process-invocation";
-import { retryFixtureStart, startOwnedFixture } from "./owned-fixture";
+import {
+  retryFixturePortAllocation,
+  retryFixtureStart,
+  startOwnedFixture,
+} from "./owned-fixture";
 import { IsolationPolicyError, linuxOuterEnvironment } from "./linux-isolation";
 import {
   observeLinuxApplication,
@@ -414,6 +418,12 @@ async function waitForLogin(
 }
 
 export async function startRealWeb(options: RealWebOptions): Promise<RealWeb> {
+  if (options.port !== undefined) return startRealWebAttempt(options);
+
+  return retryFixturePortAllocation(() => startRealWebAttempt(options));
+}
+
+async function startRealWebAttempt(options: RealWebOptions): Promise<RealWeb> {
   const invocation = invocationFromEnvironment();
 
   if (!invocation)

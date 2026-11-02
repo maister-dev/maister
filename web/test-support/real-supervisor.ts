@@ -14,7 +14,11 @@ import {
   invocationFromEnvironment,
   registerRoot,
 } from "./process-invocation";
-import { retryFixtureStart, startOwnedFixture } from "./owned-fixture";
+import {
+  retryFixturePortAllocation,
+  retryFixtureStart,
+  startOwnedFixture,
+} from "./owned-fixture";
 
 // ADR-166 T3.1: a REAL supervisor child for web integration tests — the
 // production `supervisor/src/main.ts` boot (host state store, fences,
@@ -80,7 +84,7 @@ export async function freePort(): Promise<number> {
 
     server.unref();
     server.on("error", reject);
-    server.listen(0, "127.0.0.1", () => {
+    server.listen(0, "0.0.0.0", () => {
       const address = server.address();
 
       if (!address || typeof address === "string") {
@@ -182,6 +186,14 @@ async function waitForHealth(
 // Every live pid in the process group (the group id equals the leader's pid).
 export async function startRealSupervisor(
   options: RealSupervisorOptions = {},
+): Promise<RealSupervisor> {
+  if (options.port !== undefined) return startRealSupervisorAttempt(options);
+
+  return retryFixturePortAllocation(() => startRealSupervisorAttempt(options));
+}
+
+async function startRealSupervisorAttempt(
+  options: RealSupervisorOptions,
 ): Promise<RealSupervisor> {
   const invocation = invocationFromEnvironment();
 

@@ -5,7 +5,10 @@
 
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir } from "node:fs/promises";
+import { once } from "node:events";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -13,6 +16,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { buildEnvelope } from "@/lib/execution-host/ledger";
 import { createLocalDirectTransport } from "@/lib/execution-host/transports/local-direct";
 import { asExecutionWorkspaceId } from "@/lib/execution-host/types";
+import { retryFixturePortAllocation } from "@/test-support/owned-fixture";
 import {
   startRealSupervisor,
   useRealSupervisorUrl,
@@ -52,6 +56,72 @@ afterEach(async () => {
 });
 
 describe("real-supervisor harness", () => {
+  it("reallocates a raced port after retiring the failed owned supervisor and preserves the competing listener", async () => {
+    const competing = createServer((_request, response) => {
+      response.end(JSON.stringify({ source: "competing-listener" }));
+    });
+    const listening = once(competing, "listening");
+
+    competing.listen(0, "0.0.0.0");
+    await listening;
+    const address = competing.address();
+
+    if (!address || typeof address === "string")
+      throw new Error("Competing listener has no TCP address");
+    let starts = 0;
+
+    try {
+      sup = await retryFixturePortAllocation(async () => {
+        starts += 1;
+
+        return startRealSupervisor(starts === 1 ? { port: address.port } : {});
+      });
+      expect(starts).toBe(2);
+      expect(sup.port).not.toBe(address.port);
+      expect((await fetch(`${sup.url}/health`)).status).toBe(200);
+      let refusedStarts = 0;
+
+      await expect(
+        retryFixturePortAllocation(async () => {
+          refusedStarts += 1;
+
+          return startRealSupervisor({ port: address.port });
+        }),
+      ).rejects.toThrow("EADDRINUSE");
+      expect(refusedStarts).toBe(3);
+      expect(
+        await (await fetch(`http://127.0.0.1:${address.port}/health`)).json(),
+      ).toEqual({ source: "competing-listener" });
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        competing.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  }, 60_000);
+
+  it("refuses a non-port startup error without retries or changing its state file", async () => {
+    const root = await mkdtemp(
+      path.join(tmpdir(), "supervisor-state-refusal-"),
+    );
+    const stateDir = path.join(root, "state-is-a-file");
+    let starts = 0;
+
+    try {
+      await writeFile(stateDir, "retained");
+      await expect(
+        retryFixturePortAllocation(async () => {
+          starts += 1;
+
+          return startRealSupervisor({ stateDir });
+        }),
+      ).rejects.toThrow("supervisor startup failed");
+      expect(starts).toBe(1);
+      expect(await readFile(stateDir, "utf8")).toBe("retained");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 60_000);
+
   it("kills the whole process group — the adapter child dies with the supervisor — and scrubs the inherited host pin", async () => {
     process.env.MAISTER_EXECUTION_HOST_KEY = PINNED_KEY;
     sup = await startRealSupervisor({ fixtureArgs: ["--hang"] });

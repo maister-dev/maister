@@ -2,6 +2,8 @@ import type { ChildProcess } from "node:child_process";
 import type { LinuxApplicationOutcome } from "./linux-isolation-protocol";
 import type { ProcessIdentity } from "./process-invocation";
 
+import pino from "pino";
+
 import {
   assertInvocationGroupEmpty,
   fixtureLogTail,
@@ -13,6 +15,11 @@ import {
   signalInvocationGroup,
   type Invocation,
 } from "./process-invocation";
+
+const log = pino({
+  name: "test-fixture",
+  level: process.env.LOG_LEVEL ?? "info",
+});
 
 // The half of a REAL fixture process that is identical for the supervisor and
 // the web: register it under the invocation before anything can outlive the
@@ -197,4 +204,27 @@ export async function retryFixtureStart<T>(
     }
   }
   throw last;
+}
+
+/** Retry an allocated fixture port only after the failed owned start retires. */
+export async function retryFixturePortAllocation<T>(
+  start: () => Promise<T>,
+): Promise<T> {
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await start();
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        !error.message.includes("EADDRINUSE") ||
+        attempt === 3
+      )
+        throw error;
+      log.warn(
+        { err: error, attempt, maxAttempts: 3 },
+        "fixture port allocation raced; retrying after owned cleanup",
+      );
+    }
+  }
+  throw new Error("Fixture port allocation exhausted");
 }

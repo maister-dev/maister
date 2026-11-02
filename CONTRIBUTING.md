@@ -95,6 +95,12 @@ and `E2E_SUPERVISOR_PORT` values. The existing E2E wrapper owns its Postgres
 container and places seeded fixture files under its invocation's test-worktree
 root, so independent invocations do not overwrite each other's Flow fixtures.
 
+Production test fixtures allocate a fresh port again on a confirmed
+`EADDRINUSE` startup race, after the failed owned process group has retired.
+Automatic allocation is bounded to three starts and logs each retry; other
+startup errors fail immediately. An explicitly supplied port is never silently
+reassigned.
+
 ## AI-assisted contributions
 
 AI assistance is welcome, but the contributor remains responsible for every
