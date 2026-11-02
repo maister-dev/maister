@@ -279,3 +279,13 @@ Operational agents show the structured operation result, actionable diagnostics,
 ## Child Run peek (Implemented)
 
 Descendant entries open the [read-only peek](child-run-peek.md); interactive actions require the full selected Run.
+
+## Transcript loading (Implemented)
+
+Run and Flow-node activity share the bounded transcript reader used by child Run
+peek. The first view loads the latest 100 messages; Earlier and Latest controls
+navigate history while retaining at most five windows. Loading, failed reads,
+projection catch-up and empty history have distinct states. Live notifications
+coalesce behind an in-flight read so a completed response is displayed even
+while new events arrive. Loading earlier messages preserves the visible document
+or peek-panel scroll position.

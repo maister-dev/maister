@@ -6372,6 +6372,7 @@
     "conversation": "Conversation",
     "execution": "Execution",
     "result": "Public result",
+    "loadingTranscript": "Loading history…",
     "emptyTranscript": "No conversation has been recorded.",
     "earlierMessages": "Load earlier messages",
     "latestMessages": "Latest messages",

@@ -6372,6 +6372,7 @@
     "conversation": "Переписка",
     "execution": "Выполнение",
     "result": "Публичный результат",
+    "loadingTranscript": "Загрузка истории…",
     "emptyTranscript": "Переписка пока не записана.",
     "earlierMessages": "Загрузить ранние сообщения",
     "latestMessages": "Последние сообщения",

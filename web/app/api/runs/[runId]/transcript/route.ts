@@ -74,8 +74,9 @@ export async function GET(
       (key) => new URL(req.url).searchParams.has(key),
     )
   ) {
-    return peekResponse("transcript", (userId) =>
-      readTranscriptPage(
+    return peekResponse("transcript", async (userId) => {
+      const startedAt = performance.now();
+      const page = await readTranscriptPage(
         userId,
         parsePeekRunId(runId),
         peekQuery(req, [
@@ -87,8 +88,21 @@ export async function GET(
           "windowAfter",
           "through",
         ]),
-      ),
-    );
+      );
+
+      log.debug(
+        {
+          runId,
+          nodeId: new URL(req.url).searchParams.get("node"),
+          durationMs: Math.round(performance.now() - startedAt),
+          messageCount: page.messages.length,
+          projectionState: page.projection.state,
+        },
+        "[FIX:run-transcript-loading] transcript page read",
+      );
+
+      return page;
+    });
   }
 
   try {
