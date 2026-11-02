@@ -16,6 +16,7 @@ import {
 } from "@/lib/evaluations/dispatcher/tick";
 import { evaluateAndAdvancePanel } from "@/lib/evaluations/aggregation/worker";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
+import { maxConcurrentAgentRunsCap } from "@/lib/scheduler";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -878,53 +879,75 @@ describe("dispatch liveness fixes", () => {
       })
       .where(eq(schema.evaluationJudgeAttempts.id, attempts[1].id));
 
-    const summary = await runEvaluationDispatchTick(stubDeps(), db);
+    // Keep the Pending fixture queued while the real terminal owner wakes the
+    // scheduler. Promotion is a separate behavior and may legitimately revoke
+    // an unconfigured fixture's token after it leaves Pending.
+    const holders = Array.from({ length: maxConcurrentAgentRunsCap() }, () =>
+      randomUUID(),
+    );
 
-    // >= 1: attempts of long-lived judging executions from earlier tests may
-    // also cross their 60s timeout while this file runs.
-    expect(summary.timedOutAttempts).toBeGreaterThanOrEqual(1);
+    await db.insert(schema.runs).values(
+      holders.map((id) => ({
+        id,
+        projectId,
+        runKind: "agent",
+        status: "Running",
+        flowVersion: "v0",
+        agentWorkspace: "none",
+      })),
+    );
+    try {
+      const summary = await runEvaluationDispatchTick(stubDeps(), db);
 
-    // The Pending-run attempt is NOT reaped; its timeout clock is re-anchored.
-    const [guarded] = await db
-      .select({
-        status: schema.evaluationJudgeAttempts.status,
-        runningAt: schema.evaluationJudgeAttempts.runningAt,
-      })
-      .from(schema.evaluationJudgeAttempts)
-      .where(eq(schema.evaluationJudgeAttempts.id, attempts[0].id));
+      // >= 1: attempts of long-lived judging executions from earlier tests may
+      // also cross their 60s timeout while this file runs.
+      expect(summary.timedOutAttempts).toBeGreaterThanOrEqual(1);
 
-    expect(guarded.status).toBe("running");
-    expect(guarded.runningAt!.getTime()).toBeGreaterThan(backdated.getTime());
+      // The Pending-run attempt is NOT reaped; its timeout clock is re-anchored.
+      const [guarded] = await db
+        .select({
+          status: schema.evaluationJudgeAttempts.status,
+          runningAt: schema.evaluationJudgeAttempts.runningAt,
+        })
+        .from(schema.evaluationJudgeAttempts)
+        .where(eq(schema.evaluationJudgeAttempts.id, attempts[0].id));
 
-    // The started attempt is reaped, its token revoked, its agent run stopped
-    // (terminal Abandoned → the agent slot is freed and run tokens revoked).
-    const [reaped] = await db
-      .select({ status: schema.evaluationJudgeAttempts.status })
-      .from(schema.evaluationJudgeAttempts)
-      .where(eq(schema.evaluationJudgeAttempts.id, attempts[1].id));
+      expect(guarded.status).toBe("running");
+      expect(guarded.runningAt!.getTime()).toBeGreaterThan(backdated.getTime());
 
-    expect(reaped.status).toBe("timed_out");
+      // The started attempt is reaped, its token revoked, its agent run stopped
+      // (terminal Abandoned → the agent slot is freed and run tokens revoked).
+      const [reaped] = await db
+        .select({ status: schema.evaluationJudgeAttempts.status })
+        .from(schema.evaluationJudgeAttempts)
+        .where(eq(schema.evaluationJudgeAttempts.id, attempts[1].id));
 
-    const [revokedToken] = await db
-      .select({ revoked_at: schema.projectTokens.revoked_at })
-      .from(schema.projectTokens)
-      .where(eq(schema.projectTokens.id, tokenB));
+      expect(reaped.status).toBe("timed_out");
 
-    expect(revokedToken.revoked_at).not.toBeNull();
+      const [revokedToken] = await db
+        .select({ revoked_at: schema.projectTokens.revoked_at })
+        .from(schema.projectTokens)
+        .where(eq(schema.projectTokens.id, tokenB));
 
-    const [guardedToken] = await db
-      .select({ revoked_at: schema.projectTokens.revoked_at })
-      .from(schema.projectTokens)
-      .where(eq(schema.projectTokens.id, tokenA));
+      expect(revokedToken.revoked_at).not.toBeNull();
 
-    expect(guardedToken.revoked_at).toBeNull();
+      const [guardedToken] = await db
+        .select({ revoked_at: schema.projectTokens.revoked_at })
+        .from(schema.projectTokens)
+        .where(eq(schema.projectTokens.id, tokenA));
 
-    const [stoppedRun] = await db
-      .select({ status: schema.runs.status })
-      .from(schema.runs)
-      .where(eq(schema.runs.id, runningRunId));
+      expect(guardedToken.revoked_at).toBeNull();
 
-    expect(stoppedRun.status).toBe("Abandoned");
+      const [stoppedRun] = await db
+        .select({ status: schema.runs.status })
+        .from(schema.runs)
+        .where(eq(schema.runs.id, runningRunId));
+
+      expect(stoppedRun.status).toBe("Abandoned");
+    } finally {
+      for (const id of holders)
+        await db.delete(schema.runs).where(eq(schema.runs.id, id));
+    }
 
     // One attempt still running → the panel is NOT terminal.
     expect(await statusOf(executionId)).toBe("judging");

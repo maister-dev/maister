@@ -30,6 +30,9 @@ beforeAll(async () => {
     { databaseName: "operational_upgrade" },
     "0198_project_config_attachment_binding_guard",
   );
+  database.pool.on("connect", (client) => {
+    void client.query("SET maister.agent_preparation_writer='v1'");
+  });
   projectId = (await seedProjectRow(database.db)).id;
   for (const row of historical)
     await seedRun(database.db, { ...row, projectId, runKind: "agent" });
@@ -56,6 +59,8 @@ beforeAll(async () => {
     ],
   );
   await migrate(database.db, { migrationsFolder: "./lib/db/migrations" });
+  // Current-writer controls exercise domain guards, not the obsolete-binary floor.
+  await database.pool.query("SET maister.agent_preparation_writer='v1'");
 }, 180_000);
 
 afterAll(async () => {
