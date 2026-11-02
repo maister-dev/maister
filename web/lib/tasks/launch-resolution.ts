@@ -2,9 +2,11 @@ import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
 import type { TaskLaunchRequest } from "./launch-schema";
-import type { TaskLaunchSettingsSnapshot } from "./launch-types";
+import type { TaskLaunchSettingsV2Snapshot } from "./launch-types";
 
 import { and, eq } from "drizzle-orm";
+
+import { resolveTaskLaunchCapabilities } from "./launch-capabilities";
 
 import {
   flows,
@@ -81,6 +83,12 @@ export async function taskLaunchSettingsToken(
   const [flow] = row.task.flowId
     ? await db.select().from(flows).where(eq(flows.id, row.task.flowId))
     : [];
+  const [revision] = flow?.enabledRevisionId
+    ? await db
+        .select()
+        .from(flowRevisions)
+        .where(eq(flowRevisions.id, flow.enabledRevisionId))
+    : [];
   const catalog = await loadRunnerCatalog(db);
   const [runtime] = await db
     .select()
@@ -100,6 +108,13 @@ export async function taskLaunchSettingsToken(
           ),
         )
     : [];
+  const capabilities = revision
+    ? await resolveTaskLaunchCapabilities(db, {
+        projectId: row.project.id,
+        flowRevisionId: revision.id,
+        flowSource: revision.source,
+      })
+    : null;
 
   return retryDigest({
     configuration: taskLaunchConfiguration(row.task, row.project),
@@ -111,6 +126,9 @@ export async function taskLaunchSettingsToken(
           packageInstallId: flow.packageInstallId,
         }
       : null,
+    revisionRunner: revision?.defaultRunnerId ?? null,
+    capabilityResolutionDigest:
+      capabilities?.capabilityResolutionDigest ?? null,
     runtimeRunner: runtime?.defaultRunnerId ?? null,
     flowRunner: defaults?.runnerId ?? null,
     bindings: [...bindings].sort((a, b) => a.slotKey.localeCompare(b.slotKey)),
@@ -121,7 +139,7 @@ export async function taskLaunchSettingsToken(
 }
 
 type ResolvedFlowLaunchSettings = Omit<
-  Extract<TaskLaunchSettingsSnapshot, { kind: "flow" }>,
+  Extract<TaskLaunchSettingsV2Snapshot, { kind: "flow" }>,
   "baseCommit"
 >;
 
@@ -238,7 +256,7 @@ export async function resolveFlowLaunchSettings(
   assertNoBlindShip(executionPolicy);
 
   return {
-    version: 1,
+    version: 2,
     kind: "flow",
     workspace: "worktree",
     agentId: null,
@@ -257,6 +275,11 @@ export async function resolveFlowLaunchSettings(
         ? "rebase_merge"
         : legacyPromotionModeFromStrategy(deliveryPolicy.strategy),
     autoPromote: selection.autoPromote ?? true,
+    ...(await resolveTaskLaunchCapabilities(db, {
+      projectId: project.id,
+      flowRevisionId: revision.id,
+      flowSource: revision.source,
+    })),
     taskSettingsDigest: retryDigest(taskLaunchConfiguration(task, project)),
     resolutionToken: await taskLaunchSettingsToken(db, task.id),
   };

@@ -6,7 +6,17 @@ import { rm } from "node:fs/promises";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
-import { platformAcpRunners, tasks, taskLaunchIntents } from "@/lib/db/schema";
+import {
+  platformAcpRunners,
+  tasks,
+  taskLaunchIntents,
+  taskClarifications,
+  flows,
+  flowRevisions,
+  capabilityRecords,
+} from "@/lib/db/schema";
+import { getTaskClarificationProjection } from "@/lib/queries/task-clarifications";
+import { taskLaunchEffectivePrompt } from "@/lib/tasks/launch-input";
 import { interactiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
 import {
   acceptInteractiveTaskLaunch,
@@ -16,6 +26,7 @@ import {
 import { updateTask } from "@/lib/services/tasks";
 import {
   prepareTaskQualification,
+  loadTaskQualificationInput,
   requireTaskRequalification,
 } from "@/lib/tasks/qualification";
 import { qualificationFixture } from "@/test-support/task-qualification";
@@ -454,4 +465,166 @@ it("LA01/03 requires current accepted qualification for automatic admission and 
     kind: "automatic",
     qualificationInputDigest: expect.stringMatching(/^[0-9a-f]{64}$/),
   });
+});
+
+it("LA04/05 freezes the answered nonblocking clarification actually used for execution without changing qualification hashing", async () => {
+  const taskId = await task();
+  const qualificationBefore = await loadTaskQualificationInput(
+    database.db,
+    projectId,
+    taskId,
+  );
+  const clarificationId = randomUUID();
+
+  await database.db.insert(taskClarifications).values({
+    id: clarificationId,
+    taskId,
+    seq: 1,
+    originKind: "user",
+    reTriggerMode: "none",
+    requesterUserId: userId,
+    recipientUserId: userId,
+    reason: "Capture accepted execution context",
+    answerFormat: "text",
+    question: "Which behavior should the implementation preserve?",
+    blocking: false,
+    status: "answered",
+    answer: { preserve: "original behavior" },
+    answeredAt: new Date(),
+    answeredByUserId: userId,
+  });
+  expect(
+    await loadTaskQualificationInput(database.db, projectId, taskId),
+  ).toEqual(qualificationBefore);
+  const receipt = await acceptInteractiveTaskLaunch(
+    database.db,
+    await interactiveTaskLaunchPrincipal(),
+    await request(taskId),
+    randomUUID(),
+  );
+  const [intent] = await database.db
+    .select()
+    .from(taskLaunchIntents)
+    .where(eq(taskLaunchIntents.id, receipt.intentId));
+
+  expect(intent.inputSnapshot).toMatchObject({
+    version: 2,
+    clarifications: [
+      {
+        id: clarificationId,
+        seq: 1,
+        question: "Which behavior should the implementation preserve?",
+        answer: { preserve: "original behavior" },
+      },
+    ],
+  });
+  const originalPrompt = (
+    await getTaskClarificationProjection(
+      database.db,
+      taskId,
+      intent.inputSnapshot.prompt,
+    )
+  ).effectivePrompt;
+
+  expect(taskLaunchEffectivePrompt(intent.inputSnapshot)).toBe(originalPrompt);
+  await database.db
+    .update(taskClarifications)
+    .set({ answer: { preserve: "changed behavior" } })
+    .where(eq(taskClarifications.id, clarificationId));
+  const [frozen] = await database.db
+    .select()
+    .from(taskLaunchIntents)
+    .where(eq(taskLaunchIntents.id, receipt.intentId));
+
+  expect(frozen.inputSnapshot).toEqual(intent.inputSnapshot);
+  expect(taskLaunchEffectivePrompt(frozen.inputSnapshot)).toBe(originalPrompt);
+  expect(
+    (
+      await getTaskClarificationProjection(
+        database.db,
+        taskId,
+        frozen.inputSnapshot.prompt,
+      )
+    ).effectivePrompt,
+  ).not.toBe(originalPrompt);
+});
+
+it("LA05 refuses capability material changed after preview without storing that material in the decision", async () => {
+  const taskId = await task();
+  const capabilityId = randomUUID();
+
+  await database.db.insert(capabilityRecords).values({
+    id: capabilityId,
+    projectId,
+    capabilityRefId: "fixture:launch-rule",
+    kind: "rule",
+    label: "Launch rule",
+    source: "project",
+    agents: ["codex"],
+    material: { text: "Original rule content" },
+  });
+  const input = await request(taskId);
+
+  await database.db
+    .update(capabilityRecords)
+    .set({
+      material: { text: "Changed rule content" },
+    })
+    .where(eq(capabilityRecords.id, capabilityId));
+  await expect(
+    acceptInteractiveTaskLaunch(
+      database.db,
+      await interactiveTaskLaunchPrincipal(),
+      input,
+      randomUUID(),
+    ),
+  ).rejects.toMatchObject({ details: { reason: "launch_settings_changed" } });
+  const accepted = await acceptInteractiveTaskLaunch(
+    database.db,
+    await interactiveTaskLaunchPrincipal(),
+    await request(taskId),
+    randomUUID(),
+  );
+  const [intent] = await database.db
+    .select()
+    .from(taskLaunchIntents)
+    .where(eq(taskLaunchIntents.id, accepted.intentId));
+
+  expect(JSON.stringify(intent)).not.toContain("Changed rule content");
+});
+
+it("LA05 refuses an inherited revision-runner default changed after the user preview", async () => {
+  const taskId = await task();
+
+  await database.db
+    .update(tasks)
+    .set({ runnerId: null })
+    .where(eq(tasks.id, taskId));
+  const [runner] = await database.db
+    .select()
+    .from(platformAcpRunners)
+    .where(eq(platformAcpRunners.id, runnerId));
+  const successorRunnerId = randomUUID();
+
+  await database.db
+    .insert(platformAcpRunners)
+    .values({ ...runner, id: successorRunnerId });
+  const input = await request(taskId);
+  const [flow] = await database.db
+    .select()
+    .from(flows)
+    .where(eq(flows.id, flowId));
+
+  await database.db
+    .update(flowRevisions)
+    .set({ defaultRunnerId: successorRunnerId })
+    .where(eq(flowRevisions.id, flow.enabledRevisionId!));
+  await expect(
+    acceptInteractiveTaskLaunch(
+      database.db,
+      await interactiveTaskLaunchPrincipal(),
+      input,
+      randomUUID(),
+    ),
+  ).rejects.toMatchObject({ details: { reason: "launch_settings_changed" } });
 });

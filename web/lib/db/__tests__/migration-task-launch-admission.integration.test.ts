@@ -5,13 +5,17 @@ import type {
 
 import { randomUUID } from "node:crypto";
 
-import { eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
+import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { afterAll, beforeAll, expect, it } from "vitest";
 
 import { taskLaunchIntents, runs, flows, flowRevisions } from "@/lib/db/schema";
+import { upgradeMainTestDb } from "@/test-support/migration-upgrade";
+import { retryDigest } from "@/lib/agents/retry-guards";
 import { testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 import {
   startMainPostgresTestDb,
+  startMainPostgresTestDbUpTo,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 
@@ -64,7 +68,7 @@ it("DB01 persists one immutable task reservation and rejects malformed launch sn
     [taskId],
   );
   const input: TaskLaunchInputSnapshot = {
-    version: 1,
+    version: 2,
     projectId,
     taskId,
     number: 1,
@@ -82,7 +86,7 @@ it("DB01 persists one immutable task reservation and rejects malformed launch sn
     ...runnerIdentity
   } = testRunnerSnapshot("fixture-runner");
   const settings: TaskLaunchSettingsSnapshot = {
-    version: 1,
+    version: 2,
     kind: "flow",
     workspace: "worktree",
     agentId: null,
@@ -111,6 +115,13 @@ it("DB01 persists one immutable task reservation and rejects malformed launch sn
       targetBranch: "main",
     },
     executionPolicy: { preset: "supervised" },
+    resolvedCapabilitySet: {
+      flowRevisionId: "fixture-revision",
+      flowOrigin: "git",
+      capabilities: [],
+      mcps: [],
+    },
+    capabilityResolutionDigest: "8".repeat(64),
     taskSettingsDigest: "c".repeat(64),
     resolutionToken: "d".repeat(64),
   };
@@ -247,7 +258,7 @@ it("DB01 persists one immutable task reservation and rejects malformed launch sn
   const oldWriter = await database.pool.connect();
 
   try {
-    await oldWriter.query("SET maister.task_launch_writer=''");
+    await oldWriter.query("SET maister.task_launch_writer='v1'");
     await expect(
       oldWriter.query(
         "UPDATE task_launch_intents SET updated_at=clock_timestamp() WHERE id=$1",
@@ -255,7 +266,7 @@ it("DB01 persists one immutable task reservation and rejects malformed launch sn
       ),
     ).rejects.toMatchObject({ constraint: "task_launch_writer_capability" });
   } finally {
-    await oldWriter.query("SET maister.task_launch_writer='v1'");
+    await oldWriter.query("SET maister.task_launch_writer='v2'");
     oldWriter.release();
   }
   await expect(
@@ -331,6 +342,7 @@ it("DB01 persists one immutable task reservation and rejects malformed launch sn
     flowVersion: "v1",
     taskLaunchIntentId: ready.id,
     executionPolicy: settings.executionPolicy,
+    resolvedCapabilitySet: settings.resolvedCapabilitySet,
     taskAdmissionSnapshot: {
       version: 2,
       policyVersion: 2,
@@ -357,7 +369,7 @@ it("DB01 persists one immutable task reservation and rejects malformed launch sn
   const incompatible = await database.pool.connect();
 
   try {
-    await incompatible.query("SET maister.task_launch_writer=''");
+    await incompatible.query("SET maister.task_launch_writer='v1'");
     await expect(
       incompatible.query("UPDATE runs SET status='Running' WHERE id=$1", [
         run.id,
@@ -369,7 +381,7 @@ it("DB01 persists one immutable task reservation and rejects malformed launch sn
       ]),
     ).rejects.toMatchObject({ constraint: "task_launch_writer_capability" });
   } finally {
-    await incompatible.query("SET maister.task_launch_writer='v1'");
+    await incompatible.query("SET maister.task_launch_writer='v2'");
     incompatible.release();
   }
 
@@ -441,6 +453,7 @@ it("DB01 persists one immutable task reservation and rejects malformed launch sn
     flowRefId: null,
     flowRevisionId: null,
     baseCommit: null,
+    resolvedCapabilitySet: null,
   };
   const [repositoryFree] = await database.db
     .insert(taskLaunchIntents)
@@ -464,3 +477,149 @@ it("DB01 persists one immutable task reservation and rejects malformed launch sn
     state: "cancelled",
   });
 });
+
+it("DB02 upgrades immutable v1 intent history without inventing missing execution input and fences its old writer", async () => {
+  const partial = await startMainPostgresTestDbUpTo(
+    { databaseName: "launch_execution_snapshot_upgrade" },
+    "0218_task_launch_commit_shape",
+  );
+
+  try {
+    const [source] = await database.db
+      .select()
+      .from(taskLaunchIntents)
+      .where(
+        and(
+          eq(taskLaunchIntents.principalKind, "session_user"),
+          eq(taskLaunchIntents.launchSource, "web"),
+        ),
+      )
+      .limit(1);
+
+    if (source.settingsSnapshot.version !== 2)
+      throw new Error("Missing current launch snapshot fixture");
+    const {
+      resolvedCapabilitySet: _capabilities,
+      capabilityResolutionDigest: _capabilityDigest,
+      ...settingsFields
+    } = source.settingsSnapshot;
+    const legacySettings = { ...settingsFields, version: 1 as const };
+    const legacyInput = { ...source.inputSnapshot, version: 1 as const };
+
+    await partial.pool.query(
+      "INSERT INTO users(id,email,role) VALUES($1,$2,'admin')",
+      [source.actorUserId, `${source.actorUserId}@test.local`],
+    );
+    await partial.pool.query(
+      "INSERT INTO projects(id,slug,name,repo_path,task_key) VALUES($1,$1,'Upgrade','/tmp/intent-upgrade','UPGRADE')",
+      [source.projectId],
+    );
+    await partial.pool.query(
+      "INSERT INTO tasks(id,project_id,number,title,prompt,revision,qualification_input_revision) VALUES($1,$2,1,$3,$4,$5,$6)",
+      [
+        source.taskId,
+        source.projectId,
+        legacyInput.title,
+        legacyInput.prompt,
+        source.taskRevision,
+        source.inputRevision,
+      ],
+    );
+    const intentId = randomUUID();
+
+    await partial.db.transaction(async (tx) => {
+      await tx.execute(sql`SET LOCAL maister.task_launch_writer='v1'`);
+      await tx.insert(taskLaunchIntents).values({
+        id: intentId,
+        projectId: source.projectId,
+        taskId: source.taskId,
+        principalKind: "session_user",
+        principalId: source.principalId,
+        actorUserId: source.actorUserId,
+        launchSource: "web",
+        operation: "launch",
+        requestKey: randomUUID(),
+        payloadDigest: "9".repeat(64),
+        taskRevision: source.taskRevision,
+        inputRevision: source.inputRevision,
+        inputDigest: retryDigest(legacyInput),
+        settingsDigest: retryDigest(legacySettings),
+        inputSnapshot: legacyInput,
+        settingsSnapshot: legacySettings,
+        basis: source.basis,
+        dueAt: new Date(),
+      });
+    });
+    const before = (
+      await partial.pool.query(
+        "SELECT to_jsonb(i) AS value FROM task_launch_intents i WHERE id=$1",
+        [intentId],
+      )
+    ).rows[0].value;
+
+    await upgradeMainTestDb(partial, "0218_task_launch_commit_shape");
+    await migrate(partial.db, { migrationsFolder: "./lib/db/migrations" });
+    expect(
+      (
+        await partial.pool.query(
+          "SELECT to_jsonb(i) AS value FROM task_launch_intents i WHERE id=$1",
+          [intentId],
+        )
+      ).rows[0].value,
+    ).toEqual(before);
+    const oldWriter = await partial.pool.connect();
+
+    try {
+      await oldWriter.query("SET maister.task_launch_writer='v1'");
+      await expect(
+        oldWriter.query(
+          "UPDATE task_launch_intents SET updated_at=clock_timestamp() WHERE id=$1",
+          [intentId],
+        ),
+      ).rejects.toMatchObject({ constraint: "task_launch_writer_capability" });
+    } finally {
+      await oldWriter.query("SET maister.task_launch_writer='v2'");
+      oldWriter.release();
+    }
+    await partial.db
+      .update(taskLaunchIntents)
+      .set({
+        state: "preparing",
+        stateVersion: 2,
+        leaseToken: randomUUID(),
+        leaseExpiresAt: new Date(Date.now() + 60_000),
+      })
+      .where(eq(taskLaunchIntents.id, intentId));
+    await expect(
+      partial.db.insert(runs).values({
+        id: randomUUID(),
+        projectId: source.projectId,
+        taskId: source.taskId,
+        runKind: "flow",
+        status: "Pending",
+        flowVersion: "v1",
+        flowId: legacySettings.flowId,
+        flowRevisionId: legacySettings.flowRevisionId,
+        executionPolicy: legacySettings.executionPolicy,
+        taskLaunchIntentId: intentId,
+        taskAdmissionSnapshot: {
+          version: 2,
+          policyVersion: 2,
+          mode: "manual",
+          basis: "manual",
+          intentId,
+          inputRevision: source.inputRevision,
+          qualificationId: null,
+          qualificationRevision: null,
+          parent: null,
+          evidenceTarget: legacySettings.baseBranch,
+          evidenceSha: legacySettings.baseCommit,
+        },
+      }),
+    ).rejects.toMatchObject({
+      cause: { constraint: "runs_task_launch_binding_required" },
+    });
+  } finally {
+    await partial.stop();
+  }
+}, 180_000);

@@ -23,4 +23,4 @@ export const TASK_QUALIFICATION_WRITER_SETTING =
   "maister.task_qualification_writer";
 export const TASK_QUALIFICATION_WRITER_CAPABILITY = "v1";
 export const TASK_LAUNCH_WRITER_SETTING = "maister.task_launch_writer";
-export const TASK_LAUNCH_WRITER_CAPABILITY = "v1";
+export const TASK_LAUNCH_WRITER_CAPABILITY = "v2";

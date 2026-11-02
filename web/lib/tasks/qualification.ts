@@ -15,7 +15,7 @@ import pino from "pino";
 
 import { canonicalCommandJson } from "../../../runtime/command-json";
 
-import { loadTaskSemanticInput } from "@/lib/tasks/launch-input";
+import { loadTaskQualificationMaterial } from "@/lib/tasks/launch-input";
 import { taskTriageAutoEnqueuePredicate } from "@/lib/tasks/qualification-predicates";
 import {
   projects,
@@ -92,7 +92,11 @@ export async function loadTaskQualificationInput(
   projectId: string,
   taskId: string,
 ): Promise<TaskQualificationInput> {
-  const { task, snapshot } = await loadTaskSemanticInput(tx, projectId, taskId);
+  const { task, snapshot } = await loadTaskQualificationMaterial(
+    tx,
+    projectId,
+    taskId,
+  );
   const { number: _number, ...semanticInput } = snapshot;
   const inputDigest = createHash("sha256")
     .update(

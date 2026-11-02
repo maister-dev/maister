@@ -59,3 +59,27 @@ Already checkedAt does not establish actual dispatch or frozen input. Hold incom
 - [Launch contract](../system-analytics/task-launch-admission.md), [preparation contract](../system-analytics/agent-preparation.md).
 - [Qualification persistence](task-qualification-domain.md), [runs](runs-domain.md), [operational agents](operational-agents-domain.md).
 - [Database reference](../database-schema.md), [generated implemented ERD](erd.dbml).
+
+
+## Frozen execution format v2 (designed before dispatch consumption)
+
+Input v2 captures the ordered answered clarification projection actually used by
+execution, including nonblocking answers and sequence numbers, under its existing
+20-answer/question bounds. Qualification retains its existing blocking-input hash
+algorithm and invalidation counters; these are different projections. A reader
+must never reconstruct missing execution context from today's task. Existing
+input-v1 intent rows remain immutable and readable as history; undispatched v1
+requests require a compatibility hold and explicit replacement.
+
+Settings v2 adds the existing resolved capability-set reference snapshot plus a
+canonical digest of the relevant catalog/binding configuration, including records
+with no published revision. It contains no capability material or credentials.
+The settings token also covers the enabled revision's runner default. Current
+Flow gates and runner resolution remain authoritative; changing one of these
+inputs before acceptance/dispatch cannot silently select a different executor.
+
+An additive migration accepts historical snapshot formats without rewriting them,
+requires input/settings v2 for new intent/run bindings, and raises the launch
+writer floor to v2. The public receipt remains schemaVersion 1 and exposes only
+its existing metadata fields. This change does not version the seven-check result
+or alter existing qualification digests.

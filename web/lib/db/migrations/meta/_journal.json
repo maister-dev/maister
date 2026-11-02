@@ -1506,6 +1506,13 @@
       "when": 1793657055907,
       "tag": "0218_task_launch_commit_shape",
       "breakpoints": true
+    },
+    {
+      "idx": 219,
+      "version": "7",
+      "when": 1793659230327,
+      "tag": "0219_task_launch_execution_snapshots",
+      "breakpoints": true
     }
   ]
 }

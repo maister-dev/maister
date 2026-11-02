@@ -1,3 +1,4 @@
+import type { ResolvedCapabilitySet } from "@/lib/db/schema";
 import type { JsonValue } from "@/lib/hitl-response-contract";
 import type { RunnerSnapshot } from "@/lib/acp-runners/resolve";
 import type { StoredDeliveryPolicy } from "@/lib/runs/delivery-policy";
@@ -37,7 +38,7 @@ export type TaskLaunchCancellationReceipt = Readonly<{
   cancelledAt: string;
 }>;
 
-export type TaskLaunchInputSnapshot = Readonly<{
+export type TaskLaunchInputV1Snapshot = Readonly<{
   version: 1;
   projectId: string;
   taskId: string;
@@ -59,6 +60,20 @@ export type TaskLaunchInputSnapshot = Readonly<{
     }>
   >;
 }>;
+
+export type TaskLaunchInputV2Snapshot = Omit<
+  TaskLaunchInputV1Snapshot,
+  "version" | "clarifications"
+> &
+  Readonly<{
+    version: 2;
+    clarifications: ReadonlyArray<
+      TaskLaunchInputV1Snapshot["clarifications"][number] &
+        Readonly<{ seq: number }>
+    >;
+  }>;
+export type TaskLaunchInputSnapshot =
+  TaskLaunchInputV1Snapshot | TaskLaunchInputV2Snapshot;
 
 type TaskLaunchSettingsBase = Readonly<{
   version: 1;
@@ -82,28 +97,41 @@ type TaskLaunchSettingsBase = Readonly<{
   resolutionToken: string;
 }>;
 
-export type TaskLaunchSettingsSnapshot = TaskLaunchSettingsBase &
-  (
-    | Readonly<{
-        kind: "flow";
-        workspace: "worktree";
-        baseCommit: string;
-        flowId: string;
-        flowRefId: string;
-        flowRevisionId: string;
-        agentId: null;
-        definitionSha256: null;
-      }>
-    | Readonly<{
-        kind: "agent";
-        workspace: "none" | "repo_read" | "worktree";
-        flowId: null;
-        flowRefId: null;
-        flowRevisionId: null;
-        agentId: string;
-        definitionSha256: string;
-      }>
-  );
+type TaskLaunchTargetSettings =
+  | Readonly<{
+      kind: "flow";
+      workspace: "worktree";
+      baseCommit: string;
+      flowId: string;
+      flowRefId: string;
+      flowRevisionId: string;
+      agentId: null;
+      definitionSha256: null;
+    }>
+  | Readonly<{
+      kind: "agent";
+      workspace: "none" | "repo_read" | "worktree";
+      flowId: null;
+      flowRefId: null;
+      flowRevisionId: null;
+      agentId: string;
+      definitionSha256: string;
+    }>;
+
+export type TaskLaunchSettingsV1Snapshot = TaskLaunchSettingsBase &
+  TaskLaunchTargetSettings;
+export type TaskLaunchSettingsV2Snapshot = Omit<
+  TaskLaunchSettingsBase,
+  "version"
+> &
+  TaskLaunchTargetSettings &
+  Readonly<{
+    version: 2;
+    resolvedCapabilitySet: ResolvedCapabilitySet | null;
+    capabilityResolutionDigest: string;
+  }>;
+export type TaskLaunchSettingsSnapshot =
+  TaskLaunchSettingsV1Snapshot | TaskLaunchSettingsV2Snapshot;
 
 export type TaskLaunchReceipt = Readonly<{
   schemaVersion: 1;

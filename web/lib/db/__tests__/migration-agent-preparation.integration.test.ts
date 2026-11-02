@@ -1,10 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
 
-import { readMigrationFiles } from "drizzle-orm/migrator";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { afterAll, beforeAll, expect, it } from "vitest";
 
+import { upgradeMainTestDb } from "@/test-support/migration-upgrade";
 import { seedProjectRow } from "@/test-support/execution-host-seed";
 import {
   startMainPostgresTestDbUpTo,
@@ -54,29 +53,7 @@ beforeAll(async () => {
       [runId],
     )
   ).rows[0].value;
-  const journal = JSON.parse(
-    await readFile("./lib/db/migrations/meta/_journal.json", "utf8"),
-  ) as { entries: Array<{ tag: string; when: number }> };
-  const cutoff = journal.entries.find(
-    (entry) => entry.tag === "0214_transcript_creation_order",
-  )?.when;
-
-  if (!cutoff) throw new Error("Missing preparation upgrade baseline");
-  const applied = readMigrationFiles({
-    migrationsFolder: "./lib/db/migrations",
-  }).filter((entry) => entry.folderMillis <= cutoff);
-
-  await database.pool.query(
-    "CREATE SCHEMA drizzle; CREATE TABLE drizzle.__drizzle_migrations(id serial PRIMARY KEY,hash text NOT NULL,created_at bigint)",
-  );
-  await database.pool.query(
-    "INSERT INTO drizzle.__drizzle_migrations(hash,created_at) SELECT * FROM unnest($1::text[],$2::bigint[])",
-    [
-      applied.map((entry) => entry.hash),
-      applied.map((entry) => entry.folderMillis),
-    ],
-  );
-  await migrate(database.db, { migrationsFolder: "./lib/db/migrations" });
+  await upgradeMainTestDb(database, "0214_transcript_creation_order");
 }, 180_000);
 
 afterAll(async () => {
