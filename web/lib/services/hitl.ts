@@ -79,6 +79,7 @@ import {
   buildReviewFeedbackPreview,
 } from "@/lib/review-comments/feedback-packet";
 import { runtimeRoot } from "@/lib/runtime-root";
+import { assertAgentQuestionResponse } from "@/lib/services/agent-question-response";
 import { assertParkedAssistantAnswerable } from "@/lib/scratch-runs/authorization";
 import {
   closedAnswerReason,
@@ -6436,9 +6437,9 @@ async function handleAgentQuestionResponse(
     );
   }
 
-  // Validate before locking/mutating. An agent question is schema-driven like a
-  // form, but it has no input artifact or run-resume step after the answer.
-  assertHitlResponse(body.response, hitlRow.schema);
+  // Clarification options are suggestions. Validate the human's own answer
+  // before locking/mutating without widening Flow forms or result contracts.
+  assertAgentQuestionResponse(body.response, hitlRow.schema);
   const response = body.response;
   const taskId = hitlRow.taskId;
 

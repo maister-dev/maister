@@ -8123,11 +8123,11 @@ components:
 
     FormSchemaV1:
       type: object
-      description: Existing MAIster `formSchemaSchema` grammar; validated again by `validateFormSchemaVersion`.
+      description: MAIster form grammar, not JSON Schema. Human-ask choice options suggest answers and permit a human's own response. The HTTP body and generated MCP input derive from humanAskBodySchema.
       required: [schemaVersion, fields]
       additionalProperties: true
       properties:
-        schemaVersion: { type: integer, minimum: 1 }
+        schemaVersion: { type: integer, enum: [1] }
         fields:
           type: array
           items: { $ref: "#/components/schemas/FormFieldV1" }
@@ -8139,7 +8139,7 @@ components:
         name: { type: string, minLength: 1 }
         label: { type: string, minLength: 1 }
         type:
-          { type: string, enum: [string, number, boolean, enum, array, object] }
+          { type: string, enum: [string, number, boolean, enum, array, object, json] }
         required: { type: boolean }
         default: {}
         options:
@@ -8148,6 +8148,21 @@ components:
         fields:
           type: array
           items: { $ref: "#/components/schemas/FormFieldV1" }
+        items: { $ref: "#/components/schemas/FormItemsV1" }
+    FormItemsV1:
+      type: object
+      required: [type]
+      additionalProperties: true
+      properties:
+        type:
+          { type: string, enum: [string, number, boolean, enum, array, object, json] }
+        options:
+          type: array
+          items: { type: string }
+        fields:
+          type: array
+          items: { $ref: "#/components/schemas/FormFieldV1" }
+        items: { $ref: "#/components/schemas/FormItemsV1" }
     ExtHumanAskBody:
       type: object
       required: [question, schema]

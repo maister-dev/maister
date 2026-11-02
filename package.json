@@ -8,7 +8,7 @@
     "local:blast-maister-state": "node scripts/blast-maister-local-state.mjs",
     "test:local-reset": "node --test scripts/blast-maister-local-state.test.mjs",
     "validate:docs": "node scripts/validate-docs-mermaid.mjs && node scripts/validate-docs-adr-anchors.mjs && node scripts/validate-docs-links.mjs && node scripts/validate-docs-indexes.mjs && pnpm --filter maister-web db:erd --check",
-    "validate:contracts": "node scripts/validate-contracts.mjs && node --test scripts/validate-contracts.test.mjs && pnpm validate:adapter-mirrors",
+    "validate:contracts": "node scripts/validate-contracts.mjs && node --test scripts/validate-contracts.test.mjs && pnpm validate:adapter-mirrors && pnpm --filter maister-web validate:ask-human-schema",
     "validate:adapter-mirrors": "node scripts/validate-adapter-mirrors.ts",
     "validate:docs:all": "node scripts/validate-docs-mermaid.mjs --all && node scripts/validate-docs-adr-anchors.mjs --all && node scripts/validate-docs-links.mjs --all && node scripts/validate-docs-indexes.mjs && node --test scripts/validate-docs-indexes.test.mjs && node --test scripts/validate-requirement-coverage.test.mjs && node --test scripts/validate-docs-adr-anchors.test.mjs && pnpm validate:operational-coverage && pnpm --filter maister-web db:erd --check",
     "validate:m51-coverage": "node scripts/validate-requirement-coverage.mjs --group m51",

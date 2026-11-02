@@ -486,6 +486,29 @@ describe("HitlDecisionControls — pure HITL response rendering (M17 P4)", () =>
       expect(html).toContain("run.submit");
     });
 
+    it("offers custom text for agent questions while closed Flow enums render only their choices", () => {
+      const schema = {
+        schemaVersion: 1,
+        fields: [
+          {
+            name: "scope",
+            type: "enum",
+            required: true,
+            options: ["sort-first", "manual-rank"],
+          },
+        ],
+      };
+      const question = render({ kind: "agent_question", schema });
+      const form = render({ kind: "form", schema });
+
+      expect(question).toContain('id="hitl-form-field-scope"');
+      expect(question).toContain("run.formCustomPlaceholder");
+      expect(form).toContain(">sort-first<");
+      expect(form).toContain(">manual-rank<");
+      expect(form).not.toContain('id="hitl-form-field-scope"');
+      expect(form).not.toContain("run.formCustomPlaceholder");
+    });
+
     it("falls back to the JSON textarea when the schema declares no fields", () => {
       const html = render({ kind: "form", schema: { type: "object" } });
 

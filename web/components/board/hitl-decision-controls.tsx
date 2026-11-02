@@ -808,16 +808,24 @@ function FormFieldControl({
     <div className="flex flex-col gap-1.5">
       <label
         className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute"
-        htmlFor={`hitl-form-field-${field.name}`}
+        htmlFor={
+          field.type === "enum" ? undefined : `hitl-form-field-${field.name}`
+        }
+        id={`hitl-form-label-${field.name}`}
       >
         {field.label ?? field.name}
         {field.required ? " *" : ""}
       </label>
       {options.length > 0 ? (
-        <div className="flex flex-wrap gap-2">
+        <div
+          aria-labelledby={`hitl-form-label-${field.name}`}
+          className="flex flex-wrap gap-2"
+          role="group"
+        >
           {options.map((opt) => (
             <button
               key={opt}
+              aria-pressed={value === opt}
               className={clsx(
                 "rounded-lg border px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em]",
                 value === opt
@@ -827,14 +835,20 @@ function FormFieldControl({
               )}
               disabled={disabled}
               type="button"
-              onClick={() => onChange(opt)}
+              onClick={() =>
+                onChange(
+                  field.type === "enum" && !field.required && value === opt
+                    ? ""
+                    : opt,
+                )
+              }
             >
               {opt}
             </button>
           ))}
         </div>
       ) : null}
-      {field.type === "json" ? (
+      {field.type === "enum" ? null : field.type === "json" ? (
         <>
           <textarea
             className="min-h-[80px] rounded-[7px] border border-line bg-paper px-2 py-1.5 font-mono text-[12.5px] text-ink outline-none focus:border-amber"
@@ -2024,7 +2038,11 @@ export function HitlDecisionControls({
             <FormFieldControl
               key={field.name}
               disabled={disabled}
-              field={field}
+              field={
+                kind === "agent_question" && field.type === "enum"
+                  ? { ...field, type: "string" }
+                  : field
+              }
               labels={labels}
               placeholder={labels.formCustomPlaceholder}
               value={formValues[field.name] ?? ""}

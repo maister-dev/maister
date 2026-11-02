@@ -2,14 +2,12 @@ import "server-only";
 
 import { and, eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 
-import { validateFormSchemaVersion } from "@/lib/config";
-import { formSchemaSchema } from "@/lib/config.schema";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { createOrActivateAgentQuestion } from "@/lib/services/agent-question";
+import { humanAskBodySchema } from "@/lib/services/agent-question-contract";
 import { tokenAuditIdentity } from "@/lib/tokens/audit";
 import {
   handleExt,
@@ -22,14 +20,6 @@ const { runs } = schemaModule as unknown as Record<string, any>;
 
 const ENDPOINT = "POST /api/v1/ext/projects/[slug]/tasks/[taskId]/human-asks";
 const SCOPE = "hitl:request";
-
-const bodySchema = z
-  .object({
-    question: z.string().min(1).max(10_000),
-    schema: formSchemaSchema,
-    reTriggerMode: z.enum(["agent", "triage"]).default("agent"),
-  })
-  .strict();
 
 type RouteParams = { params: Promise<{ slug: string; taskId: string }> };
 
@@ -62,17 +52,47 @@ export async function POST(
         );
       }
 
-      let body: z.infer<typeof bodySchema>;
+      let rawBody: unknown;
 
       try {
-        body = bodySchema.parse(await req.json());
-        validateFormSchemaVersion(body.schema, 1);
-      } catch {
+        rawBody = await req.json();
+      } catch (error) {
+        if (!(error instanceof SyntaxError)) throw error;
+
         return NextResponse.json(
-          { code: "CONFIG", message: "invalid human ask body" },
+          {
+            code: "CONFIG",
+            message: "Human-ask body must be valid JSON",
+            details: {
+              reason: "human_ask_body_invalid",
+              format: "form_schema_v1",
+            },
+          },
           { status: 422 },
         );
       }
+      const parsed = humanAskBodySchema.safeParse(rawBody);
+
+      if (!parsed.success)
+        return NextResponse.json(
+          {
+            code: "CONFIG",
+            message:
+              "Invalid Human-ask body: schema must use MAIster form schema {schemaVersion:1,fields:[{name,type,required?,options?}]}, not JSON Schema",
+            details: {
+              reason: "human_ask_body_invalid",
+              format: "form_schema_v1",
+              issues: parsed.error.issues
+                .slice(0, 16)
+                .map(({ path, code }) => ({
+                  path,
+                  code,
+                })),
+            },
+          },
+          { status: 422 },
+        );
+      const body = parsed.data;
 
       const sourceRows = await db
         .select({ id: runs.id })

@@ -37,6 +37,7 @@ type JsonSchema = {
   minimum?: number;
   maximum?: number;
   minLength?: number;
+  const?: unknown;
 };
 
 // Bounds the facade must mirror when the spec declares them — a bounds-only
@@ -380,6 +381,20 @@ function toolSpec(name: string): JsonSchema {
   return TOOL_SPECS[name].inputSchema as JsonSchema;
 }
 
+function derefAskHuman(node: JsonSchema): JsonSchema {
+  if (node.$ref) {
+    let current: unknown = toolSpec("ask_human");
+
+    for (const segment of node.$ref.replace(/^#\//, "").split("/"))
+      current = (current as Record<string, unknown>)[segment];
+
+    return derefAskHuman(current as JsonSchema);
+  }
+  if (node.allOf?.length === 1) return derefAskHuman(node.allOf[0]);
+
+  return node;
+}
+
 // A stable, order-insensitive rendering of a `oneOf` union's arms: per arm, the
 // sorted property names, the sorted required set, each property's base type, and
 // whether the arm is closed. A schema with no `oneOf` renders as a single arm, so
@@ -532,6 +547,48 @@ describe("TOOL_SPECS ↔ external OpenAPI contract", () => {
   // `oneOf` (there is no single branch to pick), so comparing `.properties` alone
   // would compare `{}` with `{}` and PASS while checking nothing — a guard that
   // stopped looking is worse than no guard. Compare the ARM SETS instead.
+  it("ask_human exposes the versioned recursive form grammar, including json and typed array items", () => {
+    const advertised = toolSpec("ask_human").properties!.schema;
+    const form = deref(openapi.components!.schemas!.FormSchemaV1);
+
+    expect(new Set(advertised.required)).toEqual(new Set(form.required));
+    expect(advertised.properties!.schemaVersion.const).toBe(1);
+    expect(form.properties!.schemaVersion.enum).toEqual([1]);
+    const field = derefAskHuman(advertised.properties!.fields.items!);
+    const expectedField = deref(form.properties!.fields.items!);
+    const items = derefAskHuman(field.properties!.items);
+    const expectedItems = deref(expectedField.properties!.items);
+
+    for (const [actual, expected] of [
+      [field, expectedField],
+      [items, expectedItems],
+    ]) {
+      expect(new Set(Object.keys(actual.properties ?? {}))).toEqual(
+        new Set(Object.keys(expected.properties ?? {})),
+      );
+      expect(new Set(actual.required ?? [])).toEqual(
+        new Set(expected.required ?? []),
+      );
+      expect(new Set(actual.properties!.type.enum)).toEqual(
+        new Set(expected.properties!.type.enum),
+      );
+      for (const [name, property] of Object.entries(
+        expected.properties ?? {},
+      )) {
+        const actualProperty = derefAskHuman(actual.properties![name]);
+        const expectedProperty = deref(property);
+
+        expect(baseTypeSet(actualProperty), name).toEqual(
+          baseTypeSet(expectedProperty),
+        );
+        expect(actualProperty.minLength, name).toBe(expectedProperty.minLength);
+      }
+    }
+    expect(derefAskHuman(field.properties!.fields.items!)).toEqual(field);
+    expect(derefAskHuman(items.properties!.fields.items!)).toEqual(field);
+    expect(derefAskHuman(items.properties!.items)).toEqual(items);
+  });
+
   it("run_delegate.target mirrors ExtDelegationTarget (oneOf arm sets)", () => {
     expectTargetUnionMirrors(
       bodySchema(openapi.paths["/api/v1/ext/runs/delegate"].post)!.properties!

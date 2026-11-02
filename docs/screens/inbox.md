@@ -203,11 +203,12 @@ stateDiagram-v2
 
 An active `agent_question` card remains visible after its source standalone run
 is `Done`; it identifies the task as an agent clarification, renders the stored
-strict form schema, and has the same localized busy/error feedback as existing
+form with suggested choices and a custom answer, and has the same localized busy/error feedback as existing
 HITL controls. Pending termination, failed activation, answered, and superseded
 questions are never actionable cards. A response is human-only and never offers
 ACP resume. EN/RU labels cover asking-agent context, answer, stale/superseded,
 and activation-unavailable states.
+Answer validation follows the [agent-question contract](../system-analytics/hitl.md#agent-question--task-bound-clarification-implemented--adr-136).
 
 ## Data & APIs
 

@@ -1,9 +1,14 @@
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 import taskQualificationSchema from "../../runtime/task-qualification.schema.json";
+import askHumanInputSchema from "../../runtime/ask-human-input.schema.json";
 
 import { type AuthContext, resolveAuthHeader } from "./auth";
-import { callExt, hitlRespondToolError, restResponseToToolError } from "./rest";
+import {
+  callExt,
+  structuredResponseToToolError,
+  restResponseToToolError,
+} from "./rest";
 import { isToolsetName, TOOLSETS } from "./toolsets";
 
 export type ToolSpec = {
@@ -938,17 +943,10 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   ask_human: {
     description:
-      "Create a task-bound Human-ask clarification for this running standalone agent. The server derives the requesting agent and source run from the ephemeral token; use reTriggerMode='triage' only from core:triager.",
+      'Create a task-bound Human-ask clarification for this running standalone agent. The server derives the requesting agent and source run from the ephemeral token; use reTriggerMode="triage" only from core:triager. schema is the MAIster form grammar, NOT JSON Schema. Example: {"schemaVersion":1,"fields":[{"name":"scope","type":"string","required":true,"label":"Delivery scope","options":["sort_first","manual_rank"]}]}. Options suggest answers; the human can supply another value. Use fields for nested objects and items for typed arrays; supported field types are string, number, boolean, enum, array, object and json.',
     inputSchema: {
+      ...askHumanInputSchema,
       type: "object",
-      properties: {
-        slug: { type: "string" },
-        taskId: { type: "string" },
-        question: { type: "string", minLength: 1, maxLength: 10000 },
-        schema: { type: "object" },
-        reTriggerMode: { type: "string", enum: ["agent", "triage"] },
-      },
-      required: ["slug", "taskId", "question", "schema"],
     },
   },
   comment_list: {
@@ -1219,7 +1217,8 @@ export async function dispatchTool(opts: {
   }
 
   if (!res.ok) {
-    if (name === "hitl_respond") return hitlRespondToolError(res);
+    if (name === "hitl_respond" || name === "ask_human")
+      return structuredResponseToToolError(res);
 
     return restResponseToToolError(res);
   }

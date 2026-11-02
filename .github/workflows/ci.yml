@@ -11,7 +11,7 @@ on:
 
 jobs:
   lint-typecheck-unit:
-    name: Docker-free lint + typecheck + unit (web + supervisor)
+    name: Docker-free lint + typecheck + unit (web + supervisor + MCP)
     runs-on: ubuntu-latest
     env:
       # This lane must prove build/unit safety without a Docker daemon. Database
@@ -68,6 +68,14 @@ jobs:
 
       - name: Integration tests (supervisor)
         run: pnpm --filter @maister/supervisor test:integration
+
+      - name: Typecheck and build internal MCP
+        run: |
+          pnpm --filter @maister/mcp typecheck
+          pnpm --filter @maister/mcp build
+
+      - name: Unit, API and stdio tests (internal MCP)
+        run: pnpm --filter @maister/mcp test
 
   integration:
     name: integration tests (web testcontainers)

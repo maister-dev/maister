@@ -37,6 +37,8 @@
     "backfill-flow-revisions": "tsx --import ./scripts/_register-shim.mjs scripts/backfill-flow-revisions.ts",
     "generate:qualification-schema": "tsx scripts/generate-task-qualification-json.ts",
     "validate:qualification-schema": "tsx scripts/generate-task-qualification-json.ts --check",
+    "generate:ask-human-schema": "tsx scripts/generate-ask-human-json.ts",
+    "validate:ask-human-schema": "tsx scripts/generate-ask-human-json.ts --check",
     "validate-authored-flow": "tsx --import ./scripts/_register-shim.mjs scripts/validate-authored-flow.ts",
     "validate:package-compatibility": "tsx --import ./scripts/_register-shim.mjs scripts/validate-package-compatibility.ts",
     "import-flow-package-draft": "tsx --import ./scripts/_register-shim.mjs scripts/import-flow-package-draft.ts",

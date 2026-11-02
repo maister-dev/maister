@@ -1478,6 +1478,19 @@ and schema bodies are never written to structured logs. Creation, activation
 retry/failure, answer, supersession count, and targeted re-trigger decision log
 only IDs, kind, state, and row counts.
 
+Human-ask field options are suggestions, including fields stored as `enum` in
+existing questions. The human may supply a different string answer; required
+textual answers must contain non-whitespace text. Object structure, declared
+types and required fields remain validated. This rule belongs only to
+`agent_question`: Flow forms, review decisions and structured outputs retain
+their closed enum contracts. Answers preserve the human's original text.
+
+The internal MCP `ask_human` input is generated from the canonical HTTP body
+schema, including `schemaVersion: 1` and recursive form fields. It accepts the
+MAIster form grammar rather than JSON Schema. `validate:contracts` checks the
+generated artifact, and the Docker-free CI lane typechecks, builds and tests the
+internal MCP contract against the external API.
+
 ### Human answer and supersession transaction
 
 ```mermaid

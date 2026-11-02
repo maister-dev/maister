@@ -118,7 +118,8 @@ function buildServer(transportType: "stdio" | "http"): Server {
           {
             type: "text" as const,
             text:
-              toolName === "hitl_respond" && result.publicBody
+              (toolName === "hitl_respond" || toolName === "ask_human") &&
+              result.publicBody
                 ? JSON.stringify(result.publicBody)
                 : (result.message ?? `Error ${result.status}`),
           },

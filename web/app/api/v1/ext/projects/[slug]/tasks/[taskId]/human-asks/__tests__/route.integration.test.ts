@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 
+import Ajv from "ajv";
 import { and, eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { NextRequest } from "next/server";
+import { z } from "zod";
 import {
   afterAll,
   beforeAll,
@@ -13,9 +15,12 @@ import {
   vi,
 } from "vitest";
 
+import { TOOL_SPECS } from "../../../../../../../../../../../mcp/src/tools";
+
 import { issueAgentRunToken } from "@/lib/agents/tokens";
 import * as schema from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { askHumanToolInputSchema } from "@/lib/services/agent-question-contract";
 import {
   createFakeExecutionHost,
   fakeExecutionHosts,
@@ -70,7 +75,7 @@ function body(): Record<string, unknown> {
   };
 }
 
-function request(token: string): NextRequest {
+function request(token: string, input: unknown = body()): NextRequest {
   return new NextRequest(
     "http://localhost/api/v1/ext/projects/demo/tasks/task/human-asks",
     {
@@ -79,7 +84,7 @@ function request(token: string): NextRequest {
         authorization: `Bearer ${token}`,
         "content-type": "application/json",
       },
-      body: JSON.stringify(body()),
+      body: JSON.stringify(input),
     },
   );
 }
@@ -196,6 +201,139 @@ beforeEach(async () => {
 });
 
 describe("POST /api/v1/ext/projects/[slug]/tasks/[taskId]/human-asks", () => {
+  it("keeps the complete published MCP input derived from the current HTTP form grammar", async () => {
+    const seeded = await seed();
+    const advertised = TOOL_SPECS.ask_human.inputSchema;
+
+    expect(advertised).toEqual({
+      ...z.toJSONSchema(askHumanToolInputSchema, {
+        target: "draft-07",
+        io: "input",
+        unrepresentable: "any",
+      }),
+      type: "object",
+    });
+    const validate = new Ajv({ strict: false }).compile(advertised);
+    const input = {
+      question: "Which board filters and sorting should delivery configure?",
+      schema: {
+        schemaVersion: 1,
+        fields: [
+          {
+            name: "scope",
+            type: "string",
+            required: true,
+            options: ["sort_first", "manual_rank"],
+          },
+          { name: "limit", type: "number" },
+          { name: "enabled", type: "boolean" },
+          { name: "direction", type: "enum", options: ["asc", "desc"] },
+          { name: "parameters", type: "json" },
+          {
+            name: "filters",
+            type: "array",
+            items: {
+              type: "object",
+              fields: [
+                { name: "field", type: "string" },
+                { name: "values", type: "array", items: { type: "json" } },
+              ],
+            },
+          },
+          {
+            name: "sorting",
+            type: "object",
+            fields: [{ name: "priority", type: "number" }],
+          },
+        ],
+      },
+    };
+
+    expect(
+      validate({ slug: seeded.slug, taskId: seeded.taskId, ...input }),
+      JSON.stringify(validate.errors),
+    ).toBe(true);
+    supervisor.listSessions.mockResolvedValue([]);
+    const response = await POST(request(seeded.token, input), params(seeded));
+
+    expect(response.status).toBe(201);
+    const [stored] = await database
+      .select({ schema: schema.hitlRequests.schema })
+      .from(schema.hitlRequests)
+      .where(eq(schema.hitlRequests.runId, seeded.runId));
+
+    expect(stored.schema).toMatchObject(input.schema);
+  });
+
+  it.each([
+    {
+      name: "raw JSON Schema",
+      schema: {
+        type: "object",
+        required: ["scope"],
+        properties: { scope: { type: "string", enum: ["sort_first"] } },
+      },
+      issuePath: ["schema", "schemaVersion"],
+    },
+    {
+      name: "unsupported form version",
+      schema: { schemaVersion: 2, fields: [] },
+      issuePath: ["schema", "schemaVersion"],
+    },
+    {
+      name: "unknown field type",
+      schema: {
+        schemaVersion: 1,
+        fields: [{ name: "scope", type: "secret-value-not-for-diagnostics" }],
+      },
+      issuePath: ["schema", "fields", 0, "type"],
+    },
+  ])(
+    "refuses $name in both the advertised input and HTTP without persisting a question",
+    async ({ schema: form, issuePath }) => {
+      const seeded = await seed();
+      const input = { question: "Choose the delivery scope", schema: form };
+      const validate = new Ajv({ strict: false }).compile(
+        TOOL_SPECS.ask_human.inputSchema,
+      );
+
+      expect(
+        validate({ slug: seeded.slug, taskId: seeded.taskId, ...input }),
+      ).toBe(false);
+      const response = await POST(request(seeded.token, input), params(seeded));
+      const failure = await response.json();
+
+      expect(response.status).toBe(422);
+      expect(failure).toMatchObject({
+        code: "CONFIG",
+        details: {
+          reason: "human_ask_body_invalid",
+          format: "form_schema_v1",
+          issues: expect.arrayContaining([
+            expect.objectContaining({ path: issuePath }),
+          ]),
+        },
+      });
+      expect(failure.message).toContain("MAIster form schema");
+      expect(JSON.stringify(failure)).not.toContain(
+        "secret-value-not-for-diagnostics",
+      );
+      expect(
+        await database
+          .select({ id: schema.hitlRequests.id })
+          .from(schema.hitlRequests)
+          .where(eq(schema.hitlRequests.runId, seeded.runId)),
+      ).toEqual([]);
+      const [source] = await database
+        .select({ status: schema.runs.status })
+        .from(schema.runs)
+        .where(eq(schema.runs.id, seeded.runId));
+
+      expect(source.status).toBe("Running");
+      expect(supervisor.listSessions).not.toHaveBeenCalled();
+    },
+  );
+
   it("rejects an attached agent token without hitl:request before it can persist an existence-bearing request", async () => {
     const seeded = await seed();
 

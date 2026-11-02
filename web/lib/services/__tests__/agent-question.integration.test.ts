@@ -15,6 +15,7 @@ import {
   recoverPendingAgentQuestions,
 } from "@/lib/services/agent-question";
 import { respondToHitl } from "@/lib/services/hitl";
+import { validateHitlResponse } from "@/lib/flows/hitl-validate";
 import {
   createFakeExecutionHost,
   fakeExecutionHosts,
@@ -812,18 +813,21 @@ describe("agent-question lifecycle (ADR-136, integration)", () => {
     ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
   });
 
-  it("answers atomically, supersedes siblings, emits one directed event, and replays safely", async () => {
+  it("accepts a custom answer atomically, supersedes siblings, emits one directed event, and replays safely", async () => {
     const seeded = await seed();
     const winner = await activateQuestion(seeded);
     const sibling = await createSiblingQuestion(
       seeded,
       "Which region should receive the deployment?",
     );
-    const response = { target: "staging" };
+    const response = {
+      target:
+        "Нужно доработать доску: конфигурировать фильтры и сортировку прямо на доске с разными параметрами.",
+    };
     let auditCount = 0;
     const actor = {
       kind: "user" as const,
-      userId: "human-ask-responder",
+      userId: `human-ask-responder-${randomUUID()}`,
       label: "Human responder",
       preauthorizedProjectId: seeded.projectId,
     };
@@ -835,6 +839,10 @@ describe("agent-question lifecycle (ADR-136, integration)", () => {
       .where(eq(schema.runs.id, seeded.runId));
 
     const beforeAnswer = await maxEventId();
+
+    expect(validateHitlResponse(response, input(seeded).schema)).toMatchObject({
+      ok: false,
+    });
     const first = await respondToHitl(
       {
         runId: seeded.runId,
@@ -905,7 +913,10 @@ describe("agent-question lifecycle (ADR-136, integration)", () => {
       .from(schema.runs)
       .where(eq(schema.runs.id, seeded.runId));
 
-    expect(answered).toMatchObject({ response, respondedAt: expect.any(Date) });
+    expect(answered).toMatchObject({
+      response,
+      respondedAt: expect.any(Date),
+    });
     expect(answeredClarification).toEqual({
       answer: response,
       answeredByUserId: actor.userId,
@@ -965,6 +976,106 @@ describe("agent-question lifecycle (ADR-136, integration)", () => {
       ),
     ).rejects.toMatchObject({ code: "CONFLICT" });
   });
+
+  it.each([
+    {},
+    { target: "" },
+    { target: "   " },
+    { target: 42 },
+    { matrix: [[{ answer: "   " }]] },
+  ])(
+    "does not complete an empty or wrongly typed clarification answer %j",
+    async (response) => {
+      const seeded = await seed();
+      const question =
+        "matrix" in response
+          ? await createOrActivateAgentQuestion(
+              {
+                ...input(seeded),
+                schema: {
+                  schemaVersion: 1,
+                  fields: [
+                    {
+                      name: "matrix",
+                      type: "array",
+                      required: true,
+                      items: {
+                        type: "array",
+                        items: {
+                          type: "object",
+                          fields: [
+                            { name: "answer", type: "string", required: true },
+                          ],
+                        },
+                      },
+                    },
+                  ],
+                },
+              },
+              { db, executionHosts: await hostsFor(seeded) },
+            )
+          : await activateQuestion(seeded);
+      const actor = {
+        kind: "user" as const,
+        userId: `invalid-human-ask-responder-${randomUUID()}`,
+        label: "Human responder",
+        preauthorizedProjectId: seeded.projectId,
+      };
+
+      await seedHumanUser(actor.userId);
+      const beforeAnswer = await maxEventId();
+
+      await expect(
+        respondToHitl(
+          {
+            runId: seeded.runId,
+            hitlRequestId: question.hitlRequestId,
+            body: { response },
+          },
+          actor,
+          { db },
+        ),
+      ).rejects.toMatchObject({
+        code: "NEEDS_INPUT",
+        ...("matrix" in response
+          ? {
+              details: {
+                reason: "agent_question_answer_empty",
+                field: "matrix[0][0].answer",
+              },
+            }
+          : {}),
+      });
+      const [request] = await db
+        .select()
+        .from(schema.hitlRequests)
+        .where(eq(schema.hitlRequests.id, question.hitlRequestId));
+      const [clarification] = await db
+        .select()
+        .from(schema.taskClarifications)
+        .where(
+          eq(
+            schema.taskClarifications.sourceHitlRequestId,
+            question.hitlRequestId,
+          ),
+        );
+      const events = await db
+        .select()
+        .from(schema.domainEvents)
+        .where(
+          and(
+            eq(schema.domainEvents.taskId, seeded.taskId),
+            gt(schema.domainEvents.id, beforeAnswer),
+          ),
+        );
+
+      expect(request.respondedAt).toBeNull();
+      expect(request.response).toBeNull();
+      expect(clarification.answeredAt).toBeNull();
+      expect(clarification.answer).toBeNull();
+      expect(events).toHaveLength(0);
+    },
+  );
 
   it("rolls back the answer, assignment, and event when its audit write fails", async () => {
     const seeded = await seed();

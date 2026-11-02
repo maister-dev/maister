@@ -78,7 +78,7 @@ export async function restResponseToToolError(res: Response): Promise<{
   return { isError, status, code, message };
 }
 
-export async function hitlRespondToolError(
+export async function structuredResponseToToolError(
   res: Response,
 ): Promise<ParsedUpstreamError> {
   return parseUpstreamError(res);

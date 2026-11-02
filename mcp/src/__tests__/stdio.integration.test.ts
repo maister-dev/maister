@@ -66,6 +66,24 @@ describe("MCP stdio wire contract", () => {
 
         return;
       }
+      if (req.url?.endsWith("/human-asks")) {
+        res.writeHead(422, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            code: "CONFIG",
+            message: "Use MAIster form schema, not JSON Schema",
+            details: {
+              reason: "human_ask_body_invalid",
+              format: "form_schema_v1",
+              issues: [
+                { path: ["schema", "schemaVersion"], code: "invalid_value" },
+              ],
+            },
+          }),
+        );
+
+        return;
+      }
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ triageStatus: "triaged" }));
     });
@@ -248,6 +266,36 @@ describe("MCP stdio wire contract", () => {
           code: "CONFLICT",
           message: "already owned",
           details: { reason: "permission_resume_in_flight" },
+        }),
+      },
+    ]);
+  });
+
+  it("preserves actionable Human-ask schema diagnostics through callTool", async () => {
+    const result = await client.callTool({
+      name: "ask_human",
+      arguments: {
+        slug: "demo",
+        taskId: "task-1",
+        question: "Which scope should delivery use?",
+        schema: { schemaVersion: 1, fields: [] },
+      },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content).toEqual([
+      {
+        type: "text",
+        text: JSON.stringify({
+          code: "CONFIG",
+          message: "Use MAIster form schema, not JSON Schema",
+          details: {
+            reason: "human_ask_body_invalid",
+            format: "form_schema_v1",
+            issues: [
+              { path: ["schema", "schemaVersion"], code: "invalid_value" },
+            ],
+          },
         }),
       },
     ]);
