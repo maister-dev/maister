@@ -612,7 +612,7 @@ flowchart TD
 ```
 
 
-## Scheduled request input (Designed)
+## Scheduled request input (Implemented)
 
 Per-cron current input and immutable claim/run retention are specified in [scheduled agent requests](scheduled-agent-requests.md). Protected request bodies are stored separately from viewer-safe trigger telemetry; existing admission, completion and permission policies remain authoritative.
 

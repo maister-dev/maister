@@ -68,6 +68,22 @@ The same edit dialog owns the effective trigger bindings:
 The **Project → Automations** tab shows timing and the latest safe outcome for
 cron and event bindings. Return to **Project → Agents** to edit them.
 
+### Add a recurring request
+
+Each cron schedule has its own optional **Request at launch** field. For example:
+
+```text
+Check the project's open blockers and summarize changes since yesterday.
+```
+
+The request accompanies the agent's standing instructions; it does not change the reusable definition, permissions, human approvals or completion rules. Text is literal: placeholders are not expanded. Multiline and Unicode input are supported, up to 8000 characters after outer whitespace is trimmed and line endings are normalized.
+
+Save and reload to check the value. Clear the field and save to return to the usual instructions. Requests on other schedules stay independent. Editing or deleting a schedule affects future invocations; queued/running work, resume and eligible retry keep their original input.
+
+Inspect **History**, **Attempts** or the Run inspector to see the effective request. Repository-content access is required to read its text. Viewers see only its recorded state; older executions may say the request was not recorded.
+
+A direct cron launch of a subagent is unsupported. For an agent driving a Flow, every successful path must include an `ai_coding`, `judge` or `orchestrator` action. A Flow that can finish without one refuses a nonempty request; optional AI gates and consensus-only paths do not satisfy that rule. Empty requests preserve the existing behavior.
+
 ## 4. Test and inspect
 
 Launch the enabled attachment by hand. A standalone agent creates a normal Run

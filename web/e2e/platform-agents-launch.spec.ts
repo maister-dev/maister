@@ -195,7 +195,11 @@ test("E2E-SR-01 create, edit, clear and execute independent scheduled requests (
     await expect(fields).toHaveCount(2);
     await fieldA.fill("😀".repeat(8001));
     await expect(fieldA).toHaveAttribute("aria-invalid", "true");
-    await expect(page.getByRole("dialog").getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+    await expect(
+      page
+        .getByRole("dialog")
+        .getByRole("button", { name: "Save", exact: true }),
+    ).toBeDisabled();
     await fieldA.fill(requestA);
     await fieldB.fill(requestB);
     await save();
@@ -308,6 +312,11 @@ test("E2E-SR-01 create, edit, clear and execute independent scheduled requests (
       const hidden = await viewerPage.request.get(`${detailUrl}?tab=history`);
 
       expect(await hidden.text()).not.toContain("Scheduled browser request A");
+      const settingsUrl = `/projects/${fx.projectSlug}?tab=agents`;
+      const hiddenSettings = await viewerPage.request.get(settingsUrl);
+
+      expect(hiddenSettings.status()).toBe(200);
+      expect(await hiddenSettings.text()).not.toContain(requestB);
       expect(
         await (await viewerPage.request.get(`/runs/${runId}`)).text(),
       ).not.toContain("Scheduled browser request A");
@@ -352,6 +361,9 @@ test("E2E-SR-01 create, edit, clear and execute independent scheduled requests (
       expect(
         await (await viewerPage.request.get(`${detailUrl}?tab=history`)).text(),
       ).toContain("Scheduled browser request A");
+      expect(
+        await (await viewerPage.request.get(settingsUrl)).text(),
+      ).toContain(requestB);
       await withE2EDb((pool) =>
         pool.query(
           "UPDATE project_members SET role='viewer' WHERE project_id=$1 AND user_id=$2",
@@ -361,6 +373,9 @@ test("E2E-SR-01 create, edit, clear and execute independent scheduled requests (
       expect(
         await (await viewerPage.request.get(`${detailUrl}?tab=history`)).text(),
       ).not.toContain("Scheduled browser request A");
+      expect(
+        await (await viewerPage.request.get(settingsUrl)).text(),
+      ).not.toContain(requestB);
     } finally {
       await viewerContext.close();
       await withE2EDb((pool) =>

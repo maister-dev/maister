@@ -1120,14 +1120,32 @@ export async function launchAgentRun(
     ? cronEvidence.snapshot
     : parseScheduledRequestSnapshot(input.scheduledRequestSnapshot);
 
-  if (input.trigger.payload?.kind === "budget_restart") {
-    if (typeof input.trigger.payload.oldRunId !== "string")
+  const budgetRestart =
+    input.trigger.source === "manual" &&
+    input.trigger.payload?.kind === "budget_restart";
+
+  if (
+    scheduledRequestSnapshot &&
+    !cronEvidence &&
+    !input.retryClaim &&
+    input.trigger.source !== "cron" &&
+    !budgetRestart
+  ) {
+    throw new MaisterError(
+      "CONFIG",
+      "Scheduled request requires an authorized invocation source",
+    );
+  }
+  if (scheduledRequestSnapshot && budgetRestart) {
+    const sourceRunId = input.trigger.payload?.oldRunId;
+
+    if (typeof sourceRunId !== "string")
       throw new MaisterError(
         "PRECONDITION",
         "Budget restart source is missing",
       );
     const originalRequest = await loadAgentBudgetRestartRequest(_db, {
-      sourceRunId: input.trigger.payload.oldRunId,
+      sourceRunId,
       projectId: input.projectId,
       taskId: input.taskId ?? null,
       agentId: input.agentId,

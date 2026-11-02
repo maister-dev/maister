@@ -159,6 +159,8 @@ mode: session
 triggers:
   - manual
   - cron
+  - webhook
+  - domain_event
 risk_tier: read_only
 ${CONFIG_BLOCK}---
 Classify the task.
@@ -187,7 +189,7 @@ Classify the task.
 
   await pool.query(
     `INSERT INTO "agents" ("id", "package_name", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "config_schema", "source_path", "enabled")
-     VALUES ($1, 'aif', 'v1.0.0', 'git', 'Triager', 'd', 'none', 'session', '["manual"]'::jsonb, 'read_only', $2::jsonb, $3, true)`,
+     VALUES ($1, 'aif', 'v1.0.0', 'git', 'Triager', 'd', 'none', 'session', '["manual","cron","webhook","domain_event"]'::jsonb, 'read_only', $2::jsonb, $3, true)`,
     [
       agentId,
       JSON.stringify([
@@ -228,66 +230,81 @@ async function runAgentConfig(
 }
 
 describe("ADR-111 launch-time config snapshot", () => {
-  it("retains a claimed literal request through queued launch after schedule deletion", async () => {
+  it("retains independent claimed requests through queued launches after schedule deletion", async () => {
     const agentId = await seedTriager({ intake_mode: "triage_only" });
-    const scheduleId = randomUUID();
-    const request = "Check {{ literal }} and @capability tokens.\nПроверка 😀";
+    const requests = [
+      "Check {{ literal }} and @capability tokens.\nПроверка 😀",
+      "Prepare a separate recurring report.\nДругой запрос",
+    ];
     const now = new Date();
+    const schedules = requests.map((request) => ({
+      id: randomUUID(),
+      request,
+    }));
 
-    await pool.query(
-      "INSERT INTO agent_schedules(id,agent_id,project_id,trigger_type,cron_expr,timezone,next_fire_at,request_at_launch) VALUES($1,$2,$3,'cron','* * * * *','UTC',$4,$5)",
-      [scheduleId, agentId, projectId, now, request],
-    );
+    for (const { id: scheduleId, request } of schedules) {
+      await pool.query(
+        "INSERT INTO agent_schedules(id,agent_id,project_id,trigger_type,cron_expr,timezone,next_fire_at,request_at_launch) VALUES($1,$2,$3,'cron','* * * * *','UTC',$4,$5)",
+        [scheduleId, agentId, projectId, now, request],
+      );
+    }
     const { claimCronAgentAttempt } =
       await import("@/lib/agents/trigger-attempts");
-    const claim = (await claimCronAgentAttempt(
-      testDatabase.db,
-      scheduleId,
-      now,
-      new Date(now.getTime() + 60_000),
-    ))!;
+    for (const { id: scheduleId, request } of schedules) {
+      const claim = (await claimCronAgentAttempt(
+        testDatabase.db,
+        scheduleId,
+        now,
+        new Date(now.getTime() + 60_000),
+      ))!;
 
-    await pool.query("DELETE FROM agent_schedules WHERE id=$1", [scheduleId]);
-    const result = await launchAgentRun({
-      agentId,
-      projectId,
-      trigger: { source: "cron" },
-      agentScheduleId: scheduleId,
-      runId: claim.reservedRunId,
-      agentTriggerReservation: {
-        attemptId: claim.id,
+      await pool.query("DELETE FROM agent_schedules WHERE id=$1", [scheduleId]);
+      const result = await launchAgentRun({
+        agentId,
+        projectId,
+        trigger: { source: "cron" },
+        agentScheduleId: scheduleId,
         runId: claim.reservedRunId,
-      },
-      db,
-    });
+        agentTriggerReservation: {
+          attemptId: claim.id,
+          runId: claim.reservedRunId,
+        },
+        db,
+      });
 
-    expect(result).toMatchObject({
-      runId: claim.reservedRunId,
-      status: "Pending",
-    });
-    const row = (
-      await pool.query("SELECT * FROM runs WHERE id=$1", [claim.reservedRunId])
-    ).rows[0];
+      expect(result).toMatchObject({
+        runId: claim.reservedRunId,
+        status: "Pending",
+      });
+      const row = (
+        await pool.query("SELECT * FROM runs WHERE id=$1", [
+          claim.reservedRunId,
+        ])
+      ).rows[0];
 
-    expect(row.agent_schedule_id).toBeNull();
-    expect(row.scheduled_request_snapshot.requestAtLaunch).toBe(request);
-    const effective = await import("@/lib/agents/effective");
-    const definition = await effective.resolveEffectiveAgentDefinition(
-      { agentId, projectId },
-      db,
-    );
-    const prompt = await buildAgentPrompt(db, definition.parsed, {
-      ...row,
-      triggerSource: row.trigger_source,
-      scheduledRequestSnapshot: row.scheduled_request_snapshot,
-      agentConfig: row.agent_config,
-      projectId,
-    });
+      expect(row.agent_schedule_id).toBeNull();
+      expect(row.scheduled_request_snapshot.requestAtLaunch).toBe(request);
+      const effective = await import("@/lib/agents/effective");
+      const definition = await effective.resolveEffectiveAgentDefinition(
+        { agentId, projectId },
+        db,
+      );
+      const prompt = await buildAgentPrompt(db, definition.parsed, {
+        ...row,
+        triggerSource: row.trigger_source,
+        scheduledRequestSnapshot: row.scheduled_request_snapshot,
+        agentConfig: row.agent_config,
+        projectId,
+      });
 
-    expect(prompt).toContain("## Current request (scheduled invocation)");
-    expect(prompt).toContain(request);
-    expect(prompt).toContain("triage_only");
-    expect(prompt.split(request)).toHaveLength(2);
+      expect(prompt).toContain("## Current request (scheduled invocation)");
+      expect(prompt).toContain(request);
+      expect(prompt).toContain("triage_only");
+      expect(prompt.split(request)).toHaveLength(2);
+      expect(prompt).not.toContain(
+        requests.find((other) => other !== request)!,
+      );
+    }
   });
 
   it("IT-UX-13 settles a persisted run after actual workspace preparation fails", async () => {
@@ -910,3 +927,47 @@ describe("ADR-111 launch-time config snapshot", () => {
     expect(prompt).not.toContain("clarify");
   });
 });
+
+it.each(["manual", "domain_event", "webhook"] as const)(
+  "preserves ordinary %s payloads without interpreting scheduled input",
+  async (source) => {
+    const agentId = await seedTriager(null);
+    const payload = {
+      kind: "budget_restart",
+      requestAtLaunch: "ordinary payload data",
+    };
+    const launched = await launchAgentRun({
+      agentId,
+      projectId,
+      trigger: { source, payload },
+      db,
+    });
+
+    if (!("runId" in launched)) throw new Error("Expected ordinary launch");
+    const row = (
+      await pool.query(
+        "SELECT scheduled_request_snapshot,trigger_payload FROM runs WHERE id=$1",
+        [launched.runId],
+      )
+    ).rows[0];
+
+    expect(row).toEqual({
+      scheduled_request_snapshot: null,
+      trigger_payload: payload,
+    });
+    await expect(
+      launchAgentRun({
+        agentId,
+        projectId,
+        trigger: { source },
+        scheduledRequestSnapshot: {
+          version: 1,
+          scheduleId: randomUUID(),
+          triggerAttemptId: randomUUID(),
+          requestAtLaunch: "forged source",
+        },
+        db,
+      }),
+    ).rejects.toMatchObject({ code: "CONFIG" });
+  },
+);

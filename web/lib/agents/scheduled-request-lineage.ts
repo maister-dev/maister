@@ -23,7 +23,6 @@ export async function loadFlowScheduledRequestSource(
 ): Promise<{
   snapshot: ScheduledAgentRequestSnapshot;
   agentId: string;
-  executionPolicy: typeof runs.$inferSelect.executionPolicy;
 } | null> {
   const [source] = await db
     .select({
@@ -31,7 +30,6 @@ export async function loadFlowScheduledRequestSource(
       taskId: runs.taskId,
       runKind: runs.runKind,
       agentId: runs.agentId,
-      executionPolicy: runs.executionPolicy,
       snapshot: runs.scheduledRequestSnapshot,
     })
     .from(runs)
@@ -52,7 +50,6 @@ export async function loadFlowScheduledRequestSource(
   return {
     snapshot,
     agentId: source.agentId,
-    executionPolicy: source.executionPolicy,
   };
 }
 

@@ -233,3 +233,7 @@ Operational Runs use the canonical operational outcome projection. Acknowledge e
 ## Child Run peek (Implemented)
 
 Descendant entries open the [read-only peek](child-run-peek.md); interactive actions require the full selected Run.
+
+## Scheduled request evidence
+
+For a request-bearing agent or agent-driven Flow run, the inspector shows a plain-text Scheduled request disclosure to readers with readRepoFiles. It loads the immutable run envelope separately after live project authorization; the shared getRunDetail cache and public result DTO remain body-free. It shows the claimed request even after schedule edits/deletion and across authorized successors. See the [input lifecycle](../../system-analytics/scheduled-agent-requests.md).

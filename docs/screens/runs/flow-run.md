@@ -531,3 +531,7 @@ page.
 ## Child Run peek (Implemented)
 
 Descendant entries open the [read-only peek](child-run-peek.md); interactive actions require the full selected Run.
+
+## Scheduled agent input
+
+An agent-driven cron run retains its claimed request independently of task.prompt. Request-bearing Flow admission pins the checked revision and refuses any graph with a successful path that avoids a primary AI action. Supported node, AI-gate and consensus prompts receive literal input after ordinary rendering; permission-resume prompts and owned replay keep their existing contract. Execution history and the inspector expose the original text only with readRepoFiles, through the [scheduled input contract](../../system-analytics/scheduled-agent-requests.md).

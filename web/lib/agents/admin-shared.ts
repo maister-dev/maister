@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import pino from "pino";
 
 import { isMaisterError } from "@/lib/errors";
+import { pgErrorOf } from "@/lib/db/pg-error";
 import { agentDefinitionArtifactPath } from "@/lib/agents/definition";
 
 const log = pino({
@@ -40,7 +41,11 @@ export function agentsErrorResponse(err: unknown): NextResponse {
   }
 
   log.error(
-    { err: err instanceof Error ? err.message : String(err) },
+    {
+      errorType: err instanceof Error ? err.name : typeof err,
+      sqlState: pgErrorOf(err)?.code,
+      constraint: pgErrorOf(err)?.constraint,
+    },
     "agents admin API error",
   );
 

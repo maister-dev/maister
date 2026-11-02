@@ -33,6 +33,7 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import { expandExecutionPolicy } from "@/lib/runs/execution-policy";
 
 const exec = promisify(execFile);
 
@@ -720,7 +721,7 @@ describe("scheduled request successor lineage", () => {
       );
       const row = (
         await pool.query(
-          "SELECT agent_id,source_agent_id,scheduled_request_snapshot FROM runs WHERE id=$1",
+          "SELECT agent_id,source_agent_id,scheduled_request_snapshot,execution_policy FROM runs WHERE id=$1",
           [successor.runId],
         )
       ).rows[0];
@@ -728,6 +729,10 @@ describe("scheduled request successor lineage", () => {
       expect(row.scheduled_request_snapshot).toEqual(snapshot);
       expect(row.agent_id).toBe("pkg:driver");
       expect(row.source_agent_id).toBe("pkg:driver");
+      expect(expandExecutionPolicy(row.execution_policy)).toMatchObject({
+        permissions: "ask",
+        humanGate: "stop",
+      });
       const { loadFlowScheduledRequestSource } =
         await import("@/lib/agents/scheduled-request-lineage");
 
@@ -760,4 +765,27 @@ describe("scheduled request successor lineage", () => {
       });
     },
   );
+});
+
+it("keeps ordinary Flow event payloads separate from authorized scheduled lineage", async () => {
+  const launched = await launchAgentRun({
+    agentId: "pkg:driver",
+    projectId,
+    trigger: {
+      source: "domain_event",
+      payload: { kind: "budget_restart", oldRunId: "ordinary-event-data" },
+    },
+    db,
+  });
+
+  if (!("runId" in launched))
+    throw new Error("Expected event-driven Flow launch");
+  expect(
+    (
+      await pool.query(
+        "SELECT scheduled_request_snapshot FROM runs WHERE id=$1",
+        [launched.runId],
+      )
+    ).rows[0].scheduled_request_snapshot,
+  ).toBeNull();
 });

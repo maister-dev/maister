@@ -642,13 +642,15 @@ export async function* launchRunStaged(
   // callers without project access. AuthzError propagates untouched.
   await ctx.authorize(project.id);
   const inheritanceSource = membershipSourceForLaunch(input);
-  const inheritedRequest = inheritanceSource
-    ? await loadFlowScheduledRequestSource(_db as unknown as ExecutionDb, {
-        sourceRunId: inheritanceSource.sourceRunId,
-        projectId: project.id,
-        taskId: task.id,
-      })
-    : null;
+  const inheritedRequest =
+    inheritanceSource &&
+    (input.relaunchOfRunId || (input.triggerSource ?? "manual") === "manual")
+      ? await loadFlowScheduledRequestSource(_db as unknown as ExecutionDb, {
+          sourceRunId: inheritanceSource.sourceRunId,
+          projectId: project.id,
+          taskId: task.id,
+        })
+      : null;
 
   if (
     inheritedRequest &&
@@ -689,8 +691,7 @@ export async function* launchRunStaged(
   // behind the privileged action. Snapshotted onto runs.execution_policy below;
   // resume/recover read the snapshot, never re-resolve.
   const basePolicy = resolveExecutionPolicy({
-    launchOverride:
-      input.executionPolicy ?? inheritedRequest?.executionPolicy ?? null,
+    launchOverride: input.executionPolicy ?? null,
     taskDefault: (task.executionPolicy as ExecutionPolicy | null) ?? null,
     projectDefault:
       (project.executionPolicyDefault as ExecutionPolicy | null) ?? null,
@@ -750,6 +751,17 @@ export async function* launchRunStaged(
     ? cronEvidence.snapshot
     : (inheritedRequest?.snapshot ??
       parseScheduledRequestSnapshot(input.scheduledRequestSnapshot));
+
+  if (
+    scheduledRequestSnapshot &&
+    !cronEvidence &&
+    !inheritedRequest &&
+    !(input.triggerSource === "cron" && agentId)
+  )
+    throw new MaisterError(
+      "CONFIG",
+      "Scheduled request requires an authorized invocation source",
+    );
 
   // ADR-146 D15: a relaunch/budget-restart of a LAUNCHED evaluation participant
   // mints a

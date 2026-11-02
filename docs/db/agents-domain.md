@@ -236,7 +236,7 @@ The `kind` and `completion_contract` definition columns default to code delivery
 
 New activity/incident/attempt/retry fields are owned by [agent activity persistence](agent-activity-domain.md); qualification by [task qualification persistence](task-qualification-domain.md). Existing schema above remains authoritative until the additive migration lands.
 
-## Scheduled agent request input (Designed)
+## Scheduled agent request input (Implemented)
 
 The [owning input contract](../system-analytics/scheduled-agent-requests.md) defines normalization, claim serialization, authorized successor inheritance and release/rollback constraints.
 

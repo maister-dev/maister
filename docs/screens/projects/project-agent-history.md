@@ -62,3 +62,9 @@ current-task reassessment and any legacy-task qualification opt-in. See the
 - [Behavior](../../system-analytics/agent-activity-history.md)
 - [Web API](../../api/web.openapi.yaml)
 - [Screen index](../README.md)
+
+## Scheduled request evidence
+
+Run and attempt rows show the safe recorded state. A live readRepoFiles grant reveals a plain-text **Scheduled request / Запрос по расписанию** disclosure with the frozen invocation input. Captured-empty and legacy-unrecorded states are distinct. Viewers receive no raw envelope in HTML, RSC props or history JSON; role changes are checked on each request. Attempts without a run retain their input too. Detaching/deleting the agent or editing/deleting its schedule does not rewrite the retained text.
+
+The [input lifecycle](../../system-analytics/scheduled-agent-requests.md) owns normalization, lineage and retention rules.

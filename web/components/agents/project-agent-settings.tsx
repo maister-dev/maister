@@ -21,6 +21,7 @@ export async function ProjectAgentSettings({
   return (
     <ProjectAgentsPanel
       canManage
+      canReadRepoFiles
       agentId={agentId}
       mcpRequirements={hub.requirements}
       projectId={projectId}

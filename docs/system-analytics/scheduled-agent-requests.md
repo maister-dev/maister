@@ -1,6 +1,6 @@
 # Scheduled requests for platform agents
 
-**Status: Designed.** No request-bearing runtime is enabled until the compatible migration and complete runtime are deployed.
+**Status: Implemented.** Request-bearing writes require the compatible migration and complete runtime on every worker; follow the release and rollback procedure below.
 
 ## Purpose
 
@@ -71,9 +71,9 @@ flowchart TD
 
 Public schedule property: `requestAtLaunch?: string | null`; persisted column: `agent_schedules.request_at_launch text NULL DEFAULT NULL`.
 
-Use one client-safe typed normalization/validation helper, proposed `web/lib/agents/scheduled-request.ts`, with separate single-purpose functions for normalization, validation, snapshot parsing and request-block formatting. No mode flags, framework/service imports or mutable parameters. Reuse it at UI/domain boundaries without duplicating constants. Server validation is authoritative.
+Use the client-safe `web/lib/agents/scheduled-request.ts` helper for normalization/validation, snapshot parsing and request-block formatting through single-purpose functions. No mode flags, framework/service imports or mutable parameters. Reuse it at UI/domain boundaries without duplicating constants. Server validation is authoritative.
 
-Return typed validation reasons from the pure helper; HTTP/domain boundaries translate them to `MaisterError("CONFIG")`, while client code uses existing client-safe error/feedback conventions. Do not import server-only errors/db/config into the textarea. Normalization is idempotent. `trim()` removes outer whitespace, including indentation at the very start/end; only interior indentation is promised to survive. Unsupported characters are rejected even in otherwise whitespace-only input.
+The pure helper throws client-safe `MaisterError("CONFIG")` with content-free validation messages; HTTP/domain boundaries preserve the code, while client feedback uses localized validation and length messages. Do not import server-only errors/db/config into the textarea. Normalization is idempotent. `trim()` removes outer whitespace, including indentation at the very start/end; only interior indentation is promised to survive. Unsupported characters are rejected even in otherwise whitespace-only input.
 
 1. Normalize CRLF and lone CR to LF, then apply ECMAScript `trim()` to outer whitespace. Preserve internal newlines, spacing, indentation, Unicode and combining sequences; do not apply NFC/NFKC or template expansion.
 2. Normalized empty text becomes null. No request section is appended for null, preserving the existing cron prompt.
@@ -228,13 +228,30 @@ EN label: **Request at launch**. Help: “Optional request for each invocation o
 
 - Existing rows: all three added columns nullable/default NULL; no request inferred, no historical snapshot fabricated. Existing prompts and other triggers remain byte-equivalent when no current-request block applies.
 - Old clients: omitted per-row field preserves existing request for retained IDs; explicit null clears. Strict older servers cannot accept the field, so deploy server support before exposing the editor. Existing-row migration preserves scheduling cadence, IDs, revisions, attempts and evidence.
-- Retry recipe compatibility: add optional frozen snapshot only when present; absent means legacy null. Preserve canonical serialization/digest of already persisted version-1 recipes exactly. Do not rewrite pending recipe hashes; test reading/delivering pre-upgrade intents and new request-bearing intents. If implementation cannot preserve that wire invariant, Phase 0 must specify a versioned recipe upgrade before coding.
+- Retry recipe compatibility: add optional frozen snapshot only when present; absent means legacy null. Preserve canonical serialization/digest of already persisted version-1 recipes exactly. Do not rewrite pending recipe hashes; test reading/delivering pre-upgrade intents and new request-bearing intents. Version-1 recipes without the new property retain their original serialized shape and digest.
 - Digest compatibility includes both recipe bytes and retry contextDigest: for a legacy source with SQL NULL snapshot, omit the new property from every hash input, rather than adding a null-valued key. For a new envelope (including captured-empty), include the canonical full snapshot in context/recipe equality. Same source request and reordered JSON object keys compare equal; changed input under the same used identity conflicts. A current schedule edit must not invalidate a retry preview of an unchanged source run.
-- Numbering observed locally: latest ADR 198; latest migration journal idx/tag 209/0209_task_qualification_capability. **Candidate** next identifiers are ADR-199 and 0210_scheduled_agent_requests, not a reservation claim. Phase 0 rechecks integration/master HEAD, creates the real ADR hub+record reservation and allocates migration number; no dangling ADR links in this plan.
+- Allocated records: ADR-199 and migration 0210_scheduled_agent_requests. Recheck allocation against integration HEAD before merging; never renumber an applied migration or a published ADR.
 - Additive migration package: Drizzle schema, new SQL, journal entry and matching snapshot. Trigger/CHECK SQL belongs to the new migration, never edits applied migrations. Validate schema↔snapshot↔SQL and generated ERD; fresh DB and populated upgrade DB must both pass. Budget a post-rebase numbering/conflict pass before merge; never renumber published ADRs or applied migrations.
 - Release order: enter existing upgrade/admission maintenance; quiesce old scheduler/queue/retry workers and settings writes; apply additive migration; deploy all new web workers/readers/dispatchers; run migration/legacy and request-bearing smoke checks; expose new editor/API writes and release maintenance. Supervisor API is unchanged: existing immutable prompt/command envelope carries delivered text. No new deployment wiring is needed.
 - No mixed old/new claimers after requests are enabled: old binaries cannot honor input snapshots. An additive DB alone does not make mixed operation safe. Existing pre-upgrade NULL claims/runs keep legacy behavior; do not infer text for them after deploy.
 - Rollback keeps added columns and evidence. Before old runtime admission, disable request-bearing schedules and finish/cancel request-bearing Pending/active/continuation/retry work with the new runtime; schedule disable alone does not drain Pending runs. If such work cannot safely settle, keep the compatible runtime and admission maintenance; do not run old workers that silently ignore input. Restore request-aware UI/history when returning to the new release. No down-migration/drop or evidence rewriting.
+
+## Enforcement owners
+
+| Boundary                                                         | Source                                                                                                          |
+| ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Normalization, literal framing, strict envelope                  | `web/lib/agents/scheduled-request.ts`                                                                           |
+| Per-binding replacement, omitted/clear semantics and mode checks | `web/lib/agents/project-links.ts`                                                                               |
+| Atomic claim and locked receipt equality                         | `web/lib/agents/trigger-attempts.ts`                                                                            |
+| Reservation identity and deletion-safe navigation FK             | `web/lib/agents/scheduled-request-store.ts`                                                                     |
+| Flow consumer reachability and pinned revision preflight         | `web/lib/agents/scheduled-request-flow.ts`, `web/lib/services/runs.ts`                                          |
+| Authorized successor derivation                                  | `web/lib/agents/scheduled-request-lineage.ts`, `retry-preparation.ts`, `retry-ownership.ts`, `services/hitl.ts` |
+| Standalone and retained owned prompts                            | `web/lib/agents/launch.ts`                                                                                      |
+| Flow action/gate/consensus input and matching evidence digest    | `web/lib/flows/runner-agent.ts`, `graph/runner-graph.ts`, `graph/gates-exec.ts`, `graph/consensus/runtime.ts`   |
+| Safe states and scoped protected hydration                       | `web/lib/agents/activity-queries.ts`, activity routes and SSR page                                              |
+| Immutable SQL evidence                                           | migration `0210_scheduled_agent_requests.sql`                                                                   |
+
+Trigger payload keys do not establish scheduled lineage. Ordinary manual, event and webhook payloads retain their existing meaning; only the explicit internal input contract carries a protected envelope. Source derivation checks project/task/agent ownership, and origin equality includes captured-empty envelopes. Malformed or conflicting evidence is refused rather than reconstructed from a live schedule.
 
 ## Expectations
 
@@ -247,7 +264,7 @@ EN label: **Request at launch**. Help: “Optional request for each invocation o
 - Every supported fresh prompt MUST receive literal current input exactly once through the shared formatter and mode gates.
 - Resume/replay MUST use retained owned input, enforced by existing turn and command ownership.
 - Retry/restart MUST inherit only authorized source input and preserve legacy recipe digests through source derivation and canonical equality.
-- Raw request input MUST require live readRepoFiles before hydration/serialization through protected loaders.
+- Raw request input MUST require live readRepoFiles before hydration/serialization through protected loaders, including both API history pages, SSR history/attempts, project Agents client props and execution details.
 - Request text MUST NOT participate in permission, approval or completion-policy resolution, verified at the existing policy and actual permission seams.
 - Legacy/noncron behavior and retention MUST remain unchanged through nullable defaults and owning regression suites.
 
@@ -257,7 +274,7 @@ EN label: **Request at launch**. Help: “Optional request for each invocation o
 - Stale revision, foreign schedule or changed payload under used identity: CONFLICT before effects.
 - Deleted schedule: retain original input and insert a null navigation FK; no schedule-only launch refusal.
 - Revoked project/attachment/trust authority: existing admission refusal with immutable input retained.
-- Missing run after claim: unknown evidence through existing grace recovery; never redispatch uncertain external effects.
+- Missing run after claim: unknown evidence through existing grace recovery; never redispatch uncertain external effects. A conflicting run snapshot refuses CONFLICT under the settlement lock, retains the attempt unchanged and logs only scoped IDs/code. Claim persistence failures retain safe SQLSTATE/constraint metadata without propagating query parameters into scheduler diagnostics; cron/settings failure logs exclude raw provider/database messages.
 - Required permission: ordinary HITL and explicit deferred settlement; no request-derived automatic approval.
 
 ## Linked artifacts

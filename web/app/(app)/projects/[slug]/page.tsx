@@ -811,6 +811,7 @@ export default async function ProjectBoardPage({
       {tab === "agents" ? (
         <AgentsAttachPanelLoader
           canManage={isAdmin}
+          canReadRepoFiles={canReadRepoFiles}
           mcpRequirements={mcpHub.requirements}
           projectId={project.id}
           runners={pageData.runners

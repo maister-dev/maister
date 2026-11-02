@@ -78,7 +78,7 @@ insert-only on replay; normal publication updates the observed baseline even
 when no external notification is warranted. See the notification owner contract
 in [agent incidents](../system-analytics/agent-incidents.md).
 
-## Scheduled agent request input (Designed)
+## Scheduled agent request input (Implemented)
 
 The [owning input contract](../system-analytics/scheduled-agent-requests.md) defines normalization, claim serialization, authorized successor inheritance and release/rollback constraints.
 
