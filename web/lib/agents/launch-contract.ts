@@ -25,9 +25,17 @@ Perform the requested operation with the existing permission and isolation polic
 End the completing turn with exactly one fenced json maister:output object:
 {"schemaVersion":1,"outcome":"success","summary":"Complete scan; no new work.","coverage":{"state":"complete","remainingKnown":0},"counts":{"scanned":0,"attempted":0,"completed":0,"failed":0,"skipped":0,"created":0},"references":[],"diagnostics":[]}
 Allowed outcomes: success, partial, blocked, failed. Counts are nonnegative safe integers counting distinct work items: attempted=completed+failed; attempted+skipped<=scanned; created<=attempted. A confirmed creation followed by failed receipt may have created=1,completed=0,failed=1. Include each confirmed task ID. Unknown writes require reconciliation before retry, never claim them as creations.
-Coverage state is complete, incomplete or not_started. remainingKnown is null when unknown; complete requires 0. Success requires complete coverage, no failed work, error diagnostic or unresolved effect. A complete zero-work scan succeeds. Partial requires confirmed progress and an incomplete/failed remainder. Blocked/failed require an actionable error diagnostic; HTTP 403 or retry exhaustion cannot be reported as success.
-References: {kind: task|external_issue|operation_receipt|other,id,state: confirmed|unresolved,url?: http/https without credentials}. Only confirmed receipts establish progress. Diagnostics: {code,severity: warning|error,operation,message,retryable,remediation,referenceIds?: string[],service?: string,httpStatus?: 100..599}. Preserve confirmed and unresolved effect references for diagnosis. No credentials, private paths or raw provider dumps.
+Coverage state is complete, incomplete or not_started. remainingKnown is null when unknown; complete requires 0. Complete coverage means the scan finished, not that its business operations succeeded. Success requires complete coverage, no failed work, error diagnostic or unresolved effect. A complete zero-work scan succeeds. Partial requires confirmed progress and an incomplete/failed remainder. Confirmed progress means completed>0 OR created>0 OR a confirmed operation_receipt. Count only work performed during this run. Verifying previously imported tasks or skipping existing tasks alone is not progress. A confirmed operation_receipt qualifies only for actual new work performed during this run; never relabel old verified or skipped receipts to manufacture progress. When all pending imports are held for reconciliation and no confirmed progress exists, report blocked with an actionable error diagnostic. Execution failure with no confirmed progress is failed. HTTP 403 or retry exhaustion cannot be reported as success.
+Example with no confirmed progress and four imports held for reconciliation:
+{"schemaVersion":1,"outcome":"blocked","summary":"Imports require reconciliation.","coverage":{"state":"complete","remainingKnown":0},"counts":{"scanned":18,"attempted":4,"completed":0,"failed":4,"skipped":14,"created":0},"references":[{"kind":"external_issue","id":"github:owner/repo#1","state":"unresolved"},{"kind":"external_issue","id":"github:owner/repo#2","state":"unresolved"},{"kind":"external_issue","id":"github:owner/repo#3","state":"unresolved"},{"kind":"external_issue","id":"github:owner/repo#4","state":"unresolved"}],"diagnostics":[{"code":"IMPORT_RECONCILIATION_REQUIRED","severity":"error","operation":"github_issue_import","message":"Four imports are held pending reconciliation.","retryable":false,"remediation":"Reconcile the four referenced imports before retrying.","referenceIds":["github:owner/repo#1","github:owner/repo#2","github:owner/repo#3","github:owner/repo#4"]}]}
+References: {kind: task|external_issue|operation_receipt|other,id,state: confirmed|unresolved,url?: http/https without credentials}. A confirmed reference establishes progress only when kind=operation_receipt; confirmed task/external_issue/other references alone do not. Diagnostics: {code,severity: warning|error,operation,message,retryable,remediation,referenceIds?: string[],service?: string,httpStatus?: 100..599}. Blocked/failed require an actionable error diagnostic. Preserve confirmed and unresolved effect references for diagnosis. No credentials, private paths or raw provider dumps.
 Use only these fields. summary/message/remediation<=2000 characters; IDs<=512; URLs<=2048; code<=128; operation/service<=256; references<=1000; diagnostics<=100. The platform validates both the result and source integrity. Prose or process exit cannot establish business success.`;
+
+// Preserve exact supported snapshots across instruction-only revisions of v1.
+const SUPPORTED_V1_DIGESTS: readonly string[] = [
+  "8c83781c8f59b78bd73d55484f82bfb1d2c905635dda645b3c09ff97e7e82cc6",
+  "29aabe79a069790492a8e2cb89b1cec5f6ec4afa0573fb155b21506dc29c7319",
+];
 
 function schemaDigest(
   schema: OperationalContract["schema"],
@@ -98,7 +106,9 @@ export function frozenOperationalDefinition(
     contract.semanticVersion !== 1 ||
     contract.sha256 !==
       schemaDigest(contract.schema, contract.promptAppendix) ||
-    contract.sha256 !== schemaDigest(OPERATIONAL_FORM_SCHEMA, APPENDIX) ||
+    contract.sha256 !==
+      schemaDigest(OPERATIONAL_FORM_SCHEMA, contract.promptAppendix) ||
+    !SUPPORTED_V1_DIGESTS.includes(contract.sha256) ||
     contract.definition?.kind !== "operational" ||
     contract.definition.completion?.contract !== "operational_v1" ||
     contract.provenance?.definitionSha256 !==

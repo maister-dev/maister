@@ -5893,6 +5893,100 @@
     "zeroWork": "Operation completed successfully; no new work.",
     "awaitingResult": "Waiting for the structured operation result.",
     "invalidResult": "The required result is missing or invalid. Inspect execution evidence before starting a new attempt.",
+    "validation": {
+      "title": "Result validation",
+      "field": "Field",
+      "rules": {
+        "result_missing": {
+          "message": "The required structured result is missing.",
+          "remediation": "Emit the required json maister:output block with the complete operational_v1 result."
+        },
+        "malformed_json": {
+          "message": "The structured result is not valid JSON.",
+          "remediation": "Correct the JSON syntax and emit one complete json maister:output block."
+        },
+        "oversize": {
+          "message": "The structured result exceeds the output limit.",
+          "remediation": "Reduce the result size; keep detailed execution evidence outside the structured result."
+        },
+        "unsupported_version": {
+          "message": "The operational contract version is unsupported.",
+          "remediation": "Use the semantic version pinned in this run's launch contract."
+        },
+        "field_required": {
+          "message": "A required result field is missing.",
+          "remediation": "Include every required field in the operational_v1 result."
+        },
+        "invalid_type": {
+          "message": "A result field has the wrong type.",
+          "remediation": "Use the field type defined by operational_v1; counts must be nonnegative safe integers."
+        },
+        "invalid_value": {
+          "message": "A result field has an invalid value.",
+          "remediation": "Use the permitted enum, range, length and URL format defined by operational_v1."
+        },
+        "unknown_fields": {
+          "message": "The result contains unsupported fields.",
+          "remediation": "Remove undeclared fields from this object; use only the operational_v1 schema."
+        },
+        "invalid_structure": {
+          "message": "The result violates structural safety limits.",
+          "remediation": "Use a JSON object within the size, nesting, key and array limits and remove unsafe keys."
+        },
+        "attempted_count_mismatch": {
+          "message": "Attempted must equal completed plus failed.",
+          "remediation": "Count each attempted operation as either completed or failed."
+        },
+        "scanned_count_exceeded": {
+          "message": "Attempted plus skipped exceeds scanned.",
+          "remediation": "Reconcile scan totals so every attempted or skipped item belongs to the scanned set."
+        },
+        "created_count_exceeded": {
+          "message": "Created exceeds attempted.",
+          "remediation": "Count creation attempts in attempted and report only confirmed creations in created."
+        },
+        "complete_coverage_remaining": {
+          "message": "Complete coverage requires remainingKnown to be zero.",
+          "remediation": "Report incomplete coverage while known work remains or its amount is unknown."
+        },
+        "not_started_has_scanned": {
+          "message": "Not-started coverage cannot include scanned work.",
+          "remediation": "Use incomplete or complete coverage when work was scanned."
+        },
+        "duplicate_reference": {
+          "message": "Reference identities must be unique.",
+          "remediation": "Keep one reference per kind and id."
+        },
+        "undeclared_diagnostic_reference": {
+          "message": "A diagnostic refers to an undeclared reference.",
+          "remediation": "Declare every referenced id in references or remove the invalid diagnostic link."
+        },
+        "success_inconsistent": {
+          "message": "Success requires complete coverage without failed work, errors or unresolved effects.",
+          "remediation": "Reconcile outstanding effects and errors, or report partial, blocked or failed as appropriate."
+        },
+        "partial_requires_progress": {
+          "message": "Partial completion requires confirmed progress.",
+          "remediation": "If nothing completed and no effect was confirmed, report blocked or failed with an actionable error diagnostic."
+        },
+        "partial_requires_incomplete_work": {
+          "message": "Partial completion requires incomplete or failed work.",
+          "remediation": "Report success when coverage is complete and no errors, failed work or unresolved effects remain."
+        },
+        "error_diagnostic_required": {
+          "message": "Blocked or failed outcomes require an actionable error diagnostic.",
+          "remediation": "Include an error diagnostic naming the operation, failure and concrete remediation."
+        },
+        "failed_work_requires_error": {
+          "message": "Failed work requires an actionable error diagnostic.",
+          "remediation": "Describe the failed operation and a concrete remediation in an error diagnostic."
+        },
+        "creation_reference_missing": {
+          "message": "Confirmed creations require confirmed references.",
+          "remediation": "Add a confirmed reference for every creation or correct the created count."
+        }
+      }
+    },
     "remediation": "Next step",
     "reasons": "Diagnostic codes",
     "integrity": "Source integrity",
@@ -5941,7 +6035,7 @@
     "flowPool": "Flow slots",
     "agentPool": "Agent slots",
     "workspaceAvailable": "Workspace retained",
-    "noWorkspace": "No delivery workspace",
+    "noWorkspace": "No retained workspace",
     "launchTimeUnavailable": "Launch time unavailable",
     "pendingInput": "{count, number} pending requests",
     "history": "History",

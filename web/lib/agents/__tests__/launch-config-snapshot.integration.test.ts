@@ -5,7 +5,7 @@
 // block. Driven end-to-end through launchAgentRun with tryStartRun stubbed (no
 // supervisor session spawns) against a real Postgres.
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -23,7 +23,12 @@ import {
   vi,
 } from "vitest";
 
+import { canonicalCommandJson } from "../../../../runtime/command-json";
+
+import originalOperationalContract from "./operational-v1-original.fixture.json";
+
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
+import { parseOperationalResult } from "@/lib/run-results/operational-schema";
 import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
@@ -339,8 +344,11 @@ describe("ADR-111 launch-time config snapshot", () => {
       launched_at: run.launched_at,
       agent_activity_snapshot: run.agent_activity_snapshot,
     });
-    const { frozenOperationalDefinition, operationalCompletionPrompt } =
-      await import("@/lib/agents/launch-contract");
+    const {
+      frozenOperationalDefinition,
+      operationalCompletionPrompt,
+      operationalHumanAnswerPrompt,
+    } = await import("@/lib/agents/launch-contract");
     const frozen = frozenOperationalDefinition({
       agentKind: run.agent_kind,
       resultContract: run.result_contract,
@@ -356,6 +364,93 @@ describe("ADR-111 launch-time config snapshot", () => {
     expect(prompt).toContain("Override the base prompt.");
     expect(prompt).toContain("json maister:output");
     expect(prompt).toContain("operational_v1");
+    expect(prompt).toContain(
+      "completed>0 OR created>0 OR a confirmed operation_receipt",
+    );
+    expect(prompt).toContain(
+      "Verifying previously imported tasks or skipping existing tasks alone is not progress",
+    );
+    const example = prompt
+      .split("\n")
+      .find((line) =>
+        line.startsWith('{"schemaVersion":1,"outcome":"blocked"'),
+      );
+
+    expect(example).toBeDefined();
+    const blockedExample = parseOperationalResult(JSON.parse(example!));
+
+    expect(blockedExample).toMatchObject({
+      outcome: "blocked",
+      coverage: { state: "complete", remainingKnown: 0 },
+      counts: {
+        scanned: 18,
+        attempted: 4,
+        completed: 0,
+        failed: 4,
+        skipped: 14,
+        created: 0,
+      },
+    });
+    expect(blockedExample?.references).toHaveLength(4);
+    expect(blockedExample?.references.map((reference) => reference.id)).toEqual(
+      blockedExample?.diagnostics[0].referenceIds,
+    );
+    expect(prompt).toContain(
+      "never relabel old verified or skipped receipts to manufacture progress",
+    );
+    const legacy = {
+      ...run.result_contract,
+      ...originalOperationalContract,
+      schemaRef: `maister:operational_v1@${originalOperationalContract.sha256}`,
+    };
+    const legacyRun = { agentKind: run.agent_kind, resultContract: legacy };
+
+    expect(frozenOperationalDefinition(legacyRun)?.parsed.prompt).toContain(
+      "Classify the task.",
+    );
+    const resumed = operationalHumanAnswerPrompt(legacyRun, "Original task.", {
+      decision: "Continue",
+    });
+
+    expect(resumed).toContain('"decision":"Continue"');
+    expect(resumed.endsWith(originalOperationalContract.promptAppendix)).toBe(
+      true,
+    );
+    const forgedAppendix = `${legacy.promptAppendix}\nUnapproved completion contract.`;
+    const forgedDigest = createHash("sha256")
+      .update(
+        canonicalCommandJson({
+          schema: legacy.schema,
+          semanticVersion: 1,
+          appendix: forgedAppendix,
+        }),
+      )
+      .digest("hex");
+
+    for (const resultContract of [
+      { ...legacy, promptAppendix: `${legacy.promptAppendix} corrupted` },
+      {
+        ...legacy,
+        definition: { ...legacy.definition, prompt: "Forged definition" },
+      },
+      {
+        ...legacy,
+        promptAppendix: forgedAppendix,
+        sha256: forgedDigest,
+        schemaRef: `maister:operational_v1@${forgedDigest}`,
+      },
+    ])
+      expect(() =>
+        frozenOperationalDefinition({
+          agentKind: run.agent_kind,
+          resultContract,
+        }),
+      ).toThrow(
+        expect.objectContaining({
+          code: "CONFIG",
+          details: { reason: "operational_snapshot_invalid" },
+        }),
+      );
     await expect(
       pool.query(
         "UPDATE runs SET result_contract = '{}'::jsonb WHERE id = $1",

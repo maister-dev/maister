@@ -71,6 +71,7 @@ import { reconcileAgentPermissionResume } from "@/lib/agents/permission-resume";
 import { sweepExpiredRuntimeObjects } from "@/lib/execution-host/runtime-object-retention";
 import { addDetachedWorktree } from "@/lib/worktree";
 import { gcAgeDays } from "@/lib/instance-config";
+import { loadOperationalOutcome } from "@/lib/run-results/operational-projection";
 import { readRuntimeObjectContent } from "@/lib/execution-host/runtime-objects";
 import { seedAgentRun } from "@/test-support/agent-run-seed";
 import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
@@ -227,6 +228,133 @@ async function seedUnstartedOperation() {
 const output = `\`\`\`json maister:output\n${JSON.stringify(operationalSuccessFixture())}\n\`\`\``;
 
 describe("operational disposition through existing lifecycle owners", () => {
+  it("retains safe validation rules through finalization and shared projection without publishing rejected results", async () => {
+    const partial = {
+      ...operationalSuccessFixture(),
+      outcome: "partial",
+      counts: {
+        scanned: 18,
+        attempted: 4,
+        completed: 0,
+        failed: 4,
+        skipped: 14,
+        created: 0,
+      },
+      references: [
+        { kind: "task", id: "existing-task", state: "confirmed" },
+        { kind: "external_issue", id: "existing-issue", state: "confirmed" },
+        {
+          kind: "operation_receipt",
+          id: "unconfirmed-effect",
+          state: "unresolved",
+        },
+      ],
+      diagnostics: [
+        {
+          code: "api_failure",
+          severity: "error",
+          operation: "import",
+          message: "Rejected secret payload",
+          retryable: false,
+          remediation: "Restore access.",
+        },
+      ],
+    };
+    const cases = [
+      {
+        text: `\`\`\`json maister:output\n${JSON.stringify(partial)}\n\`\`\``,
+        diagnostic: { code: "partial_requires_progress", path: "outcome" },
+      },
+      {
+        text: `\`\`\`json maister:output\n${JSON.stringify({ ...partial, counts: { ...partial.counts, completed: "private-token" } })}\n\`\`\``,
+        diagnostic: { code: "invalid_type", path: "counts.completed" },
+      },
+      {
+        text: `\`\`\`json maister:output\n${JSON.stringify({ ...partial, summary: undefined })}\n\`\`\``,
+        diagnostic: { code: "field_required", path: "summary" },
+      },
+      {
+        text: `\`\`\`json maister:output\n${JSON.stringify({ ...partial, outcome: undefined })}\n\`\`\``,
+        diagnostic: { code: "field_required", path: "outcome" },
+      },
+      {
+        text: `\`\`\`json maister:output\n${JSON.stringify({ ...partial, schemaVersion: 2 })}\n\`\`\``,
+        diagnostic: { code: "unsupported_version", path: "schemaVersion" },
+      },
+      {
+        text: `\`\`\`json maister:output\n${JSON.stringify({ ...partial, "private-token": "secret" })}\n\`\`\``,
+        diagnostic: { code: "unknown_fields", path: "$" },
+      },
+      { text: "No result", diagnostic: { code: "result_missing", path: "$" } },
+      {
+        text: "```json maister:output\n{private-token}\n```",
+        diagnostic: { code: "malformed_json", path: "$" },
+      },
+      {
+        text: `\`\`\`json maister:output\n${JSON.stringify({ ...partial, references: Array.from({ length: 30 }, () => ({ kind: "task", id: 42, state: "confirmed" })) })}\n\`\`\``,
+        diagnostic: { code: "invalid_type", path: "references[0].id" },
+        diagnosticCount: 20,
+      },
+    ];
+
+    for (const scenario of cases) {
+      const seeded = await seed("none");
+
+      await finalizeAgentRun(seeded.runId, "Done", {
+        db,
+        finalText: scenario.text,
+      });
+      const terminal = (await row(seeded.runId)).operationalTerminal;
+      const projected = await loadOperationalOutcome(db, seeded.runId);
+
+      expect(terminal).toMatchObject({
+        status: "Failed",
+        validation: "invalid",
+        validationDiagnostics: expect.arrayContaining([scenario.diagnostic]),
+      });
+      expect(projected).toMatchObject({
+        successful: false,
+        effectiveOutcome: "failed",
+        validation: "invalid",
+        reportedResult: null,
+        validationDiagnostics: terminal!.validationDiagnostics,
+      });
+      expect(JSON.stringify(terminal)).not.toMatch(
+        /private-token|Rejected secret payload|Restore access/,
+      );
+      expect(terminal!.validationDiagnostics!.length).toBeLessThanOrEqual(20);
+      if (scenario.diagnosticCount)
+        expect(terminal!.validationDiagnostics).toHaveLength(
+          scenario.diagnosticCount,
+        );
+    }
+    const legacy = await seed("none");
+
+    await db
+      .update(runs)
+      .set({
+        status: "Failed",
+        operationalTerminal: {
+          version: 1,
+          status: "Failed",
+          cause: "operational_result_invalid",
+          effectiveOutcome: "failed",
+          successful: false,
+          validation: "unchecked",
+          integrity: "clean",
+          baselineGeneration: 1,
+          resultRevision: null,
+          reasonCodes: ["result_missing"],
+          evidenceIds: [],
+        },
+      })
+      .where(eq(runs.id, legacy.runId));
+    expect(await loadOperationalOutcome(db, legacy.runId)).toMatchObject({
+      validation: "unchecked",
+      reportedResult: null,
+    });
+  });
+
   it("serializes cancellation with context creation and refuses effects after cancellation wins", async () => {
     const { runId, context } = await seedUnstartedOperation();
     let enter!: () => void;

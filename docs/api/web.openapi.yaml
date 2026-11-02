@@ -19645,6 +19645,42 @@ components:
           type: array
           items: { type: string }
           description: Opaque retained diagnostic object IDs, authorized through the run object-content endpoint.
+    OperationalValidationDiagnostic:
+      type: object
+      additionalProperties: false
+      required: [code, path]
+      description: Platform-owned validation detail. Contains no rejected values, unknown property names or raw provider/validator messages.
+      properties:
+        code:
+          type: string
+          enum:
+            - result_missing
+            - malformed_json
+            - oversize
+            - unsupported_version
+            - field_required
+            - invalid_type
+            - invalid_value
+            - unknown_fields
+            - invalid_structure
+            - attempted_count_mismatch
+            - scanned_count_exceeded
+            - created_count_exceeded
+            - complete_coverage_remaining
+            - not_started_has_scanned
+            - duplicate_reference
+            - undeclared_diagnostic_reference
+            - success_inconsistent
+            - partial_requires_progress
+            - partial_requires_incomplete_work
+            - error_diagnostic_required
+            - failed_work_requires_error
+            - creation_reference_missing
+        path:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: Canonical schema-known field path with numeric indices, or $ for the root.
     OperationalOutcome:
       type: object
       additionalProperties: false
@@ -19718,6 +19754,12 @@ components:
             - type: object
               nullable: true
               enum: [null]
+        validationDiagnostics:
+          type: array
+          maxItems: 20
+          description: Optional safe rule/path details for invalid output; absent on legacy receipts. Does not make rejected output usable.
+          items:
+            $ref: "#/components/schemas/OperationalValidationDiagnostic"
         referenceLinks:
           type: array
           description: Safe declared external links and server-resolved task links within the Run project. The reported result remains unchanged.

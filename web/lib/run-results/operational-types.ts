@@ -41,6 +41,36 @@ export type OperationalResultV1 = {
   diagnostics: OperationalDiagnostic[];
 };
 
+export type OperationalValidationCode =
+  | "result_missing"
+  | "malformed_json"
+  | "oversize"
+  | "unsupported_version"
+  | "field_required"
+  | "invalid_type"
+  | "invalid_value"
+  | "unknown_fields"
+  | "invalid_structure"
+  | "attempted_count_mismatch"
+  | "scanned_count_exceeded"
+  | "created_count_exceeded"
+  | "complete_coverage_remaining"
+  | "not_started_has_scanned"
+  | "duplicate_reference"
+  | "undeclared_diagnostic_reference"
+  | "success_inconsistent"
+  | "partial_requires_progress"
+  | "partial_requires_incomplete_work"
+  | "error_diagnostic_required"
+  | "failed_work_requires_error"
+  | "creation_reference_missing";
+
+/** At most 20 safe rules; paths contain only schema-known fields and indices. */
+export type OperationalValidationDiagnostic = {
+  code: OperationalValidationCode;
+  path: string;
+};
+
 export type OperationalIntegrityVerdict =
   "clean" | "changed" | "indeterminate" | "unchecked";
 export type OperationalResourceKind =
@@ -84,6 +114,7 @@ export type OperationalTerminal = {
   effectiveOutcome: OperationalResultV1["outcome"] | "cancelled" | "crashed";
   successful: boolean;
   validation: "valid" | "invalid" | "unchecked";
+  validationDiagnostics?: OperationalValidationDiagnostic[];
   integrity: OperationalIntegrityVerdict;
   baselineGeneration: number | null;
   resultRevision: number | null;
@@ -127,6 +158,7 @@ export type OperationalOutcome = {
   effectiveOutcome: OperationalTerminal["effectiveOutcome"] | null;
   successful: boolean;
   validation: "pending" | OperationalTerminal["validation"];
+  validationDiagnostics?: OperationalValidationDiagnostic[];
   integrity: "pending" | OperationalIntegrityVerdict;
   resultRevision: number | null;
   reportedResult: OperationalResultV1 | null;

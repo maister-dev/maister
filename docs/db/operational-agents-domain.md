@@ -60,6 +60,12 @@ receipt; cancellation/crash/launch failure receipts explicitly record unchecked
 validation. Keep cross-row result linkage in the locked transaction/deferred
 validation, never a cross-table CHECK.
 
+Optional `validationDiagnostics` stores at most 20 platform-owned `{code,path}`
+entries on that same immutable JSON receipt. Paths use only known schema fields
+and indices, bounded to 128 characters; no rejected values or unknown keys are
+copied. Old receipts omit the field. This additive diagnostic metadata changes no
+table, CHECK, status or accepted result shape and requires no migration/backfill.
+
 Cleanup version 1 stores resource kind/reference, state, armed revision/time,
 attempts 0..5, dueAt, safe error and latest re-arm receipt. Rowless claim fields
 are all-null or a complete attempt ID/owner/expiry tuple. Worktree claim remains

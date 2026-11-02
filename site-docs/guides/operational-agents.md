@@ -47,6 +47,12 @@ A GitHub 403 is an authorization failure, never an empty successful scan.
 Unknown task or comment writes require reconciliation before retrying. Do not
 repeat an operation merely because a response was lost.
 
+Checking already imported tasks does not turn a blocked import into partial
+success. If every pending import still needs reconciliation and no new work was
+completed, the outcome is **Blocked**, even after a complete scan. Invalid results
+show safe validation details and the next step; older runs may retain only a
+generic validation code.
+
 The Run shows its operation result, diagnostics, references, integrity and
 cleanup state. Operational Runs have no review, promotion, merge or publication
 action. Unexpected source changes fail validation and are preserved for diagnosis.

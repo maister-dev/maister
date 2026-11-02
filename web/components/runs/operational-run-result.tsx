@@ -132,6 +132,26 @@ export function OperationalRunResult({
           {t(outcome.state === "pending" ? "awaitingResult" : "invalidResult")}
         </p>
       )}
+      {outcome.validationDiagnostics?.length ? (
+        <div aria-label={t("validation.title")} className="my-3 space-y-3">
+          <h3 className="font-semibold">{t("validation.title")}</h3>
+          {outcome.validationDiagnostics.map((diagnostic, index) => (
+            <div
+              key={`${diagnostic.code}:${diagnostic.path}:${index}`}
+              className="rounded border border-line p-3"
+            >
+              <p>{t(`validation.rules.${diagnostic.code}.message`)}</p>
+              <p>
+                {t("validation.field")}: <code>{diagnostic.path}</code>
+              </p>
+              <p>
+                {t("remediation")}:{" "}
+                {t(`validation.rules.${diagnostic.code}.remediation`)}
+              </p>
+            </div>
+          ))}
+        </div>
+      ) : null}
       {!outcome.successful && outcome.reasonCodes.length ? (
         <p>
           {t("reasons")}: {outcome.reasonCodes.join(", ")}

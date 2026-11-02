@@ -31,6 +31,7 @@ import { installPackageRevision, attachPackage } from "@/lib/packages/attach";
 import { attachAgent } from "@/lib/agents/project-links";
 import { resolveEffectiveAgentDefinition } from "@/lib/agents/effective";
 import { buildOperationalContract } from "@/lib/agents/launch-contract";
+import { operationalResultV1Schema } from "@/lib/run-results/operational-schema";
 import {
   agents,
   projects,
@@ -198,6 +199,30 @@ describe("operational core package through real install/attach boundaries", () =
     expect(skill).toContain("created=1");
     expect(skill).toContain("HTTP 401/403");
     expect(skill).toContain("reconcile before any retry");
+    const examples: unknown[] = [
+      ...skill.matchAll(/```json maister:output\n([\s\S]*?)\n```/g),
+    ].map((match) => JSON.parse(match[1]) as unknown);
+    const blockedExample = examples
+      .map((example) => operationalResultV1Schema.safeParse(example))
+      .find((example) => example.success && example.data.outcome === "blocked");
+
+    expect(blockedExample?.success).toBe(true);
+    if (!blockedExample?.success)
+      throw new Error("Missing valid packaged held-source example");
+    expect(blockedExample.data.counts).toEqual({
+      scanned: 18,
+      attempted: 4,
+      completed: 0,
+      failed: 4,
+      skipped: 14,
+      created: 0,
+    });
+    expect(
+      operationalResultV1Schema.safeParse({
+        ...blockedExample.data,
+        outcome: "partial",
+      }).success,
+    ).toBe(false);
     expect(
       (
         await db
