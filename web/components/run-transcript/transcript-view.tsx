@@ -24,6 +24,7 @@ export type TranscriptMessage = {
   content: string;
   createdAt: string;
   delivery?: "queued" | "prompted" | "steered" | null;
+  preview?: { originalBytes: number; fullContentHref: string };
 };
 
 export type TranscriptAttachmentBadge = {
@@ -38,6 +39,8 @@ export type TranscriptLabels = {
   result: string;
   copy: string;
   copied: string;
+  limitedPreview?: (bytes: number) => string;
+  fullContent?: string;
   toolCount: (name: string, count: number) => string;
   clearedHistory?: (count: number) => string;
   // ADR-108 (M40): the scratch in-session guardrail-trip notice. Optional — only
@@ -141,19 +144,59 @@ function prettyInput(rawInput: unknown): string {
   }
 }
 
+function PreviewNotice({
+  message,
+  labels,
+}: {
+  message: TranscriptMessage;
+  labels: TranscriptLabels;
+}): ReactElement | null {
+  if (!message.preview || !labels.limitedPreview || !labels.fullContent)
+    return null;
+
+  return (
+    <p
+      className="mt-2 text-[11px] text-mute"
+      data-testid="peek-bounded-preview"
+    >
+      {labels.limitedPreview(message.preview.originalBytes)}{" "}
+      <a
+        download
+        className="text-amber underline underline-offset-2"
+        href={message.preview.fullContentHref}
+      >
+        {labels.fullContent}
+      </a>
+    </p>
+  );
+}
+
+type TranscriptTool = ScratchToolPayload & { message: TranscriptMessage };
+type ToolExpansion = {
+  rows: Readonly<Record<string, boolean>>;
+  groups: Readonly<Record<string, boolean>>;
+  toggleRow: (id: string) => void;
+  toggleGroup: (ids: string[], open: boolean) => void;
+};
+
 function ToolRow({
   tool,
   labels,
+  expansion,
 }: {
-  tool: ScratchToolPayload;
+  tool: TranscriptTool;
   labels: TranscriptLabels;
+  expansion: ToolExpansion;
 }): ReactElement {
-  const [open, setOpen] = useState(false);
+  const open = expansion.rows[tool.message.id] ?? false;
   const inputText = prettyInput(tool.rawInput);
   const hasDetail = inputText.length > 0 || tool.result.length > 0;
 
   return (
-    <li className="group min-w-0 max-w-full overflow-hidden rounded-md border border-line bg-paper">
+    <li
+      className="group min-w-0 max-w-full overflow-hidden rounded-md border border-line bg-paper"
+      data-transcript-message-id={tool.message.id}
+    >
       <button
         className={clsx(
           "flex w-full min-w-0 items-center gap-2 px-2.5 py-1.5 text-left font-mono text-[11.5px]",
@@ -161,7 +204,7 @@ function ToolRow({
         )}
         disabled={!hasDetail}
         type="button"
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => expansion.toggleRow(tool.message.id)}
       >
         <span
           className={clsx(
@@ -181,6 +224,7 @@ function ToolRow({
           <span className="flex-none text-mute">{open ? "▾" : "▸"}</span>
         ) : null}
       </button>
+      <PreviewNotice labels={labels} message={tool.message} />
       {open && hasDetail ? (
         <div className="min-w-0 border-t border-line-soft px-2.5 py-2">
           {inputText ? (
@@ -215,10 +259,12 @@ function ToolGroup({
   tools,
   labels,
   autoOpen,
+  expansion,
 }: {
-  tools: ScratchToolPayload[];
+  tools: TranscriptTool[];
   labels: TranscriptLabels;
   autoOpen: boolean;
+  expansion: ToolExpansion;
 }): ReactElement {
   const counts = useMemo(() => {
     const byName = new Map<string, number>();
@@ -228,9 +274,10 @@ function ToolGroup({
 
     return [...byName.entries()];
   }, [tools]);
-  // null = follow autoOpen (active group expands while the turn runs, then
-  // collapses); once the user clicks, the explicit choice sticks.
-  const [override, setOverride] = useState<boolean | null>(null);
+  // Keep explicit choices by message identity across pagination regrouping.
+  const override = tools
+    .map((tool) => expansion.groups[tool.message.id])
+    .find((value) => value !== undefined);
   const open = override ?? autoOpen;
   const shell =
     "min-w-0 max-w-full overflow-hidden rounded-lg border border-line bg-[color-mix(in_oklab,var(--ivory)_45%,var(--paper))] p-2";
@@ -240,7 +287,7 @@ function ToolGroup({
     return (
       <div className={shell}>
         <ul className="flex min-w-0 list-none flex-col gap-1 p-0">
-          <ToolRow labels={labels} tool={tools[0]} />
+          <ToolRow expansion={expansion} labels={labels} tool={tools[0]} />
         </ul>
       </div>
     );
@@ -249,10 +296,25 @@ function ToolGroup({
   // Multiple calls: collapse to the count summary; expand to the rows on click.
   return (
     <div className={shell}>
+      {!open
+        ? tools.map((tool) => (
+            <span
+              key={tool.message.id}
+              aria-hidden="true"
+              className="block h-0"
+              data-transcript-message-id={tool.message.id}
+            />
+          ))
+        : null}
       <button
         className="flex w-full min-w-0 items-center gap-1.5 px-0.5 text-left"
         type="button"
-        onClick={() => setOverride(!open)}
+        onClick={() =>
+          expansion.toggleGroup(
+            tools.map((tool) => tool.message.id),
+            !open,
+          )
+        }
       >
         <span className="flex-none font-mono text-[10px] text-mute">
           {open ? "▾" : "▸"}
@@ -270,11 +332,27 @@ function ToolGroup({
       </button>
       {open ? (
         <ul className="mt-1.5 flex min-w-0 list-none flex-col gap-1 p-0">
-          {tools.map((tool, index) => (
-            <ToolRow key={index} labels={labels} tool={tool} />
+          {tools.map((tool) => (
+            <ToolRow
+              key={tool.message.id}
+              expansion={expansion}
+              labels={labels}
+              tool={tool}
+            />
           ))}
         </ul>
       ) : null}
+      {!open
+        ? tools
+            .filter((tool) => tool.message.preview)
+            .map((tool) => (
+              <PreviewNotice
+                key={tool.message.id}
+                labels={labels}
+                message={tool.message}
+              />
+            ))
+        : null}
     </div>
   );
 }
@@ -337,7 +415,7 @@ function LegacyRow({
 
 type TranscriptBlock =
   | { kind: "message"; message: TranscriptMessage }
-  | { kind: "tools"; key: string; tools: ScratchToolPayload[] };
+  | { kind: "tools"; key: string; tools: TranscriptTool[] };
 
 function DefaultFlowActionResultCard({
   payload,
@@ -432,6 +510,38 @@ export function TranscriptView({
     payload: ScratchFlowActionResultPayload,
   ) => ReactElement | null;
 }): ReactElement {
+  const [openRows, setOpenRows] = useState<Record<string, boolean>>({});
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
+  const expansion: ToolExpansion = {
+    rows: openRows,
+    groups: openGroups,
+    toggleRow: (id) => {
+      setOpenRows((current) =>
+        Object.fromEntries(
+          messages.map((message) => [
+            message.id,
+            message.id === id ? !current[id] : (current[message.id] ?? false),
+          ]),
+        ),
+      );
+    },
+    toggleGroup: (ids, open) => {
+      const selected = new Set(ids);
+
+      setOpenGroups((current) =>
+        Object.fromEntries(
+          messages
+            .filter(
+              (message) => selected.has(message.id) || message.id in current,
+            )
+            .map((message) => [
+              message.id,
+              selected.has(message.id) ? open : current[message.id],
+            ]),
+        ),
+      );
+    },
+  };
   const blocks = useMemo<TranscriptBlock[]>(() => {
     const result: TranscriptBlock[] = [];
 
@@ -445,9 +555,13 @@ export function TranscriptView({
         const last = result[result.length - 1];
 
         if (last && last.kind === "tools") {
-          last.tools.push(parsed.tool);
+          last.tools.push({ ...parsed.tool, message });
         } else {
-          result.push({ kind: "tools", key: message.id, tools: [parsed.tool] });
+          result.push({
+            kind: "tools",
+            key: message.id,
+            tools: [{ ...parsed.tool, message }],
+          });
         }
 
         continue;
@@ -479,6 +593,7 @@ export function TranscriptView({
         <ToolGroup
           key={block.key}
           autoOpen={running && block.key === lastToolGroupKey}
+          expansion={expansion}
           labels={labels}
           tools={block.tools}
         />
@@ -595,6 +710,21 @@ export function TranscriptView({
     );
   }
 
+  function renderAnchoredBlock(block: TranscriptBlock): ReactElement | null {
+    if (block.kind === "tools") return renderBlock(block);
+
+    return (
+      <div
+        key={block.message.id}
+        className="min-w-0"
+        data-transcript-message-id={block.message.id}
+      >
+        {renderBlock(block)}
+        <PreviewNotice labels={labels} message={block.message} />
+      </div>
+    );
+  }
+
   return (
     <div className="flex min-h-0 min-w-0 max-w-full flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden px-4 py-4 [&>*]:shrink-0">
       {historyBlocks.length > 0 ? (
@@ -613,12 +743,12 @@ export function TranscriptView({
           </button>
           {historyOpen ? (
             <div className="mt-3 flex min-w-0 flex-col gap-3">
-              {historyBlocks.map(renderBlock)}
+              {historyBlocks.map(renderAnchoredBlock)}
             </div>
           ) : null}
         </div>
       ) : null}
-      {currentBlocks.map(renderBlock)}
+      {currentBlocks.map(renderAnchoredBlock)}
     </div>
   );
 }

@@ -5631,6 +5631,9 @@ export const runMessages = pgTable(
       enum: ["user", "assistant", "tool", "system"],
     }).notNull(),
     content: text("content").notNull(),
+    // Immutable creation-event anchor for paged node history. The existing
+    // supervisorEventId remains the last content mutation for activity feeds.
+    firstSupervisorEventId: text("first_supervisor_event_id"),
     supervisorEventId: text("supervisor_event_id"),
     projectionToolKey: text("projection_tool_key"),
     // TRC-06: the per-dispatch identity of a recorded prompt, derived from the
@@ -5655,6 +5658,16 @@ export const runMessages = pgTable(
         t.runId,
         t.nodeAttemptId,
         sql`(coalesce(${t.supervisorEventId}, '0')::bigint)`,
+        sql`(${t.promptDispatchKey} IS NOT NULL)`,
+        t.sequence,
+        t.id,
+      )
+      .where(sql`${t.nodeAttemptId} IS NOT NULL`),
+    idxPeekNodeCreationOrder: index("run_messages_peek_node_creation_order_idx")
+      .on(
+        t.runId,
+        t.nodeAttemptId,
+        sql`(coalesce(${t.firstSupervisorEventId}, ${t.supervisorEventId}, '0')::bigint)`,
         sql`(${t.promptDispatchKey} IS NOT NULL)`,
         t.sequence,
         t.id,

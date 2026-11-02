@@ -22,6 +22,13 @@ import {
 import { parse } from "yaml";
 
 import { MaisterError } from "@/lib/errors";
+import { getDb } from "@/lib/db/client";
+import {
+  encodeToolPayload,
+  parseScratchMessageContent,
+} from "@/lib/run-transcript/transcript";
+import { TRANSCRIPT_PAGE_BYTES } from "@/lib/runs/transcript-page";
+import { reanchorDispatchedPrompts } from "@/lib/execution-host/events/run-message-store";
 import { startMainPostgresTestDb } from "@/test-support/pg-container";
 
 const session = vi.hoisted(() => ({ user: null as SessionUser | null }));
@@ -503,10 +510,13 @@ describe("authorized descendant projections", () => {
       "content" in page.messages[0] ? page.messages[0].content : null,
     ).toBe("message-106");
     expect(page.messages[99]).toMatchObject({
-      kind: "bounded_preview",
-      truncated: true,
-      originalBytes: 600000,
+      content: "界".repeat(1024),
+      preview: { originalBytes: 600000 },
     });
+    expect(page.messages[99].preview?.fullContentHref).toBe(
+      `/api/runs/${child}/transcript/messages/${page.messages[99].id}`,
+    );
+    expectContract("RunTranscriptPage", page);
     expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThan(512 * 1024);
     expect(page.hasEarlier).toBe(true);
     const earlier = await (
@@ -536,6 +546,348 @@ describe("authorized descendant projections", () => {
       [userId],
     );
     expect((await get("limit=100")).status).toBe(403);
+  });
+
+  it("IT-PKD-06: cumulative byte boundaries prioritize the tail and preserve every mixed record in both directions", async () => {
+    const { GET } = await import("../../transcript/route");
+    const get = async (query = ""): Promise<TranscriptPage> => {
+      const response = await GET(
+        new NextRequest(
+          `http://localhost/api/runs/${child}/transcript?limit=100&${query}`,
+        ),
+        { params: Promise.resolve({ runId: child }) },
+      );
+
+      expect(response.status).toBe(200);
+      const raw = await response.text();
+
+      expect(Buffer.byteLength(raw)).toBeLessThanOrEqual(TRANSCRIPT_PAGE_BYTES);
+      const page = JSON.parse(raw) as TranscriptPage;
+
+      expectContract("RunTranscriptPage", page);
+
+      return page;
+    };
+    const records = [
+      { role: "user", content: "First request" },
+      {
+        role: "tool",
+        content: encodeToolPayload({
+          name: "Read",
+          toolKind: "read",
+          status: "completed",
+          arg: "first.txt",
+          rawInput: { path: "first.txt" },
+          result: "a".repeat(230000),
+        }),
+      },
+      { role: "assistant", content: "Small reply after first large tool" },
+      {
+        role: "system",
+        content: JSON.stringify({
+          v: 1,
+          kind: "thought",
+          text: "Considering the next file",
+        }),
+      },
+      {
+        role: "tool",
+        content: encodeToolPayload({
+          name: "Read",
+          toolKind: "read",
+          status: "completed",
+          arg: "second.txt",
+          rawInput: { path: "second.txt" },
+          result: "b".repeat(230000),
+        }),
+      },
+      { role: "assistant", content: "Small reply after second large tool" },
+      { role: "user", content: "Continue" },
+      {
+        role: "tool",
+        content: encodeToolPayload({
+          name: "Bash",
+          toolKind: "execute",
+          status: "completed",
+          arg: "git status",
+          rawInput: { command: "git status" },
+          result: "c".repeat(230000),
+        }),
+      },
+      { role: "assistant", content: "Latest small answer" },
+    ];
+    const ids = records.map(() => randomUUID());
+
+    for (const [index, record] of records.entries())
+      await database.pool.query(
+        "INSERT INTO run_messages(id,run_id,sequence,role,content,created_at) VALUES($1,$2,$3,$4,$5,'2026-01-01T00:00:00.000123Z')",
+        [ids[index], child, index + 1, record.role, record.content],
+      );
+    const latest = await get();
+
+    expect(latest.messages.at(-1)?.id).toBe(ids.at(-1));
+    expect(latest.messages.at(-1)?.content).toBe("Latest small answer");
+    expect(latest.messages.length).toBeLessThan(records.length);
+    expect(latest.hasEarlier).toBe(true);
+    expect(latest.hasLater).toBe(false);
+    // Stable anchors are available before future live rows are appended.
+    expect(latest.afterCursor).toBeTypeOf("string");
+    const backwards = [...latest.messages];
+    const portions = [latest];
+    let earliest = latest;
+
+    while (earliest.hasEarlier) {
+      earliest = await get(`before=${earliest.beforeCursor}`);
+      portions.push(earliest);
+      backwards.unshift(...earliest.messages);
+    }
+    expect(backwards.map((message) => message.id)).toEqual(ids);
+    expect(backwards.map((message) => message.content)).toEqual(
+      records.map((record) => record.content),
+    );
+    expect(backwards.every((message) => message.preview === undefined)).toBe(
+      true,
+    );
+    const firstCallPortion = portions.findIndex((portion) =>
+      portion.messages.some((message) => message.id === ids[1]),
+    );
+    const secondCallPortion = portions.findIndex((portion) =>
+      portion.messages.some((message) => message.id === ids[4]),
+    );
+
+    expect(firstCallPortion).toBeGreaterThanOrEqual(0);
+    expect(secondCallPortion).toBeGreaterThanOrEqual(0);
+    expect(firstCallPortion).not.toBe(secondCallPortion);
+    // Same-name calls on opposite portion boundaries stay distinct complete
+    // canonical tool units; a result is never matched by name or adjacency.
+    expect(
+      [backwards[1], backwards[4]].map((message) =>
+        parseScratchMessageContent(message.role, message.content),
+      ),
+    ).toMatchObject([
+      {
+        kind: "tool",
+        tool: {
+          name: "Read",
+          arg: "first.txt",
+          status: "completed",
+          result: "a".repeat(230000),
+        },
+      },
+      {
+        kind: "tool",
+        tool: {
+          name: "Read",
+          arg: "second.txt",
+          status: "completed",
+          result: "b".repeat(230000),
+        },
+      },
+    ]);
+    const forwards = [...earliest.messages];
+    let next = earliest;
+
+    while (next.hasLater) {
+      next = await get(`after=${next.afterCursor}`);
+      forwards.push(...next.messages);
+    }
+    expect(forwards.map((message) => message.id)).toEqual(ids);
+    expect(new Set(forwards.map((message) => message.id)).size).toBe(
+      ids.length,
+    );
+    const recentered = await get(`anchor=${ids[4]}`);
+
+    expect(recentered.messages[0].id).toBe(ids[4]);
+    expect(recentered.messages[0].content).toBe(records[4].content);
+    expect(recentered.hasEarlier).toBe(true);
+    expect(recentered.hasLater).toBe(true);
+    expect(
+      (
+        await GET(
+          new NextRequest(
+            `http://localhost/api/runs/${child}/transcript?limit=100&anchor=${randomUUID()}`,
+          ),
+          { params: Promise.resolve({ runId: child }) },
+        )
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await GET(
+          new NextRequest(
+            `http://localhost/api/runs/${child}/transcript?limit=100&anchor=${ids[4]}&after=${latest.afterCursor}`,
+          ),
+          { params: Promise.resolve({ runId: child }) },
+        )
+      ).status,
+    ).toBe(400);
+    const appendedId = randomUUID();
+
+    await database.pool.query(
+      "INSERT INTO run_messages(id,run_id,sequence,role,content,created_at) VALUES($1,$2,10,'assistant','live row','2026-01-01T00:00:00.000123Z')",
+      [appendedId, child],
+    );
+    expect(
+      (await get(`after=${latest.afterCursor}`)).messages.map(
+        (message) => message.id,
+      ),
+    ).toEqual([appendedId]);
+  });
+
+  it("IT-PKD-06: escaped UTF-8 wire sizes admit complete records and oversized tools retain identity and complete access", async () => {
+    const { GET } = await import("../../transcript/route");
+    const { GET: downloadGet } =
+      await import("../../transcript/messages/[messageId]/route");
+    const get = async (query = ""): Promise<TranscriptPage> => {
+      const response = await GET(
+        new NextRequest(
+          `http://localhost/api/runs/${child}/transcript?limit=100&${query}`,
+        ),
+        { params: Promise.resolve({ runId: child }) },
+      );
+
+      expect(response.status).toBe(200);
+      const raw = await response.text();
+
+      expect(Buffer.byteLength(raw)).toBeLessThanOrEqual(TRANSCRIPT_PAGE_BYTES);
+
+      return JSON.parse(raw) as TranscriptPage;
+    };
+    const multibyte = '界😀"\\\n'.repeat(15000);
+    const oversizedTool = encodeToolPayload({
+      name: "Read",
+      toolKind: "read",
+      status: "completed",
+      arg: "large.txt",
+      rawInput: { path: "large.txt" },
+      result: "界😀".repeat(100000),
+    });
+    const escaped = "\u0001".repeat(70000);
+    const records = [
+      { role: "assistant", content: multibyte },
+      { role: "tool", content: oversizedTool },
+      {
+        role: "assistant",
+        content: "Small message following oversized result",
+      },
+      { role: "user", content: escaped },
+      { role: "assistant", content: "Latest message" },
+    ];
+    const ids = records.map(() => randomUUID());
+
+    for (const [index, record] of records.entries())
+      await database.pool.query(
+        "INSERT INTO run_messages(id,run_id,sequence,role,content,created_at) VALUES($1,$2,$3,$4,$5,'2026-01-01T00:00:00.000123Z')",
+        [ids[index], child, index + 1, record.role, record.content],
+      );
+    const latest = await get();
+    const all = [...latest.messages];
+    let previous = latest;
+
+    while (previous.hasEarlier) {
+      previous = await get(`before=${previous.beforeCursor}`);
+      all.unshift(...previous.messages);
+    }
+    expect(all.map((message) => message.id)).toEqual(ids);
+    expect(all[0].content).toBe(multibyte);
+    expect(all[0].preview).toBeUndefined();
+    expect(all[2].content).toBe(records[2].content);
+    expect(all[2].preview).toBeUndefined();
+    expect(all[3].preview?.originalBytes).toBe(Buffer.byteLength(escaped));
+    const tool = all[1];
+
+    expect(tool.preview?.originalBytes).toBe(Buffer.byteLength(oversizedTool));
+    expect(parseScratchMessageContent(tool.role, tool.content)).toMatchObject({
+      kind: "tool",
+      tool: {
+        name: "Read",
+        toolKind: "read",
+        status: "completed",
+        arg: "large.txt",
+        result: "界😀".repeat(512),
+      },
+    });
+    const download = await downloadGet(
+      new NextRequest(`http://localhost${tool.preview!.fullContentHref}`),
+      { params: Promise.resolve({ runId: child, messageId: tool.id }) },
+    );
+
+    expect(download.status).toBe(200);
+    expect(download.headers.get("Content-Disposition")).toContain("attachment");
+    expect(download.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(download.headers.get("Content-Length")).toBe(
+      String(Buffer.byteLength(oversizedTool)),
+    );
+    const reader = download.body!.getReader();
+    const chunks: Uint8Array[] = [];
+
+    for (;;) {
+      const chunk = await reader.read();
+
+      if (chunk.done) break;
+      expect(chunk.value.byteLength).toBeLessThanOrEqual(65536);
+      chunks.push(chunk.value);
+    }
+    expect(Buffer.concat(chunks).toString("utf8")).toBe(oversizedTool);
+    expect(chunks.length).toBeGreaterThan(1);
+    const abort = new AbortController();
+    const aborted = await downloadGet(
+      new NextRequest(`http://localhost${tool.preview!.fullContentHref}`, {
+        signal: abort.signal,
+      }),
+      { params: Promise.resolve({ runId: child, messageId: tool.id }) },
+    );
+    const abortedReader = aborted.body!.getReader();
+
+    expect((await abortedReader.read()).done).toBe(false);
+    abort.abort();
+    await expect(abortedReader.read()).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    const cancelled = await downloadGet(
+      new NextRequest(`http://localhost${tool.preview!.fullContentHref}`),
+      { params: Promise.resolve({ runId: child, messageId: tool.id }) },
+    );
+    const cancelledReader = cancelled.body!.getReader();
+
+    expect((await cancelledReader.read()).done).toBe(false);
+    await cancelledReader.cancel();
+    expect((await cancelledReader.read()).done).toBe(true);
+    const changed = await downloadGet(
+      new NextRequest(`http://localhost${tool.preview!.fullContentHref}`),
+      { params: Promise.resolve({ runId: child, messageId: tool.id }) },
+    );
+    const changingReader = changed.body!.getReader();
+
+    expect((await changingReader.read()).done).toBe(false);
+    await database.pool.query(
+      "UPDATE run_messages SET content=content || 'changed' WHERE id=$1",
+      [tool.id],
+    );
+    await expect(changingReader.read()).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "transcript_message_changed" },
+    });
+    const foreign = await downloadGet(
+      new NextRequest(
+        `http://localhost/api/runs/${root}/transcript/messages/${tool.id}`,
+      ),
+      { params: Promise.resolve({ runId: root, messageId: tool.id }) },
+    );
+
+    expect(foreign.status).toBe(404);
+    await database.pool.query(
+      "UPDATE project_members SET role='viewer' WHERE user_id=$1",
+      [userId],
+    );
+    expect(
+      (
+        await downloadGet(
+          new NextRequest(`http://localhost${tool.preview!.fullContentHref}`),
+          { params: Promise.resolve({ runId: child, messageId: tool.id }) },
+        )
+      ).status,
+    ).toBe(403);
   });
 
   it("IT-PKD-06: usage remains independent of page windows and ignores newer non-usage JSON", async () => {
@@ -640,6 +992,26 @@ describe("authorized descendant projections", () => {
       '{"kind":"usage","used":45,"size":100}',
     ]);
     expect(page.usage).toEqual({ used: 45, size: 100 });
+    const { GET: downloadGet } =
+      await import("../../transcript/messages/[messageId]/route");
+    const download = (attemptQuery: string) =>
+      downloadGet(
+        new NextRequest(
+          `http://localhost/api/runs/${child}/transcript/messages/${page.messages[0].id}${attemptQuery}`,
+        ),
+        {
+          params: Promise.resolve({
+            runId: child,
+            messageId: page.messages[0].id,
+          }),
+        },
+      );
+
+    expect((await download("")).status).toBe(409);
+    const currentDownload = await download(`?attempt=${attempt}`);
+
+    expect(currentDownload.status).toBe(200);
+    expect(await currentDownload.text()).toBe("prompt");
     const earlier = await (
       await get(`limit=2&before=${page.beforeCursor}`)
     ).json();
@@ -662,6 +1034,7 @@ describe("authorized descendant projections", () => {
 
     expect(changed.status).toBe(409);
     expect((await changed.json()).reason).toBe("transcript_attempt_changed");
+    expect((await download(`?attempt=${attempt}`)).status).toBe(409);
     await database.pool.query("UPDATE flows SET manifest=$1 WHERE id=$2", [
       { ...manifest, compat: { engine_max: "1.0.0" } },
       flowId,
@@ -670,6 +1043,192 @@ describe("authorized descendant projections", () => {
       (await (await requestSnapshot(root, child)).json()).content,
     ).toMatchObject({ kind: "flow", availability: "incompatible" });
     expect((await (await get("limit=2")).json()).compatible).toBe(false);
+  });
+
+  it("IT-PKD-06: late tool completion keeps cursor order and corrected prompt horizons rebase scoped boundaries", async () => {
+    const flowId = randomUUID();
+    const attempt = randomUUID();
+    const manifest = {
+      schemaVersion: 1,
+      name: "cursor-flow",
+      nodes: [
+        {
+          id: "work",
+          type: "ai_coding",
+          action: { prompt: "Work" },
+          transitions: { success: "done" },
+        },
+      ],
+    };
+
+    await database.pool.query(
+      "INSERT INTO flows(id,project_id,flow_ref_id,source,version,installed_path,manifest,schema_version) VALUES($1,$2,'cursor','test','v1','/tmp/cursor',$3,1)",
+      [flowId, projectId, manifest],
+    );
+    await database.pool.query(
+      "UPDATE runs SET run_kind='flow',flow_id=$1 WHERE id=$2",
+      [flowId, child],
+    );
+    await database.pool.query(
+      "INSERT INTO node_attempts(id,run_id,node_id,node_type,attempt,status) VALUES($1,$2,'work','ai_coding',1,'Running')",
+      [attempt, child],
+    );
+    const { GET } = await import("../../transcript/route");
+    const get = async (query = "limit=1"): Promise<TranscriptPage> => {
+      const response = await GET(
+        new NextRequest(
+          `http://localhost/api/runs/${child}/transcript?node=work&${query}`,
+        ),
+        { params: Promise.resolve({ runId: child }) },
+      );
+
+      expect(response.status).toBe(200);
+
+      return response.json() as Promise<TranscriptPage>;
+    };
+    const emit = async (
+      sequence: number,
+      update: Record<string, unknown>,
+    ): Promise<void> => {
+      await database.pool.query(
+        "INSERT INTO execution_events(id,source,source_key,run_id,event_type,payload_schema,payload,occurred_at,received_at,run_sequence,ingest_disposition) VALUES($1,'manager',$2,$3,'session.update','maister.session.update.v1',$4,now(),now(),$5,'accepted')",
+        [
+          randomUUID(),
+          `${child}-${sequence}`,
+          child,
+          { nodeAttemptId: attempt, update },
+          sequence,
+        ],
+      );
+    };
+
+    await emit(1, {
+      sessionUpdate: "tool_call",
+      toolCallId: "call-a",
+      title: "Read",
+      kind: "read",
+      status: "in_progress",
+      rawInput: { path: "first.txt" },
+    });
+    await emit(2, {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "Between calls" },
+    });
+    await emit(3, {
+      sessionUpdate: "tool_call",
+      toolCallId: "call-b",
+      title: "Read",
+      kind: "read",
+      status: "in_progress",
+      rawInput: { path: "second.txt" },
+    });
+    const tail = await get();
+    const middle = await get(`limit=1&before=${tail.beforeCursor}`);
+    const first = await get(`limit=1&before=${middle.beforeCursor}`);
+
+    expect(first.messages[0].role).toBe("tool");
+    expect(middle.messages[0].content).toBe("Between calls");
+    expect(tail.messages[0].role).toBe("tool");
+    // Simulate a row written by the prior binary between migration and restart.
+    await database.pool.query(
+      "UPDATE run_messages SET first_supervisor_event_id=NULL WHERE id=$1",
+      [first.messages[0].id],
+    );
+    await emit(4, {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "call-a",
+      status: "completed",
+      content: [
+        { type: "content", content: { type: "text", text: "first result" } },
+      ],
+    });
+    const refreshed = await get(
+      `limit=1&windowBefore=${first.window.before}&windowAfter=${first.window.after}`,
+    );
+
+    expect(refreshed.messages[0].id).toBe(first.messages[0].id);
+    expect(
+      parseScratchMessageContent(
+        refreshed.messages[0].role,
+        refreshed.messages[0].content,
+      ),
+    ).toMatchObject({
+      kind: "tool",
+      tool: {
+        name: "Read",
+        arg: "first.txt",
+        status: "completed",
+        result: "first result",
+      },
+    });
+    expect((await get()).messages[0].id).toBe(tail.messages[0].id);
+    expect(
+      (await get(`limit=1&before=${middle.beforeCursor}`)).messages[0].id,
+    ).toBe(first.messages[0].id);
+    expect((await get(`limit=1&after=${tail.afterCursor}`)).messages).toEqual(
+      [],
+    );
+    const anchors = await database.pool.query(
+      "SELECT first_supervisor_event_id,supervisor_event_id FROM run_messages WHERE id=$1",
+      [first.messages[0].id],
+    );
+
+    expect(anchors.rows[0]).toEqual({
+      first_supervisor_event_id: "1",
+      supervisor_event_id: "4",
+    });
+    const promptId = randomUUID();
+
+    await database.pool.query(
+      "INSERT INTO run_messages(id,run_id,node_attempt_id,sequence,role,content,supervisor_event_id,prompt_dispatch_key) VALUES($1,$2,$3,-1,'user','Later-dispatched prompt','-1','dispatch-corrected')",
+      [promptId, child, attempt],
+    );
+    const oldPrompt = await get(`limit=1&anchor=${promptId}`);
+
+    expect(oldPrompt.hasEarlier).toBe(false);
+    expect(oldPrompt.messages[0].id).toBe(promptId);
+    await emit(5, {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "Late-ingested reply" },
+    });
+    await getDb().transaction((tx) =>
+      reanchorDispatchedPrompts(tx, {
+        runId: child,
+        settledAt: new Date(0),
+        anchor: 6n,
+      }),
+    );
+    const corrected = await get(
+      `limit=1&windowBefore=${oldPrompt.window.before}&windowAfter=${oldPrompt.window.after}`,
+    );
+
+    expect(corrected.messages[0].id).toBe(promptId);
+    expect(corrected.hasEarlier).toBe(true);
+    expect(corrected.beforeCursor).not.toBe(oldPrompt.beforeCursor);
+    const preceding = await get(`limit=1&before=${oldPrompt.beforeCursor}`);
+
+    expect(preceding.messages[0].content).toBe("Late-ingested reply");
+    const traversal = [
+      ...(await get(`limit=100&before=${oldPrompt.beforeCursor}`)).messages,
+      corrected.messages[0],
+    ];
+
+    expect(traversal.map((message) => message.id)).toEqual([
+      first.messages[0].id,
+      middle.messages[0].id,
+      tail.messages[0].id,
+      preceding.messages[0].id,
+      promptId,
+    ]);
+    expect(new Set(traversal.map((message) => message.id)).size).toBe(5);
+    // Even when correction reverses the old window endpoints, refresh includes
+    // both endpoint records and returns their current chronological order.
+    const reversedWindow = await get(
+      `limit=100&windowBefore=${oldPrompt.window.before}&windowAfter=${first.window.after}`,
+    );
+
+    expect(reversedWindow.messages[0].id).toBe(first.messages[0].id);
+    expect(reversedWindow.messages.at(-1)?.id).toBe(promptId);
   });
 
   it("IT-PKD-02: bounded hierarchy refuses depth 65 and accepts depth 64 without eager tree reads", async () => {

@@ -203,6 +203,7 @@ export async function projectTranscriptEvent(
         sequence,
         role,
         content,
+        firstSupervisorEventId: eventId,
         supervisorEventId: eventId,
         projectionToolKey,
       })
@@ -212,7 +213,13 @@ export async function projectTranscriptEvent(
           runMessages.nodeAttemptId,
           runMessages.sequence,
         ],
-        set: { role, content, supervisorEventId: eventId, projectionToolKey },
+        set: {
+          role,
+          content,
+          firstSupervisorEventId: sql`coalesce(${runMessages.firstSupervisorEventId},${runMessages.supervisorEventId},${eventId})`,
+          supervisorEventId: eventId,
+          projectionToolKey,
+        },
       });
 
     return sequence;
@@ -223,7 +230,11 @@ export async function projectTranscriptEvent(
   ): Promise<void> => {
     const rows = await tx
       .update(runMessages)
-      .set({ content, supervisorEventId: eventId })
+      .set({
+        content,
+        firstSupervisorEventId: sql`coalesce(${runMessages.firstSupervisorEventId},${runMessages.supervisorEventId},${eventId})`,
+        supervisorEventId: eventId,
+      })
       .where(and(scope, eq(runMessages.sequence, sequence)))
       .returning({ id: runMessages.id });
 

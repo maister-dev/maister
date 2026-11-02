@@ -64,6 +64,20 @@ function history(page: Page): Locator {
     .getByTestId("run-transcript-history");
 }
 
+async function scrollWithinDocument(
+  message: Locator,
+  viewportFraction: number,
+): Promise<void> {
+  await message.evaluate((element, fraction) => {
+    const bounds = element.getBoundingClientRect();
+
+    window.scrollBy(
+      0,
+      bounds.top - (window.innerHeight - bounds.height) * fraction,
+    );
+  }, viewportFraction);
+}
+
 async function observeRunChanges(page: Page, runId: string): Promise<void> {
   await page.addInitScript((id) => {
     const state = { changes: 0, ready: false };
@@ -189,6 +203,7 @@ for (const surface of ["agent", "node"] as const) {
     } finally {
       firstRelease();
       refreshRelease();
+      await page.unrouteAll({ behavior: "wait" });
     }
   });
 }
@@ -228,7 +243,7 @@ test("agent history distinguishes a failed load from empty history and retries",
   );
 });
 
-test("main agent history loads bounded pages and retains the reading position", async ({
+test("main history loads the latest portion, retries an automatic earlier load and respects live reading position", async ({
   page,
 }) => {
   await withE2EDb(async (pool) => {
@@ -236,68 +251,432 @@ test("main agent history loads bounded pages and retains the reading position", 
       fixture.agentRunId,
     ]);
     await pool.query(
-      "INSERT INTO run_messages(id,run_id,sequence,role,content,created_at) SELECT gen_random_uuid()::text,$1,n,'assistant','Parent history ' || n::text,'2026-01-01T00:00:00.000123Z' FROM generate_series(1,650)n",
+      "INSERT INTO run_messages(id,run_id,sequence,role,content,created_at) SELECT gen_random_uuid()::text,$1,n,'assistant','Parent history ' || n::text,'2026-01-01T00:00:00.000123Z' FROM generate_series(1,250)n",
       [fixture.agentRunId],
     );
   });
   const requests: URL[] = [];
+  let failEarlier = true;
+  const boundaries: string[] = [];
+  let releaseFailure: () => void = () => {};
+  let captureEarlier: () => void = () => {};
+  const failureHeld = new Promise<void>((resolve) => {
+    releaseFailure = resolve;
+  });
+  const earlierRequested = new Promise<void>((resolve) => {
+    captureEarlier = resolve;
+  });
 
-  page.on("request", (request) => {
-    const url = new URL(request.url());
+  await page.route(
+    `**/api/runs/${fixture.agentRunId}/transcript?*`,
+    async (route) => {
+      const url = new URL(route.request().url());
+      const before = url.searchParams.get("before");
 
-    if (url.pathname === `/api/runs/${fixture.agentRunId}/transcript`)
       requests.push(url);
-  });
-  await page.setViewportSize({ width: 1600, height: 1000 });
-  await page.goto(`/runs/${fixture.agentRunId}`);
-  await expect(history(page).getByText(/^Parent history \d+$/)).toHaveCount(
-    100,
-  );
-  await expect(
-    history(page).getByText("Parent history 650", { exact: true }),
-  ).toBeVisible();
-  expect(requests.length).toBeGreaterThan(0);
-  expect(requests.every((url) => url.searchParams.get("limit") === "100")).toBe(
-    true,
-  );
-  const reading = history(page).getByText("Parent history 551", {
-    exact: true,
-  });
+      if (before) {
+        boundaries.push(before);
+        if (failEarlier) {
+          captureEarlier();
+          await failureHeld;
+          await route.fulfill({
+            status: 503,
+            contentType: "application/json",
+            body: JSON.stringify({ reason: "transport" }),
+          });
 
-  await reading.scrollIntoViewIfNeeded();
-  const top = (await reading.boundingBox())!.y;
-
-  await history(page)
-    .getByRole("button", { name: "Load earlier messages" })
-    .click();
-  await expect(history(page).getByText(/^Parent history \d+$/)).toHaveCount(
-    200,
+          return;
+        }
+      }
+      await route.continue();
+    },
   );
-  await expect
-    .poll(async () => Math.abs((await reading.boundingBox())!.y - top))
-    .toBeLessThan(2);
-  for (let count = 3; count <= 5; count++) {
-    await history(page)
-      .getByRole("button", { name: "Load earlier messages" })
-      .click();
-    await expect(history(page).getByText(/^Parent history \d+$/)).toHaveCount(
-      count * 100,
+  try {
+    await page.setViewportSize({ width: 1600, height: 1000 });
+    await page.goto(`/runs/${fixture.agentRunId}`);
+    const transcript = history(page);
+    const messages = transcript.getByText(
+      /^Parent history \d+(?: \(continued\))?$/,
     );
+    const reading = transcript.getByText("Parent history 151", { exact: true });
+
+    await expect(messages).toHaveCount(100);
+    await expect(
+      transcript.getByText("Parent history 250", { exact: true }),
+    ).toBeInViewport();
+    await expect(
+      transcript.getByText("Parent history 150", { exact: true }),
+    ).toHaveCount(0);
+    expect(
+      requests.every((url) => url.searchParams.get("limit") === "100"),
+    ).toBe(true);
+    await scrollWithinDocument(reading, 0);
+    await expect
+      .poll(async () => ({
+        ...(await transcript.evaluate((element) => ({
+          scrollTop: document.scrollingElement?.scrollTop,
+          firstTop: element
+            .querySelector("[data-transcript-message-id]")
+            ?.getBoundingClientRect().top,
+          tailTop: element
+            .querySelector('[data-testid="transcript-tail"]')
+            ?.getBoundingClientRect().top,
+          viewportHeight: window.innerHeight,
+        }))),
+        earlierRequests: boundaries.length,
+      }))
+      .toMatchObject({ earlierRequests: 1 });
+    await earlierRequested;
+    await expect(
+      transcript.getByTestId("transcript-history-loading"),
+    ).toContainText("Loading earlier messages");
+    await expect(
+      transcript.getByRole("button", { name: "Load earlier messages" }),
+    ).toBeDisabled();
+    await transcript
+      .getByRole("button", { name: "Load earlier messages" })
+      .evaluate((element: HTMLButtonElement) => element.click());
+    expect(boundaries).toHaveLength(1);
+    releaseFailure();
+    await expect(
+      transcript.getByRole("button", { name: "Retry earlier messages" }),
+    ).toBeVisible();
+    await expect(messages).toHaveCount(100);
+    expect(boundaries).toHaveLength(1);
+    await page.evaluate(async () => {
+      window.scrollBy(0, 10);
+      window.scrollBy(0, -10);
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      );
+    });
+    expect(boundaries).toHaveLength(1);
+    const top = (await reading.boundingBox())!.y;
+
+    failEarlier = false;
+    await transcript
+      .getByRole("button", { name: "Retry earlier messages" })
+      .evaluate((element: HTMLButtonElement) => element.click());
+    await expect(messages).toHaveCount(200);
+    expect(boundaries).toHaveLength(2);
+    expect(boundaries[0]).toBe(boundaries[1]);
+    await expect
+      .poll(async () => Math.abs((await reading.boundingBox())!.y - top))
+      .toBeLessThan(2);
+    // Activate the top button without moving the reading anchor to it first.
+    await transcript
+      .getByRole("button", { name: "Load earlier messages" })
+      .evaluate((element: HTMLButtonElement) => element.click());
+    await expect(messages).toHaveCount(250);
+    await expect(
+      transcript.getByRole("button", { name: "Load earlier messages" }),
+    ).toHaveCount(0);
+    await expect
+      .poll(async () => Math.abs((await reading.boundingBox())!.y - top))
+      .toBeLessThan(2);
+    const displayed = await messages.allTextContents();
+
+    expect(displayed).toEqual(
+      Array.from({ length: 250 }, (_, index) => `Parent history ${index + 1}`),
+    );
+    await withE2EDb((pool) =>
+      pool.query(
+        "UPDATE run_messages SET content='Parent history 250 (continued)' WHERE run_id=$1 AND sequence=250",
+        [fixture.agentRunId],
+      ),
+    );
+    await expect(transcript).toContainText("Newer messages are available");
+    await expect(
+      transcript.getByTestId("transcript-jump-latest"),
+    ).toHaveAttribute("data-new-messages", "true");
+    await expect
+      .poll(async () => Math.abs((await reading.boundingBox())!.y - top))
+      .toBeLessThan(2);
+    await withE2EDb((pool) =>
+      pool.query(
+        "INSERT INTO run_messages(id,run_id,sequence,role,content,created_at) VALUES($1,$2,251,'assistant','Parent history 251','2026-01-01T00:00:00.000123Z')",
+        [randomUUID(), fixture.agentRunId],
+      ),
+    );
+    await expect(transcript).toContainText("Newer messages are available");
+    await expect(
+      transcript.getByText("Parent history 251", { exact: true }),
+    ).toHaveCount(1);
+    await expect
+      .poll(async () => Math.abs((await reading.boundingBox())!.y - top))
+      .toBeLessThan(2);
+    await transcript
+      .getByRole("button", { name: "Jump to latest", exact: true })
+      .click();
+    await expect(messages).toHaveCount(100);
+    await expect(
+      transcript.getByText("Parent history 251", { exact: true }),
+    ).toBeInViewport();
+    await withE2EDb((pool) =>
+      pool.query(
+        "INSERT INTO run_messages(id,run_id,sequence,role,content,created_at) VALUES($1,$2,252,'assistant','Parent history 252','2026-01-01T00:00:00.000123Z')",
+        [randomUUID(), fixture.agentRunId],
+      ),
+    );
+    await expect(
+      transcript.getByText("Parent history 252", { exact: true }),
+    ).toBeInViewport();
+    await expect(
+      transcript.getByRole("button", { name: "Jump to latest", exact: true }),
+    ).toHaveCount(0);
+    const middle = transcript.getByText("Parent history 200", { exact: true });
+
+    await scrollWithinDocument(middle, 0.5);
+    await expect(
+      transcript.getByTestId("transcript-jump-latest"),
+    ).toBeVisible();
+    const middleTop = (await middle.boundingBox())!.y;
+
+    await withE2EDb((pool) =>
+      pool.query(
+        "UPDATE run_messages SET content='Parent history 252 (continued)' WHERE run_id=$1 AND sequence=252",
+        [fixture.agentRunId],
+      ),
+    );
+    await expect(transcript).toContainText("Newer messages are available");
+    await expect
+      .poll(async () => Math.abs((await middle.boundingBox())!.y - middleTop))
+      .toBeLessThan(2);
+    await scrollWithinDocument(
+      transcript.getByText("Parent history 252 (continued)", { exact: true }),
+      1,
+    );
+    await expect(
+      transcript.getByText(/Newer messages are available/),
+    ).toHaveCount(0);
+    await withE2EDb((pool) =>
+      pool.query(
+        "INSERT INTO run_messages(id,run_id,sequence,role,content,created_at) SELECT gen_random_uuid()::text,$1,n,'assistant','Parent history ' || n::text,'2026-01-01T00:00:00.000123Z' FROM generate_series(253,453)n",
+        [fixture.agentRunId],
+      ),
+    );
+    await expect(
+      transcript.getByText("Parent history 453", { exact: true }),
+    ).toBeInViewport();
+    const anchors = transcript.locator("[data-transcript-message-id]");
+    const uniqueIds = async (): Promise<string[]> =>
+      anchors.evaluateAll((elements) =>
+        elements.map((element) =>
+          element.getAttribute("data-transcript-message-id")!,
+        ),
+      );
+    const afterBurst = await uniqueIds();
+
+    expect(afterBurst.length).toBe(new Set(afterBurst).size);
+    expect(afterBurst.length).toBeLessThanOrEqual(500);
+    await scrollWithinDocument(
+      transcript.getByText("Parent history 152", { exact: true }),
+      0,
+    );
+    await expect(
+      transcript.getByText("Parent history 151", { exact: true }),
+    ).toHaveCount(1);
+    const afterEarlier = await uniqueIds();
+
+    expect(afterEarlier.length).toBe(new Set(afterEarlier).size);
+    expect(afterEarlier.length).toBeLessThanOrEqual(500);
+    await transcript
+      .getByRole("button", { name: "Jump to latest", exact: true })
+      .click();
+    await expect(
+      transcript.getByText("Parent history 453", { exact: true }),
+    ).toBeInViewport();
+  } finally {
+    releaseFailure();
   }
-  await history(page)
-    .getByRole("button", { name: "Load earlier messages" })
-    .click();
-  await expect(history(page).getByText(/^Parent history \d+$/)).toHaveCount(
-    500,
+});
+
+for (const surface of ["agent", "node"] as const) {
+  test(`${surface} transcript renders a large complete tool and its following message without empty preview cards`, async ({
+    page,
+  }) => {
+    const runId = surface === "agent" ? fixture.agentRunId : fixture.flowRunId;
+    const attemptId = surface === "agent" ? null : fixture.nodeAttemptId;
+    const tool = {
+      v: 1,
+      kind: "tool",
+      name: "Read",
+      toolKind: "read",
+      status: "completed",
+      arg: "src/large.ts",
+      rawInput: { file_path: "src/large.ts" },
+      result: '界\n"'.repeat(30_000),
+    };
+
+    await withE2EDb(async (pool) => {
+      await pool.query("DELETE FROM run_messages WHERE run_id=$1", [runId]);
+      await pool.query(
+        "INSERT INTO run_messages(id,run_id,node_attempt_id,sequence,role,content,created_at,supervisor_event_id) SELECT gen_random_uuid()::text,$1,$2,n,'assistant','Mixed history ' || n::text,'2026-01-01T00:00:00.000123Z',n::text FROM generate_series(1,105)n",
+        [runId, attemptId],
+      );
+      await pool.query(
+        "UPDATE run_messages SET role='tool',content=$1 WHERE run_id=$2 AND sequence=104",
+        [JSON.stringify(tool), runId],
+      );
+      for (const [sequence, label] of [
+        [5, "first"],
+        [6, "second"],
+      ] as const) {
+        await pool.query(
+          "UPDATE run_messages SET role='tool',content=$1 WHERE run_id=$2 AND sequence=$3",
+          [
+            JSON.stringify({
+              ...tool,
+              name: "Bash",
+              toolKind: "execute",
+              arg: `${label} command`,
+              rawInput: { command: `echo ${label}` },
+              result: `${label} boundary result`,
+            }),
+            runId,
+            sequence,
+          ],
+        );
+      }
+      await pool.query(
+        "UPDATE run_messages SET role='user',content='Mixed user prompt' WHERE run_id=$1 AND sequence=101",
+        [runId],
+      );
+      await pool.query(
+        "UPDATE run_messages SET role='system',content=$1 WHERE run_id=$2 AND sequence=102",
+        [JSON.stringify({ v: 1, kind: "usage", used: 123, size: 456 }), runId],
+      );
+      await pool.query(
+        "UPDATE run_messages SET role='system',content=$1 WHERE run_id=$2 AND sequence=103",
+        [
+          JSON.stringify({
+            v: 1,
+            kind: "thought",
+            text: "Inspect the large file carefully",
+          }),
+          runId,
+        ],
+      );
+    });
+    await page.goto(`/runs/${runId}`);
+    const transcript = history(page);
+
+    await expect(
+      transcript.getByText("Mixed history 105", { exact: true }),
+    ).toBeInViewport();
+    await expect(transcript.getByTestId("peek-bounded-preview")).toHaveCount(0);
+    await expect(
+      transcript.getByText("Mixed user prompt", { exact: true }),
+    ).toHaveCount(1);
+    await expect(transcript).toContainText("123 / 456");
+    await transcript
+      .getByRole("button", { name: /Thinking/ })
+      .evaluate((element: HTMLButtonElement) => element.click());
+    await expect(transcript).toContainText("Inspect the large file carefully");
+    await expect(
+      transcript.getByRole("button", { name: /Read.*src\/large.ts/ }),
+    ).toHaveCount(1);
+    await transcript
+      .getByRole("button", { name: /Read.*src\/large.ts/ })
+      .click();
+    await expect(transcript).toContainText(tool.result.slice(0, 40));
+    await expect(transcript).not.toContainText('"rawInput"');
+    await transcript
+      .getByRole("button", { name: "Load earlier messages" })
+      .evaluate((element: HTMLButtonElement) => element.click());
+    await expect(
+      transcript.getByText("Mixed history 1", { exact: true }),
+    ).toHaveCount(1);
+    await transcript
+      .getByRole("button", { name: /Bash ×2/ })
+      .evaluate((element: HTMLButtonElement) => element.click());
+    for (const label of ["first", "second"]) {
+      await transcript
+        .getByRole("button", { name: new RegExp(`Bash.*${label} command`) })
+        .evaluate((element: HTMLButtonElement) => element.click());
+      await expect(transcript).toContainText(`${label} boundary result`);
+    }
+    await expect(
+      transcript.getByRole("button", { name: /Read.*src\/large.ts/ }),
+    ).toHaveCount(1);
+  });
+}
+
+test("a newer visible-window response wins over the older latest snapshot in the same refresh", async ({
+  page,
+}) => {
+  await withE2EDb((pool) =>
+    pool.query(
+      "INSERT INTO run_messages(id,run_id,sequence,role,content) VALUES($1,$2,2,'assistant','Existing window tail')",
+      [randomUUID(), fixture.agentRunId],
+    ),
   );
-  await expect(history(page)).toContainText(
-    "Newer displayed pages were unloaded",
+  await page.goto(`/runs/${fixture.agentRunId}`);
+  await expect(history(page)).toContainText("First agent history");
+  let injected = false;
+  let afterRequests = 0;
+  let releaseFollowing: () => void = () => {};
+  const followingHeld = new Promise<void>((resolve) => {
+    releaseFollowing = resolve;
+  });
+
+  await page.route(
+    `**/api/runs/${fixture.agentRunId}/transcript?*`,
+    async (route) => {
+      const query = new URL(route.request().url()).searchParams;
+
+      if ((query.has("windowBefore") || query.has("anchor")) && !injected) {
+        injected = true;
+        await withE2EDb(async (pool) => {
+          await pool.query(
+            "UPDATE run_messages SET content='Newest visible content' WHERE run_id=$1 AND sequence=1",
+            [fixture.agentRunId],
+          );
+          await pool.query(
+            "INSERT INTO run_messages(id,run_id,sequence,role,content) VALUES($1,$2,3,'assistant','Inserted during visible refresh')",
+            [randomUUID(), fixture.agentRunId],
+          );
+        });
+        const response = await route.fetch();
+
+        await route.fulfill({ response });
+
+        return;
+      }
+      if (query.has("after")) afterRequests++;
+      if (injected && !query.has("windowBefore") && !query.has("anchor"))
+        await followingHeld;
+      await route.continue();
+    },
   );
-  await history(page)
-    .getByRole("button", { name: "Latest messages", exact: true })
-    .click();
-  await expect(history(page).getByText(/^Parent history \d+$/)).toHaveCount(
-    100,
-  );
-  await expect(history(page)).toContainText("Parent history 650");
+  try {
+    await withE2EDb((pool) =>
+      pool.query(
+        "UPDATE run_messages SET content='Older latest snapshot' WHERE run_id=$1 AND sequence=1",
+        [fixture.agentRunId],
+      ),
+    );
+    await expect(history(page)).toContainText("Newest visible content");
+    expect(injected).toBe(true);
+    await expect(history(page)).not.toContainText("Older latest snapshot");
+    await expect(
+      history(page).getByText("Inserted during visible refresh", {
+        exact: true,
+      }),
+    ).toHaveCount(1);
+    const anchors = await history(page)
+      .locator("[data-transcript-message-id]")
+      .evaluateAll((elements) =>
+        elements.map((element) =>
+          element.getAttribute("data-transcript-message-id"),
+        ),
+      );
+
+    expect(anchors).toHaveLength(3);
+    expect(new Set(anchors).size).toBe(3);
+    expect(afterRequests).toBe(0);
+  } finally {
+    releaseFollowing();
+    await page.unrouteAll({ behavior: "wait" });
+  }
 });

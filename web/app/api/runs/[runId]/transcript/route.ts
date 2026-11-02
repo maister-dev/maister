@@ -70,9 +70,15 @@ export async function GET(
   const { runId } = await params;
 
   if (
-    ["limit", "before", "after", "windowBefore", "windowAfter", "through"].some(
-      (key) => new URL(req.url).searchParams.has(key),
-    )
+    [
+      "limit",
+      "before",
+      "after",
+      "windowBefore",
+      "windowAfter",
+      "through",
+      "anchor",
+    ].some((key) => new URL(req.url).searchParams.has(key))
   ) {
     return peekResponse("transcript", async (userId) => {
       const startedAt = performance.now();
@@ -87,6 +93,7 @@ export async function GET(
           "windowBefore",
           "windowAfter",
           "through",
+          "anchor",
         ]),
       );
 
@@ -96,6 +103,16 @@ export async function GET(
           nodeId: new URL(req.url).searchParams.get("node"),
           durationMs: Math.round(performance.now() - startedAt),
           messageCount: page.messages.length,
+          responseBytes: Buffer.byteLength(JSON.stringify(page)),
+          previewCount: page.messages.filter((message) => message.preview)
+            .length,
+          hasEarlier: page.hasEarlier,
+          hasLater: page.hasLater,
+          direction: new URL(req.url).searchParams.has("after")
+            ? "after"
+            : new URL(req.url).searchParams.has("before")
+              ? "before"
+              : "latest_or_window",
           projectionState: page.projection.state,
         },
         "[FIX:run-transcript-loading] transcript page read",

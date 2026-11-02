@@ -2402,6 +2402,7 @@ table run_messages {
   sequence integer [not null]
   role text [not null]
   content text [not null]
+  first_supervisor_event_id text
   supervisor_event_id text
   projection_tool_key text
   prompt_dispatch_key text
@@ -2412,6 +2413,7 @@ table run_messages {
 
   indexes {
     (run_id, node_attempt_id, supervisor_event_id, prompt_dispatch_key, sequence, id) [name: 'run_messages_peek_node_order_idx']
+    (run_id, node_attempt_id, first_supervisor_event_id, supervisor_event_id, prompt_dispatch_key, sequence, id) [name: 'run_messages_peek_node_creation_order_idx']
     (run_id, created_at, sequence, id) [name: 'run_messages_peek_run_order_idx']
     (run_id, node_attempt_id, projection_tool_key, sequence) [name: 'run_messages_projection_tool_idx']
     (run_id, node_attempt_id, sequence) [name: 'run_messages_run_node_attempt_sequence_uq', unique]

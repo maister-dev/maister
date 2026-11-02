@@ -7493,6 +7493,22 @@ paths:
         - name: after
           in: query
           schema: { type: string, maxLength: 2048 }
+        - name: windowBefore
+          in: query
+          description: Inclusive lower anchor for refreshing a loaded portion; requires windowAfter.
+          schema: { type: string, maxLength: 2048 }
+        - name: windowAfter
+          in: query
+          description: Inclusive upper anchor for refreshing a loaded portion; requires windowBefore.
+          schema: { type: string, maxLength: 2048 }
+        - name: anchor
+          in: query
+          description: Inclusive message ID to recenter a bounded retained window; requires limit and excludes before/after/window cursors. The record must belong to the authorized current attempt.
+          schema: { type: string, minLength: 1, maxLength: 512 }
+        - name: through
+          in: query
+          description: Captured projection head; bounded projection continuation never follows a moving head.
+          schema: { type: string, pattern: '^\d{1,20}$' }
       responses:
         "200":
           description: Ordered transcript for the node's latest attempt.
@@ -7503,6 +7519,55 @@ paths:
                   - $ref: "#/components/schemas/RunTranscriptResponse"
                   - $ref: "#/components/schemas/RunStandaloneTranscriptResponse"
                   - $ref: "#/components/schemas/RunTranscriptPage"
+        "400":
+          $ref: "#/components/responses/Config"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Precondition"
+
+  /api/runs/{runId}/transcript/messages/{messageId}:
+    get:
+      tags: [runs]
+      summary: Download one complete transcript record
+      description: |
+        Requires the same readRepoFiles access as transcript portions, or the
+        owner of an eligible personal scratch Run. Returns an attachment with
+        private/no-store, nosniff and sandbox headers. Reads at most 16384 Unicode
+        characters (65536 UTF-8 bytes) per backpressured database chunk; no whole
+        record is buffered. Every chunk checks the captured database row version
+        and current node attempt. A concurrent change aborts the download instead
+        of combining versions; retrieve the message again. Content-Length allows
+        the browser to reject incomplete downloads. Cancellation stops future reads.
+      operationId: downloadRunTranscriptMessage
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: messageId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 512 }
+        - name: attempt
+          in: query
+          description: Required for a node transcript message and must name the current attempt; omitted for standalone messages.
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Complete record content as a streaming attachment.
+          headers:
+            Content-Length:
+              schema: { type: integer, minimum: 0 }
+          content:
+            text/plain:
+              schema: { type: string }
+            application/json:
+              schema: { type: string }
         "400":
           $ref: "#/components/responses/Config"
         "401":
@@ -18336,7 +18401,8 @@ paths:
       tags:
         - runs
       summary: Designed — read-only child Run peek
-      description: "Auth.js active session required before resource lookup. Derive projects from persisted
+      description:
+        "Auth.js active session required before resource lookup. Derive projects from persisted
         Runs. Enforce readBoard and independent descendant ancestry; protected transcript/evidence
         requires readRepoFiles. No lifecycle or result-collection writes. Cache-Control: private,
         no-store. See run-peek-data.md for limits and refusal semantics."
@@ -18424,7 +18490,8 @@ paths:
       tags:
         - runs
       summary: Designed — read-only child Run peek
-      description: "Auth.js active session required before resource lookup. Derive projects from persisted
+      description:
+        "Auth.js active session required before resource lookup. Derive projects from persisted
         Runs. Enforce readBoard and independent descendant ancestry; protected transcript/evidence
         requires readRepoFiles. No lifecycle or result-collection writes. Cache-Control: private,
         no-store. See run-peek-data.md for limits and refusal semantics."
@@ -18503,7 +18570,8 @@ paths:
       tags:
         - runs
       summary: Designed — read-only child Run peek
-      description: Designed — one workbench tick-only SSE for the authorized anchor/current child and
+      description:
+        Designed — one workbench tick-only SSE for the authorized anchor/current child and
         subtree metadata. Advisory frames have no SSE id or replay cursor. Reconnect forces canonical
         reads. Child denial retains the readable parent channel. Exact frames live in
         web-runs.asyncapi.yaml. Connection acquisition failure returns 503 before headers.
@@ -18579,7 +18647,8 @@ components:
       type: apiKey
       in: cookie
       name: authjs.session-token
-      description: Auth.js active browser session, including secure-cookie deployment variants. No project
+      description:
+        Auth.js active browser session, including secure-cookie deployment variants. No project
         bearer token grant.
     cronToken:
       type: apiKey
@@ -19190,66 +19259,43 @@ components:
         reason:
           type: string
     RunTranscriptPageMessage:
-      oneOf:
-        - type: object
+      type: object
+      additionalProperties: false
+      required: [id, role, content, createdAt]
+      description: |
+        A complete normal transcript message, or an individually oversized
+        message represented by valid role-specific bounded content. Cumulative
+        response exhaustion ends a page instead of producing previews. Tool
+        previews preserve the tool name, status and argument/result summaries.
+      properties:
+        id: { type: string }
+        role:
+          type: string
+          enum: [user, assistant, tool, system]
+        content: { type: string }
+        createdAt: { type: string }
+        preview:
+          type: object
           additionalProperties: false
-          required:
-            - id
-            - role
-            - content
-            - createdAt
+          required: [originalBytes, fullContentHref]
           properties:
-            id:
+            originalBytes: { type: integer, minimum: 0 }
+            fullContentHref:
               type: string
-            role:
-              type: string
-              enum:
-                - user
-                - assistant
-                - tool
-                - system
-            content:
-              type: string
-            createdAt:
-              type: string
-              nullable: true
-        - type: object
-          additionalProperties: false
-          required:
-            - id
-            - role
-            - kind
-            - preview
-            - originalBytes
-            - truncated
-            - createdAt
-          properties:
-            id:
-              type: string
-            role:
-              type: string
-              enum:
-                - user
-                - assistant
-                - tool
-                - system
-            kind:
-              type: string
-              enum:
-                - bounded_preview
-            preview:
-              type: string
-            originalBytes:
-              type: integer
-              minimum: 0
-            truncated:
-              type: boolean
-              enum:
-                - true
-            createdAt:
-              type: string
-              nullable: true
+              description: Authorized attachment download of the complete record, bound to its current node attempt when applicable.
     RunTranscriptPage:
+      description: |
+        Each portion contains at most 200 records and 389120 serialized UTF-8
+        bytes, including content escaping, cursor and response metadata. The
+        initial portion prioritizes the newest records, displayed oldest first.
+        Size-admission is contiguous in traversal order. Cursors bind only the
+        records actually returned; nonempty portions always provide before and
+        after anchors even when no neighboring rows currently exist, allowing
+        live catch-up from an old tail. hasEarlier/hasLater report actual neighbors.
+        Canonical node rows keep immutable creation-event positions while their
+        separate last-mutation IDs continue advancing. Cursor boundary IDs are
+        resolved in the current authorized scope, allowing explicit prompt
+        horizon corrections without leaving previously issued cursors obsolete.
       type: object
       additionalProperties: false
       required:

@@ -3,6 +3,8 @@
 // components/runs/__tests__/raw-diff.test.ts. The vitest `unit` glob is
 // `components/**/__tests__/**/*.test.ts` (NO .tsx), so this is a `.test.ts`.
 
+import { randomUUID } from "node:crypto";
+
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -84,7 +86,7 @@ describe("ScratchTranscript render", () => {
   it("collapses a multi-tool group to count chips, hiding the rows", () => {
     const tool = (name: string, arg: string) =>
       message({
-        id: `${name}-${arg}`,
+        id: randomUUID(),
         role: "tool",
         content: encodeToolPayload({
           name,
@@ -112,7 +114,7 @@ describe("ScratchTranscript render", () => {
   it("auto-expands the active (last) tool group while the turn runs", () => {
     const tool = (name: string, arg: string) =>
       message({
-        id: `${name}-${arg}`,
+        id: randomUUID(),
         role: "tool",
         content: encodeToolPayload({
           name,
