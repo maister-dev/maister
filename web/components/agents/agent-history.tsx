@@ -214,7 +214,10 @@ export async function AgentRunHistory({
                       >
                         {item.runId.slice(0, 8)}
                       </Link>
-                      <ScheduledRequestEvidence snapshot={item.scheduledRequest} state={item.scheduledRequestState} />
+                      <ScheduledRequestEvidence
+                        snapshot={item.scheduledRequest}
+                        state={item.scheduledRequestState}
+                      />
                       {item.retryOfRunId ? (
                         <span className="mt-1 block text-xs text-mute">
                           {t("retryOf")}{" "}
@@ -334,7 +337,10 @@ export async function AgentAttemptHistory({
                   </span>
                 ) : null}
               </span>
-              <ScheduledRequestEvidence snapshot={item.scheduledRequest} state={item.scheduledRequestState} />
+              <ScheduledRequestEvidence
+                snapshot={item.scheduledRequest}
+                state={item.scheduledRequestState}
+              />
               {item.runId ? (
                 <Link className={link} href={`/runs/${item.runId}`}>
                   {t("openDiagnosticRun")}

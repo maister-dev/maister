@@ -246,6 +246,7 @@ runs through the existing batch preview. Saving does not launch work; confirmati
 uses the new current runner and reports eligibility per task. A failed preview
 does not misreport a successful settings save as failed. See
 [retry behavior](../../system-analytics/agent-retry.md).
+
 ## Request at launch
 
 Each cron row has an optional multiline **Request at launch / Запрос при запуске** field, help and a normalized Unicode character counter. The maximum is 8000 code points after newline normalization and outer trimming. Invalid or overlong input disables Save and has localized feedback; the API independently validates it. Empty input serializes as explicit null, clearing a retained row. Reload preserves each schedule's independent value and stable ID. Request-only saves preserve cadence progress and use the existing schedulesRevision conflict feedback.

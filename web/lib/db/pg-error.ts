@@ -59,6 +59,10 @@ export function queryErrorDiagnostics(error: unknown): {
 /** Drop query parameters and the raw cause before errors reach logs or public state. */
 export function redactQueryError(error: unknown): unknown {
   if (!(error instanceof DrizzleQueryError)) return error;
+  // Guarded query adapters also throw typed domain fences. Unwrap those
+  // without retaining the query wrapper or any nested database cause.
+  if (error.cause instanceof MaisterError && error.cause.cause === undefined)
+    return error.cause;
 
   return new MaisterError("CRASH", "Database operation failed", {
     details: queryErrorDiagnostics(error),

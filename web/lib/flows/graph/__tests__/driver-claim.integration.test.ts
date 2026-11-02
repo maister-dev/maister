@@ -1,6 +1,8 @@
 import type { Db } from "@/lib/execution-host/db";
 import type { StartedPostgresTestDb } from "@/test-support/pg-container";
 
+import { randomUUID } from "node:crypto";
+
 import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
@@ -8,6 +10,7 @@ import { executionAssignments, runs, tasks } from "@/lib/db/schema";
 import {
   claimFlowDriver,
   FlowDriverClaimLost,
+  isFlowDriverClaimLost,
   releaseFlowDriverClaim,
   renewFlowDriverClaim,
 } from "@/lib/flows/graph/driver-claim";
@@ -17,6 +20,9 @@ import { boundedPostgresTransaction } from "@/lib/execution-host/events/projecti
 import { seedGraphRun } from "@/test-support/graph-run-seed";
 import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import { startMainPostgresTestDb } from "@/test-support/pg-container";
+import { runAgentStep } from "@/lib/flows/runner-agent";
+import { loadRun } from "@/lib/flows/graph/runner-core";
+import { buildContext } from "@/lib/flows/context";
 
 let database: StartedPostgresTestDb;
 let db: Db;
@@ -53,6 +59,101 @@ async function seedClaim() {
 }
 
 describe("Flow traversal database fences", () => {
+  it("preserves a revoked driver's typed fence through the prompt privacy boundary", async () => {
+    const request = "private-revoked-driver-request-sentinel";
+    const seeded = await seedGraphRun(
+      database.db,
+      {
+        schemaVersion: 1,
+        name: "revoked-prompt-driver",
+        nodes: [
+          {
+            id: "work",
+            type: "ai_coding",
+            action: { prompt: "Work" },
+            transitions: { success: "done" },
+          },
+        ],
+      },
+      {
+        run: {
+          scheduledRequestSnapshot: {
+            version: 1,
+            scheduleId: randomUUID(),
+            triggerAttemptId: randomUUID(),
+            requestAtLaunch: request,
+          },
+        },
+      },
+    );
+    const { assignment } = await fakeExecutionHosts(db, {
+      runId: seeded.runId,
+    });
+
+    if (!assignment) throw new Error("Expected placed graph assignment");
+    const claim = await claimFlowDriver(db, {
+      runId: seeded.runId,
+      assignmentId: assignment.id,
+    });
+
+    if (!claim) throw new Error("Expected traversal claim");
+    const loaded = await loadRun(database.db, seeded.runId);
+    const controller = new AbortController();
+
+    controller.abort();
+    const attemptId = randomUUID();
+    const failure: unknown = await runAgentStep(
+      { id: "work", type: "agent", mode: "new-session", prompt: "Work" },
+      {
+        runtimeRoot: seeded.runtimeRoot,
+        worktreePath: seeded.worktreePath,
+        runId: seeded.runId,
+        projectSlug: loaded.projectSlug,
+        stepId: "work",
+        nodeAttemptId: attemptId,
+        promptOwner: {
+          variant: "node",
+          nodeAttemptId: attemptId,
+          promptOrdinal: 1,
+        },
+        flowDriverClaim: claim,
+        scheduledRequestSnapshot: loaded.run.scheduledRequestSnapshot,
+        sessionName: "work",
+        executor: { ...loaded.executor, env: loaded.executor.env ?? undefined },
+        context: buildContext({
+          task: loaded.task,
+          run: loaded.run,
+          executor: loaded.executor,
+          nodeAttempts: [],
+          projectSlug: loaded.projectSlug,
+        }),
+        db: flowDriverDatabase(db, claim, controller.signal),
+      },
+    ).catch((error: unknown) => error);
+
+    expect(isFlowDriverClaimLost(failure)).toBe(true);
+    expect(failure).toBeInstanceOf(FlowDriverClaimLost);
+    expect(String(failure)).not.toContain("Failed query");
+    expect(JSON.stringify(failure)).not.toContain(request);
+    expect(
+      (
+        await db
+          .select({ status: runs.status, token: runs.flowDriverToken })
+          .from(runs)
+          .where(eq(runs.id, seeded.runId))
+      )[0],
+    ).toEqual({ status: "Running", token: claim.token });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT id FROM execution_commands WHERE run_id=$1",
+          [seeded.runId],
+        )
+      ).rows,
+    ).toEqual([]);
+    await releaseFlowDriverClaim(db, claim);
+  });
+
   it("allocates relational query registries only on demand inside the guarded transaction and savepoint", async () => {
     const seeded = await seedClaim();
     const entries = Object.entries;

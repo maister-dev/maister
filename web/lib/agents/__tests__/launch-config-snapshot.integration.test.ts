@@ -250,6 +250,7 @@ describe("ADR-111 launch-time config snapshot", () => {
     }
     const { claimCronAgentAttempt } =
       await import("@/lib/agents/trigger-attempts");
+
     for (const { id: scheduleId, request } of schedules) {
       const claim = (await claimCronAgentAttempt(
         testDatabase.db,
@@ -775,7 +776,8 @@ describe("ADR-111 launch-time config snapshot", () => {
       CREATE FUNCTION raise_agent_question_supersession() RETURNS trigger
       LANGUAGE plpgsql AS $$
       BEGIN
-        RAISE EXCEPTION 'forced agent-question supersession failure';
+        RAISE EXCEPTION 'forced agent-question supersession failure'
+          USING CONSTRAINT='test_agent_question_supersession';
       END;
       $$
     `);
@@ -796,10 +798,13 @@ describe("ADR-111 launch-time config snapshot", () => {
           trigger: { source: "manual" },
           db,
         }),
-      ).rejects.toHaveProperty(
-        "cause.message",
-        expect.stringContaining("forced agent-question supersession failure"),
-      );
+      ).rejects.toMatchObject({
+        code: "CRASH",
+        details: {
+          sqlState: "P0001",
+          constraint: "test_agent_question_supersession",
+        },
+      });
     } finally {
       await pool.query(
         "DROP TRIGGER IF EXISTS raise_agent_question_supersession ON hitl_requests",

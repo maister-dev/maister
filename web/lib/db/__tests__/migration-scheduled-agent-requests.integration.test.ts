@@ -23,7 +23,7 @@ let legacySchedule: unknown;
 beforeAll(async () => {
   database = await startMainPostgresTestDbUpTo(
     { databaseName: "scheduled_request_upgrade" },
-    "0209_task_qualification_capability",
+    "0212_run_peek_notifications",
   );
   projectId = (await seedProjectRow(database.db)).id;
   await seedRun(database.db, { id: legacyRunId, projectId });
@@ -68,7 +68,7 @@ beforeAll(async () => {
     await readFile("./lib/db/migrations/meta/_journal.json", "utf8"),
   ) as { entries: Array<{ tag: string; when: number }> };
   const cutoff = journal.entries.find(
-    (entry) => entry.tag === "0209_task_qualification_capability",
+    (entry) => entry.tag === "0212_run_peek_notifications",
   )!.when;
   const applied = readMigrationFiles({
     migrationsFolder: "./lib/db/migrations",

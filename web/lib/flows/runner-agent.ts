@@ -65,7 +65,6 @@ import {
 } from "./graph/prompt-permission";
 
 import { queryErrorDiagnostics, redactQueryError } from "@/lib/db/pg-error";
-
 import {
   parseScheduledRequestSnapshot,
   appendScheduledRequest,
@@ -1271,7 +1270,7 @@ export async function runAgentStep(
   } catch (error) {
     const failure = redactQueryError(error);
 
-    if (failure !== error) {
+    if (failure !== error && !isFlowDriverClaimLost(failure)) {
       log.error(
         {
           runId: ctx.runId,

@@ -273,6 +273,7 @@ it("prepares a fresh current-task qualification for a legacy failed triager, opt
     .select()
     .from(runs)
     .where(eq(runs.id, settled.runId!));
+
   expect(successorRun.executionPolicy).toEqual(recipe.policy);
   expect(successorRun.agentConfig ?? {}).toEqual(recipe.configuration);
   const prompt = await buildAgentPrompt(
@@ -526,42 +527,96 @@ it.each(["ready", "needs_information"] as const)(
   },
 );
 
-it("continues an already accepted version-one retry recipe without changing its frozen digest", async () => {
-  const source = await fixture();
-  const prepared = await prepareAgentRetry(
-    database.db,
-    source.runId,
-    source.userId,
-  );
-  const recipe = await retryRecipeFor(database.db, prepared, source.runnerId);
-  const { version: _version, ...current } = recipe;
-  const legacy = {
-    ...current,
-    version: 1 as const,
-    contextDigest: prepared.legacyContextDigest,
-  };
-  const id = randomUUID();
+it.each(["absent", "captured"] as const)(
+  "continues a version-one retry with %s request input without changing its bytes or digest",
+  async (input) => {
+    const snapshot =
+      input === "captured"
+        ? {
+            version: 1 as const,
+            scheduleId: randomUUID(),
+            triggerAttemptId: randomUUID(),
+            requestAtLaunch: "Original legacy retry request 😀",
+          }
+        : undefined;
+    const source = await fixture("none", snapshot);
+    const prepared = await prepareAgentRetry(
+      database.db,
+      source.runId,
+      source.userId,
+    );
+    const recipe = await retryRecipeFor(database.db, prepared, source.runnerId);
 
-  await database.db.insert(agentRetryIntents).values({
-    id,
-    projectId: source.projectId,
-    sourceAgentId: recipe.agentId,
-    sourceRunId: source.runId,
-    actorIdentity: `user:${source.userId}`,
-    actorUserId: source.userId,
-    requestKey: randomUUID(),
-    requestDigest: retryDigest({ id }),
-    selectedRunnerId: source.runnerId,
-    recipe: legacy,
-    previewFingerprint: prepared.options.previewFingerprint,
-    successorRunId: randomUUID(),
-    dueAt: new Date(Date.now() - 1000),
-  });
-  await runAgentRetryAdmissionSweep(database.db);
-  expect(
-    await getAgentRetryReceipt(database.db, source.runId, id, source.userId),
-  ).toMatchObject({ intentState: "launched", runStatus: "Pending" });
-});
+    if (recipe.version !== 2)
+      throw new Error("Expected current version-two recipe");
+    const {
+      version: _version,
+      strategy: _strategy,
+      qualificationSha: _sha,
+      ...current
+    } = recipe;
+    const legacy = {
+      ...current,
+      version: 1 as const,
+      contextDigest: prepared.legacyContextDigest,
+    };
+    const id = randomUUID();
+
+    await database.db.insert(agentRetryIntents).values({
+      id,
+      projectId: source.projectId,
+      sourceAgentId: recipe.agentId,
+      sourceRunId: source.runId,
+      actorIdentity: `user:${source.userId}`,
+      actorUserId: source.userId,
+      requestKey: randomUUID(),
+      requestDigest: retryDigest({ id }),
+      selectedRunnerId: source.runnerId,
+      recipe: legacy,
+      previewFingerprint: prepared.options.previewFingerprint,
+      successorRunId: randomUUID(),
+      dueAt: new Date(Date.now() - 1000),
+    });
+    const before = (
+      await database.pool.query(
+        "SELECT recipe::text AS recipe FROM agent_retry_intents WHERE id=$1",
+        [id],
+      )
+    ).rows[0].recipe;
+
+    expect(JSON.parse(before).version).toBe(1);
+    if (!snapshot)
+      expect(JSON.parse(before)).not.toHaveProperty("scheduledRequestSnapshot");
+    await runAgentRetryAdmissionSweep(database.db);
+    const receipt = await getAgentRetryReceipt(
+      database.db,
+      source.runId,
+      id,
+      source.userId,
+    );
+
+    expect(receipt).toMatchObject({
+      intentState: "launched",
+      runStatus: "Pending",
+    });
+    const after = (
+      await database.pool.query(
+        "SELECT recipe::text AS recipe FROM agent_retry_intents WHERE id=$1",
+        [id],
+      )
+    ).rows[0].recipe;
+
+    expect(after).toBe(before);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT scheduled_request_snapshot FROM runs WHERE id=$1",
+          [receipt.runId],
+        )
+      ).rows[0].scheduled_request_snapshot,
+    ).toEqual(snapshot ?? null);
+  },
+);
 
 it("IT-UX-14 accepts one immutable retry of a proven pre-work failure, converges replay and concurrent admission, and leaves a capacity-queued child visible", async () => {
   const snapshot = {
@@ -650,7 +705,11 @@ it("IT-UX-14 accepts one immutable retry of a proven pre-work failure, converges
     )
   ).rows[0].recipe;
 
-  expect(recipe.scheduledRequestSnapshot).toEqual(snapshot);
+  expect(recipe).toMatchObject({
+    version: 2,
+    strategy: "pre_work_retry",
+    scheduledRequestSnapshot: snapshot,
+  });
   expect(children[0]).toMatchObject({
     retry_of_run_id: fixtureData.runId,
     trigger_source: "cron",
@@ -1051,56 +1110,4 @@ it("IT-UX-14 enforces the actual retry HTTP boundary, excludes protected recipes
       )
     ).rows[0].total,
   ).toBe(0);
-});
-
-it("executes a persisted legacy recipe without changing its shape or digest", async () => {
-  const source = await fixture();
-  const options = await getAgentRetryOptions(
-    database.db,
-    source.runId,
-    source.userId,
-  );
-  const accepted = await acceptAgentRetry(
-    database.db,
-    source.runId,
-    source.userId,
-    {
-      runnerId: source.runnerId,
-      requestKey: randomUUID(),
-      previewFingerprint: options.previewFingerprint,
-    },
-  );
-  const before = (
-    await database.pool.query(
-      "SELECT recipe::text AS recipe FROM agent_retry_intents WHERE id=$1",
-      [accepted.retryIntentId],
-    )
-  ).rows[0].recipe;
-
-  expect(JSON.parse(before)).not.toHaveProperty("scheduledRequestSnapshot");
-  await runAgentRetryAdmissionSweep(database.db);
-  const receipt = await getAgentRetryReceipt(
-    database.db,
-    source.runId,
-    accepted.retryIntentId,
-    source.userId,
-  );
-
-  expect(receipt.intentState).toBe("launched");
-  const after = (
-    await database.pool.query(
-      "SELECT recipe::text AS recipe FROM agent_retry_intents WHERE id=$1",
-      [accepted.retryIntentId],
-    )
-  ).rows[0].recipe;
-
-  expect(after).toBe(before);
-  expect(
-    (
-      await database.pool.query(
-        "SELECT scheduled_request_snapshot FROM runs WHERE id=$1",
-        [receipt.runId],
-      )
-    ).rows[0].scheduled_request_snapshot,
-  ).toBeNull();
 });
