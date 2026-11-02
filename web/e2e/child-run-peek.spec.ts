@@ -60,6 +60,24 @@ function peek(page: Page) {
   return page.getByTestId("run-peek-panel");
 }
 
+async function trackFetchSignals(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const requests: { url: string; signal: AbortSignal | null | undefined }[] =
+      [];
+    const fetch = window.fetch.bind(window);
+
+    Object.assign(window, { peekRequestSignals: requests });
+    window.fetch = (input, init) => {
+      const url = String(input);
+
+      if (url.includes("/children?") || url.includes("/transcript?"))
+        requests.push({ url, signal: init?.signal });
+
+      return fetch(input, init);
+    };
+  });
+}
+
 test("E2E-PKN-01 E2E-PKN-03 E2E-PKN-07: nested navigation keeps the original Run and browser history", async ({
   page,
 }) => {
@@ -213,7 +231,12 @@ for (const width of [1536, 1024, 767, 320]) {
         "a[href],button:not([disabled]),select",
       );
 
-      await controls.last().focus();
+      await peek(page).getByRole("heading", { level: 2 }).first().focus();
+      await page.keyboard.press("Shift+Tab");
+      await expect(controls.last()).toBeFocused();
+      await controls.first().focus();
+      await page.keyboard.press("Shift+Tab");
+      await expect(controls.last()).toBeFocused();
       await page.keyboard.press("Tab");
       await expect(controls.first()).toBeFocused();
     } else {
@@ -375,6 +398,102 @@ test("E2E-PKD-07 E2E-PKD-12: two visible HTTP/1.1 workbenches keep independent s
     ).toBe(true);
   } finally {
     await other.close();
+  }
+});
+
+test("E2E-PKD-07 E2E-PKD-09: child-list requests retire on switch and close while shared parent reads stay owned", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await trackFetchSignals(page);
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let holdChild = true;
+
+  await page.route("**/children?*", async (route) => {
+    const parent = new URL(route.request().url()).searchParams.get("parent");
+
+    if (parent === fixture.anchor || (parent === fixture.child && holdChild)) {
+      await held;
+      await route.abort();
+
+      return;
+    }
+    await route.continue();
+  });
+  const signals = (parent: string): Promise<boolean[]> =>
+    page.evaluate((id) => {
+      const state = window as typeof window & {
+        peekRequestSignals: { url: string; signal?: AbortSignal | null }[];
+      };
+
+      return state.peekRequestSignals
+        .filter(
+          (item) =>
+            new URL(item.url, location.href).searchParams.get("parent") === id,
+        )
+        .map((item) => item.signal?.aborted ?? false);
+    }, parent);
+
+  try {
+    await page.goto(`/runs/${fixture.anchor}?peek=${fixture.child}`);
+    await expect(peek(page)).toContainText("Conversation of Researcher Alpha");
+    await expect
+      .poll(async () => (await signals(fixture.child)).at(-1))
+      .toBe(false);
+    await peek(page)
+      .getByRole("region", { name: "Siblings" })
+      .getByRole("link", { name: /Researcher Beta/ })
+      .click();
+    await expect(peek(page)).toContainText("Conversation of Researcher Beta");
+    await expect
+      .poll(async () =>
+        (await signals(fixture.child)).every((aborted) => aborted),
+      )
+      .toBe(true);
+    await expect
+      .poll(async () => (await signals(fixture.anchor)).at(-1))
+      .toBe(false);
+    holdChild = false;
+    await peek(page)
+      .getByRole("region", { name: "Siblings" })
+      .getByRole("link", { name: /Researcher Alpha/ })
+      .click();
+    await expect(
+      peek(page).getByRole("region", { name: "Children" }),
+    ).toContainText("Analyst Gamma");
+    const completedRequests = (await signals(fixture.child)).length;
+
+    await peek(page)
+      .getByRole("region", { name: "Siblings" })
+      .getByRole("link", { name: /Researcher Beta/ })
+      .click();
+    await expect(peek(page)).toContainText("Conversation of Researcher Beta");
+    holdChild = true;
+    await peek(page)
+      .getByRole("region", { name: "Siblings" })
+      .getByRole("link", { name: /Researcher Alpha/ })
+      .click();
+    await expect
+      .poll(async () => (await signals(fixture.child)).length)
+      .toBeGreaterThan(completedRequests);
+    await expect
+      .poll(async () => (await signals(fixture.child)).at(-1))
+      .toBe(false);
+    await peek(page)
+      .getByRole("button", { name: "Close peek", exact: true })
+      .click();
+    await expect(peek(page)).toHaveCount(0);
+    await expect
+      .poll(async () => (await signals(fixture.child)).at(-1))
+      .toBe(true);
+    await expect
+      .poll(async () => (await signals(fixture.anchor)).at(-1))
+      .toBe(false);
+  } finally {
+    release();
   }
 });
 
@@ -579,15 +698,221 @@ test("E2E-PKD-07: long histories bound rendering, preserve earlier windows and d
     ),
   );
   await expect(peek(page)).toContainText("Updated visible earlier message");
+  const reading = peek(page).getByText("History 500", { exact: true });
+
+  await reading.scrollIntoViewIfNeeded();
+  const readingTop = (await reading.boundingBox())!.y;
+
+  await withE2EDb((pool) =>
+    pool.query(
+      "UPDATE run_messages SET content=$1 WHERE run_id=$2 AND sequence=451",
+      ["Expanded earlier detail\n".repeat(50), fixture.child],
+    ),
+  );
+  await expect(peek(page)).toContainText("Expanded earlier detail");
+  await expect
+    .poll(async () => Math.abs((await reading.boundingBox())!.y - readingTop))
+    .toBeLessThan(2);
+
+  await withE2EDb((pool) =>
+    pool.query(
+      `INSERT INTO run_messages(id,run_id,sequence,role,content,created_at) SELECT gen_random_uuid()::text,$1,n,'assistant','History ' || n::text,'2026-01-01T00:00:00.000123Z' FROM generate_series(651,850)n`,
+      [fixture.child],
+    ),
+  );
+  await expect(peek(page)).toContainText("Newer messages are available");
+  await expect
+    .poll(async () => Math.abs((await reading.boundingBox())!.y - readingTop))
+    .toBeLessThan(2);
+  await expect(
+    peek(page).getByText("History 551", { exact: true }),
+  ).toHaveCount(1);
+  await expect(
+    peek(page).getByText("History 850", { exact: true }),
+  ).toHaveCount(0);
+  await expect(peek(page).getByText(/^History \d+$/)).toHaveCount(198);
   for (let count = 2; count <= 5; count++) {
     await earlier.click();
     await expect(peek(page).getByText(/^History \d+$/)).toHaveCount(
       count === 5 ? 499 : Math.min(count + 1, 5) * 100 - 2,
     );
   }
-  await expect(peek(page)).toContainText("Older displayed pages were unloaded");
+  await expect(peek(page)).toContainText("Newer displayed pages were unloaded");
+  const displayed = await peek(page)
+    .getByText(/^History \d+$/)
+    .allTextContents();
+
+  expect(
+    displayed.map((text) => Number(text.slice("History ".length))),
+  ).toEqual(
+    Array.from({ length: 500 }, (_, index) => index + 51).filter(
+      (value) => value !== 451,
+    ),
+  );
   await peek(page).getByRole("button", { name: "Latest messages" }).click();
-  await expect(peek(page).getByText(/^History \d+$/)).toHaveCount(99);
+  await expect(peek(page).getByText(/^History \d+$/)).toHaveCount(100);
+  await expect(
+    peek(page).getByText("History 850", { exact: true }),
+  ).toHaveCount(1);
+});
+
+test("E2E-PKD-07: delayed history cannot override Latest messages or a newer Flow attempt", async ({
+  page,
+}) => {
+  const flow = randomUUID();
+  const firstAttempt = randomUUID();
+  const secondAttempt = randomUUID();
+
+  await withE2EDb(async (pool) => {
+    await pool.query(
+      "INSERT INTO flows(id,project_id,flow_ref_id,source,version,installed_path,manifest,schema_version) SELECT $1,project_id,'peek-attempt','test','v1','/tmp/peek-attempt',$2,1 FROM runs WHERE id=$3",
+      [
+        flow,
+        {
+          schemaVersion: 1,
+          name: "peek-attempt",
+          nodes: [
+            {
+              id: "work",
+              type: "ai_coding",
+              action: { prompt: "Work" },
+              transitions: { success: "done" },
+            },
+          ],
+        },
+        fixture.anchor,
+      ],
+    );
+    await pool.query("UPDATE runs SET run_kind='flow',flow_id=$1 WHERE id=$2", [
+      flow,
+      fixture.child,
+    ]);
+    await pool.query(
+      "INSERT INTO node_attempts(id,run_id,node_id,node_type,attempt,status) VALUES($1,$2,'work','ai_coding',1,'Running')",
+      [firstAttempt, fixture.child],
+    );
+    await pool.query(
+      "INSERT INTO run_messages(id,run_id,node_attempt_id,sequence,role,content,supervisor_event_id) SELECT gen_random_uuid()::text,$1,$2,n,'assistant','Prior attempt ' || n::text,n::text FROM generate_series(1,220)n",
+      [fixture.child, firstAttempt],
+    );
+  });
+  await trackFetchSignals(page);
+  let release: () => void = () => {};
+  let captured: () => void = () => {};
+  let delivered: () => void = () => {};
+  let hold = false;
+  let held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let ready = new Promise<void>((resolve) => {
+    captured = resolve;
+  });
+  let done = new Promise<void>((resolve) => {
+    delivered = resolve;
+  });
+
+  await page.route(
+    `**/api/runs/${fixture.child}/transcript?*`,
+    async (route) => {
+      if (!hold || !new URL(route.request().url()).searchParams.has("before")) {
+        await route.continue();
+
+        return;
+      }
+      const response = await route.fetch();
+
+      captured();
+      await held;
+      await route.fulfill({ response });
+      delivered();
+    },
+  );
+  try {
+    await page.goto(
+      `/runs/${fixture.anchor}?peek=${fixture.child}&peekView=conversation&peekNode=work`,
+    );
+    await expect(
+      peek(page).getByText("Prior attempt 220", { exact: true }),
+    ).toHaveCount(1);
+    await peek(page)
+      .getByRole("button", { name: "Load earlier messages" })
+      .click();
+    await expect(
+      peek(page).getByText("Prior attempt 21", { exact: true }),
+    ).toHaveCount(1);
+    hold = true;
+    await peek(page)
+      .getByRole("button", { name: "Load earlier messages" })
+      .click();
+    await ready;
+    await peek(page).getByRole("button", { name: "Latest messages" }).click();
+    const lastEarlierAborted = (): Promise<boolean> =>
+      page.evaluate((id) => {
+        const state = window as typeof window & {
+          peekRequestSignals: { url: string; signal: AbortSignal }[];
+        };
+
+        return (
+          state.peekRequestSignals
+            .filter((item) =>
+              item.url.startsWith(`/api/runs/${id}/transcript?before=`),
+            )
+            .at(-1)?.signal.aborted ?? false
+        );
+      }, fixture.child);
+
+    await expect.poll(lastEarlierAborted).toBe(true);
+    release();
+    await done;
+    await expect(
+      peek(page).getByText("Prior attempt 21", { exact: true }),
+    ).toHaveCount(0);
+    held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    ready = new Promise<void>((resolve) => {
+      captured = resolve;
+    });
+    done = new Promise<void>((resolve) => {
+      delivered = resolve;
+    });
+    await peek(page)
+      .getByRole("button", { name: "Load earlier messages" })
+      .click();
+    await ready;
+    await withE2EDb(async (pool) => {
+      await pool.query(
+        "UPDATE node_attempts SET status='Succeeded',ended_at=now() WHERE id=$1",
+        [firstAttempt],
+      );
+      await pool.query(
+        "INSERT INTO node_attempts(id,run_id,node_id,node_type,attempt,status) VALUES($1,$2,'work','ai_coding',2,'Running')",
+        [secondAttempt, fixture.child],
+      );
+      await pool.query(
+        "INSERT INTO run_messages(id,run_id,node_attempt_id,sequence,role,content,supervisor_event_id) VALUES($1,$2,$3,1,'assistant','Current attempt only','221')",
+        [randomUUID(), fixture.child, secondAttempt],
+      );
+    });
+    await expect(peek(page)).toContainText("Current attempt only");
+    await expect(peek(page)).toContainText("The node attempt changed");
+    await expect.poll(lastEarlierAborted).toBe(true);
+    release();
+    await done;
+    await expect(peek(page).getByText(/^Prior attempt \d+$/)).toHaveCount(0);
+    await expect(
+      peek(page).getByText("Current attempt only", { exact: true }),
+    ).toHaveCount(1);
+  } finally {
+    release();
+    await withE2EDb(async (pool) => {
+      await pool.query(
+        "UPDATE runs SET flow_id=NULL,run_kind='agent' WHERE id=$1",
+        [fixture.child],
+      );
+      await pool.query("DELETE FROM flows WHERE id=$1", [flow]);
+    });
+  }
 });
 
 test("E2E-PKN-02 E2E-PKN-12: result-only publication keeps the selected completed Run and valid payload", async ({
@@ -808,10 +1133,14 @@ test("E2E-PKN-09 E2E-PKN-10: modal background is inert and handled inner Escape 
     const picker = peek(page).getByRole("combobox", { name: "Node" });
 
     await expect(picker).toHaveValue("other");
+    const main = await peek(page)
+      .locator("..")
+      .locator(':scope > [data-testid="run-shell-main"]')
+      .elementHandle();
+
+    expect(main).not.toBeNull();
     expect(
-      await page
-        .getByTestId("run-shell-main")
-        .evaluate((element) => !!element.closest("[inert]")),
+      await main!.evaluate((element) => !!element.closest("[inert]")),
     ).toBe(true);
     await expect(peek(page)).toContainText(
       "No conversation has been recorded.",
@@ -839,10 +1168,9 @@ test("E2E-PKN-09 E2E-PKN-10: modal background is inert and handled inner Escape 
     await expect(peek(page)).toBeVisible();
     await picker.press("Escape");
     await expect(peek(page)).toHaveCount(0);
+    expect(await main!.evaluate((element) => element.isConnected)).toBe(true);
     expect(
-      await page
-        .getByTestId("run-shell-main")
-        .evaluate((element) => !!element.closest("[inert]")),
+      await main!.evaluate((element) => !!element.closest("[inert]")),
     ).toBe(false);
   } finally {
     await withE2EDb(async (pool) => {

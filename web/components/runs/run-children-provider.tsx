@@ -77,8 +77,12 @@ export function RunChildrenProvider({
     async (parent: string, cursor: string | null): Promise<void> => {
       const key = cacheKey(parent, cursor);
 
-      if (pending.current.has(key)) return;
+      if (!owners.current.has(key) || pending.current.has(key)) return;
       const controller = new AbortController();
+      const current = (): boolean =>
+        alive.current &&
+        !controller.signal.aborted &&
+        pending.current.get(key) === controller;
 
       pending.current.set(key, controller);
       const version = owners.current.get(key)?.version ?? 0;
@@ -97,6 +101,7 @@ export function RunChildrenProvider({
           { signal: controller.signal },
         );
 
+        if (!current()) return;
         if (!response.ok) {
           publish(key, { page: null, loading: false, error: response.status });
 
@@ -105,25 +110,26 @@ export function RunChildrenProvider({
         const page: RunPeekChildPage = await response.json();
 
         if (
-          !controller.signal.aborted &&
+          current() &&
           page.anchorRunId === anchorRunId &&
           page.parentRunId === parent
         )
           publish(key, { page, loading: false, error: null });
       } catch (error) {
-        if (!controller.signal.aborted)
+        if (current())
           publish(key, {
             page: null,
             loading: false,
             error: error instanceof TypeError ? 503 : 500,
           });
       } finally {
-        pending.current.delete(key);
-        if (
-          alive.current &&
-          (owners.current.get(key)?.version ?? version) !== version
-        )
-          void loadRef.current(parent, cursor);
+        if (pending.current.get(key) === controller) {
+          pending.current.delete(key);
+          const owner = owners.current.get(key);
+
+          if (alive.current && owner && owner.version !== version)
+            void loadRef.current(parent, cursor);
+        }
       }
     },
     [anchorRunId, publish],
@@ -149,8 +155,11 @@ export function RunChildrenProvider({
         const entry = owners.current.get(key);
 
         if (!entry) return;
-        if (entry.count <= 1) owners.current.delete(key);
-        else owners.current.set(key, { ...entry, count: entry.count - 1 });
+        if (entry.count <= 1) {
+          owners.current.delete(key);
+          pending.current.get(key)?.abort();
+          pending.current.delete(key);
+        } else owners.current.set(key, { ...entry, count: entry.count - 1 });
       };
     },
     [load],

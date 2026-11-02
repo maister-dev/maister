@@ -31,6 +31,11 @@ class TranscriptReadFailure extends Error {
   }
 }
 type WindowPage = { page: TranscriptPage; dirty: boolean };
+type TranscriptHistory = {
+  tail: TranscriptPage | null;
+  older: WindowPage[];
+  newerAvailable: boolean;
+};
 const pageKey = (page: TranscriptPage): string => page.window.before ?? "empty";
 
 async function fetchTranscriptPage(
@@ -58,6 +63,15 @@ async function fetchTranscriptPage(
   }
 
   return response.json() as Promise<TranscriptPage>;
+}
+
+function windowQuery(page: TranscriptPage): URLSearchParams | null {
+  return page.window.before && page.window.after
+    ? new URLSearchParams({
+        windowBefore: page.window.before,
+        windowAfter: page.window.after,
+      })
+    : null;
 }
 
 function TranscriptMessages({
@@ -122,8 +136,17 @@ export function RunPeekTranscript({
   const t = useTranslations("runPeek"),
     runT = useTranslations("run");
   const stream = useRunPageStream(runId, true);
-  const [tail, setTail] = useState<TranscriptPage | null>(null);
-  const [older, setOlder] = useState<WindowPage[]>([]);
+  const [history, setHistory] = useState<TranscriptHistory>({
+    tail: null,
+    older: [],
+    newerAvailable: false,
+  });
+  const { tail, older, newerAvailable } = history;
+  const historyRef = useRef(history);
+  const publishHistory = useCallback((next: TranscriptHistory): void => {
+    historyRef.current = next;
+    setHistory(next);
+  }, []);
   const [error, setError] = useState<TranscriptReadFailure | null>(null);
   const [loading, setLoading] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
@@ -132,30 +155,59 @@ export function RunPeekTranscript({
   >(null);
   const host = useRef<HTMLDivElement | null>(null);
   const controller = useRef<AbortController | null>(null);
-  const currentOlder = useRef(older);
+  const pendingEarlier = useRef<AbortController | null>(null);
+  const releaseEarlierRead = useCallback((): void => {
+    pendingEarlier.current?.abort();
+    pendingEarlier.current = null;
+    setLoading(false);
+  }, []);
+  const readingHistory = useRef(false);
+  const windowRevision = useRef(0);
   const previousAttempt = useRef<string | null | undefined>(undefined);
   const activeWindow = useRef<string | null>(null);
-  const pendingScroll = useRef<{ top: number; height: number } | null>(null);
+  const pendingScroll = useRef<{ element: HTMLElement; top: number } | null>(
+    null,
+  );
+  const retainScroll = useCallback((): void => {
+    const scroller = host.current?.closest<HTMLElement>(
+      '[data-testid="run-peek-scroll"]',
+    );
+
+    if (!scroller || !host.current) return;
+    const top = scroller.getBoundingClientRect().top;
+    const element = [
+      ...host.current.querySelectorAll<HTMLElement>(
+        "[data-window-key] > article, [data-window-key] > div > *",
+      ),
+    ].find((item) => item.getBoundingClientRect().bottom > top);
+
+    if (element)
+      pendingScroll.current = {
+        element,
+        top: element.getBoundingClientRect().top,
+      };
+  }, []);
   const refreshRef = useRef<() => void>(() => {});
   const generation = useRef(0);
+  const adoptFailure = useCallback(
+    (failure: unknown): void => {
+      const next =
+        failure instanceof TranscriptReadFailure
+          ? failure
+          : new TranscriptReadFailure(503, "transport");
 
-  useEffect(() => {
-    currentOlder.current = older;
-  }, [older]);
-  const adoptFailure = useCallback((failure: unknown): void => {
-    const next =
-      failure instanceof TranscriptReadFailure
-        ? failure
-        : new TranscriptReadFailure(503, "transport");
-
-    setError(next);
-    if (next.status === 403 || next.status === 404) {
-      controller.current?.abort();
-      generation.current++;
-      setTail(null);
-      setOlder([]);
-    }
-  }, []);
+      setError(next);
+      if (next.status === 403 || next.status === 404) {
+        controller.current?.abort();
+        releaseEarlierRead();
+        generation.current++;
+        windowRevision.current++;
+        readingHistory.current = false;
+        publishHistory({ tail: null, older: [], newerAvailable: false });
+      }
+    },
+    [publishHistory, releaseEarlierRead],
+  );
 
   useEffect(() => {
     const abort = new AbortController();
@@ -174,6 +226,8 @@ export function RunPeekTranscript({
         return;
       }
       inflight = true;
+      const revision = windowRevision.current;
+
       try {
         const latest = await fetchTranscriptPage(
           runId,
@@ -183,49 +237,80 @@ export function RunPeekTranscript({
         );
 
         if (!valid()) return;
-        if (
-          previousAttempt.current !== undefined &&
-          previousAttempt.current !== latest.attemptId
-        ) {
-          setOlder([]);
-          setNotice("attemptChanged");
+        if (revision !== windowRevision.current) {
+          dirty = true;
+
+          return;
         }
+        const attemptChanged =
+          previousAttempt.current !== undefined &&
+          previousAttempt.current !== latest.attemptId;
+
         previousAttempt.current = latest.attemptId;
-        setTail(latest);
-        setError(null);
-        const visible = currentOlder.current.find(
+        if (attemptChanged) {
+          windowRevision.current++;
+          releaseEarlierRead();
+          readingHistory.current = false;
+          setNotice("attemptChanged");
+          publishHistory({ tail: latest, older: [], newerAvailable: false });
+          setError(null);
+
+          return;
+        }
+        const cached = historyRef.current;
+        const retainedQuery =
+          readingHistory.current && cached.tail
+            ? windowQuery(cached.tail)
+            : null;
+        const visible = cached.older.find(
           ({ page }) => pageKey(page) === activeWindow.current,
         );
+        const visibleQuery = visible ? windowQuery(visible.page) : null;
+        const [displayed, refreshed] = await Promise.all([
+          retainedQuery
+            ? fetchTranscriptPage(runId, nodeId, retainedQuery, abort.signal)
+            : Promise.resolve(latest),
+          visibleQuery
+            ? fetchTranscriptPage(runId, nodeId, visibleQuery, abort.signal)
+            : Promise.resolve(null),
+        ]);
 
-        if (visible?.page.window.before && visible.page.window.after) {
-          const query = new URLSearchParams({
-            windowBefore: visible.page.window.before,
-            windowAfter: visible.page.window.after,
-          });
-          const refreshed = await fetchTranscriptPage(
-            runId,
-            nodeId,
-            query,
-            abort.signal,
-          );
+        if (!valid()) return;
+        if (revision !== windowRevision.current) {
+          dirty = true;
 
-          if (valid())
-            setOlder((pages) =>
-              pages.map((item) =>
-                pageKey(item.page) === pageKey(visible.page)
-                  ? { page: refreshed, dirty: false }
-                  : { ...item, dirty: true },
-              ),
-            );
-        } else
-          setOlder((pages) => pages.map((item) => ({ ...item, dirty: true })));
+          return;
+        }
+        if (readingHistory.current) retainScroll();
+        publishHistory({
+          tail: {
+            ...displayed,
+            usage: latest.usage,
+            projection: latest.projection,
+          },
+          older: cached.older.map((item) =>
+            refreshed && visible && pageKey(item.page) === pageKey(visible.page)
+              ? { page: refreshed, dirty: false }
+              : { ...item, dirty: true },
+          ),
+          newerAvailable: latest.window.after !== displayed.window.after,
+        });
+        setError(null);
       } catch (failure) {
         if (!valid()) return;
+        if (revision !== windowRevision.current) {
+          dirty = true;
+
+          return;
+        }
         if (
           failure instanceof TranscriptReadFailure &&
           failure.reason === "transcript_attempt_changed"
         ) {
-          setOlder([]);
+          windowRevision.current++;
+          releaseEarlierRead();
+          readingHistory.current = false;
+          publishHistory({ tail: null, older: [], newerAvailable: false });
           setNotice("attemptChanged");
           dirty = true;
         } else adoptFailure(failure);
@@ -246,7 +331,15 @@ export function RunPeekTranscript({
       abort.abort();
       controller.current = null;
     };
-  }, [runId, nodeId, adoptFailure, retryKey]);
+  }, [
+    runId,
+    nodeId,
+    adoptFailure,
+    publishHistory,
+    releaseEarlierRead,
+    retainScroll,
+    retryKey,
+  ]);
   useEffect(() => {
     if (stream.eventCount > 0) refreshRef.current();
   }, [stream.eventCount]);
@@ -260,7 +353,7 @@ export function RunPeekTranscript({
         if (!key || key === activeWindow.current) return;
         activeWindow.current = key;
         if (
-          currentOlder.current.some(
+          historyRef.current.older.some(
             (item) => pageKey(item.page) === key && item.dirty,
           )
         )
@@ -283,16 +376,32 @@ export function RunPeekTranscript({
       '[data-testid="run-peek-scroll"]',
     );
 
-    if (saved && scroller) {
-      scroller.scrollTop = saved.top + scroller.scrollHeight - saved.height;
-      pendingScroll.current = null;
-    }
-  }, [older]);
+    if (saved?.element.isConnected && scroller)
+      scroller.scrollTop +=
+        saved.element.getBoundingClientRect().top - saved.top;
+    pendingScroll.current = null;
+  }, [history]);
   const earlier = async (): Promise<void> => {
-    const first = older[0]?.page ?? tail;
-    const signal = controller.current?.signal;
+    const cached = historyRef.current;
+    const first = cached.older[0]?.page ?? cached.tail;
+    const parentSignal = controller.current?.signal;
 
-    if (!first?.beforeCursor || !signal || loading) return;
+    if (
+      !first?.beforeCursor ||
+      !parentSignal ||
+      parentSignal.aborted ||
+      pendingEarlier.current
+    )
+      return;
+    const owned = new AbortController();
+    const abortEarlier = (): void => owned.abort();
+
+    parentSignal.addEventListener("abort", abortEarlier, { once: true });
+    const signal = owned.signal;
+    const revision = ++windowRevision.current;
+
+    pendingEarlier.current = owned;
+    readingHistory.current = true;
     setLoading(true);
     try {
       const page = await fetchTranscriptPage(
@@ -302,31 +411,45 @@ export function RunPeekTranscript({
         signal,
       );
 
-      if (signal.aborted) return;
-      const scroller = host.current?.closest<HTMLElement>(
-        '[data-testid="run-peek-scroll"]',
-      );
+      if (
+        signal.aborted ||
+        revision !== windowRevision.current ||
+        page.attemptId !== previousAttempt.current
+      )
+        return;
+      retainScroll();
+      const current = historyRef.current;
+      const pages = [
+        { page, dirty: false },
+        ...current.older,
+        ...(current.tail ? [{ page: current.tail, dirty: false }] : []),
+      ];
+      const retained = pages.slice(0, 5);
+      const unloaded = pages.length > retained.length;
 
-      if (scroller)
-        pendingScroll.current = {
-          top: scroller.scrollTop,
-          height: scroller.scrollHeight,
-        };
-      if (currentOlder.current.length >= 4) setNotice("historyBound");
-      setOlder((pages) => [{ page, dirty: false }, ...pages].slice(0, 4));
+      windowRevision.current++;
+      if (unloaded) setNotice("historyBound");
+      publishHistory({
+        tail: retained.at(-1)!.page,
+        older: retained.slice(0, -1),
+        newerAvailable: current.newerAvailable || unloaded,
+      });
     } catch (failure) {
-      if (!signal.aborted) {
+      if (!signal.aborted && revision === windowRevision.current) {
         if (
           failure instanceof TranscriptReadFailure &&
           failure.reason === "transcript_attempt_changed"
         ) {
-          setOlder([]);
           setNotice("attemptChanged");
           refreshRef.current();
         } else adoptFailure(failure);
       }
     } finally {
-      if (!signal.aborted) setLoading(false);
+      parentSignal.removeEventListener("abort", abortEarlier);
+      if (pendingEarlier.current === owned) {
+        pendingEarlier.current = null;
+        setLoading(false);
+      }
     }
   };
   const labels: TranscriptLabels = {
@@ -339,17 +462,22 @@ export function RunPeekTranscript({
     toolCount: (name, count) => runT("chatToolCount", { name, count }),
   };
   const seen = new Set<string>();
-  const windows = [
-    ...older.map((item) => item.page),
-    ...(tail ? [tail] : []),
-  ].map((page) => ({
+  const pages = [...older.map((item) => item.page), ...(tail ? [tail] : [])];
+  const messagesById = new Map(
+    pages.flatMap((page) =>
+      page.messages.map((message) => [message.id, message] as const),
+    ),
+  );
+  const windows = pages.map((page) => ({
     ...page,
-    messages: page.messages.filter((message) => {
-      if (seen.has(message.id)) return false;
-      seen.add(message.id);
+    messages: page.messages
+      .filter((message) => {
+        if (seen.has(message.id)) return false;
+        seen.add(message.id);
 
-      return true;
-    }),
+        return true;
+      })
+      .map((message) => messagesById.get(message.id)!),
   }));
 
   return (
@@ -380,11 +508,19 @@ export function RunPeekTranscript({
           {t("earlierMessages")}
         </button>
       ) : null}
-      {older.length ? (
+      {newerAvailable ? <p role="status">{t("newerMessages")}</p> : null}
+      {older.length || newerAvailable ? (
         <button
           type="button"
           onClick={() => {
-            setOlder([]);
+            windowRevision.current++;
+            releaseEarlierRead();
+            readingHistory.current = false;
+            publishHistory({
+              ...historyRef.current,
+              older: [],
+              newerAvailable: false,
+            });
             setNotice(null);
             refreshRef.current();
           }}
