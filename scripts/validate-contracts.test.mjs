@@ -213,3 +213,47 @@ test("external HITL success and pending bodies accept the shipped runStatus vari
     assertValidExample(pending, body);
   assert.equal(pending({ ok: true, state: "delivered" }), false);
 });
+
+test("task launch receipts validate their real examples and distinguish Flow and repository-free agent snapshots", () => {
+  for (const file of [
+    "../docs/api/web.openapi.yaml",
+    "../docs/api/external/operations.openapi.yaml",
+  ]) {
+    const document = readContract(file);
+    const validate = schemaValidator(
+      document,
+      `launch-${file}`,
+      "TaskLaunchReceipt",
+    );
+    const example = document.components.schemas.TaskLaunchReceipt.example;
+
+    assertValidExample(validate, example);
+    assert.equal(
+      validate({
+        ...example,
+        snapshot: { ...example.snapshot, baseCommit: null },
+      }),
+      false,
+    );
+    const agent = {
+      ...example,
+      snapshot: {
+        ...example.snapshot,
+        kind: "agent",
+        workspace: "none",
+        agentId: "fixture-agent",
+        flowId: null,
+        flowRevisionId: null,
+        baseCommit: null,
+      },
+    };
+    assertValidExample(validate, agent);
+    assert.equal(
+      validate({
+        ...agent,
+        snapshot: { ...agent.snapshot, workspace: "repo_read" },
+      }),
+      false,
+    );
+  }
+});

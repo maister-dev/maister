@@ -258,6 +258,16 @@ it("DB01 persists one immutable task reservation and rejects malformed launch sn
     await oldWriter.query("SET maister.task_launch_writer='v1'");
     oldWriter.release();
   }
+  await expect(
+    database.db.insert(taskLaunchIntents).values({
+      ...accepted,
+      id: randomUUID(),
+      requestKey: randomUUID(),
+      settingsSnapshot: { ...settings, baseCommit: "a".repeat(41) },
+    }),
+  ).rejects.toMatchObject({
+    cause: { constraint: "task_launch_intents_snapshot_check" },
+  });
   const [ready] = await database.db
     .insert(taskLaunchIntents)
     .values({ ...accepted, id: randomUUID(), requestKey: randomUUID() })

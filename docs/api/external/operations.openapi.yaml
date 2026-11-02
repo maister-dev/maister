@@ -5628,6 +5628,8 @@ components:
               nullable: true
             runnerIds:
               type: array
+              minItems: 1
+              uniqueItems: true
               maxItems: 64
               items:
                 type: string
@@ -5636,6 +5638,7 @@ components:
             baseCommit:
               type: string
               nullable: true
+              pattern: "^[a-f0-9]{40}([a-f0-9]{24})?$"
               maxLength: 64
             targetBranch:
               type: string
@@ -5681,7 +5684,17 @@ components:
                 flowRevisionId:
                   type: string
                   nullable: false
-            - properties:
+            - oneOf:
+                - properties:
+                    workspace:
+                      enum: [none]
+                - properties:
+                    workspace:
+                      enum: [repo_read, worktree]
+                    baseCommit:
+                      type: string
+                      nullable: false
+              properties:
                 kind:
                   enum:
                     - agent
@@ -5738,6 +5751,8 @@ components:
         runId: null
         reason: null
         snapshot:
+          kind: flow
+          agentId: null
           flowId: flow-example
           flowRevisionId: revision-example
           runnerIds:

@@ -1,3 +1,4 @@
+import type { JsonValue } from "@/lib/hitl-response-contract";
 import type { RunnerSnapshot } from "@/lib/acp-runners/resolve";
 import type { StoredDeliveryPolicy } from "@/lib/runs/delivery-policy";
 import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
@@ -52,7 +53,7 @@ export type TaskLaunchInputSnapshot = Readonly<{
       id: string;
       question: string;
       status: string;
-      answer: string | null;
+      answer: JsonValue;
       answeredAt: string | null;
       supersededAt: string | null;
     }>
