@@ -34,6 +34,24 @@ export function preparationFenced(runId: string): MaisterError {
   );
 }
 
+export function assertPreparationCommit(
+  expected: string | null,
+  actual: string | null,
+): void {
+  if (expected !== null && actual !== expected)
+    throw new MaisterError(
+      "PRECONDITION",
+      "The checkout no longer matches its frozen preparation commit; preserve it and launch a new attempt after diagnosis",
+      {
+        details: {
+          reason: "operational_source_revision_changed",
+          expectedCommit: expected,
+          observedCommit: actual,
+        },
+      },
+    );
+}
+
 /** The caller already holds physical exclusion, including retired Git-child proof. */
 export async function claimAgentPreparation(
   db: Db,

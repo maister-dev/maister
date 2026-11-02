@@ -534,3 +534,53 @@ it("TB03 restart redrive reuses the journaled pristine checkout instead of reset
     ),
   ).toBe(true);
 }, 60_000);
+
+it("TB06 refuses a checkout whose HEAD changes away from the frozen preparation commit", async () => {
+  const { hosts } = await fakeExecutionHosts(db);
+  const fixture = await seedReadOnlyPreparation();
+  const entered = barrier();
+  const release = barrier();
+
+  probeBarrier.target = path.join(fixture.checkout, fixture.source);
+  probeBarrier.entered = entered.release;
+  probeBarrier.release = release.promise;
+  probeBarrier.used = false;
+  const driver = launch.startAgentSession(fixture.runId, {
+    db,
+    executionHosts: hosts,
+  });
+
+  try {
+    await Promise.race([
+      entered.promise,
+      driver.then(() => {
+        throw new Error("Driver ended before probe");
+      }),
+    ]);
+    await git(
+      fixture.checkout,
+      "commit",
+      "--allow-empty",
+      "-qm",
+      "unexpected checkout revision",
+    );
+  } finally {
+    release.release();
+    await driver;
+    probeBarrier.target = "";
+  }
+  const commands = await db
+    .select()
+    .from(executionCommands)
+    .where(eq(executionCommands.runId, fixture.runId));
+  const [run] = await db.select().from(runs).where(eq(runs.id, fixture.runId));
+
+  expect(
+    commands.filter((command) =>
+      ["session.create", "session.prompt"].includes(command.kind),
+    ),
+  ).toEqual([]);
+  expect(run.operationalTerminal?.reasonCodes).toContain(
+    "operational_source_revision_changed",
+  );
+}, 60_000);

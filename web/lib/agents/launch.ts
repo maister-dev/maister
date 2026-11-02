@@ -118,6 +118,7 @@ import {
 } from "@/lib/agents/operational-integrity";
 import { operationalFailureDiagnostic } from "@/lib/agents/operational-diagnostics";
 import { openAgentPreparation } from "@/lib/agents/preparation-workspace";
+import { assertPreparationCommit } from "@/lib/agents/preparation-ownership";
 import {
   executeRepositoryGit,
   withoutGitOwnership,
@@ -3855,6 +3856,7 @@ async function driveAgentSession(
       : null;
 
   if (preparation) run = { ...run, ...preparation.run };
+  let preparationCommit = preparation?.operation.resolvedCommit ?? null;
   let operationalSpawnStage = "checkout";
   const preparationContext = {
     runId,
@@ -3927,6 +3929,7 @@ async function driveAgentSession(
             }));
 
           if (preparation) {
+            preparationCommit = committish;
             let existing = false;
 
             try {
@@ -4106,6 +4109,7 @@ async function driveAgentSession(
 
       if (run.agentKind === "operational") {
         if (integrityBaseline) {
+          assertPreparationCommit(preparationCommit, integrityBaseline.head);
           const verdict =
             integrityBaseline.generation > 0
               ? await inspectOperationalRun(_db, { ...run, contextMounts })
@@ -4136,6 +4140,7 @@ async function driveAgentSession(
               },
             },
           );
+          assertPreparationCommit(preparationCommit, integrityBaseline.head);
           integrityBaseline = {
             ...integrityBaseline,
             owner: {
