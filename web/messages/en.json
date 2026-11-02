@@ -852,7 +852,7 @@
   },
   "portfolio": {
     "eyebrow": "Working pane · {projects} projects",
-    "heading": "Projects.",
+    "heading": "Projects",
     "subheading": "{projects} repos under management. {workspaces} workspaces in flight. {needs} things waiting on you.",
     "needsStripTitle": "{count} things need your review",
     "ticker": "<b>{projects}</b> projects · <b>{workspaces}</b> workspaces in flight · <b>{needs}</b> waiting on you",

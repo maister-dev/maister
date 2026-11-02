@@ -852,7 +852,7 @@
   },
   "portfolio": {
     "eyebrow": "Рабочая область · {projects} проектов",
-    "heading": "Проекты.",
+    "heading": "Проекты",
     "subheading": "{projects} репозиториев под управлением. {workspaces} воркспейсов в работе. {needs} ждут вас.",
     "needsStripTitle": "{count} требуют вашего внимания",
     "ticker": "<b>{projects}</b> проектов · <b>{workspaces}</b> в работе · <b>{needs}</b> ждут вас",
