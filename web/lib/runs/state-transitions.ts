@@ -1225,6 +1225,79 @@ export const ABANDONABLE_STATUSES = [
   "Crashed",
 ] as const;
 
+/** Database-only terminal owner. Callers commit before releasing physical resources. */
+export async function abandonRunInTransaction(
+  tx: Db,
+  runId: string,
+  cause?: TerminalCause,
+): Promise<boolean> {
+  const endedAt = new Date();
+  const rows = await tx
+    .update(runs)
+    .set({ status: "Abandoned", endedAt })
+    .where(
+      and(eq(runs.id, runId), inArray(runs.status, [...ABANDONABLE_STATUSES])),
+    )
+    .returning({
+      id: runs.id,
+      projectId: runs.projectId,
+      taskId: runs.taskId,
+      flowId: runs.flowId,
+      runKind: runs.runKind,
+      parentRunId: runs.parentRunId,
+    });
+
+  if (rows.length === 0) return false;
+
+  await releaseSyncClaimOnTerminal(tx, runId, "CRASH");
+  await releaseAssignmentForRun(tx, runId, "abandoned");
+
+  // M19 Phase 1 (T1.C): stamp the GC removal deadline on the run's
+  // workspace in the SAME tx so an abandoned run never lingers with a
+  // null scheduled_removal_at. Same endedAt instant the run row carries.
+  const scheduledRemovalAt = new Date(
+    endedAt.getTime() + gcAgeDays() * 86_400_000,
+  );
+
+  await tx
+    .update(workspaces)
+    .set({ scheduledRemovalAt })
+    .where(eq(workspaces.runId, runId));
+
+  log.debug(
+    { runId, at: scheduledRemovalAt },
+    "[scheduler] scheduled_removal_at stamped",
+  );
+
+  await emitWebhookEvent({
+    db: tx,
+    type: "run.abandoned",
+    projectId: rows[0].projectId,
+    runId,
+    data: { source: "user" },
+  });
+
+  await emitDomainEvent({
+    db: tx,
+    kind: "run.abandoned",
+    projectId: rows[0].projectId,
+    runId,
+    taskId: rows[0].taskId,
+    actor: { type: "system", id: null },
+    parentRunId: rows[0].parentRunId,
+    cause: cause ?? { code: null, reason: "user", source: "operator" },
+    payload: {
+      runId,
+      taskId: rows[0].taskId,
+      flowId: rows[0].flowId,
+      runKind: rows[0].runKind,
+      reason: "user",
+    },
+  });
+
+  return true;
+}
+
 export async function markAbandoned(
   runId: string,
   // B6: why, when it is not the operator's abandon. The top-level
@@ -1233,76 +1306,9 @@ export async function markAbandoned(
 ): Promise<StateTransitionResult> {
   const db = opts.db ?? getDb();
 
-  const abandoned: boolean = await db.transaction(async (tx: Db) => {
-    const endedAt = new Date();
-    const rows = await tx
-      .update(runs)
-      .set({ status: "Abandoned", endedAt })
-      .where(
-        and(
-          eq(runs.id, runId),
-          inArray(runs.status, [...ABANDONABLE_STATUSES]),
-        ),
-      )
-      .returning({
-        id: runs.id,
-        projectId: runs.projectId,
-        taskId: runs.taskId,
-        flowId: runs.flowId,
-        runKind: runs.runKind,
-        parentRunId: runs.parentRunId,
-      });
-
-    if (rows.length === 0) return false;
-
-    await releaseSyncClaimOnTerminal(tx, runId, "CRASH");
-    await releaseAssignmentForRun(tx, runId, "abandoned");
-
-    // M19 Phase 1 (T1.C): stamp the GC removal deadline on the run's
-    // workspace in the SAME tx so an abandoned run never lingers with a
-    // null scheduled_removal_at. Same endedAt instant the run row carries.
-    const scheduledRemovalAt = new Date(
-      endedAt.getTime() + gcAgeDays() * 86_400_000,
-    );
-
-    await tx
-      .update(workspaces)
-      .set({ scheduledRemovalAt })
-      .where(eq(workspaces.runId, runId));
-
-    log.debug(
-      { runId, at: scheduledRemovalAt },
-      "[scheduler] scheduled_removal_at stamped",
-    );
-
-    await emitWebhookEvent({
-      db: tx,
-      type: "run.abandoned",
-      projectId: rows[0].projectId,
-      runId,
-      data: { source: "user" },
-    });
-
-    await emitDomainEvent({
-      db: tx,
-      kind: "run.abandoned",
-      projectId: rows[0].projectId,
-      runId,
-      taskId: rows[0].taskId,
-      actor: { type: "system", id: null },
-      parentRunId: rows[0].parentRunId,
-      cause: opts.cause ?? { code: null, reason: "user", source: "operator" },
-      payload: {
-        runId,
-        taskId: rows[0].taskId,
-        flowId: rows[0].flowId,
-        runKind: rows[0].runKind,
-        reason: "user",
-      },
-    });
-
-    return true;
-  });
+  const abandoned = await db.transaction((tx: Db) =>
+    abandonRunInTransaction(tx, runId, opts.cause),
+  );
 
   if (!abandoned) {
     log.warn(

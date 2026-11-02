@@ -17,13 +17,17 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { assertInteractiveTaskLaunchPrincipal } from "./admission-types";
-import { assertTaskLaunchUserAuthority } from "./launch-authority";
+import {
+  assertTaskLaunchUserAuthority,
+  assertTaskLaunchReadAuthority,
+} from "./launch-authority";
 import { taskLaunchBodySchema } from "./launch-schema";
 import { loadTaskSemanticInput } from "./launch-input";
 import { launchRefusal, resolveFlowLaunchSettings } from "./launch-resolution";
 import { emitTaskLaunchChanged } from "./launch-events";
 import { automaticTaskLaunchBasis } from "./launch-automatic";
 import { lockTaskLaunchReservation } from "./launch-locks";
+import { taskLaunchReceipt } from "./launch-receipt";
 
 import { tasks, projects, taskLaunchIntents, runs } from "@/lib/db/schema";
 import { assertUpgradeMaintenanceAllows } from "@/lib/maintenance/upgrade-fence";
@@ -40,11 +44,14 @@ import {
 } from "@/lib/worktree";
 
 export { taskLaunchSettingsToken } from "./launch-resolution";
+export { taskLaunchReceipt } from "./launch-receipt";
 
 const log = pino({
   name: "task-launch-intent",
   level: process.env.LOG_LEVEL ?? "info",
 });
+const launchAuthority = Symbol("server task launch authority");
+const launchPreparation = Symbol("prepared task launch");
 const ACTIVE_INTENT_STATES = [
   "queued",
   "preparing",
@@ -60,40 +67,6 @@ const ACTIVE_RUN_STATUSES = [
   "WaitingOnChildren",
 ] as const;
 
-export function taskLaunchReceipt(
-  row: typeof taskLaunchIntents.$inferSelect,
-): TaskLaunchReceipt {
-  const settings = row.settingsSnapshot;
-
-  return {
-    schemaVersion: 1,
-    intentId: row.id,
-    taskId: row.taskId,
-    state: row.state,
-    stateVersion: row.stateVersion,
-    basis: row.basis.kind,
-    acceptedAt: row.acceptedAt.toISOString(),
-    taskRevision: row.taskRevision,
-    inputRevision: row.inputRevision,
-    settingsDigest: row.settingsDigest,
-    runId: row.runId,
-    reason: row.reason,
-    snapshot: {
-      kind: settings.kind,
-      workspace: settings.workspace,
-      flowId: settings.flowId,
-      flowRevisionId: settings.flowRevisionId,
-      agentId: settings.agentId,
-      runnerIds: [...new Set(settings.sessions.map((slot) => slot.runnerId))],
-      baseCommit: settings.baseCommit,
-      targetBranch: settings.targetBranch,
-      promotionMode: settings.promotionMode,
-      autoPromote: settings.autoPromote,
-    },
-    ...(row.terminalOutcome ? { terminalOutcome: row.terminalOutcome } : {}),
-  };
-}
-
 async function scopedTask(db: Db, taskId: string) {
   const [row] = await db
     .select({ task: tasks, project: projects })
@@ -101,17 +74,22 @@ async function scopedTask(db: Db, taskId: string) {
     .innerJoin(projects, eq(projects.id, tasks.projectId))
     .where(eq(tasks.id, taskId));
 
-  if (!row) throw launchRefusal("launch_task_missing", "PRECONDITION");
+  if (!row) throw launchRefusal("launch_not_found", "PRECONDITION");
 
   return row;
 }
 
-type LaunchAcceptanceAuthority = Readonly<{
+export type LaunchAcceptanceAuthority = Readonly<{
+  [launchAuthority]: true;
+  operation: "launch" | "replace";
+  replacesIntentId: string | null;
+  expectedStateVersion: number | null;
   principalKind: typeof taskLaunchIntents.$inferSelect.principalKind;
   principalId: string;
   actorUserId: string | null;
   launchSource: typeof taskLaunchIntents.$inferSelect.launchSource;
   actor: DomainEventActor;
+  assertVisibility: (db: Db, projectId: string) => Promise<void>;
   assert: (
     db: Db,
     projectId: string,
@@ -124,7 +102,24 @@ type LaunchAcceptanceAuthority = Readonly<{
   ) => Promise<TaskLaunchBasis>;
 }>;
 
-async function replayTaskLaunch(
+export function taskLaunchPayloadDigest(
+  authority: LaunchAcceptanceAuthority,
+  request: TaskLaunchRequest,
+): string {
+  return retryDigest({
+    version: 1,
+    operation: authority.operation,
+    request,
+    ...(authority.replacesIntentId
+      ? {
+          replacesIntentId: authority.replacesIntentId,
+          expectedStateVersion: authority.expectedStateVersion,
+        }
+      : {}),
+  });
+}
+
+export async function replayTaskLaunch(
   db: Db,
   authority: LaunchAcceptanceAuthority,
   projectId: string,
@@ -139,7 +134,7 @@ async function replayTaskLaunch(
         eq(taskLaunchIntents.principalKind, authority.principalKind),
         eq(taskLaunchIntents.principalId, authority.principalId),
         eq(taskLaunchIntents.projectId, projectId),
-        eq(taskLaunchIntents.operation, "launch"),
+        eq(taskLaunchIntents.operation, authority.operation),
         eq(taskLaunchIntents.requestKey, requestKey),
       ),
     );
@@ -166,26 +161,44 @@ async function replayTaskLaunch(
   return taskLaunchReceipt(existing);
 }
 
-/** Shared transaction; authority dependencies are created only by the trusted adapters below. */
-async function acceptTaskLaunchRequest(
+export type PreparedTaskLaunch = Readonly<{
+  kind: "prepared";
+  [launchPreparation]: true;
+  authority: LaunchAcceptanceAuthority;
+  requestKey: string;
+  request: TaskLaunchRequest;
+  payloadDigest: string;
+  projectId: string;
+  resolved: Awaited<ReturnType<typeof resolveFlowLaunchSettings>>;
+  baseCommit: string;
+}>;
+export type TaskLaunchPreparationOutcome =
+  | PreparedTaskLaunch
+  | Readonly<{ kind: "replayed"; receipt: TaskLaunchReceipt }>;
+
+/** Resolve read-only Git facts before any acceptance/replacement transaction. */
+export async function prepareTaskLaunchRequest(
   db: Db,
   authority: LaunchAcceptanceAuthority,
   rawRequest: TaskLaunchRequest,
   requestKey: string,
-): Promise<TaskLaunchReceipt> {
+): Promise<TaskLaunchPreparationOutcome> {
   assertUpgradeMaintenanceAllows("run_admission");
   const parsed = taskLaunchBodySchema.safeParse(rawRequest);
 
   if (!parsed.success || requestKey.length < 1 || requestKey.length > 256)
     throw launchRefusal("launch_request_invalid", "CONFIG");
   const request = parsed.data;
-  const payloadDigest = retryDigest({
-    version: 1,
-    operation: "launch",
-    request,
-  });
+  const payloadDigest = taskLaunchPayloadDigest(authority, request);
   const initial = await scopedTask(db, request.taskId);
 
+  try {
+    await authority.assertVisibility(db, initial.project.id);
+  } catch (error) {
+    if (isMaisterError(error) && error.code === "UNAUTHORIZED")
+      throw launchRefusal("launch_not_found", "PRECONDITION");
+    throw error;
+  }
   await authority.assert(db, initial.project.id, ["launchRun"]);
   const replay = await replayTaskLaunch(
     db,
@@ -195,7 +208,7 @@ async function acceptTaskLaunchRequest(
     payloadDigest,
   );
 
-  if (replay) return replay;
+  if (replay) return { kind: "replayed", receipt: replay };
   if (initial.task.revision !== request.expectedTaskRevision)
     throw launchRefusal("launch_input_changed");
   const resolved = await resolveFlowLaunchSettings(
@@ -229,191 +242,249 @@ async function acceptTaskLaunchRequest(
         preferRemote: "origin",
       });
 
+  return {
+    kind: "prepared",
+    [launchPreparation]: true,
+    authority,
+    requestKey,
+    request,
+    payloadDigest,
+    projectId: initial.project.id,
+    resolved,
+    baseCommit,
+  };
+}
+
+/** DB-only application; the caller may include old-request cancellation in this transaction. */
+export async function commitPreparedTaskLaunch(
+  db: Db,
+  prepared: PreparedTaskLaunch,
+): Promise<TaskLaunchReceipt> {
+  assertUpgradeMaintenanceAllows("run_admission");
+  const { authority, requestKey, projectId, request } = prepared;
+
   return db.transaction(async (tx) => {
     await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(1818326382, hashtext(${`${authority.principalKind}:${authority.principalId}:${initial.project.id}:launch:${requestKey}`}))`,
+      sql`SELECT pg_advisory_xact_lock(1818326382, hashtext(${`${authority.principalKind}:${authority.principalId}:${projectId}:${authority.operation}:${requestKey}`}))`,
     );
     await lockTaskLaunchReservation(tx, request.taskId);
-    await authority.assert(
-      tx,
-      initial.project.id,
-      requiresLaunchUnattended(resolved.executionPolicy)
-        ? ["launchRun", "launchUnattended"]
-        : ["launchRun"],
-    );
 
-    const [locked] = await tx
-      .select()
-      .from(tasks)
-      .where(eq(tasks.id, request.taskId))
-      .for("update");
-
-    if (!locked || locked.projectId !== initial.project.id)
-      throw launchRefusal("launch_task_missing", "PRECONDITION");
-    const existing = await replayTaskLaunch(
-      tx,
-      authority,
-      locked.projectId,
-      requestKey,
-      payloadDigest,
-    );
-
-    if (existing) return existing;
-    const [reserved] = await tx
-      .select({ id: taskLaunchIntents.id })
-      .from(taskLaunchIntents)
-      .where(
-        and(
-          eq(taskLaunchIntents.taskId, locked.id),
-          eq(taskLaunchIntents.reservationLane, "ordinary"),
-          inArray(taskLaunchIntents.state, ACTIVE_INTENT_STATES),
-        ),
-      )
-      .limit(1);
-
-    if (reserved) throw launchRefusal("launch_already_reserved");
-    const [liveRun] = await tx
-      .select({ id: runs.id })
-      .from(runs)
-      .where(
-        and(
-          eq(runs.taskId, locked.id),
-          inArray(runs.status, ACTIVE_RUN_STATUSES),
-        ),
-      )
-      .limit(1);
-
-    if (liveRun) throw launchRefusal("launch_already_reserved");
-    if (locked.revision !== request.expectedTaskRevision)
-      throw launchRefusal("launch_input_changed");
-    if (locked.status === "Abandoned")
-      throw launchRefusal("target_terminal", "PRECONDITION");
-    if (locked.queuePaused) throw launchRefusal("queue_paused", "PRECONDITION");
-    if ((await countOpenBlockingClarifications(locked.id, tx)) > 0)
-      throw launchRefusal("clarification_pending", "PRECONDITION");
-    if ((await getOpenRelationBlockers([locked.id], tx)).get(locked.id)?.length)
-      throw launchRefusal("blocked", "PRECONDITION");
-    const configuration = {
-      flowId: request.flowId ?? locked.flowId,
-      runnerId: request.runnerId ?? locked.runnerId,
-      baseBranch: request.baseBranch ?? locked.baseBranch,
-      targetBranch: request.targetBranch ?? locked.targetBranch,
-    };
-    const previousConfiguration = {
-      flowId: locked.flowId,
-      runnerId: locked.runnerId,
-      baseBranch: locked.baseBranch,
-      targetBranch: locked.targetBranch,
-    };
-    let launchTask = locked;
-
-    if (retryDigest(configuration) !== retryDigest(previousConfiguration)) {
-      await authority.assert(tx, locked.projectId, ["launchRun", "editTask"]);
-      [launchTask] = await tx
-        .update(tasks)
-        .set({ ...configuration, revision: locked.revision + 1 })
-        .where(eq(tasks.id, locked.id))
-        .returning();
-    }
-    const current = await scopedTask(tx, locked.id);
-    const settings = {
-      ...(await resolveFlowLaunchSettings(
-        tx,
-        launchTask,
-        current.project,
-        request,
-      )),
-      baseCommit,
-    };
-    const {
-      taskSettingsDigest: _oldTaskSettings,
-      resolutionToken: _oldToken,
-      ...beforeExecution
-    } = resolved;
-    const {
-      taskSettingsDigest: _newTaskSettings,
-      resolutionToken: _newToken,
-      ...acceptedExecution
-    } = settings;
-
-    if (
-      retryDigest({ ...beforeExecution, baseCommit }) !==
-      retryDigest(acceptedExecution)
-    )
-      throw launchRefusal("launch_settings_changed");
-    const { snapshot } = await loadTaskSemanticInput(
-      tx,
-      locked.projectId,
-      locked.id,
-    );
-    const sizes = await tx.execute<{
-      inputBytes: number;
-      settingsBytes: number;
-    }>(sql`SELECT
-      octet_length(${JSON.stringify(snapshot)}::jsonb::text) AS "inputBytes",
-      octet_length(${JSON.stringify(settings)}::jsonb::text) AS "settingsBytes"`);
-
-    if (
-      sizes.rows[0].inputBytes > 262_144 ||
-      sizes.rows[0].settingsBytes > 131_072
-    )
-      throw launchRefusal("launch_input_limit", "CONFIG");
-    const [accepted] = await tx
-      .insert(taskLaunchIntents)
-      .values({
-        id: randomUUID(),
-        projectId: locked.projectId,
-        taskId: locked.id,
-        principalKind: authority.principalKind,
-        principalId: authority.principalId,
-        actorUserId: authority.actorUserId,
-        launchSource: authority.launchSource,
-        operation: "launch",
-        requestKey,
-        payloadDigest,
-        taskRevision: launchTask.revision,
-        inputRevision: launchTask.qualificationInputRevision,
-        inputDigest: retryDigest(snapshot),
-        inputSnapshot: snapshot,
-        settingsDigest: retryDigest(settings),
-        settingsSnapshot: settings,
-        basis: await authority.admit(tx, launchTask, settings),
-        dueAt: sql`clock_timestamp()`,
-      })
-      .returning();
-
-    await emitTaskLaunchChanged(tx, accepted, authority.actor);
-    log.info(
-      {
-        intentId: accepted.id,
-        taskId: locked.id,
-        principalKind: authority.principalKind,
-        basis: accepted.basis.kind,
-        taskRevision: accepted.taskRevision,
-        inputRevision: accepted.inputRevision,
-        inputDigest: accepted.inputDigest,
-        settingsDigest: accepted.settingsDigest,
-        triageStatus: locked.triageStatus,
-      },
-      "task-launch-accepted",
-    );
-
-    return taskLaunchReceipt(accepted);
+    return applyPreparedTaskLaunch(tx, prepared);
   });
 }
 
-async function acceptTaskLaunch(
+/** Caller owns scoped key and task reservation, then any predecessor run/assignment/intent rows. */
+export async function applyPreparedTaskLaunch(
+  tx: Db,
+  prepared: PreparedTaskLaunch,
+): Promise<TaskLaunchReceipt> {
+  assertUpgradeMaintenanceAllows("run_admission");
+  if (
+    prepared[launchPreparation] !== true ||
+    prepared.authority[launchAuthority] !== true
+  )
+    throw launchRefusal("launch_manual_authority_required", "PRECONDITION");
+  const {
+    authority,
+    requestKey,
+    request,
+    payloadDigest,
+    projectId,
+    resolved,
+    baseCommit,
+  } = prepared;
+
+  await authority.assert(
+    tx,
+    projectId,
+    requiresLaunchUnattended(resolved.executionPolicy)
+      ? ["launchRun", "launchUnattended"]
+      : ["launchRun"],
+  );
+
+  const [locked] = await tx
+    .select()
+    .from(tasks)
+    .where(eq(tasks.id, request.taskId))
+    .for("update");
+
+  if (!locked || locked.projectId !== projectId)
+    throw launchRefusal("launch_task_missing", "PRECONDITION");
+  const existing = await replayTaskLaunch(
+    tx,
+    authority,
+    locked.projectId,
+    requestKey,
+    payloadDigest,
+  );
+
+  if (existing) return existing;
+  const [reserved] = await tx
+    .select({ id: taskLaunchIntents.id })
+    .from(taskLaunchIntents)
+    .where(
+      and(
+        eq(taskLaunchIntents.taskId, locked.id),
+        eq(taskLaunchIntents.reservationLane, "ordinary"),
+        inArray(taskLaunchIntents.state, ACTIVE_INTENT_STATES),
+      ),
+    )
+    .limit(1);
+
+  if (reserved) throw launchRefusal("launch_already_reserved");
+  const [liveRun] = await tx
+    .select({ id: runs.id })
+    .from(runs)
+    .where(
+      and(
+        eq(runs.taskId, locked.id),
+        inArray(runs.status, ACTIVE_RUN_STATUSES),
+      ),
+    )
+    .limit(1);
+
+  if (liveRun) throw launchRefusal("launch_already_reserved");
+  if (locked.revision !== request.expectedTaskRevision)
+    throw launchRefusal("launch_input_changed");
+  if (locked.status === "Abandoned")
+    throw launchRefusal("target_terminal", "PRECONDITION");
+  if (locked.queuePaused) throw launchRefusal("queue_paused", "PRECONDITION");
+  if ((await countOpenBlockingClarifications(locked.id, tx)) > 0)
+    throw launchRefusal("clarification_pending", "PRECONDITION");
+  if ((await getOpenRelationBlockers([locked.id], tx)).get(locked.id)?.length)
+    throw launchRefusal("blocked", "PRECONDITION");
+  const configuration = {
+    flowId: request.flowId ?? locked.flowId,
+    runnerId: request.runnerId ?? locked.runnerId,
+    baseBranch: request.baseBranch ?? locked.baseBranch,
+    targetBranch: request.targetBranch ?? locked.targetBranch,
+  };
+  const previousConfiguration = {
+    flowId: locked.flowId,
+    runnerId: locked.runnerId,
+    baseBranch: locked.baseBranch,
+    targetBranch: locked.targetBranch,
+  };
+  let launchTask = locked;
+
+  if (retryDigest(configuration) !== retryDigest(previousConfiguration)) {
+    await authority.assert(tx, locked.projectId, ["launchRun", "editTask"]);
+    [launchTask] = await tx
+      .update(tasks)
+      .set({ ...configuration, revision: locked.revision + 1 })
+      .where(eq(tasks.id, locked.id))
+      .returning();
+  }
+  const current = await scopedTask(tx, locked.id);
+  const settings = {
+    ...(await resolveFlowLaunchSettings(
+      tx,
+      launchTask,
+      current.project,
+      request,
+    )),
+    baseCommit,
+  };
+  const {
+    taskSettingsDigest: _oldTaskSettings,
+    resolutionToken: _oldToken,
+    ...beforeExecution
+  } = resolved;
+  const {
+    taskSettingsDigest: _newTaskSettings,
+    resolutionToken: _newToken,
+    ...acceptedExecution
+  } = settings;
+
+  if (
+    retryDigest({ ...beforeExecution, baseCommit }) !==
+    retryDigest(acceptedExecution)
+  )
+    throw launchRefusal("launch_settings_changed");
+  const { snapshot } = await loadTaskSemanticInput(
+    tx,
+    locked.projectId,
+    locked.id,
+  );
+  const sizes = await tx.execute<{
+    inputBytes: number;
+    settingsBytes: number;
+  }>(sql`SELECT
+    octet_length(${JSON.stringify(snapshot)}::jsonb::text) AS "inputBytes",
+    octet_length(${JSON.stringify(settings)}::jsonb::text) AS "settingsBytes"`);
+
+  if (
+    sizes.rows[0].inputBytes > 262_144 ||
+    sizes.rows[0].settingsBytes > 131_072
+  )
+    throw launchRefusal("launch_input_limit", "CONFIG");
+  const [accepted] = await tx
+    .insert(taskLaunchIntents)
+    .values({
+      id: randomUUID(),
+      projectId: locked.projectId,
+      taskId: locked.id,
+      principalKind: authority.principalKind,
+      principalId: authority.principalId,
+      actorUserId: authority.actorUserId,
+      launchSource: authority.launchSource,
+      operation: authority.operation,
+      replacesIntentId: authority.replacesIntentId,
+      requestKey,
+      payloadDigest,
+      taskRevision: launchTask.revision,
+      inputRevision: launchTask.qualificationInputRevision,
+      inputDigest: retryDigest(snapshot),
+      inputSnapshot: snapshot,
+      settingsDigest: retryDigest(settings),
+      settingsSnapshot: settings,
+      basis: await authority.admit(tx, launchTask, settings),
+      dueAt: sql`clock_timestamp()`,
+    })
+    .returning();
+
+  await emitTaskLaunchChanged(tx, accepted, authority.actor);
+  log.info(
+    {
+      intentId: accepted.id,
+      taskId: locked.id,
+      principalKind: authority.principalKind,
+      basis: accepted.basis.kind,
+      taskRevision: accepted.taskRevision,
+      inputRevision: accepted.inputRevision,
+      inputDigest: accepted.inputDigest,
+      settingsDigest: accepted.settingsDigest,
+      triageStatus: locked.triageStatus,
+    },
+    "task-launch-accepted",
+  );
+
+  return taskLaunchReceipt(accepted);
+}
+
+export async function acceptTaskLaunch(
   db: Db,
   authority: LaunchAcceptanceAuthority,
   request: TaskLaunchRequest,
   requestKey: string,
 ): Promise<TaskLaunchReceipt> {
+  if (authority[launchAuthority] !== true)
+    throw launchRefusal("launch_manual_authority_required", "PRECONDITION");
   log.debug(
     { taskId: request.taskId, principalKind: authority.principalKind },
     "task-launch-requested",
   );
   try {
-    return await acceptTaskLaunchRequest(db, authority, request, requestKey);
+    const prepared = await prepareTaskLaunchRequest(
+      db,
+      authority,
+      request,
+      requestKey,
+    );
+
+    return prepared.kind === "replayed"
+      ? prepared.receipt
+      : await commitPreparedTaskLaunch(db, prepared);
   } catch (error) {
     const context = {
       taskId: request.taskId,
@@ -441,23 +512,36 @@ export async function acceptInteractiveTaskLaunch(
   request: TaskLaunchRequest,
   requestKey: string,
 ): Promise<TaskLaunchReceipt> {
-  assertInteractiveTaskLaunchPrincipal(principal);
-
   return acceptTaskLaunch(
     db,
-    {
-      principalKind: "session_user",
-      principalId: principal.userId,
-      actorUserId: principal.userId,
-      launchSource: "api",
-      actor: { type: "user", id: principal.userId },
-      assert: (tx, projectId, actions) =>
-        assertTaskLaunchUserAuthority(tx, projectId, principal.userId, actions),
-      admit: async () => ({ kind: "manual", userId: principal.userId }),
-    },
+    interactiveTaskLaunchAuthority(principal),
     request,
     requestKey,
   );
+}
+
+/** Internal constructor; session proof stays opaque even to other launch adapters. */
+export function interactiveTaskLaunchAuthority(
+  principal: InteractiveTaskLaunchPrincipal,
+): LaunchAcceptanceAuthority {
+  assertInteractiveTaskLaunchPrincipal(principal);
+
+  return {
+    [launchAuthority]: true,
+    operation: "launch",
+    replacesIntentId: null,
+    expectedStateVersion: null,
+    principalKind: "session_user",
+    principalId: principal.userId,
+    actorUserId: principal.userId,
+    launchSource: "api",
+    actor: { type: "user", id: principal.userId },
+    assertVisibility: (tx, projectId) =>
+      assertTaskLaunchReadAuthority(tx, projectId, principal.userId),
+    assert: (tx, projectId, actions) =>
+      assertTaskLaunchUserAuthority(tx, projectId, principal.userId, actions),
+    admit: async () => ({ kind: "manual", userId: principal.userId }),
+  };
 }
 
 /** Scheduler-owned root admission. An existing manual intent never arms this operation. */
@@ -469,11 +553,16 @@ export async function acceptAutomaticTaskLaunch(
   return acceptTaskLaunch(
     db,
     {
+      [launchAuthority]: true,
+      operation: "launch",
+      replacesIntentId: null,
+      expectedStateVersion: null,
       principalKind: "system",
       principalId: "scheduler",
       actorUserId: null,
       launchSource: "scheduler",
       actor: { type: "system", id: null },
+      assertVisibility: async () => {},
       assert: async (tx, projectId) => {
         const [project] = await tx
           .select()

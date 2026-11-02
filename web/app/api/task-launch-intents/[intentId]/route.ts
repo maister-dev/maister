@@ -1,12 +1,12 @@
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
-import { requireActiveSession, requireProjectActionForUser } from "@/lib/authz";
+import { requireActiveSession } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
-import { runs, taskLaunchIntents } from "@/lib/db/schema";
-import { MaisterError, isMaisterError } from "@/lib/errors";
+import { runs } from "@/lib/db/schema";
 import { taskLaunchReceipt } from "@/lib/tasks/launch-intent";
 import { taskLaunchErrorResponse } from "@/lib/tasks/launch-http";
+import { taskLaunchForUser } from "@/lib/tasks/launch-access";
 
 export async function GET(
   _request: Request,
@@ -16,24 +16,7 @@ export async function GET(
     const user = await requireActiveSession();
     const { intentId } = await params;
     const db = getDb();
-    const [intent] = await db
-      .select()
-      .from(taskLaunchIntents)
-      .where(eq(taskLaunchIntents.id, intentId));
-
-    if (!intent)
-      throw new MaisterError("PRECONDITION", "Task launch is unavailable", {
-        details: { reason: "launch_not_found" },
-      });
-    try {
-      await requireProjectActionForUser(user.id, intent.projectId, "readBoard");
-    } catch (error) {
-      if (isMaisterError(error) && error.code === "UNAUTHORIZED")
-        throw new MaisterError("PRECONDITION", "Task launch is unavailable", {
-          details: { reason: "launch_not_found" },
-        });
-      throw error;
-    }
+    const intent = await taskLaunchForUser(db, intentId, user.id);
     const [run] = intent.runId
       ? await db
           .select({ status: runs.status })

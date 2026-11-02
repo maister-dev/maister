@@ -146,3 +146,24 @@ holds an undispatched request with `launch_input_changed`, `launch_settings_chan
 or `queue_paused`, preserves its original snapshot, and emits no source content.
 A held reservation continues to occupy the ordinary task slot until the user
 cancels or explicitly replaces it. Dispatched runs retain their frozen request.
+
+The session HTTP cancellation and replacement adapters enforce the same origin,
+opaque principal and live grants as acceptance. Metadata, cancellation and
+replacement use one existence-hiding scoped lookup. Cancellation records a scoped,
+immutable receipt; exact replay rechecks current access before returning the
+original version. Replacement cancels the old request and accepts a uniquely
+linked successor in one transaction; validation failure rolls both back. Its key
+belongs to the successor's replacement operation, independently of cancellation
+keys. A bound Pending cancellation uses the existing database terminal owner,
+releases its assignment and arms workspace cleanup in that transaction. Physical
+cleanup occurs after commitment through existing cleanup owners. Dispatch
+commitment or any execution command/session witness refuses cancellation.
+
+Read scope remains independent of launch availability: archiving a project
+preserves authorized receipt inspection. A caller without task/intent visibility
+receives the same not-found response as an unknown selector. Cancellation remains
+available during upgrade maintenance; replacement admits new work and stays
+fenced. Git preflight completes before replacement's SQL transaction. Application
+then acquires the scoped key and task reservation before run, assignment, intent
+and task rows; no key is acquired after the reservation. A cancellation that wins
+during preflight prevents the prepared replacement from committing.

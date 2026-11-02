@@ -3,12 +3,16 @@ import type { StartedPostgresTestDb } from "@/test-support/pg-container";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 
+import { eq } from "drizzle-orm";
+
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import {
   flows,
   flowRevisions,
   platformAcpRunners,
   platformRuntimeSettings,
+  taskLaunchIntents,
+  runs,
 } from "@/lib/db/schema";
 import { initRepo } from "@/test-support/git-fixture";
 
@@ -19,6 +23,82 @@ export type TaskLaunchFixture = Readonly<{
   runnerId: string;
   repo: string;
 }>;
+
+/** Create the run-bound control state through the real SQL claim/binding guards, without dispatch. */
+export async function bindPendingTaskLaunchFixture(
+  database: StartedPostgresTestDb,
+  intentId: string,
+): Promise<{ runId: string; stateVersion: number }> {
+  return database.db.transaction(async (tx) => {
+    const [intent] = await tx
+      .select()
+      .from(taskLaunchIntents)
+      .where(eq(taskLaunchIntents.id, intentId))
+      .for("update");
+    const settings = intent.settingsSnapshot;
+
+    if (
+      settings.version !== 2 ||
+      settings.kind !== "flow" ||
+      intent.basis.kind !== "manual"
+    )
+      throw new Error(
+        "Pending launch control requires a current manual Flow intent",
+      );
+    await tx
+      .update(taskLaunchIntents)
+      .set({
+        state: "preparing",
+        stateVersion: intent.stateVersion + 1,
+        leaseToken: randomUUID(),
+        leaseExpiresAt: new Date(Date.now() + 60_000),
+      })
+      .where(eq(taskLaunchIntents.id, intentId));
+    const runId = randomUUID();
+
+    await tx.insert(runs).values({
+      id: runId,
+      projectId: intent.projectId,
+      taskId: intent.taskId,
+      runKind: "flow",
+      status: "Pending",
+      flowId: settings.flowId,
+      flowRevisionId: settings.flowRevisionId,
+      flowVersion: "v1",
+      taskLaunchIntentId: intentId,
+      executionPolicy: settings.executionPolicy,
+      resolvedCapabilitySet: settings.resolvedCapabilitySet,
+      taskAdmissionSnapshot: {
+        version: 2,
+        policyVersion: 2,
+        mode: "manual",
+        basis: "manual",
+        intentId,
+        inputRevision: intent.inputRevision,
+        qualificationId: null,
+        qualificationRevision: null,
+        evidenceTarget: settings.baseBranch,
+        evidenceSha: settings.baseCommit,
+        parent: null,
+      },
+    });
+    const stateVersion = intent.stateVersion + 2;
+
+    await tx
+      .update(taskLaunchIntents)
+      .set({
+        state: "run_bound",
+        stateVersion,
+        runId,
+        originalRunId: runId,
+        leaseToken: null,
+        leaseExpiresAt: null,
+      })
+      .where(eq(taskLaunchIntents.id, intentId));
+
+    return { runId, stateVersion };
+  });
+}
 
 export async function seedTaskLaunchFixture(
   database: StartedPostgresTestDb,

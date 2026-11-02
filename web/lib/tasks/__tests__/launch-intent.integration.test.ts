@@ -219,10 +219,44 @@ it("LA06 linearizes competing clicks and replays only the same principal/key/pay
   const principal = await interactiveTaskLaunchPrincipal();
   const input = await request(taskId);
   const key = randomUUID();
-  const same = await Promise.all([
-    acceptInteractiveTaskLaunch(database.db, principal, input, key),
-    acceptInteractiveTaskLaunch(database.db, principal, input, key),
-  ]);
+  const accepted =
+    Promise.withResolvers<
+      Awaited<ReturnType<typeof acceptInteractiveTaskLaunch>>
+    >();
+  const commit = Promise.withResolvers<void>();
+  const launchDb: Db = database.db;
+  const winner = launchDb.transaction(async (tx) => {
+    const receipt = await acceptInteractiveTaskLaunch(
+      tx,
+      principal,
+      input,
+      key,
+    );
+
+    accepted.resolve(receipt);
+    await commit.promise;
+
+    return receipt;
+  });
+
+  await accepted.promise;
+  const rival = acceptInteractiveTaskLaunch(database.db, principal, input, key);
+
+  try {
+    await expect
+      .poll(async () => {
+        const blocked = await database.pool
+          .query(`SELECT 1 FROM pg_stat_activity
+        WHERE datname=current_database() AND wait_event_type='Lock'
+          AND query LIKE '%pg_advisory_xact_lock(1818326382%'`);
+
+        return blocked.rows.length;
+      })
+      .toBeGreaterThan(0);
+  } finally {
+    commit.resolve();
+  }
+  const same = await Promise.all([winner, rival]);
 
   expect(same[0].intentId).toBe(same[1].intentId);
   await expect(
@@ -307,13 +341,19 @@ it("LA14 refuses stale task/settings, paused tasks, unavailable runners and revo
     "UPDATE users SET account_status='disabled' WHERE id=$1",
     [userId],
   );
-  await expect(
-    acceptInteractiveTaskLaunch(database.db, principal, input, randomUUID()),
-  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
-  await database.pool.query(
-    "UPDATE users SET account_status='active' WHERE id=$1",
-    [userId],
-  );
+  try {
+    await expect(
+      acceptInteractiveTaskLaunch(database.db, principal, input, randomUUID()),
+    ).rejects.toMatchObject({
+      code: "PRECONDITION",
+      details: { reason: "launch_not_found" },
+    });
+  } finally {
+    await database.pool.query(
+      "UPDATE users SET account_status='active' WHERE id=$1",
+      [userId],
+    );
+  }
   expect(
     (
       await database.pool.query(

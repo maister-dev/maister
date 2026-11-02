@@ -27,3 +27,19 @@ export const taskLaunchBodySchema = z
   .strict();
 
 export type TaskLaunchRequest = z.infer<typeof taskLaunchBodySchema>;
+
+export const taskLaunchCancelBodySchema = z
+  .object({
+    expectedStateVersion: z.number().int().positive(),
+  })
+  .strict();
+export type TaskLaunchCancelRequest = z.infer<
+  typeof taskLaunchCancelBodySchema
+>;
+
+export const taskLaunchReplaceBodySchema = taskLaunchBodySchema.extend({
+  expectedStateVersion: z.number().int().positive(),
+});
+export type TaskLaunchReplaceRequest = z.infer<
+  typeof taskLaunchReplaceBodySchema
+>;

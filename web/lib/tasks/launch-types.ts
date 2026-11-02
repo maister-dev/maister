@@ -146,6 +146,7 @@ export type TaskLaunchReceipt = Readonly<{
   settingsDigest: string;
   runId: string | null;
   reason: string | null;
+  supersedesIntentId?: string;
   runStatus?: string;
   queuePosition?: number;
   queueReason?: string;
