@@ -21,12 +21,17 @@ import type {
   PromptOwnerAdapter,
   PromptOwnerOutcome,
   PromptOwnerRegistry,
+  PromptOwnerFailurePreparation,
 } from "@/lib/execution-host/prompt-owners";
 
-import { and, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import pino from "pino";
 
 import { prepareAgentRunFinalization } from "./finalization";
+import {
+  assertAgentExecutionQuiescent,
+  assertAgentSessionBindingsQuiescent,
+} from "./execution-quiescence";
 import {
   applyAgentPark,
   applyPersistentAgentPark,
@@ -79,6 +84,7 @@ import { waitForPromptCompletion } from "@/lib/execution-host/deliverer";
 import { isUnsettledPromptQuarantine } from "@/lib/execution-host/prompt-evidence";
 import { isTurnLostError } from "@/lib/reconcile-evidence";
 import { isHostPressureFailure } from "@/lib/execution-host/host-pressure";
+import { projectCanonicalSessionLifecycle } from "@/lib/execution-host/events/lifecycle-projector";
 
 const log = pino({
   name: "agent-prompt-owner",
@@ -546,7 +552,10 @@ export async function stopAgentPromptSession(
   ref: AdmittedAgentRef,
   targetSessionId: string | null,
   commandId: string,
+  signal?: AbortSignal,
 ): Promise<void> {
+  signal?.throwIfAborted();
+  await projectCanonicalSessionLifecycle({ db, runId: ref.runId });
   const binding = await db.transaction((tx) =>
     lockAgentBinding(tx, ref, targetSessionId, commandId),
   );
@@ -557,16 +566,55 @@ export async function stopAgentPromptSession(
   const client = await createExecutionHosts({ db }).forAssignment({
     id: ref.assignmentId,
   });
+  const [deletion] = await db
+    .select({ id: executionCommands.id, state: executionCommands.state })
+    .from(executionCommands)
+    .where(
+      and(
+        eq(executionCommands.runId, ref.runId),
+        eq(executionCommands.executionAssignmentId, ref.assignmentId),
+        eq(executionCommands.assignmentEpoch, ref.assignmentEpoch),
+        eq(executionCommands.targetSessionId, targetSessionId),
+        eq(executionCommands.kind, "session.delete"),
+        inArray(executionCommands.state, [
+          "queued",
+          "delivering",
+          "accepted",
+          "succeeded",
+        ]),
+      ),
+    )
+    .orderBy(desc(executionCommands.createdAt))
+    .limit(1);
 
-  await client.deleteSession(targetSessionId);
+  if (!deletion) await client.deleteSession(targetSessionId);
+  // A successful DELETE is not substituted for the lifecycle proof. Its
+  // original receipt is retained while bounded canonical catch-up progresses.
+  for (let batch = 0; batch < 4; batch += 1) {
+    signal?.throwIfAborted();
+    const projection = await projectCanonicalSessionLifecycle({
+      db,
+      runId: ref.runId,
+    });
+    const current = await db.transaction((tx) =>
+      lockAgentBinding(tx, ref, targetSessionId, commandId),
+    );
+
+    if (!current || (current.state !== "active" && current.state !== "created"))
+      return;
+    if (projection.poisoned || projection.projected === 0) break;
+  }
   log.debug(
     {
       runId: ref.runId,
       assignmentId: ref.assignmentId,
       incarnationId: ref.incarnationId,
+      commandId,
+      deletionCommandId: deletion?.id,
     },
-    "agent-prompt-session-closed",
+    "[FIX:agent-application] waiting for canonical session teardown",
   );
+  throw new PromptOwnerDeferred("agent_session_teardown_pending");
 }
 
 export async function acknowledgeAgentMessage(
@@ -653,9 +701,103 @@ export function agentTerminalOutcomeFor(
   return { outcome: "Failed", reason: "agent_prompt_failed" };
 }
 
+/** Settle an irrecoverable application as failure without replaying or
+ * publishing output which could not pass the original result contract. */
+export async function prepareAgentPromptApplicationFailure({
+  db,
+  owner,
+  command,
+  error,
+  signal,
+  onProgress,
+}: PromptOwnerFailurePreparation<
+  Extract<PromptOwner, { kind: "agent_turn" }>
+>): Promise<PreparedPromptOwner> {
+  const ref = owner.ref;
+
+  if (ref.variant === "consensus_draft")
+    throw new PromptOwnerInvariantError(
+      "consensus_application_recovery_required",
+    );
+  signal.throwIfAborted();
+  const binding = await db.transaction((tx) =>
+    lockAgentBinding(tx, ref, command.targetSessionId, command.id),
+  );
+
+  if (!binding)
+    return {
+      apply: (tx) => supersedeAgentMessage(tx, ref, command.id),
+    };
+  onProgress?.("failure_session_teardown");
+  await stopAgentPromptSession(
+    db,
+    ref,
+    command.targetSessionId,
+    command.id,
+    signal,
+  );
+  await assertAgentExecutionQuiescent(db, {
+    id: ref.runId,
+    executionAssignmentId: ref.assignmentId,
+  });
+  const [run] = await db
+    .select({ persistent: runs.persistent })
+    .from(runs)
+    .where(eq(runs.id, ref.runId));
+  const persistent = run?.persistent ?? false;
+
+  onProgress?.("failure_finalization_integrity");
+  const prepared = await prepareAgentRunFinalization(ref.runId, "Failed", {
+    db,
+    applicationCommandId: command.id,
+    reason: "owner_poisoned",
+    closeOpenHitl: true,
+  });
+
+  signal.throwIfAborted();
+  let application: AgentFinalizationApplication = { finalized: false };
+
+  return {
+    apply: async (tx) => {
+      if (
+        !(await lockAgentOwner(
+          tx,
+          ref,
+          command.targetSessionId,
+          command.id,
+          persistent,
+        ))
+      )
+        return supersedeAgentMessage(tx, ref, command.id);
+      await assertAgentSessionBindingsQuiescent(tx, {
+        id: ref.runId,
+        executionAssignmentId: ref.assignmentId,
+      });
+      application = await prepared.apply(tx);
+      if (!application.finalized)
+        throw new PromptOwnerDeferred("agent_finalization_pending");
+      await acknowledgeAgentMessage(tx, ref, command.id);
+      log.warn(
+        {
+          runId: ref.runId,
+          commandId: command.id,
+          turnId: ref.turnId,
+          stage: error.stage,
+          causeReason: error.causeReason,
+          causeCode: error.causeCode,
+        },
+        "[FIX:agent-application] ended quiescent Run after unrecoverable application failure",
+      );
+
+      return "applied";
+    },
+    afterCommit: () => prepared.afterCommit(application),
+  };
+}
+
 export const agentPromptOwner = definePromptOwnerAdapter(
   "agent_turn",
-  async ({ db, owner, command, outcome }) => {
+  async ({ db, owner, command, outcome, signal, onProgress }) => {
     const ref = owner.ref;
 
     if (
@@ -682,13 +824,16 @@ export const agentPromptOwner = definePromptOwnerAdapter(
       outcome.state === "succeeded" &&
       outcome.response.stopReason === "end_turn";
 
+    onProgress?.("permission_completion");
     await requireAgentPermissionCompletion(db, command);
+    onProgress?.("session_teardown");
     if (outcome.state !== "fenced")
       await stopAgentPromptSession(
         db,
         ref,
         command.targetSessionId,
         command.id,
+        signal,
       );
     const [run] = await db
       .select({ persistent: runs.persistent, status: runs.status })
@@ -762,11 +907,14 @@ export const agentPromptOwner = definePromptOwnerAdapter(
       };
     }
     const terminal = agentTerminalOutcomeFor(succeeded, outcome);
+
+    onProgress?.("finalization_integrity");
     const prepared = await prepareAgentRunFinalization(
       ref.runId,
       terminal.outcome,
       {
         db,
+        applicationCommandId: command.id,
         finalOutput: finishSentinelOutput(sentinel, maxBytes),
         ...(terminal.reason ? { reason: terminal.reason } : {}),
         // D-G3 (ADR-177 amendment): the boundary closes an answer the ended
@@ -811,6 +959,7 @@ export const agentPromptOwner = definePromptOwnerAdapter(
       afterCommit: () => prepared.afterCommit(application),
     };
   },
+  prepareAgentPromptApplicationFailure,
 );
 
 export const agentPromptOwners = createPromptOwnerRegistry([agentPromptOwner]);
@@ -839,16 +988,20 @@ export function createAgentPromptOwners(input: {
   ) => Promise<PreparedPromptOwner>;
 }): PromptOwnerRegistry {
   return createPromptOwnerRegistry([
-    definePromptOwnerAdapter("agent_turn", (context) => {
-      const ref = context.owner.ref;
+    definePromptOwnerAdapter(
+      "agent_turn",
+      (context) => {
+        const ref = context.owner.ref;
 
-      return ref.variant === "consensus_draft"
-        ? input.prepareConsensusDraft({
-            ...context,
-            owner: { kind: "agent_turn", ref },
-          })
-        : agentPromptOwner.prepare(context);
-    }),
+        return ref.variant === "consensus_draft"
+          ? input.prepareConsensusDraft({
+              ...context,
+              owner: { kind: "agent_turn", ref },
+            })
+          : agentPromptOwner.prepare(context);
+      },
+      prepareAgentPromptApplicationFailure,
+    ),
   ]);
 }
 

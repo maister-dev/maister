@@ -281,7 +281,8 @@ async function attemptHostSpan(
     }
     if (
       isMaisterError(error) &&
-      error.details?.reason === "command_in_progress"
+      (error.details?.reason === "command_in_progress" ||
+        error.details?.reason === "runtime_object_read_busy")
     ) {
       log.warn(
         { commandId, attempts: HOST_SPAN_BUSY_ATTEMPTS },

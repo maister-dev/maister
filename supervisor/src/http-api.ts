@@ -2951,6 +2951,24 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
             "sigterm-grace-expired-sigkill",
           );
           entry.child.kill("SIGKILL");
+          if (!(await waitForChildExit(entry, killGraceMs))) {
+            const processExited =
+              entry.child.exitCode !== null || entry.child.signalCode !== null;
+
+            throw new SupervisorError(
+              "EXECUTOR_UNAVAILABLE",
+              "session deletion could not confirm process exit and durable terminal output",
+              {
+                details: {
+                  reason: "session_delete_exit_unconfirmed",
+                  stage: processExited ? "terminal_output" : "process_exit",
+                  sessionId: req.params.id,
+                  runId: entry.record.runId,
+                  killGraceMs,
+                },
+              },
+            );
+          }
         }
 
         logger.info(

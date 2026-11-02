@@ -574,7 +574,9 @@ projector, the projector may still be confirming the row, and skipping would
 report a settled turn as pending (bounded by the transaction's `lock_timeout`;
 ADR-167 D5 amendment). Each free slot commits a unique claim before
 preparation. The 30-second owner lease renews every 10 seconds while output is
-read in bounded pages. No additional workflow or result queue is created.
+read in bounded pages. Preparation has a 120-second hard deadline, including
+adapters that fail to cooperate with cancellation; a late prepared result cannot
+commit after its claim is released. No additional workflow or result queue is created.
 Normal due ordering and retry deadlines let other commands make progress.
 
 Preparation verifies the original request-bound response, manifest and entire
@@ -603,9 +605,9 @@ D5 amendment).
 
 Successful application sets `application_state=applied` and
 `completion_applied_at` together. Explicit supersession retains the historical
-outcome without marking it applied. Transient application failures roll back
-and retry after 1, 2, 4 and 8 seconds; the fifth failure poisons application.
-Invariant failures poison immediately. Host/DB unavailability, and a deadlock
+outcome without marking it applied. Application failures roll back
+and retry after 1, 2, 4 and 8 seconds; the fifth failure exhausts application.
+Invariant failures exhaust immediately. Host/DB unavailability, and a deadlock
 that picked the apply transaction as its victim (`40P01`), leave the owner
 retryable without consuming failure attempts. `PromptOwnerDeferred` retains a
 valid owner awaiting another durable domain transition, clears its claim and
@@ -613,6 +615,89 @@ retries after one second without increasing the failure count. The canonical com
 unchanged by every application disposition. A registered live waiter remains
 pending until application succeeds, and surfaces typed poison/supersession
 instead of returning an uncommitted domain result.
+
+**Agent application failure recovery.** The ordinary agent adapter supplies a
+failure preparation handler, also forwarded by the production consensus registry
+for ordinary agent turns. Exhausted result application can finalize `Failed`
+through the original domain transaction, acknowledge the exact dispatched turn
+and commit the application marker together. It never publishes unchecked output
+as a successful result. Consensus draft failures still require round-specific
+operator repair. Recovery requires canonical terminal incarnations for the exact
+assignment and a fresh host observation with no live process; missing sessions
+and successful command receipts alone are insufficient. Operational integrity
+and result-publication checks still apply. Scheduler promotion runs only after
+the finalization commits, through the existing admission lock and cap.
+An operational result-resume with no successor session instead revalidates its
+exact permission grant and confirmed predecessor checkpoint teardown. Cancellation
+before initial execution requires a separate proof under the create-admission
+lock: active first launch assignment, no admitted create/prompt, no incarnation
+and no bound host/ACP handles. That exception authorizes `Abandoned`, never `Done`.
+
+Agent teardown reuses an existing exact assignment/epoch/session DELETE command
+and catches up canonical lifecycle before expensive integrity preparation.
+`agent_session_teardown_pending` and `agent_finalization_pending` deferrals share
+a 120-second window across claims; frontier and HITL waits retain their existing
+domain semantics. If failure recovery cannot prove quiescence or satisfy its
+contract, application becomes `poisoned` with the original cause and a separate
+recovery error. It requires operator repair and retains its scheduler slot.
+This is a safety refusal, never evidence of successful execution.
+
+Exhausted runtime-object read contention (`PRECONDITION command_in_progress`
+from read capacity or concurrent legacy verification) becomes a retryable `EXECUTOR_UNAVAILABLE`
+`runtime_object_read_busy`, retaining the original response context. It does not
+consume the application failure budget. Size, digest, manifest and full-output
+verification remain mandatory. Integrity scan failures and
+`operational_integrity_limit` separately produce unsuccessful operational
+finalization; these diagnostics do not establish runtime-object contention.
+
+### Recover an existing terminal agent prompt application
+
+Run the supported CLI in the deployment's `web` environment with the repaired
+web and supervisor code and its normal database/host configuration. Stop and
+drain old web workers before replacing them; allow any old application lease to
+expire. Inspect each affected command separately:
+
+```sh
+pnpm --filter maister-web execution:application:recover inspect --command b94ec738-e922-4dfd-acfd-c73d5d6a0746
+pnpm --filter maister-web execution:application:recover inspect --command 80a751e5-e7ae-4a67-8a70-8b4e3316476c
+```
+
+Inspection prints only application metadata, diagnostics and an observation
+token. Review `claimLive`, terminal command state, application stage and cause
+details. For each command use its own fresh token:
+
+```sh
+pnpm --filter maister-web execution:application:recover reapply --command COMMAND_UUID --observation-token TOKEN_FROM_INSPECTION
+```
+
+Reapply compares the exact observation under a row lock, refuses a live claim,
+unverified/conflicting terminal evidence or an already-applied command, and
+rearms application of the original terminal command. It invokes the registered
+production owner through the persistent web worker. The CLI prints
+`action=reapply_requested` and the durable observation, then exits; it does not
+claim that application has completed. Run the repaired web workers to process
+the request and reinspect its disposition. This keeps queue promotion and the
+next Run's launcher inside the persistent runtime. It never dispatches the original prompt.
+Reinspect deferred work; do not repeatedly rearm a live worker. An observation
+conflict requires fresh inspection. Original failure provenance survives rearm
+and subsequent waits; `recoveryError` describes a failed recovery separately.
+
+If canonical lifecycle is missing or its consumer is poisoned, repair the
+reported cause and use the existing exact-generation
+[projection rearm operation](execution-event-plane.md#durable-bounded-projection-and-reconciliation-workers)
+where applicable. Never fabricate an exit from an absent session or alter Run,
+turn, assignment or command status with SQL. Conflicting evidence and a missing
+terminal event require investigation of their owning host/projector; application
+rearm cannot manufacture that evidence. Old diagnostics that stored only
+`causeCode` cannot reconstruct a lost original message; retain the corresponding
+web/host logs for that incident.
+
+After application, verify `applicationState=applied`, populated
+`completionAppliedAt`, the exact turn acknowledged, a valid domain terminal Run
+state and one finalization/result publication. A safely failed application ends
+`Failed`, never `Done`. Verify the next eligible Pending run starts and active
+agent admissions stay within the configured cap. A `poisoned` result with a
+quiescence refusal requires the reported repair before any slot can be released.
 
 Shutdown aborts preparation, drains renewal and DB work, and releases only the
 worker's own claim. Failure to confirm that release makes shutdown fail and

@@ -1442,11 +1442,17 @@ paths:
       description: |
         Marks the session as an intentional shutdown then sends `SIGTERM`.
         After `MAISTER_KILL_GRACE_MS` (default 5000 ms) without exit, escalates
-        to `SIGKILL`. The terminal event arrives on the SSE stream as
+        to `SIGKILL` and waits another grace interval for observed exit and
+        durable terminal output. New execution confirms both barriers. The terminal
+        event arrives on the SSE stream as
         `session.exited` (because the shutdown was intentional), not
         `session.crashed`, even on non-zero exit code. (Implemented — ADR-166)
         Takes a `DeleteSessionCommand` envelope; a duplicate id replays the
-        stored `204`.
+        stored `204`. Replayed receipts preserve their original semantics: a
+        receipt created before the observed-exit barrier was introduced confirms
+        only termination initiation. Recovery must establish quiescence from the
+        matching canonical terminal lifecycle event, rather than a historical
+        `204` or session absence.
       operationId: deleteSession
       parameters:
         - $ref: "#/components/parameters/SessionId"
@@ -1474,7 +1480,7 @@ paths:
                   payload: {}
       responses:
         "204":
-          description: Termination initiated. SSE will deliver the terminal event.
+          description: New execution confirms process exit and durable terminal output. Replayed historical receipts retain their original guarantees; see the operation description.
           headers:
             X-Maister-Command-Replayed:
               $ref: "#/components/headers/CommandReplayed"
@@ -1517,6 +1523,22 @@ paths:
                       runId: "run-abc"
                       commandEpoch: 1
                       hostEpoch: 2
+        "503":
+          description: Process exit or durable terminal output could not be confirmed within the bounded termination wait. A failed receipt does not prove execution quiescence.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+              examples:
+                unconfirmedExit:
+                  value:
+                    code: "EXECUTOR_UNAVAILABLE"
+                    message: "session deletion could not confirm process exit and durable terminal output"
+                    details:
+                      reason: "session_delete_exit_unconfirmed"
+                      stage: "process_exit"
+                      sessionId: "01900000-0000-7000-8000-000000000001"
+                      runId: "run-abc"
+                      killGraceMs: 5000
   /sessions/{id}/stream:
     get:
       tags: [stream]
@@ -3939,6 +3961,7 @@ components:
         - runtime_output_buffer_capacity
         - runtime_output_frame_too_large
         - required_output_incomplete
+        - session_delete_exit_unconfirmed
         - runtime_object_missing
         - runtime_object_range_invalid
         - runtime_object_integrity_mismatch
@@ -4117,6 +4140,15 @@ components:
           type: string
           description: (`workspace_rejected` on a context mount) The offending mount's slug.
         runId: { type: string }
+        sessionId: { type: string }
+        stage:
+          type: string
+          enum: [process_exit, terminal_output]
+          description: (`session_delete_exit_unconfirmed`) The unconfirmed quiescence barrier.
+        killGraceMs:
+          type: integer
+          minimum: 0
+          description: (`session_delete_exit_unconfirmed`) The timeout used for each termination barrier.
         commandEpoch: { type: integer, minimum: 0 }
         hostEpoch: { type: integer, minimum: 0 }
         parentCommandId:

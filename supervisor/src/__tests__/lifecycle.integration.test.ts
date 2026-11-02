@@ -531,6 +531,119 @@ describe("supervisor lifecycle integration", () => {
     ).toBe(true);
   });
 
+  it("DELETE awaits a TERM-resistant child's exit and durable terminal before replaying success", async () => {
+    booted = await bootHost({
+      fixtureArgs: ["--exit-delay-ms", "60000"],
+      killGraceMs: 50,
+    });
+    const host = booted;
+    const sessionId = await createSession(host);
+    const entry = host.registry.get(sessionId)!;
+    const command = envelope("session.delete", fenceFor(host, RUN_ID), {});
+    const response = await postJson(
+      `${host.url}/sessions/${sessionId}`,
+      command,
+      "DELETE",
+    );
+
+    expect(response.status).toBe(204);
+    expect(entry.child.signalCode).toBe("SIGKILL");
+    expect(() => process.kill(entry.record.pid, 0)).toThrow();
+    expect(entry.record.terminalPublished).toBe(true);
+    await entry.record.outputTerminal;
+    const streamId = host.hostState.getRuntimeEventStreamId();
+    const events = host.hostState.runtimeEventsAfter(streamId, null);
+    const terminal = events.filter(
+      (event) =>
+        event.envelope.hostSessionId === sessionId &&
+        event.envelope.eventType === "session.exited",
+    );
+    const receipt = host.hostState.getReceipt(command.command.id);
+
+    expect(terminal).toHaveLength(1);
+    expect(receipt?.httpStatus).toBe(204);
+    expect(receipt?.phase).toBe("completed");
+    const replay = await postJson(
+      `${host.url}/sessions/${sessionId}`,
+      command,
+      "DELETE",
+    );
+
+    expect(replay.status).toBe(204);
+    expect(replay.headers.get("x-maister-command-replayed")).toBe("true");
+    expect(
+      host.hostState
+        .runtimeEventsAfter(streamId, null)
+        .filter(
+          (event) =>
+            event.envelope.hostSessionId === sessionId &&
+            event.envelope.eventType === "session.exited",
+        ),
+    ).toHaveLength(1);
+  });
+
+  it("DELETE refuses success when process exit has no confirmed terminal output", async () => {
+    booted = await bootHost({ fixtureArgs: ["--hang"], killGraceMs: 50 });
+    const host = booted;
+    const sessionId = await createSession(host);
+    const entry = host.registry.get(sessionId)!;
+    const captured = entry.record.outputDrained;
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    entry.record.outputDrained = Promise.all([captured, held]).then(() => {});
+    const command = envelope("session.delete", fenceFor(host, RUN_ID), {});
+
+    try {
+      const response = await postJson(
+        `${host.url}/sessions/${sessionId}`,
+        command,
+        "DELETE",
+      );
+
+      expect(response.status).toBe(503);
+      expect(response.body).toMatchObject({
+        code: "EXECUTOR_UNAVAILABLE",
+        details: {
+          reason: "session_delete_exit_unconfirmed",
+          stage: "terminal_output",
+          sessionId,
+          runId: RUN_ID,
+        },
+      });
+      expect(entry.record.terminalPublished).not.toBe(true);
+      expect(host.hostState.getReceipt(command.command.id)?.httpStatus).toBe(
+        503,
+      );
+    } finally {
+      release();
+      await entry.record.outputTerminal;
+    }
+  });
+
+  it("DELETE with a stale assignment cannot terminate the newer session", async () => {
+    const host = await bootFor(["--hang"]);
+    const created = await postJson(
+      `${host.url}/sessions`,
+      await createEnvelope(host, { runId: RUN_ID, assignmentEpoch: 2 }),
+    );
+    const sessionId = (created.body as { sessionId: string }).sessionId;
+    const entry = host.registry.get(sessionId)!;
+    const response = await postJson(
+      `${host.url}/sessions/${sessionId}`,
+      envelope("session.delete", fenceFor(host, RUN_ID), {}),
+      "DELETE",
+    );
+
+    expect(response.status).toBe(409);
+    expect(response.body).toMatchObject({ code: "FENCED" });
+    expect(entry.record.status).toBe("live");
+    expect(entry.child.exitCode).toBeNull();
+    expect(entry.child.signalCode).toBeNull();
+  });
+
   it("POST /sessions returns 503 and cleans up when ACP newSession hangs", async () => {
     const previousTimeout = process.env.MAISTER_ACP_HANDSHAKE_TIMEOUT_MS;
 

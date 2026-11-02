@@ -26,6 +26,7 @@
     "db:migrate:brain": "tsx lib/db/migrate-brain.ts",
     "db:check": "tsx --import ./scripts/_register-shim.mjs lib/db/check.ts",
     "execution:projection:rearm": "tsx --import ./scripts/_register-shim.mjs scripts/rearm-execution-projection.ts",
+    "execution:application:recover": "tsx --import ./scripts/_register-shim.mjs scripts/recover-prompt-application.ts",
     "db:seed": "tsx --import ./scripts/_register-shim.mjs lib/db/seed.ts",
     "db:studio": "drizzle-kit studio",
     "db:erd": "tsx --import ./scripts/_register-shim.mjs scripts/generate-erd-dbml.ts",

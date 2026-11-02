@@ -54,6 +54,7 @@ import {
   executionAssignments,
   executionCommands,
   executionRuntimeObjects,
+  runSessionIncarnations,
   runs,
   projects,
   workspaces,
@@ -205,6 +206,21 @@ async function seed(
 
   await mkdir(runtime, { recursive: true });
   await writeFile(path.join(runtime, "cache"), "native cache");
+  // Settled execution fixtures retain canonical teardown evidence before GC.
+  const client = await seam.hosts.forRun(runId, { reason: "launch" });
+  const session = await client.createSession({
+    stepId: "default",
+    executor: { agent: "claude", model: "mock" },
+  });
+
+  await client.deleteSession(session.sessionId);
+  await seam.fake.waitForCanonicalEvents();
+  expect(
+    await db
+      .select({ state: runSessionIncarnations.state })
+      .from(runSessionIncarnations)
+      .where(eq(runSessionIncarnations.runId, runId)),
+  ).toEqual([{ state: "exited" }]);
 
   return { runId, context, runtime, mounts };
 }
@@ -1243,7 +1259,10 @@ describe("operational disposition through existing lifecycle owners", () => {
     await db.transaction((tx) => prepared.apply(tx));
     const original = await row(template.runId);
 
-    await db.delete(runs).where(eq(runs.id, template.runId));
+    await disposeOperationalRun(template.runId, { db, hosts: seam.hosts });
+    expect((await row(template.runId)).operationalCleanup?.state).toBe(
+      "released",
+    );
     const inserts = Array.from({ length: 103 }, (_, index) => ({
       id: `zz-fair-${String(index).padStart(4, "0")}`,
       projectId: original.projectId,

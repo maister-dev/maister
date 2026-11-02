@@ -3,6 +3,7 @@ import "server-only";
 import type { Db } from "./db";
 import type { PreparedPromptOwner, PromptOwnerRegistry } from "./prompt-owners";
 import type { SQL } from "drizzle-orm";
+import type { CommandApplicationError } from "./types";
 import type { ExecutionCommand } from "@/lib/db/schema";
 
 import { randomUUID } from "node:crypto";
@@ -18,6 +19,11 @@ import {
   PromptOwnerInvariantError,
   PromptOwnerDeferred,
 } from "./prompt-owners";
+import { PromptOwnerSchema } from "./prompt-owner-contract";
+import {
+  preservePromptApplicationHistory,
+  promptApplicationDiagnostic,
+} from "./prompt-owner-errors";
 import { projectionTransaction } from "./events/projection-transaction";
 import { runEventWakeBus } from "./events/run-wake";
 import { commandSignals } from "./signals";
@@ -34,6 +40,8 @@ const log = pino({
 const LEASE_MS = 30_000;
 const RENEW_MS = 10_000;
 const MAX_FAILURES = 5;
+
+export const PROMPT_OWNER_PREPARE_TIMEOUT_MS = 120_000;
 
 export type PromptOwnerClaim = Readonly<{
   command: ExecutionCommand;
@@ -255,10 +263,36 @@ async function prepareWithLease(input: {
   claim: PromptOwnerClaim;
   owners: PromptOwnerRegistry;
   signal: AbortSignal;
+  onProgress: (stage: string) => void;
+  timeoutMs?: number;
+  prepare?: (signal: AbortSignal) => Promise<PreparedPromptOwner>;
 }): Promise<PreparedPromptOwner> {
   const renewalStop = new AbortController();
   const leaseLost = new AbortController();
-  const signal = AbortSignal.any([input.signal, leaseLost.signal]);
+  const deadline = new AbortController();
+  const signal = AbortSignal.any([
+    input.signal,
+    leaseLost.signal,
+    deadline.signal,
+  ]);
+  const timeoutMs = input.timeoutMs ?? PROMPT_OWNER_PREPARE_TIMEOUT_MS;
+  const timer = setTimeout(
+    () =>
+      deadline.abort(
+        new MaisterError(
+          "PRECONDITION",
+          "Prompt owner preparation exceeded its bounded application window",
+          { details: { reason: "prompt_owner_prepare_timeout", timeoutMs } },
+        ),
+      ),
+    timeoutMs,
+  );
+  let rejectAborted: () => void = () => {};
+  const aborted = new Promise<never>((_resolve, reject) => {
+    rejectAborted = () => reject(signal.reason);
+    signal.addEventListener("abort", rejectAborted, { once: true });
+    if (signal.aborted) rejectAborted();
+  });
   let renewalFailure: { error: unknown } | undefined;
   const renewal = (async (): Promise<void> => {
     while (!renewalStop.signal.aborted && !signal.aborted) {
@@ -285,17 +319,23 @@ async function prepareWithLease(input: {
   })();
 
   try {
-    const prepared = await preparePromptOwner({
-      db: input.db,
-      command: input.claim.command,
-      registry: input.owners,
-      signal,
-    });
+    const preparation = input.prepare
+      ? input.prepare(signal)
+      : preparePromptOwner({
+          db: input.db,
+          command: input.claim.command,
+          registry: input.owners,
+          signal,
+          onProgress: input.onProgress,
+        });
+    const prepared = await Promise.race([preparation, aborted]);
 
     signal.throwIfAborted();
 
     return prepared;
   } finally {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", rejectAborted);
     renewalStop.abort();
     await renewal;
     if (renewalFailure) throw renewalFailure.error;
@@ -324,22 +364,117 @@ function serviceFailure(error: unknown): boolean {
   return false;
 }
 
+async function recordServiceRetry(input: {
+  db: Db;
+  claim: PromptOwnerClaim;
+  error: unknown;
+  phase: "prepare" | "apply";
+  stage: string;
+}): Promise<PromptOwnerApplicationResult> {
+  const diagnostic = preservePromptApplicationHistory(
+    input.claim.command.applicationError,
+    {
+      reason: "prompt_owner_service_retry",
+      phase: input.phase,
+      stage: input.stage,
+      ...promptApplicationDiagnostic(input.error),
+      classification: "transient",
+    },
+  );
+
+  await projectionTransaction(input.db, async (tx) => {
+    await tx
+      .update(executionCommands)
+      .set({
+        applicationState: "pending",
+        applicationClaimOwner: null,
+        applicationClaimExpiresAt: null,
+        applicationNextRetryAt: sql`clock_timestamp() + interval '5 seconds'`,
+        applicationError: diagnostic,
+        updatedAt: sql`clock_timestamp()`,
+      })
+      .where(
+        and(
+          claimPredicate(input.claim),
+          sql`${executionCommands.applicationClaimExpiresAt} > clock_timestamp()`,
+        ),
+      );
+  });
+  log.warn(
+    { commandId: input.claim.command.id, ...diagnostic },
+    "prompt-owner-service-retry",
+  );
+
+  return "deferred";
+}
+
+const BOUNDED_AGENT_DEFERRALS = new Set([
+  "agent_session_teardown_pending",
+  "agent_finalization_pending",
+]);
+
+function expiredAgentDeferral(
+  error: unknown,
+  command: ExecutionCommand,
+): boolean {
+  if (
+    !(error instanceof PromptOwnerDeferred) ||
+    !BOUNDED_AGENT_DEFERRALS.has(String(error.details?.causeCode))
+  )
+    return false;
+  const since = command.applicationError?.deferredSince;
+
+  return (
+    since !== undefined &&
+    Number.isFinite(Date.parse(since)) &&
+    Date.now() - Date.parse(since) >= PROMPT_OWNER_PREPARE_TIMEOUT_MS
+  );
+}
+
 async function recordFailure(input: {
   db: Db;
   claim: PromptOwnerClaim;
   error: unknown;
   phase: "prepare" | "apply";
+  stage: string;
+  recoveryError?: unknown;
 }): Promise<PromptOwnerApplicationResult> {
   const attempts = input.claim.command.applicationAttempts + 1;
   const poisoned =
     input.error instanceof PromptOwnerInvariantError ||
+    expiredAgentDeferral(input.error, input.claim.command) ||
     attempts >= MAX_FAILURES;
-  const causeCode =
-    input.error instanceof PromptOwnerInvariantError
-      ? String(input.error.details?.causeCode)
-      : input.error instanceof MaisterError
-        ? input.error.code
-        : "application_failure";
+  const diagnostic = promptApplicationDiagnostic(input.error);
+  const applicationError = preservePromptApplicationHistory(
+    input.claim.command.applicationError,
+    {
+      reason: poisoned ? "prompt_owner_poisoned" : "prompt_owner_retry",
+      phase: input.phase,
+      stage: input.stage,
+      ...diagnostic,
+      classification:
+        input.error instanceof PromptOwnerInvariantError
+          ? "invariant"
+          : poisoned
+            ? "exhausted"
+            : "transient",
+      ...(input.recoveryError
+        ? {
+            recoveryError: {
+              code:
+                input.recoveryError instanceof MaisterError
+                  ? input.recoveryError.code
+                  : "application_failure",
+              reason: promptApplicationDiagnostic(input.recoveryError)
+                .causeReason,
+              message:
+                promptApplicationDiagnostic(input.recoveryError).causeMessage ??
+                "Application recovery failed",
+            },
+          }
+        : {}),
+    },
+  );
 
   return projectionTransaction(input.db, async (tx) => {
     const rows = await tx
@@ -352,11 +487,7 @@ async function recordFailure(input: {
         applicationNextRetryAt: poisoned
           ? null
           : sql`clock_timestamp() + ${Math.min(300_000, 1_000 * 2 ** (attempts - 1))} * interval '1 millisecond'`,
-        applicationError: {
-          reason: poisoned ? "prompt_owner_poisoned" : "prompt_owner_retry",
-          phase: input.phase,
-          causeCode,
-        },
+        applicationError,
         updatedAt: sql`clock_timestamp()`,
       })
       .where(
@@ -372,8 +503,7 @@ async function recordFailure(input: {
       {
         commandId: input.claim.command.id,
         attempts,
-        phase: input.phase,
-        causeCode,
+        ...applicationError,
         poisoned,
       },
       "prompt-owner-application-failed",
@@ -381,6 +511,85 @@ async function recordFailure(input: {
 
     return poisoned ? "poisoned" : "deferred";
   });
+}
+
+async function commitPreparedOwner(input: {
+  db: Db;
+  claim: PromptOwnerClaim;
+  prepared: PreparedPromptOwner;
+  signal: AbortSignal;
+  applicationError?: CommandApplicationError;
+}): Promise<PromptOwnerApplicationResult> {
+  const disposition = await projectionTransaction(input.db, async (tx) => {
+    input.signal.throwIfAborted();
+    const outcome = await input.prepared.apply(tx);
+
+    input.signal.throwIfAborted();
+    const rows = await tx
+      .update(executionCommands)
+      .set({
+        applicationState: outcome,
+        completionAppliedAt:
+          outcome === "applied" ? sql`clock_timestamp()` : null,
+        applicationClaimOwner: null,
+        applicationClaimExpiresAt: null,
+        applicationNextRetryAt: null,
+        applicationError: input.applicationError
+          ? preservePromptApplicationHistory(
+              input.claim.command.applicationError,
+              input.applicationError,
+            )
+          : input.claim.command.applicationError?.recoveryRequestedAt ||
+              input.claim.command.applicationError?.deferredSince
+            ? preservePromptApplicationHistory(
+                input.claim.command.applicationError,
+                {
+                  ...input.claim.command.applicationError,
+                  reason: "prompt_owner_recovered",
+                },
+              )
+            : null,
+        updatedAt: sql`clock_timestamp()`,
+      })
+      .where(
+        and(
+          claimPredicate(input.claim),
+          sql`${executionCommands.applicationClaimExpiresAt} > clock_timestamp()`,
+        ),
+      )
+      .returning({ id: executionCommands.id });
+
+    if (rows.length !== 1) throw new PromptOwnerClaimLostError();
+
+    return outcome;
+  });
+
+  commandSignals.wake(input.claim.command.id);
+  runEventWakeBus.wake(input.claim.command.runId);
+  log.info(
+    {
+      commandId: input.claim.command.id,
+      ownerKind: input.claim.command.ownerKind,
+      ownerVariant: input.claim.command.ownerRef?.variant,
+      disposition,
+    },
+    "prompt-owner-applied",
+  );
+
+  if (disposition === "applied" && input.prepared.afterCommit) {
+    await input.prepared.afterCommit().catch((error: unknown) => {
+      log.warn(
+        {
+          commandId: input.claim.command.id,
+          ownerKind: input.claim.command.ownerKind,
+          errorType: error instanceof Error ? error.name : "unknown",
+        },
+        "prompt-owner-cleanup-deferred-to-domain-backstop",
+      );
+    });
+  }
+
+  return disposition;
 }
 
 /** Domain writes precede the final token/lease CAS in the same bounded DB
@@ -392,8 +601,13 @@ export async function applyClaimedPromptOwner(input: {
   claim: PromptOwnerClaim;
   owners: PromptOwnerRegistry;
   signal: AbortSignal;
+  prepareTimeoutMs?: number;
 }): Promise<PromptOwnerApplicationResult> {
   let phase: "prepare" | "apply" = "prepare";
+  let stage = "reconcile";
+  const onProgress = (next: string): void => {
+    stage = next.slice(0, 128);
+  };
 
   try {
     input.signal.throwIfAborted();
@@ -411,67 +625,21 @@ export async function applyClaimedPromptOwner(input: {
 
       return "deferred";
     }
-    const prepared = await prepareWithLease(input);
-
-    phase = "apply";
-    const disposition = await projectionTransaction(input.db, async (tx) => {
-      input.signal.throwIfAborted();
-      const outcome = await prepared.apply(tx);
-
-      input.signal.throwIfAborted();
-      const rows = await tx
-        .update(executionCommands)
-        .set({
-          applicationState: outcome,
-          completionAppliedAt:
-            outcome === "applied" ? sql`clock_timestamp()` : null,
-          applicationClaimOwner: null,
-          applicationClaimExpiresAt: null,
-          applicationNextRetryAt: null,
-          applicationError: null,
-          updatedAt: sql`clock_timestamp()`,
-        })
-        .where(
-          and(
-            claimPredicate(input.claim),
-            sql`${executionCommands.applicationClaimExpiresAt} > clock_timestamp()`,
-          ),
-        )
-        .returning({ id: executionCommands.id });
-
-      if (rows.length !== 1) throw new PromptOwnerClaimLostError();
-
-      return outcome;
+    const prepared = await prepareWithLease({
+      ...input,
+      onProgress,
+      timeoutMs: input.prepareTimeoutMs,
     });
 
-    commandSignals.wake(input.claim.command.id);
-    runEventWakeBus.wake(input.claim.command.runId);
-    log.info(
-      {
-        commandId: input.claim.command.id,
-        ownerKind: input.claim.command.ownerKind,
-        ownerVariant: input.claim.command.ownerRef?.variant,
-        disposition,
-      },
-      "prompt-owner-applied",
-    );
+    phase = "apply";
+    stage = "application";
 
-    if (disposition === "applied" && prepared.afterCommit) {
-      await prepared.afterCommit().catch((error: unknown) => {
-        log.warn(
-          {
-            commandId: input.claim.command.id,
-            ownerKind: input.claim.command.ownerKind,
-            errorType: error instanceof Error ? error.name : "unknown",
-          },
-          "prompt-owner-cleanup-deferred-to-domain-backstop",
-        );
-      });
-    }
-
-    return disposition;
+    return await commitPreparedOwner({ ...input, prepared });
   } catch (error) {
-    if (error instanceof PromptOwnerDeferred) {
+    if (
+      error instanceof PromptOwnerDeferred &&
+      !expiredAgentDeferral(error, input.claim.command)
+    ) {
       await projectionTransaction(input.db, async (tx) => {
         await tx
           .update(executionCommands)
@@ -480,6 +648,19 @@ export async function applyClaimedPromptOwner(input: {
             applicationClaimOwner: null,
             applicationClaimExpiresAt: null,
             applicationNextRetryAt: sql`clock_timestamp() + interval '1 second'`,
+            applicationError: preservePromptApplicationHistory(
+              input.claim.command.applicationError,
+              {
+                reason: "prompt_owner_deferred",
+                phase,
+                stage,
+                ...promptApplicationDiagnostic(error),
+                classification: "deferred",
+                deferredSince:
+                  input.claim.command.applicationError?.deferredSince ??
+                  new Date().toISOString(),
+              },
+            ),
             updatedAt: sql`clock_timestamp()`,
           })
           .where(claimPredicate(input.claim));
@@ -500,11 +681,84 @@ export async function applyClaimedPromptOwner(input: {
       return "deferred";
     }
     if (serviceFailure(error)) {
-      await releasePromptOwnerClaim(input.db, input.claim);
-      throw error;
+      return recordServiceRetry({ ...input, error, phase, stage });
     }
 
-    return recordFailure({ ...input, error, phase });
+    const exhausted =
+      error instanceof PromptOwnerInvariantError ||
+      expiredAgentDeferral(error, input.claim.command) ||
+      input.claim.command.applicationAttempts + 1 >= MAX_FAILURES;
+    const parsed = PromptOwnerSchema.safeParse({
+      kind: input.claim.command.ownerKind,
+      ref: input.claim.command.ownerRef,
+    });
+    const adapter = parsed.success
+      ? input.owners.get(parsed.data.kind)
+      : undefined;
+
+    if (exhausted && parsed.success && adapter?.prepareFailure) {
+      const originalStage = stage;
+      const diagnostic = preservePromptApplicationHistory(
+        input.claim.command.applicationError,
+        {
+          reason: "prompt_owner_application_failed",
+          phase,
+          stage,
+          ...promptApplicationDiagnostic(error),
+          classification:
+            error instanceof PromptOwnerInvariantError
+              ? "invariant"
+              : "exhausted",
+        },
+      );
+
+      try {
+        const prepareFailure = adapter.prepareFailure;
+        const owner = parsed.data;
+
+        onProgress("failure_finalization");
+        const prepared = await prepareWithLease({
+          ...input,
+          onProgress,
+          timeoutMs: input.prepareTimeoutMs,
+          prepare: (signal) =>
+            prepareFailure({
+              db: input.db,
+              owner,
+              command: input.claim.command,
+              error: diagnostic,
+              signal,
+              onProgress,
+            }),
+        });
+        const disposition = await commitPreparedOwner({
+          ...input,
+          prepared,
+          applicationError: diagnostic,
+        });
+
+        return disposition;
+      } catch (recoveryError) {
+        if (
+          input.signal.aborted ||
+          recoveryError instanceof PromptOwnerClaimLostError
+        ) {
+          await releasePromptOwnerClaim(input.db, input.claim);
+
+          return "deferred";
+        }
+
+        return recordFailure({
+          ...input,
+          error,
+          phase,
+          stage: originalStage,
+          recoveryError,
+        });
+      }
+    }
+
+    return recordFailure({ ...input, error, phase, stage });
   }
 }
 

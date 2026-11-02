@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { Db } from "./db";
+import type { CommandApplicationError } from "./types";
 import type { PromptOwner } from "./prompt-owner-contract";
 import type { ExecutionCommand, ExecutionEvent } from "@/lib/db/schema";
 
@@ -48,11 +49,25 @@ type Preparation<O extends PromptOwner> = Readonly<{
   command: Readonly<ExecutionCommand>;
   outcome: PromptOwnerOutcome;
   signal: AbortSignal;
+  onProgress?: (stage: string) => void;
 }>;
+
+export type PromptOwnerFailurePreparation<O extends PromptOwner = PromptOwner> =
+  Readonly<{
+    db: Db;
+    owner: O;
+    command: Readonly<ExecutionCommand>;
+    error: CommandApplicationError;
+    signal: AbortSignal;
+    onProgress?: (stage: string) => void;
+  }>;
 
 export type PromptOwnerAdapter = Readonly<{
   kind: PromptOwner["kind"];
   prepare: (input: Preparation<PromptOwner>) => Promise<PreparedPromptOwner>;
+  prepareFailure?: (
+    input: PromptOwnerFailurePreparation,
+  ) => Promise<PreparedPromptOwner>;
 }>;
 export type PromptOwnerRegistry = ReadonlyMap<
   PromptOwner["kind"],
@@ -101,9 +116,25 @@ export function definePromptOwnerAdapter<K extends PromptOwner["kind"]>(
   prepare: (
     input: Preparation<Extract<PromptOwner, { kind: K }>>,
   ) => Promise<PreparedPromptOwner>,
+  prepareFailure?: (
+    input: PromptOwnerFailurePreparation<Extract<PromptOwner, { kind: K }>>,
+  ) => Promise<PreparedPromptOwner>,
 ): PromptOwnerAdapter {
   return {
     kind,
+    ...(prepareFailure
+      ? {
+          prepareFailure: (input: PromptOwnerFailurePreparation) => {
+            if (input.owner.kind !== kind)
+              throw new PromptOwnerInvariantError("adapter_kind");
+
+            return prepareFailure({
+              ...input,
+              owner: input.owner as Extract<PromptOwner, { kind: K }>,
+            });
+          },
+        }
+      : {}),
     prepare: (input) => {
       if (input.owner.kind !== kind)
         throw new PromptOwnerInvariantError("adapter_kind");
@@ -136,6 +167,7 @@ export async function preparePromptOwner(input: {
   command: ExecutionCommand;
   registry: PromptOwnerRegistry;
   signal: AbortSignal;
+  onProgress?: (stage: string) => void;
 }): Promise<PreparedPromptOwner> {
   const { db, command, signal } = input;
   const parsed = PromptOwnerSchema.safeParse({
@@ -153,6 +185,7 @@ export async function preparePromptOwner(input: {
   let outcome: PromptOwnerOutcome;
 
   if (command.state === "succeeded") {
+    input.onProgress?.("output");
     const output = await readPromptOutput({
       db,
       commandId: command.id,
@@ -164,6 +197,7 @@ export async function preparePromptOwner(input: {
       try {
         for await (const event of output.events) {
           signal.throwIfAborted();
+          input.onProgress?.("output");
           yield event;
         }
       } catch (error) {
@@ -184,12 +218,14 @@ export async function preparePromptOwner(input: {
     outcome = { state: command.state, error: command.lastError };
   } else throw new PromptOwnerInvariantError("terminal_missing");
   try {
+    input.onProgress?.("owner_prepare");
     const prepared = await adapter.prepare({
       db,
       command,
       owner,
       outcome,
       signal,
+      onProgress: input.onProgress,
     });
 
     signal.throwIfAborted();

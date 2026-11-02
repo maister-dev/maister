@@ -728,6 +728,7 @@ export const REASON_TOKENS = [
   "runtime_output_buffer_capacity",
   "runtime_output_frame_too_large",
   "required_output_incomplete",
+  "session_delete_exit_unconfirmed",
   // S4.3 (D9): the operator-only historical import path. Admission is enabled
   // out of band at boot and revoked for good; nothing here is reachable from an
   // ordinary session or an active assignment.
@@ -799,6 +800,9 @@ export type SupervisorErrorDetails = {
   // `workspace_rejected` on a context mount: the offending mount's slug.
   mount?: string;
   runId?: string;
+  sessionId?: string;
+  stage?: "process_exit" | "terminal_output";
+  killGraceMs?: number;
   commandEpoch?: number;
   hostEpoch?: number;
   // ADR-182: every steer refusal names the parent prompt it targeted.

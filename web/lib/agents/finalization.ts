@@ -16,7 +16,7 @@ import type {
 import { randomUUID } from "node:crypto";
 import { stat } from "node:fs/promises";
 
-import { and, eq, inArray, is, isNull, isNotNull } from "drizzle-orm";
+import { and, eq, inArray, is, isNull } from "drizzle-orm";
 import { NodePgTransaction } from "drizzle-orm/node-postgres";
 import pino from "pino";
 
@@ -38,20 +38,20 @@ import {
   CLOSES_MESSAGE_TURNS,
   supersedeUndispatchedMessageTurns,
 } from "./turns";
+import {
+  assertAgentExecutionQuiescent,
+  assertAgentSessionBindingsQuiescent,
+  assertAgentCancellationExecutionQuiescent,
+  assertAgentCancellationBindingsQuiescent,
+  readAgentDispatchEvidence,
+} from "./execution-quiescence";
 
 import { applyAgentTerminalIncidents } from "@/lib/runs/agent-incidents";
 import { parseOperationalResult } from "@/lib/run-results/operational-schema";
 import { terminalCauseReason } from "@/lib/domain-events/taxonomy";
 import { closedAnswerResponse } from "@/lib/hitl-closed-answer";
 import { getDb } from "@/lib/db/client";
-import {
-  hitlRequests,
-  projects,
-  runs,
-  workspaces,
-  runSessions,
-  executionCommands,
-} from "@/lib/db/schema";
+import { hitlRequests, projects, runs, workspaces } from "@/lib/db/schema";
 import { releaseRunContextMounts } from "@/lib/context-mounts/terminal";
 import {
   cancelActiveAssignmentsForRun,
@@ -119,6 +119,8 @@ type AgentAssignmentClose =
 
 export type AgentFinalizeOptions = {
   db?: Db;
+  /** Exact retained prompt whose validated result-resume grant may settle. */
+  applicationCommandId?: string;
   reason?: string;
   // B6: the terminal cause's reason token when `reason` is prose (the
   // reconcile crash carries its observer diagnosis there).
@@ -242,6 +244,7 @@ type FinalizationContext = Readonly<{
   run: Pick<
     Run,
     | "id"
+    | "status"
     | "runKind"
     | "executionAssignmentId"
     | "workspaceMode"
@@ -273,6 +276,9 @@ function finalizationProvenance(context: FinalizationContext | null): string {
           ...context,
           run: {
             ...context.run,
+            // The apply lock validates source status; Running/NeedsInput may
+            // change during preparation without changing execution identity.
+            status: null,
             launchedAt: context.run.launchedAt?.toISOString() ?? null,
           },
         },
@@ -286,6 +292,7 @@ async function loadFinalizationContext(
   const [run] = await db
     .select({
       id: runs.id,
+      status: runs.status,
       runKind: runs.runKind,
       executionAssignmentId: runs.executionAssignmentId,
       workspaceMode: runs.workspaceMode,
@@ -376,36 +383,14 @@ export async function prepareUndispatchedAgentFailure(
 
       if (!run || (run.status !== "Pending" && run.status !== "Running"))
         return { finalized: false };
-      const [command] = await tx
-        .select({ id: executionCommands.id })
-        .from(executionCommands)
-        .where(
-          and(
-            eq(executionCommands.runId, runId),
-            inArray(executionCommands.kind, [
-              "session.create",
-              "session.prompt",
-            ]),
-          ),
-        )
-        .limit(1);
-      const [session] = await tx
-        .select({ id: runSessions.id })
-        .from(runSessions)
-        .where(
-          and(
-            eq(runSessions.runId, runId),
-            isNotNull(runSessions.acpSessionId),
-          ),
-        )
-        .limit(1);
+      const evidence = await readAgentDispatchEvidence(tx, runId);
 
-      if (command || session) {
+      if (evidence.hasOwnedCommand || evidence.hasBoundSession) {
         log.warn(
           {
             runId,
-            hasOwnedCommand: command !== undefined,
-            hasLiveSession: session !== undefined,
+            hasOwnedCommand: evidence.hasOwnedCommand,
+            hasLiveSession: evidence.hasBoundSession,
           },
           "agent-undispatched-failure-retained-for-owner",
         );
@@ -444,6 +429,11 @@ async function prepareAgentFinalization(
   const original = await loadFinalizationContext(_db, runId);
 
   if (!original)
+    return {
+      apply: async () => ({ finalized: false }),
+      afterCommit: async () => {},
+    };
+  if (!sourceStatuses.includes(original.run.status))
     return {
       apply: async () => ({ finalized: false }),
       afterCommit: async () => {},
@@ -509,55 +499,40 @@ async function prepareAgentFinalization(
             finalText: opts.finalText,
           })
       : { kind: "none" as const };
-  let operationalQuiescent = true;
 
   if (
     preparedRun.agentKind === "operational" &&
-    preparedRun.executionAssignmentId
+    preparedRun.executionAssignmentId &&
+    !failureEvidence
   ) {
-    try {
-      const { createExecutionHosts } =
-        await import("@/lib/execution-host/client");
-      const client = await createExecutionHosts({ db: _db }).forAssignment({
-        id: preparedRun.executionAssignmentId,
-      });
-
-      operationalQuiescent = !(await client.sessionsForRun()).some(
-        (session) => session.status === "live",
+    if (outcome === "Abandoned")
+      await assertAgentCancellationExecutionQuiescent(_db, preparedRun);
+    else
+      await assertAgentExecutionQuiescent(
+        _db,
+        preparedRun,
+        opts.applicationCommandId,
       );
-    } catch (error) {
-      operationalQuiescent = false;
-      log.error(
-        { runId, errorType: error instanceof Error ? error.name : "unknown" },
-        "operational-execution-quiescence-unproven",
-      );
-    }
   }
   const operationalIntegrity =
     preparedRun.agentKind === "operational"
-      ? !operationalQuiescent
-        ? {
-            verdict: "indeterminate" as const,
-            reasonCodes: ["operational_execution_not_quiescent"],
-            changedPaths: [],
-          }
-        : await inspectOperationalRun(_db, preparedRun).catch(
-            (error: unknown) => {
-              log.warn(
-                {
-                  runId,
-                  errorType: error instanceof Error ? error.name : "unknown",
-                },
-                "operational-final-integrity-unavailable",
-              );
+      ? await inspectOperationalRun(_db, preparedRun).catch(
+          (error: unknown) => {
+            log.warn(
+              {
+                runId,
+                errorType: error instanceof Error ? error.name : "unknown",
+              },
+              "operational-final-integrity-unavailable",
+            );
 
-              return {
-                verdict: "indeterminate" as const,
-                reasonCodes: ["operational_integrity_probe_failed"],
-                changedPaths: [],
-              };
-            },
-          )
+            return {
+              verdict: "indeterminate" as const,
+              reasonCodes: ["operational_integrity_probe_failed"],
+              changedPaths: [],
+            };
+          },
+        )
       : null;
   const operationalDecision = operationalIntegrity
     ? operationalTerminalDecision({
@@ -670,7 +645,21 @@ async function prepareAgentFinalization(
       preparedRun.agentKind === "operational" &&
       preparedRun.operationalTerminal
     )
-      return { finalized: false };
+      throw new MaisterError(
+        "PRECONDITION",
+        "Operational terminal evidence is inconsistent with the active Run status; diagnose the original application",
+        { details: { reason: "agent_terminal_status_inconsistent", runId } },
+      );
+    if (preparedRun.agentKind === "operational" && !failureEvidence) {
+      if (outcome === "Abandoned")
+        await assertAgentCancellationBindingsQuiescent(tx, preparedRun);
+      else
+        await assertAgentSessionBindingsQuiescent(
+          tx,
+          preparedRun,
+          opts.applicationCommandId,
+        );
+    }
     const current = await loadFinalizationContext(tx, runId);
 
     if (finalizationProvenance(current) !== provenance)
@@ -1249,6 +1238,7 @@ export async function finalizeAgentRun(
         { runId, errorType: error instanceof Error ? error.name : "unknown" },
         "operational-terminal-teardown-unconfirmed",
       );
+      throw error;
     }
   }
   const prepared = await prepareAgentRunFinalization(runId, outcome, {

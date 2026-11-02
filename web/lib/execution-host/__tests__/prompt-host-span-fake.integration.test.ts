@@ -473,6 +473,84 @@ describe("host-span settlement on the fake host", () => {
     });
   });
 
+  it("B5-busy-owner: exhausted object-read capacity defers application without poisoning the completed prompt", async () => {
+    const { client, hostSessionId } = await liveSession();
+    const handle = await prompt(client, hostSessionId);
+
+    await fake.waitForCanonicalEvents();
+    await untilReceipt(handle.commandId);
+    await expect
+      .poll(async () => (await reconcile(handle.commandId)).disposition)
+      .toBe("settled");
+    const { owners, applied } = countingOwners();
+    const prompts = fake.callsOf("startPrompt").length;
+
+    for (let outer = 0; outer < 6; outer += 1) {
+      for (let read = 0; read < 5; read += 1)
+        fake.failOnce(
+          "getRuntimeObjectContent",
+          new MaisterError(
+            "PRECONDITION",
+            "runtime object verification is busy; retry the read",
+            { details: { httpStatus: 409, reason: "command_in_progress" } },
+          ),
+        );
+      expect(
+        await applyPromptOwner({
+          db,
+          commandId: handle.commandId,
+          owners,
+          signal: AbortSignal.timeout(15_000),
+        }),
+      ).toBe("deferred");
+      expect(await command(handle.commandId)).toMatchObject({
+        state: "succeeded",
+        applicationState: "pending",
+        applicationAttempts: 0,
+        completionAppliedAt: null,
+        applicationError: {
+          causeCode: "EXECUTOR_UNAVAILABLE",
+          causeReason: "runtime_object_read_busy",
+          causeDetails: {
+            causeCode: "PRECONDITION",
+            causeReason: "command_in_progress",
+            causeDetails: { httpStatus: 409, reason: "command_in_progress" },
+          },
+        },
+      });
+      // Advance only the service retry deadline; the terminal evidence and
+      // owner generation remain unchanged across the six recovery visits.
+      await db
+        .update(executionCommands)
+        .set({ applicationNextRetryAt: new Date(0) })
+        .where(eq(executionCommands.id, handle.commandId));
+    }
+    expect(applied).toEqual([]);
+    expect(
+      await applyPromptOwner({
+        db,
+        commandId: handle.commandId,
+        owners,
+        signal: AbortSignal.timeout(15_000),
+      }),
+    ).toBe("applied");
+    expect(
+      await applyPromptOwner({
+        db,
+        commandId: handle.commandId,
+        owners,
+        signal: AbortSignal.timeout(15_000),
+      }),
+    ).toBe("deferred");
+    expect(applied).toEqual([handle.commandId]);
+    expect(fake.callsOf("startPrompt")).toHaveLength(prompts);
+    expect(await command(handle.commandId)).toMatchObject({
+      state: "succeeded",
+      applicationState: "applied",
+      applicationAttempts: 0,
+    });
+  }, 30_000);
+
   it("B-write-failed: a host-span write the database refuses leaves the command waiting for the canonical feed", async () => {
     const { client, hostSessionId } = await laggingSession();
     const handle = await prompt(client, hostSessionId);

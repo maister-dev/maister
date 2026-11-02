@@ -1906,13 +1906,28 @@ async function stopAgentAfterAuth(
   });
 
   if (!finalize.finalized) {
-    // The run reached a terminal status between auth and finalize (a lost CAS
-    // race); the stop still reports ok because the outcome is identical, but
-    // surface the no-op so operators can see this call was not the finalizer.
+    const current = await deps.loadContext(runId);
+
+    if (current.run.status !== "Abandoned") {
+      throw new MaisterError(
+        "CONFLICT",
+        `agent stop finalization has not confirmed abandonment: ${runId}`,
+        {
+          details: {
+            reason: "agent_stop_finalization_pending",
+            runId,
+            status: current.run.status,
+          },
+        },
+      );
+    }
+
     log.info(
       { runId },
-      "agent stop finalize was a no-op (run already terminal)",
+      "agent stop finalize was a no-op (run already abandoned)",
     );
+
+    return { ok: true, runId, runStatus: "Abandoned", supervisorStopped };
   }
 
   // Operational disposition owns preservation, materialization restoration and

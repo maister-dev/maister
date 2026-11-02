@@ -796,8 +796,16 @@ describe("AT-01 bounded output on the production supervisor", () => {
           signal: AbortSignal.timeout(15_000),
         }),
       ).rejects.toMatchObject({
-        code: "PRECONDITION",
-        details: { httpStatus: 409, reason: "command_in_progress" },
+        code: "EXECUTOR_UNAVAILABLE",
+        details: {
+          reason: "runtime_object_read_busy",
+          commandId: command.id,
+          objectId: reference.objectId,
+          attempts: 5,
+          causeCode: "PRECONDITION",
+          causeReason: "command_in_progress",
+          causeDetails: { httpStatus: 409, reason: "command_in_progress" },
+        },
       });
       expect(countReads() - beforeExhausted).toBe(5);
       assertHeldSpools("retries-exhausted");
@@ -1541,8 +1549,9 @@ describe("AT-01 bounded output on the production supervisor", () => {
     ]);
 
     try {
-      await expect(queryPrompt({ db, handle, owners })).rejects.toMatchObject({
-        code: "EXECUTOR_UNAVAILABLE",
+      expect(await queryPrompt({ db, handle, owners })).toMatchObject({
+        state: "pending",
+        ownerApplicationPending: true,
       });
       const [waiting] = await db
         .select()
@@ -1555,16 +1564,27 @@ describe("AT-01 bounded output on the production supervisor", () => {
         applicationAttempts: 0,
         applicationClaimOwner: null,
         completionAppliedAt: null,
+        applicationError: {
+          reason: "prompt_owner_service_retry",
+          classification: "transient",
+          phase: "prepare",
+          stage: "output",
+          causeCode: "EXECUTOR_UNAVAILABLE",
+          causeReason: "prompt_output_host_unavailable",
+        },
       });
+      expect(waiting.applicationNextRetryAt!.getTime()).toBeGreaterThan(
+        Date.now(),
+      );
     } finally {
       restore();
       await new Promise<void>((resolve, reject) =>
         proxy.close((error) => (error ? reject(error) : resolve())),
       );
     }
-    expect(await queryPrompt({ db, handle, owners })).toMatchObject({
-      state: "succeeded",
-    });
+    await expect
+      .poll(() => queryPrompt({ db, handle, owners }), { timeout: 10_000 })
+      .toMatchObject({ state: "succeeded" });
     const [completed] = await db
       .select()
       .from(executionCommands)
@@ -1599,8 +1619,9 @@ describe("AT-01 bounded output on the production supervisor", () => {
       }),
     ]);
 
-    await expect(queryPrompt({ db, handle, owners })).rejects.toMatchObject({
-      code: "40P01",
+    expect(await queryPrompt({ db, handle, owners })).toMatchObject({
+      state: "pending",
+      ownerApplicationPending: true,
     });
     const [waiting] = await db
       .select()
@@ -1613,10 +1634,20 @@ describe("AT-01 bounded output on the production supervisor", () => {
       applicationAttempts: 0,
       applicationClaimOwner: null,
       completionAppliedAt: null,
+      applicationError: {
+        reason: "prompt_owner_service_retry",
+        classification: "transient",
+        phase: "apply",
+        stage: "application",
+        causeMessage: "deadlock detected",
+      },
     });
-    expect(await queryPrompt({ db, handle, owners })).toMatchObject({
-      state: "succeeded",
-    });
+    expect(waiting.applicationNextRetryAt!.getTime()).toBeGreaterThan(
+      Date.now(),
+    );
+    await expect
+      .poll(() => queryPrompt({ db, handle, owners }), { timeout: 10_000 })
+      .toMatchObject({ state: "succeeded" });
     const [completed] = await db
       .select()
       .from(executionCommands)

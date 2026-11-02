@@ -131,11 +131,24 @@ export type PromptSettlementFeed = (typeof PROMPT_SETTLEMENT_FEEDS)[number];
  * also means a read is in flight or none has finished (ADR-177 amendment). */
 export const HOST_SPAN_VERDICTS = ["busy", "refused"] as const;
 export type HostSpanVerdict = (typeof HOST_SPAN_VERDICTS)[number];
-export type CommandApplicationError = Readonly<{
+export type CommandApplicationFailure = Readonly<{
   reason: string;
   phase: "prepare" | "apply" | "continuation";
   causeCode?: string;
+  stage?: string;
+  causeReason?: string;
+  causeMessage?: string;
+  causeDetails?: Readonly<Record<string, unknown>>;
+  classification?: "transient" | "invariant" | "exhausted" | "deferred";
+  recoveryError?: Readonly<{ code: string; reason?: string; message: string }>;
 }>;
+export type CommandApplicationError = CommandApplicationFailure &
+  Readonly<{
+    deferredSince?: string;
+    recoveryRequestedAt?: string;
+    previousAttempts?: number;
+    recoveryOrigin?: CommandApplicationFailure;
+  }>;
 
 export const TERMINAL_COMMAND_STATES = [
   "succeeded",

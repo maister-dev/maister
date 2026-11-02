@@ -12,7 +12,12 @@ import path from "node:path";
 import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { runs, workspaces, runResults } from "@/lib/db/schema";
+import {
+  runs,
+  workspaces,
+  runResults,
+  runSessionIncarnations,
+} from "@/lib/db/schema";
 import {
   captureOperationalBaseline,
   captureOperationalGeneration,
@@ -302,7 +307,7 @@ for (const transport of ["gh", "mcp"] as const) {
         baseBranch: "main",
         targetBranch: "main",
       });
-      await seam.hosts.forRun(runId, { reason: "launch" });
+      const client = await seam.hosts.forRun(runId, { reason: "launch" });
       const request = async (
         page: number,
       ): Promise<{
@@ -425,6 +430,20 @@ for (const transport of ["gh", "mcp"] as const) {
           };
         }
       }
+      // The controlled actor must settle execution before publishing its result.
+      const session = await client.createSession({
+        stepId: "default",
+        executor: { agent: "claude", model: "mock" },
+      });
+
+      await client.deleteSession(session.sessionId);
+      await seam.fake.waitForCanonicalEvents();
+      expect(
+        await db
+          .select({ state: runSessionIncarnations.state })
+          .from(runSessionIncarnations)
+          .where(eq(runSessionIncarnations.runId, runId)),
+      ).toEqual([{ state: "exited" }]);
       await finalizeAgentRun(runId, "Done", {
         db,
         finalText: `\`\`\`json maister:output\n${JSON.stringify(report)}\n\`\`\``,

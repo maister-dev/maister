@@ -9,7 +9,7 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import pino from "pino";
 
-import { isMaisterError } from "@/lib/errors";
+import { isMaisterError, MaisterError } from "@/lib/errors";
 
 const log = pino({
   name: "runtime-object-content",
@@ -48,7 +48,24 @@ export async function openRuntimeObjectContent(input: {
         },
         "runtime-object-content-read-busy",
       );
-      if (attempt >= OBJECT_CONTENT_READ_ATTEMPTS) throw error;
+      if (attempt >= OBJECT_CONTENT_READ_ATTEMPTS)
+        throw new MaisterError(
+          "EXECUTOR_UNAVAILABLE",
+          "runtime object read capacity remained busy after bounded retries",
+          {
+            cause: error,
+            details: {
+              ...context,
+              objectId,
+              reason: "runtime_object_read_busy",
+              attempts: attempt,
+              causeCode: error.code,
+              causeReason: error.details.reason,
+              causeMessage: error.message,
+              causeDetails: error.details,
+            },
+          },
+        );
       await delay(BUSY_READ_BACKOFF_MS * attempt, undefined, { signal });
     }
   }

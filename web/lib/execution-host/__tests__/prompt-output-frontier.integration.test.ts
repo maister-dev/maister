@@ -319,7 +319,14 @@ describe("output behind the canonical frontier (owner application)", () => {
     expect(await command(commandId)).toMatchObject({
       applicationState: "pending",
       applicationAttempts: 0,
-      applicationError: null,
+      applicationError: {
+        reason: "prompt_owner_deferred",
+        classification: "deferred",
+        phase: "prepare",
+        stage: "owner_prepare",
+        causeReason: "prompt_owner_deferred",
+        causeDetails: { causeCode: "event_frontier_pending" },
+      },
     });
   }, 60_000);
 

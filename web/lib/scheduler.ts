@@ -783,7 +783,7 @@ export async function promoteNextPending(
     (async (id: string) => {
       const m = await import("@/lib/agents/launch");
 
-      await m.startAgentSession(id);
+      await m.startAgentSession(id, { db });
     });
   const resumeScratchFn =
     opts.resumeScratchRun ??

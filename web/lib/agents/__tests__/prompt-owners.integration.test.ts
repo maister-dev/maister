@@ -19,6 +19,7 @@ import {
   runs,
   runSessions,
   runResults,
+  workspaces,
   executionCommands,
   executionEvents,
   domainEvents,
@@ -29,12 +30,16 @@ import {
 } from "@/lib/db/schema";
 import { startAgentContinuationWorker } from "@/lib/agents/continuation-worker";
 import { lockAgentPermissionResult } from "@/lib/agents/permission-resume";
+import { prepareAgentRunFinalization } from "@/lib/agents/finalization";
 import {
   agentPermissionResumeSchema,
   assertAgentPermissionResumeSource,
 } from "@/lib/execution-host/agent-permission-handoff";
 import { readPromptRequest } from "@/lib/execution-host/command-request";
-import { agentPromptOwners } from "@/lib/agents/prompt-owner";
+import { agentPromptOwner, agentPromptOwners } from "@/lib/agents/prompt-owner";
+import { applyPromptOwner } from "@/lib/execution-host/prompt-owner-application";
+import { createPromptOwnerRegistry } from "@/lib/execution-host/prompt-owners";
+import { MaisterError } from "@/lib/errors";
 import { reworkChildRun } from "@/lib/agents/launch";
 import { claimAgentResumeSlot, respondToHitl } from "@/lib/services/hitl";
 import { markCheckpointed } from "@/lib/runs/state-transitions";
@@ -1747,10 +1752,22 @@ describe("Agent owned prompts through the production launcher", () => {
       await continuation.stop();
     }
   }, 120_000);
-  it.each(["live", "before_apply"] as const)(
-    "owner-agent-checkpoint-result retains the completed original through %s",
-    async (window) => {
-      const runId = await seedAgent({ bytes: 0, permission: true });
+  it.each(
+    [false, true].flatMap((operational) =>
+      (["live", "before_apply"] as const).map((window) => ({
+        operational,
+        window,
+      })),
+    ),
+  )(
+    "owner-agent-checkpoint-result retains the completed original through $window (operational=$operational)",
+    async ({ operational, window }) => {
+      const runId = await seedAgent({
+        bytes: 0,
+        permission: true,
+        operational,
+      });
+      const expectedStatus = operational ? "Done" : "Review";
       const launcher = startDriver(runId);
 
       await expect
@@ -1825,6 +1842,13 @@ describe("Agent owned prompts through the production launcher", () => {
       if (window === "live") {
         const response = claimed.response as Record<string, unknown>;
         const grant = response._agentResume as Record<string, unknown>;
+        const prepared = operational
+          ? await prepareAgentRunFinalization(runId, "Done", {
+              db,
+              applicationCommandId: source.commandId!,
+              finalText: `\`\`\`json maister:output\n${JSON.stringify(operationalSuccessFixture())}\n\`\`\``,
+            })
+          : null;
 
         try {
           for (const [key, value] of Object.entries({
@@ -1854,6 +1878,22 @@ describe("Agent owned prompts through the production launcher", () => {
                 causeCode: "agent_permission_resume_grant_identity",
               },
             });
+            if (prepared && key === "inputCommandId") {
+              await expect(
+                db.transaction(prepared.apply),
+              ).rejects.toMatchObject({
+                details: {
+                  reason: "prompt_owner_invariant",
+                  causeCode: "agent_permission_resume_grant_identity",
+                },
+              });
+              expect(
+                await db
+                  .select({ status: runs.status })
+                  .from(runs)
+                  .where(eq(runs.id, runId)),
+              ).toEqual([{ status: "Running" }]);
+            }
           }
         } finally {
           await db
@@ -1873,14 +1913,14 @@ describe("Agent owned prompts through the production launcher", () => {
               .from(runs)
               .where(eq(runs.id, runId));
 
-            if (resumed.returned() && run.status !== "Review")
+            if (resumed.returned() && run.status !== expectedStatus)
               throw new Error(resumed.output());
 
             return run.status;
           },
           { timeout: 60_000 + KILLED_CLAIM_WAIT_MS, interval: 100 },
         )
-        .toBe("Review");
+        .toBe(expectedStatus);
       const turns = await db
         .select()
         .from(agentTurns)
@@ -1912,7 +1952,11 @@ describe("Agent owned prompts through the production launcher", () => {
         .from(runResults)
         .where(eq(runResults.runId, runId));
 
-      expect(result.value).toEqual({ summary: "original answer" });
+      expect(result.value).toEqual(
+        operational
+          ? operationalSuccessFixture()
+          : { summary: "original answer" },
+      );
       const [completed] = await db
         .select()
         .from(hitlRequests)
@@ -3236,6 +3280,307 @@ describe("Agent owned prompts through the production launcher", () => {
     } finally {
       await recovering.stop();
     }
+  }, 90_000);
+
+  it("owner-agent-initial competing recovery after claim expiry applies once without another teardown", async () => {
+    const runId = await seedAgent({ bytes: 0 });
+
+    await killAtTerminalWrite(runId);
+    const commands = await db
+      .select()
+      .from(executionCommands)
+      .where(eq(executionCommands.runId, runId));
+    const prompt = commands.find(
+      (command) => command.kind === "session.prompt",
+    );
+    const deletes = commands.filter(
+      (command) => command.kind === "session.delete",
+    );
+
+    expect(prompt).toMatchObject({
+      state: "succeeded",
+      completionAppliedAt: null,
+    });
+    // This ACP fixture exits itself. Recovery must reuse its canonical exit
+    // rather than issue a new teardown against the already ended execution.
+    expect(deletes).toHaveLength(0);
+    await db
+      .update(executionCommands)
+      .set({
+        applicationClaimExpiresAt: new Date(0),
+        applicationNextRetryAt: null,
+      })
+      .where(eq(executionCommands.id, prompt!.id));
+    const apply = () =>
+      applyPromptOwner({
+        db,
+        owners: agentPromptOwners,
+        commandId: prompt!.id,
+        signal: AbortSignal.timeout(30_000),
+      });
+    const competing = await Promise.all([apply(), apply()]);
+
+    expect(competing).toContain("applied");
+    expect(competing).toContain("deferred");
+    await expectCompleted(runId);
+    expect(await apply()).toBe("deferred");
+    expect(
+      await db
+        .select({ state: agentTurns.state })
+        .from(agentTurns)
+        .where(eq(agentTurns.runId, runId)),
+    ).toEqual([{ state: "applied" }]);
+    expect(
+      await db
+        .select({ id: executionCommands.id })
+        .from(executionCommands)
+        .where(
+          and(
+            eq(executionCommands.runId, runId),
+            eq(executionCommands.kind, "session.delete"),
+          ),
+        ),
+    ).toEqual([]);
+  }, 90_000);
+
+  it("owner-agent-initial exhausted preparation failure settles Failed and preserves its original diagnostic", async () => {
+    const runId = await seedAgent({ bytes: 0 });
+
+    await killAtTerminalWrite(runId);
+    const previousCap = process.env.MAISTER_MAX_CONCURRENT_AGENTS;
+    const cap = await countLiveRuns(db as never, "agent");
+    const nextRunId = await seedAgent({ bytes: 0, terminalDelayMs: 5_000 });
+
+    await db
+      .update(runs)
+      .set({ status: "Pending" })
+      .where(eq(runs.id, nextRunId));
+    const laterRunId = await seedAgent({ bytes: 0 });
+
+    await db
+      .update(runs)
+      .set({ status: "Pending" })
+      .where(eq(runs.id, laterRunId));
+    process.env.MAISTER_MAX_CONCURRENT_AGENTS = String(cap);
+    try {
+      const [prompt] = await db
+        .select()
+        .from(executionCommands)
+        .where(
+          and(
+            eq(executionCommands.runId, runId),
+            eq(executionCommands.kind, "session.prompt"),
+          ),
+        );
+
+      await db
+        .update(executionCommands)
+        .set({
+          applicationAttempts: 4,
+          applicationClaimExpiresAt: new Date(0),
+          applicationNextRetryAt: null,
+        })
+        .where(eq(executionCommands.id, prompt.id));
+      const owners = createPromptOwnerRegistry([
+        {
+          ...agentPromptOwner,
+          prepare: async ({ onProgress }) => {
+            onProgress?.("fixture_result_validation");
+            throw new MaisterError(
+              "PRECONDITION",
+              "Original preparation failed with diagnostic context",
+              {
+                details: {
+                  reason: "fixture_original_precondition",
+                  marker: "preserve-original-details",
+                },
+              },
+            );
+          },
+        },
+      ]);
+
+      expect(
+        await applyPromptOwner({
+          db,
+          owners,
+          commandId: prompt.id,
+          signal: AbortSignal.timeout(30_000),
+        }),
+      ).toBe("applied");
+      const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+      const [applied] = await db
+        .select()
+        .from(executionCommands)
+        .where(eq(executionCommands.id, prompt.id));
+
+      expect(run).toMatchObject({ status: "Failed" });
+      expect(run.endedAt).not.toBeNull();
+      expect(applied).toMatchObject({
+        state: "succeeded",
+        applicationState: "applied",
+        applicationError: {
+          phase: "prepare",
+          stage: "fixture_result_validation",
+          causeCode: "PRECONDITION",
+          causeReason: "fixture_original_precondition",
+          causeDetails: { marker: "preserve-original-details" },
+        },
+      });
+      expect(applied.completionAppliedAt).not.toBeNull();
+      expect(
+        await db.select().from(runResults).where(eq(runResults.runId, runId)),
+      ).toHaveLength(0);
+      expect(
+        await db
+          .select({ state: agentTurns.state })
+          .from(agentTurns)
+          .where(eq(agentTurns.runId, runId)),
+      ).toEqual([{ state: "applied" }]);
+      expect(
+        await db
+          .select()
+          .from(domainEvents)
+          .where(
+            and(
+              eq(domainEvents.runId, runId),
+              inArray(domainEvents.kind, [...RUN_SETTLED_EVENT_KINDS]),
+            ),
+          ),
+      ).toMatchObject([{ kind: "run.failed" }]);
+      await expect
+        .poll(
+          async () =>
+            db
+              .select({ state: executionCommands.state })
+              .from(executionCommands)
+              .where(
+                and(
+                  eq(executionCommands.runId, nextRunId),
+                  eq(executionCommands.kind, "session.prompt"),
+                ),
+              ),
+          { timeout: 30_000, interval: 25 },
+        )
+        .toMatchObject([{ state: "accepted" }]);
+      expect(await countLiveRuns(db as never, "agent")).toBe(cap);
+      expect(
+        await db
+          .select({ status: runs.status })
+          .from(runs)
+          .where(eq(runs.id, laterRunId)),
+      ).toEqual([{ status: "Pending" }]);
+      const promotions = await Promise.all([
+        promoteNextPending({ db, pool: "agent" }),
+        promoteNextPending({ db, pool: "agent" }),
+      ]);
+
+      expect(promotions).toEqual([
+        { promotedRunId: null },
+        { promotedRunId: null },
+      ]);
+      expect(await countLiveRuns(db as never, "agent")).toBe(cap);
+      await expectCompleted(nextRunId);
+      await expectCompleted(laterRunId);
+    } finally {
+      if (previousCap === undefined)
+        delete process.env.MAISTER_MAX_CONCURRENT_AGENTS;
+      else process.env.MAISTER_MAX_CONCURRENT_AGENTS = previousCap;
+    }
+  }, 90_000);
+
+  it("owner-agent-operational settles an integrity probe limit as Failed after quiescence without poisoning application", async () => {
+    const runId = await seedAgent({ bytes: 0, operational: true });
+
+    await killAtTerminalWrite(runId);
+    const [workspace] = await db
+      .select()
+      .from(workspaces)
+      .where(eq(workspaces.runId, runId));
+    const gitPointer = await readFile(
+      path.join(workspace.worktreePath, ".git"),
+      "utf8",
+    );
+
+    expect(gitPointer).toMatch(/^gitdir: /);
+    const gitDirectory = gitPointer.slice("gitdir: ".length).trim();
+
+    // A real bounded integrity refusal, independent of prompt application
+    // preparation: the valid operational result must never become Done.
+    await writeFile(
+      path.join(gitDirectory, "config.worktree"),
+      `#${"x".repeat(1024 * 1024)}`,
+    );
+    const [prompt] = await db
+      .select()
+      .from(executionCommands)
+      .where(
+        and(
+          eq(executionCommands.runId, runId),
+          eq(executionCommands.kind, "session.prompt"),
+        ),
+      );
+
+    await db
+      .update(executionCommands)
+      .set({
+        applicationClaimExpiresAt: new Date(0),
+        applicationNextRetryAt: null,
+      })
+      .where(eq(executionCommands.id, prompt.id));
+    expect(
+      await applyPromptOwner({
+        db,
+        owners: agentPromptOwners,
+        commandId: prompt.id,
+        signal: AbortSignal.timeout(30_000),
+      }),
+    ).toBe("applied");
+    const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+    const [applied] = await db
+      .select()
+      .from(executionCommands)
+      .where(eq(executionCommands.id, prompt.id));
+
+    expect(run).toMatchObject({
+      status: "Failed",
+      operationalTerminal: {
+        successful: false,
+        validation: "valid",
+        integrity: "indeterminate",
+        cause: "operational_integrity_refused",
+        reasonCodes: expect.arrayContaining(["operational_integrity_limit"]),
+      },
+    });
+    expect(applied).toMatchObject({
+      state: "succeeded",
+      applicationState: "applied",
+      applicationAttempts: 0,
+      applicationError: null,
+    });
+    expect(applied.completionAppliedAt).not.toBeNull();
+    expect(
+      await db.select().from(runResults).where(eq(runResults.runId, runId)),
+    ).toMatchObject([
+      { validity: "valid", value: operationalSuccessFixture() },
+    ]);
+    expect(
+      await db
+        .select({ state: executionAssignments.state })
+        .from(executionAssignments)
+        .where(eq(executionAssignments.id, prompt.executionAssignmentId)),
+    ).toEqual([{ state: "released" }]);
+    expect(
+      await db
+        .select({ kind: domainEvents.kind })
+        .from(domainEvents)
+        .where(
+          and(
+            eq(domainEvents.runId, runId),
+            inArray(domainEvents.kind, [...RUN_SETTLED_EVENT_KINDS]),
+          ),
+        ),
+    ).toEqual([{ kind: "run.failed" }]);
   }, 90_000);
 
   it(

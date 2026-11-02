@@ -111,6 +111,84 @@ async function seedProject(): Promise<string> {
 }
 
 describe("workbench stop — agent runs", () => {
+  it.each(["Running", "Done", "Abandoned"] as const)(
+    "reloads a refused finalization and preserves materializations when the run is %s",
+    async (status) => {
+      const projectId = await seedProject();
+      const runId = randomUUID();
+      const workspaceId = randomUUID();
+
+      await pool.query(
+        `INSERT INTO "agents" ("id", "package_name", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path")
+         VALUES ('stop-agent', 'stop-pkg', 'v1.0.0', 'git', 'A', 'd', 'worktree', 'session', '["manual"]'::jsonb, 'read_only', '/tmp/agent.md')`,
+      );
+      await pool.query(
+        `INSERT INTO "runs" ("id", "run_kind", "agent_id", "agent_workspace", "trigger_source", "project_id", "flow_version", "flow_revision", "status")
+         VALUES ($1, 'agent', 'stop-agent', 'worktree', 'manual', $2, 'agent', 'manual', 'Running')`,
+        [runId, projectId],
+      );
+      await pool.query(
+        `INSERT INTO "workspaces" ("id", "run_id", "project_id", "branch", "worktree_path", "parent_repo_path")
+         VALUES ($1, $2, $3, $4, $5, '/tmp/repo')`,
+        [
+          workspaceId,
+          runId,
+          projectId,
+          `maister/${runId}`,
+          `/tmp/worktrees/${runId}`,
+        ],
+      );
+      await fakeExecutionHosts(db, { runId });
+
+      const launch = await import("@/lib/agents/launch");
+      const cleanup = await import("@/lib/capabilities/cleanup");
+      const finalize = vi
+        .spyOn(launch, "finalizeAgentRun")
+        .mockImplementationOnce(async () => {
+          await pool.query(`UPDATE "runs" SET "status" = $2 WHERE "id" = $1`, [
+            runId,
+            status,
+          ]);
+
+          return { finalized: false };
+        });
+      const cleanupMaterializations = vi
+        .spyOn(cleanup, "cleanupRunMaterializations")
+        .mockResolvedValue({ cleaned: 0, failed: 0 });
+
+      try {
+        if (status === "Abandoned") {
+          await expect(stopWorkbenchRun(runId)).resolves.toMatchObject({
+            ok: true,
+            runId,
+            runStatus: "Abandoned",
+          });
+        } else {
+          await expect(stopWorkbenchRun(runId)).rejects.toMatchObject({
+            code: "CONFLICT",
+            details: {
+              reason: "agent_stop_finalization_pending",
+              runId,
+              status,
+            },
+          });
+        }
+
+        expect(finalize).toHaveBeenCalledTimes(1);
+        expect(cleanupMaterializations).not.toHaveBeenCalled();
+        const workspace = await pool.query(
+          `SELECT "removed_at" FROM "workspaces" WHERE "id" = $1`,
+          [workspaceId],
+        );
+
+        expect(workspace.rows[0].removed_at).toBeNull();
+      } finally {
+        finalize.mockRestore();
+        cleanupMaterializations.mockRestore();
+      }
+    },
+  );
+
   it("terminates a live agent run to Abandoned", async () => {
     const projectId = await seedProject();
     const taskId = randomUUID();
