@@ -125,3 +125,24 @@ No historic assessment/run receipt is rewritten. Writer floor fences v2 and inte
 - [ADR-200](../decisions/adr-200.md), [persistence](../db/task-launch-domain.md), [preparation](agent-preparation.md).
 - [Web API](../api/web.openapi.yaml), [external API](../api/external/operations.openapi.yaml), [attention](../api/async/attention-stream.asyncapi.yaml).
 - Execution plan: `.ai-factory/plans/codex-manual-launch-triager-reliability.md`; primary tests and RED/GREEN evidence are recorded there.
+
+## Acceptance and queued-edit implementation boundary
+
+The session adapter constructs an opaque interactive principal; accepting a
+client actor/source/manual flag cannot construct it. The domain operation checks
+current DB grants, freezes a canonical semantic input and credential-free resolved
+settings, and inserts the intent plus content-free invalidation in one transaction.
+Configuration selections for Flow, runner and branches advance the saved task
+revision in that transaction; run-only delivery/execution/promotion selections
+remain in the frozen intent. Replay precedes current-revision checks after access
+checks, so a lost response returns its original request even after later edits.
+The scoped key lock and ordinary task reservation serialize acceptance; conflicting
+payloads or a different live reservation produce a typed conflict.
+
+Queued task editing shares the reservation lock, then locks bound runs, intents
+and the task. Its hold and edit commit together. Semantic input and saved settings
+are compared independently of priority/status and qualification counters. An edit
+holds an undispatched request with `launch_input_changed`, `launch_settings_changed`
+or `queue_paused`, preserves its original snapshot, and emits no source content.
+A held reservation continues to occupy the ordinary task slot until the user
+cancels or explicitly replaces it. Dispatched runs retain their frozen request.

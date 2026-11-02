@@ -3,7 +3,7 @@
 Branch: `codex/manual-launch-triager-reliability`
 Created: 2026-11-02 (Europe/Moscow)
 Inspected source: `cb183968df5bac9b9ce652a6bdb6aa2bb79b45ff`
-Status: **In progress.** Current work: A1 persistence, with B6 broad qualification/rechecks still open. Checkboxes record verified completion only.
+Status: **In progress.** Current work: A2/A3 acceptance and transport wiring, with B6 broad qualification/rechecks still open. Checkboxes record verified completion only.
 
 ## Settings
 
@@ -547,6 +547,9 @@ Use local/test DB only for migration commands; verify `db:generate` reports no u
 No commit, push, PR merge or deployment is performed by this plan. Implementation completion requires both tracks and their combined acceptance; local mechanism reproduction alone is not Triager qualification.
 
 ## Execution evidence
+
+- Acceptance checkpoint refactor reuses the existing Flow launchability and runner inspection/policy authorities, extracts one semantic-input loader without changing qualification hashing, and keeps principal construction separate from one transaction. Full Web unit suite remains 886 files / 9259 tests green after the new service/routes; current typecheck, lint, docs and ten contract checks pass. Four focused SQL/service/revision/HTTP files pass 11/11. A2/A3 remain unchecked: agent targets, token/MCP/legacy adapters, cancellation/replacement, dispatch and complete contention coverage are outstanding.
+- Focused broad-failure diagnosis: P4 passes independently. The integrity-limit case reproduces a test-contract mismatch: successful recovery deliberately retains `prompt_owner_recovered` with the original deferred terminal-evidence cause, as verified by the existing prompt-application recovery integration. Its zero genuine retry count, Failed/indeterminate integrity, released assignment and one failed event remain required. The assertion is narrowed to that documented recovered history instead of requiring null; focused coupled verification and full P4-sequence recheck are running. No runtime integrity check was weakened.
 
 - A2/A3 acceptance slice: real Postgres/Git manual cases preserve absent/negative/stale assessments, share one ordinary reservation with qualified automatic admission, replay identical keys after later edits, reject changed payloads/revoked permissions, and freeze runner/delivery settings. Atomic configuration acceptance and queued-edit holds each have behavioral RED → GREEN logs (`/tmp/maister-launch-config-red.log`, `/tmp/maister-launch-config-green.log`, `/tmp/maister-launch-edit-red.log`, `/tmp/maister-launch-edit-green.log`). Earlier module/import errors are scaffolding failures, not TDD evidence. Shared input loading preserves the existing qualification digest; structured clarification answers retain their JSON value.
 - New HTTP acceptance/status seams pass with real database state: 202/Location truthfully permits no run yet, key replay is stable, GET is read-only and content-free, client authority fields refuse, auth precedes parsing, and cross/missing Origin refuses. The origin test first observed an incorrect 202 and now passes after the same-origin guard (`/tmp/maister-launch-csrf-red.log`, `/tmp/maister-launch-accept-http-green.log`: 4 files / 11 tests). Dispatch/recovery, legacy run API/MCP and UI consumers are still open; do not claim a launched run from intent acceptance alone.

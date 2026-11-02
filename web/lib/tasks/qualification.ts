@@ -15,6 +15,7 @@ import pino from "pino";
 
 import { canonicalCommandJson } from "../../../runtime/command-json";
 
+import { loadTaskSemanticInput } from "@/lib/tasks/launch-input";
 import { taskTriageAutoEnqueuePredicate } from "@/lib/tasks/qualification-predicates";
 import {
   projects,
@@ -22,7 +23,6 @@ import {
   runs,
   taskQualifications,
   type Run,
-  taskClarifications,
   tasks,
 } from "@/lib/db/schema";
 import { validateVerdictRefs } from "@/lib/services/triage";
@@ -92,69 +92,13 @@ export async function loadTaskQualificationInput(
   projectId: string,
   taskId: string,
 ): Promise<TaskQualificationInput> {
-  const [row] = await tx
-    .select({ task: tasks, defaultTarget: projects.mainBranch })
-    .from(tasks)
-    .innerJoin(projects, eq(projects.id, tasks.projectId))
-    .where(and(eq(tasks.id, taskId), eq(tasks.projectId, projectId)));
-
-  if (!row)
-    throw new MaisterError(
-      "PRECONDITION",
-      "Task is missing from its qualification project",
-      { details: { reason: "qualification_task_missing", projectId, taskId } },
-    );
-  const clarifications = await tx
-    .select({
-      id: taskClarifications.id,
-      question: taskClarifications.question,
-      status: taskClarifications.status,
-      answer: taskClarifications.answer,
-      answeredAt: taskClarifications.answeredAt,
-      supersededAt: taskClarifications.supersededAt,
-    })
-    .from(taskClarifications)
-    .where(
-      and(
-        eq(taskClarifications.taskId, taskId),
-        eq(taskClarifications.blocking, true),
-      ),
-    )
-    .orderBy(asc(taskClarifications.seq))
-    .limit(1001);
-
-  if (clarifications.length > 1000)
-    throw new MaisterError(
-      "PRECONDITION",
-      "Qualification input exceeds the supported clarification bound",
-      {
-        details: {
-          reason: "qualification_input_limit",
-          projectId,
-          taskId,
-          maximum: 1000,
-        },
-      },
-    );
-  const target = row.task.baseBranch ?? row.defaultTarget;
+  const { task, snapshot } = await loadTaskSemanticInput(tx, projectId, taskId);
+  const { number: _number, ...semanticInput } = snapshot;
   const inputDigest = createHash("sha256")
     .update(
       canonicalCommandJson({
-        version: 1,
-        projectId,
-        taskId,
-        inputRevision: row.task.qualificationInputRevision,
-        title: row.task.title,
-        prompt: row.task.prompt,
-        statementRevision: row.task.statementRevision,
-        sourceVersion: row.task.qualificationSourceVersion,
-        target,
-        deliveryTarget: row.task.targetBranch ?? row.defaultTarget,
-        clarifications: clarifications.map((item) => ({
-          ...item,
-          answeredAt: item.answeredAt?.toISOString() ?? null,
-          supersededAt: item.supersededAt?.toISOString() ?? null,
-        })),
+        ...semanticInput,
+        inputRevision: task.qualificationInputRevision,
       }),
     )
     .digest("hex");
@@ -162,12 +106,12 @@ export async function loadTaskQualificationInput(
   return {
     taskId,
     projectId,
-    mode: row.task.qualificationMode,
-    inputRevision: row.task.qualificationInputRevision,
+    mode: task.qualificationMode,
+    inputRevision: task.qualificationInputRevision,
     inputDigest,
-    currentQualificationId: row.task.currentQualificationId,
-    currentQualificationRevision: row.task.currentQualificationRevision,
-    target,
+    currentQualificationId: task.currentQualificationId,
+    currentQualificationRevision: task.currentQualificationRevision,
+    target: snapshot.target,
   };
 }
 

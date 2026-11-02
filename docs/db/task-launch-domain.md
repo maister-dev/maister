@@ -46,7 +46,7 @@ Intent processing permits three genuine retryable failures per accepted intent w
 
 Use request-key, active task reservation, active preparation resource, `(state,due_at,id)` recovery and project/task history indexes; populated-plan checks validate actual predicates rather than timing. StateVersion increments exactly on a committed transition. Every key replay rechecks access and exact payload. Constraint/trigger direct-write negative cases accompany valid writer controls.
 
-When capacity is counted, scheduler advisory lock precedes row locking. Existing run/parent/root locks precede assignment, intent and task locks in deterministic order; task-only acceptance never locks a run later. No SQL transaction waits for filesystem exclusion or Git/network effects. Short post-exclusion DB transactions recheck exact owner. Terminal commit precedes physical cleanup and after-commit slot wake.
+When capacity is counted, the scheduler advisory lock comes first. Acceptance takes its scoped request-key advisory lock, then the shared task-reservation advisory lock; queued edits and dispatch take that same task-reservation lock before row locks. No path takes a request-key lock after the task-reservation lock. Existing run/parent/root locks precede assignment, intent and task locks in deterministic order; task-only acceptance never locks a run later. No SQL transaction waits for filesystem exclusion or Git/network effects. Short post-exclusion DB transactions recheck exact owner. Terminal commit precedes physical cleanup and after-commit slot wake.
 
 ## Migration and recovery
 
