@@ -6,7 +6,10 @@ import type {
   TerminalCause,
   TerminalFailureEventKind,
 } from "@/lib/domain-events/taxonomy";
+import type { SQL } from "drizzle-orm";
+import type { Owner } from "@/lib/company/types";
 
+import { sql } from "drizzle-orm";
 import pino from "pino";
 
 import { domainEvents } from "@/lib/db/schema";
@@ -28,6 +31,41 @@ type Db = any;
 export interface DomainEventActor {
   type: "user" | "system" | "agent";
   id: string | null;
+}
+
+/** Native publication uses the same committed outbox and dispatcher as project work. */
+export async function emitKnowledgeRecordChange(
+  input: Readonly<{
+    db: { execute(query: SQL): Promise<unknown> };
+    owner: Owner;
+    recordId: string;
+    revision: number;
+    changeId: string;
+    cause: "published" | "confirmed" | "revoked" | "retired";
+    actor: DomainEventActor;
+  }>,
+): Promise<void> {
+  const payload = {
+    owner: input.owner,
+    recordId: input.recordId,
+    revision: input.revision,
+    changeId: input.changeId,
+    cause: input.cause,
+  };
+
+  await input.db.execute(
+    sql`INSERT INTO domain_events(kind,project_id,company_id,actor_type,actor_id,payload,occurred_at) VALUES('knowledge.record_changed',${input.owner.kind === "project" ? input.owner.projectId : null},${input.owner.kind === "company" ? input.owner.companyId : null},${input.actor.type},${input.actor.id},${JSON.stringify(payload)}::jsonb,clock_timestamp())`,
+  );
+  log.debug(
+    {
+      kind: "knowledge.record_changed",
+      ownerKind: input.owner.kind,
+      recordId: input.recordId,
+      revision: input.revision,
+      changeId: input.changeId,
+    },
+    "knowledge change emitted",
+  );
 }
 
 interface BaseDomainEventInput {

@@ -120,7 +120,7 @@ export const pgVectorRecallRanker: RecallRanker = {
             SELECT 1 FROM brain_items bi
             WHERE bi.id = brain_embeddings.item_id
               AND bi.project_id = ${q.projectId}
-              AND bi.status = 'active'
+              AND bi.status = 'active' AND bi.visibility = 'owner_grants'
               AND (bi.expires_at IS NULL OR bi.expires_at > now())
           )
         ORDER BY (vector::vector(${nRaw})) <=> ${queryVec}::vector(${nRaw})
@@ -138,7 +138,7 @@ export const pgVectorRecallRanker: RecallRanker = {
       FROM brain_items i
       LEFT JOIN vec v ON v.item_id = i.id
       WHERE i.project_id = ${q.projectId}
-        AND i.status = 'active'
+        AND i.status = 'active' AND i.visibility = 'owner_grants'
         AND (i.expires_at IS NULL OR i.expires_at > now())
         AND (v.item_id IS NOT NULL
              OR i.tsv @@ plainto_tsquery('english', ${q.queryText}))

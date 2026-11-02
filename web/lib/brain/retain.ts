@@ -27,9 +27,9 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-// Project Brain (ADR-122) retain: the self-improving write. embed OUTSIDE the
-// transaction, then within ONE transaction take a per-project advisory lock and
-// dedup-or-reinforce (cosine > τ → reinforce; else insert at confidence₀ + TTL).
+// Project Brain retain: embed outside the transaction, then serialize owner
+// writes. Exact content is idempotent; distinct near claims remain distinct.
+// Similarity creates a review candidate, never a merge or truth decision.
 // content_hash exact-dup is an idempotent no-op; the partial UNIQUE is the
 // race belt (E-2/E-3). Embeddings are append-only per generation — a re-embed
 // NEVER mutates an existing row.
@@ -120,12 +120,8 @@ export async function retain(
         sql`SELECT pg_advisory_xact_lock(hashtextextended(${projectId}, 0))`,
       );
 
-      // Harvest idempotency (F4): claim the domain event id in the SAME tx as the
-      // effect. A redelivered event (at-least-once dispatcher) — including one
-      // whose first delivery REINFORCED a near-dup (which leaves no
-      // source_domain_event_id row) — conflicts here and no-ops, so confidence /
-      // reinforcement_count / TTL are never double-counted. MCP retain carries no
-      // event id and skips this.
+      // Claim delivered events in the same transaction as their knowledge effect.
+      // Redelivery cannot create additional claims, source evidence or confidence.
       if (provenance.sourceDomainEventId != null) {
         const claimed = await tx.execute(sql`
           INSERT INTO brain_harvested_events (project_id, domain_event_id)
@@ -138,7 +134,7 @@ export async function retain(
           const prior = await tx.execute(sql`
             SELECT id FROM brain_items
             WHERE project_id = ${projectId}
-              AND source_domain_event_id = ${provenance.sourceDomainEventId}
+              AND source_domain_event_id = ${provenance.sourceDomainEventId} AND visibility = 'owner_grants'
             LIMIT 1
           `);
 
@@ -153,7 +149,7 @@ export async function retain(
       const dup = await tx.execute(sql`
         SELECT id FROM brain_items
         WHERE project_id = ${projectId} AND content_hash = ${contentHash}
-          AND status = 'active'
+          AND status = 'active' AND visibility = 'owner_grants'
         LIMIT 1
       `);
 
@@ -161,54 +157,31 @@ export async function retain(
         return { itemId: String(dup.rows[0].id), reinforced: false };
       }
 
-      let supersededStateFactId: string | null = null;
+      let potentialConflict: { id: string; revision: number } | null = null;
 
-      // Near-dup over the ACTIVE generation of this project's active items,
-      // SAME kind only — a state_fact must never be absorbed into a decaying
-      // lesson (their TTL semantics differ), and the response kind must be
-      // truthful.
+      // Near claims of the same kind are review candidates. Their assertions,
+      // applicability and evidence identities remain separate.
       const near = await tx.execute(sql`
-        SELECT e.item_id AS item_id,
+        SELECT e.item_id AS item_id, i.current_revision AS revision,
                MIN((e.vector::vector(${dimRaw})) <=> ${queryVec}::vector(${dimRaw})) AS dist
         FROM brain_embeddings e
         JOIN brain_items i ON i.id = e.item_id
-        WHERE i.project_id = ${projectId} AND i.status = 'active'
+        WHERE i.project_id = ${projectId} AND i.status = 'active' AND i.visibility = 'owner_grants'
           AND i.kind = ${kind}
           AND e.embedding_model = ${client.model}
           AND e.embedding_dimensions = ${n}
-        GROUP BY e.item_id
+        GROUP BY e.item_id, i.current_revision
         ORDER BY dist ASC
         LIMIT 1
       `);
       const best = near.rows[0] as
-        { item_id: string; dist: number } | undefined;
+        { item_id: string; revision: number; dist: number } | undefined;
 
       if (best && 1 - Number(best.dist) > BRAIN_POLICY.dedupCosineThreshold) {
-        if (kind === "state_fact") {
-          supersededStateFactId = String(best.item_id);
-        } else {
-          // Re-check `status` in the UPDATE predicate: the decay sweep runs on
-          // its own connection WITHOUT the advisory lock, so the match seen
-          // active above may be `expired` by now (READ COMMITTED re-evaluates
-          // the WHERE against the new row version). Reinforcing an expired row
-          // would consume the event (ledger row committed in this tx) while the
-          // lesson stays invisible to recall — fall through and INSERT instead.
-          const reinforcedRow = await tx.execute(sql`
-            UPDATE brain_items
-            SET confidence = LEAST(confidence + ${BRAIN_POLICY.reinforceConfidenceStep}, 1),
-                reinforcement_count = reinforcement_count + 1,
-                last_reinforced_at = now(),
-                expires_at = CASE WHEN expires_at IS NULL THEN NULL
-                                  ELSE now() + ${sql.raw(String(BRAIN_POLICY.reinforceTtlDays))} * INTERVAL '1 day' END,
-                updated_at = now()
-            WHERE id = ${best.item_id} AND status = 'active'
-            RETURNING id
-          `);
-
-          if (reinforcedRow.rows.length > 0) {
-            return { itemId: String(best.item_id), reinforced: true };
-          }
-        }
+        potentialConflict = {
+          id: String(best.item_id),
+          revision: Number(best.revision),
+        };
       }
 
       // Insert a new item + one embedding row per segment (this generation).
@@ -247,24 +220,18 @@ export async function retain(
         `);
       }
 
-      if (supersededStateFactId) {
-        const superseded = await tx.execute(sql`
-          UPDATE brain_items
-          SET status = 'superseded',
-              updated_at = now()
-          WHERE id = ${supersededStateFactId}
-            AND project_id = ${projectId}
-            AND kind = 'state_fact'
-            AND status = 'active'
-          RETURNING id
+      if (potentialConflict) {
+        await tx.execute(sql`
+          INSERT INTO brain_edges(id,project_id,from_ref,to_ref,relation,confidence,claim_state,from_revision,to_revision,claim_actor)
+          SELECT ${randomUUID()},${projectId},${JSON.stringify({ type: "item", id: itemId })}::jsonb,
+            ${JSON.stringify({ type: "item", id: potentialConflict.id })}::jsonb,'references',0,'potential_conflict',1,${potentialConflict.revision},
+            '{"kind":"system","id":"similarity_candidate","runId":null,"attemptId":null}'::jsonb
+          FROM brain_items WHERE id=${potentialConflict.id} AND project_id=${projectId} AND visibility='owner_grants'
         `);
-
-        if (superseded.rows.length > 0) {
-          log.debug(
-            { projectId, oldItemId: supersededStateFactId, newItemId: itemId },
-            "brain state_fact superseded",
-          );
-        }
+        log.debug(
+          { projectId, itemId, candidateId: potentialConflict.id },
+          "near claim retained for review",
+        );
       }
 
       await createRetainSourceEdges(tx, {
@@ -283,7 +250,7 @@ export async function retain(
       const existing = await db.execute(sql`
         SELECT id FROM brain_items
         WHERE project_id = ${projectId} AND content_hash = ${contentHash}
-          AND status = 'active'
+          AND status = 'active' AND visibility = 'owner_grants'
         LIMIT 1
       `);
 

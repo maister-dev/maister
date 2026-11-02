@@ -522,6 +522,38 @@ table capability_records {
   }
 }
 
+table companies {
+  id text [pk, not null, default: `gen_random_uuid()::text`]
+  installation_singleton boolean [not null, default: true]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    installation_singleton [name: 'companies_installation_singleton_unique', unique]
+
+  }
+}
+
+table company_grants {
+  id text [pk, not null, default: `gen_random_uuid()::text`]
+  company_id text [not null]
+  principal_type text [not null]
+  principal_id text [not null]
+  action text [not null]
+  revision integer [not null, default: 1]
+  confirmation_classes jsonb [not null, default: `[]`]
+  created_by text [not null]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  revoked_at "timestamp with time zone"
+
+  indexes {
+    (company_id, principal_type, principal_id, action) [name: 'company_grants_live_principal_action_unique', unique]
+
+
+
+
+  }
+}
+
 table consensus_round_verdicts {
   id text [pk, not null]
   run_id text [not null]
@@ -559,7 +591,8 @@ table domain_event_consumers {
 table domain_events {
   id bigint [pk, not null]
   kind text [not null]
-  project_id text [not null]
+  project_id text
+  company_id text
   task_id text
   run_id text
   actor_type text
@@ -571,6 +604,9 @@ table domain_events {
 
   indexes {
 
+
+
+    (company_id, kind, id) [name: 'domain_events_company_kind_id_idx']
 
     (run_id, occurred_at) [name: 'domain_events_m43_cutover_run_occurred_idx']
     (task_id, occurred_at) [name: 'domain_events_m43_cutover_task_occurred_idx']
@@ -2629,6 +2665,7 @@ table runs {
   launched_at "timestamp with time zone"
   activity_sort_at "timestamp with time zone"
   activity_timestamp_provenance text
+  knowledge_access jsonb
   agent_activity_snapshot jsonb
   agent_kind text
   operational_integrity_baseline jsonb
@@ -2704,6 +2741,7 @@ table runs {
     retry_of_run_id [name: 'runs_agent_retry_child_uq', unique]
 
     (project_id, source_agent_id, activity_sort_at, id) [name: 'runs_agent_activity_history_idx']
+
 
     (operational_cleanup, id) [name: 'runs_operational_cleanup_due_idx']
 
@@ -3475,7 +3513,8 @@ table workspaces {
 table brain_chunks {
   id text [pk, not null]
   source_id text [not null]
-  project_id text [not null]
+  project_id text
+  company_id text
   stable_id text [not null]
   kind text [not null]
   title text [not null]
@@ -3489,11 +3528,31 @@ table brain_chunks {
   updated_at "timestamp with time zone" [not null, default: `now()`]
 }
 
+table brain_confirmations {
+  decision_sequence bigint [not null]
+  id text [pk, not null, default: `gen_random_uuid()::text`]
+  record_id text [not null]
+  record_revision integer [not null]
+  decision text [not null]
+  confirmer jsonb [not null]
+  policy_snapshot jsonb [not null]
+  evidence_witnesses jsonb [not null]
+  reason text [not null]
+  idempotency_key text [not null]
+  request_digest text [not null]
+  recorded_at "timestamp with time zone" [not null, default: `now()`]
+}
+
 table brain_edges {
   id text [pk, not null]
-  project_id text [not null]
+  project_id text
+  company_id text
   from_ref jsonb [not null]
   to_ref jsonb [not null]
+  claim_state text
+  from_revision integer
+  to_revision integer
+  claim_actor jsonb
   relation text [not null]
   confidence "numeric(4, 3)" [not null]
   degraded boolean [not null, default: false]
@@ -3516,6 +3575,31 @@ table brain_embeddings {
   chunker_id text
   chunker_version text
   embedded_at "timestamp with time zone" [not null, default: `now()`]
+}
+
+table brain_evidence_observations {
+  id text [pk, not null, default: `gen_random_uuid()::text`]
+  project_id text
+  company_id text
+  source_id text [not null]
+  source_version text
+  content_sha256 text [not null]
+  independence_group_id text
+  attribution jsonb [not null]
+  observed_at "timestamp with time zone"
+  source_at "timestamp with time zone"
+  captured_at "timestamp with time zone" [not null, default: `now()`]
+}
+
+table brain_evidence_witnesses {
+  id text [pk, not null, default: `gen_random_uuid()::text`]
+  observation_id text [not null]
+  source_version text
+  content_sha256 text [not null]
+  selector text [not null]
+  restrictions jsonb [not null]
+  capture_locator jsonb [not null]
+  captured_at "timestamp with time zone" [not null, default: `now()`]
 }
 
 table brain_harvested_events {
@@ -3541,7 +3625,10 @@ table brain_index_jobs {
 
 table brain_items {
   id text [pk, not null]
-  project_id text [not null]
+  project_id text
+  company_id text
+  current_revision integer [not null, default: 1]
+  visibility text [not null, default: 'owner_grants']
   kind text [not null]
   tier text [not null, default: 'owned']
   title text [not null]
@@ -3560,6 +3647,18 @@ table brain_items {
   source_ref jsonb
   created_at "timestamp with time zone" [not null, default: `now()`]
   updated_at "timestamp with time zone" [not null, default: `now()`]
+}
+
+table brain_knowledge_submissions {
+  id text [pk, not null, default: `gen_random_uuid()::text`]
+  project_id text
+  company_id text
+  proposal_id text [not null]
+  principal_key text [not null]
+  delivery_key text [not null]
+  request_digest text [not null]
+  attribution jsonb [not null]
+  received_at "timestamp with time zone" [not null, default: `now()`]
 }
 
 table brain_project_config {
@@ -3589,7 +3688,20 @@ table brain_proposal_decision_stats {
 
 table brain_proposals {
   id text [pk, not null]
-  project_id text [not null]
+  project_id text
+  company_id text
+  revision integer [not null, default: 1]
+  principal_key text
+  submission_key text
+  request_digest text
+  knowledge_attribution jsonb
+  target_record_id text
+  expected_record_revision integer
+  published_record_id text
+  published_record_revision integer
+  decision_key text
+  decision_digest text
+  authority_snapshot jsonb
   kind text [not null]
   evidence_item_ids jsonb [not null]
   draft jsonb [not null]
@@ -3608,9 +3720,65 @@ table brain_proposals {
   applied_at "timestamp with time zone"
 }
 
+table brain_record_changes {
+  id text [pk, not null, default: `gen_random_uuid()::text`]
+  record_id text [not null]
+  prior_revision integer
+  accepted_revision integer [not null]
+  proposal_id text
+  actor jsonb [not null]
+  originating_work jsonb
+  recorded_at "timestamp with time zone" [not null, default: `now()`]
+}
+
+table brain_record_grants {
+  id text [pk, not null, default: `gen_random_uuid()::text`]
+  record_id text [not null]
+  principal_type text [not null]
+  principal_id text [not null]
+  action text [not null]
+  created_by jsonb [not null]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  revoked_at "timestamp with time zone"
+}
+
+table brain_record_revisions {
+  record_id text [not null]
+  revision integer [not null]
+  assertion text [not null]
+  title text [not null]
+  kind text [not null]
+  basis text [not null]
+  content_sha256 text [not null]
+  attribution jsonb [not null]
+  freshness jsonb [not null]
+  missing_evidence jsonb [not null, default: `[]`]
+  limitations jsonb [not null, default: `[]`]
+  proposal_id text
+  provenance text [not null]
+  recorded_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (record_id, revision) [pk]
+  }
+}
+
+table brain_revision_evidence {
+  record_id text [not null]
+  revision integer [not null]
+  witness_id text [not null]
+  relation text [not null]
+  witness_snapshot jsonb [not null]
+
+  indexes {
+    (record_id, revision, witness_id, relation) [pk]
+  }
+}
+
 table brain_snapshots {
   id text [pk, not null]
-  project_id text [not null]
+  project_id text
+  company_id text
   run_id text
   node_attempt_id text
   actor_type text [not null]
@@ -3626,9 +3794,12 @@ table brain_snapshots {
 
 table brain_sources {
   id text [pk, not null]
-  project_id text [not null]
+  project_id text
+  company_id text
   kind text [not null]
   path text [not null]
+  title text
+  submitted_content text
   source_hash text
   chunker_id text [not null]
   chunker_version text [not null]
@@ -3750,6 +3921,10 @@ ref capability_imports_package_install_id_package_installs_id_fk: capability_imp
 
 ref capability_records_project_id_projects_id_fk: capability_records.project_id > projects.id [delete: cascade, update: no action]
 
+ref company_grants_company_id_companies_id_fk: company_grants.company_id > companies.id [delete: restrict, update: no action]
+
+ref company_grants_created_by_users_id_fk: company_grants.created_by > users.id [delete: restrict, update: no action]
+
 ref consensus_round_verdicts_run_id_runs_id_fk: consensus_round_verdicts.run_id > runs.id [delete: cascade, update: no action]
 
 ref consensus_round_verdicts_node_attempt_id_node_attempts_id_fk: consensus_round_verdicts.node_attempt_id > node_attempts.id [delete: cascade, update: no action]
@@ -3757,6 +3932,8 @@ ref consensus_round_verdicts_node_attempt_id_node_attempts_id_fk: consensus_roun
 ref consensus_round_verdicts_raw_output_artifact_id_artifact_instances_id_fk: consensus_round_verdicts.raw_output_artifact_id > artifact_instances.id [delete: set null, update: no action]
 
 ref domain_events_project_id_projects_id_fk: domain_events.project_id > projects.id [delete: cascade, update: no action]
+
+ref domain_events_company_id_companies_id_fk: domain_events.company_id > companies.id [delete: restrict, update: no action]
 
 ref domain_events_task_id_tasks_id_fk: domain_events.task_id > tasks.id [delete: cascade, update: no action]
 

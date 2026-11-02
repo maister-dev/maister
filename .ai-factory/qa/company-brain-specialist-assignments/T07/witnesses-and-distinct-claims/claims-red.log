@@ -1,0 +1,134 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.5 /Users/kaa/.codex/worktrees/2599/mAIster/web
+
+{"level":30,"time":1793655928313,"pid":61696,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-daemon-contact","outcome":"passed","durationMs":14,"serverVersion":"29.4.2","strategy":"ConfigurationStrategy","msg":"test container daemon contacted"}
+{"level":30,"time":1793655928313,"pid":61696,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"started","msg":"constructing test container runtime client"}
+{"level":30,"time":1793655928320,"pid":61696,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"passed","durationMs":7,"serverVersion":"29.4.2","msg":"test container runtime client ready"}
+{"level":30,"time":1793655928321,"pid":61696,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-create-start","preparationDurationMs":23,"storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"starting owned PostgreSQL container"}
+{"level":30,"time":1793655929036,"pid":61696,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-start","outcome":"passed","durationMs":715,"containerId":"b25b5a69925d170fa766cf8b3db3c7d3ee7b80802493c8ee111fba4cfd267291","storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"started owned PostgreSQL container"}
+{"level":30,"time":1793655929042,"pid":61696,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"bare","phase":"ready","durationMs":744,"containerId":"b25b5a69925d170fa766cf8b3db3c7d3ee7b80802493c8ee111fba4cfd267291","endpoint":"postgres://localhost:62061/maister_brain_test","msg":"started bare test database"}
+{"level":30,"time":1793655929337,"pid":61696,"hostname":"MacBook-Pro-2.local","name":"test-database-migrations","migrationsFolder":"./lib/db/migrations","migrationsTable":"__drizzle_migrations","migrationCount":212,"querySubmissions":6,"durationMs":295,"msg":"applied test database migration lineage"}
+{"level":30,"time":1793655929362,"pid":61696,"hostname":"MacBook-Pro-2.local","name":"test-database-migrations","migrationsFolder":"./lib/db/brain-migrations","migrationsTable":"__drizzle_brain_migrations","migrationCount":7,"querySubmissions":6,"durationMs":25,"msg":"applied test database migration lineage"}
+{"level":30,"time":1793655929362,"pid":61696,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"main+brain","phase":"migrate","endpoint":"postgres://localhost:62061/maister_brain_test","msg":"applied Brain test database migrations"}
+{"level":40,"time":1793655929445,"pid":61696,"hostname":"MacBook-Pro-2.local","name":"brain:home-resolution","projectId":"04781c91-6cb6-41cc-993b-5fb7aad90f8f","kind":"decision","sourceId":"d04d3644-998a-429c-b0d7-1cb8a8e8ff7f","msg":"brain retain refused by home resolution"}
+{"level":40,"time":1793655929447,"pid":61696,"hostname":"MacBook-Pro-2.local","name":"brain:home-resolution","projectId":"e7c4ed6f-f0a5-4b53-9648-ea0ef1654e14","kind":"direction","sourceId":"82535045-872b-4b57-9330-5f449a76041b","msg":"brain retain refused by home resolution"}
+{"level":30,"time":1793655929622,"pid":61696,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"stop","durationMs":151,"containerId":"b25b5a69925d170fa766cf8b3db3c7d3ee7b80802493c8ee111fba4cfd267291","endpoint":"postgres://localhost:62061/maister_brain_test","msg":"stopped test database"}
+ ❯ |integration| lib/brain/__tests__/retain.integration.test.ts (17 tests | 5 failed) 1326ms
+   ❯ retain — dedup-or-reinforce (T2.2) (6)
+     × IT-CBE-02 preserves distinct near assertions without manufacturing corroboration 17ms
+   ❯ retain — review-fix hardening (kind scope, decay race, kill switch, TTL) (4)
+     × near assertions cannot refresh the applicability of an older assertion 6ms
+   ❯ retain — state_fact supersede-on-change (T6.2) (4)
+     × IT-CBE-03 changed near state facts remain distinct unresolved claims 6ms
+     × retains every repeated state change until explicit review 8ms
+     × near lesson assertions remain separately reviewable 5ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |integration| lib/brain/__tests__/retain.integration.test.ts > retain — dedup-or-reinforce (T2.2) > IT-CBE-02 preserves distinct near assertions without manufacturing corroboration
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ lib/brain/__tests__/retain.integration.test.ts:122:31
+    120|     );
+    121|
+    122|     expect(second.reinforced).toBe(false);
+       |                               ^
+    123|     expect(second.itemId).not.toBe(first.itemId);
+    124|     expect(
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯
+
+ FAIL  |integration| lib/brain/__tests__/retain.integration.test.ts > retain — review-fix hardening (kind scope, decay race, kill switch, TTL) > near assertions cannot refresh the applicability of an older assertion
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ lib/brain/__tests__/retain.integration.test.ts:360:42
+    358|     );
+    359|
+    360|     expect(Boolean(row.rows[0]?.pushed)).toBe(false);
+       |                                          ^
+    361|   });
+    362|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯
+
+ FAIL  |integration| lib/brain/__tests__/retain.integration.test.ts > retain — state_fact supersede-on-change (T6.2) > IT-CBE-03 changed near state facts remain distinct unresolved claims
+AssertionError: expected { …(3) } to match object { status: 'active', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+    "reinforcement_count": 0,
+-   "status": "active",
++   "status": "superseded",
+  }
+
+ ❯ lib/brain/__tests__/retain.integration.test.ts:520:46
+    518|     const byId = new Map(rows.rows.map((row) => [String(row.id), row])…
+    519|
+    520|     expect(byId.get(String(oldFact.itemId))).toMatchObject({
+       |                                              ^
+    521|       status: "active",
+    522|       reinforcement_count: 0,
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/5]⎯
+
+ FAIL  |integration| lib/brain/__tests__/retain.integration.test.ts > retain — state_fact supersede-on-change (T6.2) > retains every repeated state change until explicit review
+AssertionError: expected 'superseded' to be 'active' // Object.is equality
+
+Expected: "active"
+Received: "superseded"
+
+ ❯ lib/brain/__tests__/retain.integration.test.ts:562:44
+    560|     const byId = new Map(rows.rows.map((row) => [String(row.id), row.s…
+    561|
+    562|     expect(byId.get(String(first.itemId))).toBe("active");
+       |                                            ^
+    563|     expect(byId.get(String(second.itemId))).toBe("active");
+    564|     expect(byId.get(String(third.itemId))).toBe("active");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/5]⎯
+
+ FAIL  |integration| lib/brain/__tests__/retain.integration.test.ts > retain — state_fact supersede-on-change (T6.2) > near lesson assertions remain separately reviewable
+AssertionError: expected '8cf93ffd-bde3-4e75-a1fb-1e0fc455bb27' not to be '8cf93ffd-bde3-4e75-a1fb-1e0fc455bb27' // Object.is equality
+ ❯ lib/brain/__tests__/retain.integration.test.ts:586:31
+    584|     );
+    585|
+    586|     expect(second.itemId).not.toBe(first.itemId);
+       |                               ^
+    587|     expect(second.reinforced).toBe(false);
+    588|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/5]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  5 failed | 12 passed (17)
+   Start at  00:45:27
+   Duration  1.94s (tests 71%, import 26%, transform 3%, setup 1%)
+
+undefined
+/Users/kaa/.codex/worktrees/2599/mAIster/web:
+[ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL] Command failed with exit code 1: vitest run --project integration lib/brain/__tests__/retain.integration.test.ts

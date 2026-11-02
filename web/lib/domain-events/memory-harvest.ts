@@ -7,6 +7,7 @@ import type { DomainEventConsumer } from "./consumers";
 import { sql, type SQL } from "drizzle-orm";
 import pino from "pino";
 
+import { isProjectDomainEvent } from "@/lib/domain-events/scope";
 import { getBrainEmbeddingClient } from "@/lib/brain/openai-compatible";
 import { distill } from "@/lib/brain/distill";
 import { isBrainSchemaApplied, isProjectBrainEnabled } from "@/lib/brain/guard";
@@ -81,6 +82,7 @@ export async function harvestEvents(
   let client: OpenAiCompatibleClient | null = null;
 
   for (const event of events) {
+    if (!isProjectDomainEvent(event)) continue;
     if (isGraphOnlyCutoverFailure(event)) {
       log.debug(
         { eventId: event.id, runId: event.runId, reason: "graph-cutover" },
@@ -144,7 +146,10 @@ export async function harvestEvents(
 export const memoryHarvestConsumer: DomainEventConsumer = {
   id: "memory_harvest",
   startFrom: "now",
-  async handle(events: DomainEventRow[]): Promise<void> {
+  async handle(receivedEvents: DomainEventRow[]): Promise<void> {
+    const events = receivedEvents.filter(isProjectDomainEvent);
+
+    if (events.length === 0) return;
     const db = getDb() as unknown as HarvestDb;
 
     if (!(await isBrainSchemaApplied(db))) return;

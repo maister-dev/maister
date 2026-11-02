@@ -362,6 +362,8 @@ export async function getCrossProjectActivityFeed(
   }
 
   for (const row of eventRows) {
+    if (row.projectId === null) continue;
+
     const project = projectById.get(row.projectId);
 
     if (!project) continue;

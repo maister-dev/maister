@@ -1,0 +1,58 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.5 /Users/kaa/.codex/worktrees/2599/mAIster/web
+
+{"level":30,"time":1793654928921,"pid":9813,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-daemon-contact","outcome":"passed","durationMs":11,"serverVersion":"29.4.2","strategy":"ConfigurationStrategy","msg":"test container daemon contacted"}
+{"level":30,"time":1793654928921,"pid":9813,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"started","msg":"constructing test container runtime client"}
+{"level":30,"time":1793654928929,"pid":9813,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"passed","durationMs":8,"serverVersion":"29.4.2","msg":"test container runtime client ready"}
+{"level":30,"time":1793654928929,"pid":9813,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-create-start","preparationDurationMs":19,"storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"starting owned PostgreSQL container"}
+{"level":30,"time":1793654929641,"pid":9813,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-start","outcome":"passed","durationMs":710,"containerId":"bd33c87ce7506c0c962f69b849b3889ee0407f1bf92c96384035bf56824b9999","storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"started owned PostgreSQL container"}
+{"level":30,"time":1793654929650,"pid":9813,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"bare","phase":"ready","durationMs":740,"containerId":"bd33c87ce7506c0c962f69b849b3889ee0407f1bf92c96384035bf56824b9999","endpoint":"postgres://localhost:61930/company_upgrade","msg":"started bare test database"}
+{"level":30,"time":1793654930247,"pid":9813,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"main-partial","phase":"migrate","targetTag":"0214_transcript_creation_order","applied":211,"endpoint":"postgres://localhost:61930/company_upgrade","msg":"applied partial main test database migrations"}
+{"level":30,"time":1793654930298,"pid":9813,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-daemon-contact","outcome":"passed","durationMs":4,"serverVersion":"29.4.2","strategy":"ConfigurationStrategy","msg":"test container daemon contacted"}
+{"level":30,"time":1793654930298,"pid":9813,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"started","msg":"constructing test container runtime client"}
+{"level":30,"time":1793654930298,"pid":9813,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"passed","durationMs":0,"serverVersion":"29.4.2","msg":"test container runtime client ready"}
+{"level":30,"time":1793654930299,"pid":9813,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-create-start","preparationDurationMs":5,"storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"starting owned PostgreSQL container"}
+{"level":30,"time":1793654931002,"pid":9813,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-start","outcome":"passed","durationMs":702,"containerId":"ce6af2e20b37fb35304c76b1e69b53525879f1740f9c0e15f4b8d16090235b0f","storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"started owned PostgreSQL container"}
+{"level":30,"time":1793654931010,"pid":9813,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"bare","phase":"ready","durationMs":716,"containerId":"ce6af2e20b37fb35304c76b1e69b53525879f1740f9c0e15f4b8d16090235b0f","endpoint":"postgres://localhost:61931/legacy_brain_upgrade","msg":"started bare test database"}
+(node:9813) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+{"level":30,"time":1793654931577,"pid":9813,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"main","phase":"migrate","endpoint":"postgres://localhost:61931/legacy_brain_upgrade","msg":"applied main test database migrations"}
+{"level":30,"time":1793654931810,"pid":9813,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"stop","durationMs":191,"containerId":"ce6af2e20b37fb35304c76b1e69b53525879f1740f9c0e15f4b8d16090235b0f","endpoint":"postgres://localhost:61931/legacy_brain_upgrade","msg":"stopped test database"}
+{"level":30,"time":1793654931976,"pid":9813,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"stop","durationMs":161,"containerId":"bd33c87ce7506c0c962f69b849b3889ee0407f1bf92c96384035bf56824b9999","endpoint":"postgres://localhost:61930/company_upgrade","msg":"stopped test database"}
+ ❯ |integration| lib/db/__tests__/migration-company-brain-specialists.integration.test.ts (2 tests | 1 failed) 3069ms
+   × IT-CBX-01 populated Brain upgrade preserves honest legacy provenance and pending proposals 1521ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |integration| lib/db/__tests__/migration-company-brain-specialists.integration.test.ts > IT-CBX-01 populated Brain upgrade preserves honest legacy provenance and pending proposals
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ lib/db/__tests__/migration-company-brain-specialists.integration.test.ts:109:36
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 1 passed (2)
+   Start at  00:28:48
+   Duration  3.44s (tests 91%, import 8%, transform 1%)
+
+undefined
+/Users/kaa/.codex/worktrees/2599/mAIster/web:
+[ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL] Command failed with exit code 1: vitest run --project integration lib/db/__tests__/migration-company-brain-specialists.integration.test.ts

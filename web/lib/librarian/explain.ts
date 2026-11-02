@@ -93,7 +93,11 @@ export async function explainLibrarianUpdate(
         ? await getVisibleProjectIds(ownerId, owner.role, tx)
         : [];
 
-    if (!event || !visibleIds.includes(event.projectId))
+    if (
+      !event ||
+      event.projectId === null ||
+      !visibleIds.includes(event.projectId)
+    )
       throw new MaisterError("PRECONDITION", "update not found", {
         details: { reason: "not_found" },
       });

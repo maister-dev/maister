@@ -1,5 +1,8 @@
 import type { HitlRequest, RunStatus } from "@/lib/db/schema";
-import type { DomainEventKind } from "@/lib/domain-events/taxonomy";
+import type {
+  DomainEventKind,
+  NON_ATTENTION_EVENT_KINDS,
+} from "@/lib/domain-events/taxonomy";
 import type { ReadinessState } from "@/lib/flows/graph/readiness-core";
 import type { SummonBlockedReason } from "@/lib/social/mentions";
 
@@ -12,7 +15,10 @@ export type ActivityAction = {
   detail?: string | null;
 };
 
-export type PulseEventKind = DomainEventKind;
+export type PulseEventKind = Exclude<
+  DomainEventKind,
+  (typeof NON_ATTENTION_EVENT_KINDS)[number]
+>;
 
 export type ActivityLivenessState =
   | "working"

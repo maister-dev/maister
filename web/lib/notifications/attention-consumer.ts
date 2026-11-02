@@ -8,6 +8,7 @@ import type { DomainEventRow } from "@/lib/db/schema";
 import { sql } from "drizzle-orm";
 import pino from "pino";
 
+import { isProjectDomainEvent } from "@/lib/domain-events/scope";
 import { ATTENTION_PLANE_EVENT_KINDS } from "@/lib/domain-events/taxonomy";
 import {
   readAttentionDecisionSnapshot,
@@ -109,7 +110,10 @@ export function buildAttentionConsumer(
     // Forward-only: a first registration must not replay months of history into
     // somebody's phone.
     startFrom: "now",
-    async handle(events: DomainEventRow[]): Promise<void> {
+    async handle(receivedEvents: DomainEventRow[]): Promise<void> {
+      const events = receivedEvents.filter(isProjectDomainEvent);
+
+      if (events.length === 0) return;
       const client: Db = deps.db ?? getDb();
       const decisionsFor =
         deps.decisionsFor ??

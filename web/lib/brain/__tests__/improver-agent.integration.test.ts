@@ -43,7 +43,7 @@ beforeEach(async () => {
   await ctx.pool.query(`DELETE FROM brain_proposals`);
   await ctx.pool.query(`DELETE FROM brain_edges`);
   await ctx.pool.query(`DELETE FROM brain_embeddings`);
-  await ctx.pool.query(`DELETE FROM brain_items`);
+  await ctx.pool.query(`TRUNCATE brain_items CASCADE`);
   await ctx.pool.query(`DELETE FROM "agent_project_links"`);
   await ctx.pool.query(`DELETE FROM "agent_schedules"`);
   await ctx.pool.query(`DELETE FROM "agents"`);

@@ -195,7 +195,7 @@ async function listMemoryRows(
              ${ownedRank}::float8 AS search_rank
       FROM brain_items i
       WHERE i.project_id = ${projectId}
-        AND i.status = 'active'
+        AND i.status = 'active' AND i.visibility = 'owner_grants'
         AND (i.expires_at IS NULL OR i.expires_at > now())
         ${ownedWhere}
       ORDER BY search_rank DESC, i.updated_at DESC
@@ -256,7 +256,7 @@ async function evidenceById(
   const rows = await db.execute(sql`
     SELECT id, title, source_ref
     FROM brain_items
-    WHERE project_id = ${projectId}
+    WHERE visibility = 'owner_grants' AND project_id = ${projectId}
       AND id IN (${sql.join(
         ids.map((id) => sql`${id}`),
         sql`, `,
@@ -284,6 +284,7 @@ async function listProposalRows(
            evidence_item_ids, draft, created_at
     FROM brain_proposals
     WHERE project_id = ${projectId}
+      AND kind NOT IN ('knowledge_add','knowledge_correct')
     ORDER BY
       CASE WHEN status = 'pending' THEN 0 ELSE 1 END,
       created_at DESC

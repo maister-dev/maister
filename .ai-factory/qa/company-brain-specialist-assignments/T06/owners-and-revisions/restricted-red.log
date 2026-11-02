@@ -1,0 +1,73 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.5 /Users/kaa/.codex/worktrees/2599/mAIster/web
+
+{"level":30,"time":1793655155468,"pid":11261,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-daemon-contact","outcome":"passed","durationMs":16,"serverVersion":"29.4.2","strategy":"ConfigurationStrategy","msg":"test container daemon contacted"}
+{"level":30,"time":1793655155468,"pid":11261,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"started","msg":"constructing test container runtime client"}
+{"level":30,"time":1793655155476,"pid":11261,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"passed","durationMs":8,"serverVersion":"29.4.2","msg":"test container runtime client ready"}
+{"level":30,"time":1793655155477,"pid":11261,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-create-start","preparationDurationMs":26,"storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"starting owned PostgreSQL container"}
+{"level":30,"time":1793655156362,"pid":11261,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-start","outcome":"passed","durationMs":883,"containerId":"ed9b4d9a417b50ec765b6d130c2aa116a05b17ab9990623e330f83fb9f86ad88","storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"started owned PostgreSQL container"}
+{"level":30,"time":1793655156377,"pid":11261,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"bare","phase":"ready","durationMs":926,"containerId":"ed9b4d9a417b50ec765b6d130c2aa116a05b17ab9990623e330f83fb9f86ad88","endpoint":"postgres://localhost:61940/maister_brain_test","msg":"started bare test database"}
+{"level":30,"time":1793655156662,"pid":11261,"hostname":"MacBook-Pro-2.local","name":"test-database-migrations","migrationsFolder":"./lib/db/migrations","migrationsTable":"__drizzle_migrations","migrationCount":212,"querySubmissions":6,"durationMs":285,"msg":"applied test database migration lineage"}
+{"level":30,"time":1793655156688,"pid":11261,"hostname":"MacBook-Pro-2.local","name":"test-database-migrations","migrationsFolder":"./lib/db/brain-migrations","migrationsTable":"__drizzle_brain_migrations","migrationCount":7,"querySubmissions":6,"durationMs":26,"msg":"applied test database migration lineage"}
+{"level":30,"time":1793655156688,"pid":11261,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"main+brain","phase":"migrate","endpoint":"postgres://localhost:61940/maister_brain_test","msg":"applied Brain test database migrations"}
+{"level":30,"time":1793655156891,"pid":11261,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"stop","durationMs":177,"containerId":"ed9b4d9a417b50ec765b6d130c2aa116a05b17ab9990623e330f83fb9f86ad88","endpoint":"postgres://localhost:61940/maister_brain_test","msg":"stopped test database"}
+ ❯ |integration| lib/brain/__tests__/recall.integration.test.ts (11 tests | 1 failed | 10 skipped) 1444ms
+   × legacy project recall does not disclose a record with narrower grants 24ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |integration| lib/brain/__tests__/recall.integration.test.ts > legacy project recall does not disclose a record with narrower grants
+AssertionError: expected [ { tier: 'owned', …(11) } ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   {
++     "confidence": 0.3,
++     "content": "alpha lesson body",
++     "createdAt": "2026-11-02 21:32:36.696731+00",
++     "expiresAt": "2026-12-02 21:32:36.696731+00",
++     "id": "880eb9fe-1469-47a3-8277-dbb421f9a793",
++     "itemId": "880eb9fe-1469-47a3-8277-dbb421f9a793",
++     "kind": "lesson",
++     "provenance": {
++       "gateKind": null,
++       "runId": null,
++     },
++     "score": 1.03,
++     "tags": [],
++     "tier": "owned",
++     "title": "alpha lesson body",
++   },
++ ]
+
+ ❯ lib/brain/__tests__/recall.integration.test.ts:432:19
+    430|   const results = await recall(projectId, QUERY, { db: ctx.db, client …
+    431|
+    432|   expect(results).toEqual([]);
+       |                   ^
+    433| });
+    434|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 10 skipped (11)
+   Start at  00:32:35
+   Duration  1.86s (tests 80%, import 16%, transform 4%, setup 1%)
+
+undefined
+/Users/kaa/.codex/worktrees/2599/mAIster/web:
+[ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL] Command failed with exit code 1: vitest run --project integration lib/brain/__tests__/recall.integration.test.ts -t 'legacy project recall'

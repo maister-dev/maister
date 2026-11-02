@@ -260,3 +260,37 @@ cases:
       schema: {schemaVersion: 1, fields: []}
       reTriggerMode: triage
       idempotencyKey: question_example_002
+  - id: proposal-preserves-contradicting-evidence-role
+    surfaces: [web, external]
+    schema: CBProposalInput
+    valid: true
+    value:
+      idempotencyKey: contradiction_example_001
+      content:
+        change: add
+        owner: { kind: company, companyId: company_example }
+        title: Unresolved component observation
+        kind: observation
+        assertion: The component state requires further investigation.
+        basis: inferred
+        evidence:
+          - relation: contradicts
+            reference: { kind: witness, id: witness_example }
+        missingEvidence: []
+        limitations: [The supporting and contradicting sources must remain distinguishable.]
+  - id: proposal-cannot-discard-evidence-role
+    surfaces: [web, external]
+    schema: CBProposalInput
+    valid: false
+    value:
+      idempotencyKey: contradiction_example_002
+      content:
+        change: add
+        owner: { kind: company, companyId: company_example }
+        title: Ambiguous evidence role
+        kind: observation
+        assertion: Evidence cannot silently become supporting by default.
+        basis: inferred
+        evidence: [{ kind: witness, id: witness_example }]
+        missingEvidence: []
+        limitations: []

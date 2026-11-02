@@ -1,0 +1,32 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.5 /Users/kaa/.codex/worktrees/2599/mAIster/web
+
+{"level":40,"time":1793660641670,"pid":95426,"hostname":"MacBook-Pro-2.local","name":"brain:openai-compatible","op":"embed","attempt":0,"status":503,"model":"text-embedding-3-small","baseUrl":"https://api.example.test","msg":"embedding request failed, retrying"}
+{"level":40,"time":1793660641672,"pid":95426,"hostname":"MacBook-Pro-2.local","name":"brain:openai-compatible","op":"embed","attempt":0,"status":500,"model":"text-embedding-3-small","baseUrl":"https://api.example.test","msg":"embedding request failed, retrying"}
+{"level":40,"time":1793660641674,"pid":95426,"hostname":"MacBook-Pro-2.local","name":"brain:openai-compatible","op":"embed","attempt":1,"status":500,"model":"text-embedding-3-small","baseUrl":"https://api.example.test","msg":"embedding request failed, retrying"}
+{"level":40,"time":1793660641676,"pid":95426,"hostname":"MacBook-Pro-2.local","name":"brain:openai-compatible","op":"embed","attempt":0,"model":"text-embedding-3-small","baseUrl":"https://api.example.test","kind":"network","msg":"embedding request failed, retrying"}
+{"level":40,"time":1793660641677,"pid":95426,"hostname":"MacBook-Pro-2.local","name":"brain:openai-compatible","op":"embed","attempt":1,"model":"text-embedding-3-small","baseUrl":"https://api.example.test","kind":"network","msg":"embedding request failed, retrying"}
+{"level":40,"time":1793660641677,"pid":95426,"hostname":"MacBook-Pro-2.local","name":"brain:openai-compatible","op":"embed","attempt":2,"model":"text-embedding-3-small","baseUrl":"https://api.example.test","kind":"network","msg":"embedding request failed, retrying"}
+{"level":40,"time":1793660641688,"pid":95426,"hostname":"MacBook-Pro-2.local","name":"brain:openai-compatible","op":"embed","attempt":0,"model":"text-embedding-3-small","baseUrl":"https://api.example.test","kind":"timeout","msg":"embedding request failed, retrying"}
+{"level":40,"time":1793660641702,"pid":95426,"hostname":"MacBook-Pro-2.local","name":"brain:openai-compatible","op":"embed","attempt":1,"model":"text-embedding-3-small","baseUrl":"https://api.example.test","kind":"timeout","msg":"embedding request failed, retrying"}
+{"level":40,"time":1793660641713,"pid":95426,"hostname":"MacBook-Pro-2.local","name":"brain:openai-compatible","op":"embed","attempt":2,"model":"text-embedding-3-small","baseUrl":"https://api.example.test","kind":"timeout","msg":"embedding request failed, retrying"}
+{"level":40,"time":1793660641714,"pid":95426,"hostname":"MacBook-Pro-2.local","name":"brain:openai-compatible","op":"embed","attempt":0,"status":500,"model":"text-embedding-3-small","baseUrl":"https://api.example.test","msg":"embedding request failed, retrying"}
+{"level":40,"time":1793660641715,"pid":95426,"hostname":"MacBook-Pro-2.local","name":"brain:openai-compatible","op":"embed","attempt":1,"status":500,"model":"text-embedding-3-small","baseUrl":"https://api.example.test","msg":"embedding request failed, retrying"}
+{"level":40,"time":1793660641721,"pid":95426,"hostname":"MacBook-Pro-2.local","name":"brain:openai-compatible","op":"embed","attempt":0,"model":"text-embedding-3-small","baseUrl":"https://api.example.test","kind":"malformed-body","msg":"embedding request failed, retrying"}
+{"level":40,"time":1793660641722,"pid":95426,"hostname":"MacBook-Pro-2.local","name":"brain:openai-compatible","op":"embed","attempt":1,"model":"text-embedding-3-small","baseUrl":"https://api.example.test","kind":"malformed-body","msg":"embedding request failed, retrying"}
+{"level":40,"time":1793660641724,"pid":95426,"hostname":"MacBook-Pro-2.local","name":"brain:openai-compatible","op":"embed","attempt":2,"model":"text-embedding-3-small","baseUrl":"https://api.example.test","kind":"malformed-body","msg":"embedding request failed, retrying"}
+
+ Test Files  9 passed (9)
+      Tests  63 passed (63)
+   Start at  02:04:01
+   Duration  492ms (import 59%, tests 18%, transform 16%, setup 7%, worker 1%)
+

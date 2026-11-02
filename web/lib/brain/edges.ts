@@ -7,6 +7,10 @@ import { randomUUID } from "node:crypto";
 import { sql, type SQL } from "drizzle-orm";
 import pino from "pino";
 
+import { captureChunkEvidence } from "./evidence";
+
+import { MaisterError } from "@/lib/errors";
+
 const log = pino({
   name: "brain:edges",
   level: process.env.LOG_LEVEL ?? "info",
@@ -96,18 +100,24 @@ async function findChunkForSourceRef(
   db: EdgesDb,
   projectId: string,
   sourceRef: BrainSourceRef,
-): Promise<ChunkRow | null> {
+): Promise<
+  (ChunkRow & { content: string; source_version: string | null }) | null
+> {
   const rows = await db.execute(sql`
-    SELECT id, source_id, stable_id, path, symbol, content_hash
-    FROM brain_chunks
-    WHERE project_id = ${projectId}
-      AND path = ${sourceRef.sourcePath}
-      AND (${sourceRef.stableId ?? null}::text IS NULL OR stable_id = ${sourceRef.stableId ?? null})
-    ORDER BY updated_at DESC, stable_id ASC
+    SELECT c.id, c.source_id, c.stable_id, c.path, c.symbol, c.content_hash, c.content, s.source_hash AS source_version
+    FROM brain_chunks c JOIN brain_sources s ON s.id=c.source_id
+    WHERE c.project_id = ${projectId}
+      AND c.path = ${sourceRef.sourcePath}
+      AND (${sourceRef.stableId ?? null}::text IS NULL OR c.stable_id = ${sourceRef.stableId ?? null})
+    ORDER BY c.updated_at DESC, c.stable_id ASC
     LIMIT 1
   `);
 
-  return (rows.rows[0] as unknown as ChunkRow | undefined) ?? null;
+  return (
+    (rows.rows[0] as unknown as
+      | (ChunkRow & { content: string; source_version: string | null })
+      | undefined) ?? null
+  );
 }
 
 export async function createRetainSourceEdges(
@@ -122,7 +132,21 @@ export async function createRetainSourceEdges(
 
   const chunk = await findChunkForSourceRef(db, args.projectId, args.sourceRef);
 
-  if (!chunk) return;
+  if (!chunk)
+    throw new MaisterError(
+      "CONFIG",
+      "Source reference does not resolve in this project",
+      { details: { reason: "brain_source_reference_missing" } },
+    );
+
+  await captureChunkEvidence(db, {
+    projectId: args.projectId,
+    recordId: args.itemId,
+    chunkId: chunk.id,
+    sourceId: chunk.source_id,
+    sourceVersion: chunk.source_version,
+    content: chunk.content,
+  });
 
   await db.execute(sql`
     INSERT INTO brain_edges
@@ -230,6 +254,7 @@ export async function listBrainItemEdges(
     SELECT id, to_ref, relation, confidence::float8 AS confidence, degraded
     FROM brain_edges
     WHERE project_id = ${args.projectId}
+      AND EXISTS (SELECT 1 FROM brain_items i WHERE i.id = ${args.itemId} AND i.project_id = ${args.projectId} AND i.visibility = 'owner_grants')
       AND from_ref = ${JSON.stringify({ type: "item", id: args.itemId })}::jsonb
     ORDER BY created_at ASC
   `);

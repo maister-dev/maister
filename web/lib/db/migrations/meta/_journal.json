@@ -1583,6 +1583,20 @@
       "when": 1794606477932,
       "tag": "0229_librarian_history",
       "breakpoints": true
+    },
+    {
+      "idx": 230,
+      "version": "7",
+      "when": 1794606477933,
+      "tag": "0230_company_ownership",
+      "breakpoints": true
+    },
+    {
+      "idx": 231,
+      "version": "7",
+      "when": 1794606477934,
+      "tag": "0231_company_knowledge_events",
+      "breakpoints": true
     }
   ]
 }

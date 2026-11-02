@@ -10,6 +10,7 @@ import { eq } from "drizzle-orm";
 
 import { taskLaunchIntents } from "@/lib/db/schema";
 import { hasUnobservedChildOutcome } from "@/lib/orchestrator/child-obligations";
+import { isProjectDomainEvent } from "@/lib/domain-events/scope";
 import { getDb } from "@/lib/db/client";
 import { isRunSettledEventKind } from "@/lib/domain-events/taxonomy";
 import { isMaisterError } from "@/lib/errors";
@@ -30,7 +31,10 @@ export function buildOrchestratorResumeConsumer(
   return {
     id: "orchestrator_resume",
     startFrom: "now",
-    async handle(events: DomainEventRow[]): Promise<void> {
+    async handle(receivedEvents: DomainEventRow[]): Promise<void> {
+      const events = receivedEvents.filter(isProjectDomainEvent);
+
+      if (events.length === 0) return;
       const db = (opts.db ?? getDb()) as Db;
 
       for (const event of events) {

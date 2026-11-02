@@ -117,7 +117,7 @@ beforeEach(async () => {
 });
 
 describe("brain edges and source re-anchor (T7.1)", () => {
-  it("creates a derived_from edge when retain provenance points at a source chunk", async () => {
+  it("IT-CBE-01 retains immutable witnesses independently of navigational source anchors", async () => {
     const sourcePath = "docs/decisions.md";
     const sourceId = await seedSource(sourcePath);
     const stableId = `${sourcePath}#adr-127`;
@@ -157,6 +157,108 @@ describe("brain edges and source re-anchor (T7.1)", () => {
       symbol: "ADR-127",
       contentHash: "adr-127-v1",
     });
+    const schema = await ctx.pool.query<{ present: boolean }>(
+      "SELECT to_regclass('public.brain_evidence_witnesses') IS NOT NULL AS present",
+    );
+
+    expect(schema.rows[0]?.present).toBe(true);
+    const original = await ctx.pool.query<{
+      id: string;
+      content_sha256: string;
+      selector: string;
+    }>(
+      "SELECT w.id,w.content_sha256,w.selector FROM brain_evidence_witnesses w JOIN brain_revision_evidence e ON e.witness_id=w.id WHERE e.record_id=$1",
+      [retained.itemId],
+    );
+
+    expect(original.rows).toHaveLength(1);
+    expect(original.rows[0]?.content_sha256).toMatch(/^[a-f0-9]{64}$/);
+    const quoted = await retain(
+      projectId,
+      {
+        kind: "observation",
+        content: "Another agent quotes the same indexed source",
+        sourceRef: { sourcePath, stableId },
+      },
+      {},
+      { db: ctx.db, client },
+    );
+    const quotations = await ctx.pool.query(
+      "SELECT witness_id FROM brain_revision_evidence WHERE record_id IN ($1,$2)",
+      [retained.itemId, quoted.itemId],
+    );
+
+    expect(quotations.rows).toHaveLength(2);
+    expect(
+      new Set(quotations.rows.map((row) => String(row.witness_id))).size,
+    ).toBe(1);
+    expect(
+      await ctx.pool.query(
+        "SELECT id FROM brain_evidence_observations WHERE project_id=$1",
+        [projectId],
+      ),
+    ).toMatchObject({ rowCount: 1 });
+    expect(
+      await ctx.pool.query(
+        "SELECT id FROM brain_evidence_observations WHERE project_id=$1 AND independence_group_id IS NOT NULL",
+        [projectId],
+      ),
+    ).toMatchObject({ rowCount: 0 });
+
+    await ctx.pool.query(
+      "UPDATE brain_chunks SET content='Changed text',content_hash='adr-127-v2' WHERE id=$1",
+      [chunkId],
+    );
+    await reanchorBrainEdgesForSource(ctx.db, { projectId, sourceId });
+    expect(
+      (
+        await ctx.pool.query(
+          "SELECT id,content_sha256,selector FROM brain_evidence_witnesses WHERE id=$1",
+          [original.rows[0]!.id],
+        )
+      ).rows,
+    ).toEqual(original.rows);
+    await ctx.pool.query("DELETE FROM brain_sources WHERE id=$1", [sourceId]);
+    expect(
+      (
+        await ctx.pool.query(
+          "SELECT id,content_sha256,selector FROM brain_evidence_witnesses WHERE id=$1",
+          [original.rows[0]!.id],
+        )
+      ).rows,
+    ).toEqual(original.rows);
+    await expect(
+      ctx.pool.query(
+        "UPDATE brain_evidence_witnesses SET selector='rewritten' WHERE id=$1",
+        [original.rows[0]!.id],
+      ),
+    ).rejects.toMatchObject({ code: "23514" });
+    const companyRecord = await ctx.pool.query<{ id: string }>(
+      "INSERT INTO brain_items(id,company_id,kind,title,content,confidence,content_hash) SELECT gen_random_uuid()::text,id,'assertion','Company finding','Company-owned finding',0.3,'company-finding' FROM companies RETURNING id",
+    );
+
+    await ctx.pool.query(
+      "INSERT INTO brain_revision_evidence(record_id,revision,witness_id,relation,witness_snapshot) SELECT $1,1,witness_id,relation,witness_snapshot FROM brain_revision_evidence WHERE record_id=$2",
+      [companyRecord.rows[0]!.id, retained.itemId],
+    );
+    await ctx.pool.query("DELETE FROM projects WHERE id=$1", [projectId]);
+    expect(
+      await ctx.pool.query("SELECT id FROM brain_items WHERE id=$1", [
+        companyRecord.rows[0]!.id,
+      ]),
+    ).toMatchObject({ rowCount: 1 });
+    expect(
+      await ctx.pool.query(
+        "SELECT witness_id FROM brain_revision_evidence WHERE record_id=$1",
+        [companyRecord.rows[0]!.id],
+      ),
+    ).toMatchObject({ rowCount: 1 });
+    expect(
+      await ctx.pool.query(
+        "SELECT id FROM brain_evidence_witnesses WHERE id=$1",
+        [original.rows[0]!.id],
+      ),
+    ).toMatchObject({ rowCount: 0 });
   });
 
   it("remaps chunk edges by symbol/path and degrades removed chunk targets without dropping edges", async () => {
@@ -228,4 +330,35 @@ describe("brain edges and source re-anchor (T7.1)", () => {
       symbol: "ADR-REMOVED",
     });
   });
+});
+
+it("IT-CBE-01 unresolved and foreign source references refuse without partial knowledge writes", async () => {
+  const foreignProject = await seedBrainProject(ctx.db);
+
+  await ctx.pool.query(
+    "INSERT INTO brain_sources(id,project_id,kind,path,chunker_id,chunker_version) VALUES(gen_random_uuid()::text,$1,'text','private-foreign-source','text','1')",
+    [foreignProject],
+  );
+  for (const sourcePath of ["missing-source", "private-foreign-source"]) {
+    await expect(
+      retain(
+        projectId,
+        {
+          kind: "lesson",
+          content: `Unresolved ${sourcePath}`,
+          sourceRef: { sourcePath },
+        },
+        {},
+        { db: ctx.db, client },
+      ),
+    ).rejects.toMatchObject({
+      code: "CONFIG",
+      details: { reason: "brain_source_reference_missing" },
+    });
+  }
+  expect(
+    await ctx.pool.query("SELECT id FROM brain_items WHERE project_id=$1", [
+      projectId,
+    ]),
+  ).toMatchObject({ rowCount: 0 });
 });

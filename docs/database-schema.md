@@ -21,6 +21,10 @@ supported.
 
 ## Tables
 
+### Installation company and authority (Implemented storage)
+
+Migration `0230_company_ownership` creates one server-generated `companies` identity without a project. `company_grants` has explicit principal/action/revision, optional confirmation classes, server creator/time and revocation. Live principal/action uniqueness is independent of revoked history; CHECKs constrain actions, principal shape and confirmation classes. No grants are seeded. Current active-user authorization is `requireCompanyActionForUser` in `web/lib/authz.ts`; global administrator status does not grant company content access. Management HTTP and record-specific restrictions remain Designed in [Company Brain](system-analytics/company-brain.md).
+
 The implemented schema contains auth, platform runner, project, capability, run, workspace,
 graph-runner, scratch-run, evaluation-lab, HITL, and outbound-webhook tables. Scratch-run persistence landed as
 additive migrations: `runs.run_kind`, nullable scratch launch FKs,
@@ -5629,3 +5633,6 @@ Main migration reservation `0230_company_ownership` adds installation company id
 ## Stand operation model (Designed)
 
 [Stand operation persistence](db/stand-operations-domain.md) specifies main `0220_stand_operations` and separately hardened `0221_company_brain_constraints`: versioned targets/components, effect intents/receipts, canonical resource claims, current permits, independent probes and inspected recovery decisions. Unknown external effects outlive run cleanup. No operation success is inferred from process/HTTP status or current health.
+
+
+Native Company Brain publication uses the existing `domain_events` outbox with exclusive project/company ownership. Company knowledge events carry only owner/record/revision/change identifiers and a cause. Project-only consumers skip these events while advancing their ordinary cursors; they cannot create a project or launch work for company knowledge. Existing project event payloads retain their contract. `runs.knowledge_access` is nullable versioned source-access metadata reserved for structured knowledge consumption; legacy NULL means unknown, never evidence of an empty source set.

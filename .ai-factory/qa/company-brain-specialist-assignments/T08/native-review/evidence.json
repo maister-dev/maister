@@ -1,0 +1,37 @@
+{
+  "task": "T08",
+  "baseRevision": "d10830e98e9e23b88ef5f18c18f58ad16ecd0bd2",
+  "specSha256": {
+    "docs/system-analytics/company-brain.md": "9302cc6f1f6bfdade2a73363e3065fbd46162e0f895ba42069e550112e70b5a8",
+    "docs/db/company-brain-domain.md": "3a412ab9774d000fd6f28b39af4e02f71af6f53c1f81c908fdec012f208c2dd5"
+  },
+  "red": [
+    "native-proposal-red.log",
+    "delivery-red.log",
+    "publication-red.log",
+    "input-contract-red.log"
+  ],
+  "greenRefactor": {
+    "command": "pnpm --filter maister-web exec vitest run --project integration lib/brain/__tests__ lib/db/__tests__/migration-company-brain-specialists.integration.test.ts",
+    "files": 16,
+    "passed": 119,
+    "failed": 0,
+    "skipped": 0,
+    "output": "close-green.log",
+    "refactor": "Separate current authority, delivery identity, accepted revision writes and confirmation decisions. Alias duplicate input without manufacturing authorship or corroboration. Project deletion cascades native review history."
+  },
+  "focusedAfterRefactor": {
+    "files": 1,
+    "passed": 14,
+    "output": "review-green.log",
+    "includes": "Confirmation/revocation creation order and successful project cascade through native proposals, two accepted revisions, captures and decision history; company record remains."
+  },
+  "otherGates": {
+    "brainUnitPassed": 63,
+    "typecheck": "passed at phase exit; see T09/storage-qualification/typecheck.log",
+    "eslint": "zero warnings"
+  },
+  "limitations": [
+    "Internal transaction contracts only. Owned outbox is T08.1; HTTP/MCP, inherited source restrictions and additional reference resolvers remain T10 onward. No real package or stand qualification claimed."
+  ]
+}

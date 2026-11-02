@@ -1,5 +1,10 @@
 import "server-only";
 
+import type { KnowledgeDraft } from "./knowledge-types";
+import type { Owner } from "@/lib/company/types";
+import type { KnowledgeAttribution, KnowledgeFreshness } from "./record-types";
+
+import { sql } from "drizzle-orm";
 import {
   bigint,
   boolean,
@@ -12,6 +17,8 @@ import {
   text,
   timestamp,
 } from "drizzle-orm/pg-core";
+
+import { KNOWLEDGE_KINDS } from "./record-types";
 
 // Project Brain (ADR-122/127, Sub-projects A+B) runtime types. The brain lineage is
 // HAND-AUTHORED SQL (`web/lib/db/brain-migrations/`), NOT generated from this
@@ -47,15 +54,20 @@ export const vector = customType<{ data: number[]; driverData: string }>({
 
 export const brainItems = pgTable("brain_items", {
   id: text("id").primaryKey(),
-  projectId: text("project_id").notNull(),
+  projectId: text("project_id"),
+  companyId: text("company_id"),
+  currentRevision: integer("current_revision").notNull().default(1),
+  visibility: text("visibility", { enum: ["owner_grants", "restricted"] })
+    .notNull()
+    .default("owner_grants"),
   kind: text("kind", {
-    enum: ["lesson", "observation", "state_fact", "decision", "direction"],
+    enum: KNOWLEDGE_KINDS,
   }).notNull(),
   tier: text("tier").notNull().default("owned"),
   title: text("title").notNull(),
   content: text("content").notNull(),
   status: text("status", {
-    enum: ["active", "expired", "superseded"],
+    enum: ["active", "expired", "superseded", "withdrawn"],
   })
     .notNull()
     .default("active"),
@@ -85,7 +97,8 @@ export const brainItems = pgTable("brain_items", {
 
 export const brainSources = pgTable("brain_sources", {
   id: text("id").primaryKey(),
-  projectId: text("project_id").notNull(),
+  projectId: text("project_id"),
+  companyId: text("company_id"),
   kind: text("kind", {
     enum: [
       "repo_file",
@@ -102,6 +115,8 @@ export const brainSources = pgTable("brain_sources", {
     ],
   }).notNull(),
   path: text("path").notNull(),
+  title: text("title"),
+  submittedContent: text("submitted_content"),
   sourceHash: text("source_hash"),
   chunkerId: text("chunker_id").notNull(),
   chunkerVersion: text("chunker_version").notNull(),
@@ -123,7 +138,8 @@ export const brainSources = pgTable("brain_sources", {
 export const brainChunks = pgTable("brain_chunks", {
   id: text("id").primaryKey(),
   sourceId: text("source_id").notNull(),
-  projectId: text("project_id").notNull(),
+  projectId: text("project_id"),
+  companyId: text("company_id"),
   stableId: text("stable_id").notNull(),
   kind: text("kind").notNull(),
   title: text("title").notNull(),
@@ -162,7 +178,8 @@ export const brainEmbeddings = pgTable("brain_embeddings", {
 
 export const brainSnapshots = pgTable("brain_snapshots", {
   id: text("id").primaryKey(),
-  projectId: text("project_id").notNull(),
+  projectId: text("project_id"),
+  companyId: text("company_id"),
   runId: text("run_id"),
   nodeAttemptId: text("node_attempt_id"),
   actorType: text("actor_type", {
@@ -224,9 +241,16 @@ export const brainHarvestedEvents = pgTable(
 
 export const brainEdges = pgTable("brain_edges", {
   id: text("id").primaryKey(),
-  projectId: text("project_id").notNull(),
+  projectId: text("project_id"),
+  companyId: text("company_id"),
   fromRef: jsonb("from_ref").$type<BrainGraphRef>().notNull(),
   toRef: jsonb("to_ref").$type<BrainGraphRef>().notNull(),
+  claimState: text("claim_state", {
+    enum: ["potential_conflict", "declared_conflict"],
+  }),
+  fromRevision: integer("from_revision"),
+  toRevision: integer("to_revision"),
+  claimActor: jsonb("claim_actor").$type<KnowledgeAttribution>(),
   relation: text("relation", {
     enum: ["supports", "contradicts", "derived_from", "refines", "references"],
   }).notNull(),
@@ -289,9 +313,46 @@ export const brainProposalDecisionStats = pgTable(
 
 export const brainProposals = pgTable("brain_proposals", {
   id: text("id").primaryKey(),
-  projectId: text("project_id").notNull(),
+  projectId: text("project_id"),
+  companyId: text("company_id"),
+  revision: integer("revision").notNull().default(1),
+  principalKey: text("principal_key"),
+  submissionKey: text("submission_key"),
+  requestDigest: text("request_digest"),
+  knowledgeAttribution: jsonb(
+    "knowledge_attribution",
+  ).$type<KnowledgeAttribution>(),
+  targetRecordId: text("target_record_id"),
+  expectedRecordRevision: integer("expected_record_revision"),
+  publishedRecordId: text("published_record_id"),
+  publishedRecordRevision: integer("published_record_revision"),
+  decisionKey: text("decision_key"),
+  decisionDigest: text("decision_digest"),
+  authoritySnapshot: jsonb("authority_snapshot").$type<{
+    submit: {
+      version: number;
+      authorityId: string;
+      authorityRevision: number;
+      confirmationClasses: readonly string[];
+    };
+    review?: {
+      version: number;
+      authorityId: string;
+      authorityRevision: number;
+      confirmationClasses: readonly string[];
+    };
+  }>(),
   kind: text("kind", {
-    enum: ["rule", "skill", "flow", "adr", "roadmap", "state"],
+    enum: [
+      "rule",
+      "skill",
+      "flow",
+      "adr",
+      "roadmap",
+      "state",
+      "knowledge_add",
+      "knowledge_correct",
+    ],
   }).notNull(),
   evidenceItemIds: jsonb("evidence_item_ids").$type<string[]>().notNull(),
   draft: jsonb("draft").$type<Record<string, unknown>>().notNull(),
@@ -318,6 +379,199 @@ export const brainProposals = pgTable("brain_proposals", {
     .defaultNow(),
   resolvedAt: timestamp("resolved_at", { withTimezone: true, mode: "date" }),
   appliedAt: timestamp("applied_at", { withTimezone: true, mode: "date" }),
+});
+
+export const brainRecordRevisions = pgTable(
+  "brain_record_revisions",
+  {
+    recordId: text("record_id").notNull(),
+    revision: integer("revision").notNull(),
+    assertion: text("assertion").notNull(),
+    title: text("title").notNull(),
+    kind: text("kind", { enum: KNOWLEDGE_KINDS }).notNull(),
+    basis: text("basis", {
+      enum: ["observed", "inferred", "unknown"],
+    }).notNull(),
+    contentSha256: text("content_sha256").notNull(),
+    attribution: jsonb("attribution").$type<KnowledgeAttribution>().notNull(),
+    freshness: jsonb("freshness").$type<KnowledgeFreshness>().notNull(),
+    missingEvidence: jsonb("missing_evidence")
+      .$type<KnowledgeDraft["missingEvidence"]>()
+      .notNull()
+      .default([]),
+    limitations: jsonb("limitations").$type<string[]>().notNull().default([]),
+    proposalId: text("proposal_id"),
+    provenance: text("provenance", {
+      enum: ["submitted", "legacy_migration", "legacy_writer"],
+    }).notNull(),
+    recordedAt: timestamp("recorded_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.recordId, t.revision] }) }),
+);
+
+export const brainRecordGrants = pgTable("brain_record_grants", {
+  id: text("id")
+    .primaryKey()
+    .default(sql`gen_random_uuid()::text`),
+  recordId: text("record_id").notNull(),
+  principalType: text("principal_type", {
+    enum: ["user", "agent", "system"],
+  }).notNull(),
+  principalId: text("principal_id").notNull(),
+  action: text("action", {
+    enum: [
+      "knowledge:read",
+      "knowledge:propose",
+      "knowledge:review",
+      "knowledge:confirm",
+      "knowledge:manage",
+    ],
+  }).notNull(),
+  createdBy: jsonb("created_by").$type<KnowledgeAttribution>().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+    .notNull()
+    .defaultNow(),
+  revokedAt: timestamp("revoked_at", { withTimezone: true, mode: "date" }),
+});
+
+export const brainRecordChanges = pgTable("brain_record_changes", {
+  id: text("id")
+    .primaryKey()
+    .default(sql`gen_random_uuid()::text`),
+  recordId: text("record_id").notNull(),
+  priorRevision: integer("prior_revision"),
+  acceptedRevision: integer("accepted_revision").notNull(),
+  proposalId: text("proposal_id"),
+  actor: jsonb("actor").$type<KnowledgeAttribution>().notNull(),
+  originatingWork: jsonb("originating_work").$type<{
+    runId: string;
+    resultRevision: number;
+  }>(),
+  recordedAt: timestamp("recorded_at", { withTimezone: true, mode: "date" })
+    .notNull()
+    .defaultNow(),
+});
+
+export const brainEvidenceObservations = pgTable(
+  "brain_evidence_observations",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    projectId: text("project_id"),
+    companyId: text("company_id"),
+    sourceId: text("source_id").notNull(),
+    sourceVersion: text("source_version"),
+    contentSha256: text("content_sha256").notNull(),
+    independenceGroupId: text("independence_group_id"),
+    attribution: jsonb("attribution").$type<KnowledgeAttribution>().notNull(),
+    observedAt: timestamp("observed_at", { withTimezone: true, mode: "date" }),
+    sourceAt: timestamp("source_at", { withTimezone: true, mode: "date" }),
+    capturedAt: timestamp("captured_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+);
+
+export const brainEvidenceWitnesses = pgTable("brain_evidence_witnesses", {
+  id: text("id")
+    .primaryKey()
+    .default(sql`gen_random_uuid()::text`),
+  observationId: text("observation_id").notNull(),
+  sourceVersion: text("source_version"),
+  contentSha256: text("content_sha256").notNull(),
+  selector: text("selector").notNull(),
+  restrictions: jsonb("restrictions").$type<Owner[]>().notNull(),
+  captureLocator: jsonb("capture_locator")
+    .$type<{ kind: "inline"; content: string }>()
+    .notNull(),
+  capturedAt: timestamp("captured_at", { withTimezone: true, mode: "date" })
+    .notNull()
+    .defaultNow(),
+});
+
+export const brainRevisionEvidence = pgTable(
+  "brain_revision_evidence",
+  {
+    recordId: text("record_id").notNull(),
+    revision: integer("revision").notNull(),
+    witnessId: text("witness_id").notNull(),
+    relation: text("relation", {
+      enum: [
+        "supports",
+        "contradicts",
+        "derived_from",
+        "refines",
+        "references",
+      ],
+    }).notNull(),
+    witnessSnapshot: jsonb("witness_snapshot")
+      .$type<{
+        id: string;
+        sourceId: string;
+        sourceVersion: string | null;
+        sha256: string;
+        selector: string;
+        restrictions: Owner[];
+      }>()
+      .notNull(),
+  },
+  (t) => ({
+    pk: primaryKey({
+      columns: [t.recordId, t.revision, t.witnessId, t.relation],
+    }),
+  }),
+);
+
+export const brainKnowledgeSubmissions = pgTable(
+  "brain_knowledge_submissions",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    projectId: text("project_id"),
+    companyId: text("company_id"),
+    proposalId: text("proposal_id").notNull(),
+    principalKey: text("principal_key").notNull(),
+    deliveryKey: text("delivery_key").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    attribution: jsonb("attribution").$type<KnowledgeAttribution>().notNull(),
+    receivedAt: timestamp("received_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+);
+
+export const brainConfirmations = pgTable("brain_confirmations", {
+  decisionSequence: bigint("decision_sequence", { mode: "bigint" })
+    .notNull()
+    .generatedAlwaysAsIdentity(),
+  id: text("id")
+    .primaryKey()
+    .default(sql`gen_random_uuid()::text`),
+  recordId: text("record_id").notNull(),
+  recordRevision: integer("record_revision").notNull(),
+  decision: text("decision", { enum: ["confirm", "revoke"] }).notNull(),
+  confirmer: jsonb("confirmer").$type<KnowledgeAttribution>().notNull(),
+  policySnapshot: jsonb("policy_snapshot")
+    .$type<{
+      version: number;
+      authorityId: string;
+      authorityRevision: number;
+      confirmationClasses: readonly string[];
+    }>()
+    .notNull(),
+  evidenceWitnesses: jsonb("evidence_witnesses")
+    .$type<Record<string, unknown>[]>()
+    .notNull(),
+  reason: text("reason").notNull(),
+  idempotencyKey: text("idempotency_key").notNull(),
+  requestDigest: text("request_digest").notNull(),
+  recordedAt: timestamp("recorded_at", { withTimezone: true, mode: "date" })
+    .notNull()
+    .defaultNow(),
 });
 
 export type BrainItemRow = typeof brainItems.$inferSelect;

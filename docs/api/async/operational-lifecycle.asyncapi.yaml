@@ -132,7 +132,7 @@ components:
 
     KnowledgeRecordChanged:
       name: knowledge.record_changed
-      summary: Designed — content-free accepted knowledge invalidation
+      summary: Content-free accepted knowledge or confirmation invalidation
       payload:
         type: object
         additionalProperties: false
@@ -141,6 +141,7 @@ components:
           - recordId
           - revision
           - cause
+          - changeId
         properties:
           owner:
             oneOf:
@@ -179,7 +180,11 @@ components:
           revision:
             type: integer
             minimum: 1
-            maximum: 9007199254740991
+            maximum: 2147483647
+          changeId:
+            type: string
+            minLength: 1
+            maxLength: 128
           cause:
             type: string
             enum:

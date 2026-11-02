@@ -1,0 +1,52 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.5 /Users/kaa/.codex/worktrees/2599/mAIster/web
+
+{"level":30,"time":1793656029821,"pid":63672,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-daemon-contact","outcome":"passed","durationMs":15,"serverVersion":"29.4.2","strategy":"ConfigurationStrategy","msg":"test container daemon contacted"}
+{"level":30,"time":1793656029821,"pid":63672,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"started","msg":"constructing test container runtime client"}
+{"level":30,"time":1793656029829,"pid":63672,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"passed","durationMs":8,"serverVersion":"29.4.2","msg":"test container runtime client ready"}
+{"level":30,"time":1793656029829,"pid":63672,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-create-start","preparationDurationMs":25,"storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"starting owned PostgreSQL container"}
+{"level":30,"time":1793656030558,"pid":63672,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-start","outcome":"passed","durationMs":728,"containerId":"1fabbdda08f63c4bec7be170b10de75d94998354cbb17ce2ae0799d8e17f8149","storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"started owned PostgreSQL container"}
+{"level":30,"time":1793656030573,"pid":63672,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"bare","phase":"ready","durationMs":769,"containerId":"1fabbdda08f63c4bec7be170b10de75d94998354cbb17ce2ae0799d8e17f8149","endpoint":"postgres://localhost:62062/maister_brain_test","msg":"started bare test database"}
+{"level":30,"time":1793656030866,"pid":63672,"hostname":"MacBook-Pro-2.local","name":"test-database-migrations","migrationsFolder":"./lib/db/migrations","migrationsTable":"__drizzle_migrations","migrationCount":212,"querySubmissions":6,"durationMs":293,"msg":"applied test database migration lineage"}
+{"level":30,"time":1793656030893,"pid":63672,"hostname":"MacBook-Pro-2.local","name":"test-database-migrations","migrationsFolder":"./lib/db/brain-migrations","migrationsTable":"__drizzle_brain_migrations","migrationCount":7,"querySubmissions":6,"durationMs":27,"msg":"applied test database migration lineage"}
+{"level":30,"time":1793656030893,"pid":63672,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"main+brain","phase":"migrate","endpoint":"postgres://localhost:62062/maister_brain_test","msg":"applied Brain test database migrations"}
+{"level":30,"time":1793656030929,"pid":63672,"hostname":"MacBook-Pro-2.local","name":"brain:edges","projectId":"f38cbab9-0e4d-4607-81d4-1ba0bea61723","sourceId":"d787b33b-c4a8-47a3-90d5-46b447112809","remapped":1,"degraded":1,"msg":"brain source edges re-anchored"}
+{"level":30,"time":1793656031094,"pid":63672,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"stop","durationMs":164,"containerId":"1fabbdda08f63c4bec7be170b10de75d94998354cbb17ce2ae0799d8e17f8149","endpoint":"postgres://localhost:62062/maister_brain_test","msg":"stopped test database"}
+ ❯ |integration| lib/brain/__tests__/edges.integration.test.ts (2 tests | 1 failed) 1292ms
+   ❯ brain edges and source re-anchor (T7.1) (2)
+     × IT-CBE-01 retains immutable witnesses independently of navigational source anchors 28ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |integration| lib/brain/__tests__/edges.integration.test.ts > brain edges and source re-anchor (T7.1) > IT-CBE-01 retains immutable witnesses independently of navigational source anchors
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ lib/brain/__tests__/edges.integration.test.ts:162:37
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 1 passed (2)
+   Start at  00:47:09
+   Duration  1.93s (tests 69%, import 27%, transform 3%, setup 1%)
+
+undefined
+/Users/kaa/.codex/worktrees/2599/mAIster/web:
+[ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL] Command failed with exit code 1: vitest run --project integration lib/brain/__tests__/edges.integration.test.ts

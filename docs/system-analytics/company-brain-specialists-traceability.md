@@ -5,8 +5,8 @@
 | ID | Contract | Tasks | Primary test | Status |
 | --- | --- | --- | --- | --- |
 | CBK-01 | [company-brain](./company-brain.md) | T05,T06,T10 | `IT-CBK-01` — `web/lib/brain/__tests__/company-records.integration.test.ts` (web integration) | Planned |
-| CBK-02 | [company-brain](./company-brain.md) | T06,T08 | `IT-CBK-02` — `web/lib/brain/__tests__/proposals.integration.test.ts` (web integration) | Planned |
-| CBK-03 | [company-brain](./company-brain.md) | T08,T11 | `IT-CBK-03` — `web/lib/brain/__tests__/proposals.integration.test.ts` (web integration) | Planned |
+| CBK-02 | [company-brain](./company-brain.md) | T06,T08,T08.1 | `IT-CBK-02` — `web/lib/brain/__tests__/proposals.integration.test.ts` (web integration) | Planned |
+| CBK-03 | [company-brain](./company-brain.md) | T08,T11,T08.1 | `IT-CBK-03` — `web/lib/brain/__tests__/proposals.integration.test.ts` (web integration) | Planned |
 | CBK-04 | [company-brain](./company-brain.md) | T06,T07,T10 | `IT-CBK-04` — `web/lib/brain/__tests__/recall.integration.test.ts` (web integration) | Planned |
 | CBK-05 | [company-brain](./company-brain.md) | T06,T07,T08,T10,T09 | `IT-CBK-05` — `web/lib/brain/__tests__/company-records.integration.test.ts` (web integration) | Planned |
 | CBK-06 | [company-brain](./company-brain.md) | T10,T11 | `IT-CBK-06` — `web/app/api/knowledge/__tests__/knowledge.integration.test.ts` (web integration) | Planned |
@@ -78,7 +78,7 @@
 | EDGE-CBO-05 | [stand-maintenance](./stand-maintenance.md) | T31,T32,T33 | `IT-CBO-02` — `web/lib/stand-operations/__tests__/connector.integration.test.ts` (web integration) | Planned |
 | EDGE-CBO-06 | [stand-maintenance](./stand-maintenance.md) | T31,T33,T37 | `IT-CBO-07` — `web/lib/stand-operations/__tests__/reconcile.integration.test.ts` (web integration) | Planned |
 | EDGE-CBO-07 | [stand-maintenance](./stand-maintenance.md) | T32,T33 | `IT-CBO-06` — `web/lib/stand-operations/__tests__/connector.integration.test.ts` (web integration) | Planned |
-| CBX-01 | [company-brain-specialists-qualification](./company-brain-specialists-qualification.md) | T04,T05,T06,T09,T18,T19.1,T31 | `IT-CBX-01` — `web/lib/db/__tests__/migration-company-brain-specialists.integration.test.ts` (web integration) | Planned |
+| CBX-01 | [company-brain-specialists-qualification](./company-brain-specialists-qualification.md) | T04,T05,T06,T09,T18,T19.1,T31,T08.1 | `IT-CBX-01` — `web/lib/db/__tests__/migration-company-brain-specialists.integration.test.ts` (web integration) | Planned |
 | CBX-02 | [company-brain-specialists-qualification](./company-brain-specialists-qualification.md) | T10,T11,T14,T19,T20,T22.1,T24,T27 | `IT-CBX-02` — `mcp/src/__tests__/company-specialists.integration.test.ts` (MCP integration) | Planned |
 | CBX-03 | [company-brain-specialists-qualification](./company-brain-specialists-qualification.md) | T16,T17 | `QL-CBX-03` — `web/e2e/live-company-brain-specialists.spec.ts` (live-supervisor) | Planned |
 | CBX-04 | [company-brain-specialists-qualification](./company-brain-specialists-qualification.md) | T35,T36,T40,T41 | `QL-CBX-04` — `web/e2e/live-company-brain-specialists.spec.ts` (live-supervisor) | Planned |

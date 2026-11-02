@@ -69,7 +69,7 @@ sequenceDiagram
 | Assertion basis | observed, inferred, unknown; pending proposal is publication state, not basis |
 | Confirmation | unconfirmed, confirmed, revoked over one exact record revision; never derived from score |
 | Attribution | server principal kind/ID, originating run/attempt where present; null with explicit legacy limitation where absent |
-| Freshness | source/observation/capture times remain distinct UTC values; applicability current/stale/unknown plus limitations; absent observation is unknown |
+| Freshness | source/observation/capture times remain distinct UTC values; freshness current/stale/unknown and applicability known/unknown plus limitations; absent observation is unknown |
 | Identity | stable item ID and positive integer revision; old revisions addressable under current access |
 | Bounds | title 1–256 characters; content 1–32000; proposal/review reason <=2000; query <=2000; <=10 tags of <=64 characters; <=64 evidence refs per revision |
 | Reads | default 20/max 50 records, <=256 KiB response; stable `(updatedAt,id)` cursor bound to owner/filter/access-policy digest; changed authorization invalidates cursor, never widens it |
@@ -106,9 +106,9 @@ Accepted/corrected revisions never inherit a previous revision's confirmation au
 
 ### Compatibility and recovery
 
-Legacy migration creates an imported baseline revision with unknown submitting actor/observation/confirmation and no historical review event. Existing improvement proposals keep their draft/task outcome. Existing retain endpoints enter the same source-aware claim policy; they cannot silently supersede claims. Exact content replay is deduplicated within the accessible owner/authority boundary, without revealing hidden duplicates or adding independent corroboration. No destructive migration deletes records or attachments.
+Legacy migration creates an imported baseline revision with unknown submitting actor/observation/confirmation and no historical review event. Existing improvement proposals keep their draft/task outcome. Existing retain endpoints enter the same source-aware claim policy; they cannot silently supersede claims. Exact content replay is deduplicated within the accessible owner/authority boundary, without revealing hidden duplicates or adding independent corroboration. No destructive migration deletes records or attachments. Brain does not block explicit project deletion: project-owned records and local history cascade with that project; ordinary record changes retain immutable history. Cross-owner evidence references become explicitly unavailable when their source owner is deleted.
 
-DB changes are one transaction; the outbox publishes only after commit. Crash before commit leaves the proposal pending; after commit returns the same content-guarded receipt. Failed projection/index refresh retries from the accepted revision; it cannot roll back the accepted fact history or bypass access. List/search failure does not mutate knowledge.
+DB changes are one transaction; the existing outbox publishes only after commit. Implemented internal storage emits `knowledge.record_changed` with owner, exact record revision, accepted change/confirmation decision identity and cause. General project pulse/attention, indexing and agent-trigger consumers do not treat this invalidation as project work. Crash before commit leaves the proposal pending; after commit returns the same content-guarded receipt. Failed projection/index refresh retries from the accepted revision; it cannot roll back the accepted fact history or bypass access. List/search failure does not mutate knowledge.
 
 ## Expectations
 

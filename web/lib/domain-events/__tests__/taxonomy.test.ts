@@ -12,6 +12,7 @@ import {
   DECISION_OPENING_EVENT_KINDS,
   AUTO_PROMOTABLE_REVIEW_CAUSES,
   DOMAIN_EVENT_KINDS,
+  NON_ATTENTION_EVENT_KINDS,
   isAutoPromotableReviewCause,
   isDomainEventKind,
   isRunSettledEventKind,
@@ -138,6 +139,7 @@ describe("run.review cause", () => {
 describe("domain-event taxonomy", () => {
   it("contains registered domain kinds including operational disposition", () => {
     expect([...DOMAIN_EVENT_KINDS]).toEqual([
+      "knowledge.record_changed",
       "agent.activity_changed",
       "agent.incident_changed",
       "task.qualification_changed",
@@ -219,11 +221,12 @@ describe("domain-event taxonomy", () => {
 // The classification is now THREE-way, not two. `DECISION_OPENING_EVENT_KINDS`
 // is the third role: a kind that moves the `decisions` count and therefore must
 // NOT also land in `updates` — the same double-count, one counter over. The
-// three lists must PARTITION the taxonomy, so a new kind in none of them still
+// lists, plus explicitly quiet projection kinds, must PARTITION the taxonomy, so a new kind in none of them still
 // fails here rather than silently defaulting to "counted" or to "invisible".
 describe("UT-ATN-09 attention/twinned partition of the taxonomy", () => {
   it("partitions every taxonomy kind exactly once", () => {
     const union = [
+      ...NON_ATTENTION_EVENT_KINDS,
       ...OPERATIONAL_ATTENTION_EVENT_KINDS,
       ...TASK_ACTIVITY_TWINNED_EVENT_KINDS,
       ...ATTENTION_EVENT_KINDS,

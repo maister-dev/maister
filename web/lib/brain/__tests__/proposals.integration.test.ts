@@ -653,3 +653,542 @@ describe("brain docs-as-code projection tasks (T12.2)", () => {
     expect(admission.rows).toEqual([{ assessments: 0, intents: 0, runs: 0 }]);
   });
 });
+
+it("IT-CBK-03 company knowledge publication is attributable, idempotent and separate from confirmation", async () => {
+  const native = await import("@/lib/brain/proposals");
+  const company = (
+    await ctx.pool.query<{ id: string }>("SELECT id FROM companies")
+  ).rows[0]!;
+  const reviewerId = randomUUID();
+
+  await ctx.pool.query(
+    "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'admin','active')",
+    [reviewerId, `${reviewerId}@example.test`],
+  );
+  await ctx.pool.query(
+    "INSERT INTO company_grants(company_id,principal_type,principal_id,action,created_by) SELECT $1,'user',$2,action,$2 FROM unnest(ARRAY['knowledge:read','knowledge:propose','knowledge:review','knowledge:confirm']) action",
+    [company.id, reviewerId],
+  );
+  const input = {
+    owner: { kind: "company" as const, companyId: company.id },
+    kind: "knowledge_add" as const,
+    principal: { kind: "user" as const, userId: reviewerId },
+    idempotencyKey: "proposal_example_001",
+    draft: {
+      title: "Restart evidence requirement",
+      kind: "procedure" as const,
+      assertion: "A restart requires independent verification.",
+      basis: "inferred" as const,
+      evidence: [],
+      missingEvidence: [
+        {
+          state: "absent" as const,
+          reason: "No execution evidence is available.",
+        },
+      ],
+      limitations: [
+        "Pending operational qualification",
+        "No observed execution is claimed",
+      ],
+    },
+  };
+
+  await expect(
+    createBrainProposal(ctx.db, {
+      ...input,
+      targetRecordId: randomUUID(),
+      idempotencyKey: "invalid_partial_target_001",
+    }),
+  ).rejects.toMatchObject({ code: "CONFIG" });
+  await expect(
+    createBrainProposal(ctx.db, {
+      ...input,
+      kind: "knowledge_correct",
+      targetRecordId: randomUUID(),
+      expectedRecordRevision: 2147483648,
+      idempotencyKey: "invalid_large_revision_001",
+    }),
+  ).rejects.toMatchObject({ code: "CONFIG" });
+  const proposed = await createBrainProposal(ctx.db, input);
+
+  expect(proposed).toMatchObject({ status: "pending", duplicate: false });
+  const alias = {
+    ...input,
+    draft: {
+      ...input.draft,
+      limitations: [...input.draft.limitations].reverse(),
+    },
+    idempotencyKey: "proposal_example_alias_001",
+  };
+
+  expect(await createBrainProposal(ctx.db, alias)).toMatchObject({
+    id: proposed.id,
+    duplicate: true,
+  });
+  await expect(
+    createBrainProposal(ctx.db, {
+      ...alias,
+      draft: { ...input.draft, assertion: "Changed alias input" },
+    }),
+  ).rejects.toMatchObject({ code: "CONFLICT" });
+  expect((await createBrainProposal(ctx.db, input)).id).toBe(proposed.id);
+  await expect(
+    createBrainProposal(ctx.db, {
+      ...input,
+      draft: {
+        ...input.draft,
+        assertion: "Different request with reused delivery key",
+      },
+    }),
+  ).rejects.toMatchObject({ code: "CONFLICT" });
+  const otherReviewerId = randomUUID();
+
+  await ctx.pool.query(
+    "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'admin','active')",
+    [otherReviewerId, `${otherReviewerId}@example.test`],
+  );
+  await ctx.pool.query(
+    "INSERT INTO company_grants(company_id,principal_type,principal_id,action,created_by) SELECT $1,'user',$2,action,$2 FROM unnest(ARRAY['knowledge:read','knowledge:propose','knowledge:review']) action",
+    [company.id, otherReviewerId],
+  );
+  const repeatedByOther = await createBrainProposal(ctx.db, {
+    ...input,
+    principal: { kind: "user", userId: otherReviewerId },
+    idempotencyKey: "proposal_other_reviewer_001",
+  });
+  const decision = {
+    proposalId: proposed.id,
+    principal: input.principal,
+    expectedRevision: 1,
+    decision: "accept" as const,
+    reason: "Publish the reviewed procedure",
+    idempotencyKey: "decision_example_001",
+  };
+
+  await ctx.pool.query(
+    "CREATE FUNCTION reject_knowledge_test_event() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected event write failure'; END $$; CREATE TRIGGER reject_knowledge_test_event BEFORE INSERT ON domain_events FOR EACH ROW WHEN (NEW.kind='knowledge.record_changed') EXECUTE FUNCTION reject_knowledge_test_event()",
+  );
+  try {
+    await expect(
+      native.reviewKnowledgeProposal(ctx.db, decision),
+    ).rejects.toMatchObject({ code: "CRASH" });
+    expect(
+      (
+        await ctx.pool.query(
+          "SELECT status,published_record_id FROM brain_proposals WHERE id=$1",
+          [proposed.id],
+        )
+      ).rows,
+    ).toEqual([{ status: "pending", published_record_id: null }]);
+    expect(
+      (
+        await ctx.pool.query(
+          "SELECT id FROM brain_record_changes WHERE proposal_id=$1",
+          [proposed.id],
+        )
+      ).rows,
+    ).toEqual([]);
+  } finally {
+    await ctx.pool.query(
+      "DROP TRIGGER reject_knowledge_test_event ON domain_events; DROP FUNCTION reject_knowledge_test_event()",
+    );
+  }
+  const accepted = await native.reviewKnowledgeProposal(ctx.db, decision);
+
+  expect(accepted).toMatchObject({ status: "accepted", duplicate: false });
+  expect(accepted.acceptedRecordId).toEqual(expect.any(String));
+  expect(
+    (await native.reviewKnowledgeProposal(ctx.db, decision)).acceptedRecordId,
+  ).toBe(accepted.acceptedRecordId);
+  const repeatedAcceptance = await native.reviewKnowledgeProposal(ctx.db, {
+    ...decision,
+    proposalId: repeatedByOther.id,
+    principal: { kind: "user", userId: otherReviewerId },
+    idempotencyKey: "decision_other_reviewer_001",
+  });
+
+  expect(repeatedAcceptance.acceptedRecordId).toBe(accepted.acceptedRecordId);
+  const records = await ctx.pool.query(
+    "SELECT r.basis,r.attribution FROM brain_record_revisions r WHERE r.record_id=$1 AND r.revision=1",
+    [accepted.acceptedRecordId],
+  );
+
+  expect(records.rows[0]).toMatchObject({
+    basis: "inferred",
+    attribution: { kind: "user", id: reviewerId, runId: null, attemptId: null },
+  });
+  expect(
+    await ctx.pool.query(
+      "SELECT id FROM brain_record_changes WHERE record_id=$1",
+      [accepted.acceptedRecordId],
+    ),
+  ).toMatchObject({ rowCount: 1 });
+  expect(
+    await ctx.pool.query(
+      "SELECT id FROM brain_confirmations WHERE record_id=$1",
+      [accepted.acceptedRecordId],
+    ),
+  ).toMatchObject({ rowCount: 0 });
+  const publishedEvents = await ctx.pool.query(
+    "SELECT payload FROM domain_events WHERE kind='knowledge.record_changed' AND payload->>'recordId'=$1",
+    [accepted.acceptedRecordId],
+  );
+
+  expect(publishedEvents.rows).toHaveLength(1);
+  expect(publishedEvents.rows[0]?.payload).toMatchObject({
+    owner: input.owner,
+    cause: "published",
+    recordId: accepted.acceptedRecordId,
+    revision: 1,
+    changeId: expect.any(String),
+  });
+  expect(JSON.stringify(publishedEvents.rows)).not.toContain(
+    input.draft.assertion,
+  );
+  await expect(
+    native.confirmKnowledgeRecord(ctx.db, {
+      recordId: accepted.acceptedRecordId!,
+      principal: input.principal,
+      expectedRevision: 1,
+      decision: "confirm",
+      witnessIds: [],
+      reason: "No evidence must not confirm a fact",
+      idempotencyKey: "confirmation_example_001",
+    }),
+  ).rejects.toMatchObject({ code: "PRECONDITION" });
+});
+
+it("IT-CBK-05 deleting a project removes native proposals, revisions, confirmations and evidence without touching company knowledge", async () => {
+  const native = await import("@/lib/brain/proposals");
+  const reviewerId = randomUUID();
+  const observationId = randomUUID();
+  const witnessId = randomUUID();
+  const companyRecordId = randomUUID();
+  const companyId = (
+    await ctx.pool.query<{ id: string }>("SELECT id FROM companies")
+  ).rows[0]!.id;
+
+  await ctx.pool.query(
+    "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'admin','active')",
+    [reviewerId, `${reviewerId}@example.test`],
+  );
+  await ctx.pool.query(
+    "INSERT INTO brain_items(id,company_id,kind,title,content,content_hash,confidence) VALUES($1,$2,'procedure','Company procedure',$3,$4,0.3)",
+    [
+      companyRecordId,
+      companyId,
+      `Independent company procedure ${companyRecordId}`,
+      companyRecordId,
+    ],
+  );
+  await ctx.pool.query(
+    "INSERT INTO brain_evidence_observations(id,project_id,source_id,source_version,content_sha256,attribution) VALUES($1,$2,$3,'version-1',repeat('a',64),$4::jsonb)",
+    [
+      observationId,
+      projectId,
+      randomUUID(),
+      JSON.stringify({
+        kind: "user",
+        id: reviewerId,
+        runId: null,
+        attemptId: null,
+      }),
+    ],
+  );
+  await ctx.pool.query(
+    "INSERT INTO brain_evidence_witnesses(id,observation_id,source_version,content_sha256,selector,restrictions,capture_locator) VALUES($1,$2,'version-1',repeat('a',64),'service:health',$3::jsonb,$4::jsonb)",
+    [
+      witnessId,
+      observationId,
+      JSON.stringify([{ kind: "project", projectId }]),
+      JSON.stringify({
+        kind: "submitted_text",
+        content: "Independent health check passed",
+      }),
+    ],
+  );
+  const principal = { kind: "user" as const, userId: reviewerId };
+  const input = {
+    owner: { kind: "project" as const, projectId },
+    kind: "knowledge_add" as const,
+    principal,
+    idempotencyKey: "project_deletion_proposal_001",
+    draft: {
+      title: "Verified project procedure",
+      kind: "procedure" as const,
+      assertion: `Health is verified for ${projectId}`,
+      basis: "observed" as const,
+      evidence: [
+        {
+          relation: "supports" as const,
+          reference: {
+            kind: "witness" as const,
+            id: witnessId,
+            version: "version-1",
+            sha256: "a".repeat(64),
+          },
+        },
+      ],
+      missingEvidence: [],
+      limitations: [],
+    },
+  };
+  const proposed = await createBrainProposal(ctx.db, input);
+  const accepted = await native.reviewKnowledgeProposal(ctx.db, {
+    proposalId: proposed.id,
+    principal,
+    expectedRevision: 1,
+    decision: "accept",
+    reason: "Accept reviewed project procedure",
+    idempotencyKey: "project_deletion_review_001",
+  });
+  const recordId = accepted.acceptedRecordId!;
+
+  await expect(
+    ctx.pool.query(
+      "INSERT INTO brain_knowledge_submissions(company_id,proposal_id,principal_key,delivery_key,request_digest,attribution) VALUES($1,$2,'user:wrong-owner','invalid_cross_owner_alias',repeat('b',64),'{}')",
+      [companyId, proposed.id],
+    ),
+  ).rejects.toMatchObject({
+    code: "23514",
+    constraint: "brain_submission_owner_check",
+  });
+
+  await expect(
+    ctx.pool.query(
+      "INSERT INTO brain_record_revisions(record_id,revision,assertion,title,kind,basis,content_sha256,attribution,freshness,limitations,provenance,proposal_id) SELECT record_id,2,assertion,title,kind,basis,content_sha256,attribution,freshness,limitations,provenance,$2 FROM brain_record_revisions WHERE record_id=$1 AND revision=1",
+      [companyRecordId, proposed.id],
+    ),
+  ).rejects.toMatchObject({
+    code: "23514",
+    constraint: "brain_proposal_record_owner_check",
+  });
+
+  const confirmed = await native.confirmKnowledgeRecord(ctx.db, {
+    recordId,
+    principal,
+    expectedRevision: 1,
+    decision: "confirm",
+    witnessIds: [witnessId],
+    reason: "Separate health check supports this revision",
+    idempotencyKey: "project_deletion_confirm_001",
+  });
+
+  expect(confirmed.status).toBe("confirmed");
+  const revoked = await native.confirmKnowledgeRecord(ctx.db, {
+    recordId,
+    principal,
+    expectedRevision: 1,
+    decision: "revoke",
+    witnessIds: [],
+    reason: "Revoke pending a revised procedure",
+    idempotencyKey: "project_deletion_revoke_001",
+  });
+
+  expect(revoked.status).toBe("revoked");
+  expect(
+    (
+      await ctx.pool.query(
+        "SELECT decision FROM brain_confirmations WHERE record_id=$1 ORDER BY decision_sequence",
+        [recordId],
+      )
+    ).rows,
+  ).toEqual([{ decision: "confirm" }, { decision: "revoke" }]);
+
+  const correction = await createBrainProposal(ctx.db, {
+    ...input,
+    kind: "knowledge_correct",
+    targetRecordId: recordId,
+    expectedRecordRevision: 1,
+    idempotencyKey: "project_deletion_correction_001",
+    draft: {
+      ...input.draft,
+      assertion: `Revised health procedure for ${projectId}`,
+    },
+  });
+
+  await native.reviewKnowledgeProposal(ctx.db, {
+    proposalId: correction.id,
+    principal,
+    expectedRevision: 1,
+    decision: "accept",
+    reason: "Accept a second attributable revision",
+    idempotencyKey: "project_deletion_review_002",
+  });
+  expect(
+    (
+      await ctx.pool.query(
+        "SELECT revision FROM brain_record_revisions WHERE record_id=$1 ORDER BY revision",
+        [recordId],
+      )
+    ).rows,
+  ).toEqual([{ revision: 1 }, { revision: 2 }]);
+  await ctx.pool.query("DELETE FROM projects WHERE id=$1", [projectId]);
+
+  for (const table of [
+    "brain_items",
+    "brain_proposals",
+    "brain_evidence_observations",
+  ]) {
+    expect(
+      (
+        await ctx.pool.query(`SELECT id FROM ${table} WHERE project_id=$1`, [
+          projectId,
+        ])
+      ).rows,
+    ).toEqual([]);
+  }
+  for (const table of [
+    "brain_record_revisions",
+    "brain_record_changes",
+    "brain_confirmations",
+    "brain_revision_evidence",
+  ]) {
+    expect(
+      (
+        await ctx.pool.query(
+          `SELECT record_id FROM ${table} WHERE record_id=$1`,
+          [recordId],
+        )
+      ).rows,
+    ).toEqual([]);
+  }
+  expect(
+    (
+      await ctx.pool.query(
+        "SELECT id FROM brain_evidence_witnesses WHERE id=$1",
+        [witnessId],
+      )
+    ).rows,
+  ).toEqual([]);
+  expect(
+    (
+      await ctx.pool.query(
+        "SELECT id,current_revision FROM brain_items WHERE id=$1",
+        [companyRecordId],
+      )
+    ).rows,
+  ).toEqual([{ id: companyRecordId, current_revision: 1 }]);
+});
+
+it("IT-CBK-02 concurrent corrections preserve one exact revision winner and require current review authority", async () => {
+  const native = await import("@/lib/brain/proposals");
+  const companyId = (
+    await ctx.pool.query<{ id: string }>("SELECT id FROM companies")
+  ).rows[0]!.id;
+  const userId = randomUUID();
+
+  await ctx.pool.query(
+    "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'member','active')",
+    [userId, `${userId}@example.test`],
+  );
+  await ctx.pool.query(
+    "INSERT INTO company_grants(company_id,principal_type,principal_id,action,created_by) SELECT $1,'user',$2,action,$2 FROM unnest(ARRAY['knowledge:read','knowledge:propose','knowledge:review']) action",
+    [companyId, userId],
+  );
+  const principal = { kind: "user" as const, userId };
+  const input = {
+    owner: { kind: "company" as const, companyId },
+    kind: "knowledge_add" as const,
+    principal,
+    idempotencyKey: "concurrent_native_base_001",
+    draft: {
+      title: "Correction race",
+      kind: "decision" as const,
+      assertion: `Initial decision ${userId}`,
+      basis: "inferred" as const,
+      evidence: [],
+      missingEvidence: [
+        {
+          state: "unknown" as const,
+          reason: "The decision has not been verified",
+        },
+      ],
+      limitations: ["Provisional decision"],
+    },
+  };
+  const original = await createBrainProposal(ctx.db, input);
+  const accepted = await native.reviewKnowledgeProposal(ctx.db, {
+    proposalId: original.id,
+    principal,
+    expectedRevision: 1,
+    decision: "accept",
+    reason: "Publish initial decision",
+    idempotencyKey: "concurrent_native_accept_001",
+  });
+  const recordId = accepted.acceptedRecordId!;
+  const proposals = await Promise.all(
+    ["A", "B"].map((name) =>
+      createBrainProposal(ctx.db, {
+        ...input,
+        kind: "knowledge_correct",
+        targetRecordId: recordId,
+        expectedRecordRevision: 1,
+        idempotencyKey: `concurrent_correction_${name}`,
+        draft: { ...input.draft, assertion: `Decision ${name} for ${userId}` },
+      }),
+    ),
+  );
+  const decisions = proposals.map((proposal) => ({
+    proposalId: proposal.id,
+    principal,
+    expectedRevision: 1,
+    decision: "accept" as const,
+    reason: "Publish exact-base correction",
+    idempotencyKey: `concurrent_review_${proposal.id}`,
+  }));
+  const results = await Promise.allSettled(
+    decisions.map((decision) =>
+      native.reviewKnowledgeProposal(ctx.db, decision),
+    ),
+  );
+
+  expect(
+    results.filter((result) => result.status === "fulfilled"),
+  ).toHaveLength(1);
+  expect(results.find((result) => result.status === "rejected")).toMatchObject({
+    reason: { code: "CONFLICT" },
+  });
+  expect(
+    (
+      await ctx.pool.query(
+        "SELECT revision,missing_evidence FROM brain_record_revisions WHERE record_id=$1 ORDER BY revision",
+        [recordId],
+      )
+    ).rows,
+  ).toEqual(
+    [1, 2].map((revision) => ({
+      revision,
+      missing_evidence: input.draft.missingEvidence,
+    })),
+  );
+  expect(
+    (
+      await ctx.pool.query(
+        "SELECT id FROM brain_record_changes WHERE record_id=$1",
+        [recordId],
+      )
+    ).rowCount,
+  ).toBe(2);
+  const winnerIndex = results.findIndex(
+    (result) => result.status === "fulfilled",
+  );
+  const loserIndex = 1 - winnerIndex;
+
+  expect(
+    await native.reviewKnowledgeProposal(ctx.db, decisions[winnerIndex]!),
+  ).toMatchObject({ duplicate: true, acceptedRecordId: recordId });
+  await ctx.pool.query(
+    "UPDATE company_grants SET revoked_at=now() WHERE company_id=$1 AND principal_id=$2 AND action='knowledge:review'",
+    [companyId, userId],
+  );
+  await expect(
+    native.reviewKnowledgeProposal(ctx.db, decisions[winnerIndex]!),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  await expect(
+    native.reviewKnowledgeProposal(ctx.db, {
+      ...decisions[loserIndex]!,
+      decision: "reject",
+    }),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+});

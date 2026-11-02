@@ -58,8 +58,7 @@ the parent is mandatory (NOT NULL FK), the children are zero-or-more.
 
 ## Cascade chain
 
-Every FK is `ON DELETE CASCADE`. Deleting a project drops the entire
-descendant tree in one statement. See [`../database-schema.md#cascade-chain`](../database-schema.md#cascade-chain).
+Deletion policies include CASCADE, SET NULL and RESTRICT. Company identity/grants use RESTRICT. Project-owned Brain records and their local history cascade on project deletion; Brain never blocks that deletion. Operational evidence has a separately governed lifetime. See [`../database-schema.md#cascade-chain`](../database-schema.md#cascade-chain).
 
 - [Company Brain persistence](company-brain-domain.md) — Designed owner/revision/witness/confirmation model and lineage contract.
 

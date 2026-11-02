@@ -1,0 +1,236 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+[integration] lib/brain/__tests__/ambient.integration.test.ts > getAmbientBrainProjection (T4.3) > returns top-K and writes an ambient snapshot when brain_context = true
+[integration] lib/brain/__tests__/ambient.integration.test.ts > getAmbientBrainProjection (T4.3) > returns undefined and writes NO snapshot when brain_context = false
+[integration] lib/brain/__tests__/ambient.integration.test.ts > getAmbientBrainProjection (T4.3) > treats null brain_context as opt-in OFF (no ambient)
+[integration] lib/brain/__tests__/ambient.integration.test.ts > getAmbientBrainProjection (T4.3) > honors the project kill switch: disabled project → no recall, no snapshot even with brain_context = true (F1)
+[integration] lib/brain/__tests__/ambient.integration.test.ts > getAmbientBrainProjection (T4.3) > floors ambient injection at ambientMinConfidence: a fresh (never-reinforced) item is NOT injected
+[integration] lib/brain/__tests__/ambient.integration.test.ts > getAmbientBrainProjection (T4.3) > keeps ambient owned-first when five owned memories are relevant
+[integration] lib/brain/__tests__/ambient.integration.test.ts > getAmbientBrainProjection (T4.3) > fills ambient leftovers with at most two indexed chunks
+[integration] lib/brain/__tests__/ambient.integration.test.ts > getAmbientBrainProjection (T4.3) > NEVER throws: a failing db (even on the enablement check) degrades to undefined and negative-caches
+[integration] lib/brain/__tests__/ambient.integration.test.ts > getAmbientBrainProjection (T4.3) > memoizes the query embedding across repeated calls (no re-embed)
+[integration] lib/brain/__tests__/ambient.integration.test.ts > writeRunContext brain injection (T4.3) > writes the brain projection into .maister/run.json
+[integration] lib/brain/__tests__/company-records.integration.test.ts > IT-CBK-01 installation company exists without a repository or implicit grants
+[integration] lib/brain/__tests__/company-records.integration.test.ts > IT-CBK-01 explicit action grants are isolated from ownership, global admin and revocation
+[integration] lib/brain/__tests__/company-records.integration.test.ts > IT-CBK-05 company records keep explicit ownership and unknown legacy metadata
+[integration] lib/brain/__tests__/company-records.integration.test.ts > IT-CBK-02 native record head cannot diverge from its immutable assertion revision
+[integration] lib/brain/__tests__/company-records.integration.test.ts > IT-CBK-01 narrower grants cannot leave or restore a broadly readable projection
+[integration] lib/brain/__tests__/decay.integration.test.ts > runBrainDecaySweep (T3.3) > expires active items past expires_at, keeps fresh + non-decayed items
+[integration] lib/brain/__tests__/decay.integration.test.ts > runBrainDecaySweep (T3.3) > an expired item drops out of REAL recall (the ranker's own predicates, not a re-implemented count)
+[integration] lib/brain/__tests__/decay.integration.test.ts > runBrainDecaySweep (T3.3) > self-throttles: a second call within the hour is a no-op
+[integration] lib/brain/__tests__/decay.integration.test.ts > runBrainDecaySweep (T3.3) > is idempotent — re-running (forced) never double-expires
+[integration] lib/brain/__tests__/decay.integration.test.ts > runBrainDecaySweep (T3.3) > is a QUIET no-op on Postgres without the brain lineage applied (upgrade forgot db:migrate:brain)
+[integration] lib/brain/__tests__/decay.integration.test.ts > runBrainDecaySweep (T3.3) > swallows a DB error into the summary (never throws)
+[integration] lib/brain/__tests__/decay.integration.test.ts > runBrainDecaySweep (T3.3) > prunes brain_snapshots older than snapshotTtlDays, keeps fresh ones
+[integration] lib/brain/__tests__/edges.integration.test.ts > brain edges and source re-anchor (T7.1) > IT-CBE-01 retains immutable witnesses independently of navigational source anchors
+[integration] lib/brain/__tests__/edges.integration.test.ts > brain edges and source re-anchor (T7.1) > remaps chunk edges by symbol/path and degrades removed chunk targets without dropping edges
+[integration] lib/brain/__tests__/edges.integration.test.ts > IT-CBE-01 unresolved and foreign source references refuse without partial knowledge writes
+[integration] lib/brain/__tests__/foundation.integration.test.ts > brain foundation — two lineages + pgvector (T1.3) > 0088 shared-table columns exist with the right defaults/nullability
+[integration] lib/brain/__tests__/foundation.integration.test.ts > brain foundation — two lineages + pgvector (T1.3) > creates the static indexes + the per-generation expression HNSW index
+[integration] lib/brain/__tests__/foundation.integration.test.ts > brain foundation — two lineages + pgvector (T1.3) > a second ensureEmbeddingIndex call is idempotent (IF NOT EXISTS)
+[integration] lib/brain/__tests__/foundation.integration.test.ts > brain foundation — two lineages + pgvector (T1.3) > inserts an item + embedding and answers a cosine query through the cast
+[integration] lib/brain/__tests__/foundation.integration.test.ts > brain foundation — two lineages + pgvector (T1.3) > IT-CBK-05 project deletion cascades project-owned Brain records
+[integration] lib/brain/__tests__/improver-agent.integration.test.ts > core Brain Improver package path (T10.2) > registers the improver as a flow-less core package agent with ADR-111 config
+[integration] lib/brain/__tests__/improver-agent.integration.test.ts > core Brain Improver package path (T10.2) > runs the scripted cluster-to-proposal path idempotently by clusterHash
+[integration] lib/brain/__tests__/indexed-schema.integration.test.ts > brain indexed-tier schema (ADR-127, migration 0003) > creates source, chunk, edge, config tables and indexed-tier columns
+[integration] lib/brain/__tests__/indexed-schema.integration.test.ts > brain indexed-tier schema (ADR-127, migration 0003) > enforces exactly one embedding target and unique chunk generations
+[integration] lib/brain/__tests__/indexed-schema.integration.test.ts > brain indexed-tier schema (ADR-127, migration 0003) > project deletion cascades indexed evidence and local record history
+[integration] lib/brain/__tests__/indexer.integration.test.ts > Project Brain source indexer (ADR-127) > indexes tracked sources into chunks and chunk embeddings, then skips unchanged source_hash
+[integration] lib/brain/__tests__/indexer.integration.test.ts > Project Brain source indexer (ADR-127) > re-embeds changed chunks for the same source generation
+[integration] lib/brain/__tests__/indexer.integration.test.ts > Project Brain source indexer (ADR-127) > indexes glob sources as separate tracked-file chunks
+[integration] lib/brain/__tests__/indexer.integration.test.ts > Project Brain source indexer (ADR-127) > keeps broad glob source jobs running across bounded batches
+[integration] lib/brain/__tests__/indexer.integration.test.ts > Project Brain source indexer (ADR-127) > excludes exact peer sources from glob chunks for the same project and kind
+[integration] lib/brain/__tests__/indexer.integration.test.ts > Project Brain source indexer (ADR-127) > records a bounded source error when chunk production exceeds the job budget
+[integration] lib/brain/__tests__/indexer.integration.test.ts > Project Brain source indexer (ADR-127) > records parser errors per source and continues other source jobs
+[integration] lib/brain/__tests__/indexer.integration.test.ts > Project Brain source indexer (ADR-127) > records vanished tracked files and retires old chunks
+[integration] lib/brain/__tests__/indexer.integration.test.ts > Project Brain source indexer (ADR-127) > leaves source jobs retryable when the embedding provider is unavailable
+[integration] lib/brain/__tests__/indexer.integration.test.ts > Project Brain source indexer (ADR-127) > enqueues source jobs idempotently from run-terminal domain events
+[integration] lib/brain/__tests__/indexer.integration.test.ts > Project Brain source indexer (ADR-127) > does not enqueue reindex jobs for graph-only cut-over failures
+[integration] lib/brain/__tests__/proposals.integration.test.ts > brain proposals schema and FSM (T9.1) > creates pending proposals and preserves evidence ids after evidence expires
+[integration] lib/brain/__tests__/proposals.integration.test.ts > brain proposals schema and FSM (T9.1) > allows pending -> accepted -> applied
+[integration] lib/brain/__tests__/proposals.integration.test.ts > brain proposals schema and FSM (T9.1) > allows pending -> rejected and rejects invalid transitions
+[integration] lib/brain/__tests__/proposals.integration.test.ts > brain proposals schema and FSM (T9.1) > cascades proposals on project delete
+[integration] lib/brain/__tests__/proposals.integration.test.ts > brain proposal conclusion and authored draft bridge (T11.1) > accepts rule/skill/flow proposals into unpublished M25 authored drafts
+[integration] lib/brain/__tests__/proposals.integration.test.ts > brain proposal conclusion and authored draft bridge (T11.1) > rejects proposals with a human reason
+[integration] lib/brain/__tests__/proposals.integration.test.ts > brain proposal conclusion and authored draft bridge (T11.1) > refuses machine actors and stale proposal conclusions
+[integration] lib/brain/__tests__/proposals.integration.test.ts > brain proposal autonomy (T12.1) > auto-drafts an allowed low-radius catalog proposal without publishing it
+[integration] lib/brain/__tests__/proposals.integration.test.ts > brain proposal autonomy (T12.1) > keeps high-radius proposals human-gated even when low-radius auto_draft exists
+[integration] lib/brain/__tests__/proposals.integration.test.ts > brain docs-as-code projection tasks (T12.2) > accepts state proposals into a Backlog task with drafted path/content
+[integration] lib/brain/__tests__/proposals.integration.test.ts > brain docs-as-code projection tasks (T12.2) > stamps projection flow triage and is eligible for auto-launch
+[integration] lib/brain/__tests__/proposals.integration.test.ts > IT-CBK-03 company knowledge publication is attributable, idempotent and separate from confirmation
+[integration] lib/brain/__tests__/proposals.integration.test.ts > IT-CBK-05 deleting a project removes native proposals, revisions, confirmations and evidence without touching company knowledge
+[integration] lib/brain/__tests__/proposals.integration.test.ts > IT-CBK-02 concurrent corrections preserve one exact revision winner and require current review authority
+[integration] lib/brain/__tests__/recall.integration.test.ts > recall — cross-tier indexed chunks (ADR-127) > returns owned and indexed hits through a shared union shape with pointers
+[integration] lib/brain/__tests__/recall.integration.test.ts > recall — cross-tier indexed chunks (ADR-127) > uses an indexed chunk vector plan under enable_seqscan=off
+[integration] lib/brain/__tests__/recall.integration.test.ts > recall — hybrid ranking (T4.1) > returns the project's active items ranked by similarity, and makes NO completion call
+[integration] lib/brain/__tests__/recall.integration.test.ts > recall — hybrid ranking (T4.1) > never returns another project's items (cross-project isolation, E-1)
+[integration] lib/brain/__tests__/recall.integration.test.ts > recall — hybrid ranking (T4.1) > ignores stale-generation embeddings in the vector leg
+[integration] lib/brain/__tests__/recall.integration.test.ts > recall — hybrid ranking (T4.1) > uses the per-generation expression HNSW index for the vector leg
+[integration] lib/brain/__tests__/recall.integration.test.ts > recall — hybrid ranking (T4.1) > respects the kinds filter and minConfidence
+[integration] lib/brain/__tests__/recall.integration.test.ts > recall — review-fix hardening (lexical fallback, KNN scoping, kill switch) > returns a lexical-only item that has NO active-generation embedding (mid-reindex fallback)
+[integration] lib/brain/__tests__/recall.integration.test.ts > recall — review-fix hardening (lexical fallback, KNN scoping, kill switch) > KNN candidate pool is project-scoped: a flood of near vectors in ANOTHER project cannot starve this one
+[integration] lib/brain/__tests__/recall.integration.test.ts > recall — review-fix hardening (lexical fallback, KNN scoping, kill switch) > refuses CONFIG on a brain-disabled project (kill switch enforced INSIDE the service)
+[integration] lib/brain/__tests__/recall.integration.test.ts > legacy project recall does not disclose a record with narrower grants
+[integration] lib/brain/__tests__/reindex.integration.test.ts > reindex worker (T5.5) > model switch (same N): re-embeds every active item into the new generation, old rows intact (E-2)
+[integration] lib/brain/__tests__/reindex.integration.test.ts > reindex worker (T5.5) > recall then uses only the new generation (vector leg follows active settings)
+[integration] lib/brain/__tests__/reindex.integration.test.ts > reindex worker (T5.5) > dimension switch (1536 -> 768): new expression index + generation, old rows untouched, recall works
+[integration] lib/brain/__tests__/reindex.integration.test.ts > reindex worker (T5.5) > resumes from resumable_cursor after an interrupt (bounded per-tick work)
+[integration] lib/brain/__tests__/reindex.integration.test.ts > reindex worker (T5.5) > concurrent double-fire does not create duplicate embeddings (F3)
+[integration] lib/brain/__tests__/reindex.integration.test.ts > reindex worker (T5.5) > no pending jobs → a no-op tick
+[integration] lib/brain/__tests__/reindex.integration.test.ts > reindex — review-fix hardening (poison item, kill switch) > is a QUIET no-op on Postgres without the brain lineage applied
+[integration] lib/brain/__tests__/reindex.integration.test.ts > reindex — review-fix hardening (poison item, kill switch) > a deterministic CONFIG rejection marks the job FAILED with the item recorded — no permanent stall
+[integration] lib/brain/__tests__/reindex.integration.test.ts > reindex — review-fix hardening (poison item, kill switch) > a transient failure leaves the job RUNNING for retry (unchanged contract)
+[integration] lib/brain/__tests__/reindex.integration.test.ts > reindex — review-fix hardening (poison item, kill switch) > skips jobs of brain-DISABLED projects (kill switch on the write side)
+[integration] lib/brain/__tests__/retain.integration.test.ts > retain — dedup-or-reinforce (T2.2) > IT-CBE-02 preserves distinct near assertions without manufacturing corroboration
+[integration] lib/brain/__tests__/retain.integration.test.ts > retain — dedup-or-reinforce (T2.2) > is idempotent on identical content (no duplicate, no reinforce)
+[integration] lib/brain/__tests__/retain.integration.test.ts > retain — dedup-or-reinforce (T2.2) > two concurrent retains of the same content produce exactly one active row
+[integration] lib/brain/__tests__/retain.integration.test.ts > retain — dedup-or-reinforce (T2.2) > keeps non-near content as a separate item
+[integration] lib/brain/__tests__/retain.integration.test.ts > retain — dedup-or-reinforce (T2.2) > near assertions keep original embeddings immutable (E-2)
+[integration] lib/brain/__tests__/retain.integration.test.ts > retain — dedup-or-reinforce (T2.2) > stores provenance FKs and a per-segment embedding for an oversize item
+[integration] lib/brain/__tests__/retain.integration.test.ts > retain — review-fix hardening (kind scope, decay race, kill switch, TTL) > near-dup match is KIND-scoped: a state_fact never reinforces a near lesson
+[integration] lib/brain/__tests__/retain.integration.test.ts > retain — review-fix hardening (kind scope, decay race, kill switch, TTL) > a near match that is no longer active is NOT reinforced — a fresh item is inserted (decay-race guard)
+[integration] lib/brain/__tests__/retain.integration.test.ts > retain — review-fix hardening (kind scope, decay race, kill switch, TTL) > near assertions cannot refresh the applicability of an older assertion
+[integration] lib/brain/__tests__/retain.integration.test.ts > retain — review-fix hardening (kind scope, decay race, kill switch, TTL) > refuses CONFIG on a brain-disabled project (kill switch enforced INSIDE the service)
+[integration] lib/brain/__tests__/retain.integration.test.ts > retain — decision/direction home resolution (T6.1) > allows owned decision and direction retain when the project has no covering canonical source
+[integration] lib/brain/__tests__/retain.integration.test.ts > retain — decision/direction home resolution (T6.1) > refuses decision retain before embedding when docs/decisions.md is the canonical home
+[integration] lib/brain/__tests__/retain.integration.test.ts > retain — decision/direction home resolution (T6.1) > refuses direction retain when a roadmap source is the canonical home
+[integration] lib/brain/__tests__/retain.integration.test.ts > retain — state_fact supersede-on-change (T6.2) > keeps identical state_fact content idempotent without reinforcement
+[integration] lib/brain/__tests__/retain.integration.test.ts > retain — state_fact supersede-on-change (T6.2) > IT-CBE-03 changed near state facts remain distinct unresolved claims
+[integration] lib/brain/__tests__/retain.integration.test.ts > retain — state_fact supersede-on-change (T6.2) > retains every repeated state change until explicit review
+[integration] lib/brain/__tests__/retain.integration.test.ts > retain — state_fact supersede-on-change (T6.2) > near lesson assertions remain separately reviewable
+[integration] lib/brain/__tests__/settings.integration.test.ts > updateBrainSettings (T5.1) > SET / CLEAR / re-SET round-trips each field
+[integration] lib/brain/__tests__/settings.integration.test.ts > updateBrainSettings (T5.1) > stores API keys as env:NAME references, never secrets
+[integration] lib/brain/__tests__/settings.integration.test.ts > updateBrainSettings (T5.1) > rejects a raw (non-env:) embedding API key with CONFIG
+[integration] lib/brain/__tests__/settings.integration.test.ts > updateBrainSettings (T5.1) > rejects a raw (non-env:) distillation API key with CONFIG
+[integration] lib/brain/__tests__/settings.integration.test.ts > updateBrainSettings (T5.1) > rejects a non-positive dimension with CONFIG
+[integration] lib/brain/__tests__/settings.integration.test.ts > updateBrainSettings (T5.1) > on a model change: creates the new expression index and enqueues a reindex job per enabled project with a coverage gap
+[integration] lib/brain/__tests__/settings.integration.test.ts > updateBrainSettings (T5.1) > does NOT double-enqueue while a job is already queued/running
+[integration] lib/brain/__tests__/settings.integration.test.ts > updateBrainSettings (T5.1) > a FAILED job is recoverable: the next settings save re-enqueues the project
+[integration] lib/brain/__tests__/settings.integration.test.ts > updateBrainSettings (T5.1) > rejects dimensions above the pgvector HNSW cap (2000) with CONFIG
+[integration] lib/brain/__tests__/settings.integration.test.ts > updateBrainSettings (T5.1) > a dimension change is also a reindex generation (no schema migration)
+[integration] lib/brain/__tests__/sources.integration.test.ts > Project Brain sources (ADR-127) > seeds the docs indexing profile once as metadata-only source rows
+[integration] lib/brain/__tests__/sources.integration.test.ts > Project Brain sources (ADR-127) > skips suggested defaults after the project already has curated sources
+[integration] lib/brain/__tests__/sources.integration.test.ts > Project Brain sources (ADR-127) > registers an exact tracked source with autodetected kind and chunker metadata
+[integration] lib/brain/__tests__/sources.integration.test.ts > Project Brain sources (ADR-127) > expands glob sources only to tracked matching files
+[integration] lib/brain/__tests__/sources.integration.test.ts > Project Brain sources (ADR-127) > allows broad glob sources because source jobs process them in batches
+[integration] lib/brain/__tests__/sources.integration.test.ts > Project Brain sources (ADR-127) > fails closed for traversal, .git, ignored, and untracked source paths
+[integration] lib/brain/__tests__/sources.integration.test.ts > Project Brain sources (ADR-127) > updates, deletes, and enqueues source-scoped manual reindex jobs
+[integration] lib/brain/__tests__/sources.integration.test.ts > Project Brain sources (ADR-127) > disables a source whose tracked file was removed after registration
+[integration] lib/brain/__tests__/ui-queries.integration.test.ts > Project Brain UI queries > ranks exact indexed OpenAPI operation matches above newer markdown references
+[integration] lib/db/__tests__/migration-company-brain-specialists.integration.test.ts > IT-CBX-01 company migration preserves existing project data and identity across repeated boot
+[integration] lib/db/__tests__/migration-company-brain-specialists.integration.test.ts > IT-CBX-01 populated Brain upgrade preserves honest legacy provenance and pending proposals
+[integration] lib/domain-events/__tests__/auto-launch-flow-child.integration.test.ts > auto_launch_run_plan with FLOW children (ADR-163) > the run_kind gate is an ALLOW-LIST: flow passes, scratch is still rejected
+[integration] lib/domain-events/__tests__/auto-launch-flow-child.integration.test.ts > auto_launch_run_plan with FLOW children (ADR-163) > a FLOW dependent refused at release time gets ONE system comment naming the refusal and stays queued
+[integration] lib/domain-events/__tests__/auto-launch-flow-child.integration.test.ts > auto_launch_run_plan with FLOW children (ADR-163) > a FLOW child's run.review auto-promotes an as-plan (auto) child
+[integration] lib/domain-events/__tests__/auto-launch-flow-child.integration.test.ts > auto_launch_run_plan with FLOW children (ADR-163) > a FLOW child's run.review from $label does NOT auto-promote an as-plan child
+[integration] lib/domain-events/__tests__/auto-launch-flow-child.integration.test.ts > auto_launch_run_plan with FLOW children (ADR-163) > a MANUAL (as-run) flow child in Review is NOT auto-promoted — the launch_mode discriminant
+[integration] lib/domain-events/__tests__/auto-launch-flow-child.integration.test.ts > auto_launch_run_plan with FLOW children (ADR-163) > an auto flow child whose promote CONFLICTS stays in Review and releases nothing
+[integration] lib/domain-events/__tests__/auto-launch-flow-child.integration.test.ts > the as-plan auto-launcher is bounded by the shared cap (ADR-163 REQ-15) > refuses a released dependent at the cap through the REAL launcher, and admits it once a slot frees
+[integration] lib/domain-events/__tests__/auto-launch-flow-child.integration.test.ts > the as-plan auto-launcher is bounded by the shared cap (ADR-163 REQ-15) > the same bound applies to a FLOW dependent through the real flow launcher
+[integration] lib/domain-events/__tests__/auto-launch-flow-child.integration.test.ts > the as-plan auto-launcher is bounded by the shared cap (ADR-163 REQ-15) > (ADR-165) a result-only run.done advances the as-plan task and releases its dependent
+[integration] lib/domain-events/__tests__/auto-launch-result-profile.integration.test.ts > auto-launch edge — profile resolution against the pinned revision > resolves the recorded name into the same contract the source launch got
+[integration] lib/domain-events/__tests__/auto-launch-result-profile.integration.test.ts > auto-launch edge — profile resolution against the pinned revision > still resolves after a NEWER revision drops the profile — the pin is what counts
+[integration] lib/domain-events/__tests__/auto-launch-result-profile.integration.test.ts > auto-launch edge — profile resolution against the pinned revision > returns null when the spec recorded no profile
+[integration] lib/domain-events/__tests__/auto-launch-result-profile.integration.test.ts > auto-launch edge — profile resolution against the pinned revision > refuses an unknown name at THIS edge too, naming what the pin does declare
+[integration] lib/domain-events/__tests__/auto-launch-result-profile.integration.test.ts > auto-launch edge — profile resolution against the pinned revision > refuses below the 3.7.0 floor even when the pin carries a profile map
+[integration] lib/domain-events/__tests__/auto-launch-result-profile.integration.test.ts > auto-launch edge — profile resolution against the pinned revision > refuses when the parent run is not pinned to any revision
+[integration] lib/domain-events/__tests__/auto-launch-result-profile.integration.test.ts > delegation_spec carries the NAME, never the resolved schema > an as-plan agent task records only the profile name
+[integration] lib/domain-events/__tests__/auto-launch.integration.test.ts > executorId
+[integration] lib/domain-events/__tests__/auto-launch.integration.test.ts > auto_launch_run_plan consumer > (5) launches a dependent once its blocker completes; redelivery is idempotent
+[integration] lib/domain-events/__tests__/auto-launch.integration.test.ts > auto_launch_run_plan consumer > never auto-launches a cross-project as-plan candidate
+[integration] lib/domain-events/__tests__/auto-launch.integration.test.ts > auto_launch_run_plan consumer > (5c) concurrent handle() of the releasing event launches the dependent exactly once
+[integration] lib/domain-events/__tests__/auto-launch.integration.test.ts > auto_launch_run_plan consumer > one event fanning out to TWO same-agent dependents launches BOTH (no index collapse)
+[integration] lib/domain-events/__tests__/auto-launch.integration.test.ts > auto_launch_run_plan consumer > (6) a FAILED/Abandoned blocker does NOT release the dependent (success-gate)
+[integration] lib/domain-events/__tests__/auto-launch.integration.test.ts > auto_launch_run_plan consumer > (6b) an ABANDONED blocker does NOT release the dependent (success-gate)
+[integration] lib/domain-events/__tests__/auto-launch.integration.test.ts > auto_launch_run_plan consumer > (7) two blockers near-simultaneous: C requires A AND B → launched exactly once
+[integration] lib/domain-events/__tests__/auto-launch.integration.test.ts > auto_launch_run_plan consumer > ignores a non-agent or parent-less terminal event
+[integration] lib/domain-events/__tests__/auto-launch.integration.test.ts > auto_launch_run_plan consumer > (8) an as-plan child reaching Review is auto-promoted (ADR-100)
+[integration] lib/domain-events/__tests__/auto-launch.integration.test.ts > auto_launch_run_plan consumer > a manual (as-run) child reaching Review is NOT auto-promoted
+[integration] lib/domain-events/__tests__/cost-rollup-reconcile.integration.test.ts > cost-rollup-reconcile consumer > reconciles a never-opened scratch run on its run.failed terminal
+[integration] lib/domain-events/__tests__/cost-rollup-reconcile.integration.test.ts > cost-rollup-reconcile consumer > reconciles only terminal kinds, dedupes runIds, ignores non-terminal events
+[integration] lib/domain-events/__tests__/cost-rollup-reconcile.integration.test.ts > cost-rollup-reconcile consumer > is idempotent across at-least-once redelivery (one rollup, stable cursor)
+[integration] lib/domain-events/__tests__/cost-rollup-reconcile.integration.test.ts > cost-rollup-reconcile consumer > writes no row and does not throw when no usage event exists
+[integration] lib/domain-events/__tests__/cost-rollup-reconcile.integration.test.ts > cost-rollup-reconcile consumer > is poison-safe: an always-failing run never stalls the dispatch cursor
+[integration] lib/domain-events/__tests__/cost-rollup-reconcile.integration.test.ts > cost-rollup-reconcile consumer > reconciles a project-less local-package run without deriving a filesystem slug
+[integration] lib/domain-events/__tests__/dispatch.integration.test.ts > T-D1 — cursor isolation between consumers > each consumer advances independently and sees every event
+[integration] lib/domain-events/__tests__/dispatch.integration.test.ts > T-D2 — no double-claim under concurrent dispatch passes > concurrent passes deliver every event exactly once per consumer
+[integration] lib/domain-events/__tests__/dispatch.integration.test.ts > T-D3 — catch-up drains a backlog via the batch loop > 250 backlog events drain in one dispatch run
+[integration] lib/domain-events/__tests__/dispatch.integration.test.ts > T-D4 — at-least-once with failure accounting > a throwing handler leaves the cursor, counts the failure, then redelivers
+[integration] lib/domain-events/__tests__/dispatch.integration.test.ts > T-D5 — xid8 commit horizon > an open earlier tx holds back later committed events until it resolves
+[integration] lib/domain-events/__tests__/dispatch.integration.test.ts > T-D6 — zombie advance after lease expiry + reclaim no-ops > a reclaiming pass that moved the cursor wins over the zombie's late advance
+[integration] lib/domain-events/__tests__/dispatch.integration.test.ts > T-D7 — startFrom 'now' seeds at MAX(id) > a 'now' consumer skips the backlog and receives only later events
+[integration] lib/domain-events/__tests__/dispatch.integration.test.ts > T-D8 — exponential failure backoff > does not re-invoke a failed consumer on the immediately following tick
+[integration] lib/domain-events/__tests__/dispatch.integration.test.ts > T-D8 — exponential failure backoff > caps the backoff delay at one hour
+[integration] lib/domain-events/__tests__/dispatch.integration.test.ts > IT-CBK-03 company knowledge events drain every existing consumer without creating project work
+[integration] lib/domain-events/__tests__/emit-sites.integration.test.ts > createTask → task.created (T-E3) > winner: emits exactly one task.created in the task's transaction
+[integration] lib/domain-events/__tests__/emit-sites.integration.test.ts > createTask → task.created (T-E3) > rollback: an injected post-emit failure leaves no task AND no event
+[integration] lib/domain-events/__tests__/emit-sites.integration.test.ts > addTaskComment → task.comment_added (T-E4) > winner: emits exactly one task.comment_added with commentId + mentionedTaskIds
+[integration] lib/domain-events/__tests__/emit-sites.integration.test.ts > addTaskComment → task.comment_added (T-E4) > winner: a mention-free comment omits mentionedTaskIds
+[integration] lib/domain-events/__tests__/emit-sites.integration.test.ts > addTaskComment → task.comment_added (T-E4) > rollback: an injected post-emit failure leaves no comment AND no event
+[integration] lib/domain-events/__tests__/emit-terminal.integration.test.ts > executorId
+[integration] lib/domain-events/__tests__/emit-terminal.integration.test.ts > T-E5 — paired domain emission at terminal state transitions > markAbandoned captures exactly one run.abandoned paired with the webhook
+[integration] lib/domain-events/__tests__/emit-terminal.integration.test.ts > T-E5 — paired domain emission at terminal state transitions > failResumedRun captures exactly one run.failed with the failure reason
+[integration] lib/domain-events/__tests__/emit-terminal.integration.test.ts > T-E5 — paired domain emission at terminal state transitions > a CAS-losing transition captures nothing (loser path)
+[integration] lib/domain-events/__tests__/emit-terminal.integration.test.ts > T-E5 — paired domain emission at terminal state transitions > crashRunningRun captures exactly one run.crashed
+[integration] lib/domain-events/__tests__/emit-terminal.integration.test.ts > T-E5 — paired domain emission at terminal state transitions > crashResumedRun captures exactly one run.crashed
+[integration] lib/domain-events/__tests__/emit-terminal.integration.test.ts > T-E5 — paired domain emission at terminal state transitions > crashResumedRun keeps only the token of a reason that carries a message
+[integration] lib/domain-events/__tests__/emit-terminal.integration.test.ts > T-E5 — paired domain emission at terminal state transitions > failResumedRun names the host's refusal by its code
+[integration] lib/domain-events/__tests__/emit-terminal.integration.test.ts > T-E6 — gate.failed pairing on gate terminal flips > markGateFailed captures exactly one gate.failed domain event
+[integration] lib/domain-events/__tests__/emit-terminal.integration.test.ts > T-E6 — gate.failed pairing on gate terminal flips > markGatePassed captures NO domain event (webhook-only)
+[integration] lib/domain-events/__tests__/emit-terminal.integration.test.ts > T-E7 — runPass2 TTL abandon: one tx, both emits > folds the runs flip + hitl close-out and emits domain + webhook run.abandoned
+[integration] lib/domain-events/__tests__/emit.integration.test.ts > emitDomainEvent — same-transaction capture (AC1) > T-E1: a committed caller tx yields exactly one mapped row with tx_id set
+[integration] lib/domain-events/__tests__/emit.integration.test.ts > emitDomainEvent — same-transaction capture (AC1) > T-E1b: system actor and nullable refs map to NULL columns
+[integration] lib/domain-events/__tests__/emit.integration.test.ts > emitDomainEvent — same-transaction capture (AC1) > T-E2: a rolled-back caller tx leaves zero rows
+[integration] lib/domain-events/__tests__/memory-harvest.integration.test.ts > memory_harvest consumer (T3.2) > harvests a run-terminal event into a lesson with provenance FKs
+[integration] lib/domain-events/__tests__/memory-harvest.integration.test.ts > memory_harvest consumer (T3.2) > is idempotent on re-delivery of the same event (no duplicate)
+[integration] lib/domain-events/__tests__/memory-harvest.integration.test.ts > memory_harvest consumer (T3.2) > IT-CBE-02 near harvest claims stay distinct and event replay changes neither claim nor confidence
+[integration] lib/domain-events/__tests__/memory-harvest.integration.test.ts > memory_harvest consumer (T3.2) > does NOT harvest run.review (excluded from the predicate)
+[integration] lib/domain-events/__tests__/memory-harvest.integration.test.ts > memory_harvest consumer (T3.2) > does not harvest graph-only cut-over failures
+[integration] lib/domain-events/__tests__/memory-harvest.integration.test.ts > memory_harvest consumer (T3.2) > skips (advances) when the project's Brain is disabled
+[integration] lib/domain-events/__tests__/memory-harvest.integration.test.ts > memory_harvest consumer (T3.2) > THROWS (cursor holds) when distill config is unset — a transient CONFIG
+[integration] lib/domain-events/__tests__/memory-harvest.integration.test.ts > memory_harvest consumer (T3.2) > skips (advances) on schema-invalid distill output — a permanent failure
+[integration] lib/domain-events/__tests__/memory-harvest.integration.test.ts > memory_harvest consumer (T3.2) > THROWS (cursor holds) on a transient embed failure during retain
+[integration] lib/domain-events/__tests__/memory-harvest.integration.test.ts > memory_harvest consumer (T3.2) > harvests a gate.failed event (predicate includes gate.failed)
+[integration] lib/domain-events/__tests__/orchestrator-resume-flow-child.integration.test.ts > a delegated flow child reaching Review (ADR-163 REQ-18) > emits the run.review DOMAIN event carrying parentRunId, alongside the webhook
+[integration] lib/domain-events/__tests__/orchestrator-resume-flow-child.integration.test.ts > a delegated flow child reaching Review (ADR-163 REQ-18) > a TOP-LEVEL flow run reaching Review emits the webhook but NO domain event
+[integration] lib/domain-events/__tests__/orchestrator-resume-flow-child.integration.test.ts > orchestrator_resume wakes on a FLOW child (ADR-163 REQ-18/REQ-20) > (1) one flow child reaching Review CASes the parent WaitingOnChildren → Running and resumes at the coordinator node
+[integration] lib/domain-events/__tests__/orchestrator-resume-flow-child.integration.test.ts > orchestrator_resume wakes on a FLOW child (ADR-163 REQ-18/REQ-20) > (2) a flow child reaching Review while a sibling is still Running does NOT wake the parent
+[integration] lib/domain-events/__tests__/orchestrator-resume-flow-child.integration.test.ts > orchestrator_resume wakes on a FLOW child (ADR-163 REQ-18/REQ-20) > (3) a flow child reaching a FAILURE terminal wakes the parent even with a pending sibling
+[integration] lib/domain-events/__tests__/orchestrator-resume-flow-child.integration.test.ts > orchestrator_resume wakes on a FLOW child (ADR-163 REQ-18/REQ-20) > every Review flip of a delegated child emits run.review (ADR-163 review F1) > $name on a delegated child emits run.review carrying parentRunId
+[integration] lib/domain-events/__tests__/orchestrator-resume-flow-child.integration.test.ts > orchestrator_resume wakes on a FLOW child (ADR-163 REQ-18/REQ-20) > every Review flip of a delegated child emits run.review (ADR-163 review F1) > $name on a TOP-LEVEL run emits no run.review domain event
+[integration] lib/domain-events/__tests__/orchestrator-resume-flow-child.integration.test.ts > orchestrator_resume wakes on a FLOW child (ADR-163 REQ-18/REQ-20) > (ADR-165) a result-only run.done wakes the parent like any success-side settle
+[integration] lib/domain-events/__tests__/orchestrator-resume-flow-child.integration.test.ts > orchestrator_resume wakes on a FLOW child (ADR-163 REQ-18/REQ-20) > (ADR-165) run.failed{reason:result_missing} wakes the parent UNCONDITIONALLY, pending sibling and all
+[integration] lib/domain-events/__tests__/orchestrator-resume.integration.test.ts > executorId
+[integration] lib/domain-events/__tests__/orchestrator-resume.integration.test.ts > orchestrator_resume consumer (M37 T5.2) > (2) last child done → wakes the parent exactly once; redelivery is a no-op (CAS)
+[integration] lib/domain-events/__tests__/orchestrator-resume.integration.test.ts > orchestrator_resume consumer (M37 T5.2) > (3) a done child while a sibling is still pending does NOT wake; the last done does
+[integration] lib/domain-events/__tests__/orchestrator-resume.integration.test.ts > orchestrator_resume consumer (M37 T5.2) > (4) a crashed child wakes the parent even with other pending children (deferred-release)
+[integration] lib/domain-events/__tests__/orchestrator-resume.integration.test.ts > orchestrator_resume consumer (M37 T5.2) > (5) two child terminals processed together converge to exactly one respawn
+[integration] lib/domain-events/__tests__/orchestrator-resume.integration.test.ts > orchestrator_resume consumer (M37 T5.2) > (5b) two concurrent handle() calls wake the parent exactly once
+[integration] lib/domain-events/__tests__/orchestrator-resume.integration.test.ts > orchestrator_resume consumer (M37 T5.2) > (6) a child reaching Review wakes the parked parent (ADR-100)
+[integration] lib/domain-events/__tests__/orchestrator-resume.integration.test.ts > orchestrator_resume consumer (M37 T5.2) > (7) a Review child with a pending sibling does NOT wake; settling the last does
+[integration] lib/domain-events/__tests__/orchestrator-resume.integration.test.ts > orchestrator_resume consumer (M37 T5.2) > never drives a NON-flow (agent) orchestrator into the flow resume path
+[integration] lib/domain-events/__tests__/orchestrator-resume.integration.test.ts > orchestrator_resume consumer (M37 T5.2) > wakes a consensus parent only after every draft child has settled
+[integration] lib/domain-events/__tests__/orchestrator-resume.integration.test.ts > orchestrator_resume consumer (M37 T5.2) > rolls a consensus parent back to WaitingOnChildren when re-drive is retryable
+[integration] lib/domain-events/__tests__/orchestrator-resume.integration.test.ts > orchestrator_resume consumer (M37 T5.2) > skips a WaitingOnChildren parent whose current node is not a coordinator
+[integration] lib/domain-events/__tests__/terminal-cause.integration.test.ts > runnerId
+[integration] lib/domain-events/__tests__/terminal-cause.integration.test.ts > the terminal cause on each writer (D-B2) > crashWaitingOnChildren: CRASH, the crash reason as a token, from the sweep
+[integration] lib/domain-events/__tests__/terminal-cause.integration.test.ts > the terminal cause on each writer (D-B2) > crashRunningRun from an owner application names the graph as the source
+[integration] lib/domain-events/__tests__/terminal-cause.integration.test.ts > the terminal cause on each writer (D-B2) > markAbandoned by the reconcile orphan arm: the truth rides cause, the legacy reason is untouched
+[integration] lib/domain-events/__tests__/terminal-cause.integration.test.ts > the terminal cause on each writer (D-B2) > markScratchCrashed: the error's code and reason, from the scratch dialog
+[integration] lib/domain-events/__tests__/terminal-cause.integration.test.ts > the terminal cause on each writer (D-B2) > markScratchCrashed as a budget kill: run.failed with BUDGET_EXCEEDED
+[integration] lib/domain-events/__tests__/terminal-cause.integration.test.ts > the terminal cause on each writer (D-B2) > a scratch stop that abandons the run emits run.abandoned (it emitted nothing before)
+[integration] lib/domain-events/__tests__/terminal-cause.integration.test.ts > the terminal cause on each writer (D-B2) > two concurrent stops emit run.abandoned exactly once
+[integration] lib/domain-events/__tests__/terminal-cause.integration.test.ts > the terminal cause on each writer (D-B2) > SELECT count(*)::int AS waiting FROM pg_stat_activity
+            WHERE wait_event_type = 'Lock' AND query ILIKE '%FROM runs WHERE id%FOR NO KEY UPDATE%'
+[integration] lib/ext-activity/__tests__/pulse.db.integration.test.ts > domainEvents
+[integration] lib/ext-activity/__tests__/pulse.db.integration.test.ts > projects
+[integration] lib/ext-activity/__tests__/pulse.db.integration.test.ts > projects
+[integration] lib/ext-activity/__tests__/pulse.db.integration.test.ts > assistant activity pulse commit horizon > bootstraps from the visible tail so an older in-flight transaction is not skipped forever
+[integration] lib/ext-activity/__tests__/pulse.db.integration.test.ts > IT-CBK-03 knowledge invalidations stay out of the project activity pulse and cannot stall its cursor

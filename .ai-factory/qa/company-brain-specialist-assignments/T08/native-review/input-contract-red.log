@@ -1,0 +1,103 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.5 /Users/kaa/.codex/worktrees/2599/mAIster/web
+
+{"level":30,"time":1793660572263,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793660572500,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-daemon-contact","outcome":"passed","durationMs":15,"serverVersion":"29.4.2","strategy":"ConfigurationStrategy","msg":"test container daemon contacted"}
+{"level":30,"time":1793660572500,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"started","msg":"constructing test container runtime client"}
+{"level":30,"time":1793660572509,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"passed","durationMs":9,"serverVersion":"29.4.2","msg":"test container runtime client ready"}
+{"level":30,"time":1793660572510,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-create-start","preparationDurationMs":25,"storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"starting owned PostgreSQL container"}
+{"level":30,"time":1793660573384,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-start","outcome":"passed","durationMs":872,"containerId":"4b454fc72dabbab66e57ba5e023b6767f6a8ca456c2e4e56fdd098f95ad66fdf","storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"started owned PostgreSQL container"}
+{"level":30,"time":1793660573391,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"bare","phase":"ready","durationMs":906,"containerId":"4b454fc72dabbab66e57ba5e023b6767f6a8ca456c2e4e56fdd098f95ad66fdf","endpoint":"postgres://localhost:62837/maister_brain_test","msg":"started bare test database"}
+{"level":30,"time":1793660573678,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"test-database-migrations","migrationsFolder":"./lib/db/migrations","migrationsTable":"__drizzle_migrations","migrationCount":212,"querySubmissions":6,"durationMs":287,"msg":"applied test database migration lineage"}
+{"level":30,"time":1793660573711,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"test-database-migrations","migrationsFolder":"./lib/db/brain-migrations","migrationsTable":"__drizzle_brain_migrations","migrationCount":9,"querySubmissions":6,"durationMs":33,"msg":"applied test database migration lineage"}
+{"level":30,"time":1793660573711,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"main+brain","phase":"migrate","endpoint":"postgres://localhost:62837/maister_brain_test","msg":"applied Brain test database migrations"}
+{"level":30,"time":1793660573723,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:proposals","projectId":"2f8ca958-0641-4435-ad3b-21ed25fd8158","proposalId":"a88423cb-cd65-4072-963c-786da1db6ffb","kind":"rule","status":"pending","actorType":"agent","msg":"brain proposal created"}
+{"level":30,"time":1793660573729,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:proposals","projectId":"667bae11-07ef-47b5-9daf-b6cf443716d7","proposalId":"1984b1ee-392a-4e60-9708-f9e4dd1218f7","kind":"skill","status":"pending","actorType":"agent","msg":"brain proposal created"}
+{"level":30,"time":1793660573733,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:proposals","projectId":"667bae11-07ef-47b5-9daf-b6cf443716d7","proposalId":"1984b1ee-392a-4e60-9708-f9e4dd1218f7","kind":"skill","status":"accepted","actorType":"user","msg":"brain proposal transitioned"}
+{"level":30,"time":1793660573736,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:proposals","projectId":"667bae11-07ef-47b5-9daf-b6cf443716d7","proposalId":"1984b1ee-392a-4e60-9708-f9e4dd1218f7","kind":"skill","status":"applied","actorType":"system","msg":"brain proposal transitioned"}
+{"level":30,"time":1793660573740,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:proposals","projectId":"c92f6930-c490-466b-8da1-85a7de2cc71a","proposalId":"952ba8aa-2824-4d13-b363-e4efc7eea47e","kind":"flow","status":"pending","actorType":"agent","msg":"brain proposal created"}
+{"level":30,"time":1793660573741,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:proposals","projectId":"c92f6930-c490-466b-8da1-85a7de2cc71a","proposalId":"1b0adf5b-4854-4f03-b9b1-2883e97231e7","kind":"adr","status":"pending","actorType":"agent","msg":"brain proposal created"}
+{"level":30,"time":1793660573743,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:proposals","projectId":"c92f6930-c490-466b-8da1-85a7de2cc71a","proposalId":"952ba8aa-2824-4d13-b363-e4efc7eea47e","kind":"flow","status":"rejected","actorType":"user","msg":"brain proposal transitioned"}
+{"level":30,"time":1793660573745,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:proposals","projectId":"c92f6930-c490-466b-8da1-85a7de2cc71a","proposalId":"1b0adf5b-4854-4f03-b9b1-2883e97231e7","kind":"adr","status":"accepted","actorType":"user","msg":"brain proposal transitioned"}
+{"level":30,"time":1793660573752,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:proposals","projectId":"ee14bf46-a58f-478f-bf04-898599e97237","proposalId":"eda57a39-3959-4496-9aea-c668dae005a3","kind":"roadmap","status":"pending","actorType":"agent","msg":"brain proposal created"}
+{"level":30,"time":1793660573762,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:proposals","projectId":"61b6a91f-4d69-434a-af45-94c63a52c068","proposalId":"4987b23e-2699-4962-acfc-d674d6eff873","kind":"skill","status":"pending","actorType":"agent","msg":"brain proposal created"}
+{"level":30,"time":1793660573764,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:proposals","projectId":"61b6a91f-4d69-434a-af45-94c63a52c068","proposalId":"4987b23e-2699-4962-acfc-d674d6eff873","kind":"skill","status":"accepted","actorType":"user","msg":"brain proposal transitioned"}
+{"level":30,"time":1793660573766,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"authored-catalog","projectId":"61b6a91f-4d69-434a-af45-94c63a52c068","capId":"7c89dddc-41b4-4283-87cf-ea0bb3a3bae9","kind":"skill","revisionId":"95133f24-2ed1-4160-976a-6367cdc84ed2","msg":"authored capability draft created"}
+{"level":30,"time":1793660573767,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:proposals","projectId":"61b6a91f-4d69-434a-af45-94c63a52c068","proposalId":"4987b23e-2699-4962-acfc-d674d6eff873","kind":"skill","status":"applied","actorType":"user","msg":"brain proposal transitioned"}
+{"level":30,"time":1793660573767,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:proposals","projectId":"61b6a91f-4d69-434a-af45-94c63a52c068","proposalId":"4987b23e-2699-4962-acfc-d674d6eff873","kind":"skill","resolvedBy":"reviewer-1","msg":"brain proposal accepted into authored draft"}
+{"level":30,"time":1793660573771,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:proposals","projectId":"577a36e7-795c-4122-a104-153f5c08e16d","proposalId":"1766b82c-8755-47b4-bcaa-4d7dd8f5492d","kind":"roadmap","status":"pending","actorType":"agent","msg":"brain proposal created"}
+{"level":30,"time":1793660573773,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:proposals","projectId":"577a36e7-795c-4122-a104-153f5c08e16d","proposalId":"1766b82c-8755-47b4-bcaa-4d7dd8f5492d","kind":"roadmap","status":"rejected","actorType":"user","msg":"brain proposal transitioned"}
+{"level":30,"time":1793660573773,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:proposals","projectId":"577a36e7-795c-4122-a104-153f5c08e16d","proposalId":"1766b82c-8755-47b4-bcaa-4d7dd8f5492d","kind":"roadmap","resolvedBy":"reviewer-1","msg":"brain proposal rejected"}
+{"level":30,"time":1793660573775,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:proposals","projectId":"4f1e2e1c-9e62-4183-aa08-d31460c7fb52","proposalId":"70d59a1d-187b-4a2e-bb35-5eac91f74e99","kind":"rule","status":"pending","actorType":"agent","msg":"brain proposal created"}
+{"level":30,"time":1793660573777,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:proposals","projectId":"4f1e2e1c-9e62-4183-aa08-d31460c7fb52","proposalId":"70d59a1d-187b-4a2e-bb35-5eac91f74e99","kind":"rule","status":"rejected","actorType":"user","msg":"brain proposal transitioned"}
+{"level":30,"time":1793660573777,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:proposals","projectId":"4f1e2e1c-9e62-4183-aa08-d31460c7fb52","proposalId":"70d59a1d-187b-4a2e-bb35-5eac91f74e99","kind":"rule","resolvedBy":"reviewer-1","msg":"brain proposal rejected"}
+{"level":30,"time":1793660573782,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:proposals","projectId":"b525a981-45ef-4f40-8452-92ee1c1e32f2","proposalId":"00cd4e34-b21e-4fb0-ac13-7f7963b82086","kind":"rule","status":"pending","actorType":"agent","msg":"brain proposal created"}
+{"level":30,"time":1793660573782,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:proposals","projectId":"b525a981-45ef-4f40-8452-92ee1c1e32f2","kind":"rule","blastRadius":"low","decision":"auto_draft","msg":"brain proposal autonomy decision resolved"}
+{"level":30,"time":1793660573784,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:proposals","projectId":"b525a981-45ef-4f40-8452-92ee1c1e32f2","proposalId":"00cd4e34-b21e-4fb0-ac13-7f7963b82086","kind":"rule","status":"accepted","actorType":"system","msg":"brain proposal transitioned"}
+{"level":30,"time":1793660573785,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"authored-catalog","projectId":"b525a981-45ef-4f40-8452-92ee1c1e32f2","capId":"6321d1bd-fac7-489f-97f5-9716b1ebed44","kind":"rule","revisionId":"6279365e-cb10-45fd-9888-6844ada0ed6c","msg":"authored capability draft created"}
+{"level":30,"time":1793660573786,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:proposals","projectId":"b525a981-45ef-4f40-8452-92ee1c1e32f2","proposalId":"00cd4e34-b21e-4fb0-ac13-7f7963b82086","kind":"rule","status":"applied","actorType":"system","msg":"brain proposal transitioned"}
+{"level":30,"time":1793660573786,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:proposals","projectId":"b525a981-45ef-4f40-8452-92ee1c1e32f2","proposalId":"00cd4e34-b21e-4fb0-ac13-7f7963b82086","kind":"rule","blastRadius":"low","decision":"auto_draft","msg":"brain proposal auto-drafted"}
+{"level":30,"time":1793660573791,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:proposals","projectId":"28323aaf-94bc-459e-ba27-1be5ff98cfdc","proposalId":"fdaf2bbb-6ebc-41e9-bba4-378a39a5764f","kind":"rule","status":"pending","actorType":"agent","msg":"brain proposal created"}
+{"level":30,"time":1793660573791,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:proposals","projectId":"28323aaf-94bc-459e-ba27-1be5ff98cfdc","kind":"rule","blastRadius":"high","decision":"manual","msg":"brain proposal autonomy decision resolved"}
+{"level":30,"time":1793660573793,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:proposals","projectId":"09793fa9-09fd-4c7c-91b2-18af4e3498ca","proposalId":"c0f3df65-f182-4158-b293-111f71d9cb37","kind":"state","status":"pending","actorType":"agent","msg":"brain proposal created"}
+{"level":30,"time":1793660573794,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:proposals","projectId":"09793fa9-09fd-4c7c-91b2-18af4e3498ca","proposalId":"c0f3df65-f182-4158-b293-111f71d9cb37","kind":"state","status":"accepted","actorType":"user","msg":"brain proposal transitioned"}
+{"level":30,"time":1793660573800,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"service-tasks","projectId":"09793fa9-09fd-4c7c-91b2-18af4e3498ca","taskId":"ebd1d3fd-f39c-4332-8a7d-297f21f9831a","flowId":null,"taskKey":"BRF7D585","number":1,"deduped":false,"msg":"task created"}
+{"level":30,"time":1793660573800,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:projection","projectId":"09793fa9-09fd-4c7c-91b2-18af4e3498ca","proposalId":"c0f3df65-f182-4158-b293-111f71d9cb37","taskId":"ebd1d3fd-f39c-4332-8a7d-297f21f9831a","kind":"state","launchMode":"manual","msg":"brain projection task created"}
+{"level":30,"time":1793660573801,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:proposals","projectId":"09793fa9-09fd-4c7c-91b2-18af4e3498ca","proposalId":"c0f3df65-f182-4158-b293-111f71d9cb37","kind":"state","status":"applied","actorType":"user","msg":"brain proposal transitioned"}
+{"level":30,"time":1793660573801,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:proposals","projectId":"09793fa9-09fd-4c7c-91b2-18af4e3498ca","proposalId":"c0f3df65-f182-4158-b293-111f71d9cb37","kind":"state","taskId":"ebd1d3fd-f39c-4332-8a7d-297f21f9831a","launchMode":"manual","resolvedBy":"reviewer-1","msg":"brain proposal accepted into projection task"}
+{"level":30,"time":1793660573803,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:proposals","projectId":"24f8feb6-8f94-4630-8176-474e5d850014","proposalId":"dde08380-2071-404e-871d-73accce54c1c","kind":"adr","status":"pending","actorType":"agent","msg":"brain proposal created"}
+{"level":30,"time":1793660573805,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:proposals","projectId":"24f8feb6-8f94-4630-8176-474e5d850014","proposalId":"dde08380-2071-404e-871d-73accce54c1c","kind":"adr","status":"accepted","actorType":"user","msg":"brain proposal transitioned"}
+{"level":30,"time":1793660573808,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"service-tasks","projectId":"24f8feb6-8f94-4630-8176-474e5d850014","taskId":"99af3da2-91a1-4b36-b26b-de4351b67bee","flowId":null,"taskKey":"BREAD995","number":1,"deduped":false,"msg":"task created"}
+{"level":30,"time":1793660573809,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"service-triage","taskId":"99af3da2-91a1-4b36-b26b-de4351b67bee","actorType":"user","fields":["flowId"],"enqueue":true,"msg":"triage verdict applied"}
+{"level":30,"time":1793660573809,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:projection","projectId":"24f8feb6-8f94-4630-8176-474e5d850014","proposalId":"dde08380-2071-404e-871d-73accce54c1c","taskId":"99af3da2-91a1-4b36-b26b-de4351b67bee","kind":"adr","launchMode":"auto","msg":"brain projection task created"}
+{"level":30,"time":1793660573809,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:proposals","projectId":"24f8feb6-8f94-4630-8176-474e5d850014","proposalId":"dde08380-2071-404e-871d-73accce54c1c","kind":"adr","status":"applied","actorType":"user","msg":"brain proposal transitioned"}
+{"level":30,"time":1793660573809,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:proposals","projectId":"24f8feb6-8f94-4630-8176-474e5d850014","proposalId":"dde08380-2071-404e-871d-73accce54c1c","kind":"adr","taskId":"99af3da2-91a1-4b36-b26b-de4351b67bee","launchMode":"auto","resolvedBy":"reviewer-1","msg":"brain proposal accepted into projection task"}
+{"level":30,"time":1793660573820,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"scheduler","taskId":"99af3da2-91a1-4b36-b26b-de4351b67bee","projectId":"24f8feb6-8f94-4630-8176-474e5d850014","msg":"promoteNextPending → C2 claimed fresh Backlog task"}
+{"level":30,"time":1793660573821,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"scheduler","taskId":"99af3da2-91a1-4b36-b26b-de4351b67bee","runId":"projection-run-1","status":"Running","msg":"promoteNextPending → C2 launched fresh Backlog run"}
+{"level":30,"time":1793660573840,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:knowledge","proposalId":"3a080b15-b9cb-470c-a977-947d99bb32c8","ownerKind":"project","ownerId":"e2521b96-a6b2-427d-ba62-1bc1b574c415","actorId":"1f91f187-71a8-4b9d-9720-34209d003b07","msg":"knowledge proposed"}
+{"level":30,"time":1793660573857,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:knowledge","proposalId":"f6bd1b1f-ff8d-4bab-9b6a-c9dad4a6ca88","ownerKind":"project","ownerId":"e2521b96-a6b2-427d-ba62-1bc1b574c415","actorId":"1f91f187-71a8-4b9d-9720-34209d003b07","msg":"knowledge proposed"}
+{"level":30,"time":1793660573873,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:knowledge","proposalId":"de23fc4e-845f-49af-bef5-d0391ad12dd3","ownerKind":"company","ownerId":"ff73fe41-21af-4e27-9429-b8bcadcee1e7","actorId":"ce7ba0ca-2c0f-4a3b-9e73-f07e622fba8c","msg":"knowledge proposed"}
+{"level":30,"time":1793660573881,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:knowledge","proposalId":"2a70e29d-e540-427e-8c66-45308e9586e9","ownerKind":"company","ownerId":"ff73fe41-21af-4e27-9429-b8bcadcee1e7","actorId":"ce7ba0ca-2c0f-4a3b-9e73-f07e622fba8c","msg":"knowledge proposed"}
+{"level":30,"time":1793660573887,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"brain:knowledge","proposalId":"e36b25ef-3097-44c4-89c0-5879006a7f38","ownerKind":"company","ownerId":"ff73fe41-21af-4e27-9429-b8bcadcee1e7","actorId":"ce7ba0ca-2c0f-4a3b-9e73-f07e622fba8c","msg":"knowledge proposed"}
+{"level":30,"time":1793660574092,"pid":72477,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"stop","durationMs":193,"containerId":"4b454fc72dabbab66e57ba5e023b6767f6a8ca456c2e4e56fdd098f95ad66fdf","endpoint":"postgres://localhost:62837/maister_brain_test","msg":"stopped test database"}
+ ❯ |integration| lib/brain/__tests__/proposals.integration.test.ts (14 tests | 1 failed) 1612ms
+   × IT-CBK-03 company knowledge publication is attributable, idempotent and separate from confirmation 11ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |integration| lib/brain/__tests__/proposals.integration.test.ts > IT-CBK-03 company knowledge publication is attributable, idempotent and separate from confirmation
+AssertionError: expected MaisterError: Knowledge reference is unav… { …(2) } to match object { code: 'CONFIG' }
+(3 matching properties omitted from actual)
+
+- Expected
++ Received
+
+- {
+-   "code": "CONFIG",
++ MaisterError {
++   "code": "PRECONDITION",
+  }
+
+ ❯ lib/brain/__tests__/proposals.integration.test.ts:684:134
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 13 passed (14)
+   Start at  02:02:51
+   Duration  2.18s (tests 76%, import 18%, transform 6%)
+
+undefined
+/Users/kaa/.codex/worktrees/2599/mAIster/web:
+[ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL] Command failed with exit code 1: vitest run --project integration lib/brain/__tests__/proposals.integration.test.ts

@@ -1,0 +1,58 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.5 /Users/kaa/.codex/worktrees/2599/mAIster/web
+
+{"level":30,"time":1793654924027,"pid":9772,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-daemon-contact","outcome":"passed","durationMs":16,"serverVersion":"29.4.2","strategy":"ConfigurationStrategy","msg":"test container daemon contacted"}
+{"level":30,"time":1793654924027,"pid":9772,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"started","msg":"constructing test container runtime client"}
+{"level":30,"time":1793654924037,"pid":9772,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"passed","durationMs":10,"serverVersion":"29.4.2","msg":"test container runtime client ready"}
+{"level":30,"time":1793654924038,"pid":9772,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-create-start","preparationDurationMs":28,"storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"starting owned PostgreSQL container"}
+{"level":30,"time":1793654924910,"pid":9772,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-start","outcome":"passed","durationMs":871,"containerId":"2c66b3d0a1c768d8b043b6668db65d2464b662627fbdfe76360f973543153c49","storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"started owned PostgreSQL container"}
+{"level":30,"time":1793654924920,"pid":9772,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"bare","phase":"ready","durationMs":910,"containerId":"2c66b3d0a1c768d8b043b6668db65d2464b662627fbdfe76360f973543153c49","endpoint":"postgres://localhost:61929/company_records","msg":"started bare test database"}
+{"level":30,"time":1793654925180,"pid":9772,"hostname":"MacBook-Pro-2.local","name":"test-database-migrations","migrationsFolder":"./lib/db/migrations","migrationsTable":"__drizzle_migrations","migrationCount":212,"querySubmissions":6,"durationMs":259,"msg":"applied test database migration lineage"}
+{"level":30,"time":1793654925201,"pid":9772,"hostname":"MacBook-Pro-2.local","name":"test-database-migrations","migrationsFolder":"./lib/db/brain-migrations","migrationsTable":"__drizzle_brain_migrations","migrationCount":6,"querySubmissions":6,"durationMs":20,"msg":"applied test database migration lineage"}
+{"level":30,"time":1793654925201,"pid":9772,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"main+brain","phase":"migrate","endpoint":"postgres://localhost:61929/company_records","msg":"applied Brain test database migrations"}
+{"level":40,"time":1793654925239,"pid":9772,"hostname":"MacBook-Pro-2.local","name":"authz","userId":"reader","status":"disabled","msg":"denied: inactive account"}
+{"level":40,"time":1793654925239,"pid":9772,"hostname":"MacBook-Pro-2.local","name":"authz","userId":"reader","msg":"denied: password change required"}
+{"level":40,"time":1793654925240,"pid":9772,"hostname":"MacBook-Pro-2.local","name":"authz","userId":"missing-user","msg":"denied: missing user"}
+{"level":30,"time":1793654925411,"pid":9772,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"stop","durationMs":167,"containerId":"2c66b3d0a1c768d8b043b6668db65d2464b662627fbdfe76360f973543153c49","endpoint":"postgres://localhost:61929/company_records","msg":"stopped test database"}
+ ❯ |integration| lib/brain/__tests__/company-records.integration.test.ts (3 tests | 1 failed) 1404ms
+   × IT-CBK-05 company records keep explicit ownership and unknown legacy metadata 4ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |integration| lib/brain/__tests__/company-records.integration.test.ts > IT-CBK-05 company records keep explicit ownership and unknown legacy metadata
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ lib/brain/__tests__/company-records.integration.test.ts:127:34
+    125|   const shape = await database.pool.query<{ present: boolean }>("SELEC…
+    126|
+    127|   expect(shape.rows[0]?.present).toBe(true);
+       |                                  ^
+    128|   const companyId = (await database.pool.query<{ id: string }>("SELECT…
+    129|   const row = await database.pool.query<{ id: string }>(
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 2 passed (3)
+   Start at  00:28:43
+   Duration  1.78s (tests 81%, import 16%, transform 2%, setup 1%)
+
+undefined
+/Users/kaa/.codex/worktrees/2599/mAIster/web:
+[ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL] Command failed with exit code 1: vitest run --project integration lib/brain/__tests__/company-records.integration.test.ts

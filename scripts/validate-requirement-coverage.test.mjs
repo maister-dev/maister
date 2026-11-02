@@ -175,14 +175,15 @@ test("CT-CBX-05 refuses empty discovery, duplicate identities and unresolvable s
   );
 });
 
-test("CT-CBX-05 company group discovers all 84 contracts and 44 enforcing tasks", () => {
+test("CT-CBX-05 company group discovers all 84 contracts and 45 enforcing tasks", () => {
   const group = COVERAGE_GROUPS["company-brain-specialists"];
   assert.ok(group, "company group must be registered");
   const result = checkGroupCoverage(group);
   assert.deepEqual(result.failures, []);
   assert.equal(result.ids.length, 84);
   assert.equal(result.rows.size, 84);
-  assert.equal(result.tasks.filter((id) => group.implementationPhases.test(id)).length, 44);
+  assert.equal(result.tasks.filter((id) => group.implementationPhases.test(id)).length, 45);
   assert.ok(result.tasks.includes("T04.1"));
   assert.ok(result.tasks.includes("T20.1"));
+  assert.ok(group.implementationPhases.test("T08.1"));
 });

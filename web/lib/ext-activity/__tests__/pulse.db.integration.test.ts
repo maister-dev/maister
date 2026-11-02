@@ -130,3 +130,45 @@ describe("assistant activity pulse commit horizon", () => {
     }
   });
 });
+
+it("IT-CBK-03 knowledge invalidations stay out of the project activity pulse and cannot stall its cursor", async () => {
+  const projectId = await seedProject(
+    `knowledge-pulse-${randomUUID().slice(0, 8)}`,
+  );
+  const first = await insertDomainEvent(
+    testDatabase.pool,
+    projectId,
+    "task.created",
+    { taskKey: "OPS-1" },
+  );
+
+  await insertDomainEvent(
+    testDatabase.pool,
+    projectId,
+    "knowledge.record_changed",
+    {
+      owner: { kind: "project", projectId },
+      recordId: randomUUID(),
+      revision: 1,
+      changeId: randomUUID(),
+      cause: "published",
+    },
+  );
+  const last = await insertDomainEvent(
+    testDatabase.pool,
+    projectId,
+    "task.comment_added",
+    { taskKey: "OPS-2" },
+  );
+  const result = await getActivityPulse(projectId, {
+    since: first,
+    salience: "low",
+    client: testDatabase.db,
+  });
+
+  expect(result.happened.items.map((item) => item.kind)).toEqual([
+    "task.comment_added",
+  ]);
+  expect(result.happened.nextCursor).toBe(last);
+  expect(result.happened.hasMore).toBe(false);
+});

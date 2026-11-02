@@ -1,4 +1,5 @@
 import type { CoordinatorChildLaunchContext } from "@/lib/orchestrator/child-launch-context";
+import type { KnowledgeAccessCapture } from "@/lib/company/types";
 import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
 import type { OperationalFailureDiagnostic } from "@/lib/agents/operational-diagnostics";
 import type {
@@ -122,6 +123,11 @@ import {
 import { ADAPTER_IDS, type AdapterId } from "@/lib/acp-runners/adapter-support";
 import { DOMAIN_EVENT_KINDS } from "@/lib/domain-events/taxonomy";
 import { ADDITIONAL_CREATE_OWNER_SHAPES } from "@/lib/execution-host/create-owner-contract";
+import {
+  COMPANY_ACTIONS,
+  type CompanyAction,
+  type ConfirmationClass,
+} from "@/lib/company/types";
 import { PROMPT_OWNER_SHAPES } from "@/lib/execution-host/prompt-owner-contract";
 import {
   ASSIGNMENT_STATES,
@@ -185,6 +191,84 @@ export const users = pgTable(
   },
   (t) => ({
     idxAccountStatus: index("users_account_status_idx").on(t.accountStatus),
+  }),
+);
+
+export const companies = pgTable(
+  "companies",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    installationSingleton: boolean("installation_singleton")
+      .notNull()
+      .default(true),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    singleton: unique("companies_installation_singleton_unique").on(
+      t.installationSingleton,
+    ),
+    singletonCheck: check(
+      "companies_singleton_check",
+      sql`${t.installationSingleton} = true`,
+    ),
+  }),
+);
+
+export const companyGrants = pgTable(
+  "company_grants",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    companyId: text("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "restrict" }),
+    principalType: text("principal_type", {
+      enum: ["user", "agent", "system"],
+    }).notNull(),
+    principalId: text("principal_id").notNull(),
+    action: text("action", { enum: COMPANY_ACTIONS })
+      .$type<CompanyAction>()
+      .notNull(),
+    revision: integer("revision").notNull().default(1),
+    confirmationClasses: jsonb("confirmation_classes")
+      .$type<ConfirmationClass[]>()
+      .notNull()
+      .default([]),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (t) => ({
+    livePrincipalAction: uniqueIndex(
+      "company_grants_live_principal_action_unique",
+    )
+      .on(t.companyId, t.principalType, t.principalId, t.action)
+      .where(sql`${t.revokedAt} IS NULL`),
+    principalCheck: check(
+      "company_grants_principal_check",
+      sql`${t.principalType} IN ('user','agent','system') AND length(${t.principalId}) BETWEEN 1 AND 128`,
+    ),
+    actionCheck: check(
+      "company_grants_action_check",
+      sql`${t.action} IN (${sql.raw(COMPANY_ACTIONS.map((action) => "'" + action + "'").join(", "))})`,
+    ),
+    revisionCheck: check(
+      "company_grants_revision_check",
+      sql`${t.revision} > 0`,
+    ),
+    confirmationCheck: check(
+      "company_grants_confirmation_check",
+      sql`jsonb_typeof(${t.confirmationClasses}) = 'array' AND ${t.confirmationClasses} <@ '["assertion","observation","decision","procedure"]'::jsonb AND (${t.action} = 'knowledge:confirm' OR ${t.confirmationClasses} = '[]'::jsonb)`,
+    ),
   }),
 );
 
@@ -2038,6 +2122,7 @@ export const runs = pgTable(
     activityTimestampProvenance: text(
       "activity_timestamp_provenance",
     ).$type<AgentActivityTimestampProvenance>(),
+    knowledgeAccess: jsonb("knowledge_access").$type<KnowledgeAccessCapture>(),
     agentActivitySnapshot: jsonb(
       "agent_activity_snapshot",
     ).$type<AgentActivitySnapshot>(),
@@ -2396,6 +2481,10 @@ export const runs = pgTable(
     agentActivityHistoryIndex: index("runs_agent_activity_history_idx")
       .on(t.projectId, t.sourceAgentId, t.activitySortAt.desc(), t.id.desc())
       .where(sql`${t.sourceAgentId} IS NOT NULL`),
+    knowledgeAccessCheck: check(
+      "runs_knowledge_access_check",
+      sql`${t.knowledgeAccess} IS NULL OR (jsonb_typeof(${t.knowledgeAccess})='object' AND ${t.knowledgeAccess}->'schemaVersion'='1'::jsonb AND ${t.knowledgeAccess}->>'state' IN ('capturing','complete','unknown') AND jsonb_typeof(${t.knowledgeAccess}->'generation')='number' AND ${t.knowledgeAccess}->>'generation' ~ '^[1-9][0-9]*$' AND jsonb_typeof(${t.knowledgeAccess}->'restrictions')='array') IS TRUE`,
+    ),
     agentActivitySnapshotCheck: check(
       "runs_agent_activity_snapshot_check",
       sql`(${t.sourceAgentId} IS NULL AND ${t.agentActivitySnapshot} IS NULL AND ${t.activitySortAt} IS NULL AND ${t.activityTimestampProvenance} IS NULL) OR (${t.sourceAgentId} IS NOT NULL AND ${t.activitySortAt} IS NOT NULL AND ${t.activityTimestampProvenance} IN ('launch','verified_creation','legacy_estimate','migration_estimate') AND (${t.activityTimestampProvenance} <> 'launch' OR ${t.launchedAt} IS NOT NULL) AND (${t.agentActivitySnapshot} IS NULL OR (jsonb_typeof(${t.agentActivitySnapshot}) = 'object' AND ${t.agentActivitySnapshot}->'version' = '1'::jsonb AND ${t.agentActivitySnapshot}->>'agentId' = ${t.sourceAgentId} AND ${t.agentActivitySnapshot}->>'definitionSha256' ~ '^[a-f0-9]{64}$'))) IS TRUE`,
@@ -8645,9 +8734,12 @@ export const domainEvents = pgTable(
       .primaryKey()
       .generatedAlwaysAsIdentity(),
     kind: text("kind", { enum: DOMAIN_EVENT_KINDS }).notNull(),
-    projectId: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    companyId: text("company_id").references(() => companies.id, {
+      onDelete: "restrict",
+    }),
     taskId: text("task_id").references(() => tasks.id, {
       onDelete: "cascade",
     }),
@@ -8669,8 +8761,19 @@ export const domainEvents = pgTable(
   (t) => ({
     kindCheck: check(
       "domain_events_kind_check",
-      sql`${t.kind} in ('agent.activity_changed', 'agent.incident_changed', 'task.qualification_changed', 'task.launch_changed', 'task.created', 'task.comment_added', 'task.triage_requeued', 'task.clarification_requested', 'task.clarification_answered', 'task.clarification_cancelled', 'run.done', 'run.failed', 'run.crashed', 'run.abandoned', 'run.review', 'run.review_opened', 'run.needs_input', 'run.escalated', 'run.rework_claimed', 'run.rework_returned', 'gate.failed', 'run.operational_attention_acknowledged', 'run.operational_cleanup_changed')`,
+      sql`${t.kind} in ('knowledge.record_changed', 'agent.activity_changed', 'agent.incident_changed', 'task.qualification_changed', 'task.launch_changed', 'task.created', 'task.comment_added', 'task.triage_requeued', 'task.clarification_requested', 'task.clarification_answered', 'task.clarification_cancelled', 'run.done', 'run.failed', 'run.crashed', 'run.abandoned', 'run.review', 'run.review_opened', 'run.needs_input', 'run.escalated', 'run.rework_claimed', 'run.rework_returned', 'gate.failed', 'run.operational_attention_acknowledged', 'run.operational_cleanup_changed')`,
     ),
+    ownerCheck: check(
+      "domain_events_owner_check",
+      sql`(${t.projectId} IS NULL) <> (${t.companyId} IS NULL)`,
+    ),
+    companyKindCheck: check(
+      "domain_events_company_kind_check",
+      sql`${t.companyId} IS NULL OR (${t.kind}='knowledge.record_changed' AND ${t.taskId} IS NULL AND ${t.runId} IS NULL)`,
+    ),
+    companyKindIdIdx: index("domain_events_company_kind_id_idx")
+      .on(t.companyId, t.kind, t.id)
+      .where(sql`${t.companyId} IS NOT NULL`),
     actorTypeCheck: check(
       "domain_events_actor_type_check",
       sql`${t.actorType} in ('user', 'system', 'agent')`,
@@ -8703,7 +8806,16 @@ export const domainEvents = pgTable(
       ),
   }),
 );
-export type DomainEventRow = typeof domainEvents.$inferSelect;
+export type DomainEventRow = Omit<
+  typeof domainEvents.$inferSelect,
+  "companyId"
+> & {
+  companyId?: string | null;
+};
+export type ProjectDomainEventRow = Omit<
+  DomainEventRow,
+  "projectId" | "companyId"
+> & { projectId: string; companyId?: null };
 export type DomainEventInsert = typeof domainEvents.$inferInsert;
 
 export const domainEventConsumers = pgTable("domain_event_consumers", {

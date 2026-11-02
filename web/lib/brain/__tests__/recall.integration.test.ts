@@ -423,3 +423,20 @@ describe("recall — review-fix hardening (lexical fallback, KNN scoping, kill s
     ).rejects.toMatchObject({ code: "CONFIG" });
   });
 });
+
+it("legacy project recall does not disclose a record with narrower grants", async () => {
+  const retained = await retain(
+    projectId,
+    { kind: "lesson", content: NEAR },
+    {},
+    { db: ctx.db, client },
+  );
+
+  await ctx.pool.query(
+    "UPDATE brain_items SET visibility='restricted' WHERE id=$1",
+    [retained.itemId],
+  );
+  const results = await recall(projectId, QUERY, { db: ctx.db, client });
+
+  expect(results).toEqual([]);
+});

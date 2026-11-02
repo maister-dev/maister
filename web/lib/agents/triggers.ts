@@ -2,11 +2,12 @@ import "server-only";
 
 import type { AgentTriggerClaim } from "@/lib/agents/trigger-attempts";
 import type { DomainEventConsumer } from "@/lib/domain-events/consumers";
-import type { DomainEventRow } from "@/lib/db/schema";
+import type { DomainEventRow, ProjectDomainEventRow } from "@/lib/db/schema";
 
 import { and, eq, inArray, lte, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { isProjectDomainEvent } from "@/lib/domain-events/scope";
 import {
   claimCronAgentAttempt,
   claimEventAgentAttempt,
@@ -344,7 +345,7 @@ function clarificationAnswerTarget(
 async function summonMentionedAgents(input: {
   db: Db;
   launch: LaunchFn;
-  event: DomainEventRow;
+  event: ProjectDomainEventRow;
   agentIds: string[];
 }): Promise<void> {
   const { db: _db, launch, event } = input;
@@ -556,7 +557,10 @@ export function buildAgentTriggersConsumer(
   return {
     id: "agent_triggers",
     startFrom: "now",
-    async handle(events: DomainEventRow[]): Promise<void> {
+    async handle(receivedEvents: DomainEventRow[]): Promise<void> {
+      const events = receivedEvents.filter(isProjectDomainEvent);
+
+      if (events.length === 0) return;
       const _db = opts.db ?? getDb();
       const launch = opts.launch ?? launchAgentRun;
 

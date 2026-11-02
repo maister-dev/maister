@@ -1,0 +1,52 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.5 /Users/kaa/.codex/worktrees/2599/mAIster/web
+
+{"level":30,"time":1793660864407,"pid":97902,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793660864635,"pid":97902,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-daemon-contact","outcome":"passed","durationMs":13,"serverVersion":"29.4.2","strategy":"ConfigurationStrategy","msg":"test container daemon contacted"}
+{"level":30,"time":1793660864635,"pid":97902,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"started","msg":"constructing test container runtime client"}
+{"level":30,"time":1793660864643,"pid":97902,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"passed","durationMs":8,"serverVersion":"29.4.2","msg":"test container runtime client ready"}
+{"level":30,"time":1793660864644,"pid":97902,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-create-start","preparationDurationMs":22,"storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"starting owned PostgreSQL container"}
+{"level":30,"time":1793660865528,"pid":97902,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-start","outcome":"passed","durationMs":882,"containerId":"f665fc76ceec15023cadb029ce197c2923f86d1040cfef1fa92ebe373ca7e210","storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"started owned PostgreSQL container"}
+{"level":30,"time":1793660865536,"pid":97902,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"bare","phase":"ready","durationMs":914,"containerId":"f665fc76ceec15023cadb029ce197c2923f86d1040cfef1fa92ebe373ca7e210","endpoint":"postgres://localhost:62886/ext_activity_pulse_test","msg":"started bare test database"}
+(node:97902) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+{"level":30,"time":1793660866201,"pid":97902,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"main","phase":"migrate","endpoint":"postgres://localhost:62886/ext_activity_pulse_test","msg":"applied main test database migrations"}
+{"level":30,"time":1793660866398,"pid":97902,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"stop","durationMs":161,"containerId":"f665fc76ceec15023cadb029ce197c2923f86d1040cfef1fa92ebe373ca7e210","endpoint":"postgres://localhost:62886/ext_activity_pulse_test","msg":"stopped test database"}
+ ❯ |integration| lib/ext-activity/__tests__/pulse.db.integration.test.ts (2 tests | 1 failed) 1779ms
+   × IT-CBK-03 knowledge invalidations stay out of the project activity pulse and cannot stall its cursor 12ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |integration| lib/ext-activity/__tests__/pulse.db.integration.test.ts > IT-CBK-03 knowledge invalidations stay out of the project activity pulse and cannot stall its cursor
+TypeError: Cannot read properties of undefined (reading 'salience')
+ ❯ mapDomainEventToPulseItem lib/ext-activity/domain-events.ts:244:22
+    242|     ts: row.occurredAt,
+    243|     kind: row.kind,
+    244|     salience: mapped.salience,
+       |                      ^
+    245|     summary: mapped.summary,
+    246|     action: mapped.action,
+ ❯ lib/ext-activity/service.ts:406:5
+ ❯ getActivityPulse lib/ext-activity/service.ts:405:65
+ ❯ lib/ext-activity/__tests__/pulse.db.integration.test.ts:141:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 1 passed (2)
+   Start at  02:07:44
+   Duration  2.33s (tests 78%, import 16%, transform 6%)
+
+undefined
+/Users/kaa/.codex/worktrees/2599/mAIster/web:
+[ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL] Command failed with exit code 1: vitest run --project integration lib/ext-activity/__tests__/pulse.db.integration.test.ts

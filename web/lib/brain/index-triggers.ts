@@ -6,6 +6,7 @@ import type { DomainEventRow } from "@/lib/db/schema";
 import { sql, type SQL } from "drizzle-orm";
 import pino from "pino";
 
+import { isProjectDomainEvent } from "@/lib/domain-events/scope";
 import { getDb } from "@/lib/db/client";
 import { isRunTerminalEventKind } from "@/lib/domain-events/taxonomy";
 import { isBrainSchemaApplied } from "@/lib/brain/guard";
@@ -32,6 +33,7 @@ export async function enqueueSourceReindexForEvents(
   let inserted = 0;
 
   for (const event of events) {
+    if (!isProjectDomainEvent(event)) continue;
     if (isGraphOnlyCutoverFailure(event)) {
       log.debug(
         { eventId: event.id, runId: event.runId, reason: "graph-cutover" },
@@ -86,7 +88,10 @@ export async function enqueueSourceReindexForEvents(
 export const sourceReindexConsumer: DomainEventConsumer = {
   id: "brain_source_reindex",
   startFrom: "now",
-  async handle(events: DomainEventRow[]): Promise<void> {
+  async handle(receivedEvents: DomainEventRow[]): Promise<void> {
+    const events = receivedEvents.filter(isProjectDomainEvent);
+
+    if (events.length === 0) return;
     const db = getDb() as unknown as TriggerDb;
 
     if (!(await isBrainSchemaApplied(db))) return;

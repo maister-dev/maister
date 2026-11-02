@@ -2,7 +2,7 @@
 
 ## Purpose
 
-**Designed — ADR-202.** This domain owns immutable source/version witnesses, source-observation independence and conflict-preserving retrieval. [Records](company-brain.md) owns publication/confirmation; current repository search anchors remain navigational projections.
+**Partially implemented — ADR-202.** Indexed-source captures, immutable witnesses, correlated reuse and potential-conflict edges are implemented in storage. Native retrieval, review and external tool surfaces remain Designed. This domain owns immutable source/version witnesses, source-observation independence and conflict-preserving retrieval. [Records](company-brain.md) owns publication/confirmation; current repository search anchors remain navigational projections.
 
 ## Domain entities
 
@@ -66,9 +66,13 @@ Source observation identity is separate from selector/witness identity. Two chun
 | Same source quoted repeatedly | One correlated observation; do not increase confirmation or independent corroboration |
 | Near semantic match | Review candidate only; no automatic overwrite/merge/supersession |
 
+Proposal evidence uses explicit `{relation,reference}` entries; record evidence returns `{relation,witness}`. Supporting, contradicting and provenance roles cannot be silently converted during publication or reduction.
+
 Submissions use owner/authority-bound delivery key and canonical payload digest; keys are generated before external effects and survive retries. Same key/same canonical body returns the original safe receipt without new origin/reinforcement evidence; changed body conflicts. Exact-content dedup cannot reveal hidden records. Parent record revision, witness links and submission receipt commit together; current anchor updates are independently retryable.
 
-Witness rows and evidence links are immutable; source deletion retires capture availability without cascading accepted revision/evidence history. Restricted captured content stays restricted after workspace cleanup. Current rank/confidence is retrieval metadata only. Derived summary output inherits every server-recorded accessed restriction, including sources absent from model citations.
+Indexed captures record source/version/content and server capture attribution; source-observation independence is explicitly unknown and cannot increase corroboration. Similarity emits only an attributed `potential_conflict` edge with exact record revisions; it never asserts a contradiction or truth.
+
+Witness rows and evidence links are immutable; source deletion retires capture availability without cascading accepted revision/evidence history. Restricted captured content stays restricted after workspace cleanup. Explicit project deletion cascades its observations/witnesses without obstruction. Cross-owner links retain immutable identity/version snapshots and resolve unavailable; they have no restrictive FK to the removed witness. Current rank/confidence is retrieval metadata only. Derived summary output inherits every server-recorded accessed restriction, including sources absent from model citations.
 
 ## Expectations
 
