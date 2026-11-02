@@ -17,7 +17,8 @@ import type { AgentTurn } from "@/lib/db/schema";
 import type { RealSupervisor } from "@/test-support/real-supervisor";
 import type { ProjectionWorker } from "@/lib/execution-host/events/projection-worker";
 
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -30,6 +31,7 @@ import {
   finalizeAgentRun,
   sendAgentMessage,
   startAgentSession,
+  launchAgentRun,
 } from "@/lib/agents/launch";
 import { startAgentContinuationWorker } from "@/lib/agents/continuation-worker";
 import { createExecutionHosts } from "@/lib/execution-host/client";
@@ -39,6 +41,13 @@ import { canonicalProjectors } from "@/lib/execution-host/events/projection-runt
 import { startProjectionWorker } from "@/lib/execution-host/events/projection-worker";
 import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer";
 import { seedAgentRun } from "@/test-support/agent-run-seed";
+import { createTask } from "@/lib/services/tasks";
+import {
+  loadTaskQualificationInput,
+  prepareTaskQualification,
+} from "@/lib/tasks/qualification";
+import { qualificationFixture } from "@/test-support/task-qualification";
+import { operationalSuccessFixture } from "@/test-support/operational-agent";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -161,6 +170,172 @@ async function runStatus(runId: string): Promise<string> {
 }
 
 describe("the queued-message invariant (D-A6)", () => {
+  it("TB07 real supervisor completes owned Triager preparation and publishes its assessment after clean completion", async () => {
+    const responseFile = path.join(logDir, "triager-response.txt");
+    const templateId = await seedAgentRun(db, {
+      runtimeRoot: supervisor.runtimeRoot,
+      definition: `---\nname: Qualifier\ndescription: qualify requests\nkind: operational\ncompletion: {contract: operational_v1}\ntask_qualification: {contract: v1, role: qualifier}\nworkspace: repo_read\nworkspace_ref: task_target\nmode: session\nplatform_mcp: false\ntriggers: [manual]\nrisk_tier: read_only\n---\nfixture-output:${JSON.stringify({ bytes: 0, textFile: responseFile })}\n`,
+      workspace: "repo_read",
+      operational: true,
+      resultContract: null,
+    });
+    const source = (
+      await database.pool.query(
+        "SELECT r.project_id,r.agent_id,s.runner_id FROM runs r JOIN run_sessions s ON s.run_id=r.id WHERE r.id=$1",
+        [templateId],
+      )
+    ).rows[0] as { project_id: string; agent_id: string; runner_id: string };
+
+    await database.pool.query(
+      "UPDATE projects SET task_qualification_override='required' WHERE id=$1",
+      [source.project_id],
+    );
+    await database.pool.query(
+      "UPDATE package_installs SET manifest=jsonb_set(manifest,'{spec,compat,engine_min}','\"3.10.0\"') WHERE id=(SELECT package_install_id FROM project_package_attachments WHERE project_id=$1)",
+      [source.project_id],
+    );
+    await database.pool.query(
+      "INSERT INTO platform_runtime_settings(id,default_runner_id) VALUES('singleton',$1) ON CONFLICT(id) DO UPDATE SET default_runner_id=excluded.default_runner_id",
+      [source.runner_id],
+    );
+    const task = await createTask(
+      {
+        title: "Qualification fixture",
+        prompt: "Inspect the repository and assess this request.",
+      },
+      { projectId: source.project_id },
+      db,
+    );
+    const launched = await launchAgentRun({
+      db,
+      agentId: source.agent_id,
+      projectId: source.project_id,
+      taskId: task.taskId,
+      trigger: { source: "manual" },
+    });
+
+    if (!("runId" in launched)) throw new Error("Expected a qualifier run");
+    let invocation: Invocation | undefined;
+
+    await expect
+      .poll(
+        async () => {
+          const session = (
+            await database.pool.query(
+              "SELECT acp_session_id FROM run_sessions WHERE run_id=$1",
+              [launched.runId],
+            )
+          ).rows[0]?.acp_session_id;
+
+          invocation = (await prompts()).find(
+            (entry) => entry.sessionId === session,
+          );
+
+          return invocation !== undefined;
+        },
+        { timeout: 45_000, interval: 50 },
+      )
+      .toBe(true);
+    const preparedRun = (
+      await database.pool.query(
+        "SELECT operational_integrity_baseline FROM runs WHERE id=$1",
+        [launched.runId],
+      )
+    ).rows[0];
+
+    expect(
+      preparedRun.operational_integrity_baseline.generation,
+    ).toBeGreaterThan(0);
+    const credential = (
+      await database.pool.query("SELECT id FROM project_tokens WHERE name=$1", [
+        `agent-run:${launched.runId}`,
+      ])
+    ).rows[0] as { id: string };
+    const input = await loadTaskQualificationInput(
+      db,
+      source.project_id,
+      task.taskId,
+    );
+    const assessment = await prepareTaskQualification(db, {
+      projectId: source.project_id,
+      taskId: task.taskId,
+      author: {
+        kind: "agent_run",
+        runId: launched.runId,
+        tokenId: credential.id,
+      },
+      request: {
+        requestKey: randomUUID(),
+        expectedInputRevision: input.inputRevision,
+        expectedQualificationRevision: input.currentQualificationRevision,
+        qualification: qualificationFixture(),
+        enqueue: false,
+      },
+    });
+    const candidate = await db.transaction(assessment.apply);
+
+    expect(
+      (
+        await database.pool.query(
+          "SELECT current_qualification_id FROM tasks WHERE id=$1",
+          [task.taskId],
+        )
+      ).rows[0].current_qualification_id,
+    ).toBeNull();
+    await writeFile(
+      responseFile,
+      `\`\`\`json maister:output\n${JSON.stringify({ ...operationalSuccessFixture(), references: [{ kind: "other", id: candidate.qualificationId, state: "confirmed" }] })}\n\`\`\``,
+    );
+    process.kill(invocation!.pid, "SIGUSR1");
+    await expect
+      .poll(() => runStatus(launched.runId), { timeout: 45_000, interval: 50 })
+      .toBe("Done");
+    const completed = (
+      await database.pool.query(
+        "SELECT operational_terminal FROM runs WHERE id=$1",
+        [launched.runId],
+      )
+    ).rows[0];
+
+    expect(completed.operational_terminal).toMatchObject({
+      successful: true,
+      integrity: "clean",
+      validation: "valid",
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT current_qualification_id FROM tasks WHERE id=$1",
+          [task.taskId],
+        )
+      ).rows[0].current_qualification_id,
+    ).toBe(candidate.qualificationId);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT phase,turn_id FROM agent_preparation_operations WHERE run_id=$1",
+          [launched.runId],
+        )
+      ).rows,
+    ).toEqual([
+      expect.objectContaining({
+        phase: "handed_off",
+        turn_id: expect.any(String),
+      }),
+    ]);
+    await expect
+      .poll(
+        async () =>
+          (
+            await database.pool.query(
+              "SELECT operational_cleanup->>'state' AS state FROM runs WHERE id=$1",
+              [launched.runId],
+            )
+          ).rows[0].state,
+        { timeout: 45_000, interval: 50 },
+      )
+      .toBe("released");
+  }, 180_000);
   it("M1: a run finalized Failed supersedes its queued messages in the finalization transaction", async () => {
     const runId = await seedPersistentAgent();
     const before = (await prompts()).length;

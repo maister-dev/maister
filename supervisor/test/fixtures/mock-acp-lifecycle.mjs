@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { appendFile, open, writeFile } from "node:fs/promises";
+import { appendFile, open, readFile, writeFile } from "node:fs/promises";
 import { Readable, Writable } from "node:stream";
 
 import * as acp from "@agentclientprotocol/sdk/unstable";
@@ -536,10 +536,16 @@ class LifecycleAgent {
         return { stopReason: "end_turn" };
       }
       const glyph = spec.multibyte ? "é" : "x";
+      let responseText = spec.text ?? "";
+      if (spec.textFile) {
+        const responseBytes = await readFile(spec.textFile);
+        if (responseBytes.length > 65536) throw new Error("Fixture response exceeds 64 KiB");
+        responseText = responseBytes.toString("utf8");
+      }
       const text =
         glyph.repeat(Math.floor(spec.bytes / Buffer.byteLength(glyph))) +
         "x".repeat(spec.bytes % Buffer.byteLength(glyph)) +
-        (spec.text ?? "");
+        responseText;
       const chunks =
         spec.chunkSize && !spec.tool
           ? Array.from(

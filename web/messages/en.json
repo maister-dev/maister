@@ -5889,6 +5889,9 @@
   },
   "operationalAgents": {
     "title": "Operation result",
+    "preparationFailed": "Workspace preparation failed before model execution. The model did not start; no task assessment was produced.",
+    "preparationRemediation": "Inspect the preparation details and resolve the filesystem or Git problem, then use Retry for a new attempt.",
+    "preparationDetails": "Preparation details",
     "pending": "In progress",
     "success": "Done",
     "partial": "Partially completed",

@@ -221,6 +221,17 @@ export function OperationalOutcomeDetails({
             </div>
           ))}
         </>
+      ) : outcome.infrastructureFailure ? (
+        <div className="my-3 space-y-2" role="status">
+          <p>{t("preparationFailed")}</p>
+          <p>{t("preparationRemediation")}</p>
+          <details>
+            <summary>{t("preparationDetails")}</summary>
+            <pre className="overflow-auto whitespace-pre-wrap text-sm">
+              {JSON.stringify(outcome.infrastructureFailure, null, 2)}
+            </pre>
+          </details>
+        </div>
       ) : (
         <p>
           {t(outcome.state === "pending" ? "awaitingResult" : "invalidResult")}

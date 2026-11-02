@@ -135,6 +135,9 @@ function projectOperationalOutcome(
     ...(receipt?.validationDiagnostics
       ? { validationDiagnostics: receipt.validationDiagnostics }
       : {}),
+    ...(receipt?.infrastructureFailure
+      ? { infrastructureFailure: receipt.infrastructureFailure }
+      : {}),
     integrity: receipt?.integrity ?? "pending",
     resultRevision: receipt?.resultRevision ?? null,
     reportedResult: result,

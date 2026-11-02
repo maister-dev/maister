@@ -74,5 +74,27 @@ it.each([
     expect(html).toContain("<code>outcome</code>");
     expect(html).not.toContain(messages.operationalAgents.counts.scanned);
     expect(render(invalid)).toContain(messages.operationalAgents.invalidResult);
+    const preparationHtml = render({
+      ...invalid,
+      resultRevision: null,
+      infrastructureFailure: {
+        runId: "run",
+        assignmentEpoch: 1,
+        stage: "baseline",
+        probeOperation: "lstat",
+        causeChain: [{ name: "Error", code: "ENOENT", syscall: "lstat" }],
+      },
+    });
+
+    expect(preparationHtml).toContain(
+      messages.operationalAgents.preparationFailed,
+    );
+    expect(preparationHtml).toContain(
+      messages.operationalAgents.preparationRemediation,
+    );
+    expect(preparationHtml).toContain("ENOENT");
+    expect(preparationHtml).not.toContain(
+      messages.operationalAgents.invalidResult,
+    );
   },
 );

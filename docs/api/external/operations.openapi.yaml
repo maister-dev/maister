@@ -6244,6 +6244,33 @@ components:
           type: array
           items: { type: string }
           description: Opaque retained diagnostic object IDs, authorized through the run object-content endpoint.
+    OperationalPreparationFailure:
+      type: object
+      additionalProperties: false
+      required: [causeChain]
+      description: Safe primary infrastructure cause retained before model dispatch. Messages, paths, stderr, source and credentials are excluded; absent on historical receipts.
+      properties:
+        runId: { type: string, minLength: 1, maxLength: 256 }
+        assignmentId: { type: string, minLength: 1, maxLength: 256 }
+        assignmentEpoch: { type: integer, minimum: 1 }
+        preparationId: { type: string, minLength: 1, maxLength: 256 }
+        stage: { type: string, minLength: 1, maxLength: 64 }
+        probeOperation: { type: string, pattern: '^[a-z.-]{1,64}$' }
+        causeChain:
+          type: array
+          maxItems: 4
+          items:
+            type: object
+            additionalProperties: false
+            required: [name]
+            properties:
+              name: { type: string, pattern: '^[A-Za-z_][A-Za-z0-9_]{0,63}$' }
+              code:
+                oneOf:
+                  - { type: integer }
+                  - { type: string, pattern: '^[A-Za-z_][A-Za-z0-9_]{0,63}$' }
+              syscall: { type: string, pattern: '^[A-Za-z_][A-Za-z0-9_]{0,63}$' }
+              signal: { type: string, pattern: '^[A-Za-z_][A-Za-z0-9_]{0,63}$' }
     OperationalOutcome:
       type: object
       additionalProperties: false
@@ -6317,6 +6344,8 @@ components:
             - type: object
               nullable: true
               enum: [null]
+        infrastructureFailure:
+          $ref: "#/components/schemas/OperationalPreparationFailure"
         referenceLinks:
           type: array
           description: Safe declared external links and server-resolved task links within the Run project. The reported result remains unchanged.

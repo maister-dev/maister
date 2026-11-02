@@ -161,6 +161,7 @@ export type OperationalOutcome = {
   successful: boolean;
   validation: "pending" | OperationalTerminal["validation"];
   validationDiagnostics?: OperationalValidationDiagnostic[];
+  infrastructureFailure?: OperationalFailureDiagnostic;
   integrity: "pending" | OperationalIntegrityVerdict;
   resultRevision: number | null;
   reportedResult: OperationalResultV1 | null;
