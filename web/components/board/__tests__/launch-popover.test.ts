@@ -38,6 +38,7 @@ import {
   launchUnavailableReasonMessage,
   launchVerdictReasonMessage,
   launchPreviewMatches,
+  launchPreconditionMessage,
   runnerLaunchErrorLabel,
   pruneBudgetText,
 } from "@/components/board/launch-popover";
@@ -86,6 +87,29 @@ describe("LaunchPopover — consensus diagnostics", () => {
     expect(
       launchUnavailableReasonMessage("runner_unresolved", (key) => key),
     ).toBe("launchUnavailableReason.runnerUnresolved");
+  });
+});
+
+describe("LaunchPopover — launch refusal diagnostics", () => {
+  it("surfaces an actionable PRECONDITION message", () => {
+    expect(
+      launchPreconditionMessage({
+        code: "PRECONDITION",
+        message: "flow requirements not met: run sk-init first",
+      }),
+    ).toBe("flow requirements not met: run sk-init first");
+  });
+
+  it("does not surface arbitrary backend messages for other error codes", () => {
+    expect(
+      launchPreconditionMessage({
+        code: "CONFIG",
+        message: "private output",
+      }),
+    ).toBeNull();
+    expect(
+      launchPreconditionMessage({ code: "PRECONDITION", message: "   " }),
+    ).toBeNull();
   });
 });
 
