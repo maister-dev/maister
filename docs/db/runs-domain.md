@@ -933,4 +933,4 @@ Operational runs freeze `agent_kind` and `result_contract`; integrity generation
 
 ## Peek paging and push hints (Implemented)
 
-Migration 0210 adds three bounded page-order indexes; 0211 adds transactional advisory notification triggers on existing canonical tables. No entities, columns or lifecycle transitions are added. Exact indexes, sources and upgrade gates: [peek data contract](../system-analytics/run-peek-data.md).
+Migration 0211 adds three bounded page-order indexes; 0212 adds transactional advisory notification triggers on existing canonical tables. No entities, columns or lifecycle transitions are added. Exact indexes, sources and upgrade gates: [peek data contract](../system-analytics/run-peek-data.md).
