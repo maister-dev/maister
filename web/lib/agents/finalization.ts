@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { RawNodeOutputPayload } from "@/lib/flows/graph/node-output";
+import type { OperationalFailureDiagnostic } from "@/lib/agents/operational-diagnostics";
 import type { Db } from "@/lib/execution-host/db";
 import type { Run, Workspace, Project } from "@/lib/db/schema";
 import type { RunResultContract, ResultStatus } from "@/lib/run-results/types";
@@ -119,6 +120,7 @@ type AgentAssignmentClose =
 
 export type AgentFinalizeOptions = {
   db?: Db;
+  infrastructureFailure?: OperationalFailureDiagnostic;
   /** Exact retained prompt whose validated result-resume grant may settle. */
   applicationCommandId?: string;
   reason?: string;
@@ -782,6 +784,9 @@ async function prepareAgentFinalization(
           baselineGeneration:
             preparedRun.operationalIntegrityBaseline?.generation ?? null,
           evidenceIds: [],
+          ...(opts.infrastructureFailure
+            ? { infrastructureFailure: opts.infrastructureFailure }
+            : {}),
         }
       : null;
     const cleanupDue = new Date(

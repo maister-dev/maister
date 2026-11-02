@@ -116,6 +116,7 @@ import {
   captureOperationalBaseline,
   captureOperationalGeneration,
 } from "@/lib/agents/operational-integrity";
+import { operationalFailureDiagnostic } from "@/lib/agents/operational-diagnostics";
 import {
   buildOperationalContract,
   frozenOperationalDefinition,
@@ -3979,6 +3980,13 @@ async function driveAgentSession(
         integrityBaseline = await captureOperationalBaseline(
           cwd,
           operationalResourceKind(run),
+          {
+            context: {
+              runId,
+              ...(assignmentId ? { assignmentId } : {}),
+              stage: "baseline",
+            },
+          },
         );
         integrityBaseline = {
           ...integrityBaseline,
@@ -4315,13 +4323,11 @@ async function driveAgentSession(
                 typeof err.code === "string"
                   ? err.code
                   : undefined,
-              errorFrames:
-                err instanceof Error
-                  ? err.stack
-                      ?.split("\n")
-                      .filter((line) => line.trim().startsWith("at "))
-                      .slice(0, 4)
-                  : undefined,
+              ...operationalFailureDiagnostic(err, {
+                runId,
+                ...(assignmentId ? { assignmentId } : {}),
+                stage: operationalSpawnStage,
+              }),
             }
           : {}),
         errorType: err instanceof Error ? err.name : "unknown",
@@ -4352,9 +4358,33 @@ async function driveAgentSession(
         return;
       throw err;
     }
+    const diagnostic =
+      run.agentKind === "operational"
+        ? {
+            causeReason:
+              isMaisterError(err) && typeof err.details?.reason === "string"
+                ? err.details.reason
+                : "operational_preparation_failed",
+            infrastructureFailure: operationalFailureDiagnostic(err, {
+              runId,
+              ...(assignmentId ? { assignmentId } : {}),
+              stage: operationalSpawnStage,
+            }),
+          }
+        : {};
+    if (
+      await settleUndispatchedAgentFailure(
+        _db,
+        runId,
+        "agent_dispatch_failed",
+        diagnostic,
+      )
+    )
+      return;
     await finalizeAgentRun(runId, "Failed", {
       db: _db,
       reason: "agent_session_spawn_failed",
+      ...diagnostic,
     });
   }
 }

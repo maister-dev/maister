@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { AgentFinalizeOptions } from "@/lib/agents/finalization";
+
 import type { Db } from "@/lib/execution-host/db";
 import type { AgentTurn } from "@/lib/db/schema";
 import type { BoundClient } from "@/lib/execution-host/client";
@@ -35,8 +37,16 @@ export async function settleUndispatchedAgentFailure(
   db: Db,
   runId: string,
   reason: "agent_workspace_prepare_failed" | "agent_dispatch_failed",
+  diagnostic: Pick<
+    AgentFinalizeOptions,
+    "causeReason" | "infrastructureFailure"
+  > = {},
 ): Promise<boolean> {
-  const prepared = await prepareUndispatchedAgentFailure(runId, { db, reason });
+  const prepared = await prepareUndispatchedAgentFailure(runId, {
+    db,
+    reason,
+    ...diagnostic,
+  });
   const application = await db.transaction(prepared.apply);
 
   await prepared.afterCommit(application);

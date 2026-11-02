@@ -47,6 +47,31 @@ afterEach(async () => {
 });
 
 describe("operational source integrity", () => {
+  it("TB05 preserves a real missing-root cause and probe operation without exposing filesystem paths", async () => {
+    await rm(cwd, { recursive: true });
+
+    let failure: unknown;
+
+    try {
+      await captureOperationalBaseline(cwd, "ephemeral_checkout");
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toMatchObject({
+      code: "PRECONDITION",
+      details: {
+        reason: "operational_integrity_probe_failed",
+        probeOperation: "lstat",
+        causeChain: [{ name: "Error", code: "ENOENT", syscall: "lstat" }],
+      },
+      cause: { code: "ENOENT", syscall: "lstat" },
+    });
+    expect(
+      JSON.stringify((failure as { details: object }).details),
+    ).not.toContain(root);
+  });
+
   it("bounds concurrent probe buffers while hashing distinct multi-block, empty, short and tiny files exactly", async () => {
     const fixtures = Array.from({ length: 4 }, (_, probe) => ({
       plain: join(root, `probe-${probe}`),

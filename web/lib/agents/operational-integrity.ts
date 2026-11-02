@@ -5,6 +5,7 @@ import type {
   OperationalIntegrityEntry,
   OperationalResourceKind,
 } from "@/lib/run-results/operational-types";
+import type { OperationalProbeContext } from "@/lib/agents/operational-diagnostics";
 
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -18,6 +19,7 @@ import pino from "pino";
 import { canonicalCommandJson } from "../../../runtime/command-json";
 
 import { MaisterError, isMaisterError } from "@/lib/errors";
+import { operationalCauseChain } from "@/lib/agents/operational-diagnostics";
 
 const exec = promisify(execFile);
 const MAX_ENTRIES = 100_000;
@@ -25,7 +27,12 @@ const MAX_BYTES = 256 * 1024 * 1024;
 const MAX_PROBE_MS = 30_000;
 const log = pino({ name: "operational-integrity" });
 
-type Limits = { maxEntries?: number; maxBytes?: number; maxProbeMs?: number };
+type Limits = {
+  maxEntries?: number;
+  maxBytes?: number;
+  maxProbeMs?: number;
+  context?: OperationalProbeContext;
+};
 type ProbeLimitAxis = "time" | "bytes" | "entries" | "worktree_config_bytes";
 type ProbeLimitDetails = {
   limitAxis: ProbeLimitAxis;
@@ -66,17 +73,44 @@ function probeError(reason: string, details?: ProbeLimitDetails): MaisterError {
   );
 }
 
+async function probeOperation<T>(
+  operation: string,
+  effect: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await effect();
+  } catch (error) {
+    if (isMaisterError(error)) throw error;
+    throw new MaisterError(
+      "PRECONDITION",
+      "operational integrity probe failed",
+      {
+        cause: error,
+        details: {
+          reason: "operational_integrity_probe_failed",
+          probeOperation: operation,
+          causeChain: operationalCauseChain(error),
+        },
+      },
+    );
+  }
+}
+
 function logProbeFailure(
   phase: "capture" | "verify",
   resourceKind: OperationalResourceKind,
   error: unknown,
+  context: OperationalProbeContext = {},
 ): void {
   const details = isMaisterError(error) ? error.details : undefined;
 
   log.warn(
     {
+      ...context,
       phase,
       resourceKind,
+      probeOperation: details?.probeOperation,
+      causeChain: details?.causeChain ?? operationalCauseChain(error),
       reason:
         typeof details?.reason === "string"
           ? details.reason
@@ -105,11 +139,11 @@ async function captureTree(
   limits: Limits,
 ): Promise<Tree> {
   const candidate = path.resolve(cwd);
-  const rootInfo = await lstat(candidate);
+  const rootInfo = await probeOperation("lstat", () => lstat(candidate));
 
   if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink())
     throw probeError("operational_integrity_root_replaced");
-  const root = await realpath(candidate);
+  const root = await probeOperation("realpath", () => realpath(candidate));
   const startedAt = performance.now();
   const maxProbeMs = Math.min(limits.maxProbeMs ?? MAX_PROBE_MS, MAX_PROBE_MS);
   const deadline = startedAt + maxProbeMs;
@@ -148,11 +182,11 @@ async function captureTree(
     if (source.length >= maxEntries)
       throw limitError("entries", source.length + 1, maxEntries);
     const absolute = path.join(root, relative);
-    const info = await lstat(absolute);
+    const info = await probeOperation("lstat", () => lstat(absolute));
     const mode = info.mode & 0o777;
 
     if (info.isSymbolicLink()) {
-      const target = await readlink(absolute);
+      const target = await probeOperation("readlink", () => readlink(absolute));
 
       bytes += Buffer.byteLength(target);
       source.push({
@@ -162,7 +196,10 @@ async function captureTree(
         mode,
       });
     } else if (info.isDirectory()) {
-      if ((await realpath(absolute)) !== absolute)
+      if (
+        (await probeOperation("realpath", () => realpath(absolute))) !==
+        absolute
+      )
         throw probeError("operational_integrity_symlink_race");
       source.push({
         path: relative,
@@ -170,18 +207,19 @@ async function captureTree(
         sha256: digest(""),
         mode,
       });
-      for (const name of (await readdir(absolute)).sort())
+      for (const name of (
+        await probeOperation("readdir", () => readdir(absolute))
+      ).sort())
         await visit(`${relative}/${name}`);
     } else if (info.isFile()) {
       bytes += info.size;
       check();
-      const file = await open(
-        absolute,
-        constants.O_RDONLY | constants.O_NOFOLLOW,
+      const file = await probeOperation("open", () =>
+        open(absolute, constants.O_RDONLY | constants.O_NOFOLLOW),
       );
 
       try {
-        const opened = await file.stat();
+        const opened = await probeOperation("stat", () => file.stat());
 
         if (
           opened.ino !== info.ino ||
@@ -195,7 +233,9 @@ async function captureTree(
 
         while (true) {
           check();
-          const read = await file.read(buffer, 0, buffer.length, null);
+          const read = await probeOperation("read", () =>
+            file.read(buffer, 0, buffer.length, null),
+          );
 
           if (read.bytesRead === 0) break;
           count += read.bytesRead;
@@ -203,7 +243,7 @@ async function captureTree(
             throw probeError("operational_integrity_file_race");
           hash.update(buffer.subarray(0, read.bytesRead));
         }
-        const closed = await file.stat();
+        const closed = await probeOperation("stat", () => file.stat());
 
         if (
           count !== info.size ||
@@ -218,13 +258,15 @@ async function captureTree(
           mode,
         });
       } finally {
-        await file.close();
+        await probeOperation("close", () => file.close());
       }
     } else throw probeError("operational_integrity_special_file");
     check();
   };
 
-  for (const name of (await readdir(root)).sort())
+  for (const name of (
+    await probeOperation("readdir", () => readdir(root))
+  ).sort())
     if (name !== ".git" || resourceKind === "plain_directory")
       await visit(name);
   if (resourceKind === "plain_directory")
@@ -241,14 +283,12 @@ async function captureTree(
     };
   const git = async (args: string[]): Promise<string> => {
     check();
-    const result = await exec(
-      "git",
-      ["-C", root, "-c", "core.fsmonitor=false", ...args],
-      {
+    const result = await probeOperation(`git.${args[0]}`, () =>
+      exec("git", ["-C", root, "-c", "core.fsmonitor=false", ...args], {
         env: { ...process.env, LC_ALL: "C", GIT_OPTIONAL_LOCKS: "0" },
         timeout: Math.max(1, Math.ceil(deadline - performance.now())),
         maxBuffer: 8 * 1024 * 1024,
-      },
+      }),
     );
 
     check();
@@ -335,7 +375,9 @@ async function captureTree(
     indexDigest: digest(index),
     indexContentDigest: digest(indexContent),
     historyDigest: digest(history),
-    gitIdentity: digest(await realpath(gitDirectory.trim())),
+    gitIdentity: digest(
+      await probeOperation("realpath", () => realpath(gitDirectory.trim())),
+    ),
     gitConfigDigest: digest(
       canonicalCommandJson({ localConfig, worktreeConfigDigest }),
     ),
@@ -366,14 +408,17 @@ export async function captureOperationalBaseline(
       platform: [],
     };
   } catch (error) {
-    logProbeFailure("capture", resourceKind, error);
+    logProbeFailure("capture", resourceKind, error, limits.context);
     if (isMaisterError(error)) throw error;
     throw new MaisterError(
       "PRECONDITION",
       "operational integrity capture failed",
       {
-        cause: error instanceof Error ? error : undefined,
-        details: { reason: "operational_integrity_probe_failed" },
+        cause: error,
+        details: {
+          reason: "operational_integrity_probe_failed",
+          causeChain: operationalCauseChain(error),
+        },
       },
     );
   }
