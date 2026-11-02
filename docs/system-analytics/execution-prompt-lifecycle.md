@@ -635,12 +635,18 @@ and no bound host/ACP handles. That exception authorizes `Abandoned`, never `Don
 
 Agent teardown reuses an existing exact assignment/epoch/session DELETE command
 and catches up canonical lifecycle before expensive integrity preparation.
-`agent_session_teardown_pending` and `agent_finalization_pending` deferrals share
-a 120-second window across claims; frontier and HITL waits retain their existing
-domain semantics. If failure recovery cannot prove quiescence or satisfy its
-contract, application becomes `poisoned` with the original cause and a separate
-recovery error. It requires operator repair and retains its scheduler slot.
-This is a safety refusal, never evidence of successful execution.
+After 120 seconds, repeated `agent_session_teardown_pending` and
+`agent_finalization_pending` deferrals record `prompt_owner_stalled`, release the
+claim and retry the original application with bounded backoff. Elapsed wait time
+alone never authorizes failure finalization or poisoning. Frontier and HITL waits
+retain their existing domain semantics. A preparation deadline likewise releases
+its claim and records a stalled service retry without consuming result failures.
+
+When genuine invariant/exhausted failures require safe failure finalization,
+transient quiescence, lifecycle or service blockers keep application pending with
+the original cause and separate recovery diagnostics. Nontransient recovery
+contract violations become `poisoned` and require operator repair. Both paths
+retain the slot until execution quiescence and finalization contracts are met.
 
 Exhausted runtime-object read contention (`PRECONDITION command_in_progress`
 from read capacity or concurrent legacy verification) becomes a retryable `EXECUTOR_UNAVAILABLE`
@@ -664,7 +670,12 @@ pnpm --filter maister-web execution:application:recover inspect --command 80a751
 
 Inspection prints only application metadata, diagnostics and an observation
 token. Review `claimLive`, terminal command state, application stage and cause
-details. For each command use its own fresh token:
+details.
+
+If inspection already shows `applied` with `completionAppliedAt`, recovery is
+complete. Do not rearm it, repeat teardown or alter its terminal Run outcome.
+
+For an unapplied command use its own fresh token:
 
 ```sh
 pnpm --filter maister-web execution:application:recover reapply --command COMMAND_UUID --observation-token TOKEN_FROM_INSPECTION

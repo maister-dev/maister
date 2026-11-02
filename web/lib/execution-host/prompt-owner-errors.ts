@@ -117,5 +117,6 @@ export function preservePromptApplicationHistory(
       previous?.recoveryRequestedAt ?? next.recoveryRequestedAt,
     previousAttempts: previous?.previousAttempts ?? next.previousAttempts,
     recoveryOrigin: previous?.recoveryOrigin ?? next.recoveryOrigin,
+    recoveryError: next.recoveryError ?? previous?.recoveryError,
   };
 }

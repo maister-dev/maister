@@ -433,7 +433,7 @@ describe("bounded and fenced terminal prompt application", () => {
     expect(completed.completionAppliedAt).not.toBeNull();
   });
 
-  it("keeps the bounded teardown deadline when service and application failures alternate with deferrals", async () => {
+  it("retains stalled teardown diagnostics across transient failures and retries the original adapter", async () => {
     const fixture = await terminalPrompt();
     const deferredSince = new Date(Date.now() - 180_000).toISOString();
 
@@ -483,10 +483,14 @@ describe("bounded and fenced terminal prompt application", () => {
     const owners = createPromptOwnerRegistry([
       definePromptOwnerAdapter(
         "flow_node_attempt",
-        async () => {
+        async ({ command: current }) => {
+          if (current.applicationError?.reason === "prompt_owner_stalled")
+            return { apply: async () => "applied" };
           throw new PromptOwnerDeferred("agent_session_teardown_pending");
         },
-        async () => ({ apply: async () => "applied" }),
+        async () => {
+          throw new PromptOwnerInvariantError("deferred_must_not_fail");
+        },
       ),
     ]);
 
@@ -497,31 +501,49 @@ describe("bounded and fenced terminal prompt application", () => {
         ...fixture,
         signal: AbortSignal.timeout(10_000),
       }),
-    ).toBe("applied");
+    ).toBe("deferred");
     expect((await command(fixture.commandId)).applicationError).toMatchObject({
-      classification: "exhausted",
+      reason: "prompt_owner_stalled",
+      classification: "deferred",
       deferredSince,
     });
+    expect((await command(fixture.commandId)).applicationAttempts).toBe(1);
+    await db
+      .update(executionCommands)
+      .set({ applicationNextRetryAt: null })
+      .where(eq(executionCommands.id, fixture.commandId));
+    expect(
+      await applyPromptOwner({
+        db,
+        owners,
+        ...fixture,
+        signal: AbortSignal.timeout(10_000),
+      }),
+    ).toBe("applied");
   });
 
-  it("bounds repeated agent teardown deferrals across claims before invoking safe recovery", async () => {
+  it("marks a healthy teardown delayed beyond six minutes stalled and later applies the original result", async () => {
     const fixture = await terminalPrompt();
     const owners = createPromptOwnerRegistry([
       definePromptOwnerAdapter(
         "flow_node_attempt",
-        async () => {
+        async ({ command: current, owner }) => {
+          if (current.applicationError?.reason === "prompt_owner_stalled")
+            return {
+              apply: async (tx) => {
+                await tx
+                  .update(runs)
+                  .set({ status: "Failed" })
+                  .where(eq(runs.id, owner.ref.runId));
+
+                return "applied";
+              },
+            };
           throw new PromptOwnerDeferred("agent_session_teardown_pending");
         },
-        async ({ owner }) => ({
-          apply: async (tx) => {
-            await tx
-              .update(runs)
-              .set({ status: "Failed" })
-              .where(eq(runs.id, owner.ref.runId));
-
-            return "applied";
-          },
-        }),
+        async () => {
+          throw new PromptOwnerInvariantError("deferred_must_not_fail");
+        },
       ),
     ]);
 
@@ -543,7 +565,7 @@ describe("bounded and fenced terminal prompt application", () => {
         applicationNextRetryAt: null,
         applicationError: {
           ...deferred.applicationError!,
-          deferredSince: new Date(Date.now() - 180_000).toISOString(),
+          deferredSince: new Date(Date.now() - 7 * 60_000).toISOString(),
         },
       })
       .where(eq(executionCommands.id, fixture.commandId));
@@ -554,12 +576,37 @@ describe("bounded and fenced terminal prompt application", () => {
         ...fixture,
         signal: AbortSignal.timeout(10_000),
       }),
-    ).toBe("applied");
+    ).toBe("deferred");
     expect((await command(fixture.commandId)).applicationError).toMatchObject({
-      reason: "prompt_owner_application_failed",
-      classification: "exhausted",
+      reason: "prompt_owner_stalled",
+      classification: "deferred",
       causeDetails: { causeCode: "agent_session_teardown_pending" },
     });
+    const waiting = await command(fixture.commandId);
+    const [run] = await db
+      .select({ status: runs.status })
+      .from(runs)
+      .where(eq(runs.id, fixture.runId));
+
+    expect(waiting.applicationAttempts).toBe(0);
+    expect(waiting.applicationClaimOwner).toBeNull();
+    expect(waiting.completionAppliedAt).toBeNull();
+    expect(run.status).toBe("Running");
+    await db
+      .update(executionCommands)
+      .set({ applicationNextRetryAt: null })
+      .where(eq(executionCommands.id, fixture.commandId));
+    expect(
+      await applyPromptOwner({
+        db,
+        owners,
+        ...fixture,
+        signal: AbortSignal.timeout(10_000),
+      }),
+    ).toBe("applied");
+    expect(
+      (await command(fixture.commandId)).completionAppliedAt,
+    ).not.toBeNull();
   });
 
   it("preserves the original PRECONDITION reason, details and stage after exhausted retry", async () => {
@@ -648,6 +695,15 @@ describe("bounded and fenced terminal prompt application", () => {
     expect(
       (await command(fixture.commandId)).applicationError?.causeReason,
     ).toBe("prompt_owner_prepare_timeout");
+    expect(await command(fixture.commandId)).toMatchObject({
+      applicationState: "pending",
+      applicationAttempts: 0,
+      applicationClaimOwner: null,
+      applicationError: {
+        reason: "prompt_owner_stalled",
+        classification: "transient",
+      },
+    });
     const [run] = await db
       .select({ status: runs.status })
       .from(runs)
@@ -708,7 +764,167 @@ describe("bounded and fenced terminal prompt application", () => {
     );
   });
 
-  it("keeps the original error when safe failure finalization cannot establish quiescence", async () => {
+  it("retries transient and deferred safe failure preparation until quiescence permits one atomic commit", async () => {
+    const fixture = await terminalPrompt();
+    const owners = createPromptOwnerRegistry([
+      definePromptOwnerAdapter(
+        "flow_node_attempt",
+        async ({ onProgress, command: current }) => {
+          onProgress?.("result_publication");
+          if (
+            current.applicationError?.reason ===
+              "prompt_owner_recovery_pending" &&
+            current.applicationError.recoveryError?.code ===
+              "EXECUTOR_UNAVAILABLE"
+          )
+            throw new MaisterError(
+              "EXECUTOR_UNAVAILABLE",
+              "Output service is temporarily busy",
+              { details: { reason: "runtime_object_read_busy" } },
+            );
+          throw new PromptOwnerInvariantError("result_binding_mismatch");
+        },
+        async ({ command: current, owner }) => {
+          if (!current.applicationError?.recoveryError)
+            throw new MaisterError(
+              "EXECUTOR_UNAVAILABLE",
+              "Execution exit has not been proven",
+              { details: { reason: "execution_quiescence_unproven" } },
+            );
+          if (
+            current.applicationError.recoveryError.code ===
+            "EXECUTOR_UNAVAILABLE"
+          )
+            throw new PromptOwnerDeferred("agent_session_teardown_pending");
+
+          return {
+            apply: async (tx) => {
+              await tx
+                .update(runs)
+                .set({ status: "Failed" })
+                .where(eq(runs.id, owner.ref.runId));
+
+              return "applied";
+            },
+          };
+        },
+      ),
+    ]);
+
+    expect(
+      await applyPromptOwner({
+        db,
+        owners,
+        ...fixture,
+        signal: AbortSignal.timeout(10_000),
+      }),
+    ).toBe("deferred");
+    expect((await command(fixture.commandId)).applicationError).toMatchObject({
+      reason: "prompt_owner_recovery_pending",
+      stage: "result_publication",
+      causeCode: "result_binding_mismatch",
+      recoveryOrigin: {
+        stage: "result_publication",
+        causeCode: "result_binding_mismatch",
+      },
+      recoveryError: {
+        code: "EXECUTOR_UNAVAILABLE",
+        reason: "execution_quiescence_unproven",
+      },
+    });
+    expect((await command(fixture.commandId)).completionAppliedAt).toBeNull();
+    expect((await command(fixture.commandId)).applicationAttempts).toBe(0);
+    await db
+      .update(executionCommands)
+      .set({ applicationNextRetryAt: null })
+      .where(eq(executionCommands.id, fixture.commandId));
+    expect(
+      await applyPromptOwner({
+        db,
+        owners,
+        ...fixture,
+        signal: AbortSignal.timeout(10_000),
+      }),
+    ).toBe("deferred");
+    expect(await command(fixture.commandId)).toMatchObject({
+      applicationState: "pending",
+      applicationAttempts: 0,
+      applicationError: {
+        reason: "prompt_owner_service_retry",
+        recoveryOrigin: {
+          causeCode: "result_binding_mismatch",
+          stage: "result_publication",
+        },
+        recoveryError: {
+          code: "EXECUTOR_UNAVAILABLE",
+          reason: "execution_quiescence_unproven",
+        },
+      },
+    });
+    await db
+      .update(executionCommands)
+      .set({ applicationNextRetryAt: null })
+      .where(eq(executionCommands.id, fixture.commandId));
+    expect(
+      await applyPromptOwner({
+        db,
+        owners,
+        ...fixture,
+        signal: AbortSignal.timeout(10_000),
+      }),
+    ).toBe("deferred");
+    expect(await command(fixture.commandId)).toMatchObject({
+      applicationState: "pending",
+      applicationAttempts: 0,
+      applicationClaimOwner: null,
+      applicationError: {
+        causeCode: "result_binding_mismatch",
+        stage: "result_publication",
+        recoveryError: {
+          code: "PRECONDITION",
+          reason: "prompt_owner_deferred",
+        },
+      },
+    });
+    await db
+      .update(executionCommands)
+      .set({ applicationNextRetryAt: null })
+      .where(eq(executionCommands.id, fixture.commandId));
+    expect(
+      await applyPromptOwner({
+        db,
+        owners,
+        ...fixture,
+        signal: AbortSignal.timeout(10_000),
+      }),
+    ).toBe("applied");
+    const applied = await command(fixture.commandId);
+
+    expect(applied.applicationError).toMatchObject({
+      reason: "prompt_owner_application_failed",
+      causeCode: "result_binding_mismatch",
+      stage: "result_publication",
+      recoveryOrigin: {
+        stage: "result_publication",
+        causeCode: "result_binding_mismatch",
+      },
+      recoveryError: { code: "PRECONDITION", reason: "prompt_owner_deferred" },
+    });
+    expect(applied.completionAppliedAt).not.toBeNull();
+    expect(
+      await applyPromptOwner({
+        db,
+        owners,
+        ...fixture,
+        signal: AbortSignal.timeout(10_000),
+      }),
+    ).toBe("deferred");
+    expect((await command(fixture.commandId)).completionAppliedAt).toEqual(
+      applied.completionAppliedAt,
+    );
+  });
+
+  it("requires operator repair for a nontransient safe failure contract error", async () => {
     const fixture = await terminalPrompt();
     const owners = createPromptOwnerRegistry([
       definePromptOwnerAdapter(
@@ -718,9 +934,9 @@ describe("bounded and fenced terminal prompt application", () => {
         },
         async () => {
           throw new MaisterError(
-            "EXECUTOR_UNAVAILABLE",
-            "Execution exit has not been proven",
-            { details: { reason: "execution_quiescence_unproven" } },
+            "PRECONDITION",
+            "Finalization evidence requires operator repair",
+            { details: { reason: "finalization_contract_mismatch" } },
           );
         },
       ),
@@ -734,14 +950,65 @@ describe("bounded and fenced terminal prompt application", () => {
         signal: AbortSignal.timeout(10_000),
       }),
     ).toBe("poisoned");
-    expect((await command(fixture.commandId)).applicationError).toMatchObject({
-      causeCode: "result_binding_mismatch",
-      recoveryError: {
-        code: "EXECUTOR_UNAVAILABLE",
-        reason: "execution_quiescence_unproven",
+    expect(await command(fixture.commandId)).toMatchObject({
+      applicationState: "poisoned",
+      completionAppliedAt: null,
+      applicationError: {
+        causeCode: "result_binding_mismatch",
+        recoveryError: { reason: "finalization_contract_mismatch" },
       },
     });
-    expect((await command(fixture.commandId)).completionAppliedAt).toBeNull();
+  });
+
+  it("records the exhausted fifth ordinary failure once while recovery remains deferred", async () => {
+    const fixture = await terminalPrompt();
+
+    await db
+      .update(executionCommands)
+      .set({ applicationAttempts: 4 })
+      .where(eq(executionCommands.id, fixture.commandId));
+    const owners = createPromptOwnerRegistry([
+      definePromptOwnerAdapter(
+        "flow_node_attempt",
+        async () => {
+          throw new MaisterError(
+            "PRECONDITION",
+            "Result publication contract is incomplete",
+            { details: { reason: "result_publication_incomplete" } },
+          );
+        },
+        async () => {
+          throw new PromptOwnerDeferred("agent_finalization_pending");
+        },
+      ),
+    ]);
+
+    for (let retry = 0; retry < 2; retry++) {
+      expect(
+        await applyPromptOwner({
+          db,
+          owners,
+          ...fixture,
+          signal: AbortSignal.timeout(10_000),
+        }),
+      ).toBe("deferred");
+      expect(await command(fixture.commandId)).toMatchObject({
+        applicationState: "pending",
+        applicationAttempts: 5,
+        completionAppliedAt: null,
+        applicationError: {
+          reason: "prompt_owner_recovery_pending",
+          recoveryOrigin: {
+            classification: "exhausted",
+            causeReason: "result_publication_incomplete",
+          },
+        },
+      });
+      await db
+        .update(executionCommands)
+        .set({ applicationNextRetryAt: null })
+        .where(eq(executionCommands.id, fixture.commandId));
+    }
   });
 
   it("recovers an expired claim after restart and fences competing workers", async () => {

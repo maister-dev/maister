@@ -3,6 +3,7 @@ import type { Db } from "@/lib/execution-host/db";
 import type { ExecutionHosts } from "@/lib/execution-host/client";
 import type { FakeExecutionHost } from "@/test-support/fake-execution-host";
 import type { PromptResult } from "@/lib/supervisor-client";
+import type { RunResultContract } from "@/lib/run-results/types";
 
 import { join } from "node:path";
 
@@ -20,16 +21,28 @@ import {
 
 import { startAgentSession } from "@/lib/agents/launch";
 import { assertAgentExecutionQuiescent } from "@/lib/agents/execution-quiescence";
-import { stopAgentPromptSession } from "@/lib/agents/prompt-owner";
 import {
+  agentPromptOwner,
+  agentPromptOwners,
+  stopAgentPromptSession,
+} from "@/lib/agents/prompt-owner";
+import {
+  agentTurns,
+  domainEvents,
   executionAssignments,
   executionCommands,
+  runResults,
   runSessionIncarnations,
   runs,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer";
 import { PromptOwnerSchema } from "@/lib/execution-host/prompt-owner-contract";
+import { applyPromptOwner } from "@/lib/execution-host/prompt-owner-application";
+import {
+  createPromptOwnerRegistry,
+  PromptOwnerDeferred,
+} from "@/lib/execution-host/prompt-owners";
 import { countLiveRuns } from "@/lib/scheduler";
 import { seedAgentRun } from "@/test-support/agent-run-seed";
 import {
@@ -53,6 +66,19 @@ const previousRuntimeRoot = process.env.MAISTER_RUNTIME_ROOT;
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 
 const definition = `---\nname: Researcher\ndescription: d\nworkspace: none\nmode: session\nplatform_mcp: false\ntriggers:\n  - manual\nrisk_tier: read_only\n---\nResearch the repository\n`;
+const resultContract: RunResultContract = {
+  kind: "agent_profile",
+  profileName: "research",
+  schemaRef: "fixture@abcdef123456:research-result.v1",
+  schemaVersion: 1,
+  sha256: "f".repeat(64),
+  required: true,
+  schema: {
+    schemaVersion: 1,
+    fields: [{ name: "summary", type: "string", required: true }],
+  },
+  sourceFlowRevisionId: "rev-1",
+};
 
 beforeAll(async () => {
   database = await startMainPostgresTestDb({
@@ -86,12 +112,14 @@ afterAll(async () => {
   await database?.stop();
 });
 
-async function detachedPrompt(): Promise<ExecutionCommand> {
+async function detachedPrompt(
+  contract: RunResultContract | null = null,
+): Promise<ExecutionCommand> {
   const runId = await seedAgentRun(db, {
     runtimeRoot,
     definition,
     workspace: "none",
-    resultContract: null,
+    resultContract: contract,
   });
   const controller = new AbortController();
   const driving = startAgentSession(runId, {
@@ -142,7 +170,21 @@ async function completedDetachedPrompt(): Promise<ExecutionCommand> {
         complete = resolve;
       }),
   );
-  const command = await detachedPrompt();
+  fake.setStreamEvents([
+    {
+      type: "session.update",
+      sessionId: "fake",
+      monotonicId: 1,
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: {
+          type: "text",
+          text: '```json maister:output\n{"summary":"original answer"}\n```',
+        },
+      },
+    },
+  ]);
+  const command = await detachedPrompt(resultContract);
 
   expect(complete).toBeDefined();
   complete!({ stopReason: "end_turn", meta: null });
@@ -198,6 +240,161 @@ async function expectSlotRetained(
 }
 
 describe("agent application quiescence", () => {
+  it("applies the original successful result after more than six minutes of deferred teardown, including exit arriving during preparation", async () => {
+    const command = await completedDetachedPrompt();
+    const occupied = await countLiveRuns(db as never, "agent");
+    const apply = () =>
+      applyPromptOwner({
+        db,
+        owners: agentPromptOwners,
+        commandId: command.id,
+        signal: AbortSignal.timeout(10_000),
+      });
+
+    fake.holdIngest();
+    expect(await apply()).toBe("deferred");
+    const [deferred] = await db
+      .select()
+      .from(executionCommands)
+      .where(eq(executionCommands.id, command.id));
+    const deferredSince = new Date(Date.now() - 393_000).toISOString();
+
+    expect(deferred).toMatchObject({
+      applicationState: "pending",
+      applicationAttempts: 0,
+      completionAppliedAt: null,
+      applicationClaimOwner: null,
+      applicationClaimExpiresAt: null,
+    });
+    await db
+      .update(executionCommands)
+      .set({
+        applicationNextRetryAt: null,
+        applicationError: { ...deferred.applicationError!, deferredSince },
+      })
+      .where(eq(executionCommands.id, command.id));
+    const exitArrivesDuringPreparation = createPromptOwnerRegistry([
+      {
+        ...agentPromptOwner,
+        prepare: async (input) => {
+          try {
+            return await agentPromptOwner.prepare(input);
+          } catch (error) {
+            if (error instanceof PromptOwnerDeferred)
+              await fake.releaseIngest();
+            throw error;
+          }
+        },
+      },
+    ]);
+
+    expect(
+      await applyPromptOwner({
+        db,
+        owners: exitArrivesDuringPreparation,
+        commandId: command.id,
+        signal: AbortSignal.timeout(10_000),
+      }),
+    ).toBe("deferred");
+    const [stalled] = await db
+      .select()
+      .from(executionCommands)
+      .where(eq(executionCommands.id, command.id));
+
+    expect(stalled).toMatchObject({
+      state: "succeeded",
+      applicationState: "pending",
+      applicationAttempts: 0,
+      applicationClaimOwner: null,
+      applicationClaimExpiresAt: null,
+      completionAppliedAt: null,
+      applicationError: {
+        reason: "prompt_owner_stalled",
+        classification: "deferred",
+        stage: "session_teardown",
+        deferredSince,
+      },
+    });
+    expect(stalled.applicationNextRetryAt).not.toBeNull();
+    await expectSlotRetained(command, occupied);
+    expect(
+      await db
+        .select()
+        .from(runResults)
+        .where(eq(runResults.runId, command.runId)),
+    ).toHaveLength(0);
+    await db
+      .update(executionCommands)
+      .set({ applicationNextRetryAt: null })
+      .where(eq(executionCommands.id, command.id));
+    expect(await apply()).toBe("applied");
+    expect(await apply()).toBe("deferred");
+    expect(
+      await db
+        .select({ status: runs.status })
+        .from(runs)
+        .where(eq(runs.id, command.runId)),
+    ).toEqual([{ status: "Done" }]);
+    expect(
+      await db
+        .select({ validity: runResults.validity, value: runResults.value })
+        .from(runResults)
+        .where(eq(runResults.runId, command.runId)),
+    ).toEqual([{ validity: "valid", value: { summary: "original answer" } }]);
+    expect(
+      await db
+        .select({ state: agentTurns.state, commandId: agentTurns.commandId })
+        .from(agentTurns)
+        .where(eq(agentTurns.runId, command.runId)),
+    ).toEqual([{ state: "applied", commandId: command.id }]);
+    const [applied] = await db
+      .select()
+      .from(executionCommands)
+      .where(eq(executionCommands.id, command.id));
+
+    expect(applied).toMatchObject({
+      applicationState: "applied",
+      applicationAttempts: 0,
+      applicationClaimOwner: null,
+      applicationClaimExpiresAt: null,
+    });
+    expect(applied.completionAppliedAt).not.toBeNull();
+    expect(fake.callsOf("deleteSession")).toHaveLength(1);
+    expect(
+      await db
+        .select({ id: executionCommands.id })
+        .from(executionCommands)
+        .where(
+          and(
+            eq(executionCommands.runId, command.runId),
+            eq(executionCommands.kind, "session.prompt"),
+          ),
+        ),
+    ).toEqual([{ id: command.id }]);
+    expect(
+      await db
+        .select({ kind: domainEvents.kind })
+        .from(domainEvents)
+        .where(
+          and(
+            eq(domainEvents.runId, command.runId),
+            eq(domainEvents.kind, "run.done"),
+          ),
+        ),
+    ).toEqual([{ kind: "run.done" }]);
+    expect(
+      await db
+        .select()
+        .from(domainEvents)
+        .where(
+          and(
+            eq(domainEvents.runId, command.runId),
+            eq(domainEvents.kind, "run.failed"),
+          ),
+        ),
+    ).toHaveLength(0);
+  });
+
   it("reuses a successful delete while canonical teardown is delayed, then catches up", async () => {
     const command = await completedDetachedPrompt();
     const occupied = await countLiveRuns(db as never, "agent");

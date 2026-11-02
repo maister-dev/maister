@@ -23,6 +23,7 @@ import { PromptOwnerSchema } from "./prompt-owner-contract";
 import {
   preservePromptApplicationHistory,
   promptApplicationDiagnostic,
+  promptApplicationFailureSnapshot,
 } from "./prompt-owner-errors";
 import { projectionTransaction } from "./events/projection-transaction";
 import { runEventWakeBus } from "./events/run-wake";
@@ -374,7 +375,9 @@ async function recordServiceRetry(input: {
   const diagnostic = preservePromptApplicationHistory(
     input.claim.command.applicationError,
     {
-      reason: "prompt_owner_service_retry",
+      reason: preparationTimedOut(input.error)
+        ? "prompt_owner_stalled"
+        : "prompt_owner_service_retry",
       phase: input.phase,
       stage: input.stage,
       ...promptApplicationDiagnostic(input.error),
@@ -382,6 +385,23 @@ async function recordServiceRetry(input: {
     },
   );
 
+  return recordPendingApplication({ ...input, diagnostic, retryMs: 5_000 });
+}
+
+function preparationTimedOut(error: unknown): boolean {
+  return (
+    error instanceof MaisterError &&
+    error.details?.reason === "prompt_owner_prepare_timeout"
+  );
+}
+
+async function recordPendingApplication(input: {
+  db: Db;
+  claim: PromptOwnerClaim;
+  diagnostic: CommandApplicationError;
+  retryMs: number;
+  applicationAttempts?: number;
+}): Promise<PromptOwnerApplicationResult> {
   await projectionTransaction(input.db, async (tx) => {
     await tx
       .update(executionCommands)
@@ -389,8 +409,11 @@ async function recordServiceRetry(input: {
         applicationState: "pending",
         applicationClaimOwner: null,
         applicationClaimExpiresAt: null,
-        applicationNextRetryAt: sql`clock_timestamp() + interval '5 seconds'`,
-        applicationError: diagnostic,
+        applicationNextRetryAt: sql`clock_timestamp() + ${input.retryMs} * interval '1 millisecond'`,
+        applicationError: input.diagnostic,
+        ...(input.applicationAttempts === undefined
+          ? {}
+          : { applicationAttempts: input.applicationAttempts }),
         updatedAt: sql`clock_timestamp()`,
       })
       .where(
@@ -400,10 +423,17 @@ async function recordServiceRetry(input: {
         ),
       );
   });
-  log.warn(
-    { commandId: input.claim.command.id, ...diagnostic },
-    "prompt-owner-service-retry",
-  );
+  const fields = { commandId: input.claim.command.id, ...input.diagnostic };
+
+  if (input.diagnostic.reason === "prompt_owner_deferred")
+    log.debug(fields, "prompt-owner-domain-pending");
+  else
+    log.warn(
+      fields,
+      input.diagnostic.reason === "prompt_owner_service_retry"
+        ? "prompt-owner-service-retry"
+        : "prompt-owner-application-pending",
+    );
 
   return "deferred";
 }
@@ -413,7 +443,7 @@ const BOUNDED_AGENT_DEFERRALS = new Set([
   "agent_finalization_pending",
 ]);
 
-function expiredAgentDeferral(
+function stalledAgentDeferral(
   error: unknown,
   command: ExecutionCommand,
 ): boolean {
@@ -439,10 +469,12 @@ async function recordFailure(input: {
   stage: string;
   recoveryError?: unknown;
 }): Promise<PromptOwnerApplicationResult> {
-  const attempts = input.claim.command.applicationAttempts + 1;
+  const attempts = Math.min(
+    MAX_FAILURES,
+    input.claim.command.applicationAttempts + 1,
+  );
   const poisoned =
     input.error instanceof PromptOwnerInvariantError ||
-    expiredAgentDeferral(input.error, input.claim.command) ||
     attempts >= MAX_FAILURES;
   const diagnostic = promptApplicationDiagnostic(input.error);
   const applicationError = preservePromptApplicationHistory(
@@ -540,6 +572,8 @@ async function commitPreparedOwner(input: {
               input.applicationError,
             )
           : input.claim.command.applicationError?.recoveryRequestedAt ||
+              input.claim.command.applicationError?.recoveryOrigin ||
+              input.claim.command.applicationError?.recoveryError ||
               input.claim.command.applicationError?.deferredSince
             ? preservePromptApplicationHistory(
                 input.claim.command.applicationError,
@@ -636,57 +670,39 @@ export async function applyClaimedPromptOwner(input: {
 
     return await commitPreparedOwner({ ...input, prepared });
   } catch (error) {
-    if (
-      error instanceof PromptOwnerDeferred &&
-      !expiredAgentDeferral(error, input.claim.command)
-    ) {
-      await projectionTransaction(input.db, async (tx) => {
-        await tx
-          .update(executionCommands)
-          .set({
-            applicationState: "pending",
-            applicationClaimOwner: null,
-            applicationClaimExpiresAt: null,
-            applicationNextRetryAt: sql`clock_timestamp() + interval '1 second'`,
-            applicationError: preservePromptApplicationHistory(
-              input.claim.command.applicationError,
-              {
-                reason: "prompt_owner_deferred",
-                phase,
-                stage,
-                ...promptApplicationDiagnostic(error),
-                classification: "deferred",
-                deferredSince:
-                  input.claim.command.applicationError?.deferredSince ??
-                  new Date().toISOString(),
-              },
-            ),
-            updatedAt: sql`clock_timestamp()`,
-          })
-          .where(claimPredicate(input.claim));
-      });
-      log.debug(
+    if (error instanceof PromptOwnerDeferred) {
+      const stalled = stalledAgentDeferral(error, input.claim.command);
+      const diagnostic = preservePromptApplicationHistory(
+        input.claim.command.applicationError,
         {
-          commandId: input.claim.command.id,
-          causeCode: error.details?.causeCode,
+          reason: stalled ? "prompt_owner_stalled" : "prompt_owner_deferred",
+          phase,
+          stage,
+          ...promptApplicationDiagnostic(error),
+          classification: "deferred",
+          deferredSince:
+            input.claim.command.applicationError?.deferredSince ??
+            new Date().toISOString(),
         },
-        "prompt-owner-domain-pending",
       );
 
-      return "deferred";
+      return recordPendingApplication({
+        ...input,
+        diagnostic,
+        retryMs: stalled ? 5_000 : 1_000,
+      });
     }
     if (input.signal.aborted || error instanceof PromptOwnerClaimLostError) {
       await releasePromptOwnerClaim(input.db, input.claim);
 
       return "deferred";
     }
-    if (serviceFailure(error)) {
+    if (serviceFailure(error) || preparationTimedOut(error)) {
       return recordServiceRetry({ ...input, error, phase, stage });
     }
 
     const exhausted =
       error instanceof PromptOwnerInvariantError ||
-      expiredAgentDeferral(error, input.claim.command) ||
       input.claim.command.applicationAttempts + 1 >= MAX_FAILURES;
     const parsed = PromptOwnerSchema.safeParse({
       kind: input.claim.command.ownerKind,
@@ -746,6 +762,48 @@ export async function applyClaimedPromptOwner(input: {
           await releasePromptOwnerClaim(input.db, input.claim);
 
           return "deferred";
+        }
+
+        if (
+          recoveryError instanceof PromptOwnerDeferred ||
+          serviceFailure(recoveryError) ||
+          preparationTimedOut(recoveryError)
+        ) {
+          const recoveryDiagnostic = promptApplicationDiagnostic(recoveryError);
+          const pending = preservePromptApplicationHistory(
+            input.claim.command.applicationError,
+            {
+              ...diagnostic,
+              reason: "prompt_owner_recovery_pending",
+              classification:
+                recoveryError instanceof PromptOwnerDeferred
+                  ? "deferred"
+                  : "transient",
+              recoveryOrigin:
+                diagnostic.recoveryOrigin ??
+                promptApplicationFailureSnapshot(diagnostic),
+              recoveryError: {
+                code: recoveryDiagnostic.causeCode ?? "application_failure",
+                reason: recoveryDiagnostic.causeReason,
+                message:
+                  recoveryDiagnostic.causeMessage ??
+                  "Application recovery is pending",
+              },
+            },
+          );
+
+          return recordPendingApplication({
+            ...input,
+            diagnostic: pending,
+            retryMs: 5_000,
+            applicationAttempts:
+              error instanceof PromptOwnerInvariantError
+                ? input.claim.command.applicationAttempts
+                : Math.min(
+                    MAX_FAILURES,
+                    input.claim.command.applicationAttempts + 1,
+                  ),
+          });
         }
 
         return recordFailure({
