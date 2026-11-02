@@ -450,7 +450,8 @@ Keep each behavior commit GREEN after its RED/GREEN/REFACTOR receipts; do not la
 2. T2–T3: `feat: add bounded authorized child Run reads` (paging indexes and tests written before behavior).
 3. T4–T5: `feat: stream workbench changes with isolated Run contexts` (notification migration, listener, schemas and lifetime tests).
 4. T6–T8: `feat: add accessible child Run peek navigation` (working entry points, bilingual content and browser TDD).
-5. T9: `test: qualify child Run peek against frozen specifications` (complete receipts and current-state status reconciliation).
+5. T9 qualification prerequisite: `fix: allow bounded retirement of owned Git children` (baseline-proven Git retirement race found by the frozen full suite; preserve refusal for surviving children).
+6. T9: `test: qualify child Run peek against frozen specifications` (complete receipts and current-state status reconciliation).
 
 ## Execution record
 
@@ -499,3 +500,10 @@ Keep each behavior commit GREEN after its RED/GREEN/REFACTOR receipts; do not la
 - Concurrent-checkout E2E setup collisions were demonstrated before adding test-only stub-port selection and invocation-owned fixture paths. Default application configuration/ports are unchanged. Invalid fixture shapes, denied sandbox sockets and native popup-vs-context-page collection were setup issues, not functional REDs.
 - Engineering docs, public EN/RU build/link checks, official contract parsers, nine contract checks and five adapter mirrors passed. Public docs state the peek/full-Run action boundary. Structured request/stream logs contain safe identifiers/reasons, with no message/result bodies.
 - Earlier broad integration attempts do **not** qualify phase exits: one ran across source/HEAD/migration changes and reported failures; a second was stopped with exit 130 while sources/build artifacts were changing. Final broad qualification runs only after this phase commit, with no browser/dev build or source/HEAD mutation in parallel. T9 remains open until its real results are reconciled.
+
+### Phase 4 — frozen qualification and baseline blocker correction
+
+- Frozen source `0cc3180c7`, `pnpm --filter maister-web exec vitest run --project integration --passWithNoTests --maxWorkers=4`: **620 files passed / 2 failed / 2 skipped; 5492 tests passed / 3 failed / 2 skipped**, 1728.43s. All feature owners passed. The failures were in existing configuration Git publication/push owners: the unchanged process gate refused Darwin `?E` exiting children; one retained operation also changed the later recovery count. No source, HEAD or build mutation occurred during this run.
+- Baseline proof: extracted exact pre-feature source `7cf28cc96` into an isolated temporary directory and ran the same two existing owners with the already-installed Vitest binary, without installing dependencies or changing the active checkout. **28 passed / 4 failed**, 126.85s, including the same `active_child`/`?E` diagnostics. Failure names varied with timing. A separate 500-command read-only gate probe did not reproduce the race; it is not used as the failure proof.
+- SDD/TDD correction: updated the existing configuration safety specification first. Added one real-Git integration case, `IT-CPC-10: gated Git retains ownership until a short-lived hook child retires`; it failed on the old gate (**RED**, 749ms), then passed after a command-local retirement bound (**GREEN**, 971ms). The gate allows at most 500ms within the existing command deadline, proves all non-zombie children gone, and still refuses active children, unreadable evidence and signalled Git. It introduces no background job, workbench polling, lifecycle mutation or new API/schema contract.
+- REFACTOR/regression: all six existing/new configuration integration owners pass, **58 tests**, 147.25s, including the existing real surviving-hook refusal and owner-death/recovery cases. Strict typecheck, non-mutating scoped ESLint/Prettier, documentation/DBML and the 43-row run-peek requirement gate pass. No test was skipped or weakened to resolve the baseline blocker. T9 remains open for the final frozen full-suite repeat.
