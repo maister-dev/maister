@@ -353,6 +353,12 @@ materialization target"; this section states only what this domain requires.
   state and a shared ownership index. Only normalized descriptor-root paths may
   be claimed. Terminal cleanup releases the run's ownership and removes a path
   only when no other live owner remains.
+- **Generated cwd entries stay out of Git (Implemented).** Each skill or
+  subagent MAIster actually writes gets an exact, root-anchored entry in the
+  worktree-local `.gitignore`. Adapter roots such as `.claude/skills/` and
+  `.gemini/skills/` are never ignored wholesale, so repo-owned neighboring
+  entries remain visible and committable. Redirected homes remain under the
+  already-excluded `.maister/capabilities/` runtime tree.
 - **Materialization is verbatim of files only** — the cross-runner wire-form
   rewriting happens web-side in the normalizer (FR-E,
   [flow-settings.md](flow-settings.md)); the supervisor still forwards the

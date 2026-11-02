@@ -1,6 +1,8 @@
+import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 
 import { parse as parseYaml } from "yaml";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -10,6 +12,8 @@ import {
   ensureWorktreeGitignore,
   writeAiFactoryConfigOverride,
 } from "@/lib/capabilities/materialize-bundle";
+
+const execFileAsync = promisify(execFile);
 
 describe("copyBundleArtifactsToWorktree", () => {
   let bundle: string;
@@ -53,7 +57,14 @@ describe("copyBundleArtifactsToWorktree", () => {
       worktreePath: worktree,
     });
 
-    expect(copied).toEqual({ skills: true, agents: true });
+    expect(copied).toEqual({
+      skills: true,
+      agents: true,
+      materializedPaths: [
+        path.join(worktree, ".claude", "skills", "aif-y"),
+        path.join(worktree, ".claude", "agents", "foo.md"),
+      ],
+    });
     expect(
       await readFile(
         path.join(worktree, ".claude", "skills", "aif-x", "SKILL.md"),
@@ -131,7 +142,11 @@ describe("copyBundleArtifactsToWorktree", () => {
       worktreePath: worktree,
     });
 
-    expect(copied).toEqual({ skills: false, agents: false });
+    expect(copied).toEqual({
+      skills: false,
+      agents: false,
+      materializedPaths: [],
+    });
   });
 });
 
@@ -214,5 +229,39 @@ describe("ensureWorktreeGitignore", () => {
     expect(gi).toContain("node_modules");
     expect(gi).toContain("/.ai-factory/config.yaml");
     expect(gi.match(/\/\.ai-factory\/config\.yaml/g)).toHaveLength(1);
+  });
+
+  it("ignores only exact MAIster-written entries and keeps repo-local peers visible", async () => {
+    await execFileAsync("git", ["init", "-q", worktree]);
+    await mkdir(path.join(worktree, ".claude", "skills", "repo-skill"), {
+      recursive: true,
+    });
+    await writeFile(
+      path.join(worktree, ".claude", "skills", "repo-skill", "SKILL.md"),
+      "REPO",
+    );
+
+    const generated = path.join(
+      worktree,
+      ".claude",
+      "skills",
+      "generated-skill",
+    );
+
+    await mkdir(generated, { recursive: true });
+    await writeFile(path.join(generated, "SKILL.md"), "GENERATED");
+    await ensureWorktreeGitignore(worktree, [generated]);
+
+    const { stdout } = await execFileAsync(
+      "git",
+      ["-C", worktree, "status", "--short", "--untracked-files=all"],
+      { cwd: worktree },
+    );
+    const gi = await readFile(path.join(worktree, ".gitignore"), "utf8");
+
+    expect(gi).toContain("/.claude/skills/generated-skill");
+    expect(gi).not.toContain("/.claude/skills/\n");
+    expect(stdout).not.toContain("generated-skill");
+    expect(stdout).toContain(".claude/skills/repo-skill/SKILL.md");
   });
 });

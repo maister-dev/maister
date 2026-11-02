@@ -37,13 +37,22 @@ async function pathExists(p: string): Promise<boolean> {
 // a partial repo-local skill dir (its `SKILL.md`) with the bundle's extra files
 // (e.g. `references/*.md`), yielding a Frankenstein skill; copying entry-by-entry
 // and skipping existing entries avoids that. Returns which subtrees were present
-// in the bundle (i.e. a copy was attempted), not whether any file was written.
+// in the bundle (i.e. a copy was attempted) plus the exact entries MAIster wrote,
+// so only generated content can be hidden from the run diff.
 export async function copyBundleArtifactsToWorktree(args: {
   installedPath: string;
   worktreePath: string;
-}): Promise<{ skills: boolean; agents: boolean }> {
+}): Promise<{
+  skills: boolean;
+  agents: boolean;
+  materializedPaths: string[];
+}> {
   const worktreePath = path.resolve(args.worktreePath);
-  const copied = { skills: false, agents: false };
+  const copied = {
+    skills: false,
+    agents: false,
+    materializedPaths: [] as string[],
+  };
 
   for (const sub of ["skills", "agents"] as const) {
     const src = path.join(args.installedPath, sub);
@@ -65,6 +74,7 @@ export async function copyBundleArtifactsToWorktree(args: {
         force: false,
         errorOnExist: false,
       });
+      copied.materializedPaths.push(destEntry);
     }
 
     copied[sub] = true;
@@ -144,33 +154,69 @@ export async function writeAiFactoryConfigOverride(args: {
   );
 }
 
-// The materialized `.ai-factory/config.yaml` git-ownership override must never be
-// staged or promoted by a downstream `git add -A` an agent step runs. It lives at
-// a fixed worktree path (AIF reads it there), so it cannot be relocated out of the
-// tree. `.git/info/exclude` is NOT usable: in a linked worktree it resolves to the
-// SHARED common git dir, so it would leak the ignore to every worktree + the main
-// checkout. A worktree `.gitignore` is the only per-worktree, `git add -A`-robust
-// mechanism — git honors it even when the file is untracked (a fresh consumer
-// repo). The `.gitignore` edit itself is `--skip-worktree`'d so it never shows in
-// the run diff nor trips the commit gate's clean-tree check; `/.gitignore` is
-// self-ignored so an untracked `.gitignore` on a fresh repo can't be swept in
-// either. Repo-local skills/agents are NOT ignored — a consumer may track its own
-// `.claude/`, and in the dogfood they are repo-local (never materialized).
+// Materialized worktree content must never be staged or promoted by a downstream
+// `git add -A`. `.git/info/exclude` is NOT usable: in a linked worktree it resolves
+// to the SHARED common git dir, so it would leak the ignore to every worktree + the
+// main checkout. A worktree `.gitignore` is the only per-worktree, `git add -A`-
+// robust mechanism — git honors it even when the file is untracked (a fresh
+// consumer repo). The `.gitignore` edit itself is `--skip-worktree`'d so it never
+// shows in the run diff nor trips the commit gate's clean-tree check; `/.gitignore`
+// is self-ignored so an untracked `.gitignore` on a fresh repo can't be swept in.
+//
+// Do NOT ignore whole adapter roots: a consumer may track its own `.claude/` or
+// `.gemini/`. Callers pass only paths MAIster actually wrote, so repo-owned peers
+// remain visible to Git.
 const MATERIALIZED_GITIGNORE_PATTERNS = [
   "/.gitignore",
   "/.ai-factory/config.yaml",
 ];
 
+function escapeGitignorePathSegment(segment: string): string {
+  return segment.replace(/[\\*?\[\]#! ]/g, "\\$&");
+}
+
+function materializedGitignorePattern(
+  worktreePath: string,
+  materializedPath: string,
+): string {
+  const absolutePath = path.resolve(worktreePath, materializedPath);
+  const relativePath = path.relative(worktreePath, absolutePath);
+
+  if (
+    relativePath.length === 0 ||
+    relativePath === ".." ||
+    relativePath.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relativePath) ||
+    /[\0\r\n]/.test(relativePath)
+  ) {
+    throw new Error(
+      `materialized gitignore path is outside worktree: ${materializedPath}`,
+    );
+  }
+
+  return `/${relativePath
+    .split(path.sep)
+    .map(escapeGitignorePathSegment)
+    .join("/")}`;
+}
+
 export async function ensureWorktreeGitignore(
   worktreePath: string,
+  materializedPaths: readonly string[] = [],
 ): Promise<void> {
   const root = path.resolve(worktreePath);
   const gitignorePath = path.join(root, ".gitignore");
   const existing = (await pathExists(gitignorePath))
     ? await readFile(gitignorePath, "utf8")
     : "";
-  const present = new Set(existing.split("\n").map((line) => line.trim()));
-  const missing = MATERIALIZED_GITIGNORE_PATTERNS.filter(
+  const present = new Set(existing.split("\n"));
+  const requested = [
+    ...MATERIALIZED_GITIGNORE_PATTERNS,
+    ...materializedPaths.map((materializedPath) =>
+      materializedGitignorePattern(root, materializedPath),
+    ),
+  ];
+  const missing = [...new Set(requested)].filter(
     (pattern) => !present.has(pattern),
   );
 
@@ -214,17 +260,21 @@ export async function materializeProjectBundlesIntoWorktree(args: {
 
   if (installedImports.length === 0) return { bundles: 0 };
 
+  const materializedPaths: string[] = [];
+
   for (const imp of installedImports) {
-    await copyBundleArtifactsToWorktree({
+    const copied = await copyBundleArtifactsToWorktree({
       installedPath: imp.installedPath,
       worktreePath: args.worktreePath,
     });
+
+    materializedPaths.push(...copied.materializedPaths);
   }
   await writeAiFactoryConfigOverride({
     worktreePath: args.worktreePath,
     baseBranch: args.baseBranch,
   });
-  await ensureWorktreeGitignore(args.worktreePath);
+  await ensureWorktreeGitignore(args.worktreePath, materializedPaths);
 
   log.debug(
     {

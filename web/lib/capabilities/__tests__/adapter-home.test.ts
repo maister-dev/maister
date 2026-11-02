@@ -75,6 +75,11 @@ describe("materializeAdapterCapabilityHome — per-adapter target (FR-C1/C2)", (
     expect(
       await readFile(path.join(work, ".claude", "agents", "helper.md"), "utf8"),
     ).toBe("PROJECT helper");
+    const gitignore = await readFile(path.join(work, ".gitignore"), "utf8");
+
+    expect(gitignore).toContain("/.claude/skills/aif-plan");
+    expect(gitignore).toContain("/.claude/agents/helper.md");
+    expect(gitignore).not.toContain("/.claude/skills/\n");
   });
 
   it("claude package capability roots materialize capability subagents", async () => {
@@ -275,6 +280,9 @@ describe("materializeAdapterCapabilityHome — per-adapter target (FR-C1/C2)", (
         "utf8",
       ),
     ).toBe("PROJECT aif-plan");
+    expect(await readFile(path.join(work, ".gitignore"), "utf8")).toContain(
+      "/.gemini/skills/aif-plan",
+    );
     await expect(
       lstat(path.join(work, ".gemini", "agents", "helper.md")),
     ).rejects.toMatchObject({ code: "ENOENT" });
@@ -312,6 +320,9 @@ describe("materializeSubagentDefinition (FR-C4)", () => {
 
     expect(target).toBe(path.join(work, ".claude", "agents", "reviewer.md"));
     expect(await readFile(target, "utf8")).toBe("AGENT BODY");
+    expect(await readFile(path.join(work, ".gitignore"), "utf8")).toContain(
+      "/.claude/agents/reviewer.md",
+    );
   });
 
   it("refuses a symlinked .claude path before writing a subagent definition", async () => {

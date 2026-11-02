@@ -160,6 +160,9 @@ describe("materializeProjectBundlesIntoWorktree (ADR-079 §4)", () => {
     const gitignore = await readFile(join(worktree, ".gitignore"), "utf8");
 
     expect(gitignore).toContain("/.ai-factory/config.yaml");
+    expect(gitignore).toContain("/.claude/skills/skill-a");
+    expect(gitignore).toContain("/.claude/skills/skill-b");
+    expect(gitignore).not.toContain("/.claude/skills/\n");
   });
 
   // Forward guard: the WHOLE materialization block is gated on >=1 Installed
