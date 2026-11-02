@@ -1140,6 +1140,10 @@ from Darwin qualification.
 ## Expectations
 
 1. Unit/build tests MUST NOT require a reachable Docker runtime.
+   Controlled minimum-delay witnesses use a monotonic deadline and remain held
+   until that deadline, including when a native timer wakes slightly early.
+   Record the observed elapsed time and retain the strict minimum assertions;
+   a single wall-clock timer is not proof of the required fault window.
 2. Integration/E2E checks MUST fail with `TestDatabaseDockerUnavailableError`
    and the documented Docker-boundary message when Docker is unavailable,
    including a Docker failure that occurs after the runtime probe.

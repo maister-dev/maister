@@ -4,16 +4,12 @@
 // step slow without touching the daemon contact the short guard measures.
 import { appendFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { performance } from "node:perf_hooks";
 
 const evidence = process.env.MAISTER_DOCKER_CONTROL_EVIDENCE;
 const delayMs = Number(process.env.MAISTER_DOCKER_CONTROL_DELAY_MS);
 
-if (
-  !evidence ||
-  !Number.isInteger(delayMs) ||
-  delayMs < 1 ||
-  delayMs > 35_000
-)
+if (!evidence || !Number.isInteger(delayMs) || delayMs < 1 || delayMs > 35_000)
   throw new Error(
     "real SDK discovery control requires its evidence path and delay",
   );
@@ -25,12 +21,20 @@ let delayed = false;
 dns.lookup = async (...args) => {
   if (!delayed) {
     delayed = true;
-    const startedAt = Date.now();
+    const startedAt = performance.now();
+    const deadline = startedAt + delayMs;
 
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    while (performance.now() < deadline) {
+      await new Promise((resolve) =>
+        setTimeout(
+          resolve,
+          Math.max(1, Math.ceil(deadline - performance.now())),
+        ),
+      );
+    }
     appendFileSync(
       evidence,
-      `${JSON.stringify({ event: "real-host-discovery", delayMs: Date.now() - startedAt })}\n`,
+      `${JSON.stringify({ event: "real-host-discovery", delayMs: performance.now() - startedAt })}\n`,
     );
   }
 
