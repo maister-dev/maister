@@ -10,7 +10,7 @@ import { sql } from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import pino from "pino";
-import { Pool } from "pg";
+import { Pool, type PoolConfig } from "pg";
 import { getContainerRuntimeClient } from "testcontainers";
 
 import { probeContainerRuntimeDaemon } from "./docker-runtime-probe";
@@ -57,6 +57,46 @@ const dockerProbeTimeoutMs =
 const dockerClientTimeoutMs = 30_000;
 const logger = pino({ name: "test-database" });
 const DATABASE_ALLOCATION_LABEL = "maister.test.database-allocation";
+const CONNECTIONS_CLOSED = Symbol("test-pool-connections-closed");
+
+type TrackedTestPool = Pool & {
+  readonly [CONNECTIONS_CLOSED]: () => Promise<void>;
+};
+
+function createTestPool(options: PoolConfig): TrackedTestPool {
+  const pool = new Pool(options);
+  const connections = new Set<Promise<void>>();
+
+  pool.on("connect", (client) => {
+    const closed = new Promise<void>((resolve) => client.once("end", resolve));
+
+    connections.add(closed);
+    void closed.then(() => {
+      connections.delete(closed);
+    });
+  });
+
+  return Object.assign(pool, {
+    [CONNECTIONS_CLOSED]: async (): Promise<void> => {
+      await Promise.all([...connections]);
+    },
+  });
+}
+
+function isTrackedTestPool(pool: Pool): pool is TrackedTestPool {
+  return CONNECTIONS_CLOSED in pool;
+}
+
+async function closeTestPool(pool: Pool): Promise<void> {
+  if (!isTrackedTestPool(pool))
+    throw new Error("Test database pool has no connection-retirement owner");
+  try {
+    await pool.end();
+  } finally {
+    // pg-pool can resolve end before its client.end callbacks have run.
+    await pool[CONNECTIONS_CLOSED]();
+  }
+}
 
 export type TestDatabaseLane = "integration" | "e2e";
 
@@ -139,7 +179,7 @@ async function stopTestDatabaseResources(
 
   if (resources.pool !== undefined) {
     try {
-      await resources.pool.end();
+      await closeTestPool(resources.pool);
     } catch (error) {
       cleanupErrors.push(error);
     }
@@ -458,7 +498,7 @@ export async function startBarePostgresTestDb(
 
     container = startedContainer;
     const databaseUrl = startedContainer.getConnectionUri();
-    const startedPool = new Pool({
+    const startedPool = createTestPool({
       connectionString: databaseUrl,
       max: options.poolMax,
     });
@@ -700,8 +740,8 @@ export async function startMainAndBrainPostgresTestDbTemplate(
   let admin: Pool | undefined;
 
   try {
-    await template.pool.end();
-    admin = new Pool({ connectionString: adminUrl.href, max: 1 });
+    await closeTestPool(template.pool);
+    admin = createTestPool({ connectionString: adminUrl.href, max: 1 });
     await admin.query(`ALTER DATABASE ${templateName} ALLOW_CONNECTIONS false`);
   } catch (error) {
     return throwAfterCleanup(lane, error, {
@@ -730,7 +770,7 @@ export async function startMainAndBrainPostgresTestDbTemplate(
         "test database allocation interrupted by template shutdown",
       );
     }
-    const pool = new Pool({
+    const pool = createTestPool({
       connectionString: databaseUrl.href,
       max: options.poolMax,
     });
@@ -757,7 +797,7 @@ export async function startMainAndBrainPostgresTestDbTemplate(
         const errors: unknown[] = [];
 
         try {
-          await pool.end();
+          await closeTestPool(pool);
         } catch (error) {
           errors.push(error);
         }

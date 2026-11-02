@@ -1146,6 +1146,11 @@ from Darwin qualification.
 3. Every helper-created database MUST be unique to its test process and
    disposed through pool-before-container teardown; container shutdown MUST
    still be attempted if pool shutdown fails.
+   Pool retirement includes the actual `end` event of every connected client,
+   not only resolution of `Pool.end()`. Track connection retirement before
+   queries start and await it before stopping a container or dropping a clone;
+   the installed pg-pool removes clients before their socket-end callbacks.
+   Do not ignore administrator-termination errors to conceal a teardown race.
    Production fault suites may own one disposable container and a frozen,
    main-then-Brain migrated template for their lifetime. Each case receives a
    distinct database cloned from that template before any application seed or
