@@ -984,7 +984,7 @@ it("P4: delayed checkpoint ACK reaches its original handler after successor epoc
       },
     );
 
-    expect(restart.status).toBe(202);
+    expect(restart.status, await restart.clone().text()).toBe(202);
     events.release();
     receipt.release();
     const publishing = await successorPublication.awaitReached();

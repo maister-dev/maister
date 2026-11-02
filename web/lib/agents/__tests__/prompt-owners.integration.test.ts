@@ -3556,8 +3556,21 @@ describe("Agent owned prompts through the production launcher", () => {
       state: "succeeded",
       applicationState: "applied",
       applicationAttempts: 0,
-      applicationError: null,
     });
+    // Terminal evidence may arrive after the first preparation. A recovered
+    // deferral is retained by the application contract, never a poisoned retry.
+    if (applied.applicationError !== null) {
+      expect(applied.applicationError).toMatchObject({
+        reason: "prompt_owner_recovered",
+        classification: "deferred",
+        phase: "prepare",
+        causeReason: "prompt_owner_deferred",
+        causeDetails: { causeCode: "terminal_event_unconfirmed" },
+      });
+      expect(applied.applicationError.deferredSince).toEqual(
+        expect.any(String),
+      );
+    }
     expect(applied.completionAppliedAt).not.toBeNull();
     expect(
       await db.select().from(runResults).where(eq(runResults.runId, runId)),

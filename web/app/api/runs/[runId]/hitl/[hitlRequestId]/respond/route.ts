@@ -5,6 +5,7 @@ import pino from "pino";
 import { z } from "zod";
 
 import { requireActiveSession } from "@/lib/authz";
+import { queryErrorDiagnostics } from "@/lib/db/pg-error";
 import { getDb } from "@/lib/db/client";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { publicHitlRespondError } from "@/lib/hitl-response-error";
@@ -61,9 +62,10 @@ function errorResponse(
 
     return NextResponse.json(body, { status });
   }
-  const message = err instanceof Error ? err.message : String(err);
-
-  log.error({ ...ctx, err: message }, "respond unhandled error");
+  log.error(
+    { ...ctx, ...queryErrorDiagnostics(err) },
+    "respond unhandled error",
+  );
 
   return NextResponse.json(
     { code: "CRASH", message: "internal error" },
