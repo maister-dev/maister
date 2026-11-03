@@ -1699,7 +1699,7 @@ before scheduling. Unrelated core capabilities remain installable in legacy proj
 
 ## Company specialist and stand configuration (Designed)
 
-Company bindings resolve installed pinned definitions/revisions without a repository. `execution: {workspace: none, completion: result}` is the designed engine-3.11.0 result-only Flow declaration; current engine support is not implied. [Runtime](system-analytics/specialist-runtime.md) defines the allowed nodes, current authority and separate immutable input planes.
+Company bindings resolve installed pinned definitions/revisions without a repository. `execution: {workspace: none, completion: result}` is the designed engine-3.12.0 result-only Flow declaration; current engine support is not implied. [Runtime](system-analytics/specialist-runtime.md) defines the allowed nodes, current authority and separate immutable input planes.
 
 A stand target is managed through `/api/stands` with explicit incarnation, HTTPS/TLS identity, environment credential references, systemd manager/scope/user/unit, allowed actions, exact runbook revision and health probe. Read/propose grants are separate from review/confirmation and target mutation. Global administrators manage explicit company grants through `/api/company/grants`; this management authority does not implicitly disclose knowledge. Submitted source capture through `/api/knowledge/sources` records actual received bytes/version witness, not proof of assertion truth.
 

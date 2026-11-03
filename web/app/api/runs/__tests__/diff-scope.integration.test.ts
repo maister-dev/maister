@@ -29,8 +29,19 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
 }
 
 vi.mock("@/lib/authz", () => ({
-  requireActiveSession: vi.fn(async () => undefined),
+  requireActiveSession: vi.fn(async () => ({
+    id: "diff-scope-reader",
+    role: "member",
+    accountStatus: "active",
+    mustChangePassword: false,
+  })),
   requireProjectAction: vi.fn(async () => undefined),
+}));
+
+// This real-Git scope fixture isolates database/auth transport; actual native
+// source denial and regrant run in findings-workbench.integration.test.ts.
+vi.mock("@/lib/brain/knowledge-run-disclosure", () => ({
+  assertRunKnowledgeDisclosure: vi.fn(async () => undefined),
 }));
 
 // Table-identity fake DB: each table name maps to a seeded row array. All

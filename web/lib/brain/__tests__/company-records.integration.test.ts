@@ -514,13 +514,13 @@ it("IT-CBE-06 run-bound disclosure captures are durable, serialized and refuse u
   let releaseFirst: () => void = () => {
     throw new Error("first disclosure transaction has not started");
   };
-  let firstLocked: () => void = () => {
+  let firstLocked: (backendId: number) => void = () => {
     throw new Error("first disclosure barrier is not initialized");
   };
   const release = new Promise<void>((resolve) => {
     releaseFirst = resolve;
   });
-  const locked = new Promise<void>((resolve) => {
+  const locked = new Promise<number>((resolve) => {
     firstLocked = resolve;
   });
   const first = database.db.transaction(async (tx) => {
@@ -529,11 +529,13 @@ it("IT-CBE-06 run-bound disclosure captures are durable, serialized and refuse u
     await recordKnowledgeDisclosure(tx, consumer, [
       { kind: "company", companyId },
     ]);
-    firstLocked();
+    const backend = await tx.execute(sql`SELECT pg_backend_pid() AS pid`);
+
+    firstLocked(Number(backend.rows[0]!.pid));
     await release;
   });
 
-  await locked;
+  const backendId = await locked;
   const second = database.db.transaction(async (tx) => {
     const consumer = await lockKnowledgeReadConsumer(tx, principal);
 
@@ -549,7 +551,8 @@ it("IT-CBE-06 run-bound disclosure captures are durable, serialized and refuse u
           Number(
             (
               await database.pool.query(
-                "SELECT count(*)::int AS n FROM pg_stat_activity WHERE wait_event_type='Lock' AND query ILIKE '%SELECT knowledge_access FROM runs%FOR UPDATE%'",
+                "SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1::integer=ANY(pg_blocking_pids(pid))",
+                [backendId],
               )
             ).rows[0]!.n,
           ),

@@ -1,0 +1,373 @@
+{
+  "schemaVersion": 1,
+  "task": "T15",
+  "baselineCommit": "e76199b9d",
+  "status": "platform_qualified",
+  "engineVersion": "3.11.0",
+  "recordedAt": "2026-11-03T20:14:12.173323+00:00",
+  "tests": {
+    "webIntegration": {
+      "passed": 5758,
+      "filesPassed": 640,
+      "skippedTests": 2,
+      "skippedFiles": 2
+    },
+    "webUnit": {
+      "passed": 9261,
+      "files": 886
+    },
+    "supervisorUnit": {
+      "passed": 499,
+      "files": 50
+    },
+    "supervisorIntegration": {
+      "passed": 340,
+      "files": 37
+    },
+    "webTypecheck": "passed",
+    "changedWebLint": "passed",
+    "contracts": "passed",
+    "docsAndErd": "passed",
+    "standaloneProbeServerTypecheck": "passed"
+  },
+  "qualified": [
+    "The full web unit/integration and full supervisor unit/integration gates pass with native findings engine floor 3.11.0; the separate company result-only/operational-v2 capability remains reserved for 3.12.0.",
+    "Existing result ledger, collection/reduction, private input, source capture, current recipient disclosure, outward history/Inbox/review/webhook/export channels, exact-revision inspection and bounded/concurrent source handling remain covered by the owning T15 checkpoints and full web regression.",
+    "Legacy fixture corrections provide real session users and originating runs, preserve negative nonexistent-execution intake, pass current recipients, and observe actual PostgreSQL lock contention rather than SQL spelling. No production source-authorization bypass was added.",
+    "Native package lifecycle separates install/trust/explicit enable, including trusted reattachment, and accepts only equivalent absolute-cache/file-URL identities. T16 retains separate actual companion install/contract evidence."
+  ],
+  "qualificationLimits": [
+    "The first full run was interrupted with exit 130 after stale fixture and long recovery failures. Isolated unchanged recovery cases and the final full rerun pass; the earlier timing failure root cause is not asserted.",
+    "The next full run passed 5751 checks but one suite failed Docker port binding before tests; cleanup then failed on an uninitialized path. Initializing the owned directory before database startup preserves cleanup, the isolated seven cases pass, and the final full run passes all 5758.",
+    "The final web integration run started before the T17 shared ACP delta fix; its owning checks and the subsequent fresh full supervisor suites qualify that seam separately. No exact-build end-to-end package or deployment claim is implied.",
+    "Two pre-existing opt-in event-plane load checks are skipped by this default integration lane. This is not their performance qualification.",
+    "Actual installed RAH depth-1/depth-2/live access/write-back qualification, CB0 release and all CB1 pilot qualification remain open. No push, merge or deployment occurred.",
+    "Brain adds no restrictive source FK or read prerequisite for project deletion; company knowledge remains independent of project lifetime."
+  ],
+  "logs": [
+    {
+      "name": "initial-interrupted",
+      "uncompressedSha256": "8ba2da742c21e3638be6a055e729a6b89d86577849c368a34ae3e33714e70d37",
+      "parts": [
+        {
+          "path": "initial-interrupted.part-001.log.gz",
+          "byteOffset": 0,
+          "byteLength": 3666800,
+          "uncompressedSha256": "dd4fb3d3f9d943467597e6f64456962ded9c6f87d1ddf9b3a4c5346ff2232f64"
+        },
+        {
+          "path": "initial-interrupted.part-002.log.gz",
+          "byteOffset": 3666800,
+          "byteLength": 3666800,
+          "uncompressedSha256": "610792fe56923c8ff855b2f96258e1e5fe374f64aa3d04749d011b1339e365cc"
+        },
+        {
+          "path": "initial-interrupted.part-003.log.gz",
+          "byteOffset": 7333600,
+          "byteLength": 3666800,
+          "uncompressedSha256": "415223e5cdc42ba4f4d8968b27fa40c09616b7772c6d52bc0d5bc0b47252380c"
+        },
+        {
+          "path": "initial-interrupted.part-004.log.gz",
+          "byteOffset": 11000400,
+          "byteLength": 3666800,
+          "uncompressedSha256": "d8552e1497e50e5fc35d96e735441a508c6e2efb8b84fc7954e855c5a9c482a4"
+        },
+        {
+          "path": "initial-interrupted.part-005.log.gz",
+          "byteOffset": 14667200,
+          "byteLength": 1833400,
+          "uncompressedSha256": "861a1356a078b849cb898b9c4c53134779f0898c430d2ef91799896838284f11"
+        },
+        {
+          "path": "initial-interrupted.part-006.log.gz",
+          "byteOffset": 16500600,
+          "byteLength": 1833400,
+          "uncompressedSha256": "531ded0be3236a0224da02a0a33c4448967bbc5a8764bf2e664103ca9ba40931"
+        },
+        {
+          "path": "initial-interrupted.part-007.log.gz",
+          "byteOffset": 18334000,
+          "byteLength": 3666800,
+          "uncompressedSha256": "305211631ca3bf574fc8edae805088d256ee32e81e2851a10be4d18dc72b8a04"
+        },
+        {
+          "path": "initial-interrupted.part-008.log.gz",
+          "byteOffset": 22000800,
+          "byteLength": 3666800,
+          "uncompressedSha256": "026242bed3d2613516dd50b8fa6feab38bf1a09d4cf494cf82f6f6500d09f614"
+        },
+        {
+          "path": "initial-interrupted.part-009.log.gz",
+          "byteOffset": 25667600,
+          "byteLength": 3666801,
+          "uncompressedSha256": "377aad4c21d5ee4d8473d46b732a8f70aa8fced90b6e6f44481b3270d5baf40f"
+        }
+      ]
+    },
+    {
+      "name": "fixture-corrections",
+      "uncompressedSha256": "c84eedbc77ed2f3acf16968bfea0f4e06ab73297a817078cf5f440b46731940b",
+      "parts": [
+        {
+          "path": "fixture-corrections.log.gz",
+          "byteOffset": 0,
+          "byteLength": 481894,
+          "uncompressedSha256": "c84eedbc77ed2f3acf16968bfea0f4e06ab73297a817078cf5f440b46731940b"
+        }
+      ]
+    },
+    {
+      "name": "isolated-agent-resume",
+      "uncompressedSha256": "0ee56ec6457992463b4ea7f558ecbd7ca284ceebc3e4ef1847fb74dc5a337a06",
+      "parts": [
+        {
+          "path": "isolated-agent-resume.log.gz",
+          "byteOffset": 0,
+          "byteLength": 45340,
+          "uncompressedSha256": "0ee56ec6457992463b4ea7f558ecbd7ca284ceebc3e4ef1847fb74dc5a337a06"
+        }
+      ]
+    },
+    {
+      "name": "isolated-agent-rework",
+      "uncompressedSha256": "8fe9d7570070f3c6c8e66132e55bfc800caaa0215a95fb682214ae515a5250a6",
+      "parts": [
+        {
+          "path": "isolated-agent-rework.log.gz",
+          "byteOffset": 0,
+          "byteLength": 38904,
+          "uncompressedSha256": "8fe9d7570070f3c6c8e66132e55bfc800caaa0215a95fb682214ae515a5250a6"
+        }
+      ]
+    },
+    {
+      "name": "full-web-port-timeout",
+      "uncompressedSha256": "ca24f179813a91b5179a52185432892b87753174be056689b00ef2d7ff2929fc",
+      "parts": [
+        {
+          "path": "full-web-port-timeout.part-001.log.gz",
+          "byteOffset": 0,
+          "byteLength": 3780487,
+          "uncompressedSha256": "7d0e9a989192fa0fdb6f4b11e6bd1917b33b8b1514d9bd14f05e80cf23a671b4"
+        },
+        {
+          "path": "full-web-port-timeout.part-002.log.gz",
+          "byteOffset": 3780487,
+          "byteLength": 3780488,
+          "uncompressedSha256": "fdd2bd1536c83801f6b1cb9d0249de679e80a3cf77cc8361f93a127dcb8951d6"
+        },
+        {
+          "path": "full-web-port-timeout.part-003.log.gz",
+          "byteOffset": 7560975,
+          "byteLength": 3780487,
+          "uncompressedSha256": "efb057b14e94434646babb5a18695d7f695522e4cf23484a3b91f1e622c9bec1"
+        },
+        {
+          "path": "full-web-port-timeout.part-004.log.gz",
+          "byteOffset": 11341462,
+          "byteLength": 3780488,
+          "uncompressedSha256": "8ff74a0322f48e03a14472e870931535110ac8e1245cdc5852df9164222268ad"
+        },
+        {
+          "path": "full-web-port-timeout.part-005.log.gz",
+          "byteOffset": 15121950,
+          "byteLength": 3780487,
+          "uncompressedSha256": "22b992b96dd2938d9d786bef1f0b47649e538ce2c278a4376791ad7c2780fb94"
+        },
+        {
+          "path": "full-web-port-timeout.part-006.log.gz",
+          "byteOffset": 18902437,
+          "byteLength": 3780488,
+          "uncompressedSha256": "4a3e4e98c3a0e09fd3aee5024c880bcf4734d4000ad5792e960c70b806bcb245"
+        },
+        {
+          "path": "full-web-port-timeout.part-007.log.gz",
+          "byteOffset": 22682925,
+          "byteLength": 3780488,
+          "uncompressedSha256": "2c7fdc4ecb194795c83f68e8453a14a22a18e7c83fa0fa945a76b6baf105c757"
+        },
+        {
+          "path": "full-web-port-timeout.part-008.log.gz",
+          "byteOffset": 26463413,
+          "byteLength": 1890244,
+          "uncompressedSha256": "76efea5749ca9516a4483222321157e97ed44b499f1781a8cab3738c4718b834"
+        },
+        {
+          "path": "full-web-port-timeout.part-009.log.gz",
+          "byteOffset": 28353657,
+          "byteLength": 1890244,
+          "uncompressedSha256": "0de47c24481d95b0fa1b9f946b8878c5dec51ab92000c3e55dfd4bc27685bd35"
+        }
+      ]
+    },
+    {
+      "name": "isolated-legacy-copy",
+      "uncompressedSha256": "ad79ec32f2d4d466f2f501016fac35540cec2ee012f67003c032ff79c51ec112",
+      "parts": [
+        {
+          "path": "isolated-legacy-copy.log.gz",
+          "byteOffset": 0,
+          "byteLength": 13205,
+          "uncompressedSha256": "ad79ec32f2d4d466f2f501016fac35540cec2ee012f67003c032ff79c51ec112"
+        }
+      ]
+    },
+    {
+      "name": "full-web-integration",
+      "uncompressedSha256": "b7b809c4c27d17c02a56a77a423f15bb56b1ddeb166539467c9ba5f8aab0044e",
+      "parts": [
+        {
+          "path": "full-web-integration.part-001.log.gz",
+          "byteOffset": 0,
+          "byteLength": 3793700,
+          "uncompressedSha256": "3facc900154ff7d54b2aa2139aa25a0800938a02b7b6c69ef220c6014e7a4d05"
+        },
+        {
+          "path": "full-web-integration.part-002.log.gz",
+          "byteOffset": 3793700,
+          "byteLength": 3793701,
+          "uncompressedSha256": "e5be74d21902a8aa270739ec00ec6ecd4cc8983451f3ab87ea510249352a1441"
+        },
+        {
+          "path": "full-web-integration.part-003.log.gz",
+          "byteOffset": 7587401,
+          "byteLength": 3793700,
+          "uncompressedSha256": "079089aa3db9e9b24fa9c40f1d257d29cd80191abdf87365f4671ec9aeac9773"
+        },
+        {
+          "path": "full-web-integration.part-004.log.gz",
+          "byteOffset": 11381101,
+          "byteLength": 3793701,
+          "uncompressedSha256": "11ec0570592e56e15637bd4c5455a267e8431359109bc813fc94e080c2760489"
+        },
+        {
+          "path": "full-web-integration.part-005.log.gz",
+          "byteOffset": 15174802,
+          "byteLength": 3793700,
+          "uncompressedSha256": "155d3e8326d1108b2726cfb7b594ad1ea0e3ae3e98dc0fd5c285dfb1b9c2dc78"
+        },
+        {
+          "path": "full-web-integration.part-006.log.gz",
+          "byteOffset": 18968502,
+          "byteLength": 3793701,
+          "uncompressedSha256": "b72d7e627d53e1c3b91c7b9a0bfa029ba2310459cc96ecd2c1cfd0562b2c27fe"
+        },
+        {
+          "path": "full-web-integration.part-007.log.gz",
+          "byteOffset": 22762203,
+          "byteLength": 3793700,
+          "uncompressedSha256": "13afbb0fd2d0dced73ba59112684efb072b2a0fd827a30519da135ca7d503c95"
+        },
+        {
+          "path": "full-web-integration.part-008.log.gz",
+          "byteOffset": 26555903,
+          "byteLength": 1896850,
+          "uncompressedSha256": "28b888fc6388f404122ac271ad90f8252d5aec256eebe167c338feaa56f69e3e"
+        },
+        {
+          "path": "full-web-integration.part-009.log.gz",
+          "byteOffset": 28452753,
+          "byteLength": 1896851,
+          "uncompressedSha256": "528c0ea01c8bdf595f5ac57182e7929da61d8ec2ffc821213a443c5b92a0bcc8"
+        }
+      ]
+    },
+    {
+      "name": "full-web-unit",
+      "uncompressedSha256": "25e7b2141c3083031705757be2e8bb88ad4e652c1162886a2c31b475ec3d01ea",
+      "parts": [
+        {
+          "path": "full-web-unit.log.gz",
+          "byteOffset": 0,
+          "byteLength": 525041,
+          "uncompressedSha256": "25e7b2141c3083031705757be2e8bb88ad4e652c1162886a2c31b475ec3d01ea"
+        }
+      ]
+    },
+    {
+      "name": "full-supervisor-unit",
+      "uncompressedSha256": "c9598aa03a645b932daafc66737bea86bc3f01aeb456b76ab4811a7ec03ae7d3",
+      "parts": [
+        {
+          "path": "full-supervisor-unit.log.gz",
+          "byteOffset": 0,
+          "byteLength": 1284,
+          "uncompressedSha256": "c9598aa03a645b932daafc66737bea86bc3f01aeb456b76ab4811a7ec03ae7d3"
+        }
+      ]
+    },
+    {
+      "name": "full-supervisor-integration",
+      "uncompressedSha256": "168e2543a372d7d7094b14d91f14790e566ee059a07fa31ef5461b101aa84d0a",
+      "parts": [
+        {
+          "path": "full-supervisor-integration.log.gz",
+          "byteOffset": 0,
+          "byteLength": 1667,
+          "uncompressedSha256": "168e2543a372d7d7094b14d91f14790e566ee059a07fa31ef5461b101aa84d0a"
+        }
+      ]
+    },
+    {
+      "name": "web-typecheck",
+      "uncompressedSha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92",
+      "parts": [
+        {
+          "path": "web-typecheck.log.gz",
+          "byteOffset": 0,
+          "byteLength": 15,
+          "uncompressedSha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+        }
+      ]
+    },
+    {
+      "name": "web-lint",
+      "uncompressedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "parts": [
+        {
+          "path": "web-lint.log.gz",
+          "byteOffset": 0,
+          "byteLength": 0,
+          "uncompressedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ]
+    },
+    {
+      "name": "contracts",
+      "uncompressedSha256": "9df6e6fe2e70aec626897bb9a34aa4544395b707f682f868f4ff7412cb480da4",
+      "parts": [
+        {
+          "path": "contracts.log.gz",
+          "byteOffset": 0,
+          "byteLength": 2489,
+          "uncompressedSha256": "9df6e6fe2e70aec626897bb9a34aa4544395b707f682f868f4ff7412cb480da4"
+        }
+      ]
+    },
+    {
+      "name": "docs",
+      "uncompressedSha256": "d48bc74a086b82c78a4b9b9ed8b91f1d8f774dcc1cff1ba2269b7659da829321",
+      "parts": [
+        {
+          "path": "docs.log.gz",
+          "byteOffset": 0,
+          "byteLength": 5273,
+          "uncompressedSha256": "d48bc74a086b82c78a4b9b9ed8b91f1d8f774dcc1cff1ba2269b7659da829321"
+        }
+      ]
+    },
+    {
+      "name": "probe-server-typecheck",
+      "uncompressedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "parts": [
+        {
+          "path": "probe-server-typecheck.log.gz",
+          "byteOffset": 0,
+          "byteLength": 0,
+          "uncompressedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ]
+    }
+  ]
+}

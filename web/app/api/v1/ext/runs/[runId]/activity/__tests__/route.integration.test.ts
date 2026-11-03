@@ -211,6 +211,7 @@ describe("GET /api/v1/ext/runs/[runId]/activity", () => {
         limit: 25,
         salience: "normal",
         client: { name: "db" },
+        recipient: { kind: "token", tokenId: "tok-1" },
       },
     );
     await expect(res.json()).resolves.toEqual({
@@ -333,6 +334,7 @@ describe("GET /api/v1/ext/runs/[runId]/activity", () => {
         limit: 25,
         salience: "normal",
         client: { name: "db" },
+        recipient: { kind: "token", tokenId: "tok-1" },
       },
     );
   });

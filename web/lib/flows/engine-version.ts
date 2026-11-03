@@ -96,7 +96,10 @@ const log = pino({
 // engine forwards the literal text, which this engine cannot refuse on its
 // behalf, so the floor is documented rather than enforced at load.
 // 3.9.0 adds operational agents and their mandatory package compatibility floor.
-export const MAISTER_ENGINE_VERSION = "3.10.0";
+// 3.11.0 adds native evidence findings with server-validated references, source
+// capture and access-aware reduction/disclosure. Company result-only execution
+// still requires its own declared capability and binding preflight.
+export const MAISTER_ENGINE_VERSION = "3.11.0";
 
 // Minimum engine version a graph (`nodes[]`) manifest must declare in
 // `compat.engine_min` (ADR-026). Enforced in `loadFlowManifest`.

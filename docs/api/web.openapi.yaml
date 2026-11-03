@@ -15172,7 +15172,10 @@ paths:
         `flow_revisions` + `capability_imports` row, THEN the existing
         post-trust setup path runs pending member `setup.sh` (after-tx
         side-effect; never at install). Setup failure marks the member
-        revision Failed and surfaces on launch as today.
+        revision Failed and surfaces on launch as today. Native
+        evidence_findings_v1 member Flows remain Installed after trust and need
+        the existing explicit revision-enable action. A trusted install/cache
+        or a previous attachment does not enable a new native attachment.
       operationId: trustProjectPackage
       parameters:
         - {

@@ -58,6 +58,15 @@ resolution. This declaration requires the owning package and Flow's effective
 is a configuration refusal before launch. Generic FormSchema and existing
 operational_v1 declarations keep their meaning.
 
+Native result-export Flows require explicit revision enablement after install
+and trust, including reattachment of an already trusted cache. Installation does
+not execute their setup hooks; deferred setup runs only through a trusted
+trust/enable action. Legacy package auto-enable behavior retains its contract.
+The ordinary enable/rollback source check treats an absolute cache path and its
+exact file URL as the same source identity; it still refuses another directory
+or repository. This supports retained package preinstall rows without rewriting
+source history or granting cross-source trust.
+
 The loader preserves the native selector in the pinned profile/export metadata.
 The launcher freezes it as `nativeContract` in the existing `runs.result_contract`.
 Publication selects native validation only from this server snapshot. The result
@@ -295,11 +304,15 @@ hold PostgreSQL locks while waiting for upstream chunks; deleting a project can
 complete while its stream is open. Company-owned records survive that deletion.
 The next chunk is unavailable because its project/run source no longer exists.
 
-The T15 collection/reduction and protected artifact/transcript/inspector slice is
-implemented behind the existing native capability floor. The engine remains
-3.10.0 until the remaining outward channels, shared-store writes, evidence-link
-presentation, and recovery/performance qualification pass. These implemented
-boundaries do not establish native package or pilot readiness.
+The native collection/reduction, source-aware input, protected outward channels
+and evidence inspection use the 3.11.0 capability floor. The full platform
+regression gate is required before activation is qualified. The installed-package
+and live ACP gates remain separate; these platform boundaries alone do not
+establish package or pilot readiness. Reduction metadata bounds aggregate retained
+input at 4 MiB before loading bodies and admits at most 256 source findings.
+Concurrent knowledge tools serialize the receiving run capture before reading
+records, so each disclosed source remains in the durable union. Repeated reads of
+one source neither advance an unchanged capture generation nor confirm its facts.
 
 ### Shared destination admission
 

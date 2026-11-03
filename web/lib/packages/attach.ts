@@ -28,6 +28,7 @@ import {
   type InstallResult,
 } from "@/lib/flows";
 import { loadFlowManifest } from "@/lib/config";
+import { requiresExplicitNativeFindingsEnablement } from "@/lib/flows/enablement-states";
 import { evaluateMcpReadiness } from "@/lib/mcp/readiness";
 import { loadMcpReadinessContext } from "@/lib/mcp/readiness-host";
 import { resolvePackageSource } from "@/lib/packages/install";
@@ -1338,6 +1339,7 @@ export async function trustPackageRevision(opts: {
           : rev.setupStatus;
 
       if (
+        !requiresExplicitNativeFindingsEnablement(rev.manifest) &&
         isReadyFlowRevision({
           packageStatus: rev.packageStatus,
           setupStatus,

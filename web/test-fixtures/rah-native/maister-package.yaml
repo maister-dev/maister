@@ -1,0 +1,23 @@
+schemaVersion: 1
+name: rah
+compat:
+  engine_min: 3.11.0
+metadata:
+  title: Governed evidence research
+  summary: Pinned depth-1/depth-2 research and a single-role control over
+    structured Company Brain knowledge.
+flows:
+  - id: rah-root-d1
+    path: flows/rah-root-d1
+  - id: rah-root-d2
+    path: flows/rah-root-d2
+  - id: rah-research
+    path: flows/rah-research
+  - id: rah-control
+    path: flows/rah-control
+result_profiles:
+  findings:
+    schema: ./schemas/evidence-findings.v1.json
+    native_contract: evidence_findings_v1
+capabilities: []
+mcps: []
