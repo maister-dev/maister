@@ -94,6 +94,15 @@ The reused Git gate registers its detached process group durably before acknowle
 
 Terminalization atomically closes run/assignment/turn/publication authority and arms cleanup; filesystem effects follow commit. Disposition quiescence includes preparation, commands, canonical bound sessions, HITL and fresh host evidence. Missing session, successful prompt or old DELETE success alone is insufficient. Cleanup failure is a separate retained incident and does not revert terminal state. Deferred contention/readiness is not a negative assessment or proof of irrecoverability from age alone.
 
+A rejected session create without a manager incarnation needs positive physical
+retirement evidence. [Supervisor receipt ownership](../supervisor.md#command-envelope-fences-and-receipts-implemented--adr-166)
+defines the versioned host witness and same-command late-exit recovery. Finalization,
+cleanup and pre-work retry validate that witness and exact private owner binding;
+empty inventory or a legacy unstamped rejection alone remains insufficient.
+Accepted v1/v2 creates and legacy restart-generated `turn_lost` rejections do
+not prove adapter retirement and cannot authorize a new session generation.
+No historical receipt is backfilled.
+
 ### Diagnostics
 
 Preserve earliest safe cause plus run, assignment/epoch, driver source, preparation token/resource incarnation, stage, probe operation, safe errno/syscall, Git category/exit/signal and bounded cause chain. Retain capture/verify phase and numeric limit counters. Correlate worktree operation start/end/outcome by operation ID. Log no source bytes, credentials, environment values, raw provider stderr or default absolute host paths. Error sanitization must retain typed FENCED yield semantics.

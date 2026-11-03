@@ -21,6 +21,7 @@ import {
 import { commandRequestDigest } from "../command-receipts";
 import { SESSION_EVENT_CHANNEL } from "../registry";
 import { pendingPermissions } from "../pending-permissions";
+import { signalOwnedSessionProcess } from "../execution-fence";
 import { canonicalCommandJson } from "../../../runtime/command-json";
 import {
   parseCommandReceiptV2,
@@ -1062,7 +1063,7 @@ describe("session.command events", () => {
     } finally {
       releaseTerminal();
       if (entry.child.exitCode === null && entry.child.signalCode === null)
-        entry.child.kill("SIGKILL");
+        signalOwnedSessionProcess(entry, "SIGKILL");
       await prompt;
       await waitFor(
         () => entry.child.exitCode !== null || entry.child.signalCode !== null,
@@ -1147,7 +1148,7 @@ describe("session.command events", () => {
     } finally {
       releasePublication();
       if (entry.child.exitCode === null && entry.child.signalCode === null)
-        entry.child.kill("SIGKILL");
+        signalOwnedSessionProcess(entry, "SIGKILL");
       await waitFor(() => entry.record.terminalPublished === true, 5_000);
       await entry.record.outputTerminal;
       await prompt;

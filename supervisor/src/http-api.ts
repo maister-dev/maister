@@ -26,7 +26,12 @@ import { z, ZodError, type ZodType } from "zod";
 
 import { safeDownloadHeaders } from "../../runtime/safe-download";
 import { objectDigest, objectEtag } from "../../runtime/object-integrity";
+import { safeErrorCauseChain } from "../../runtime/safe-error-cause";
 
+import {
+  reconcileRunSessionProcesses,
+  recoverSessionProcessesOnBoot,
+} from "./session-process-ownership";
 import {
   createAcpConnection,
   sendPromptOnConnection,
@@ -57,9 +62,11 @@ import { attachCost } from "./cost";
 import {
   applyFence,
   evictLowerEpochSessions,
+  terminateSessionProcess,
+  signalOwnedSessionProcess,
+  requestOwnedSessionTermination,
   waitForChildExit,
 } from "./execution-fence";
-import { attachHeartbeat } from "./heartbeat";
 import { finishProgressTurn } from "./guardrail-progress";
 import { executionHostCapabilities } from "./data-plane-capabilities";
 import { outboxLimitOf } from "./host-runtime-errors";
@@ -76,6 +83,10 @@ import { ModelSourceRegistry } from "./model-catalog/registry";
 import { resolveModelCatalog } from "./model-catalog/resolve";
 import { ModelCatalogDraftSchema } from "./model-catalog/types";
 import { checkpointSession } from "./checkpoint-teardown";
+import {
+  settleRetiredSessionCreate,
+  UnsettledSessionCreateError,
+} from "./session-create-outcome";
 import { PRODUCER_PAUSE_MAX_MS } from "./producer-pressure";
 import { pendingPermissions } from "./pending-permissions";
 import { contentBlockUriViolation } from "./prompt-confinement";
@@ -653,14 +664,17 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   // route below exists, so no reclamation can precede it. Boot no longer prunes
   // receipts at all — the only reclamation is that explicit handshake.
   const receipts = new CommandReceipts(hostState, logger);
-  const recoveredPromptReceipts = receipts.recoverAcceptedPrompts();
 
-  if (recoveredPromptReceipts > 0) {
-    logger.warn(
-      { recoveredPromptReceipts },
-      "supervisor-startup-recovered-accepted-prompts",
-    );
-  }
+  app.addHook("onReady", async () => {
+    await recoverSessionProcessesOnBoot(hostState, registry);
+    const recoveredPromptReceipts = receipts.recoverAcceptedPrompts();
+
+    if (recoveredPromptReceipts > 0)
+      logger.warn(
+        { recoveredPromptReceipts },
+        "supervisor-startup-recovered-accepted-prompts",
+      );
+  });
   const runtimeObjects = new RuntimeObjectRegistry(
     hostState,
     join(hostState.stateDirReal ?? runtimeRoot, "runtime-objects"),
@@ -786,6 +800,27 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   // a fence advance triggers runs INSIDE the in-flight execution, so a
   // concurrent duplicate of the same command id joins the eviction instead of
   // executing beside it (E-EH-04).
+  /** Terminal receipts only replay evidence; every potentially executable command must first retire older owners. */
+  async function requirePriorEpochRetirement(
+    envelope: CommandEnvelope,
+  ): Promise<void> {
+    const previous = receipts.lookup(envelope.command.id);
+
+    if (previous && previous.phase !== "accepted") return;
+    await evictLowerEpochSessions({
+      registry,
+      runId: envelope.fence.runId,
+      epoch: envelope.fence.assignmentEpoch,
+      killGraceMs,
+      logger: fenceLog,
+    });
+    await reconcileRunSessionProcesses(
+      hostState,
+      registry,
+      envelope.fence.runId,
+    );
+  }
+
   async function runCommand(args: {
     reply: FastifyReply;
     parsed: ParsedCommand<unknown>;
@@ -809,12 +844,14 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       "accepted" | "completed" | "rejected",
       SessionCommandEvent
     >();
-    const fence = applyFence({
+
+    applyFence({
       state: hostState,
       fence: envelope.fence,
       expectedRunId: args.expectedRunId,
       logger: fenceLog,
     });
+    await requirePriorEpochRetirement(envelope);
 
     const outcome = await receipts.execute({
       envelope,
@@ -879,16 +916,6 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
           : undefined,
       admission,
       run: async () => {
-        if (fence.advanced) {
-          await evictLowerEpochSessions({
-            registry,
-            runId: envelope.fence.runId,
-            epoch: envelope.fence.assignmentEpoch,
-            killGraceMs,
-            logger: fenceLog,
-          });
-        }
-
         try {
           return await args.execute();
         } catch (error) {
@@ -920,12 +947,13 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     }) => AppendRuntimeEventInput | null;
     execute: () => Promise<CommandOutcome>;
   }): Promise<void> {
-    const fence = applyFence({
+    applyFence({
       state: hostState,
       fence: args.parsed.envelope.fence,
       expectedRunId: args.expectedRunId,
       logger: fenceLog,
     });
+    await requirePriorEpochRetirement(args.parsed.envelope);
     const outcome = await receipts.executeRestartableUpload({
       admission: receiptAdmission("runtime_object.upload", {}),
       envelope: args.parsed.envelope,
@@ -947,16 +975,6 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         else hostState.putReceipt(transition.row, transition.admission);
       },
       run: async () => {
-        if (fence.advanced) {
-          await evictLowerEpochSessions({
-            registry,
-            runId: args.parsed.envelope.fence.runId,
-            epoch: args.parsed.envelope.fence.assignmentEpoch,
-            killGraceMs,
-            logger: fenceLog,
-          });
-        }
-
         return args.execute();
       },
     });
@@ -1047,12 +1065,14 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       "accepted" | "completed" | "rejected",
       SessionCommandEvent
     >();
-    const fence = applyFence({
+
+    applyFence({
       state: hostState,
       fence: envelope.fence,
       expectedRunId: entry.record.runId,
       logger: fenceLog,
     });
+    await requirePriorEpochRetirement(envelope);
 
     if (
       entry.record.activePromptCommandId &&
@@ -1179,16 +1199,6 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         }
       },
       run: async () => {
-        if (fence.advanced) {
-          await evictLowerEpochSessions({
-            registry,
-            runId: envelope.fence.runId,
-            epoch: envelope.fence.assignmentEpoch,
-            killGraceMs,
-            logger: fenceLog,
-          });
-        }
-
         try {
           return await args.execute();
         } finally {
@@ -1705,7 +1715,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         !entry.intentionalShutdown
       ) {
         if (entry.child.exitCode === null && entry.child.signalCode === null)
-          entry.child.kill("SIGKILL");
+          requestOwnedSessionTermination(entry, "SIGKILL", logger);
         const terminalSettled = await waitForChildExit(entry, killGraceMs);
 
         // A terminal purge settles the bounded permission callbacks. Derive
@@ -1794,7 +1804,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     }
     if (entry.record.reapOnEndTurn && response.stopReason === "end_turn") {
       entry.intentionalShutdown = true;
-      entry.child.kill("SIGTERM");
+      signalOwnedSessionProcess(entry, "SIGTERM");
     }
 
     return {
@@ -2598,6 +2608,19 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   );
 
   app.get<CommandIdParams>("/commands/:commandId", async (req, reply) => {
+    const existing = receipts.lookup(req.params.commandId);
+
+    if (existing?.phase === "accepted") {
+      try {
+        await reconcileRunSessionProcesses(hostState, registry, existing.runId);
+      } catch (error) {
+        if (
+          !isSupervisorError(error) ||
+          error.details?.reason !== "session_process_owner_unconfirmed"
+        )
+          throw error;
+      }
+    }
     const receipt = receipts.lookup(req.params.commandId);
 
     if (!receipt) {
@@ -2648,229 +2671,280 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       kind: "session.create",
       expectedRunId: handle?.runId,
       execute: async () => {
-        // ADR-166 D7: cwd, confinement roots, run dir, and mounts all derive
-        // from the adopted handle (server state) — the single path-derivation
-        // site.
-        const workspace: WorkspaceResolution = workspaces.resolveForSession(
-          request.executionWorkspaceId,
-          { stepId: request.stepId },
-        );
-        const sessionId = randomUUID();
-        const outputPaths: Partial<
-          Record<RuntimeObjectOutputBinding["envName"], string>
-        > = {};
-        const outputObjectIds = new Set<string>();
-        const outputEnvironmentNames = new Set<string>();
-
-        for (const binding of request.outputObjects ?? []) {
-          if (
-            outputObjectIds.has(binding.objectId) ||
-            outputEnvironmentNames.has(binding.envName)
-          ) {
-            throw new SupervisorError(
-              "PRECONDITION",
-              "runtime output bindings must use unique object IDs and environment names",
-              { details: { reason: "command_invariant_conflict" } },
-            );
-          }
-          outputObjectIds.add(binding.objectId);
-          outputEnvironmentNames.add(binding.envName);
-        }
-        let spawned: Awaited<ReturnType<typeof spawnSession>>;
+        let createProcess: "not_started" | "unknown" | "terminated" =
+          "not_started";
 
         try {
+          // ADR-166 D7: cwd, confinement roots, run dir, and mounts all derive
+          // from the adopted handle (server state) — the single path-derivation
+          // site.
+          const workspace: WorkspaceResolution = workspaces.resolveForSession(
+            request.executionWorkspaceId,
+            { stepId: request.stepId },
+          );
+          const sessionId = randomUUID();
+          const outputPaths: Partial<
+            Record<RuntimeObjectOutputBinding["envName"], string>
+          > = {};
+          const outputObjectIds = new Set<string>();
+          const outputEnvironmentNames = new Set<string>();
+
           for (const binding of request.outputObjects ?? []) {
-            const allocated = await runtimeObjects.allocateOutput({
-              runId: parsed.envelope.fence.runId,
-              assignmentId: parsed.envelope.fence.assignmentId,
-              assignmentEpoch: parsed.envelope.fence.assignmentEpoch,
-              hostSessionId: sessionId,
-              walletId: parsed.envelope.command.id,
-              binding,
-            });
-
-            outputPaths[binding.envName] = allocated.path;
-          }
-          const capabilityProfile = request.capabilityProfileObjectId
-            ? await runtimeObjects.resolvePromptReference({
-                objectId: request.capabilityProfileObjectId,
-                runId: parsed.envelope.fence.runId,
-                assignmentId: parsed.envelope.fence.assignmentId,
-                assignmentEpoch: parsed.envelope.fence.assignmentEpoch,
-                expectedKind: "capability_profile",
-              })
-            : null;
-          const capabilityInstructions = request.capabilityInstructionsObjectId
-            ? await runtimeObjects.resolvePromptReference({
-                objectId: request.capabilityInstructionsObjectId,
-                runId: parsed.envelope.fence.runId,
-                assignmentId: parsed.envelope.fence.assignmentId,
-                assignmentEpoch: parsed.envelope.fence.assignmentEpoch,
-                expectedKind: "capability_instructions",
-              })
-            : null;
-
-          spawned = await spawnSession({
-            sessionId,
-            hostState,
-            runtimeEventPublisher: runtimeEvents,
-            request,
-            workspace,
-            createdBy: {
-              commandId: parsed.envelope.command.id,
-              assignmentId: parsed.envelope.fence.assignmentId,
-              assignmentEpoch: parsed.envelope.fence.assignmentEpoch,
-            },
-            logger,
-            producerPauseBound: {
-              maxMs: producerPauseMaxMs,
-              onExceeded: (pausedMs) => parkPausedProducer(sessionId, pausedMs),
-            },
-            binaryOverride: opts.spawnOverrides?.binary,
-            preArgs: opts.spawnOverrides?.preArgs,
-            runtimeObjectEnv: {
-              capabilityProfilePath: capabilityProfile?.path,
-              capabilityInstructionsPath: capabilityInstructions?.path,
-              outputPaths,
-              outputObjectIds: [...outputObjectIds],
-            },
-          });
-        } catch (error) {
-          await runtimeObjects.discardPendingOutputs({
-            objectIds: [...outputObjectIds],
-            hostSessionId: sessionId,
-          });
-          throw error;
-        }
-        const { child, emitter, record, acpStdoutTap } = spawned;
-
-        // M34 lifecycle: propagate the reap-on-end-turn flag onto the record so
-        // the prompt handler can reap a one-shot agent session when its turn ends.
-        record.reapOnEndTurn = request.reapOnEndTurn === true;
-        registry.register(record, child, emitter, {
-          runtimeEventPublisher: runtimeEvents,
-        });
-        attachHeartbeat({ sessionId, child, registry, logger });
-        await attachCost({
-          sessionId,
-          sessionName: record.sessionName,
-          projectSlug: workspace.projectSlug,
-          runId: workspace.runId,
-          stepId: request.stepId,
-          nodeAttemptId: request.nodeAttemptId,
-          getContext: () => {
-            const latest = registry.get(sessionId)?.record;
-
-            return {
-              stepId: latest?.stepId,
-              nodeAttemptId: latest?.nodeAttemptId,
-            };
-          },
-          emitter,
-          logger,
-          resumed: Boolean(request.resumeSessionId),
-          onRecorded: (cost) => {
-            const latest = registry.get(sessionId)?.record;
-
-            if (!latest) {
-              throw new Error(
-                `cannot publish canonical usage for removed session ${sessionId}`,
+            if (
+              outputObjectIds.has(binding.objectId) ||
+              outputEnvironmentNames.has(binding.envName)
+            ) {
+              throw new SupervisorError(
+                "PRECONDITION",
+                "runtime output bindings must use unique object IDs and environment names",
+                { details: { reason: "command_invariant_conflict" } },
               );
             }
-            runtimeEvents.publishUsage(latest, cost);
-          },
-        });
+            outputObjectIds.add(binding.objectId);
+            outputEnvironmentNames.add(binding.envName);
+          }
+          let spawned: Awaited<ReturnType<typeof spawnSession>>;
 
-        if (!child.stdin) {
-          throw new SupervisorError("SPAWN", "child has no stdin for ACP");
-        }
+          try {
+            for (const binding of request.outputObjects ?? []) {
+              const allocated = await runtimeObjects.allocateOutput({
+                runId: parsed.envelope.fence.runId,
+                assignmentId: parsed.envelope.fence.assignmentId,
+                assignmentEpoch: parsed.envelope.fence.assignmentEpoch,
+                hostSessionId: sessionId,
+                walletId: parsed.envelope.command.id,
+                binding,
+              });
 
-        let connection: AcpConnection;
-        let acpSessionId: string;
-        let capabilities: Awaited<
-          ReturnType<typeof createAcpConnection>
-        >["capabilities"];
+              outputPaths[binding.envName] = allocated.path;
+            }
+            const capabilityProfile = request.capabilityProfileObjectId
+              ? await runtimeObjects.resolvePromptReference({
+                  objectId: request.capabilityProfileObjectId,
+                  runId: parsed.envelope.fence.runId,
+                  assignmentId: parsed.envelope.fence.assignmentId,
+                  assignmentEpoch: parsed.envelope.fence.assignmentEpoch,
+                  expectedKind: "capability_profile",
+                })
+              : null;
+            const capabilityInstructions =
+              request.capabilityInstructionsObjectId
+                ? await runtimeObjects.resolvePromptReference({
+                    objectId: request.capabilityInstructionsObjectId,
+                    runId: parsed.envelope.fence.runId,
+                    assignmentId: parsed.envelope.fence.assignmentId,
+                    assignmentEpoch: parsed.envelope.fence.assignmentEpoch,
+                    expectedKind: "capability_instructions",
+                  })
+                : null;
 
-        try {
-          const result = await createAcpConnection({
-            stdin: child.stdin,
-            stdoutSource: acpStdoutTap,
-            publishTextFrame(events) {
-              runtimeEvents.publishTextFrame(record, events);
-              for (const event of events) {
-                if (!registry.emitCanonicallyPersisted(sessionId, event))
-                  throw new SupervisorError(
-                    "ACP_PROTOCOL",
-                    "committed text frame lost its registered session",
-                  );
-              }
-            },
+            createProcess = "unknown";
+            spawned = await spawnSession({
+              sessionId,
+              hostState,
+              registry,
+              killGraceMs,
+              runtimeEventPublisher: runtimeEvents,
+              request,
+              workspace,
+              createdBy: {
+                commandId: parsed.envelope.command.id,
+                assignmentId: parsed.envelope.fence.assignmentId,
+                assignmentEpoch: parsed.envelope.fence.assignmentEpoch,
+              },
+              logger,
+              producerPauseBound: {
+                maxMs: producerPauseMaxMs,
+                onExceeded: (pausedMs) =>
+                  parkPausedProducer(sessionId, pausedMs),
+              },
+              binaryOverride: opts.spawnOverrides?.binary,
+              preArgs: opts.spawnOverrides?.preArgs,
+              runtimeObjectEnv: {
+                capabilityProfilePath: capabilityProfile?.path,
+                capabilityInstructionsPath: capabilityInstructions?.path,
+                outputPaths,
+                outputObjectIds: [...outputObjectIds],
+              },
+            });
+          } catch (error) {
+            await runtimeObjects.discardPendingOutputs({
+              objectIds: [...outputObjectIds],
+              hostSessionId: sessionId,
+            });
+            throw error;
+          }
+          const { child, emitter, record, acpStdoutTap } = spawned;
+
+          // M34 lifecycle: propagate the reap-on-end-turn flag onto the record so
+          // the prompt handler can reap a one-shot agent session when its turn ends.
+          record.reapOnEndTurn = request.reapOnEndTurn === true;
+          await attachCost({
             sessionId,
-            worktreePath: workspace.cwd,
-            record,
+            sessionName: record.sessionName,
+            projectSlug: workspace.projectSlug,
+            runId: workspace.runId,
+            stepId: request.stepId,
+            nodeAttemptId: request.nodeAttemptId,
+            getContext: () => {
+              const latest = registry.get(sessionId)?.record;
+
+              return {
+                stepId: latest?.stepId,
+                nodeAttemptId: latest?.nodeAttemptId,
+              };
+            },
             emitter,
             logger,
-            adapter: request.runner?.adapter ?? request.executor.agent,
-            mcpServers: request.mcpServers,
-            resumeSessionId: request.resumeSessionId,
-            runner: request.runner,
+            resumed: Boolean(request.resumeSessionId),
+            onRecorded: (cost) => {
+              const latest = registry.get(sessionId)?.record;
+
+              if (!latest) {
+                throw new Error(
+                  `cannot publish canonical usage for removed session ${sessionId}`,
+                );
+              }
+              runtimeEvents.publishUsage(latest, cost);
+            },
           });
 
-          connection = result.connection;
-          acpSessionId = result.acpSessionId;
-          capabilities = result.capabilities;
-        } catch (err) {
-          const entry = registry.get(sessionId);
-          const message = err instanceof Error ? err.message : String(err);
-
-          logger.warn({ sessionId, err: message }, "acp handshake failed");
-          registry.markIntentionalShutdown(sessionId, "intentional");
-          child.kill("SIGTERM");
-
-          if (entry) {
-            const exited = await waitForChildExit(entry, killGraceMs);
-
-            if (!exited) {
-              logger.warn(
-                { sessionId, killGraceMs },
-                "acp-handshake-failed-sigterm-grace-expired-sigkill",
-              );
-              child.kill("SIGKILL");
-            }
+          if (!child.stdin) {
+            throw new SupervisorError("SPAWN", "child has no stdin for ACP");
           }
 
-          registry.remove(sessionId, "acp-handshake-failed");
-          throw err;
-        }
+          let connection: AcpConnection;
+          let acpSessionId: string;
+          let capabilities: Awaited<
+            ReturnType<typeof createAcpConnection>
+          >["capabilities"];
 
-        registry.attachAcp(sessionId, connection, acpSessionId, capabilities);
-        runtimeEvents.publishSessionCreated(record);
+          try {
+            const result = await createAcpConnection({
+              stdin: child.stdin,
+              stdoutSource: acpStdoutTap,
+              publishTextFrame(events) {
+                runtimeEvents.publishTextFrame(record, events);
+                for (const event of events) {
+                  if (!registry.emitCanonicallyPersisted(sessionId, event))
+                    throw new SupervisorError(
+                      "ACP_PROTOCOL",
+                      "committed text frame lost its registered session",
+                    );
+                }
+              },
+              sessionId,
+              worktreePath: workspace.cwd,
+              record,
+              emitter,
+              logger,
+              adapter: request.runner?.adapter ?? request.executor.agent,
+              mcpServers: request.mcpServers,
+              resumeSessionId: request.resumeSessionId,
+              runner: request.runner,
+            });
 
-        logger.info(
-          {
-            sessionId,
-            runId: workspace.runId,
-            executionWorkspaceId: workspace.executionWorkspaceId,
-            assignmentId: record.assignmentId,
-            assignmentEpoch: record.assignmentEpoch,
-            commandId: record.createdByCommandId,
-            pid: record.pid,
-            acpSessionId,
-            mcpServerCount: request.mcpServers?.length ?? 0,
+            connection = result.connection;
+            acpSessionId = result.acpSessionId;
+            capabilities = result.capabilities;
+          } catch (err) {
+            const entry = registry.get(sessionId);
+            const message = err instanceof Error ? err.message : String(err);
+
+            logger.warn({ sessionId, err: message }, "acp handshake failed");
+            registry.markIntentionalShutdown(sessionId, "intentional");
+            const termination = entry
+              ? await terminateSessionProcess(entry, killGraceMs, logger)
+              : "process_exit";
+
+            if (termination !== "confirmed") {
+              logger.error(
+                {
+                  sessionId,
+                  runId: workspace.runId,
+                  stage: termination,
+                  killGraceMs,
+                },
+                "session-create-exit-unconfirmed",
+              );
+              throw new UnsettledSessionCreateError({
+                runId: workspace.runId,
+                sessionId,
+                stage: termination,
+                killGraceMs,
+                cause: err,
+                retainedSession: entry ?? null,
+              });
+            }
+            createProcess = "terminated";
+            const obligation = hostState
+              .sessionProcessesForRun(record.runId)
+              .find(
+                (candidate) =>
+                  candidate.commandId === record.createdByCommandId,
+              );
+
+            if (obligation?.phase === "registered")
+              hostState.releaseSessionProcess(
+                obligation.commandId,
+                new Date().toISOString(),
+              );
+            registry.remove(sessionId, "acp-handshake-failed");
+            if (isSupervisorError(err)) {
+              throw new SupervisorError(err.code, err.message, {
+                cause: err,
+                details: {
+                  ...err.details,
+                  sessionCreateFailure: {
+                    version: 1,
+                    stage: "acp_handshake",
+                    causeChain: safeErrorCauseChain(err),
+                  },
+                },
+              });
+            }
+            throw err;
+          }
+
+          registry.attachAcp(sessionId, connection, acpSessionId, capabilities);
+          runtimeEvents.publishSessionCreated(record);
+
+          logger.info(
+            {
+              sessionId,
+              runId: workspace.runId,
+              executionWorkspaceId: workspace.executionWorkspaceId,
+              assignmentId: record.assignmentId,
+              assignmentEpoch: record.assignmentEpoch,
+              commandId: record.createdByCommandId,
+              pid: record.pid,
+              acpSessionId,
+              mcpServerCount: request.mcpServers?.length ?? 0,
+              status: 201,
+            },
+            "http POST /sessions",
+          );
+
+          return {
             status: 201,
-          },
-          "http POST /sessions",
-        );
-
-        return {
-          status: 201,
-          body: {
-            sessionId,
-            pid: record.pid,
-            acpSessionId,
-            steeringSupported: capabilities.steering.supported,
-          },
-        };
+            body: {
+              sessionId,
+              pid: record.pid,
+              acpSessionId,
+              steeringSupported: capabilities.steering.supported,
+            },
+          };
+        } catch (error) {
+          if (createProcess === "unknown" || !isSupervisorError(error))
+            throw error;
+          throw new SupervisorError(error.code, error.message, {
+            cause: error,
+            details: {
+              ...error.details,
+              sessionCreateQuiescence: { version: 1, process: createProcess },
+            },
+          });
+        }
       },
     });
   });
@@ -2994,35 +3068,40 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       entry,
       execute: async () => {
         registry.markIntentionalShutdown(req.params.id, "intentional");
-        entry.record.stopOutputForTeardown?.();
-        entry.child.kill("SIGTERM");
-        const exited = await waitForChildExit(entry, killGraceMs);
+        const termination = await terminateSessionProcess(
+          entry,
+          killGraceMs,
+          logger,
+        );
 
-        if (!exited) {
-          logger.warn(
-            { sessionId: req.params.id, killGraceMs },
-            "sigterm-grace-expired-sigkill",
-          );
-          entry.child.kill("SIGKILL");
-          if (!(await waitForChildExit(entry, killGraceMs))) {
-            const processExited =
-              entry.child.exitCode !== null || entry.child.signalCode !== null;
-
-            throw new SupervisorError(
-              "EXECUTOR_UNAVAILABLE",
-              "session deletion could not confirm process exit and durable terminal output",
-              {
-                details: {
-                  reason: "session_delete_exit_unconfirmed",
-                  stage: processExited ? "terminal_output" : "process_exit",
-                  sessionId: req.params.id,
-                  runId: entry.record.runId,
-                  killGraceMs,
-                },
+        if (termination !== "confirmed") {
+          throw new SupervisorError(
+            "EXECUTOR_UNAVAILABLE",
+            "session deletion could not confirm process exit and durable terminal output",
+            {
+              details: {
+                reason: "session_delete_exit_unconfirmed",
+                stage: termination,
+                sessionId: req.params.id,
+                runId: entry.record.runId,
+                killGraceMs,
               },
-            );
-          }
+            },
+          );
         }
+        await settleRetiredSessionCreate({ entry, state: hostState, logger });
+        const obligation = hostState
+          .sessionProcessesForRun(entry.record.runId)
+          .find(
+            (candidate) =>
+              candidate.commandId === entry.record.createdByCommandId,
+          );
+
+        if (obligation?.phase === "registered")
+          hostState.releaseSessionProcess(
+            obligation.commandId,
+            new Date().toISOString(),
+          );
 
         logger.info(
           { sessionId: req.params.id, status: 204 },
@@ -3034,9 +3113,45 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     });
   });
 
-  app.get("/sessions", async (_req, reply) => {
-    reply.send(registry.list().map(toSessionListEntry));
-  });
+  app.get<{ Querystring: { runId?: string } }>(
+    "/sessions",
+    async (req, reply) => {
+      const query = z
+        .object({
+          runId: z
+            .string()
+            .min(1)
+            .max(128)
+            .regex(/^[A-Za-z0-9._:-]+$/)
+            .optional(),
+        })
+        .strict()
+        .safeParse(req.query);
+
+      if (!query.success)
+        throw new SupervisorError(
+          "PRECONDITION",
+          "Session inventory requires a valid Run identity",
+          { details: { reason: "run_mismatch" } },
+        );
+      if (query.data.runId) {
+        await reconcileRunSessionProcesses(
+          hostState,
+          registry,
+          query.data.runId,
+        );
+        reply.header("X-Maister-Session-Ownership-Version", "1");
+      }
+      reply.send(
+        registry
+          .list()
+          .filter(
+            (record) => !query.data.runId || record.runId === query.data.runId,
+          )
+          .map(toSessionListEntry),
+      );
+    },
+  );
 
   app.get<SessionIdParams>("/sessions/:id/stream", (req, reply) => {
     const sessionId = req.params.id;

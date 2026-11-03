@@ -1,8 +1,6 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import {
   lstat,
   mkdir,
@@ -18,6 +16,8 @@ import { basename, dirname, join, resolve } from "node:path";
 
 import pino from "pino";
 import { z } from "zod";
+
+import { inspectProcessGroup } from "../../../runtime/process-group";
 
 import { git } from "./git";
 import { acquireRepositoryFenceClaim } from "./repository-fence-claim";
@@ -60,7 +60,6 @@ const log = pino({
   name: "project-config-persistence/fence",
   level: process.env.LOG_LEVEL ?? "info",
 });
-const execute = promisify(execFile);
 // Ordinary repository actions have no DB intent. Their reserved identity lets
 // the next ordinary call retire a dead owner before rechecking its own Git
 // preconditions; it never adopts or replays a configuration publication intent.
@@ -94,53 +93,16 @@ function processIsDead(processId: number): boolean {
 }
 
 async function groupIsDead(group: number): Promise<boolean> {
-  if (processIsDead(-group)) return true;
-  // Orphaned exited children can remain zombies until the host reaps them.
-  // Zombies cannot issue effects; a live member or unreadable process table refuses adoption.
-  let stdout: string;
+  const observation = await inspectProcessGroup(group);
 
-  try {
-    ({ stdout } = await execute(
-      "ps",
-      ["-g", String(group), "-o", "pgid=,stat="],
-      {
-        timeout: 5_000,
-        maxBuffer: 1024 * 1024,
-      },
-    ));
-  } catch (error) {
-    const failure = error as NodeJS.ErrnoException & {
-      stdout?: string;
-      stderr?: string;
-    };
-
-    if (
-      Number(failure.code) === 1 &&
-      !failure.stdout?.trim() &&
-      !failure.stderr?.trim()
-    )
-      return processIsDead(-group);
-    throw busy();
-  }
-
-  const members: string[] = [];
-
-  for (const line of stdout.split("\n").filter((entry) => entry.trim())) {
-    const match = /^\s*(\d+)\s+(\S+)/u.exec(line);
-
-    if (!match) throw busy();
-    if (Number(match[1]) === group) members.push(match[2]!);
-  }
-  if (members.length === 0) return processIsDead(-group);
-  const active = members.filter((state) => !state.startsWith("Z"));
-
-  if (active.length)
+  if (observation.state === "unavailable") throw busy();
+  if (observation.state === "active")
     log.warn(
-      { group, states: active },
+      { group, states: observation.states },
       "repository Git process group is still active",
     );
 
-  return active.length === 0;
+  return observation.state === "retired";
 }
 
 async function readOwner(directory: string): Promise<FenceOwner> {

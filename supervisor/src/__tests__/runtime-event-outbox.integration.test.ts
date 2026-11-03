@@ -279,7 +279,16 @@ describe("Stage B durable host event outbox", () => {
       const create = createReceipt();
       const sessionId = eventDraft().draft.hostSessionId;
 
+      state.setFence(create.runId, create.assignmentId!, create.epoch);
       state.reserveProducerReceipt(create, 0);
+      state.registerSessionProcess({
+        commandId: create.commandId,
+        runId: create.runId,
+        assignmentId: create.assignmentId!,
+        epoch: create.epoch,
+        hostSessionId: sessionId,
+        processGroup: 54321,
+      });
       state.bindProducerSession(create.commandId, sessionId);
       state.putReceipt({
         ...create,
@@ -312,6 +321,10 @@ describe("Stage B durable host event outbox", () => {
           },
         },
         { kind: "teardown", walletId: create.commandId },
+      );
+      state.releaseSessionProcess(
+        create.commandId,
+        new Date(clock).toISOString(),
       );
       state.close();
       clock += 8 * 24 * 60 * 60 * 1000;

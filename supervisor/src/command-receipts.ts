@@ -23,6 +23,12 @@ import {
 
 import { HostRuntimeEventError } from "./host-runtime-errors";
 import {
+  isUnsettledSessionCreateReceipt,
+  observeUnsettledSessionCreate,
+  UnsettledSessionCreateError,
+  UnstartedSessionProcessError,
+} from "./session-create-outcome";
+import {
   errorBody,
   httpStatusForCode,
   isSupervisorError,
@@ -168,6 +174,13 @@ export class CommandReceipts {
     }
 
     if (existing) {
+      if (isUnsettledSessionCreateReceipt(existing)) {
+        return {
+          status: existing.httpStatus,
+          body: existing.body,
+          replayed: true,
+        };
+      }
       const turnLost = new SupervisorError(
         "PRECONDITION",
         "the turn for this command id was lost in a host restart",
@@ -394,7 +407,38 @@ export class CommandReceipts {
     try {
       outcome = await args.run();
     } catch (err) {
+      if (err instanceof UnstartedSessionProcessError) {
+        const rejected = {
+          status: httpStatusForCode(err.code),
+          body: errorBody(err),
+        };
+
+        // Persist the positive no-child fact before an artifact-storage fault
+        // closes further writes. This remains the normal fenced receipt path.
+        this.writeReceipt(envelope, "rejected", rejected, receivedAt, args);
+        this.state.reportRuntimeStorageFailure(err);
+
+        return rejected;
+      }
       this.state.reportRuntimeStorageFailure(err);
+      if (err instanceof UnsettledSessionCreateError) {
+        this.writeReceipt(
+          envelope,
+          "accepted",
+          {
+            status: httpStatusForCode(err.code),
+            body: errorBody(err),
+          },
+          receivedAt,
+          args,
+        );
+        observeUnsettledSessionCreate({
+          error: err,
+          state: this.state,
+          logger: this.logger,
+        });
+        throw err;
+      }
       if (!isSupervisorError(err)) throw err;
 
       outcome = { status: httpStatusForCode(err.code), body: errorBody(err) };

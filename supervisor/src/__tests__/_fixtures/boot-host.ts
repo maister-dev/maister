@@ -21,6 +21,7 @@ import { pendingPermissions } from "../../pending-permissions";
 import { openHostState } from "../../host-state";
 import { registerRoutes, type SpawnOverrides } from "../../http-api";
 import { SessionRegistry } from "../../registry";
+import { requestOwnedSessionTermination } from "../../execution-fence";
 
 export const FIXTURES_DIR = resolve(
   fileURLToPath(import.meta.url),
@@ -184,7 +185,11 @@ export async function bootHost(
                 clearTimeout(timeout);
                 resolve();
               });
-              if (!live.child.kill("SIGKILL")) {
+              requestOwnedSessionTermination(live, "SIGKILL", logger);
+              if (
+                live.child.exitCode !== null ||
+                live.child.signalCode !== null
+              ) {
                 clearTimeout(timeout);
                 resolve();
               }

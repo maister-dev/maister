@@ -613,9 +613,15 @@ LEFT JOIN step_runs ON step_runs.run_id = terminal_legacy.id;
 Inventory logs contain counts and identifiers only. Never print manifest bodies
 or database credentials.
 
-- **Supervisor restart terminates live ACP turns explicitly.** Startup converts
-  accepted non-live prompt receipts to durable `turn_lost`; manager command and
-  run reconciliation then applies the existing checkpoint/crash policy.
+- **Supervisor restart records lost turns; it does not prove adapter exit.**
+  Startup converts accepted non-live prompt receipts to durable `turn_lost`;
+  manager command and run reconciliation applies the checkpoint/crash policy.
+  An adapter can survive supervisor process death. Replacement of an unfinished
+  create and workspace cleanup require positive host retirement proof for the
+  exact original command, run, assignment and epoch. A live or unknown process
+  group, an empty new registry and unstamped historical receipts leave the
+  original create unresolved. Follow the [supervisor receipt recovery contract](supervisor.md#command-envelope-fences-and-receipts-implemented--adr-166);
+  restarting again or deleting the checkout does not establish retirement.
 - **Single host only.** The web tier needs no supervisor runtime-data mount:
   events replay from the host outbox into canonical Postgres state and runtime
   bytes use opaque object APIs. Repository/worktree placement remains local;

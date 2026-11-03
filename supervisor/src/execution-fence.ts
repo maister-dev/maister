@@ -3,9 +3,15 @@ import type { HostState } from "./host-state";
 import type { PendingPermissionRegistry } from "./pending-permissions";
 import type { RegistryEntry, SessionRegistry } from "./registry";
 import type { CommandFence } from "./types";
+import type { SessionRecord } from "./types";
+import type { ChildProcess } from "node:child_process";
+
+import { inspectProcessGroup } from "../../runtime/process-group";
+import { safeErrorCauseChain } from "../../runtime/safe-error-cause";
 
 import { pendingPermissions as defaultPendingPermissions } from "./pending-permissions";
-import { SupervisorError } from "./types";
+import { isSupervisorError, SupervisorError } from "./types";
+import { readHostProcessContext } from "./session-process-context";
 
 // ADR-166 D3: fence enforcement at the execution boundary. Rules run in order —
 // host key, run binding, epoch high-water, assignment identity — and the
@@ -111,7 +117,12 @@ export async function evictLowerEpochSessions(args: {
 
   args.registry.forEach((entry) => {
     if (entry.record.runId !== args.runId) return;
-    if (entry.record.status !== "live") return;
+    if (
+      entry.record.status !== "live" &&
+      (entry.child.exitCode !== null || entry.child.signalCode !== null) &&
+      entry.record.terminalPublished
+    )
+      return;
     if (entry.record.assignmentEpoch >= args.epoch) return;
 
     victims.push(entry);
@@ -127,7 +138,7 @@ export async function evictLowerEpochSessions(args: {
         sessionEpoch: entry.record.assignmentEpoch,
         commandEpoch: args.epoch,
       },
-      "session-evicted-by-fence",
+      "session-fence-eviction-started",
     );
 
     entry.record.fencedByEpoch = args.epoch;
@@ -137,19 +148,32 @@ export async function evictLowerEpochSessions(args: {
     }
 
     args.registry.markIntentionalShutdown(sessionId, "fenced");
-    entry.record.stopOutputForTeardown?.();
-    entry.child.kill("SIGTERM");
+    const termination = await terminateSessionProcess(
+      entry,
+      args.killGraceMs,
+      args.logger,
+    );
 
-    const exited = await waitForChildExit(entry, args.killGraceMs);
-
-    if (!exited) {
-      args.logger.warn(
-        { sessionId, killGraceMs: args.killGraceMs },
-        "fence-eviction-sigterm-grace-expired-sigkill",
+    if (termination !== "confirmed") {
+      throw new SupervisorError(
+        "EXECUTOR_UNAVAILABLE",
+        "The previous assignment still has unconfirmed process retirement; reconcile its host session before dispatching the current epoch",
+        {
+          details: {
+            reason: "session_eviction_exit_unconfirmed",
+            runId: args.runId,
+            sessionId,
+            commandEpoch: args.epoch,
+            stage: termination,
+            killGraceMs: args.killGraceMs,
+          },
+        },
       );
-      entry.child.kill("SIGKILL");
-      await waitForChildExit(entry, args.killGraceMs);
     }
+    args.logger.info(
+      { sessionId, runId: args.runId, commandEpoch: args.epoch },
+      "session-evicted-by-fence",
+    );
   }
 
   return victims.map((entry) => entry.record.sessionId);
@@ -177,4 +201,146 @@ export function waitForChildExit(
       onExit();
     else entry.child.once("exit", onExit);
   });
+}
+
+/** Only this live native child authorizes signalling its captured group; recovered group IDs never do. */
+export function signalOwnedSessionProcess(
+  owner: Readonly<{ child: ChildProcess; record: SessionRecord }>,
+  signal: "SIGTERM" | "SIGKILL",
+): void {
+  if (owner.child.exitCode !== null || owner.child.signalCode !== null) return;
+  const group = owner.record.processGroup;
+
+  if (!group) {
+    owner.child.kill(signal);
+
+    return;
+  }
+  const context = readHostProcessContext();
+
+  if (
+    owner.child.pid !== group ||
+    !owner.record.processContext ||
+    owner.record.processContext.osBootIdentity !== context.osBootIdentity ||
+    owner.record.processContext.pidNamespace !== context.pidNamespace
+  ) {
+    throw new SupervisorError(
+      "EXECUTOR_UNAVAILABLE",
+      "The live session's physical owner cannot be verified; no process group was signalled",
+      {
+        details: {
+          reason: "process_identity_unavailable",
+          runId: owner.record.runId,
+          sessionId: owner.record.sessionId,
+        },
+      },
+    );
+  }
+  try {
+    process.kill(-group, signal);
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code !== "ESRCH")
+      throw new SupervisorError(
+        "EXECUTOR_UNAVAILABLE",
+        "The owned session group could not be signalled; retain its workspace for reconciliation",
+        {
+          cause,
+          details: {
+            reason: "session_process_owner_unconfirmed",
+            runId: owner.record.runId,
+            sessionId: owner.record.sessionId,
+            processGroup: group,
+          },
+        },
+      );
+  }
+}
+
+/** Signal delivery is not retirement: confirm both process exit and its terminal output. */
+export async function terminateSessionProcess(
+  entry: RegistryEntry,
+  killGraceMs: number,
+  logger: Logger,
+): Promise<"confirmed" | "process_exit" | "terminal_output"> {
+  if (entry.child.exitCode === null && entry.child.signalCode === null)
+    entry.record.stopOutputForTeardown?.();
+  else entry.record.drainSessionOutput?.();
+  requestOwnedSessionTermination(entry, "SIGTERM", logger);
+  if (await waitForChildExit(entry, killGraceMs)) {
+    return (await ownedSessionProcessGroupRetired(entry))
+      ? "confirmed"
+      : "process_exit";
+  }
+  logger.warn(
+    { sessionId: entry.record.sessionId, killGraceMs },
+    "sigterm-grace-expired-sigkill",
+  );
+  requestOwnedSessionTermination(entry, "SIGKILL", logger);
+  if (await waitForChildExit(entry, killGraceMs)) {
+    return (await ownedSessionProcessGroupRetired(entry))
+      ? "confirmed"
+      : "process_exit";
+  }
+
+  return entry.child.exitCode !== null || entry.child.signalCode !== null
+    ? "terminal_output"
+    : "process_exit";
+}
+
+/** A local exit cannot prove group retirement in a different OS boot or PID namespace. */
+export async function ownedSessionProcessGroupRetired(
+  owner: Readonly<{ child: ChildProcess; record: SessionRecord }>,
+): Promise<boolean> {
+  if (owner.child.exitCode === null && owner.child.signalCode === null)
+    return false;
+  if (!owner.record.processGroup) return true;
+  const context = readHostProcessContext();
+
+  if (
+    !owner.record.processContext ||
+    owner.record.processContext.osBootIdentity !== context.osBootIdentity ||
+    owner.record.processContext.pidNamespace !== context.pidNamespace
+  )
+    return false;
+
+  return (
+    (await inspectProcessGroup(owner.record.processGroup)).state === "retired"
+  );
+}
+
+/** Darwin may refuse signals to an already-exiting owned group; only the subsequent positive lifetime proof can settle it. */
+export function requestOwnedSessionTermination(
+  entry: Readonly<{ child: ChildProcess; record: SessionRecord }>,
+  signal: "SIGTERM" | "SIGKILL",
+  logger: Logger,
+): SupervisorError | null {
+  try {
+    signalOwnedSessionProcess(entry, signal);
+
+    return null;
+  } catch (error) {
+    if (
+      !isSupervisorError(error) ||
+      error.code !== "EXECUTOR_UNAVAILABLE" ||
+      ![
+        "session_process_owner_unconfirmed",
+        "process_identity_unavailable",
+      ].includes(error.details?.reason ?? "")
+    )
+      throw error;
+    logger.warn(
+      {
+        runId: entry.record.runId,
+        assignmentId: entry.record.assignmentId,
+        assignmentEpoch: entry.record.assignmentEpoch,
+        sessionId: entry.record.sessionId,
+        processGroup: entry.record.processGroup,
+        signal,
+        causeChain: safeErrorCauseChain(error),
+      },
+      "owned-session-signal-unconfirmed-awaiting-lifetime-proof",
+    );
+
+    return error;
+  }
 }

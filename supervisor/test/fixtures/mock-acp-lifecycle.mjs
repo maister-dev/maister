@@ -348,6 +348,7 @@ class LifecycleAgent {
   }
 
   async newSession() {
+    await logInvocation({ method: "session/new", at: Date.now() });
     if (hangNewSession) return never();
 
     return { sessionId: `mock-${randomUUID()}` };

@@ -69,6 +69,29 @@ type Session = {
   events: SessionEvent[];
 };
 
+function adapterPidForSession(stack: Stack, session: Session): number {
+  const owner = stack.host.registry.get(session.sessionId);
+  const adapterPid = owner?.record.adapterPid;
+
+  if (
+    !owner ||
+    typeof adapterPid !== "number" ||
+    !Number.isSafeInteger(adapterPid) ||
+    adapterPid <= 0 ||
+    owner.record.runId !== session.fence.runId ||
+    owner.record.assignmentId !== session.fence.assignmentId ||
+    owner.record.assignmentEpoch !== session.fence.assignmentEpoch ||
+    owner.record.processGroup !== owner.child.pid ||
+    owner.child.exitCode !== null ||
+    owner.child.signalCode !== null
+  )
+    throw new Error(
+      "The steering fixture no longer owns its actual adapter process",
+    );
+
+  return adapterPid;
+}
+
 async function openSession(stack: Stack): Promise<Session> {
   const runId = `run-${randomUUID().slice(0, 8)}`;
   const create = await createEnvelope(stack.host, fenceFor(stack.host, runId));
@@ -172,7 +195,7 @@ async function releasePrompt(
   session: Session,
   commandId: string,
 ): Promise<void> {
-  process.kill(session.pid, "SIGUSR1");
+  process.kill(adapterPidForSession(stack, session), "SIGUSR1");
   await waitFor(
     () => stack.host.hostState.getReceipt(commandId)?.phase === "completed",
     10_000,
@@ -732,7 +755,7 @@ describe("POST /sessions/:id/steer (ADR-182)", () => {
       stack.log,
       (rows) => count(rows, "session/prompt") === 1,
     );
-    process.kill(session.pid, "SIGKILL");
+    process.kill(adapterPidForSession(stack, session), "SIGKILL");
     await waitFor(() => {
       const child = stack.host.registry.get(session.sessionId)?.child;
 
