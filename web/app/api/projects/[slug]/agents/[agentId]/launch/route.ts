@@ -44,6 +44,8 @@ export async function POST(
     // Authz-first: authenticate before resolving the slug; project
     // membership is enforced right after the minimal project lookup.
     await requireActiveSession();
+
+    assertInteractiveLaunchOrigin(req);
     const agentId = decodeRouteParam(rawAgentId, "agentId");
 
     const db = getDb();
@@ -88,7 +90,6 @@ export async function POST(
       const context = await loadAgentContext(db, input);
 
       if (context.effective.parsed.kind === "code_delivery") {
-        assertInteractiveLaunchOrigin(req);
         const principal = await interactiveTaskLaunchPrincipal();
 
         if (

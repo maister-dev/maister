@@ -151,7 +151,7 @@ const domains: DomainRow[] = [
     launch: async () => {
       const res = await api(agentPath, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", Origin: web.url },
         body: JSON.stringify({}),
       });
 

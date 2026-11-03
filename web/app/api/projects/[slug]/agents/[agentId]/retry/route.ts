@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 
 import { interactiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
+import { assertInteractiveLaunchOrigin } from "@/lib/tasks/launch-http";
 import { wakeTaskLaunchQueue } from "@/lib/tasks/launch-wake";
 import { resolveAgentActivityAccess } from "@/lib/agents/activity-access";
 import { acceptAgentRetryBatch } from "@/lib/agents/retry-batch";
@@ -24,6 +25,8 @@ export async function POST(
     const { slug, agentId } = await params;
     const access = await resolveAgentActivityAccess(slug, agentId);
     const principal = await interactiveTaskLaunchPrincipal();
+
+    assertInteractiveLaunchOrigin(request);
     const result = await acceptAgentRetryBatch(
       access.db,
       {

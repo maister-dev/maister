@@ -31,7 +31,7 @@ const params = (agentId = "core%3Atriager") => ({
 function jsonRequest(body?: Record<string, unknown>): NextRequest {
   return new Request("http://x/api/projects/proj/agents/core:triager/launch", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", Origin: "http://x" },
     body: body === undefined ? undefined : JSON.stringify(body),
   }) as NextRequest;
 }

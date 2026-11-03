@@ -48,19 +48,84 @@ const runnerSlotSchema = z
   })
   .strict();
 
+function refuseInteractiveOrigin(): never {
+  throw new MaisterError(
+    "UNAUTHORIZED",
+    "An interactive launch must use the same origin",
+    { details: { reason: "launch_interactive_origin_required" } },
+  );
+}
+
+/** Host is transport authority; Next's internal bind hostname is not the public origin. */
+function requestHostOrigin(request: Request): string {
+  const protocol = new URL(request.url).protocol;
+  const host = request.headers.get("host");
+
+  if (protocol !== "http:" && protocol !== "https:")
+    return refuseInteractiveOrigin();
+  if (host === null) return new URL(request.url).origin;
+  if (!host || host.length > 1024 || /[\s\\/?#@,]/u.test(host))
+    return refuseInteractiveOrigin();
+  let authority: URL;
+
+  try {
+    authority = new URL(`${protocol}//${host}`);
+  } catch {
+    return refuseInteractiveOrigin();
+  }
+  if (!authority.hostname || authority.username || authority.password)
+    return refuseInteractiveOrigin();
+
+  return authority.origin;
+}
+
+function configuredInteractiveOrigin(): string | null {
+  const configured = process.env.AUTH_URL;
+
+  // Auth.js treats an empty optional URL as unset and supports an auth base path.
+  if (configured === undefined || configured === "") return null;
+  if (configured.trim() !== configured || /[\r\n\t]/u.test(configured))
+    throw invalidOriginConfiguration();
+  let authority: URL;
+
+  try {
+    authority = new URL(configured);
+  } catch {
+    throw invalidOriginConfiguration();
+  }
+  if (
+    !["http:", "https:"].includes(authority.protocol) ||
+    !authority.hostname ||
+    authority.username ||
+    authority.password ||
+    authority.href.includes("?") ||
+    authority.href.includes("#")
+  )
+    throw invalidOriginConfiguration();
+
+  return authority.origin;
+}
+
+function invalidOriginConfiguration(): MaisterError {
+  // Never attach the parser error or URL: configuration can contain secrets.
+  return new MaisterError(
+    "CONFIG",
+    "AUTH_URL must be an absolute HTTP(S) URL without credentials, query or fragment",
+    { details: { reason: "launch_origin_configuration_invalid" } },
+  );
+}
+
 /** A session cookie authenticates the user; same-origin protection authenticates the interactive request boundary. */
 export function assertInteractiveLaunchOrigin(request: Request): void {
+  // Validate any present Host even when configured public authority takes precedence.
+  const transportOrigin = requestHostOrigin(request);
+  const canonicalOrigin = configuredInteractiveOrigin() ?? transportOrigin;
+
   if (
-    request.headers.get("origin") !== new URL(request.url).origin ||
+    request.headers.get("origin") !== canonicalOrigin ||
     request.headers.get("sec-fetch-site") === "cross-site"
   )
-    throw new MaisterError(
-      "UNAUTHORIZED",
-      "An interactive launch must use the same origin",
-      {
-        details: { reason: "launch_interactive_origin_required" },
-      },
-    );
+    refuseInteractiveOrigin();
 }
 
 export async function readTaskLaunchBody(request: Request): Promise<unknown> {

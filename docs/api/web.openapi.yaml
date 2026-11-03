@@ -185,8 +185,8 @@ paths:
       summary: (Implemented — ADR-196–198) getProjectAgentHistory
       description:
         Identifiers are URL parameters; actor/project/source context is derived from
-        authenticated server state. Existing data grants apply before aggregation and nested evidence
-        serialization. No secrets, host paths or session handles are returned.
+        authenticated server state. Canonical same-origin session authorization precedes parsing and retry admission.
+        Existing data grants apply before aggregation and nested evidence serialization. No secrets, host paths or session handles are returned.
       parameters:
         - &a2
           name: slug
@@ -518,6 +518,7 @@ paths:
       summary: Explicitly accept keyed agent retries on one selected runner
       description: >-
         Authenticated actor and project/agent scope come from server state.
+        Requires canonical same-origin session authorization before parsing or accepting items.
         Validates all source IDs before accepting any item, then records each
         independently through the single-retry owner. Task targets are deduplicated.
         Per-item request keys and content guards survive partial/lost responses;
@@ -3175,7 +3176,9 @@ paths:
         launch override, tier 1 of the standalone chain) is validated against
         the enabled runner catalog; body `workspace` (optional launch override)
         is the workspace used for runner compatibility, cwd selection, and
-        persisted `runs.agent_workspace`. Refusals: disabled/quarantined agent,
+        persisted `runs.agent_workspace`. Every fresh session launch, including taskless
+        operational agents, requires canonical same-origin authorization before parsing or allocation.
+        Refusals: disabled/quarantined agent,
         `risk_tier=destructive` (ADR-041 gate), `manual` missing from the
         agent's `triggers`, or a dirty `repo_read` baseline → `409
         PRECONDITION`; runner resolution/incompatibility → `503
@@ -10525,6 +10528,7 @@ paths:
       summary: (M19) Recover a Crashed run
       description: |
         (Implemented, M19 — ADR-034.)
+        Requires canonical same-origin session authorization before creating recovery authority or dispatch effects.
 
         Recovers a `Crashed` flow run via a hybrid plan decided by
         `classifyRecover(run, nodeKind, retrySafe, consensusEvidence)` over the
@@ -18882,8 +18886,13 @@ paths:
       description:
         Active session and live project launchRun/policy grants for writes; readBoard for
         metadata and readRepoFiles before any source-bearing content. Explicit session Launch records
-        one-shot manual authority. Same-origin/CSRF protection is enforced at the human-action
-        boundary. Strict bounded request. Server derives project and actor from scoped task/auth
+        one-shot manual authority. Same-origin/CSRF protection requires exact serialized Origin,
+        using configured AUTH_URL origin (its Auth.js base path is allowed), otherwise actual
+        HTTP Host plus request protocol; Host-absent framework requests use their URL authority.
+        Present malformed Host refuses, even with configured authority. Empty AUTH_URL is unset;
+        malformed nonempty configuration returns static CONFIG launch_origin_configuration_invalid.
+        Forwarded headers never grant origin authority; cross-site fetches and noncanonical
+        client Origin values refuse. Strict bounded request. Server derives project and actor from scoped task/auth
         state. Persist immutable input/settings/basis, reservation, audit and task.launch_changed in
         one transaction before effects. Same key/same payload returns original receipt after access
         checks; changed payload conflicts. 202 describes intent acceptance, not a started run. Lost

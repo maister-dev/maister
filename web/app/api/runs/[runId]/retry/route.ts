@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import pino from "pino";
 
 import { interactiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
+import { assertInteractiveLaunchOrigin } from "@/lib/tasks/launch-http";
 import { wakeTaskLaunchQueue } from "@/lib/tasks/launch-wake";
 import { getDb } from "@/lib/db/client";
 import {
@@ -24,6 +25,8 @@ export async function POST(
 ): Promise<NextResponse> {
   try {
     const principal = await interactiveTaskLaunchPrincipal();
+
+    assertInteractiveLaunchOrigin(request);
     const { runId } = await params;
     const db = getDb();
     const body: unknown = await readAgentRetryJson(request);

@@ -97,6 +97,7 @@ let POST: typeof import("@/app/api/runs/[runId]/recover/route").POST;
 function request(runId: string): NextRequest {
   return new NextRequest(`http://localhost/api/runs/${runId}/recover`, {
     method: "POST",
+    headers: { Origin: "http://localhost" },
   });
 }
 
@@ -324,6 +325,28 @@ describe("POST /api/runs/[runId]/recover — state → HTTP mapping", () => {
 });
 
 describe("POST /api/runs/[runId]/recover — boundaries", () => {
+  it("refuses an authenticated cross-origin recovery before invoking its execution effect", async () => {
+    const runId = await seedRun();
+    const crossOrigin = request(runId);
+
+    crossOrigin.headers.set("Origin", "https://evil.invalid");
+    resumeCrashedRunMock.mockResolvedValue({ state: "resumed" });
+    const response = await POST(crossOrigin, {
+      params: Promise.resolve({ runId }),
+    });
+
+    expect(response.status).toBe(403);
+    expect(resumeCrashedRunMock).not.toHaveBeenCalled();
+    expect(
+      (
+        await testDatabase.pool.query<{ status: string }>(
+          "SELECT status FROM runs WHERE id=$1",
+          [runId],
+        )
+      ).rows[0]!.status,
+    ).toBe("Crashed");
+  });
+
   it("run not found → 404 (resumeCrashedRun never called)", async () => {
     const res = await invoke("does-not-exist");
 

@@ -389,6 +389,215 @@ it("LA07 refuses cross-origin session authorization before accepting a launch", 
   ).toBe(0);
 });
 
+it("LA07 resolves actual HTTP authority independently of the internal bind URL and refuses forged origin forms before effects", async () => {
+  const savedAuthUrl = process.env.AUTH_URL;
+
+  type OriginCase = Readonly<{
+    name: string;
+    url: string;
+    host?: string;
+    origin?: string;
+    authUrl?: string;
+    headers?: Readonly<Record<string, string>>;
+  }>;
+  const publicHttp = "http://127.0.0.1:48000";
+  const internalUrl = "http://0.0.0.0:48000/api/task-launch-intents";
+  const accepted: readonly OriginCase[] = [
+    {
+      name: "native custom server",
+      url: internalUrl,
+      host: "127.0.0.1:48000",
+      origin: publicHttp,
+    },
+    {
+      name: "configured HTTPS proxy and Auth.js base path",
+      url: internalUrl,
+      host: "web.internal:3000",
+      origin: "https://public.example",
+      authUrl: "https://PUBLIC.example:443/auth/base",
+    },
+    {
+      name: "empty optional config and absent abstract Host",
+      url: "http://localhost/api/task-launch-intents",
+      origin: "http://localhost",
+      authUrl: "",
+    },
+    {
+      name: "IPv6 canonical default port",
+      url: internalUrl,
+      host: "[0:0:0:0:0:0:0:1]:80",
+      origin: "http://[::1]",
+    },
+    {
+      name: "Host default port and case normalization ignores forwarded headers",
+      url: "https://0.0.0.0/api/task-launch-intents",
+      host: "PUBLIC.example:443",
+      origin: "https://public.example",
+      headers: {
+        "X-Forwarded-Host": "evil.invalid",
+        "X-Forwarded-Proto": "http",
+        Forwarded: "host=evil.invalid;proto=http",
+      },
+    },
+  ];
+  const refused: readonly OriginCase[] = [
+    ...[
+      undefined,
+      "null",
+      "http://evil.invalid:48000",
+      "https://127.0.0.1:48000",
+      "http://127.0.0.1:48001",
+      `${publicHttp}/`,
+      `${publicHttp}/path`,
+      `${publicHttp}?token=do-not-leak`,
+      `${publicHttp}#fragment`,
+      "http://user:do-not-leak@127.0.0.1:48000",
+    ].map((origin) => ({
+      name: "invalid client origin",
+      url: internalUrl,
+      host: "127.0.0.1:48000",
+      origin,
+    })),
+    {
+      name: "noncanonical client default port",
+      url: internalUrl,
+      host: "public.example:80",
+      origin: "http://public.example:80",
+    },
+    {
+      name: "cross-site fetch",
+      url: internalUrl,
+      host: "127.0.0.1:48000",
+      origin: publicHttp,
+      headers: { "Sec-Fetch-Site": "cross-site" },
+    },
+    {
+      name: "forwarded host cannot authorize another origin",
+      url: internalUrl,
+      host: "127.0.0.1:48000",
+      origin: "https://evil.invalid",
+      headers: {
+        "X-Forwarded-Host": "evil.invalid",
+        "X-Forwarded-Proto": "https",
+        Forwarded: "host=evil.invalid;proto=https",
+      },
+    },
+    ...[
+      "",
+      "user:do-not-leak@public.example",
+      "public.example/path",
+      "public.example?token=do-not-leak",
+      "public.example#fragment",
+      "public.example,evil.invalid",
+      "public .example",
+      "[::1",
+      "public.example:70000",
+      "public.example\\evil",
+    ].map((host) => ({
+      name: "present malformed Host",
+      url: internalUrl,
+      host,
+      origin: "https://public.example",
+      authUrl: "https://public.example/auth/base",
+    })),
+    {
+      name: "configured origin wins over valid internal Host",
+      url: internalUrl,
+      host: "web.internal:3000",
+      origin: "http://web.internal:3000",
+      authUrl: "https://public.example/auth/base",
+    },
+    ...[
+      " ",
+      "/relative",
+      "ftp://public.example",
+      "https://user:do-not-leak@public.example",
+      "https://public.example?token=do-not-leak",
+      "https://public.example#fragment",
+    ].map((authUrl) => ({
+      name: "invalid server origin configuration",
+      url: internalUrl,
+      host: "127.0.0.1:48000",
+      origin: publicHttp,
+      authUrl,
+    })),
+  ];
+  const send = async (
+    testCase: OriginCase,
+    input: Awaited<ReturnType<typeof body>>,
+  ): Promise<Response> => {
+    if (testCase.authUrl === undefined) delete process.env.AUTH_URL;
+    else process.env.AUTH_URL = testCase.authUrl;
+
+    return POST(
+      new Request(testCase.url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": randomUUID(),
+          ...(testCase.host === undefined ? {} : { Host: testCase.host }),
+          ...(testCase.origin === undefined ? {} : { Origin: testCase.origin }),
+          ...testCase.headers,
+        },
+        body: JSON.stringify(input),
+      }),
+    );
+  };
+
+  try {
+    for (const testCase of accepted) {
+      const input = await body();
+      const response = await send(testCase, input);
+
+      expect(response.status, testCase.name).toBe(202);
+      expect(await response.json()).toMatchObject({
+        taskId: input.taskId,
+        basis: "manual",
+        state: "queued",
+        runId: null,
+      });
+    }
+    const input = await body();
+
+    for (const testCase of refused) {
+      const response = await send(testCase, input);
+      const invalidConfig =
+        testCase.name === "invalid server origin configuration";
+      const result: unknown = await response.json();
+
+      expect(response.status, testCase.name).toBe(invalidConfig ? 400 : 403);
+      expect(result, testCase.name).toMatchObject({
+        code: invalidConfig ? "CONFIG" : "UNAUTHORIZED",
+        details: {
+          reason: invalidConfig
+            ? "launch_origin_configuration_invalid"
+            : "launch_interactive_origin_required",
+        },
+      });
+      expect(JSON.stringify(result)).not.toContain("do-not-leak");
+    }
+    expect(
+      (
+        await database.pool.query<{ n: number }>(
+          "SELECT count(*)::int AS n FROM task_launch_intents WHERE task_id=$1",
+          [input.taskId],
+        )
+      ).rows[0]!.n,
+    ).toBe(0);
+    expect(
+      (
+        await database.pool.query<{ n: number }>(
+          "SELECT count(*)::int AS n FROM runs WHERE task_id=$1",
+          [input.taskId],
+        )
+      ).rows[0]!.n,
+    ).toBe(0);
+  } finally {
+    if (savedAuthUrl === undefined) delete process.env.AUTH_URL;
+    else process.env.AUTH_URL = savedAuthUrl;
+  }
+});
+
 it("LA07 keeps an intent ID from becoming a readable cross-project capability", async () => {
   const input = await body();
   const accepted = await POST(request(input));

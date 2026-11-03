@@ -129,6 +129,7 @@ future task revision. SQL guards prevent receipt reclassification after creation
 
 ### Request and mutation rules
 
+- Task-launch, hold-resolution, assessment, retry/recovery and fresh-agent-launch HTTP actions require the exact serialized canonical Origin and refuse `Sec-Fetch-Site: cross-site`. A nonempty server-configured `AUTH_URL` supplies the HTTP(S) origin; an Auth.js base path is preserved as configuration but is not part of the origin. Otherwise the actual HTTP Host and request protocol supply the authority, independently of Next's internal bind hostname. Framework requests without Host retain their URL authority. Any present malformed Host refuses even with configured authority; malformed nonempty `AUTH_URL` produces a static configuration diagnostic. Credentials, query and fragment are invalid configuration. Empty `AUTH_URL` is unset. Forwarded headers grant no origin authority. Client Origin values containing paths, credentials, query, fragments or noncanonical serialization refuse before admission.
 - Acceptance snapshots task title/prompt, statement/source identity and relevant clarifications; semantic/settings digest versions; resolved Flow/package revision or agent definition identity, runner slots/model/profile/capabilities, base commit/target, delivery/execution/promotion policy. Runner provenance excludes environment and provider credential values; a private configuration digest binds the server-resolved executable profile, which must still match at dispatch. No credential values enter the intent receipt. `tasks.revision` guards acceptance, while semantic/settings digests govern dispatch freshness.
 - Same principal/project/operation/key and identical canonical payload returns the original receipt after current access checks. A changed payload under the key conflicts without mutation. Different keys compete under one ordinary task reservation; losing manual settings are not silently replaced by automatic work. Existing nonterminal v1 delivery runs participate in that fence too.
   A scoped `409 launch_already_reserved` includes `details.existing` with nullable
@@ -326,7 +327,9 @@ A held reservation continues to occupy the ordinary task slot until the user
 cancels or explicitly replaces it. Dispatched runs retain their frozen request.
 
 The session HTTP cancellation and replacement adapters enforce the same origin,
-opaque principal and live grants as acceptance. Metadata, cancellation and
+opaque principal and live grants as acceptance. Run recovery, individual retry
+and agent batch retry enforce that boundary before parsing a decision or creating
+recovery/retry authority and effects. Metadata, cancellation and
 replacement use one existence-hiding scoped lookup. Cancellation records a scoped,
 immutable receipt; exact replay rechecks current access before returning the
 original version. Replacement cancels the old request and accepts a uniquely

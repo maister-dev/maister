@@ -1189,7 +1189,7 @@ it("requires a fresh displayed manual decision for task-bound pre-work retry and
     const acceptedResponse = await POST(
       new Request(`http://local/runs/${source.id}/retry`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Origin: "http://local" },
         body: JSON.stringify(decision),
       }),
       params,

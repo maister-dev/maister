@@ -14,6 +14,7 @@ import {
   getAgentRetryReceipt,
 } from "@/lib/agents/retry";
 import { prepareUndispatchedAgentFailure } from "@/lib/agents/finalization";
+import { getAgentRetryBatchOptions } from "@/lib/agents/retry-batch";
 import { runs, runSessions, platformAcpRunners } from "@/lib/db/schema";
 import { allocateAgentRetryWorktree } from "@/lib/agents/retry-allocation";
 import { agentWorkdirPath } from "@/lib/agents/workspace-paths";
@@ -46,10 +47,17 @@ vi.mock("@/lib/scheduler", async (original) => ({
 let database: StartedPostgresTestDb;
 let sessionUserId: string | null = null;
 
+// Direct handlers have no Next request lifetime; durable admission remains real SQL.
+vi.mock("next/server", async (original) => ({
+  ...(await original<typeof import("next/server")>()),
+  after: vi.fn(),
+}));
 vi.mock("@/lib/db/client", () => ({ getDb: () => database.db }));
-vi.mock("@/lib/authz", async (original) => ({
-  ...(await original<typeof import("@/lib/authz")>()),
-  requireActiveSession: async () => ({ id: sessionUserId, role: "member" }),
+vi.mock("@/auth", () => ({
+  auth: async () => (sessionUserId ? { user: { id: sessionUserId } } : null),
+  signIn: vi.fn(),
+  signOut: vi.fn(),
+  handlers: {},
 }));
 let root: string;
 const previousRoot = process.env.MAISTER_WORKTREES_ROOT;
@@ -149,6 +157,136 @@ it("accepts a positively proven operational pre-dispatch failure even when its o
       )
     ).rows[0].phase,
   ).toBe("before_dispatch");
+});
+
+it("refuses authenticated cross-origin operational launch before allocation and preserves a real same-origin taskless launch", async () => {
+  const runId = await seedAgentRun(database.db, {
+    runtimeRoot: root,
+    definition:
+      "---\nname: Operator\ndescription: inspect\nkind: operational\ncompletion: {contract: operational_v1}\nmode: session\nworkspace: none\ntriggers: [manual]\nrisk_tier: read_only\nplatform_mcp: false\n---\nInspect.",
+    workspace: "none",
+    resultContract: null,
+    operational: true,
+  });
+  const source = await finishedFixture(runId);
+  const {
+    rows: [context],
+  } = await database.pool.query<{ slug: string; agent_id: string }>(
+    "SELECT p.slug,r.agent_id FROM runs r JOIN projects p ON p.id=r.project_id WHERE r.id=$1",
+    [runId],
+  );
+  const { POST } =
+    await import("@/app/api/projects/[slug]/agents/[agentId]/launch/route");
+  const { NextRequest } = await import("next/server");
+  const url = `http://test/api/projects/${context!.slug}/agents/${encodeURIComponent(context!.agent_id)}/launch`;
+  const params = {
+    params: Promise.resolve({
+      slug: context!.slug,
+      agentId: context!.agent_id,
+    }),
+  };
+
+  sessionUserId = source.userId;
+  const refused = await POST(
+    new NextRequest(url, {
+      method: "POST",
+      headers: { Origin: "https://evil.invalid" },
+      body: "{}",
+    }),
+    params,
+  );
+
+  expect(refused.status).toBe(403);
+  expect(
+    (
+      await database.pool.query("SELECT id FROM runs WHERE project_id=$1", [
+        source.projectId,
+      ])
+    ).rows,
+  ).toHaveLength(1);
+  const accepted = await POST(
+    new NextRequest(url, {
+      method: "POST",
+      headers: { Origin: "http://test" },
+      body: "{}",
+    }),
+    params,
+  );
+
+  expect(accepted.status).toBe(202);
+  expect(await accepted.json()).toMatchObject({ status: "Pending" });
+  expect(
+    (
+      await database.pool.query<{ task_id: string | null }>(
+        "SELECT task_id FROM runs WHERE project_id=$1",
+        [source.projectId],
+      )
+    ).rows,
+  ).toEqual([{ task_id: null }, { task_id: null }]);
+});
+
+it("refuses authenticated cross-origin batch retry before accepting any item", async () => {
+  const source = await fixture();
+  const {
+    rows: [context],
+  } = await database.pool.query<{ slug: string; agent_id: string }>(
+    "SELECT p.slug,r.agent_id FROM runs r JOIN projects p ON p.id=r.project_id WHERE r.id=$1",
+    [source.runId],
+  );
+  const options = await getAgentRetryBatchOptions(
+    database.db,
+    { ...source, agentId: context!.agent_id },
+    { runIds: [source.runId] },
+  );
+  const { POST } =
+    await import("@/app/api/projects/[slug]/agents/[agentId]/retry/route");
+  const { NextRequest } = await import("next/server");
+
+  expect(options.items).toHaveLength(1);
+  expect(options.items[0]!.options?.eligible).toBe(true);
+  sessionUserId = source.userId;
+  const response = await POST(
+    new NextRequest(
+      `http://test/api/projects/${context!.slug}/agents/${encodeURIComponent(context!.agent_id)}/retry`,
+      {
+        method: "POST",
+        headers: { Origin: "https://evil.invalid" },
+        body: JSON.stringify({
+          runnerId: source.runnerId,
+          items: options.items.map((item) => ({
+            runId: item.runId,
+            requestKey: randomUUID(),
+            previewFingerprint: item.options!.previewFingerprint,
+            strategy: item.options!.strategy,
+          })),
+        }),
+      },
+    ),
+    {
+      params: Promise.resolve({
+        slug: context!.slug,
+        agentId: context!.agent_id,
+      }),
+    },
+  );
+
+  expect(response.status).toBe(403);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT id FROM agent_retry_intents WHERE source_run_id=$1",
+        [source.runId],
+      )
+    ).rows,
+  ).toEqual([]);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT id FROM runs WHERE retry_of_run_id=$1",
+        [source.runId],
+      )
+    ).rows,
+  ).toEqual([]);
 });
 
 async function failedQualificationFixture(): Promise<
@@ -1044,12 +1182,39 @@ it("IT-UX-14 enforces the actual retry HTTP boundary, excludes protected recipes
     requestKey: randomUUID(),
     previewFingerprint: options.previewFingerprint,
   };
+  const crossOrigin = await POST(
+    new Request("http://test/retry", {
+      method: "POST",
+      headers: { Origin: "https://evil.invalid" },
+      body: JSON.stringify(request),
+    }),
+    params,
+  );
+
+  expect(crossOrigin.status).toBe(403);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT id FROM agent_retry_intents WHERE source_run_id=$1",
+        [source.runId],
+      )
+    ).rows,
+  ).toEqual([]);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT id FROM runs WHERE retry_of_run_id=$1",
+        [source.runId],
+      )
+    ).rows,
+  ).toEqual([]);
 
   expect(
     (
       await POST(
         new Request("http://test/retry", {
           method: "POST",
+          headers: { Origin: "http://test" },
           body: JSON.stringify({ ...request, projectId: source.projectId }),
         }),
         params,
@@ -1059,7 +1224,11 @@ it("IT-UX-14 enforces the actual retry HTTP boundary, excludes protected recipes
   expect(
     (
       await POST(
-        new Request("http://test/retry", { method: "POST", body: "{" }),
+        new Request("http://test/retry", {
+          method: "POST",
+          headers: { Origin: "http://test" },
+          body: "{",
+        }),
         params,
       )
     ).status,
