@@ -2,7 +2,7 @@
 
 ## Purpose
 
-**Partially implemented — ADR-202.** Indexed-source captures, immutable witnesses, correlated reuse and potential-conflict edges are implemented in storage. Native session/bearer retrieval, bounded evidence/conflict pages and the built MCP read/capture facade are implemented locally. Public review, launch-wide inheritance and installable-package/pilot qualification remain pending. This domain owns immutable source/version witnesses, source-observation independence and conflict-preserving retrieval. [Records](company-brain.md) owns publication/confirmation; current repository search anchors remain navigational projections.
+**Partially implemented — ADR-202.** Indexed-source captures, immutable witnesses, correlated reuse and potential-conflict edges are implemented in storage. Native session/bearer retrieval, bounded evidence/conflict pages and the built MCP read/capture facade are implemented locally. Proposal review and native launch capture are qualified locally. Complete outward disclosure and installable-package/pilot qualification remain pending. This domain owns immutable source/version witnesses, source-observation independence and conflict-preserving retrieval. [Records](company-brain.md) owns publication/confirmation; current repository search anchors remain navigational projections.
 
 ## Domain entities
 
@@ -101,13 +101,5 @@ Search returns an explicit assertion preview with a truncation marker and exact 
 Conflict detail is bounded to 64 accessible opposing identities with an explicit incomplete marker. The conflicts endpoint provides authorized continuation and exact original opposing revisions. Source closure is filtered before its page limit, including historical revision restrictions; hidden edges cannot occupy all public slots. Neither retrieval confidence nor a newer opposing head resolves the retained conflict.
 
 
-## Governed operational projections
 
-**Implemented locally; T15 qualification remains in progress.** Agent run/attempt history and automation list/detail hydrate diagnostic bodies and immutable input snapshots only after current receiving-source authorization. The shared operational projection checks the selected bounded run set and reads bodies in the same SQL transaction. Failed operational runs retain classified diagnostic results; failure does not make their prose public. Automation pagination selects control metadata before hydrating only the visible page, so an unrelated off-page result cannot disclose content or deny the selected page.
-
-Internal activity-index repair uses an explicit server-only inspection function to maintain enum/status metadata; it cannot select a public bypass through request JSON. Historical runs with NULL knowledge profiles retain their existing project access rules. Enrolled runs require a current recipient and complete source capture. The history UI preserves safe control metadata and shows the existing EN/RU source-unavailable notice; project settings and deletion do not depend on reading that evidence.
-
-
-Review-thread reads and edits preserve the run's source envelope, including retained anchor text after workspace cleanup. They recheck the current receiving user before emitting delayed responses. Project deletion and comment deletion do not acquire a new Brain authorization dependency.
-
-Project/cross-project HITL lists filter enrolled rows through current receiving-source authorization before exposing prompts, schemas, responses or counts. Authorized unrelated legacy work remains visible; grants are rechecked before final serialization. Native rows lacking complete capture or an identified recipient cannot enter the content projection. Source-budget exhaustion fails explicitly rather than masquerading as a denied record. External Inbox uses the actual bearer credential; it cannot substitute the owner's broader authority. Private agent/librarian stores remain separate, and no new scheduler or attempt ledger is introduced.
+Execution disclosure, operational projections and findings inspection are specified by [native findings](evidence-findings.md#governed-operational-projections).

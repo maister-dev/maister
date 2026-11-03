@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { EvidenceFindingsV1 } from "@/lib/run-results/findings-types";
 import type { KnowledgeRecipient } from "@/lib/brain/knowledge-run-disclosure";
 import type { KnowledgeAccessCapture } from "@/lib/company/types";
 import type { RunResultContract } from "@/lib/run-results/types";
@@ -10,6 +11,7 @@ import { eq } from "drizzle-orm";
 
 import { assertRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
 import { usesStructuredKnowledgeContext } from "@/lib/run-results/contract";
+import { projectNativeFindings } from "@/lib/run-results/findings-projection";
 import { MaisterError } from "@/lib/errors";
 import { loadOperationalOutcome } from "@/lib/run-results/operational-projection";
 import * as schemaModule from "@/lib/db/schema";
@@ -26,6 +28,7 @@ type Db = any;
 // cannot leak into a client-visible payload by accident.
 
 export type RunPublicResultDto = {
+  findings?: EvidenceFindingsV1;
   operationalOutcome: OperationalOutcome | null;
   /** `<flowRefId>@<rev12>:<schemaStem>`; null when the run has no contract. */
   schemaRef: string | null;
@@ -114,7 +117,12 @@ export async function loadRunPublicResult(
   // nulls `result` for exactly this case. One plane, one rule.
   const served = resultStatus === "valid" ? valid : null;
 
+  const findings = projectNativeFindings(
+    run.resultContract,
+    served?.value ?? null,
+  );
   const result: RunPublicResultDto = {
+    ...(findings ? { findings } : {}),
     operationalOutcome: await loadOperationalOutcome(db, runId, recipient),
     schemaRef: run.resultContract?.schemaRef ?? newest?.schemaRef ?? null,
     resultStatus,

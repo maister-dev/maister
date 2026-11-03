@@ -7003,5 +7003,33 @@
     "publicationRevisionUnknown": "The original publication revision is unknown; inspect the current record.",
     "errorBusy": "Another knowledge update is in progress. Inspect current state and retry the same request when it finishes.",
     "errorSize": "Narrow the request, source text or evidence dependencies before trying again."
+  },
+  "findings": {
+    "title": "Evidence-linked findings",
+    "confirmationPolicy": "Knowledge confirmation requires a separate authorized decision.",
+    "empty": "No findings recorded.",
+    "supporting": "Supporting evidence",
+    "contradicting": "Contradicting evidence",
+    "missing": "Missing evidence",
+    "questions": "Open questions",
+    "origins": "Source findings",
+    "selection": "Coordinator selection",
+    "retained": "Retained",
+    "combined": "Combined",
+    "omitted": "Omitted",
+    "unavailable": "Evidence unavailable",
+    "sourceVersion": "Source version",
+    "noReferences": "No evidence references recorded.",
+    "proposals": "Proposed knowledge changes",
+    "proposalPolicy": "These drafts require submission and review under the knowledge policy.",
+    "history": "Retained result revision",
+    "historical": "This retained revision is execution evidence. Current validity is shown separately.",
+    "revision": "Revision",
+    "validity": "Current validity",
+    "publishedAt": "Published",
+    "collectedAt": "First collected",
+    "notCollected": "Never collected",
+    "value": "Recorded value",
+    "noValue": "No retained value for this publication attempt."
   }
 }

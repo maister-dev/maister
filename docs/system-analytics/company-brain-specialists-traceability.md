@@ -10,7 +10,7 @@
 | CBK-04 | [company-brain](./company-brain.md) | T06,T07,T10 | `IT-CBK-04` — `web/lib/brain/__tests__/recall.integration.test.ts` (web integration) | Planned |
 | CBK-05 | [company-brain](./company-brain.md) | T06,T07,T08,T10,T09 | `IT-CBK-05` — `web/lib/brain/__tests__/company-records.integration.test.ts` (web integration) | Planned |
 | CBK-06 | [company-brain](./company-brain.md) | T10,T11 | `IT-CBK-06` — `web/app/api/knowledge/__tests__/knowledge.integration.test.ts` (web integration) | Planned |
-| CBU-01 | [company-brain](./company-brain.md) | T12,T13 | `E2E-CBU-01` — `web/e2e/company-brain.spec.ts` (Playwright) | Planned |
+| CBU-01 | [company-brain](./company-brain.md) | T12,T13,T15 | `E2E-CBU-01` — `web/e2e/company-brain.spec.ts` (Playwright) | Planned |
 | CBU-03 | [company-brain](./company-brain.md) | T38 | `IT-CBU-03` — `web/lib/specialist-assignments/__tests__/write-back.integration.test.ts` (web integration) | Planned |
 | EDGE-CBK-01 | [company-brain](./company-brain.md) | T06,T08 | `IT-CBK-02` — `web/lib/brain/__tests__/proposals.integration.test.ts` (web integration) | Planned |
 | EDGE-CBK-02 | [company-brain](./company-brain.md) | T10,T11 | `IT-CBK-06` — `web/app/api/knowledge/__tests__/knowledge.integration.test.ts` (web integration) | Planned |

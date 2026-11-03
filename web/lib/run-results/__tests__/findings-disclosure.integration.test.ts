@@ -170,6 +170,173 @@ it.each(["run summary", "readiness", "activity", "hitl"] as const)(
   },
 );
 
+it("IT-CBE-05 a frozen native result exposes typed findings for inspection", async () => {
+  const source = await completedRun();
+  const { loadRunPublicResult } = await import("@/lib/runs/run-result-dto");
+  const result = await loadRunPublicResult(database.db, source.runId, {
+    kind: "user",
+    userId: source.submitterId,
+  });
+
+  expect(result).toMatchObject({
+    findings: {
+      schemaVersion: 1,
+      findings: [
+        {
+          id: "health",
+          basis: "observed",
+          supporting: [{ kind: "witness", id: source.witness.id }],
+        },
+      ],
+    },
+  });
+});
+
+it("IT-CBE-05 exact session inspection retains superseded evidence without collecting or upgrading a generic result", async () => {
+  const source = await completedRun();
+
+  sessionUserId = source.submitterId;
+  const { publishRunResult } = await import("@/lib/run-results/ledger");
+  const original = (
+    await database.pool.query<{ value: EvidenceFindingsV1 }>(
+      "SELECT value FROM run_results WHERE run_id=$1 AND revision=1",
+      [source.runId],
+    )
+  ).rows[0]!.value;
+  const nextValue: EvidenceFindingsV1 = {
+    ...original,
+    findings: original.findings.map((finding) => ({
+      ...finding,
+      assertion: "A subsequent observation remains separately retained.",
+    })),
+  };
+
+  // The owning publication tests qualify producer validation; this test drives the existing ledger's supersession and exact read boundary.
+  await database.db.transaction((tx) =>
+    publishRunResult(tx, {
+      runId: source.runId,
+      value: nextValue,
+      valueBytes: Buffer.byteLength(JSON.stringify(nextValue)),
+      contract,
+      producerKind: "agent_session",
+      producerRef: "session:default",
+    }),
+  );
+  const { GET } =
+    await import("@/app/api/runs/[runId]/results/[revision]/route");
+  const read = (revision: string) =>
+    GET(
+      new Request(
+        `http://localhost/api/runs/${source.runId}/results/${revision}`,
+      ),
+      { params: Promise.resolve({ runId: source.runId, revision }) },
+    );
+  const response = await read("1");
+
+  expect(response.status).toBe(200);
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  expect(await response.json()).toMatchObject({
+    revision: 1,
+    validity: "superseded",
+    supersededByRevision: 2,
+    value: original,
+    findings: original,
+    collectedAt: null,
+  });
+  const latest = await read("2");
+
+  expect(latest.status).toBe(200);
+  expect(await latest.json()).toMatchObject({
+    revision: 2,
+    validity: "valid",
+    value: nextValue,
+  });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT first_collected_at FROM run_results WHERE run_id=$1",
+        [source.runId],
+      )
+    ).rows,
+  ).toEqual([{ first_collected_at: null }, { first_collected_at: null }]);
+  const { recordInvalidRunResult } = await import("@/lib/run-results/ledger");
+
+  await database.db.transaction((tx) =>
+    recordInvalidRunResult(tx, {
+      runId: source.runId,
+      contract,
+      reason: "schema_mismatch",
+      producerKind: "agent_session",
+      producerRef: "session:default",
+    }),
+  );
+  const invalid = await read("3");
+  const invalidBody: unknown = await invalid.json();
+
+  expect(invalid.status).toBe(200);
+  expect(invalidBody).toMatchObject({
+    revision: 3,
+    validity: "invalid",
+    value: null,
+    invalidReason: "schema_mismatch",
+  });
+  expect(invalidBody).not.toHaveProperty("findings");
+  const missing = await read("999");
+
+  expect(missing.status).toBe(404);
+  const missingBody = await missing.text();
+  const outsiderId = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'member','active')",
+    [outsiderId, `${outsiderId}@example.test`],
+  );
+  sessionUserId = outsiderId;
+  const foreign = await read("1");
+
+  expect(foreign.status).toBe(404);
+  expect(await foreign.text()).toBe(missingBody);
+  sessionUserId = source.submitterId;
+  for (const revision of ["0", "-1", "1.0", "0x1", "2147483648"])
+    expect((await read(revision)).status).toBe(400);
+
+  const grant = (
+    await database.pool.query<{ id: string; revision: number }>(
+      "SELECT id,revision FROM company_grants WHERE principal_type='user' AND principal_id=$1 AND action='knowledge:read' AND revoked_at IS NULL",
+      [source.submitterId],
+    )
+  ).rows[0]!;
+
+  await revokeCompanyGrant(database.db, source.submitterId, grant.id, {
+    expectedRevision: grant.revision,
+    reason: "Revoke exact result inspection",
+    idempotencyKey: `retained-revoke:${source.runId}`,
+  });
+  const denied = await read("1");
+
+  expect(denied.status).toBe(409);
+  expect(await denied.text()).not.toContain(original.findings[0]!.assertion);
+
+  const generic = await seedNativeFindingsExecution(database, {
+    ...contract,
+    nativeContract: undefined,
+  });
+  const { finalizeAgentRun } = await import("@/lib/agents/launch");
+
+  await finalizeAgentRun(generic.runId, "Done", {
+    db: database.db,
+    finalOutput: { kind: "value", value: original },
+  });
+  const { loadRunPublicResult } = await import("@/lib/runs/run-result-dto");
+  const genericResult = await loadRunPublicResult(database.db, generic.runId, {
+    kind: "user",
+    userId: generic.submitterId,
+  });
+
+  expect(genericResult?.value).toEqual(original);
+  expect(genericResult).not.toHaveProperty("findings");
+});
+
 it("IT-CBE-06 result DTO assembly rechecks a grant revoked after initial admission", async () => {
   const source = await completedRun();
   let firstAdmission = true;

@@ -8,6 +8,7 @@ import { getLocale, getTranslations } from "next-intl/server";
 import { notFound, redirect } from "next/navigation";
 import { ExclamationTriangleIcon } from "@heroicons/react/24/outline";
 
+import { RunFindingsPanel } from "@/components/runs/run-findings-panel";
 import { loadRunScheduledRequest } from "@/lib/agents/activity-queries";
 import { ScheduledRequestEvidence } from "@/components/agents/scheduled-request-evidence";
 import { AgentRetryControl } from "@/components/agents/agent-retry-control";
@@ -1590,6 +1591,12 @@ export default async function RunDetailLayout({
             ) : null}
             {/* ADR-165 (T8.1): renders nothing at all for a run with no public
                 result contract and no rows — most runs. */}
+            {publicResult?.findings ? (
+              <RunFindingsPanel
+                findings={publicResult.findings}
+                resultHref={`/knowledge/results/${encodeURIComponent(runId)}/${publicResult.revision}`}
+              />
+            ) : null}
             <RunPublicResultPanel
               labels={publicResultLabels}
               result={isOperational ? null : publicResult}

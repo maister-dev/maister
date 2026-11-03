@@ -9504,6 +9504,49 @@ paths:
                     code: EXECUTOR_UNAVAILABLE
                     message: Your answer is saved; delivery is pending. Retry delivery to send it.
                     details: { reason: delivery_unavailable }
+  /api/runs/{runId}/results/{revision}:
+    get:
+      tags: [runs]
+      operationId: getRetainedRunResult
+      summary: Inspect an exact retained result revision
+      description: |
+        Session-authenticated human inspection under current project readBoard
+        authority and the run's complete captured-source closure. Returns the
+        requested existing ledger revision, including superseded/stale or invalid
+        publication attempts, with current validity and original schema/producer
+        metadata. Inspection does not mark a result collected, accept child work,
+        confirm knowledge or change a run. Native findings are projected only from
+        the frozen evidence_findings_v1 discriminator; matching generic JSON is
+        never upgraded. Current grants are rechecked before return. Missing and
+        foreign-project rows return the same 404; unavailable native sources
+        return PRECONDITION/409 without result content. Response is no-store.
+        This session route is not a bearer/MCP direct-grandchild collection path.
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 128 }
+        - name: revision
+          in: path
+          required: true
+          description: Canonical positive decimal integer, at most 2147483647.
+          schema: { type: string, pattern: '^[1-9][0-9]*$', maxLength: 10 }
+      responses:
+        "200":
+          description: Exact authorized retained revision, including its current validity.
+          headers:
+            Cache-Control:
+              schema: { type: string, enum: [no-store] }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CBRetainedRunResult" }
+        "400": { description: Malformed identity or noncanonical/out-of-range revision. }
+        "401": { description: Active session required. }
+        "403": { description: Current account unavailable or password change required. }
+        "404": { description: Requested retained result is unavailable. }
+        "409": { description: Current native source closure unavailable; no result content. }
+        "500": { description: Retained data violates its inspection contract or infrastructure failed. }
+
   /api/runs/{runId}/review-comments:
     get:
       tags: [review-comments]
@@ -36999,6 +37042,42 @@ components:
           type: boolean
           enum:
             - true
+    CBRetainedRunResult:
+      type: object
+      additionalProperties: false
+      oneOf:
+        - not: { required: [findings] }
+          properties:
+            validity: { enum: [invalid] }
+            value: { type: object, nullable: true, enum: [null] }
+            invalidReason: { type: string, minLength: 1 }
+        - properties:
+            validity: { enum: [valid, stale, superseded] }
+            value: { type: object }
+            invalidReason: { type: string, nullable: true, enum: [null] }
+      required:
+        [runId, revision, validity, schemaRef, schemaSha256, schemaVersion,
+         producerKind, producerRef, nodeAttemptId, value, valueBytes,
+         invalidReason, publishedAt, collectedAt, supersededByRevision]
+      properties:
+        runId: { type: string, minLength: 1, maxLength: 128 }
+        revision: { type: integer, minimum: 1, maximum: 2147483647 }
+        validity: { type: string, enum: [valid, stale, superseded, invalid] }
+        schemaRef: { type: string, minLength: 1, maxLength: 1024 }
+        schemaSha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        schemaVersion: { type: integer, minimum: 1 }
+        producerKind: { type: string, enum: [flow_node, agent_session] }
+        producerRef: { type: string, minLength: 1, maxLength: 512 }
+        nodeAttemptId: { type: string, nullable: true, minLength: 1, maxLength: 128 }
+        value: { type: object, nullable: true, additionalProperties: true }
+        valueBytes: { type: integer, minimum: 0 }
+        invalidReason: { type: string, nullable: true, minLength: 1, maxLength: 128 }
+        publishedAt: { type: string, format: date-time }
+        collectedAt: { type: string, format: date-time, nullable: true }
+        supersededByRevision: { type: integer, nullable: true, minimum: 1, maximum: 2147483647 }
+        findings:
+          $ref: "#/components/schemas/CBFindings"
+
     CBFindings:
       type: object
       additionalProperties: false

@@ -1,8 +1,12 @@
 import { randomUUID } from "node:crypto";
 
+import { Pool } from "pg";
+import { z } from "zod";
 import { expect, test } from "@playwright/test";
 
 import { loadFixtures } from "./_seed/fixtures";
+
+import { resolvePostgresDbUrl } from "@/lib/db/postgres-url";
 
 test.use({ actionTimeout: 10000 });
 
@@ -253,4 +257,247 @@ test("E2E-CBU-01 an administrator explicitly enables company knowledge and revie
   await expect(
     surface.getByRole("heading", { name: "Знание недоступно", exact: true }),
   ).toBeVisible();
+});
+
+// Browser inspection uses retained fixtures; installable-package/live ACP acceptance remains a separate required gate.
+test("E2E-CBU-01 findings preserve exact evidence links and retained revisions in English and Russian", async ({
+  page,
+  context,
+}, testInfo) => {
+  test.setTimeout(120000);
+  const { byKey } = loadFixtures();
+  const projectSlug = byKey.m11a.projectSlug;
+  const pool = new Pool({ connectionString: resolvePostgresDbUrl() });
+  const runId = randomUUID();
+  const childRunId = randomUUID();
+  const assertion = `Bounded health observation ${randomUUID()}`;
+  const witnessSchema = z.object({
+    id: z.string(),
+    sha256: z.string(),
+    sourceVersion: z.string().nullable(),
+  });
+
+  try {
+    const project = (
+      await pool.query<{ id: string }>(
+        "SELECT id FROM projects WHERE slug=$1",
+        [projectSlug],
+      )
+    ).rows[0];
+
+    expect(project).toBeDefined();
+    const projectId = project!.id;
+
+    await pool.query("UPDATE projects SET brain_enabled=true WHERE id=$1", [
+      projectId,
+    ]);
+    const capture = await page.request.post("/api/knowledge/sources", {
+      data: {
+        owner: { kind: "project", projectId },
+        title: "Retained health source",
+        content: assertion,
+        idempotencyKey: `findings-browser:${runId}`,
+      },
+    });
+
+    const capturedBody = await capture.text();
+
+    expect(capture.status(), capturedBody).toBe(201);
+    const witness = witnessSchema.parse(JSON.parse(capturedBody));
+    const contract = {
+      kind: "flow_export",
+      nativeContract: "evidence_findings_v1",
+      schemaRef: "browser-inspection@aaaaaaaaaaaa:findings.v1",
+      schemaVersion: 1,
+      sha256: "b".repeat(64),
+      required: true,
+      producerNodeIds: ["coordinator"],
+      schema: { schemaVersion: 1, fields: [] },
+      flowRevisionId: "retained-browser-fixture",
+    };
+    const knowledgeAccess = {
+      schemaVersion: 1,
+      state: "complete",
+      generation: 1,
+      restrictions: [{ kind: "project", projectId }],
+    };
+
+    await pool.query(
+      "INSERT INTO runs(id,project_id,run_kind,status,flow_version,result_contract,knowledge_access) VALUES($1,$2,'flow','Done','retained-browser-fixture',$3::jsonb,$4::jsonb),($5,$2,'flow','Done','retained-browser-fixture',$3::jsonb,$4::jsonb)",
+      [
+        runId,
+        projectId,
+        JSON.stringify(contract),
+        JSON.stringify(knowledgeAccess),
+        childRunId,
+      ],
+    );
+    await pool.query("UPDATE runs SET parent_run_id=$2 WHERE id=$1", [
+      childRunId,
+      runId,
+    ]);
+    const baseFinding = {
+      id: "health",
+      assertion,
+      basis: "observed",
+      supporting: [{ kind: "witness", id: witness.id, sha256: witness.sha256 }],
+      contradicting: [],
+      missingEvidence: [
+        {
+          state: "unknown",
+          reason: "Current applicability requires a new health check.",
+        },
+      ],
+      limitations: ["The source records one observation."],
+      openQuestions: ["Has the component changed?"],
+      sourceFindings: [],
+    };
+    const child = {
+      schemaVersion: 1,
+      findings: [baseFinding],
+      knowledgeProposals: [],
+      selection: [],
+    };
+    const parent = {
+      ...child,
+      findings: [
+        {
+          ...baseFinding,
+          sourceFindings: [
+            { childRunId, resultRevision: 1, findingId: "health" },
+          ],
+        },
+      ],
+      selection: [
+        {
+          childRunId,
+          resultRevision: 1,
+          findingId: "health",
+          disposition: "retained",
+          outputFindingIds: ["health"],
+        },
+      ],
+    };
+    const firstId = randomUUID();
+    const nextId = randomUUID();
+
+    await pool.query(
+      "INSERT INTO run_results(id,run_id,revision,validity,schema_ref,schema_sha256,schema_version,producer_kind,producer_ref,value,value_bytes,engine_version,first_collected_at) VALUES($1,$2,1,'valid',$3,$4,1,'flow_node','coordinator',$5::jsonb,$6,'retained-browser-fixture',now())",
+      [
+        randomUUID(),
+        childRunId,
+        contract.schemaRef,
+        contract.sha256,
+        JSON.stringify(child),
+        Buffer.byteLength(JSON.stringify(child)),
+      ],
+    );
+    await pool.query(
+      "INSERT INTO run_results(id,run_id,revision,validity,schema_ref,schema_sha256,schema_version,producer_kind,producer_ref,value,value_bytes,engine_version) VALUES($1,$2,1,'superseded',$3,$4,1,'flow_node','coordinator',$5::jsonb,$6,'retained-browser-fixture'),($7,$2,2,'valid',$3,$4,1,'flow_node','coordinator',$5::jsonb,$6,'retained-browser-fixture')",
+      [
+        firstId,
+        runId,
+        contract.schemaRef,
+        contract.sha256,
+        JSON.stringify(parent),
+        Buffer.byteLength(JSON.stringify(parent)),
+        nextId,
+      ],
+    );
+    await pool.query(
+      "UPDATE run_results SET superseded_by_id=$2,superseded_at=now() WHERE id=$1",
+      [firstId, nextId],
+    );
+    const url = `/knowledge/results/${runId}/1`;
+
+    await page.goto(url);
+    const main = page.getByRole("main");
+    const findings = main.getByTestId("native-findings");
+
+    await expect(
+      main.getByRole("heading", {
+        name: "Retained result revision",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      findings.getByRole("heading", { name: assertion, exact: true }),
+    ).toBeVisible();
+    await expect(
+      findings.getByText("Current applicability requires a new health check.", {
+        exact: false,
+      }),
+    ).toBeVisible();
+    await expect(
+      findings.getByRole("link", {
+        name: `witness:${witness.id}`,
+        exact: true,
+      }),
+    ).toHaveAttribute("href", `/knowledge/witnesses/${witness.id}`);
+    await findings
+      .getByRole("link", { name: `witness:${witness.id}`, exact: true })
+      .click();
+    await expect(main.getByText(assertion, { exact: true })).toBeVisible();
+    await page.goto(url);
+    await page
+      .getByTestId("native-findings")
+      .getByRole("link", { name: `${childRunId}@1 · health`, exact: true })
+      .first()
+      .click();
+    await expect(page).toHaveURL(
+      new RegExp(`/knowledge/results/${childRunId}/1#finding-health$`),
+    );
+    await expect(
+      page
+        .getByTestId("native-findings")
+        .getByRole("heading", { name: assertion, exact: true }),
+    ).toBeVisible();
+    await context.addCookies([
+      { name: "NEXT_LOCALE", value: "ru", url: new URL(page.url()).origin },
+    ]);
+    await page.goto(url);
+    await expect(
+      main.getByRole("heading", {
+        name: "Сохранённая ревизия результата",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      main.getByRole("heading", {
+        name: "Выводы со ссылками на доказательства",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      main.getByRole("heading", {
+        name: "Недостающие доказательства",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await page.screenshot({
+      caret: "initial",
+      path: testInfo.outputPath("native-findings-ru.png"),
+    });
+    expect(
+      (
+        await pool.query(
+          "SELECT first_collected_at FROM run_results WHERE run_id=$1 ORDER BY revision",
+          [runId],
+        )
+      ).rows,
+    ).toEqual([{ first_collected_at: null }, { first_collected_at: null }]);
+    await pool.query("UPDATE projects SET brain_enabled=false WHERE id=$1", [
+      projectId,
+    ]);
+    await page.reload();
+    await expect(
+      main.getByRole("heading", { name: "Знание недоступно", exact: true }),
+    ).toBeVisible();
+    await expect(main.getByText(assertion, { exact: true })).toBeHidden();
+  } finally {
+    await pool.query("DELETE FROM runs WHERE id=ANY($1::text[])", [
+      [runId, childRunId],
+    ]);
+    await pool.end();
+  }
 });

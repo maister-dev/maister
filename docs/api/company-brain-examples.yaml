@@ -396,3 +396,66 @@ cases:
       code: CONFLICT
       message: The policy revision is stale.
       details: {}
+
+  - id: exact-retained-superseded-inspection-does-not-consume-work
+    surfaces: [web]
+    schema: CBRetainedRunResult
+    valid: true
+    value:
+      runId: "retained_run_example"
+      revision: 1
+      validity: "superseded"
+      schemaRef: "pinned-package@aaaaaaaaaaaa:summary.v1"
+      schemaSha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      schemaVersion: 1
+      producerKind: "flow_node"
+      producerRef: "coordinator"
+      nodeAttemptId: "node_attempt_example"
+      value: {"summary": "An exact retained observation."}
+      valueBytes: 44
+      invalidReason: null
+      publishedAt: "2026-11-03T09:00:00.000Z"
+      collectedAt: null
+      supersededByRevision: 2
+
+  - id: invalid-retained-publication-keeps-no-value
+    surfaces: [web]
+    schema: CBRetainedRunResult
+    valid: true
+    value:
+      runId: "retained_run_example"
+      revision: 1
+      validity: "invalid"
+      schemaRef: "pinned-package@aaaaaaaaaaaa:summary.v1"
+      schemaSha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      schemaVersion: 1
+      producerKind: "flow_node"
+      producerRef: "coordinator"
+      nodeAttemptId: "node_attempt_example"
+      value: null
+      valueBytes: 44
+      invalidReason: "schema_mismatch"
+      publishedAt: "2026-11-03T09:00:00.000Z"
+      collectedAt: null
+      supersededByRevision: null
+
+  - id: invalid-publication-cannot-carry-a-usable-value
+    surfaces: [web]
+    schema: CBRetainedRunResult
+    valid: false
+    value:
+      runId: "retained_run_example"
+      revision: 1
+      validity: "invalid"
+      schemaRef: "pinned-package@aaaaaaaaaaaa:summary.v1"
+      schemaSha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      schemaVersion: 1
+      producerKind: "flow_node"
+      producerRef: "coordinator"
+      nodeAttemptId: "node_attempt_example"
+      value: {"summary": "An exact retained observation."}
+      valueBytes: 44
+      invalidReason: "schema_mismatch"
+      publishedAt: "2026-11-03T09:00:00.000Z"
+      collectedAt: null
+      supersededByRevision: null

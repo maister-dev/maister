@@ -3,7 +3,8 @@
 Routes: `/knowledge`, `/knowledge/{recordId}`, `/knowledge/proposals`,
 `/knowledge/proposals/new`, `/knowledge/proposals/{proposalId}`,
 `/knowledge/{recordId}/correct`, `/knowledge/witnesses/{witnessId}`,
-`/settings/company-grants`, `/settings/company-grants/new`.
+`/settings/company-grants`, `/settings/company-grants/new`,
+`/knowledge/results/{runId}/{revision}`.
 Status: Implemented locally; cross-surface and full runtime qualification remains separate.
 Source: `web/app/(app)/knowledge/`, `web/components/brain/knowledge-*`,
 `web/components/brain/company-grant-*`.
@@ -104,9 +105,13 @@ Owning behavior: [Company Brain](../system-analytics/company-brain.md),
 [evidence](../system-analytics/company-brain-evidence.md). The interface does not
 create an execution engine or mix private/librarian memory with company records.
 
+## Native findings and exact result history
+
+The existing run inspector renders structured findings only for the frozen native findings contract. Evidence links open exact record/witness/result identities. The retained result page shows current validity separately from its original schema digest, publication and collection timestamps. Superseded history stays inspectable under current project/source authority; inspection does not collect or accept child work or confirm a Brain fact. The session-only API is documented in the [HTTP contract](../api/web.openapi.yaml); it does not widen MCP collection. Native execution capability remains behind the separate complete-disclosure and installed-package qualification gates.
+
 ## i18n
 
-`knowledge` provides EN/RU labels and mutation feedback; `nav.knowledge`,
+`findings` provides EN/RU native evidence/history labels. `knowledge` provides EN/RU labels and mutation feedback; `nav.knowledge`,
 `brain.structuredKnowledge` and `settings.companyAccess*` provide entry points.
 Captured source bytes and submitted assertions retain their original language.
 Dates use the active locale and explicit UTC. Loading and error states reuse the

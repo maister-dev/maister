@@ -2,7 +2,7 @@
 
 ## Purpose
 
-**Designed — ADR-204.** Define one native versioned value for evidence-linked agent/RAH findings through the existing result plane. It applies to coordinator, subordinate researcher and specialist results; [Brain evidence](company-brain-evidence.md) owns source/witness identity.
+**Partially implemented locally — ADR-204.** Native contracts, reference validation, reduction and the qualified read/UI boundaries below extend one native versioned value for evidence-linked agent/RAH findings through the existing result plane. It applies to coordinator, subordinate researcher and specialist results; [Brain evidence](company-brain-evidence.md) owns source/witness identity.
 
 ## Domain entities
 
@@ -348,3 +348,27 @@ advances past this intentional non-consumption without a new attempt/skip ledger
 Native reusable knowledge is proposed through the attributed, source-aware
 proposal API and reviewed under its explicit policy. Legacy NULL-capture harvest
 retains its existing provenance, deduplication, retry and permanent-failure rules.
+
+
+## Governed operational projections
+
+**Implemented locally; T15 qualification remains in progress.** Agent run/attempt history and automation list/detail hydrate diagnostic bodies and immutable input snapshots only after current receiving-source authorization. The shared operational projection checks the selected bounded run set and reads bodies in the same SQL transaction. Failed operational runs retain classified diagnostic results; failure does not make their prose public. Automation pagination selects control metadata before hydrating only the visible page, so an unrelated off-page result cannot disclose content or deny the selected page.
+
+Internal activity-index repair uses an explicit server-only inspection function to maintain enum/status metadata; it cannot select a public bypass through request JSON. Historical runs with NULL knowledge profiles retain their existing project access rules. Enrolled runs require a current recipient and complete source capture. The history UI preserves safe control metadata and shows the existing EN/RU source-unavailable notice; project settings and deletion do not depend on reading that evidence.
+
+
+Review-thread reads and edits preserve the run's source envelope, including retained anchor text after workspace cleanup. They recheck the current receiving user before emitting delayed responses. Project deletion and comment deletion do not acquire a new Brain authorization dependency.
+
+Project/cross-project HITL lists filter enrolled rows through current receiving-source authorization before exposing prompts, schemas, responses or counts. Authorized unrelated legacy work remains visible; grants are rechecked before final serialization. Native rows lacking complete capture or an identified recipient cannot enter the content projection. Source-budget exhaustion fails explicitly rather than masquerading as a denied record. External Inbox uses the actual bearer credential; it cannot substitute the owner's broader authority. Private agent/librarian stores remain separate, and no new scheduler or attempt ledger is introduced.
+
+
+## Findings inspection and retained results
+
+Native result inspection uses the frozen `evidence_findings_v1` discriminator and the validated findings schema. Matching generic JSON remains an ordinary result. The EN/RU findings panel preserves observed/inferred/unknown basis, supporting and contradicting references, missing proof, limitations, open questions, source findings and coordinator selection/omission reasons. It displays proposed knowledge as drafts subject to the separate submission/review policy; viewing a finding cannot confirm a Brain record.
+
+Evidence links name exact record revisions, immutable witnesses and exact run-result revisions. `/knowledge/results/{runId}/{revision}` and the session-only `GET /api/runs/{runId}/results/{revision}` inspect the requested existing ledger row under current project/source authority. Superseded or stale history keeps its value and explicit current validity; invalid publication attempts keep their reason and no value. The original schema digest, publication time, producer reference and first-collected timestamp remain attributable. Inspection never stamps collection or changes acceptance. Current source denial returns no retained payload; this human inspection path does not widen bearer/MCP direct-child collection.
+
+
+### Carrier input boundary
+
+Flow delegation and agent task-mode delegation create shared carrier tasks from model-supplied title/prompt input. The originating run's captured restrictions must govern that input before any shared task, activity, trigger, template or prompt disclosure. Child-run inheritance alone cannot protect an already visible carrier field. This boundary remains unqualified and keeps native capability disabled; required depth-2 Flow cooperation cannot be replaced with a permanent refusal. Existing legacy task/launcher behavior remains the compatibility baseline. No new execution engine or attempt ledger is required.
