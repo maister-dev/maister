@@ -1,8 +1,8 @@
 // Playwright global setup for the authenticated/seeded e2e suite. Database
 // preflight runs from the webServer command because Playwright starts the server
 // before this hook. Auth (storageState) is handled by e2e/auth.setup.ts.
-import { Pool } from "pg";
 
+import { createE2EDbPool } from "./_seed/db";
 import {
   STUB_SESSIONS_DIR,
   STUB_SUPERVISOR_PORT,
@@ -28,7 +28,7 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   // STUB_SUPERVISOR_PORT so playwright.config.ts's MAISTER_SUPERVISOR_URL
   // (=STUB_SUPERVISOR_URL) reaches it unchanged. Returned as the global teardown.
   process.env.MAISTER_TEST_CHILD_AGENT_ID = E2E_WORKER_AGENT;
-  const supervisorPool = new Pool({ connectionString: resolvePostgresDbUrl() });
+  const supervisorPool = createE2EDbPool(resolvePostgresDbUrl());
   const supervisor = await startTestSupervisor({
     pool: supervisorPool,
     portHint: STUB_SUPERVISOR_PORT,

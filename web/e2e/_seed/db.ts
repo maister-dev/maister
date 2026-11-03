@@ -1,13 +1,24 @@
 import { Pool } from "pg";
 
 import { resolvePostgresDbUrl } from "@/lib/db/postgres-url";
+import {
+  EXECUTION_AB_WRITER_CAPABILITY,
+  TASK_LAUNCH_WRITER_CAPABILITY,
+  TASK_LAUNCH_WRITER_SETTING,
+  TASK_QUALIFICATION_WRITER_CAPABILITY,
+  TASK_QUALIFICATION_WRITER_SETTING,
+  WRITER_CAPABILITY_SETTING,
+} from "@/lib/db/writer-capability";
+
+export function createE2EDbPool(connectionString: string): Pool {
+  return new Pool({
+    connectionString,
+    options: `-c ${WRITER_CAPABILITY_SETTING}=${EXECUTION_AB_WRITER_CAPABILITY} -c ${TASK_QUALIFICATION_WRITER_SETTING}=${TASK_QUALIFICATION_WRITER_CAPABILITY} -c maister.agent_preparation_writer=v1 -c ${TASK_LAUNCH_WRITER_SETTING}=${TASK_LAUNCH_WRITER_CAPABILITY}`,
+  });
+}
 
 export async function withE2EDb<T>(fn: (pool: Pool) => Promise<T>): Promise<T> {
-  const pool = new Pool({
-    connectionString: resolvePostgresDbUrl(),
-    options:
-      "-c maister.task_qualification_writer=v1 -c maister.agent_preparation_writer=v1 -c maister.task_launch_writer=v3",
-  });
+  const pool = createE2EDbPool(resolvePostgresDbUrl());
 
   try {
     return await fn(pool);

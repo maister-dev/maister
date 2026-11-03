@@ -30,6 +30,7 @@ import { promisify } from "node:util";
 import bcrypt from "bcryptjs";
 import { Pool } from "pg";
 
+import { createE2EDbPool } from "./db";
 import { DELEGATED_FLOW_RELEASE } from "./delegated-release";
 import { resetFakeGhState } from "./fake-gh";
 import { E2E_EXECUTION_HOST_SLUG } from "./fixtures";
@@ -8261,8 +8262,9 @@ async function seedActivityFeedFixture(
   ): Promise<{ id: string; keyRef: string }> {
     const id = randomUUID();
     const { rows } = await pool.query<{ number: number }>(
-      `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage, triage_status)
-       VALUES ($1, $2, (SELECT COALESCE(MAX(number), 0) + 1 FROM tasks WHERE project_id = $2), $3, 'activity fixture', $4, 'Backlog', 'Backlog', $5)
+      `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage, triage_status, triage_flag_origin)
+       VALUES ($1, $2, (SELECT COALESCE(MAX(number), 0) + 1 FROM tasks WHERE project_id = $2), $3, 'activity fixture', $4, 'Backlog', 'Backlog', $5,
+         CASE WHEN $5 = 'flagged' THEN 'explicit' ELSE NULL END)
        RETURNING number`,
       [id, projectId, title, flowId, triageStatus],
     );
@@ -8470,7 +8472,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const pool = new Pool({ connectionString: url });
+  const pool = createE2EDbPool(url);
 
   try {
     await pool.query(`DELETE FROM projects WHERE slug = ANY($1::text[])`, [

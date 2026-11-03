@@ -5,8 +5,8 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 import { drizzle } from "drizzle-orm/node-postgres";
-import { Pool } from "pg";
 
+import { createE2EDbPool } from "./_seed/db";
 import {
   LIBRARIAN_SUPERVISOR_CONTROL_PORT,
   LIBRARIAN_SUPERVISOR_PORT,
@@ -28,7 +28,7 @@ function qualificationAdapter(
 }
 
 export default async function globalSetup(): Promise<() => Promise<void>> {
-  const pool = new Pool({ connectionString: resolvePostgresDbUrl() });
+  const pool = createE2EDbPool(resolvePostgresDbUrl());
   const worktreesRoot = process.env.MAISTER_WORKTREES_ROOT;
   const runtimeRoot = path.resolve("e2e/.runtime-librarian-web");
   const liveAdapter = qualificationAdapter(
