@@ -1,9 +1,15 @@
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
+import { mkdir, writeFile, readFile, unlink } from "node:fs/promises";
+import path from "node:path";
 
 import { expect, test } from "@playwright/test";
 
 import { withE2EDb, seedDefaultRunSession } from "./_seed/db";
 import contract from "./_seed/operational-contract.json" with { type: "json" };
+import { seedManualTaskLaunchFixture } from "./_seed/manual-task-launch";
+
+import { git } from "@/test-support/git-fixture";
 
 // Browser wiring only. The real supervisor/Postgres integration suites own
 // outcome classification, permissions, source integrity and physical cleanup.
@@ -423,4 +429,170 @@ test.describe("operational results, history and attention", () => {
       ]);
     });
   });
+});
+
+test("TB07: actual baseline Git failure is infrastructure before model execution, with safe details and retry guidance (EN/RU)", async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  test.setTimeout(90_000);
+  const fixture = await seedManualTaskLaunchFixture();
+  const hooks = path.join(fixture.root, "diagnostic-hooks");
+  const privateContent = "private-fixture-source-token-not-for-ui";
+
+  await mkdir(hooks);
+  await writeFile(
+    path.join(hooks, "post-checkout"),
+    `#!/bin/sh
+set -eu
+if test -f .git; then
+  cp .git .git.fixture-diagnostic-backup
+  printf '%s\\n' '${privateContent}' > .git
+fi
+`,
+    { mode: 0o755 },
+  );
+  await git(fixture.repo, "config", "core.hooksPath", hooks);
+  let checkout: string | null = null;
+
+  try {
+    const created = await page.request.post(
+      `/api/projects/${fixture.slug}/tasks`,
+      {
+        data: {
+          title: "Inspect preparation infrastructure failure",
+          prompt:
+            "Inspect the tracked source; a failed workspace probe cannot assess this request.",
+          flowId: fixture.flowId,
+        },
+      },
+    );
+
+    expect(created.status()).toBe(201);
+    const task = (await created.json()) as { taskId: string };
+    const launch = await page.request.post(
+      `/api/projects/${fixture.slug}/agents/${encodeURIComponent(fixture.qualifierId)}/launch`,
+      { data: { taskId: task.taskId } },
+    );
+
+    expect(launch.status()).toBe(202);
+    const { runId } = (await launch.json()) as { runId: string };
+
+    await expect
+      .poll(
+        () =>
+          withE2EDb(
+            async (pool) =>
+              (await pool.query("SELECT status FROM runs WHERE id=$1", [runId]))
+                .rows[0].status,
+          ),
+        { timeout: 20_000 },
+      )
+      .toBe("Failed");
+    const proof = await withE2EDb(
+      async (pool) =>
+        (
+          await pool.query<{
+            operational_terminal: {
+              infrastructureFailure: {
+                runId: string;
+                assignmentId: string;
+                assignmentEpoch: number;
+                stage: string;
+                probeOperation: string;
+                causeChain: Array<{ code?: string | number }>;
+              };
+            };
+            worktree_path: string;
+            session_create_commands: number;
+            prompt_commands: number;
+            assessments: number;
+          }>(
+            "SELECT r.operational_terminal,w.worktree_path,(SELECT count(*)::int FROM execution_commands c WHERE c.run_id=r.id AND c.kind='session.create') AS session_create_commands,(SELECT count(*)::int FROM execution_commands c WHERE c.run_id=r.id AND c.kind='session.prompt') AS prompt_commands,(SELECT count(*)::int FROM task_qualifications q WHERE q.author_run_id=r.id) AS assessments FROM runs r JOIN workspaces w ON w.run_id=r.id WHERE r.id=$1 AND r.project_id=$2",
+            [runId, fixture.projectId],
+          )
+        ).rows[0],
+    );
+
+    checkout = proof.worktree_path;
+    expect(proof).toMatchObject({
+      session_create_commands: 0,
+      prompt_commands: 0,
+      assessments: 0,
+      operational_terminal: {
+        infrastructureFailure: {
+          runId,
+          assignmentId: expect.any(String),
+          assignmentEpoch: expect.any(Number),
+          stage: "baseline",
+          probeOperation: expect.stringMatching(/^git\./),
+        },
+      },
+    });
+    expect(
+      proof.operational_terminal.infrastructureFailure.causeChain,
+    ).toContainEqual(expect.objectContaining({ code: 128 }));
+    for (const locale of ["en", "ru"] as const) {
+      await context.addCookies([
+        { name: "NEXT_LOCALE", value: locale, url: baseURL! },
+      ]);
+      await page.goto(`/runs/${runId}`);
+      const result = page
+        .getByTestId("operational-result")
+        .filter({ visible: true });
+
+      await expect(result).toContainText(
+        locale === "en"
+          ? "Workspace preparation failed before model execution. The model did not start; no task assessment was produced."
+          : "Подготовка рабочего пространства завершилась ошибкой до запуска модели. Модель не была запущена; оценка задачи не создана.",
+      );
+      await expect(result).toContainText(
+        locale === "en"
+          ? "resolve the filesystem or Git problem, then use Retry"
+          : "устраните проблему файловой системы или Git",
+      );
+      await result
+        .getByText(
+          locale === "en" ? "Preparation details" : "Детали подготовки",
+          { exact: true },
+        )
+        .click();
+      const technical = result.locator("pre");
+
+      await expect(technical).toContainText(runId);
+      await expect(technical).toContainText('"stage": "baseline"');
+      await expect(technical).toContainText('"code": 128');
+      await expect(technical).toContainText('"assignmentEpoch":');
+      await expect(technical).not.toContainText(fixture.root);
+      await expect(technical).not.toContainText(checkout);
+      await expect(technical).not.toContainText(privateContent);
+      await expect(technical).not.toContainText("stderr");
+      await expect(result).not.toContainText(
+        locale === "en"
+          ? "Requester information needed"
+          : "Нужны данные от автора",
+      );
+      await expect(
+        page
+          .getByRole("button", {
+            name: locale === "en" ? "Run again…" : "Запустить повторно…",
+            exact: true,
+          })
+          .filter({ visible: true }),
+      ).toBeEnabled();
+    }
+  } finally {
+    await git(fixture.repo, "config", "--unset", "core.hooksPath");
+    // Restore only this hook's backed-up metadata. A terminal cleanup may
+    // already have removed the fixture checkout; never remove unknown locks.
+    if (checkout) {
+      const backup = path.join(checkout, ".git.fixture-diagnostic-backup");
+
+      if (existsSync(backup)) {
+        await writeFile(path.join(checkout, ".git"), await readFile(backup));
+        await unlink(backup);
+      }
+    }
+  }
 });

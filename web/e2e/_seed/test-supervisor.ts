@@ -75,7 +75,13 @@ import {
   stubSessionListEntry,
   stubSessions,
 } from "./stub-supervisor";
+import {
+  MANUAL_LAUNCH_FLOW_PREFIX,
+  MANUAL_QUALIFICATION_MARKER,
+  MANUAL_REVIEW_MARKER,
+} from "./manual-task-launch";
 
+import { git } from "@/test-support/git-fixture";
 import { qualificationFixture } from "@/test-support/task-qualification";
 
 const STUB_RELEASE_BACKSTOP_MS = 15_000;
@@ -917,6 +923,42 @@ export async function startTestSupervisor(
   async function driveTurn(rec: SessionRecord): Promise<void> {
     if (
       rec.runKind === "flow" &&
+      (await flowRefOf(rec.runId))?.startsWith(MANUAL_LAUNCH_FLOW_PREFIX)
+    ) {
+      const workspace = (
+        await opts.pool.query<{ worktree_path: string }>(
+          "SELECT worktree_path FROM workspaces WHERE run_id=$1",
+          [rec.runId],
+        )
+      ).rows[0];
+
+      if (!workspace)
+        throw new Error("Controlled manual delivery has no workspace");
+      mkdirSync(path.join(workspace.worktree_path, "docs"), {
+        recursive: true,
+      });
+      writeFileSync(
+        path.join(workspace.worktree_path, "docs/manual-launch-proof.md"),
+        "# Controlled provider output\nThis change was produced by the browser test provider fixture.\n",
+      );
+      await git(workspace.worktree_path, "add", "docs/manual-launch-proof.md");
+      await git(
+        workspace.worktree_path,
+        "commit",
+        "-m",
+        "Controlled manual launch proof",
+      );
+      emitText(
+        rec,
+        "Controlled provider committed its documentation change. The real Flow must still execute its blocking check and human review.",
+      );
+      rec.exitPending = true;
+      rec.exitCode = 0;
+
+      return;
+    }
+    if (
+      rec.runKind === "flow" &&
       !rec.isResume &&
       !delegatedRuns.has(rec.runId)
     ) {
@@ -974,9 +1016,10 @@ export async function startTestSupervisor(
           agent_kind: string | null;
           task_id: string | null;
           task_qualification_snapshot: { role: string; sha: string } | null;
+          agent_config: Record<string, unknown> | null;
           slug: string;
         }>(
-          "SELECT r.agent_kind,r.task_id,r.task_qualification_snapshot,p.slug FROM runs r JOIN projects p ON p.id=r.project_id WHERE r.id=$1",
+          "SELECT r.agent_kind,r.task_id,r.task_qualification_snapshot,r.agent_config,p.slug FROM runs r JOIN projects p ON p.id=r.project_id WHERE r.id=$1",
           [rec.runId],
         )
       ).rows[0];
@@ -1002,13 +1045,45 @@ export async function startTestSupervisor(
             `Controlled qualifier task read refused: ${currentResponse.status}`,
           );
         const current = (await currentResponse.json()) as {
+          flowId: string | null;
+          runnerId: string | null;
+          prompt: string;
           qualification: {
             inputRevision: number;
             qualificationRevision: number | null;
           };
         };
-        const qualification = qualificationFixture();
+        const baseQualification = qualificationFixture();
+        const needsReview = current.prompt.includes(MANUAL_REVIEW_MARKER);
+        const qualification = needsReview
+          ? {
+              ...baseQualification,
+              decision: "needs_review" as const,
+              checks: baseQualification.checks.map((check) =>
+                check.dimension === "acceptance"
+                  ? {
+                      ...check,
+                      state: "unknown" as const,
+                      rationale:
+                        "The controlled request explicitly leaves acceptance criteria unresolved.",
+                    }
+                  : check,
+              ),
+              reasonCodes: ["acceptance_unclear"],
+              nextActions: [
+                "Specify the expected acceptance result before automatic execution.",
+              ],
+            }
+          : baseQualification;
+        const enqueue =
+          !needsReview && run.agent_config?.auto_enqueue === "always";
+        const routeSelected =
+          enqueue || current.prompt.includes(MANUAL_QUALIFICATION_MARKER);
 
+        if (enqueue && (!current.flowId || !current.runnerId))
+          throw new Error(
+            "Controlled auto-enqueue qualifier requires an explicitly selected task Flow and runner",
+          );
         qualification.evidenceRefs = [
           {
             id: "repo",
@@ -1025,7 +1100,10 @@ export async function startTestSupervisor(
             expectedQualificationRevision:
               current.qualification.qualificationRevision,
             qualification,
-            enqueue: false,
+            enqueue,
+            ...(routeSelected
+              ? { flowId: current.flowId, runnerId: current.runnerId }
+              : {}),
           }),
         });
 
