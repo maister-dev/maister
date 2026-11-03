@@ -2505,6 +2505,11 @@
     "closeAndSync": "Close & sync from upstream"
   },
   "run": {
+    "originalInput": {
+      "title": "Original delegated input",
+      "origin": "Originating execution",
+      "witness": "Input witness"
+    },
     "sourceUnavailableTitle": "Source access required",
     "sourceUnavailableDescription": "This execution used evidence that is unavailable or that you cannot currently access. Restore the required access to inspect its findings, files, and transcript.",
     "eyebrow": "run",

@@ -1,5 +1,6 @@
 import type { StartedPostgresTestDb } from "@/test-support/pg-container";
 import type { NativeFindingsExecution } from "@/test-support/native-findings-seed";
+import type { SqlDatabase, SqlTransaction } from "@/lib/db/sql-types";
 
 import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -9,8 +10,11 @@ import { join } from "node:path";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
-import { createCompanyGrants } from "@/lib/company/grants";
+import { createCompanyGrants, revokeCompanyGrant } from "@/lib/company/grants";
 import { captureKnowledgeSource } from "@/lib/brain/knowledge-source-capture";
+import { resolveKnowledgePrincipal } from "@/lib/brain/knowledge-access";
+import { contentDigest } from "@/lib/evaluations/digest";
+import { loadNativeInputForUser } from "@/lib/orchestrator/native-input-read";
 import {
   createKnowledgeProposal,
   reviewKnowledgeProposal,
@@ -65,6 +69,133 @@ afterAll(async () => {
   } finally {
     vi.unstubAllEnvs();
   }
+});
+
+it("IT-CBE-06 original delegated input inspection retains exact binding and current human source authority", async () => {
+  const execution = await seedNativeFindingsExecution(database, contract);
+  const principal = { kind: "token" as const, tokenId: execution.tokenId };
+
+  await getKnowledgeRecord(database.db, principal, {
+    recordId: execution.recordId,
+  });
+  const authority = await resolveKnowledgePrincipal(
+    database.db,
+    principal,
+    "knowledge:read",
+  );
+  const parent = (
+    await database.pool.query("SELECT knowledge_access FROM runs WHERE id=$1", [
+      execution.runId,
+    ])
+  ).rows[0]!;
+  const content = {
+    schemaVersion: 1,
+    sourceRunId: execution.runId,
+    sourceGeneration: parent.knowledge_access.generation,
+    sourceActor: authority.actor,
+    sourceRestrictions: parent.knowledge_access.restrictions,
+    target: { kind: "agent", id: execution.agentId },
+    title: "Original private objective",
+    prompt: "Diagnose the exact retained company observation.",
+  };
+  const nativeInput = { ...content, inputDigest: contentDigest(content) };
+  const childId = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO runs(id,project_id,run_kind,status,flow_version,flow_revision,agent_workspace,agent_id,source_agent_id,launched_at,activity_sort_at,activity_timestamp_provenance,agent_activity_snapshot,knowledge_access,parent_run_id,delegation_snapshot) SELECT $2,project_id,'agent','Pending',flow_version,flow_revision,'none',agent_id,source_agent_id,now(),now(),'launch',agent_activity_snapshot,knowledge_access,id,$3::jsonb FROM runs WHERE id=$1",
+    [
+      execution.runId,
+      childId,
+      JSON.stringify({
+        kind: "agent",
+        agentDefinitionId: execution.agentId,
+        revisionId: "retained-revision",
+        nativeInput,
+      }),
+    ],
+  );
+  const expected = {
+    title: content.title,
+    prompt: content.prompt,
+    sourceRunId: execution.runId,
+    inputDigest: nativeInput.inputDigest,
+  };
+
+  expect(
+    await loadNativeInputForUser(database.db, execution.submitterId, childId),
+  ).toEqual(expected);
+  await database.pool.query(
+    "UPDATE company_grants SET revoked_at=now() WHERE company_id=$1 AND principal_type='user' AND principal_id=$2 AND action='knowledge:read'",
+    [execution.companyId, execution.submitterId],
+  );
+  await expect(
+    loadNativeInputForUser(database.db, execution.submitterId, childId),
+  ).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "knowledge_reference_unavailable" },
+  });
+  await createCompanyGrants(database.db, execution.submitterId, {
+    principalKind: "user",
+    principalId: execution.submitterId,
+    actions: ["knowledge:read"],
+    idempotencyKey: `input-inspection:${childId}`,
+  });
+  expect(
+    await loadNativeInputForUser(database.db, execution.submitterId, childId),
+  ).toEqual(expected);
+  await database.pool.query(
+    "UPDATE runs SET delegation_snapshot=jsonb_set(delegation_snapshot,'{nativeInput,prompt}','\"Changed without a new witness\"') WHERE id=$1",
+    [childId],
+  );
+  await expect(
+    loadNativeInputForUser(database.db, execution.submitterId, childId),
+  ).rejects.toMatchObject({ code: "CRASH" });
+  expect(
+    await loadNativeInputForUser(
+      database.db,
+      execution.submitterId,
+      execution.runId,
+    ),
+  ).toBeNull();
+  await database.pool.query(
+    "UPDATE runs SET delegation_snapshot=jsonb_set(delegation_snapshot,'{nativeInput}',$2::jsonb) WHERE id=$1",
+    [childId, JSON.stringify(nativeInput)],
+  );
+  let firstInspection = true;
+  const racedDb: SqlDatabase = {
+    execute: database.db.execute.bind(database.db),
+    async transaction<T>(
+      action: (tx: SqlTransaction) => Promise<T>,
+    ): Promise<T> {
+      const result = await database.db.transaction(action);
+
+      if (firstInspection) {
+        firstInspection = false;
+        const grant = (
+          await database.pool.query<{ id: string; revision: number }>(
+            "SELECT id,revision FROM company_grants WHERE principal_type='user' AND principal_id=$1 AND action='knowledge:read' AND revoked_at IS NULL",
+            [execution.submitterId],
+          )
+        ).rows[0]!;
+
+        await revokeCompanyGrant(database.db, execution.submitterId, grant.id, {
+          expectedRevision: grant.revision,
+          reason:
+            "Revoke source access after private input assembly and before outward delivery.",
+          idempotencyKey: `input-assembly:${childId}`,
+        });
+      }
+
+      return result;
+    },
+  };
+
+  await expect(
+    loadNativeInputForUser(racedDb, execution.submitterId, childId),
+  ).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "knowledge_reference_unavailable" },
+  });
 });
 
 it("IT-CBE-06 native private notes preserve their separate source policy and cannot store company-derived content", async () => {

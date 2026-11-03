@@ -2,6 +2,7 @@ import type { EnforcementSnapshotEntry } from "@/lib/db/schema";
 import type { FlowResultDegradationCode } from "@/lib/runs/flow-result-dto";
 import type { ResultStatus } from "@/lib/run-results/types";
 import type { ReactElement, ReactNode } from "react";
+import type { NativeInputInspection } from "@/lib/orchestrator/native-input-read";
 
 import Link from "next/link";
 import { getLocale, getTranslations } from "next-intl/server";
@@ -9,6 +10,8 @@ import { notFound, redirect } from "next/navigation";
 import { ExclamationTriangleIcon } from "@heroicons/react/24/outline";
 
 import { RunFindingsPanel } from "@/components/runs/run-findings-panel";
+import { NativeInputInspectionPanel } from "@/components/runs/native-input-inspection";
+import { loadNativeInputForUser } from "@/lib/orchestrator/native-input-read";
 import { loadRunScheduledRequest } from "@/lib/agents/activity-queries";
 import { ScheduledRequestEvidence } from "@/components/agents/scheduled-request-evidence";
 import { AgentRetryControl } from "@/components/agents/agent-retry-control";
@@ -400,6 +403,17 @@ export default async function RunDetailLayout({
     role,
   );
   const [t, locale] = await Promise.all([getTranslations("run"), getLocale()]);
+
+  let nativeInput: NativeInputInspection | null = null;
+
+  if (canReadRepoFiles) {
+    try {
+      nativeInput = await loadNativeInputForUser(getDb(), user.id, runId);
+    } catch (error) {
+      if (isRunKnowledgeUnavailable(error)) return RunSourceUnavailable();
+      throw error;
+    }
+  }
 
   const scheduledRequest = canReadRepoFiles
     ? await loadRunScheduledRequest(getDb(), runId, detail.projectId)
@@ -1583,6 +1597,9 @@ export default async function RunDetailLayout({
         hideChangeSummary={isOperational}
         inspector={
           <>
+            {nativeInput ? (
+              <NativeInputInspectionPanel input={nativeInput} />
+            ) : null}
             {scheduledRequest ? (
               <ScheduledRequestEvidence
                 snapshot={scheduledRequest}

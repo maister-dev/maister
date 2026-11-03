@@ -393,6 +393,17 @@ still precede dispatch and outward inspection. It cannot enter shared task DTOs,
 activity or board search. This contract does not add a Brain prerequisite to
 cancellation, teardown or project deletion.
 
+The existing run inspector exposes a separate read-only original-input section
+in English and Russian. Its human-only reader requires current project repository
+read authority and the child execution's current source authority, validates the
+retained digest, target and parent/source binding, and returns only original
+title/prompt, source-run link and input digest. It rechecks authority after
+assembly. Absent historical input renders no section; malformed or unavailable
+native input is explicit and never reconstructed from a public placeholder.
+No private input is added to cached shared run/task DTOs. Company-only assignment
+inspection extends this reader's owner admission in CB1 rather than fabricating
+a project.
+
 ### Attention and gate chat
 
 Portfolio attention summaries/counts and project activity HITL text use the same

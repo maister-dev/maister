@@ -7,8 +7,135 @@ import { expect, test } from "@playwright/test";
 import { loadFixtures } from "./_seed/fixtures";
 
 import { resolvePostgresDbUrl } from "@/lib/db/postgres-url";
+import { contentDigest } from "@/lib/evaluations/digest";
 
 test.use({ actionTimeout: 10000 });
+
+test("E2E-CBU-01 original delegated input is inspectable in English and Russian and withheld when capture becomes unavailable", async ({
+  page,
+  context,
+}, testInfo) => {
+  test.setTimeout(120000);
+  const { byKey } = loadFixtures();
+  const runId = byKey.m11a.runId!;
+  const pool = new Pool({ connectionString: resolvePostgresDbUrl() });
+  const parentId = randomUUID();
+  const row = z
+    .object({
+      project_id: z.string(),
+      task_id: z.string(),
+      flow_id: z.string(),
+      source_agent_id: z.string().nullable(),
+      parent_run_id: z.string().nullable(),
+      knowledge_access: z.unknown(),
+      delegation_snapshot: z.unknown(),
+    })
+    .parse(
+      (
+        await pool.query(
+          "SELECT project_id,task_id,flow_id,source_agent_id,parent_run_id,knowledge_access,delegation_snapshot FROM runs WHERE id=$1",
+          [runId],
+        )
+      ).rows[0],
+    );
+  const input = {
+    schemaVersion: 1,
+    sourceRunId: parentId,
+    sourceGeneration: 1,
+    sourceActor: {
+      kind: "agent",
+      id: byKey.platformAgents.helperAgentId,
+      runId: parentId,
+      attemptId: null,
+    },
+    sourceRestrictions: [
+      { kind: "project_context", projectId: row.project_id },
+    ],
+    target: row.source_agent_id
+      ? { kind: "agent", id: row.source_agent_id }
+      : { kind: "flow", id: row.flow_id },
+    title: `Retained private objective ${randomUUID()}`,
+    prompt:
+      "Inspect the original bounded diagnostic request without republishing it to a task card.",
+  };
+  const digest = contentDigest(input);
+
+  try {
+    await pool.query(
+      "INSERT INTO runs(id,project_id,run_kind,status,flow_version) VALUES($1,$2,'flow','Done','retained-input-browser')",
+      [parentId, row.project_id],
+    );
+    await pool.query(
+      "UPDATE runs SET parent_run_id=$2,knowledge_access=$3::jsonb,delegation_snapshot=$4::jsonb WHERE id=$1",
+      [
+        runId,
+        parentId,
+        JSON.stringify({
+          schemaVersion: 1,
+          state: "complete",
+          generation: 1,
+          restrictions: input.sourceRestrictions,
+        }),
+        JSON.stringify({
+          kind: "flow",
+          carrierTaskId: row.task_id,
+          flowId: row.flow_id,
+          nativeInput: { ...input, inputDigest: digest },
+        }),
+      ],
+    );
+    await page.goto(`/runs/${runId}`);
+    for (const [locale, title] of [
+      ["en", "Original delegated input"],
+      ["ru", "Исходное поручение"],
+    ] as const) {
+      await context.addCookies([
+        { name: "NEXT_LOCALE", value: locale, url: new URL(page.url()).origin },
+      ]);
+      await page.goto(`/runs/${runId}`);
+      const panel = page.getByTestId("native-input-inspection");
+
+      await panel.getByText(title, { exact: true }).click();
+      await expect(panel.getByText(input.title, { exact: true })).toBeVisible();
+      await expect(
+        panel.getByText(input.prompt, { exact: true }),
+      ).toBeVisible();
+      await expect(panel.getByRole("link")).toHaveAttribute(
+        "href",
+        `/runs/${parentId}`,
+      );
+      await expect(panel.locator("code")).toHaveText(digest);
+    }
+    await page.screenshot({
+      caret: "initial",
+      path: testInfo.outputPath("native-input-ru.png"),
+      fullPage: true,
+    });
+    await pool.query(
+      "UPDATE runs SET knowledge_access=jsonb_set(knowledge_access,'{state}','\"unknown\"') WHERE id=$1",
+      [runId],
+    );
+    await page.reload();
+    await expect(page.getByTestId("native-input-inspection")).toHaveCount(0);
+    expect(await page.content()).not.toContain(input.prompt);
+  } finally {
+    await pool.query(
+      "UPDATE runs SET parent_run_id=$2,knowledge_access=$3::jsonb,delegation_snapshot=$4::jsonb WHERE id=$1",
+      [
+        runId,
+        row.parent_run_id,
+        row.knowledge_access == null
+          ? null
+          : JSON.stringify(row.knowledge_access),
+        row.delegation_snapshot == null
+          ? null
+          : JSON.stringify(row.delegation_snapshot),
+      ],
+    );
+    await pool.query("DELETE FROM runs WHERE id=$1", [parentId]);
+    await pool.end();
+  }
+});
 
 // This is the native browser/session path. Live installed-package qualification has a separate lane.
 test("E2E-CBU-01 an administrator explicitly enables company knowledge and reviews a captured assertion without implicitly confirming it", async ({

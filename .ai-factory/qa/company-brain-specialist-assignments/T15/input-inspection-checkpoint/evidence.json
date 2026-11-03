@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 1,
+  "task": "T15",
+  "baselineCommit": "e01071520",
+  "status": "partial_checkpoint_qualified",
+  "engineVersion": "3.10.0",
+  "qualified": [
+    "Human-only original-input inspection validates the retained witness, actual target and parent binding; requires current project repository-read authority and inherited source grants before and after assembly. No private objective enters cached shared task/run DTOs.",
+    "Real PostgreSQL proves allowed inspection, current grant revocation, explicit new grant, tamper refusal, historical absent input and revocation after assembly.",
+    "The existing run inspector renders original title/prompt, origin execution link and input witness in English and Russian. A clean no-retry real browser run withholds all private input after native capture becomes unknown; screenshot visually inspected."
+  ],
+  "tests": {
+    "owningIntegration": {
+      "passed": 61,
+      "files": 3
+    },
+    "browser": {
+      "scenarios": 1,
+      "setup": 1,
+      "retries": 0
+    },
+    "fullWebUnit": {
+      "passed": 9261,
+      "files": 886
+    },
+    "typecheck": "passed",
+    "lint": "passed",
+    "contracts": "passed",
+    "docsAnd164TableErd": "passed"
+  },
+  "qualificationLimits": [
+    "The initial empty-reader implementation produced the expected behavior RED; the test grant fixture was then corrected to issue a new grant instead of reversing an immutable revocation.",
+    "Two browser CLI argument mistakes and SQL NULL restoration fixture error are retained separately, not claimed as product failures or green readiness. The final focused invocation passed without retries and cleaned up with zero leaks.",
+    "This is retained-input/session/browser qualification, not installed companion/live ACP or stand pilot readiness. Company-only assignment inspection extends owner admission in T21."
+  ],
+  "pending": [
+    "Remaining outbound payloads, reduction/source-budget/concurrency/recovery and full integration gates.",
+    "Native capability activation, installed companion/live ACP and stand-maintenance pilot."
+  ],
+  "logs": [
+    {
+      "path": "initial-empty-reader-red.log.gz",
+      "uncompressedSha256": "0faf26b8bd61a6d3628c30d89703cdd1269260eba60510f28bef60cc44558e34"
+    },
+    {
+      "path": "owning-integration-green.log.gz",
+      "uncompressedSha256": "efff0354305fc01efa9a9af8a3e4bd2a73b7b0f4accd69398cab5451519537c2"
+    },
+    {
+      "path": "browser-green.log.gz",
+      "uncompressedSha256": "933e3b328c190f6f8bdb33fd62d5b45ff0d71428afa623c97d2f03041ddbb0d1"
+    },
+    {
+      "path": "full-web-unit-green.log.gz",
+      "uncompressedSha256": "9ccc323fe95edee98db3ff1ba311e7f97fc2aea68fa378cf776d0efd6544eade"
+    },
+    {
+      "path": "typecheck-green.log.gz",
+      "uncompressedSha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+    },
+    {
+      "path": "lint-green.log.gz",
+      "uncompressedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "contracts-green.log.gz",
+      "uncompressedSha256": "5704e1ebbdbbc6ab7a3ef6b6113a25aacfd407f23fa3fe8432aa0c8d2b3d960a"
+    },
+    {
+      "path": "docs-green.log.gz",
+      "uncompressedSha256": "5058181f239a25d11e46a8db67b451f5cf6f8c807bd85697cf7b9509ccd4513e"
+    },
+    {
+      "path": "browser-arguments-interrupted.log.gz",
+      "uncompressedSha256": "e4cce38f713c9e31d37431d852bb1fa1c8cf143941c25f5164099854a36c7a2b"
+    },
+    {
+      "path": "browser-selection-error.log.gz",
+      "uncompressedSha256": "804fad4797691b9e954491a739eb7d94646937b527fa85b514dd58d94223e6bc"
+    },
+    {
+      "path": "browser-null-fixture-error.log.gz",
+      "uncompressedSha256": "314d0482c15cd98179b77a7f2fd7d7f47bc623b439183ecc7b02face42d9de8a"
+    }
+  ]
+}
