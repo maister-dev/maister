@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "task": "T17",
+  "status": "actual_depth_two_and_review_passed_control_harness_corrected_pending_rerun",
+  "platformCommit": "c42052dba",
+  "package": {
+    "tag": "rah/v1.0.3",
+    "commit": "2074179904b09917a81e86585bdccd4fe2952d20",
+    "published": false
+  },
+  "qualified": [
+    "Actual Git install/trust/bind/enable, strict native tools, depth-one tree (3 valid results), depth-two tree (7 valid results), original evidence closure and coordinator reductions passed.",
+    "Both root proposal content/result draft equality checks passed. Human accepted the actual root proposal; record remains unconfirmed with original agent attribution.",
+    "All 11 runs completed with valid native results; invocation cleanup reports zero leaks."
+  ],
+  "failure": {
+    "expected": "Revoked control role returns missing evidence without references.",
+    "actual": "The harness revoked the coordinator, while installed rah-control executes rah:evidence-researcher whose company read grant remained current. This is a test precondition error, not proof of an authorization bypass.",
+    "fix": "Revoke the control researcher, assert installed manifest role and retained node actor, verify no current read grant; retain control proof before assertions."
+  },
+  "checks": {
+    "typecheck": {
+      "exitCode": 0
+    },
+    "lint": {
+      "exitCode": 0,
+      "formatWarningsCorrected": true
+    },
+    "liveRed": {
+      "exitCode": 1
+    }
+  },
+  "pending": [
+    "Fresh full corrected native workflow",
+    "EN/RU browser inspection",
+    "Phase-wide integration/build"
+  ],
+  "artifacts": [
+    "actual-qualification.json.gz",
+    "live-red.log.gz"
+  ]
+}

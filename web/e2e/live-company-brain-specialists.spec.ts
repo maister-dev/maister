@@ -150,6 +150,7 @@ async function inspectTree(rootId: string): Promise<RunProof[]> {
       states.filter((run) => run.status !== "Done" && run.status !== "Review"),
       "Every required child must complete with a valid result before this scenario qualifies",
     ).toEqual([]);
+
     return z.array(proofSchema).parse(rows.rows);
   });
 }
@@ -229,7 +230,8 @@ test("QL-CBX-03 the real pinned RAH package retrieves structured company knowled
     profile: z.infer<typeof enforcementSchema>;
   }> = [];
   const nativeProposalIds = new Set<string>();
-  let coordinatorReadGrant: { id: string; revision: number } | null = null;
+  const controlAgentId = "rah:evidence-researcher";
+  let controlReadGrant: { id: string; revision: number } | null = null;
   const dependencies = z
     .object({
       dependencies: z.object({
@@ -353,6 +355,13 @@ test("QL-CBX-03 the real pinned RAH package retrieves structured company knowled
       "rah-root-d1",
       "rah-root-d2",
     ]);
+    expect(
+      await singleValue<string>(
+        "SELECT node->'settings'->>'agent' AS value FROM flow_revisions f CROSS JOIN LATERAL jsonb_array_elements(f.manifest->'nodes') node WHERE f.id=$1 AND node->>'id'='research'",
+        [flows.find((flow) => flow.id === "rah-control")?.revision],
+      ),
+      "The revoked grant must belong to the installed control Flow's executing role",
+    ).toBe(controlAgentId);
     for (const flow of flows) {
       await readResponse(
         await request.patch(
@@ -420,14 +429,14 @@ test("QL-CBX-03 the real pinned RAH package retrieves structured company knowled
         }),
       );
 
-      if (agentId === "rah:coordinator") {
+      if (agentId === controlAgentId) {
         const readGrant = granted.items.find(
           (item) => item.action === "knowledge:read",
         );
 
         if (!readGrant)
-          throw new Error("Coordinator read grant was not retained");
-        coordinatorReadGrant = readGrant;
+          throw new Error("Control researcher read grant was not retained");
+        controlReadGrant = readGrant;
       }
     }
     const grant = await readResponse(
@@ -795,18 +804,26 @@ test("QL-CBX-03 the real pinned RAH package retrieves structured company knowled
       kind: "agent",
       id: "rah:coordinator",
     });
-    if (!coordinatorReadGrant)
-      throw new Error("No coordinator read grant is available to revoke");
+    if (!controlReadGrant)
+      throw new Error(
+        "No control researcher read grant is available to revoke",
+      );
     await readResponse(
-      await request.delete(`/api/company/grants/${coordinatorReadGrant.id}`, {
+      await request.delete(`/api/company/grants/${controlReadGrant.id}`, {
         data: {
-          expectedRevision: coordinatorReadGrant.revision,
+          expectedRevision: controlReadGrant.revision,
           reason: "Controlled live current-authority refusal check.",
           idempotencyKey: randomUUID(),
         },
       }),
       z.object({ id: z.string() }),
     );
+    expect(
+      await singleValue<number>(
+        "SELECT count(*)::int AS value FROM company_grants WHERE company_id=$1 AND principal_type='agent' AND principal_id=$2 AND action='knowledge:read' AND revoked_at IS NULL",
+        [owner.companyId, controlAgentId],
+      ),
+    ).toBe(0);
     const unavailableTask = await readResponse(
       await request.post(`/api/projects/${project.projectSlug}/tasks`, {
         data: {
@@ -843,7 +860,14 @@ test("QL-CBX-03 the real pinned RAH package retrieves structured company knowled
       );
     const unavailable = await inspectTree(unavailableRun.runId);
 
+    proofs.push(unavailable);
     expect(unavailable).toHaveLength(1);
+    expect(
+      await singleValue<string>(
+        "SELECT knowledge_actor->>'agentId' AS value FROM node_attempts WHERE run_id=$1 AND node_id='research' ORDER BY attempt DESC LIMIT 1",
+        [unavailableRun.runId],
+      ),
+    ).toBe(controlAgentId);
     expect(
       unavailable[0]?.value.findings.some(
         (finding) =>
@@ -858,7 +882,6 @@ test("QL-CBX-03 the real pinned RAH package retrieves structured company knowled
           finding.supporting.length === 0 && finding.contradicting.length === 0,
       ),
     ).toBe(true);
-    proofs.push(unavailable);
     for (const { flowId, runId } of browserRuns) {
       await page.goto(`/runs/${runId}`);
       const findingsPanel = page
