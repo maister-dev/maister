@@ -454,7 +454,7 @@ describe("P0-2 durable workers in the production web boot", () => {
       const [
         { composePromptOwnerRegistry },
         { flowPromptOwners },
-        { consensusDraftPromptOwners },
+        { createConsensusDraftPromptOwners },
         { agentPromptOwners },
         { scratchPromptOwners },
         { syncPromptOwners },
@@ -472,7 +472,7 @@ describe("P0-2 durable workers in the production web boot", () => {
       expect(() =>
         composePromptOwnerRegistry([
           flowPromptOwners,
-          consensusDraftPromptOwners,
+          createConsensusDraftPromptOwners(),
           agentPromptOwners,
           scratchPromptOwners,
           syncPromptOwners,

@@ -40,7 +40,7 @@ import { PromptIncarnationPending } from "@/lib/execution-host/prompt-incarnatio
 import { retireEligibleCommands } from "@/lib/execution-host/retirement";
 import { SessionCreatePending } from "@/lib/execution-host/owned-session-create";
 import { flowPromptOwners } from "@/lib/flows/graph/prompt-owner";
-import { consensusDraftPromptOwners } from "@/lib/flows/graph/consensus/draft-prompt-owner";
+import { createConsensusDraftPromptOwners } from "@/lib/flows/graph/consensus/draft-prompt-owner";
 import { verifyConsensusInputEvidence } from "@/lib/flows/graph/consensus/input-evidence";
 import { recordConsensusVerdict } from "@/lib/flows/graph/consensus/ledger";
 import {
@@ -931,7 +931,7 @@ describe("Consensus prompt owners through the production graph driver", () => {
     expect(await draftArtifacts()).not.toHaveLength(2);
     const worker = startPromptOwnerWorker({
       db: database.db as unknown as Db,
-      owners: consensusDraftPromptOwners,
+      owners: createConsensusDraftPromptOwners(),
     });
 
     try {

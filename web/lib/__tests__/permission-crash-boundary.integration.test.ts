@@ -60,7 +60,7 @@ import { respondToHitl, type HitlActor } from "@/lib/services/hitl";
 import { runReconcileSweep } from "@/lib/reconcile";
 import {
   composePromptOwnerRegistry,
-  PRODUCTION_PROMPT_OWNER_REGISTRIES,
+  createProductionPromptOwnerRegistries,
 } from "@/lib/workers/runtime";
 import { seedAgentRun } from "@/test-support/agent-run-seed";
 import { addWorktree, initRepo } from "@/test-support/git-fixture";
@@ -251,7 +251,9 @@ beforeAll(async () => {
   durable = [
     startPromptOwnerWorker({
       db,
-      owners: composePromptOwnerRegistry(PRODUCTION_PROMPT_OWNER_REGISTRIES),
+      owners: composePromptOwnerRegistry(
+        createProductionPromptOwnerRegistries(),
+      ),
     }),
     startFlowContinuationWorker({ db }),
     startAgentContinuationWorker({ db, executionHosts: hosts }),
@@ -893,7 +895,9 @@ describe("a gate permission park whose adapter dies under a live host (G1)", () 
     } finally {
       durable[0] = startPromptOwnerWorker({
         db,
-        owners: composePromptOwnerRegistry(PRODUCTION_PROMPT_OWNER_REGISTRIES),
+        owners: composePromptOwnerRegistry(
+          createProductionPromptOwnerRegistries(),
+        ),
       });
       durable[1] = startFlowContinuationWorker({ db });
     }

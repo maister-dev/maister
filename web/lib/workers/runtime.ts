@@ -17,7 +17,7 @@ import { PROMPT_OWNER_SHAPES } from "@/lib/execution-host/prompt-owner-contract"
 import { createPromptOwnerRegistry } from "@/lib/execution-host/prompt-owners";
 import { startPromptOwnerWorker } from "@/lib/execution-host/prompt-owner-recovery";
 import { startFlowContinuationWorker } from "@/lib/flows/graph/continuation-worker";
-import { consensusDraftPromptOwners } from "@/lib/flows/graph/consensus/draft-prompt-owner";
+import { createConsensusDraftPromptOwners } from "@/lib/flows/graph/consensus/draft-prompt-owner";
 import { flowPromptOwners } from "@/lib/flows/graph/prompt-owner";
 import { librarianPromptOwners } from "@/lib/librarian/prompt-owner";
 import { scratchPromptOwners } from "@/lib/scratch-runs/prompt-owner";
@@ -37,21 +37,23 @@ import { isApplicationStopping } from "@/lib/server-lifecycle";
 /**
  * The six production owner registries, one per `PromptOwnerSchema` kind.
  *
- * `agent_turn` is served by `consensusDraftPromptOwners`, NOT by
+ * `agent_turn` is served by `createConsensusDraftPromptOwners`, NOT by
  * `agentPromptOwners`: the draft registry routes a `consensus_draft` variant to
  * draft preparation and every other variant to the ordinary agent owner, while
  * `agentPromptOwners` refuses `consensus_draft` outright. Listing both is a
  * `CONFIG` boot failure by design, and the duplicate-kind check below is what
  * makes that failure loud.
  */
-export const PRODUCTION_PROMPT_OWNER_REGISTRIES = [
-  flowPromptOwners,
-  consensusDraftPromptOwners,
-  scratchPromptOwners,
-  syncPromptOwners,
-  gateChatPromptOwners,
-  librarianPromptOwners,
-] as const;
+export function createProductionPromptOwnerRegistries(): readonly PromptOwnerRegistry[] {
+  return [
+    flowPromptOwners,
+    createConsensusDraftPromptOwners(),
+    scratchPromptOwners,
+    syncPromptOwners,
+    gateChatPromptOwners,
+    librarianPromptOwners,
+  ];
+}
 
 const EXPECTED_OWNER_KINDS = new Set(
   PROMPT_OWNER_SHAPES.map((shape) => shape.kind),
@@ -118,7 +120,9 @@ export function startDurableWorkers(): DurableWorkers {
   // Compose BEFORE starting: `startPromptOwnerWorker` refuses an empty
   // registry, and a start ordered before the registry resolves would fail into
   // the boot try/catch and leave the worker silently unstarted.
-  const owners = composePromptOwnerRegistry(PRODUCTION_PROMPT_OWNER_REGISTRIES);
+  const owners = composePromptOwnerRegistry(
+    createProductionPromptOwnerRegistries(),
+  );
 
   return {
     // The prompt-owner worker already logs its own start/stop with ownerKinds

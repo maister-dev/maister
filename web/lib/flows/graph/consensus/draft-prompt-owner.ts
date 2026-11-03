@@ -334,10 +334,12 @@ export async function prepareConsensusDraftPrompt(
   };
 }
 
-export const consensusDraftPromptOwners: PromptOwnerRegistry =
-  createAgentPromptOwners({
+/** Compose after module initialization so launch imports cannot construct a cyclic owner graph. */
+export function createConsensusDraftPromptOwners(): PromptOwnerRegistry {
+  return createAgentPromptOwners({
     prepareConsensusDraft: prepareConsensusDraftPrompt,
   });
+}
 
 export async function waitForConsensusDraftPrompt(
   db: Db,
@@ -348,7 +350,7 @@ export async function waitForConsensusDraftPrompt(
   await awaitAgentApplication(db, commandId, () =>
     client.waitForPrompt(
       { commandId },
-      { owners: consensusDraftPromptOwners, signal },
+      { owners: createConsensusDraftPromptOwners(), signal },
     ),
   );
 }
