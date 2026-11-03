@@ -11,7 +11,7 @@ text for inspection and recovery.
 
 ## Purpose
 
-**Partially implemented — ADR-202.** Indexed-source captures, immutable witnesses, correlated reuse and potential-conflict edges are implemented in storage. Native session/bearer retrieval, bounded evidence/conflict pages and the built MCP read/capture facade are implemented locally. Proposal review and native launch capture are qualified locally. Complete outward disclosure and installable-package/pilot qualification remain pending. This domain owns immutable source/version witnesses, source-observation independence and conflict-preserving retrieval. [Records](company-brain.md) owns publication/confirmation; current repository search anchors remain navigational projections.
+**Implemented locally — ADR-202; actual package release qualification pending.** Indexed-source captures, immutable witnesses, correlated reuse, conflict edges, bounded retrieval, native MCP tools and proposal review are platform-qualified. Launch capture and complete outward source-access guards are platform-qualified. The actual tagged package has completed depth-one evidence research; the full CB0 and separate CB1 pilot gates remain open. This domain owns immutable source/version witnesses, source-observation independence and conflict-preserving retrieval. [Records](company-brain.md) owns publication/confirmation; current repository search anchors remain navigational projections.
 
 ## Domain entities
 

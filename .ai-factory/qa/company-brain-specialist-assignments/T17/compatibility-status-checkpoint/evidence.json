@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "task": "T17",
+  "status": "static_compatibility_and_platform_status_checkpoint_qualified",
+  "engineVersion": "3.11.1",
+  "qualified": [
+    "All 39 actual local Git tags were resolved, archived and validated from their own immutable package bytes. No setup hook, model prompt, check, service action or mutable working-tree substitution was executed.",
+    "Native Brain/evidence documentation now describes the completed platform qualification accurately while retaining open actual depth-two/review/refusal/browser and CB1 pilot gates. Root agent instructions refer to the owning engine constant rather than stale hardcoded version 3.9.0."
+  ],
+  "checks": {
+    "actualArchivedTags": {
+      "passed": 39,
+      "failed": 0
+    },
+    "docsAndErd": {
+      "exitCode": 0
+    }
+  },
+  "limits": [
+    "Static compatibility is not workflow/runtime qualification. The complete actual v1.0.2 lane is separate and still running; T16/T17 remain open.",
+    "All tags are local; this gate does not publish or prove external remote availability."
+  ],
+  "command": "pnpm exec tsx --import ./scripts/_register-shim.mjs /private/tmp/cb-audit-package-tags-3111.mts",
+  "tagManifest": "tag-manifest.json",
+  "logs": "log-index.json"
+}
