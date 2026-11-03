@@ -3,7 +3,7 @@
 Branch: `codex/manual-launch-triager-reliability`
 Created: 2026-11-02 (Europe/Moscow)
 Inspected source: `cb183968df5bac9b9ce652a6bdb6aa2bb79b45ff`
-Status: **In progress.** Current work: A2/A3 acceptance and transport wiring, with B6 broad qualification/rechecks still open. Checkboxes record verified completion only.
+Status: **In progress.** Current work: A2/A3 acceptance and transport wiring. Durable/physical preparation and idempotent handoff pass their focused controls and the full Web regression gate; B5's complete crash-window audit and B6's combined qualification/delivery scenario remain open. Checkboxes record verified completion only.
 
 ## Settings
 
@@ -13,7 +13,7 @@ Status: **In progress.** Current work: A2/A3 acceptance and transport wiring, wi
 - Docs: yes; a complete design/contract checkpoint precedes code, followed by an as-built checkpoint through `$aif-docs`.
 - Runtime: Node 24 (`>=24.15.0 <25`) and frozen pnpm workspace dependencies for implementation validation.
 - Scope: two related tracks, A = admission/UX and B = Triager reliability. Restore and qualify B before claiming the full automatic delivery scenario works. A's design/schema work can proceed independently after Phase 0.
-- Execution limits: no implementation in this planning session; no merge, deployment, production reproduction, paid model call, or historical data repair. Production IDs are evidence references only.
+- Execution limits: implementation is now explicitly authorized; no merge, deployment, production reproduction, paid model call, or historical data repair. Production IDs are evidence references only.
 - Excluded: MAI-27's archived-run package-pinning fix. This plan uses existing immutable Flow/package identities where available; it neither repairs archived packages nor changes their retention.
 - Design conventions: strict discriminated types; pure decision/digest functions; single-purpose auth, resolution, claim, effect and projection boundaries. Apply SOLID through cohesive modules and explicit narrow dependencies, with KISS/DRY: reuse existing admission, scheduler, lifecycle, command and error infrastructure; do not introduce a parallel execution engine, generic workflow framework or new OOP hierarchy.
 
@@ -365,14 +365,14 @@ Every code task inherits the logging/redaction and TDD contracts and must name i
   - Logging: owner-correlated start/end/failure plus original cause, separate capture vs verify. Normal controls prove logger sanitization does not erase errno/exit/category.
   - Acceptance: deterministic failing-before reproducer on Node 24; positive baseline control; failure blocks all session/create+prompt commands; precise conclusion about source race reachability or recorded remaining gap. Do not claim historical MAI-27 reconstruction.
 
-- [ ] **B2. Add durable preparation ownership and schema guards** (depends B1).
+- [x] **B2. Add durable preparation ownership and schema guards** (depends B1).
   - Files: `web/lib/db/schema.ts`, new Drizzle SQL+journal+snapshot; new focused `web/lib/agents/preparation-ownership.ts`; `web/lib/execution-host/session-binding.ts`, `assignments.ts` only where common lock helpers need reuse; existing `web/lib/runs/lifecycle-claim.ts` and workspace lifecycle owner.
   - Persist operation token, run/assignment/epoch/resource identity, phase, lease and resolved commit. Define shape/state CHECKs, one-live-owner uniqueness, token-fenced renew/publish/release, terminal/released invalidation and current DB-time use. Reuse existing claim machinery; do not repurpose flow-only columns. Include rowless operational resources in quiescence queries.
   - TDD: DB01/TB02 direct mutation and real two-connection contenders RED before the new migration/claim logic, GREEN after; refactor only after stale-owner and valid-owner controls both pass.
   - Logging: claim won/busy/recovered/fenced, renewal and release with token/epoch, no payload contents.
   - Acceptance: real-Postgres two-connection same-epoch/new-epoch CAS controls; stale token cannot publish/fail successor; restart can discover every partially prepared state. SQL+journal+snapshot+schema agree; old live runs are not assigned invented completed preparation.
 
-- [ ] **B3. Fence physical checkout operations across processes** (depends B2).
+- [x] **B3. Fence physical checkout operations across processes** (depends B2).
   - Files: `web/lib/context-mounts/operational-lock.ts`, `web/lib/agents/materialization-lock.ts`/`materialization-manifest.ts` as reusable primitives, new `web/lib/agents/preparation-workspace.ts`, `web/lib/worktree.ts`; execution-host/supervisor command files only if the child-lifetime design requires host ownership.
   - Protect the canonical physical resource outside disposable paths; reuse context-lock mechanics without changing unrelated materialization semantics. Hold exclusion across Git, capture and materialization, then durable ownership handoff. Recheck DB token/status/epoch **after** acquisition; use fixed lock order with context and common-repository fences. Implement bounded acquisition/renewal with explicit deferred outcome.
   - Prove subprocess lifetime safety from P0/B1. If a helper is needed, give it durable operation identity and lock lifetime through child completion, plus cancellation/reaping/restart handling. Lease expiry never authorizes mutation over a live old actor. Do not add a process-local-only mutex.
@@ -380,7 +380,7 @@ Every code task inherits the logging/redaction and TDD contracts and must name i
   - Logging: acquisition contention, owner transfer, quiescence refusal, child command category/exit and fence failures.
   - Acceptance: two real processes cannot delete/read-replace the same active checkout; kill parent during Git operation then restart, stale children cannot change a successor checkout. Guard-disabled control must reproduce interference so the test validates the invariant, not just a chosen lock call.
 
-- [ ] **B4. Make preparation and session handoff idempotent** (depends B3).
+- [x] **B4. Make preparation and session handoff idempotent** (depends B3).
   - Files: `web/lib/agents/launch.ts` (`startAgentSession`/`driveAgentSession`), new preparation modules, `continuation-worker.ts`, `generation-turn.ts`/`turn-claim.ts`, `web/lib/execution-host/create-intent.ts` and session binding as needed.
   - Claim before checkout effects on every initial/recovery/retry entry. Remove unconditional no-baseline remove/add. Validate/reuse exact checkout incarnation/commit; recover journal phases or preserve ambiguity. Persist baseline/generation with preparation-token+assignment/status fence; hand off to existing create/prompt owner before dropping preparation protection. Losing owner yields without cleanup or successor terminalization.
   - Keep `none`, shared-repository `repo_read`, ephemeral `repo_read`, isolated/shared `worktree`, operational and execution agent paths explicit; initial, resume and recovery are separate typed operations. No multi-mode bypass flag.
@@ -547,6 +547,10 @@ Use local/test DB only for migration commands; verify `db:generate` reports no u
 No commit, push, PR merge or deployment is performed by this plan. Implementation completion requires both tracks and their combined acceptance; local mechanism reproduction alone is not Triager qualification.
 
 ## Execution evidence
+
+- Cross-process TB03 control now pauses an actual baseline `lstat` in one real process. A second process using the physical owner refuses `operation_busy`; after capture releases, owned cleanup succeeds. Deliberately bypassing the guard lets real Git delete the checkout and reproduces `lstat/ENOENT`, with the safe cause retained. Together with the existing parent-death/orphan-Git/common-directory controls, both focused files pass 21/21 (`/tmp/maister-preparation-process-reviewed.log`). Typecheck/lint pass. Independent review found an unbounded fixture exit wait; bounded process deadlines and all-child cleanup fix it, and repeat review has no actionable finding. B3 uses existing persistent storage and Git gate, adding no runtime helper/env/mount/port. B4's actual continuation collision, slow capture, journal reuse, revision fence and existing agent/prompt-owner regressions are green. No historical production inner exception is inferred.
+
+- Frozen broad regression at `e3dee3426` passes **632 files / 5621 tests**, with the two existing platform exclusions (`/tmp/maister-launch-principals-full-integration.log`, 1426.63s). No source or HEAD changes occurred during this run. This reconciles the previous broad failures; it does not qualify unfinished launch adapters/dispatch/UX or the combined Triager-to-delivery scenario. B2's durable schema/claim/epoch/upgrade controls and the broad gate are complete.
 
 - Internal bearer admission checkpoint: issued user/project tokens require current positive qualification and independent auto arm; their owner attribution remains automatic. Live scope loss/expiry/revocation, changed origin identity, cross-project selectors and ownerless unattended elevation refuse. A real SQL RED accepted an originless bearer request; additive INSERT-only 0220 now validates its bounded immutable identity/current token binding, leaving historical rows unchanged. Real PG membership revocation RED committed before an accepting transaction; shared membership-row locks now serialize it, and later replay rechecks access. Three SQL/service/HTTP files pass 22/22; the full Web unit gate remains 886 files / 9259 tests. Missing fixture ID and initial uncommitted SQL syntax failures are setup failures, not behavioral REDs. Independent review reports no actionable bearer-checkpoint finding. External/MCP adapters, child proof consumption and execution dispatch are still open.
 

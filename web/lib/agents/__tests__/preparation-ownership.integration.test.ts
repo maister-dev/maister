@@ -2,11 +2,13 @@ import type { Db } from "@/lib/execution-host/db";
 import type { StartedPostgresTestDb } from "@/test-support/pg-container";
 
 import { randomUUID } from "node:crypto";
+import { fork, type ChildProcess } from "node:child_process";
 import { access, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
+import { z } from "zod";
 
 import * as launch from "@/lib/agents/launch";
 import * as worktree from "@/lib/worktree";
@@ -70,6 +72,143 @@ let db: Db;
 let root: string;
 const oldRoot = process.env.MAISTER_WORKTREES_ROOT;
 const oldRuntime = process.env.MAISTER_RUNTIME_ROOT;
+
+const preparationProcessMessage = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("probe-paused") }),
+  z.object({
+    type: z.literal("result"),
+    ok: z.boolean(),
+    entries: z.number().optional(),
+    reason: z.string().optional(),
+    diagnostic: z
+      .object({
+        probeOperation: z.string().optional(),
+        causeChain: z.array(
+          z.object({ code: z.union([z.string(), z.number()]).optional() }),
+        ),
+      })
+      .optional(),
+  }),
+]);
+
+function preparationProcess(
+  action: "capture" | "owned-remove" | "unfenced-remove",
+  input: Readonly<{
+    runId: string;
+    assignmentId: string;
+    repoPath: string;
+    cwd: string;
+    source: string;
+  }>,
+): {
+  child: ChildProcess;
+  close: () => Promise<number | null>;
+  wait: (
+    type: "probe-paused" | "result",
+  ) => Promise<z.infer<typeof preparationProcessMessage>>;
+} {
+  const child = fork(
+    path.resolve("test-support/preparation-owner-process.ts"),
+    [action, JSON.stringify(input)],
+    {
+      execArgv: [
+        "--import",
+        "tsx",
+        "--import",
+        path.resolve("scripts/_register-shim.mjs"),
+      ],
+      env: { ...process.env, DB_URL: database.databaseUrl },
+      stdio: ["ignore", "ignore", "pipe", "ipc"],
+    },
+  );
+  const messages: z.infer<typeof preparationProcessMessage>[] = [];
+  let stderr = "";
+
+  child.stderr?.on("data", (chunk: Buffer) => {
+    stderr = (stderr + chunk.toString("utf8")).slice(-4096);
+  });
+  child.on("message", (message: unknown) => {
+    const parsed = preparationProcessMessage.safeParse(message);
+
+    if (parsed.success) messages.push(parsed.data);
+  });
+  const closed = new Promise<{
+    code: number | null;
+    failure: Error | null;
+  }>((resolve) => {
+    let failure: Error | null = null;
+    let killDeadline: ReturnType<typeof setTimeout> | undefined;
+    const finish = (code: number | null): void => {
+      clearTimeout(deadline);
+      clearTimeout(killDeadline);
+      resolve({ code, failure });
+    };
+    const deadline = setTimeout(() => {
+      failure = new Error("Preparation fixture exceeded its process deadline");
+      child.kill("SIGKILL");
+      killDeadline = setTimeout(() => finish(null), 3000);
+    }, 35_000);
+
+    child.once("close", finish);
+    child.once("error", (error: Error) => {
+      failure = error;
+      child.kill("SIGKILL");
+      killDeadline = setTimeout(() => finish(null), 3000);
+    });
+  });
+  const close = async (): Promise<number | null> => {
+    const result = await closed;
+
+    if (result.failure) throw result.failure;
+
+    return result.code;
+  };
+  const wait = async (
+    type: "probe-paused" | "result",
+  ): Promise<z.infer<typeof preparationProcessMessage>> => {
+    const existing = messages.find((message) => message.type === type);
+
+    if (existing) return existing;
+
+    return new Promise((resolve, reject) => {
+      const done = (): void => {
+        clearTimeout(timeout);
+        child.off("message", receive);
+        child.off("close", ended);
+        child.off("error", failed);
+      };
+      const receive = (message: unknown): void => {
+        const parsed = preparationProcessMessage.safeParse(message);
+
+        if (parsed.success && parsed.data.type === type) {
+          done();
+          resolve(parsed.data);
+        }
+      };
+      const ended = (): void => {
+        done();
+        reject(
+          new Error(`Preparation fixture ended before ${type}: ${stderr}`),
+        );
+      };
+      const failed = (error: Error): void => {
+        done();
+        reject(error);
+      };
+      const timeout = setTimeout(() => {
+        done();
+        reject(new Error(`Preparation fixture did not reach ${type}`));
+      }, 30_000);
+
+      child.on("message", receive);
+      child.once("close", ended);
+      child.once("error", failed);
+      if (child.exitCode !== null || child.signalCode !== null) ended();
+    });
+  };
+
+  return { child, close, wait };
+}
 
 beforeAll(async () => {
   database = await startMainPostgresTestDb({
@@ -584,3 +723,96 @@ it("TB06 refuses a checkout whose HEAD changes away from the frozen preparation 
     "operational_source_revision_changed",
   );
 }, 60_000);
+
+it("TB03 real processes preserve an owned slow baseline; disabling the guard reproduces checkout interference", async () => {
+  await fakeExecutionHosts(db);
+
+  for (const action of ["owned-remove", "unfenced-remove"] as const) {
+    const fixture = await seedReadOnlyPreparation();
+    const [run] = await db
+      .select()
+      .from(runs)
+      .where(eq(runs.id, fixture.runId));
+    const input = {
+      runId: run.id,
+      assignmentId: run.executionAssignmentId!,
+      repoPath: fixture.project.repoPath,
+      cwd: fixture.checkout,
+      source: fixture.source,
+    };
+    const owner = preparationProcess("capture", input);
+    const children = [owner];
+
+    try {
+      await owner.wait("probe-paused");
+      const remover = preparationProcess(action, input);
+
+      children.push(remover);
+      const removed = await remover.wait("result");
+
+      expect(await remover.close()).toBe(0);
+      if (action === "owned-remove") {
+        expect(removed).toMatchObject({ ok: false, reason: "operation_busy" });
+        await expect(
+          access(path.join(fixture.checkout, fixture.source)),
+        ).resolves.toBeUndefined();
+      } else {
+        expect(removed).toMatchObject({ ok: true });
+        await expect(access(fixture.checkout)).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+      }
+      owner.child.send({ type: "resume" });
+      const captured = await owner.wait("result");
+
+      expect(await owner.close()).toBe(0);
+      if (action === "owned-remove") {
+        expect(captured).toMatchObject({ ok: true });
+        const cleanup = preparationProcess("owned-remove", input);
+
+        children.push(cleanup);
+        expect(await cleanup.wait("result")).toMatchObject({ ok: true });
+        expect(await cleanup.close()).toBe(0);
+      } else {
+        expect(captured).toMatchObject({
+          ok: false,
+          reason: "operational_integrity_probe_failed",
+          diagnostic: {
+            probeOperation: "lstat",
+            causeChain: [{ code: "ENOENT" }],
+          },
+        });
+      }
+      const operations = await db
+        .select()
+        .from(agentPreparationOperations)
+        .where(eq(agentPreparationOperations.runId, run.id));
+
+      expect(operations).toHaveLength(1);
+      expect(operations[0].phase).toBe("cancelled");
+      await expect(access(fixture.checkout)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    } finally {
+      const cleanup = await Promise.allSettled(
+        children.map(async (driver) => {
+          if (
+            driver.child.exitCode === null &&
+            driver.child.signalCode === null
+          )
+            driver.child.kill("SIGKILL");
+          await driver.close();
+        }),
+      );
+      const failures = cleanup.flatMap((result) =>
+        result.status === "rejected" ? [result.reason as unknown] : [],
+      );
+
+      if (failures.length)
+        throw new AggregateError(
+          failures,
+          "Preparation fixture cleanup failed",
+        );
+    }
+  }
+}, 120_000);
