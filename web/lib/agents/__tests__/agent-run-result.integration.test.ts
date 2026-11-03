@@ -1,5 +1,6 @@
 import type { SupervisorEvent } from "@/lib/execution-host";
 import type { RunResultContract, RunResultRow } from "@/lib/run-results/types";
+import type { AgentExecution } from "@/lib/agents/launch";
 
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
@@ -23,8 +24,14 @@ import {
 } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
+import { applyCreateAck } from "@/lib/execution-host/create-ack";
+import { buildEnvelope } from "@/lib/execution-host/ledger";
+import { projectCanonicalSessionLifecycle } from "@/lib/execution-host/events/lifecycle-projector";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
-import { fakeAgentExecution } from "@/test-support/fake-execution-host";
+import {
+  fakeAgentExecution,
+  fakeExecutionHosts,
+} from "@/test-support/fake-execution-host";
 import {
   operationalContractFixture,
   operationalSuccessFixture,
@@ -82,10 +89,96 @@ const CONTRACT: RunResultContract = {
  * drive a permission round-trip (which RESETS the per-turn buffer) as well as a
  * plain single-turn exit.
  */
-// ADR-166: the consumer's execution seam is a DB-less fake host whose stream
-// yields `events` in order (a permission round-trip included).
-function scriptedApi(events: unknown[]) {
-  return fakeAgentExecution({ events: events as SupervisorEvent[] });
+// The scripted stream observes the Run's real current assignment; terminal
+// result publication must satisfy the same generation fence as dispatch.
+async function scriptedApi(
+  runId: string,
+  events: unknown[],
+): Promise<AgentExecution> {
+  const scriptedEvents = events as SupervisorEvent[];
+  const scripted = fakeAgentExecution({
+    runId,
+    events: scriptedEvents,
+  });
+  const { hosts, assignment } = await fakeExecutionHosts(db, {
+    runId,
+    fake: scripted.fake,
+  });
+
+  if (!assignment)
+    throw new Error("Scripted agent fixture has no active assignment");
+  const execution = await hosts.executionFor(runId, {
+    assignmentId: assignment.id,
+  });
+  const terminal = scriptedEvents.findLast(
+    (event) =>
+      event.type === "session.exited" || event.type === "session.crashed",
+  );
+
+  if (terminal) {
+    const [session] = await db
+      .select()
+      .from(fullSchema.runSessions)
+      .where(eq(fullSchema.runSessions.runId, runId));
+
+    if (!session)
+      throw new Error("Scripted agent fixture has no logical session");
+    // Model the provider's already-ingested terminal observation through the
+    // real reducers. No owned prompt may skip the legacy consumer under test.
+    expect(
+      await db.transaction((tx) =>
+        applyCreateAck(tx, {
+          runId,
+          sessionName: session.sessionName,
+          assignmentId: assignment.id,
+          nodeAttemptId: null,
+          result: {
+            sessionId: terminal.sessionId,
+            acpSessionId: session.acpSessionId,
+            steeringSupported: null,
+          },
+        }),
+      ),
+    ).toBe("applied");
+    const terminalObservation = {
+      ...terminal,
+      sessionName: session.sessionName,
+    };
+
+    await scripted.fake.publishCanonical(
+      buildEnvelope({
+        commandId: randomUUID(),
+        kind: "session.create",
+        hostKey: scripted.fake.identity.hostKey,
+        assignmentId: assignment.id,
+        assignmentEpoch: assignment.epoch,
+        runId,
+        payload: {},
+      }),
+      terminal.sessionId,
+      terminalObservation,
+    );
+
+    expect(await projectCanonicalSessionLifecycle({ db, runId })).toMatchObject(
+      {
+        deferred: false,
+        poisoned: false,
+      },
+    );
+    const [incarnation] = await db
+      .select()
+      .from(fullSchema.runSessionIncarnations)
+      .where(eq(fullSchema.runSessionIncarnations.runId, runId));
+
+    expect(incarnation).toMatchObject({
+      executionAssignmentId: assignment.id,
+      assignmentEpoch: assignment.epoch,
+      hostSessionId: terminal.sessionId,
+      state: terminal.type === "session.crashed" ? "crashed" : "exited",
+    });
+  }
+
+  return { client: execution.client, admin: scripted.admin };
 }
 
 function chunk(text: string): unknown {
@@ -286,7 +379,7 @@ async function seedOperationalRun(): Promise<{ runId: string; cwd: string }> {
 async function finishOperational(runId: string, text: string): Promise<void> {
   await consumeAgentSession({
     db,
-    execution: scriptedApi([chunk(text), exited(0)]),
+    execution: await scriptedApi(runId, [chunk(text), exited(0)]),
     runId,
     sessionId: "sup-1",
   });
@@ -553,7 +646,7 @@ describe("agent public result — the happy path", () => {
 
     await consumeAgentSession({
       db,
-      execution: scriptedApi([
+      execution: await scriptedApi(runId, [
         chunk(
           `Working...\n${OPEN}\n${JSON.stringify(VALID_VALUE)}\n${CLOSE}\n`,
         ),
@@ -595,7 +688,7 @@ describe("agent public result — the happy path", () => {
 
     await consumeAgentSession({
       db,
-      execution: scriptedApi([
+      execution: await scriptedApi(runId, [
         chunk(`${OPEN}\n${JSON.stringify(VALID_VALUE)}\n${CLOSE}\n`),
         exited(0),
       ]),
@@ -623,7 +716,10 @@ describe("agent public result — the D10 failure table", () => {
 
     await consumeAgentSession({
       db,
-      execution: scriptedApi([chunk("I finished, no block."), exited(0)]),
+      execution: await scriptedApi(runId, [
+        chunk("I finished, no block."),
+        exited(0),
+      ]),
       runId,
       sessionId: "sup-1",
     });
@@ -690,7 +786,7 @@ describe("agent public result — the D10 failure table", () => {
 
       await consumeAgentSession({
         db,
-        execution: scriptedApi([
+        execution: await scriptedApi(runId, [
           chunk(`${OPEN}\n${block}\n${CLOSE}\n`),
           exited(0),
         ]),
@@ -723,7 +819,7 @@ describe("agent public result — the D10 failure table", () => {
 
     await consumeAgentSession({
       db,
-      execution: scriptedApi([
+      execution: await scriptedApi(runId, [
         chunk(`${OPEN}\n${JSON.stringify(VALID_VALUE)}\n${CLOSE}\n`),
         exited(1),
       ]),
@@ -740,7 +836,7 @@ describe("agent public result — the D10 failure table", () => {
 
     await consumeAgentSession({
       db,
-      execution: scriptedApi([
+      execution: await scriptedApi(runId, [
         chunk(`${OPEN}\n{"anything":true}\n${CLOSE}\n`),
         exited(0),
       ]),
@@ -763,7 +859,7 @@ describe("agent public result — per-turn buffering", () => {
 
     await consumeAgentSession({
       db,
-      execution: scriptedApi([
+      execution: await scriptedApi(runId, [
         chunk(`${OPEN}\n${stale}\n${CLOSE}\n`),
         {
           type: "session.permission_request",
@@ -798,7 +894,7 @@ describe("W4 — death before the finalize transaction", () => {
 
     await consumeAgentSession({
       db,
-      execution: scriptedApi([
+      execution: await scriptedApi(runId, [
         // A valid block was already buffered — it still must not be published:
         // the run did not finish, so what it emitted is not an answer.
         chunk(`${OPEN}\n${JSON.stringify(VALID_VALUE)}\n${CLOSE}\n`),
