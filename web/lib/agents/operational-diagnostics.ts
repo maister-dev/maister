@@ -46,7 +46,9 @@ export function operationalCauseChain(
     const code =
       typeof rawCode === "number" && Number.isSafeInteger(rawCode)
         ? rawCode
-        : safeToken(rawCode);
+        : typeof rawCode === "string" && /^[0-9A-Z]{5}$/.test(rawCode)
+          ? rawCode
+          : safeToken(rawCode);
     const syscall =
       "syscall" in current ? safeToken(current.syscall) : undefined;
     const signal = "signal" in current ? safeToken(current.signal) : undefined;

@@ -3,7 +3,7 @@
 Branch: `codex/manual-launch-triager-reliability`
 Created: 2026-11-02 (Europe/Moscow)
 Inspected source: `cb183968df5bac9b9ce652a6bdb6aa2bb79b45ff`
-Status: **In progress.** Current work: A2/A3 acceptance and transport wiring. Durable/physical preparation and idempotent handoff pass their focused controls and the full Web regression gate; B5's complete crash-window audit and B6's combined qualification/delivery scenario remain open. Checkboxes record verified completion only.
+Status: **In progress.** Current work: review remediation, A3/A4 dispatch integration and A5/A6 UX. Preparation publication and failure settlement now pass the strengthened owner/lease controls. B5's complete crash-window audit, B6's combined qualification/delivery scenario and final broad regression qualification remain open. Checkboxes record verified completion only.
 
 ## Settings
 
@@ -381,6 +381,7 @@ Every code task inherits the logging/redaction and TDD contracts and must name i
   - Acceptance: two real processes cannot delete/read-replace the same active checkout; kill parent during Git operation then restart, stale children cannot change a successor checkout. Guard-disabled control must reproduce interference so the test validates the invariant, not just a chosen lock call.
 
 - [x] **B4. Make preparation and session handoff idempotent** (depends B3).
+  - Review R3/R4 regression checkpoint: expired initial/trusted publication, atomic phase-write rollback, native acquisition diagnosis and stale/generic driver settlement all verified on Node 24 with real Postgres/Git; 4 coupled files / 62 tests pass (`/tmp/maister-driver-class-green.log`). The safe SQLSTATE cause remains observable. This does not close B5/B6 or final full-suite acceptance.
   - Files: `web/lib/agents/launch.ts` (`startAgentSession`/`driveAgentSession`), new preparation modules, `continuation-worker.ts`, `generation-turn.ts`/`turn-claim.ts`, `web/lib/execution-host/create-intent.ts` and session binding as needed.
   - Claim before checkout effects on every initial/recovery/retry entry. Remove unconditional no-baseline remove/add. Validate/reuse exact checkout incarnation/commit; recover journal phases or preserve ambiguity. Persist baseline/generation with preparation-token+assignment/status fence; hand off to existing create/prompt owner before dropping preparation protection. Losing owner yields without cleanup or successor terminalization.
   - Keep `none`, shared-repository `repo_read`, ephemeral `repo_read`, isolated/shared `worktree`, operational and execution agent paths explicit; initial, resume and recovery are separate typed operations. No multi-mode bypass flag.

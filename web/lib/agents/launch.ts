@@ -12,6 +12,7 @@ import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 import type { AgentTurn, Run, ExecutionAssignment } from "@/lib/db/schema";
 import type { AgentRetryClaim } from "@/lib/agents/retry-types";
 import type { TaskQualificationLaunchSnapshot } from "@/lib/tasks/qualification-types";
+import type { OperationalProbeContext } from "./operational-diagnostics";
 
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, stat } from "node:fs/promises";
@@ -1425,6 +1426,7 @@ export async function launchAgentRun(
   // Hold the shared worktree directory's mutex through provenance, row commit
   // and failure compensation. Keep its files outside the project checkout;
   // Git still runs before the PostgreSQL transaction.
+  let initialAssignmentId: string | null = null;
   const allocateAndPersist = async (): Promise<boolean> => {
     let worktreePath: string | null = null;
     let branch: string | null = null;
@@ -1828,11 +1830,13 @@ export async function launchAgentRun(
         });
         // ADR-166 D3: every new run is placed on the local host at launch (epoch
         // 1, `launch`); the driver binds to this assignment when it spawns.
-        await mintPlacement(tx as unknown as ExecutionDb, {
+        const placement = await mintPlacement(tx as unknown as ExecutionDb, {
           runId,
           reason: "launch",
           host: placementHost,
         });
+
+        initialAssignmentId = placement.id;
 
         // A reused shared tree already has a workspaces row owned by its allocator
         // (worktree_path is UNIQUE), so a reusing sibling inserts none. F3
@@ -1951,6 +1955,7 @@ export async function launchAgentRun(
       _db,
       runId,
       "agent_workspace_prepare_failed",
+      { expectedAssignmentId: initialAssignmentId },
     );
     throw error;
   }
@@ -2674,6 +2679,7 @@ async function startConsensusRunnerDraftSession(args: {
     await finalizeAgentRun(runId, "Failed", {
       db: args.db,
       reason: "consensus_draft_spawn_failed",
+      expectedAssignmentId: args.assignmentId,
     });
   }
 }
@@ -3372,9 +3378,22 @@ export async function startAgentSession(
 ): Promise<void> {
   const db = opts.db ?? getDb();
   const executionHosts = opts.executionHosts ?? createExecutionHosts({ db });
+  const [source] = await db
+    .select({ assignmentId: runs.executionAssignmentId })
+    .from(runs)
+    .where(eq(runs.id, runId));
+  const expectedAssignmentId =
+    opts.assignmentId === undefined
+      ? (source?.assignmentId ?? null)
+      : opts.assignmentId;
 
   try {
-    await driveAgentSession(runId, { ...opts, db, executionHosts });
+    await driveAgentSession(runId, {
+      ...opts,
+      assignmentId: expectedAssignmentId,
+      db,
+      executionHosts,
+    });
   } catch (err) {
     if (err instanceof AgentPromptQuarantined) {
       await endQuarantinedAgentRun(db, executionHosts, err.commandId);
@@ -3398,7 +3417,9 @@ export async function startAgentSession(
     )
       throw err;
     if (
-      await settleUndispatchedAgentFailure(db, runId, "agent_dispatch_failed")
+      await settleUndispatchedAgentFailure(db, runId, "agent_dispatch_failed", {
+        expectedAssignmentId,
+      })
     )
       return;
     throw err;
@@ -3487,9 +3508,18 @@ async function driveAgentSession(
   }
 
   const assignmentId =
-    opts.assignmentId ??
-    (baseRun.executionAssignmentId as string | null) ??
-    null;
+    opts.assignmentId === undefined
+      ? (baseRun.executionAssignmentId ?? null)
+      : opts.assignmentId;
+
+  if (assignmentId !== baseRun.executionAssignmentId)
+    throw new MaisterError(
+      "CONFLICT",
+      "The agent driver assignment was superseded",
+      {
+        details: { reason: "assignment_fenced", runId, assignmentId },
+      },
+    );
 
   // M42 (ADR-114): runner snapshot + resume handle come from the run's ACTIVE
   // session (run_sessions), not the dropped runs columns. Merge once so every
@@ -3743,6 +3773,7 @@ async function driveAgentSession(
   if (!project) {
     await finalizeAgentRun(runId, "Failed", {
       db: _db,
+      expectedAssignmentId: assignmentId,
       reason: "project row vanished before spawn",
     });
 
@@ -3769,6 +3800,7 @@ async function driveAgentSession(
 
     await finalizeAgentRun(runId, "Failed", {
       db: _db,
+      expectedAssignmentId: assignmentId,
       reason:
         "agent run has no catalog agent and is not a valid consensus runner draft",
     });
@@ -3785,6 +3817,7 @@ async function driveAgentSession(
   if (!agent) {
     await finalizeAgentRun(runId, "Failed", {
       db: _db,
+      expectedAssignmentId: assignmentId,
       reason: "agent row vanished before spawn",
     });
 
@@ -3801,6 +3834,7 @@ async function driveAgentSession(
       throw error;
     await finalizeAgentRun(runId, "Failed", {
       db: _db,
+      expectedAssignmentId: assignmentId,
       reason: "qualification_stale",
     });
 
@@ -3826,6 +3860,7 @@ async function driveAgentSession(
     );
     await finalizeAgentRun(runId, "Failed", {
       db: _db,
+      expectedAssignmentId: assignmentId,
       reason: "effective_definition_unresolved",
     });
 
@@ -3846,48 +3881,64 @@ async function driveAgentSession(
       "Operational preparation requires a current assignment",
       { details: { reason: "assignment_fenced", runId } },
     );
-  const preparation =
-    run.agentKind === "operational" && assignmentId
-      ? await openAgentPreparation(_db, {
-          runId,
-          assignmentId,
-          ...(await operationalWorkspace(_db, run)),
-        })
-      : null;
-
-  if (preparation) run = { ...run, ...preparation.run };
-  let preparationCommit = preparation?.operation.resolvedCommit ?? null;
-  let operationalSpawnStage = "checkout";
-  const preparationContext = {
+  let preparation: Awaited<ReturnType<typeof openAgentPreparation>> | null =
+    null;
+  let preparationCommit: string | null = null;
+  let operationalSpawnStage = "workspace_acquisition";
+  let preparationContext: OperationalProbeContext = {
     runId,
     ...(assignmentId ? { assignmentId } : {}),
-    ...(preparation
-      ? {
-          assignmentEpoch: preparation.operation.assignmentEpoch,
-          preparationId: preparation.operation.id,
-        }
-      : {}),
   };
 
   try {
+    if (run.agentKind === "operational" && assignmentId) {
+      const [assignment] = await _db
+        .select({ epoch: executionAssignments.epoch })
+        .from(executionAssignments)
+        .where(eq(executionAssignments.id, assignmentId));
+
+      preparationContext = {
+        ...preparationContext,
+        ...(assignment ? { assignmentEpoch: assignment.epoch } : {}),
+      };
+      preparation = await openAgentPreparation(_db, {
+        runId,
+        assignmentId,
+        ...(await operationalWorkspace(_db, run)),
+      });
+      run = { ...run, ...preparation.run };
+      preparationCommit = preparation.operation.resolvedCommit;
+      preparationContext = {
+        ...preparationContext,
+        assignmentEpoch: preparation.operation.assignmentEpoch,
+        preparationId: preparation.operation.id,
+      };
+    }
+    operationalSpawnStage = "checkout";
     await (preparation
       ? preparation.runEffect(prepareAndDispatch)
       : prepareAndDispatch());
   } catch (error) {
-    if (!preparation || isFencedError(error)) throw error;
+    if (
+      run.agentKind !== "operational" ||
+      isFencedError(error) ||
+      (isMaisterError(error) && error.details?.reason === "operation_busy")
+    )
+      throw error;
     const infrastructureFailure = operationalFailureDiagnostic(error, {
       ...preparationContext,
       stage: operationalSpawnStage,
     });
 
-    await preparation.fail(infrastructureFailure);
-    await preparation.release();
+    await preparation?.fail(infrastructureFailure);
+    await preparation?.release();
     const settled = await withoutGitOwnership(() =>
       settleUndispatchedAgentFailure(
         _db,
         runId,
         "agent_workspace_prepare_failed",
         {
+          ...(assignmentId ? { expectedAssignmentId: assignmentId } : {}),
           causeReason:
             isMaisterError(error) && typeof error.details?.reason === "string"
               ? error.details.reason
@@ -4017,6 +4068,7 @@ async function driveAgentSession(
         );
         await finalizeAgentRun(runId, "Failed", {
           db: _db,
+          expectedAssignmentId: assignmentId,
           reason: "repo_read_checkout_failed",
         });
 
@@ -4049,6 +4101,7 @@ async function driveAgentSession(
     if (!snapshot) {
       await finalizeAgentRun(runId, "Failed", {
         db: _db,
+        expectedAssignmentId: assignmentId,
         reason: "run has no runner snapshot",
       });
 
@@ -4150,32 +4203,13 @@ async function driveAgentSession(
             },
             contextMounts: await captureOperationalContextMounts(contextMounts),
           };
-          const written = await _db
-            .update(runs)
-            .set({ operationalIntegrityBaseline: integrityBaseline })
-            .where(
-              and(
-                eq(runs.id, runId),
-                eq(runs.status, "Running"),
-                isNull(runs.operationalIntegrityBaseline),
-                assignmentId
-                  ? eq(runs.executionAssignmentId, assignmentId)
-                  : isNull(runs.executionAssignmentId),
-              ),
-            )
-            .returning({ id: runs.id });
-
-          if (!written[0])
-            throw new MaisterError(
-              "CONFLICT",
-              "operational baseline generation was superseded",
-              { details: { reason: "assignment_fenced" } },
-            );
+          await preparation?.publishBaseline(integrityBaseline);
         }
-        await preparation?.advance({
-          phase: "baseline_ready",
-          generation: integrityBaseline!.generation,
-        });
+        if (run.operationalIntegrityBaseline)
+          await preparation?.advance({
+            phase: "baseline_ready",
+            generation: integrityBaseline!.generation,
+          });
       }
       // ADR-090 L2 (materialize-only): instructed deny rules in the session
       // cwd; manifest-tracked and restored at the terminal choke point.
@@ -4327,31 +4361,11 @@ async function driveAgentSession(
             ".maister/agent-materialization/mutex.sqlite-wal",
           ],
         );
-        const written = await _db
-          .update(runs)
-          .set({ operationalIntegrityBaseline: next })
-          .where(
-            and(
-              eq(runs.id, runId),
-              eq(runs.status, "Running"),
-              sql`${runs.operationalIntegrityBaseline}->>'generation' = ${String(integrityBaseline.generation)}`,
-              assignmentId
-                ? eq(runs.executionAssignmentId, assignmentId)
-                : isNull(runs.executionAssignmentId),
-            ),
-          )
-          .returning({ id: runs.id });
 
-        if (!written[0])
-          throw new MaisterError(
-            "CONFLICT",
-            "operational materialization generation was superseded",
-            { details: { reason: "assignment_fenced" } },
-          );
-        await preparation?.advance({
-          phase: "materialized",
-          generation: next.generation,
-        });
+        await preparation?.publishGeneration(
+          next,
+          integrityBaseline.generation,
+        );
       }
 
       // ADR-166: the create is handle-form — the workspace (and its context
@@ -4557,6 +4571,7 @@ async function driveAgentSession(
         const diagnostic =
           run.agentKind === "operational"
             ? {
+                ...(assignmentId ? { expectedAssignmentId: assignmentId } : {}),
                 causeReason:
                   isMaisterError(err) && typeof err.details?.reason === "string"
                     ? err.details.reason
@@ -4579,6 +4594,7 @@ async function driveAgentSession(
           return;
         await finalizeAgentRun(runId, "Failed", {
           db: _db,
+          expectedAssignmentId: assignmentId,
           reason: "agent_session_spawn_failed",
           ...diagnostic,
         });
@@ -4931,6 +4947,7 @@ export async function consumeAgentSession(args: {
             : "Failed",
           {
             db: args.db,
+            expectedAssignmentId: args.execution.client.assignment.id,
             reason:
               event.exitCode === 0
                 ? undefined
@@ -4951,6 +4968,7 @@ export async function consumeAgentSession(args: {
         await finalizeAgentRun(args.runId, "Crashed", {
           db: args.db,
           reason: "supervisor reported session crash",
+          expectedAssignmentId: args.execution.client.assignment.id,
         });
 
         return;
@@ -5005,6 +5023,7 @@ export async function consumeAgentSession(args: {
             await finalizeAgentRun(args.runId, "Crashed", {
               db: args.db,
               reason: "hook_trip escalation failed (executor unavailable)",
+              expectedAssignmentId: args.execution.client.assignment.id,
             });
 
             return;

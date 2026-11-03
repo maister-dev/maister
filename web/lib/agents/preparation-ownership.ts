@@ -2,12 +2,13 @@ import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
 import type { OperationalFailureDiagnostic } from "./operational-diagnostics";
+import type { OperationalIntegrityBaseline } from "@/lib/run-results/operational-types";
 
 import { createHash, randomUUID } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
 
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, exists, inArray, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { agentPreparationOperations, runs } from "@/lib/db/schema";
@@ -23,6 +24,26 @@ const ACTIVE = [
 ] as const;
 
 type Preparation = typeof agentPreparationOperations.$inferSelect;
+type PreparationProgress = {
+  phase: Preparation["phase"];
+  resolvedCommit?: string;
+  generation?: number;
+  turnId?: string;
+  failure?: OperationalFailureDiagnostic;
+};
+
+function activePreparation(operation: Preparation): ReturnType<typeof and> {
+  return and(
+    eq(agentPreparationOperations.id, operation.id),
+    eq(agentPreparationOperations.runId, operation.runId),
+    eq(agentPreparationOperations.assignmentId, operation.assignmentId),
+    eq(agentPreparationOperations.assignmentEpoch, operation.assignmentEpoch),
+    eq(agentPreparationOperations.resourceId, operation.resourceId),
+    eq(agentPreparationOperations.incarnation, operation.incarnation),
+    inArray(agentPreparationOperations.phase, [...ACTIVE]),
+    sql`${agentPreparationOperations.leaseExpiresAt} > clock_timestamp()`,
+  );
+}
 
 export function preparationFenced(runId: string): MaisterError {
   return new MaisterError(
@@ -138,13 +159,7 @@ export async function claimAgentPreparation(
 export async function advanceAgentPreparation(
   db: Db,
   operation: Preparation,
-  next: {
-    phase: Preparation["phase"];
-    resolvedCommit?: string;
-    generation?: number;
-    turnId?: string;
-    failure?: OperationalFailureDiagnostic;
-  },
+  next: PreparationProgress,
 ): Promise<void> {
   await db.transaction(async (tx) => {
     const assignment = await lockCurrentSessionAssignment(tx, operation);
@@ -159,37 +174,106 @@ export async function advanceAgentPreparation(
       run?.status !== "Running"
     )
       throw preparationFenced(operation.runId);
-    const active = ACTIVE.includes(next.phase as (typeof ACTIVE)[number]);
+    await writePreparationProgress(tx, operation, next);
+  });
+}
+
+async function writePreparationProgress(
+  tx: Db,
+  operation: Preparation,
+  next: PreparationProgress,
+): Promise<void> {
+  const active = ACTIVE.includes(next.phase as (typeof ACTIVE)[number]);
+  const [written] = await tx
+    .update(agentPreparationOperations)
+    .set({
+      ...next,
+      updatedAt: sql`clock_timestamp()`,
+      leaseExpiresAt: active
+        ? sql`clock_timestamp() + interval '60 seconds'`
+        : null,
+    })
+    .where(activePreparation(operation))
+    .returning({ id: agentPreparationOperations.id });
+
+  if (!written) throw preparationFenced(operation.runId);
+  log.info(
+    {
+      runId: operation.runId,
+      assignmentId: operation.assignmentId,
+      assignmentEpoch: operation.assignmentEpoch,
+      preparationId: operation.id,
+      phase: next.phase,
+      generation: next.generation,
+    },
+    "agent-preparation-advanced",
+  );
+}
+
+/** Publish captured bytes and their ownership receipt in one fenced commit. */
+async function publishPreparation(
+  db: Db,
+  operation: Preparation,
+  baseline: OperationalIntegrityBaseline,
+  expectedGeneration: number | null,
+  phase: "baseline_ready" | "materialized",
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    const assignment = await lockCurrentSessionAssignment(tx, operation);
+
+    if (!assignment || assignment.epoch !== operation.assignmentEpoch)
+      throw preparationFenced(operation.runId);
     const [written] = await tx
-      .update(agentPreparationOperations)
-      .set({
-        ...next,
-        updatedAt: sql`clock_timestamp()`,
-        leaseExpiresAt: active
-          ? sql`clock_timestamp() + interval '60 seconds'`
-          : null,
-      })
+      .update(runs)
+      .set({ operationalIntegrityBaseline: baseline })
       .where(
         and(
-          eq(agentPreparationOperations.id, operation.id),
-          inArray(agentPreparationOperations.phase, [...ACTIVE]),
-          sql`${agentPreparationOperations.leaseExpiresAt} > clock_timestamp()`,
+          eq(runs.id, operation.runId),
+          eq(runs.status, "Running"),
+          eq(runs.executionAssignmentId, operation.assignmentId),
+          expectedGeneration === null
+            ? isNull(runs.operationalIntegrityBaseline)
+            : sql`${runs.operationalIntegrityBaseline}->>'generation' = ${String(expectedGeneration)}`,
+          exists(
+            tx
+              .select({ id: agentPreparationOperations.id })
+              .from(agentPreparationOperations)
+              .where(activePreparation(operation)),
+          ),
         ),
       )
-      .returning({ id: agentPreparationOperations.id });
+      .returning({ id: runs.id });
 
     if (!written) throw preparationFenced(operation.runId);
-    log.info(
-      {
-        runId: operation.runId,
-        assignmentId: operation.assignmentId,
-        assignmentEpoch: operation.assignmentEpoch,
-        preparationId: operation.id,
-        phase: next.phase,
-      },
-      "agent-preparation-advanced",
-    );
+    // Recheck DB time after the write; expiry rolls both publications back.
+    await writePreparationProgress(tx, operation, {
+      phase,
+      generation: baseline.generation,
+    });
   });
+}
+
+export function publishAgentPreparationBaseline(
+  db: Db,
+  operation: Preparation,
+  baseline: OperationalIntegrityBaseline,
+): Promise<void> {
+  return publishPreparation(db, operation, baseline, null, "baseline_ready");
+}
+
+export function publishAgentPreparationGeneration(
+  db: Db,
+  operation: Preparation,
+  baseline: OperationalIntegrityBaseline,
+  previousGeneration: number,
+): Promise<void> {
+  return publishPreparation(
+    db,
+    operation,
+    baseline,
+    previousGeneration,
+    "materialized",
+  );
 }
 
 export async function renewAgentPreparation(

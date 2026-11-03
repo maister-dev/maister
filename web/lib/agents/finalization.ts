@@ -52,7 +52,13 @@ import { parseOperationalResult } from "@/lib/run-results/operational-schema";
 import { terminalCauseReason } from "@/lib/domain-events/taxonomy";
 import { closedAnswerResponse } from "@/lib/hitl-closed-answer";
 import { getDb } from "@/lib/db/client";
-import { hitlRequests, projects, runs, workspaces } from "@/lib/db/schema";
+import {
+  executionAssignments,
+  hitlRequests,
+  projects,
+  runs,
+  workspaces,
+} from "@/lib/db/schema";
 import { releaseRunContextMounts } from "@/lib/context-mounts/terminal";
 import {
   cancelActiveAssignmentsForRun,
@@ -121,6 +127,8 @@ type AgentAssignmentClose =
 export type AgentFinalizeOptions = {
   db?: Db;
   infrastructureFailure?: OperationalFailureDiagnostic;
+  /** A dispatch driver's diagnosis cannot settle another assignment generation. */
+  expectedAssignmentId?: string | null;
   /** Exact retained prompt whose validated result-resume grant may settle. */
   applicationCommandId?: string;
   reason?: string;
@@ -636,13 +644,56 @@ async function prepareAgentFinalization(
 
   const apply = async (tx: Db): Promise<AgentFinalizationApplication> => {
     const [locked] = await tx
-      .select({ id: runs.id, status: runs.status })
+      .select({
+        id: runs.id,
+        status: runs.status,
+        assignmentId: runs.executionAssignmentId,
+      })
       .from(runs)
       .where(eq(runs.id, runId))
       .for("update");
 
     if (!locked || !sourceStatuses.includes(locked.status))
       return { finalized: false };
+    if (opts.expectedAssignmentId !== undefined) {
+      if (locked.assignmentId !== opts.expectedAssignmentId)
+        throw new MaisterError(
+          "CONFLICT",
+          "The dispatch failure belongs to a superseded assignment",
+          {
+            details: {
+              reason: "assignment_fenced",
+              runId,
+              assignmentId: opts.expectedAssignmentId,
+            },
+          },
+        );
+      if (opts.expectedAssignmentId !== null) {
+        const [assignment] = await tx
+          .select({ state: executionAssignments.state })
+          .from(executionAssignments)
+          .where(
+            and(
+              eq(executionAssignments.id, opts.expectedAssignmentId),
+              eq(executionAssignments.runId, runId),
+            ),
+          )
+          .for("update");
+
+        if (!assignment || assignment.state !== "active")
+          throw new MaisterError(
+            "CONFLICT",
+            "The dispatch failure belongs to a released assignment",
+            {
+              details: {
+                reason: "assignment_fenced",
+                runId,
+                assignmentId: opts.expectedAssignmentId,
+              },
+            },
+          );
+      }
+    }
     if (
       preparedRun.agentKind === "operational" &&
       preparedRun.operationalTerminal

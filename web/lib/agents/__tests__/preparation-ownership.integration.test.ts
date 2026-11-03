@@ -3,10 +3,10 @@ import type { StartedPostgresTestDb } from "@/test-support/pg-container";
 
 import { randomUUID } from "node:crypto";
 import { fork, type ChildProcess } from "node:child_process";
-import { access, rm, stat, writeFile } from "node:fs/promises";
+import { access, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { z } from "zod";
 
@@ -33,8 +33,18 @@ import { mintAssignment } from "@/lib/execution-host/assignments";
 import { prepareUndispatchedAgentFailure } from "@/lib/agents/finalization";
 import { disposeOperationalRun } from "@/lib/gc/operational-disposition";
 import { loadOperationalOutcome } from "@/lib/run-results/operational-projection";
+import { admitAgentGenerationTurn } from "@/lib/agents/generation-turn";
+import { isMaisterError, MaisterError } from "@/lib/errors";
 
 const probeBarrier = vi.hoisted(() => ({
+  target: "",
+  entered: (): void => {},
+  release: Promise.resolve(),
+  used: false,
+  skipCalls: 0,
+}));
+
+const acquisitionBarrier = vi.hoisted(() => ({
   target: "",
   entered: (): void => {},
   release: Promise.resolve(),
@@ -46,8 +56,25 @@ vi.mock("node:fs/promises", async (original) => {
 
   return {
     ...actual,
+    realpath: async (...args: Parameters<typeof actual.realpath>) => {
+      if (
+        !acquisitionBarrier.used &&
+        String(args[0]) === acquisitionBarrier.target
+      ) {
+        acquisitionBarrier.used = true;
+        acquisitionBarrier.entered();
+        await acquisitionBarrier.release;
+      }
+
+      return actual.realpath(...args);
+    },
     lstat: async (...args: Parameters<typeof actual.lstat>) => {
       if (!probeBarrier.used && String(args[0]) === probeBarrier.target) {
+        if (probeBarrier.skipCalls > 0) {
+          probeBarrier.skipCalls -= 1;
+
+          return actual.lstat(...args);
+        }
         probeBarrier.used = true;
         probeBarrier.entered();
         await probeBarrier.release;
@@ -324,6 +351,332 @@ it("TB05 a real preparation probe failure persists its cause and issues no model
   expect(
     JSON.stringify(run.operationalTerminal?.infrastructureFailure),
   ).not.toContain(root);
+}, 60_000);
+
+it("TB05 workspace acquisition failure retains the native cause before model dispatch", async () => {
+  const { hosts } = await fakeExecutionHosts(db);
+  const fixture = await seedReadOnlyPreparation();
+  const [before] = await db
+    .select()
+    .from(runs)
+    .where(eq(runs.id, fixture.runId));
+  const [assignment] = await db
+    .select()
+    .from(executionAssignments)
+    .where(eq(executionAssignments.id, before.executionAssignmentId!));
+
+  await rename(fixture.project.repoPath, `${fixture.project.repoPath}-removed`);
+  await launch.startAgentSession(fixture.runId, { db, executionHosts: hosts });
+  const [run] = await db.select().from(runs).where(eq(runs.id, fixture.runId));
+  const commands = await db
+    .select({ kind: executionCommands.kind })
+    .from(executionCommands)
+    .where(eq(executionCommands.runId, fixture.runId));
+
+  expect(run.status).toBe("Failed");
+  expect(run.operationalTerminal?.infrastructureFailure).toMatchObject({
+    runId: fixture.runId,
+    assignmentId: assignment.id,
+    assignmentEpoch: assignment.epoch,
+    stage: "workspace_acquisition",
+    causeChain: [{ code: "ENOENT", syscall: "realpath" }],
+  });
+  expect(run.operationalTerminal?.reasonCodes).toContain(
+    "operational_preparation_failed",
+  );
+  expect(commands).toEqual([]);
+  expect(
+    JSON.stringify(run.operationalTerminal?.infrastructureFailure),
+  ).not.toContain(root);
+}, 60_000);
+
+it("TB05 a stale acquisition failure cannot terminalize the successor assignment", async () => {
+  const { hosts } = await fakeExecutionHosts(db);
+  const fixture = await seedReadOnlyPreparation();
+  const [before] = await db
+    .select()
+    .from(runs)
+    .where(eq(runs.id, fixture.runId));
+  const [assignment] = await db
+    .select()
+    .from(executionAssignments)
+    .where(eq(executionAssignments.id, before.executionAssignmentId!));
+  const entered = barrier();
+  const release = barrier();
+
+  acquisitionBarrier.target = fixture.project.repoPath;
+  acquisitionBarrier.entered = entered.release;
+  acquisitionBarrier.release = release.promise;
+  acquisitionBarrier.used = false;
+  const driver = launch
+    .startAgentSession(fixture.runId, { db, executionHosts: hosts })
+    .then(
+      () => ({ reason: null }),
+      (error: unknown) => ({
+        reason:
+          error instanceof Object && "details" in error
+            ? (error.details as { reason?: string }).reason
+            : "unknown",
+      }),
+    );
+  let successor: typeof assignment;
+
+  try {
+    await Promise.race([
+      entered.promise,
+      driver.then(() => {
+        throw new Error("Driver ended before acquisition");
+      }),
+    ]);
+    successor = await db.transaction((tx) =>
+      mintAssignment(tx, {
+        runId: fixture.runId,
+        hostId: assignment.executionHostId,
+        reason: "recover",
+      }),
+    );
+    await rename(
+      fixture.project.repoPath,
+      `${fixture.project.repoPath}-removed`,
+    );
+  } finally {
+    release.release();
+    acquisitionBarrier.target = "";
+  }
+  const outcome = await driver;
+  const [run] = await db.select().from(runs).where(eq(runs.id, fixture.runId));
+  const [current] = await db
+    .select()
+    .from(executionAssignments)
+    .where(eq(executionAssignments.id, successor.id));
+  const commands = await db
+    .select({ kind: executionCommands.kind })
+    .from(executionCommands)
+    .where(eq(executionCommands.runId, fixture.runId));
+
+  expect(outcome.reason).toBe("assignment_fenced");
+  expect(run.status).toBe("Running");
+  expect(run.executionAssignmentId).toBe(successor.id);
+  expect(run.operationalTerminal).toBeNull();
+  expect(current.state).toBe("active");
+  expect(commands).toEqual([]);
+}, 60_000);
+
+it.each([false, true])(
+  "TB02 generic pre-dispatch failure retains its assignment fence (superseded=$0)",
+  async (superseded) => {
+    const { hosts } = await fakeExecutionHosts(db);
+    const fixture = await seedReadOnlyPreparation();
+    const [before] = await db
+      .select()
+      .from(runs)
+      .where(eq(runs.id, fixture.runId));
+    const [assignment] = await db
+      .select()
+      .from(executionAssignments)
+      .where(eq(executionAssignments.id, before.executionAssignmentId!));
+
+    await db.transaction((tx) =>
+      admitAgentGenerationTurn(tx, {
+        runId: fixture.runId,
+        assignmentId: assignment.id,
+        variant: "initial",
+        prompt: "Read this exact request",
+      }),
+    );
+    const entered = barrier();
+    const release = barrier();
+    const driver = launch
+      .startAgentSession(fixture.runId, {
+        db,
+        executionHosts: {
+          ...hosts,
+          executionFor: async () => {
+            entered.release();
+            await release.promise;
+            throw new MaisterError(
+              "EXECUTOR_UNAVAILABLE",
+              "fixture host unavailable before dispatch",
+            );
+          },
+        },
+      })
+      .then(
+        () => ({ reason: null }),
+        (error: unknown) => ({
+          reason: isMaisterError(error) ? error.details?.reason : "unknown",
+        }),
+      );
+    let successor = assignment;
+
+    try {
+      await Promise.race([
+        entered.promise,
+        driver.then(() => {
+          throw new Error("Driver ended before host resolution");
+        }),
+      ]);
+      if (superseded)
+        successor = await db.transaction((tx) =>
+          mintAssignment(tx, {
+            runId: fixture.runId,
+            hostId: assignment.executionHostId,
+            reason: "recover",
+          }),
+        );
+    } finally {
+      release.release();
+    }
+    const outcome = await driver;
+    const [run] = await db
+      .select()
+      .from(runs)
+      .where(eq(runs.id, fixture.runId));
+    const [current] = await db
+      .select()
+      .from(executionAssignments)
+      .where(eq(executionAssignments.id, successor.id));
+    const commands = await db
+      .select({ kind: executionCommands.kind })
+      .from(executionCommands)
+      .where(eq(executionCommands.runId, fixture.runId));
+
+    expect(outcome.reason).toBe(superseded ? "assignment_fenced" : null);
+    expect(run.status).toBe(superseded ? "Running" : "Failed");
+    expect(run.executionAssignmentId).toBe(successor.id);
+    expect(current.state).toBe(superseded ? "active" : "released");
+    if (superseded) expect(run.operationalTerminal).toBeNull();
+    expect(commands).toEqual([]);
+  },
+  60_000,
+);
+
+it.each([
+  {
+    stage: "baseline",
+    skipCalls: 0,
+    generation: null,
+    phase: "checkout_ready",
+  },
+  {
+    stage: "trusted generation",
+    skipCalls: 1,
+    generation: 0,
+    phase: "baseline_ready",
+  },
+])(
+  "TB02 an expired preparation cannot publish its $stage",
+  async ({ skipCalls, generation, phase }) => {
+    const { hosts } = await fakeExecutionHosts(db);
+    const fixture = await seedReadOnlyPreparation();
+    const entered = barrier();
+    const release = barrier();
+
+    probeBarrier.target = path.join(fixture.checkout, fixture.source);
+    probeBarrier.entered = entered.release;
+    probeBarrier.release = release.promise;
+    probeBarrier.used = false;
+    probeBarrier.skipCalls = skipCalls;
+    const driver = launch.startAgentSession(fixture.runId, {
+      db,
+      executionHosts: hosts,
+    });
+
+    try {
+      await Promise.race([
+        entered.promise,
+        driver.then(() => {
+          throw new Error("Driver ended before publication probe");
+        }),
+      ]);
+      await db.execute(sql`UPDATE agent_preparation_operations
+      SET lease_expires_at=clock_timestamp()+interval '100 milliseconds'
+      WHERE run_id=${fixture.runId} AND phase=${phase}`);
+      await expect
+        .poll(async () => {
+          const result = await db.execute<{
+            expired: boolean;
+          }>(sql`SELECT lease_expires_at <= clock_timestamp() AS expired
+        FROM agent_preparation_operations WHERE run_id=${fixture.runId} AND phase=${phase}`);
+
+          return result.rows[0]?.expired;
+        })
+        .toBe(true);
+    } finally {
+      release.release();
+      await driver;
+      probeBarrier.target = "";
+      probeBarrier.skipCalls = 0;
+    }
+    const [run] = await db
+      .select()
+      .from(runs)
+      .where(eq(runs.id, fixture.runId));
+    const [operation] = await db
+      .select()
+      .from(agentPreparationOperations)
+      .where(eq(agentPreparationOperations.runId, fixture.runId));
+    const commands = await db
+      .select({ kind: executionCommands.kind })
+      .from(executionCommands)
+      .where(eq(executionCommands.runId, fixture.runId));
+
+    expect(run.status).toBe("Running");
+    expect(run.operationalIntegrityBaseline?.generation ?? null).toBe(
+      generation,
+    );
+    expect(operation.phase).toBe(phase);
+    expect(operation.generation).toBe(generation);
+    expect(commands).toEqual([]);
+  },
+  60_000,
+);
+
+it("TB02 a failed ownership receipt rolls back the captured baseline", async () => {
+  const { hosts } = await fakeExecutionHosts(db);
+  const fixture = await seedReadOnlyPreparation();
+
+  await db.execute(sql`CREATE FUNCTION reject_preparation_publication() RETURNS trigger
+    LANGUAGE plpgsql AS $$ BEGIN
+      RAISE EXCEPTION 'fixture preparation receipt unavailable' USING ERRCODE='40001';
+    END $$`);
+  await db.execute(sql`CREATE TRIGGER reject_preparation_publication
+    BEFORE UPDATE OF phase ON agent_preparation_operations
+    FOR EACH ROW WHEN (NEW.phase='baseline_ready')
+    EXECUTE FUNCTION reject_preparation_publication()`);
+  try {
+    await launch.startAgentSession(fixture.runId, {
+      db,
+      executionHosts: hosts,
+    });
+  } finally {
+    await db.execute(
+      sql`DROP TRIGGER reject_preparation_publication ON agent_preparation_operations`,
+    );
+    await db.execute(sql`DROP FUNCTION reject_preparation_publication()`);
+  }
+  const [run] = await db.select().from(runs).where(eq(runs.id, fixture.runId));
+  const [operation] = await db
+    .select()
+    .from(agentPreparationOperations)
+    .where(eq(agentPreparationOperations.runId, fixture.runId));
+  const commands = await db
+    .select({ kind: executionCommands.kind })
+    .from(executionCommands)
+    .where(eq(executionCommands.runId, fixture.runId));
+
+  expect(run.status).toBe("Failed");
+  expect(run.operationalIntegrityBaseline).toBeNull();
+  expect(operation.phase).toBe("failed");
+  expect(operation.generation).toBeNull();
+  expect(
+    run.operationalTerminal?.infrastructureFailure?.causeChain,
+  ).toContainEqual(expect.objectContaining({ code: "40001" }));
+  expect(
+    commands.filter((command) =>
+      ["session.create", "session.prompt"].includes(command.kind),
+    ),
+  ).toEqual([]);
 }, 60_000);
 
 it("TB02 durable ownership rejects identity forgery and terminal publication", async () => {

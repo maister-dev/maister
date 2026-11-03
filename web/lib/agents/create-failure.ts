@@ -38,7 +38,7 @@ export async function settleUndispatchedAgentFailure(
   reason: "agent_workspace_prepare_failed" | "agent_dispatch_failed",
   diagnostic: Pick<
     AgentFinalizeOptions,
-    "causeReason" | "infrastructureFailure"
+    "causeReason" | "infrastructureFailure" | "expectedAssignmentId"
   > = {},
 ): Promise<boolean> {
   const prepared = await prepareUndispatchedAgentFailure(runId, {

@@ -2,6 +2,7 @@ import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
 import type { OperationalFailureDiagnostic } from "./operational-diagnostics";
+import type { OperationalIntegrityBaseline } from "@/lib/run-results/operational-types";
 
 import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
@@ -15,6 +16,8 @@ import {
   claimAgentPreparation,
   renewAgentPreparation,
   advanceAgentPreparation,
+  publishAgentPreparationBaseline,
+  publishAgentPreparationGeneration,
 } from "./preparation-ownership";
 import { assertSafeAgentMaterializationPath } from "./materialization-manifest";
 import { withPreparationTrace } from "./preparation-trace";
@@ -36,6 +39,11 @@ export type AgentPreparationOwner = PreparationClaim & {
     next: Parameters<typeof advanceAgentPreparation>[2],
   ) => Promise<void>;
   fail: (failure: OperationalFailureDiagnostic) => Promise<void>;
+  publishBaseline: (baseline: OperationalIntegrityBaseline) => Promise<void>;
+  publishGeneration: (
+    baseline: OperationalIntegrityBaseline,
+    previousGeneration: number,
+  ) => Promise<void>;
 };
 
 /** Repository fences retain registered orphan Git groups; plain trees spawn no Git. */
@@ -144,6 +152,22 @@ export async function openAgentPreparation(
       ): Promise<void> => {
         if (renewalFailure) throw renewalFailure;
         await advanceAgentPreparation(db, claim.operation, next);
+      },
+      publishBaseline: async (baseline): Promise<void> => {
+        if (renewalFailure) throw renewalFailure;
+        await publishAgentPreparationBaseline(db, claim.operation, baseline);
+      },
+      publishGeneration: async (
+        baseline,
+        previousGeneration,
+      ): Promise<void> => {
+        if (renewalFailure) throw renewalFailure;
+        await publishAgentPreparationGeneration(
+          db,
+          claim.operation,
+          baseline,
+          previousGeneration,
+        );
       },
     };
   } catch (error) {
