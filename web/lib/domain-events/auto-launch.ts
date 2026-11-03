@@ -486,6 +486,9 @@ export function buildAutoLaunchRunPlanConsumer(
                     carrierTaskId: candidate.taskId,
                     mode: "task",
                     runnerOverride: flowSpec.runnerOverride ?? null,
+                    ...(flowSpec.nativeInput
+                      ? { nativeInput: flowSpec.nativeInput }
+                      : {}),
                   }),
                 },
                 { actorUserId: null, authorize: async () => {} },
@@ -564,6 +567,7 @@ export function buildAutoLaunchRunPlanConsumer(
             }
             const result = await launch({
               agentId: spec.agentId,
+              ...(spec.nativeInput ? { nativeInput: spec.nativeInput } : {}),
               projectId: candidate.projectId,
               taskId: candidate.taskId,
               launchOverrideRunnerId: spec.runnerOverride ?? null,

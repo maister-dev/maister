@@ -1738,6 +1738,15 @@ paths:
       tags: [runs]
       summary: (M37 — Implemented) Delegate a child unit from an orchestrator
       description: |
+        Native enrollment keeps model-supplied title/prompt in the existing
+        private delegation intent and frozen child input, while a shared carrier
+        contains only resolved target metadata. Current source/role authority is
+        checked before carrier creation; unknown capture refuses 409, revoked
+        origin authority 403, and native input bounds 422. Historical absent
+        native metadata keeps its existing behavior. The internal snapshot is
+        server-authored and is not an accepted request field. See the carrier
+        input contract in `docs/system-analytics/evidence-findings.md`.
+
         (M37 — Implemented, ADR-098.) Scope `runs:delegate`. Spawns ONE governed
         child unit from the calling orchestrator run. Backs the `run_delegate`
         delegation tool exposed over the maister MCP facade to `orchestrator`
@@ -1913,6 +1922,17 @@ paths:
       tags: [runs]
       summary: (M37 — Implemented) Submit a success-gated task DAG from an orchestrator
       description: |
+        Native source restrictions cover the entire immediate/deferred DAG input.
+        Original title/prompt remain in private retained delegation intents;
+        shared task fields contain resolved target metadata. The same frozen
+        private objective reaches immediate and deferred prompt composition.
+        Incomplete capture/unavailable sources, revoked origin role or input
+        bounds refuse before the DAG transaction commits (409/403/422
+        respectively). Ordinary relaunch
+        cannot execute a public placeholder without its exact private binding.
+        The canonical internal contract is the carrier input boundary in
+        `docs/system-analytics/evidence-findings.md`; clients cannot supply it.
+
         (M37 — Implemented, ADR-098.) Scope `runs:delegate`. Writes a DAG of child
         tasks wired by the success-gated `requires` relation in ONE transaction.
         Backs the `run_plan` delegation tool. `requires` releases a dependent

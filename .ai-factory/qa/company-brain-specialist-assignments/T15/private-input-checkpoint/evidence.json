@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "task": "T15",
+  "baselineCommit": "9d9ebcc88",
+  "status": "partial_checkpoint_qualified",
+  "engineVersion": "3.10.0",
+  "qualified": [
+    "Native delegated input stays in existing private task intent and frozen run input, while shared carrier title/prompt and task DTOs expose only resolved target metadata.",
+    "Actual canonical Flow/agent loaders compose the original objective; immediate/deferred mixed plans and task/taskless Flow-driving specialists retain the source and target binding.",
+    "Ordinary carrier relaunch cannot execute its public placeholder; digest mismatch, incomplete capture, native input bounds and revoked originating role refuse before another carrier/run. Origin revocation maps to HTTP 403.",
+    "Actual deferred consumer replay leaves one child run; legacy launch regressions and project deletion remain qualified."
+  ],
+  "tests": {
+    "owningIntegration": {
+      "passed": 134,
+      "files": 9
+    },
+    "fullWebUnit": {
+      "passed": 9261,
+      "files": 886
+    },
+    "typecheck": "passed",
+    "lint": "passed",
+    "contracts": "passed",
+    "docsAnd164TableErd": "passed"
+  },
+  "qualificationLimits": [
+    "Uses real PostgreSQL and Git/canonical launch and prompt composition. Scheduler/session boundaries use existing test seams; no live ACP or installed-package qualification is claimed.",
+    "Earlier wrong activity timestamps/HTTP expectation and the deferred worker lacking its required domain_event declaration were fixture errors, not behavior RED.",
+    "A sandbox-denied contract script IPC invocation passed unchanged with required local execution permissions."
+  ],
+  "pending": [
+    "Authorized original-input inspection and native shared workspace/runtime-file source policy.",
+    "Remaining portfolio/activity/export/notification projections and reduction/budget/concurrency/recovery edges; full integration phase checkpoint.",
+    "Native capability activation, real installed companion/live ACP and stand-maintenance pilot."
+  ],
+  "logs": [
+    {
+      "path": "carrier-disclosure-red.log.gz",
+      "uncompressedSha256": "c7630aeab4d7554ffacef6ebc97546420d0867b5c8cb689052627605f9fd916c"
+    },
+    {
+      "path": "ordinary-relaunch-red.log.gz",
+      "uncompressedSha256": "8e1394da0a34993fb0f0389529e3538413c5e1cdad82072b56f61a972a71ad2b"
+    },
+    {
+      "path": "plan-disclosure-red.log.gz",
+      "uncompressedSha256": "78177a5b9bdfc681989b962d00cab90af685b6983fafeae02423d6432f533415"
+    },
+    {
+      "path": "agent-objective-red.log.gz",
+      "uncompressedSha256": "02cd1941f8e1e94700b7a3b5f626c159d50f4f76cf27ec6bb7e6096ceb35b45d"
+    },
+    {
+      "path": "revoked-origin-http-red.log.gz",
+      "uncompressedSha256": "59b3bcdf3d7fd5dd68fdba9c181634f96f97b65ea0502d51dab57a3b13d9702d"
+    },
+    {
+      "path": "owning-integration-green.log.gz",
+      "uncompressedSha256": "2edb3f96177dff8f59e65b0a048581496c27e9797e92cac4568de7d97b07f83a"
+    },
+    {
+      "path": "full-web-unit-green.log.gz",
+      "uncompressedSha256": "839df00968f1645ae975e9724bc03dc71ec92e8bae9ad97e2b35f71338b48d85"
+    },
+    {
+      "path": "typecheck-green.log.gz",
+      "uncompressedSha256": "b0af638847de187e62c72fa799b415737ceb503a586a928f5b0f4122cbadc9e0"
+    },
+    {
+      "path": "contracts-green.log.gz",
+      "uncompressedSha256": "5342412c06b3a1bfaab51d53adf389b6117b87e1853feee2de331f8dd44deade"
+    },
+    {
+      "path": "docs-green.log.gz",
+      "uncompressedSha256": "53249d9d7cfb99572499e4b2918857df71b0c6a64603e317b9db7325e1abf46d"
+    }
+  ]
+}

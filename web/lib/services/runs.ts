@@ -102,6 +102,7 @@ import { parseExecutableStoredFlowManifest } from "@/lib/flows/manifest-parser";
 import { runDirPath } from "@/lib/flows/graph/mutation-check";
 import { assertFlowLaunchable } from "@/lib/flows/launchability-gate";
 import { admitDelegatedChild } from "@/lib/orchestrator/admission";
+import { assertNativeFlowInputBinding } from "@/lib/orchestrator/native-input";
 import { resolveEffectiveFlowRevision } from "@/lib/flows/lifecycle";
 import { runFlow } from "@/lib/flows/runner";
 import { worktreesRoot } from "@/lib/instance-config";
@@ -640,6 +641,18 @@ async function* executeFlowLaunch(
   // classification detail (incl. blocker KEY-N refs) must not leak to
   // callers without project access. AuthzError propagates untouched.
   await ctx.authorize(project.id);
+  const nativeInput = assertNativeFlowInputBinding({
+    taskId: task.id,
+    taskInput: task.delegationSpec?.nativeInput,
+    launchInput: input.delegationSnapshot?.nativeInput,
+    parentRunId: input.parentRunId,
+    carrierTaskId: input.delegationSnapshot?.carrierTaskId,
+    target: input.agentId
+      ? { kind: "agent", id: input.agentId }
+      : input.delegationSnapshot
+        ? { kind: "flow", id: input.delegationSnapshot.flowId }
+        : undefined,
+  });
   const inheritanceSource = membershipSourceForLaunch(input);
   const inheritedRequest = accepted
     ? accepted.settings.relaunchSource?.scheduledRequestSnapshot
@@ -913,6 +926,15 @@ async function* executeFlowLaunch(
     throw new MaisterError(
       "PRECONDITION",
       `flow "${flow.id}" is not enabled for project ${project.slug}`,
+    );
+  }
+  if (nativeInput && input.delegationSnapshot?.flowId !== flow.id) {
+    throw new MaisterError(
+      "PRECONDITION",
+      "Native delegated input cannot be redirected to another Flow",
+      {
+        details: { reason: "native_delegation_input_binding_required" },
+      },
     );
   }
 

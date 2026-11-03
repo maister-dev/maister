@@ -247,6 +247,10 @@ async function agentMayReach(
 // 409 (docs/error-taxonomy.md); a missing executor/supervisor is 503.
 export function httpStatusForExtCode(code: string): number {
   switch (code) {
+    case "UNAUTHENTICATED":
+      return 401;
+    case "UNAUTHORIZED":
+      return 403;
     case "PRECONDITION":
     case "CONFLICT":
       return 409;

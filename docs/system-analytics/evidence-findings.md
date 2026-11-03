@@ -372,3 +372,23 @@ Evidence links name exact record revisions, immutable witnesses and exact run-re
 ### Carrier input boundary
 
 Flow delegation and agent task-mode delegation create shared carrier tasks from model-supplied title/prompt input. The originating run's captured restrictions must govern that input before any shared task, activity, trigger, template or prompt disclosure. Child-run inheritance alone cannot protect an already visible carrier field. This boundary remains unqualified and keeps native capability disabled; required depth-2 Flow cooperation cannot be replaced with a permanent refusal. Existing legacy task/launcher behavior remains the compatibility baseline. No new execution engine or attempt ledger is required.
+
+The native input contract reuses private `tasks.delegation_spec` for queued intent
+and `runs.delegation_snapshot` for the exact execution input. The shared carrier's
+title/prompt contain only the server-resolved target identity. A version-1
+`nativeInput` retains the original title/prompt, source run, source capture
+generation/restrictions, server-resolved professional actor, target kind/identity,
+and canonical content digest. Bounds are 256 title characters, 32,000 prompt
+characters, the existing source restriction limits, and a positive PostgreSQL
+generation. Model-provided actor/authority is never accepted. These JSON additions
+need no new ledger or migration and leave historical absent fields unchanged.
+
+Immediate and deferred launches must bind the exact retained intent to the parent,
+carrier and actual target before effects. An ordinary launch cannot execute the
+public placeholder: missing or mismatched binding refuses with
+`native_delegation_input_binding_required`. Runtime prompt composition reads the
+frozen private input and validates its digest and inclusion in the run's source
+capture. The input snapshot does not grant access; current source/role checks
+still precede dispatch and outward inspection. It cannot enter shared task DTOs,
+activity or board search. This contract does not add a Brain prerequisite to
+cancellation, teardown or project deletion.

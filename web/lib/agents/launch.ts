@@ -18,6 +18,7 @@ import type { ConsensusDraftAdmission } from "@/lib/flows/graph/consensus/admiss
 import type { TasklessAgentFlowCarrierAdmission } from "./carrier-launch-authority";
 import type { TaskLaunchReceipt } from "@/lib/tasks/launch-types";
 import type { TaskLaunchAuditContext } from "@/lib/tasks/launch-intent";
+import type { NativeDelegationInput } from "@/lib/orchestrator/native-input-types";
 
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, stat } from "node:fs/promises";
@@ -220,6 +221,14 @@ export { runnerCatalogEntry } from "@/lib/agents/runner-catalog";
 import { issueAgentRunToken } from "@/lib/agents/tokens";
 import { nativeKnowledgeCaptureAtLaunch } from "@/lib/brain/knowledge-launch-capture";
 import {
+  assertNativeAgentInputBinding,
+  nativeDelegationExecutionInput,
+} from "@/lib/orchestrator/native-input";
+import {
+  flowDelegationSnapshot,
+  resolveDelegatableFlow,
+} from "@/lib/flows/delegatable-flow";
+import {
   assertNativeRunKnowledgeInputs,
   recordNativeRunSources,
 } from "@/lib/brain/knowledge-execution-access";
@@ -357,6 +366,7 @@ export type AgentTriggerSource =
 
 export type LaunchAgentRunInput = {
   agentId: string;
+  nativeInput?: NativeDelegationInput;
   projectId: string;
   taskId?: string | null;
   launchOverrideRunnerId?: string | null;
@@ -1020,6 +1030,12 @@ async function launchAgentDrivenFlowRun(
     ?.requestAtLaunch
     ? await resolveScheduledRequestFlowRevision(_db, flow)
     : undefined;
+  const nativeFlow = input.nativeInput
+    ? await resolveDelegatableFlow(
+        { projectId: input.projectId, flowId: flow.id },
+        _db,
+      )
+    : null;
   let taskId = input.taskId ?? null;
   let carrierAdmission: TasklessAgentFlowCarrierAdmission | null = null;
 
@@ -1081,6 +1097,19 @@ async function launchAgentDrivenFlowRun(
     taskId,
     flowId: flow.id as string,
     agentId: input.agentId,
+      ...(nativeFlow && input.nativeInput
+        ? {
+            parentRunId: input.parentRunId ?? undefined,
+            rootRunId: input.rootRunId ?? undefined,
+            launchMode: input.launchMode,
+            delegationSnapshot: flowDelegationSnapshot(nativeFlow, {
+              carrierTaskId: taskId,
+              mode: "task",
+              runnerOverride: input.launchOverrideRunnerId ?? null,
+              nativeInput: input.nativeInput,
+            }),
+          }
+        : {}),
     agentActivity: buildAgentActivitySnapshot(input.agentId, ctx.effective),
     // Trigger provenance carries the (agent_id, trigger_event_id) dedup claim
     // onto the flow run so an at-least-once redelivery converges to one run.
@@ -1437,6 +1466,26 @@ async function launchAgentRunWithAdmission(
   const launchInput = { ...input, scheduledRequestSnapshot };
   const currentContext =
     acceptedExecution?.runtime ?? (await loadAgentContext(_db, input));
+  const taskIntent = input.taskId
+    ? (
+        await _db
+          .select({ delegationSpec: tasks.delegationSpec })
+          .from(tasks)
+          .where(
+            and(
+              eq(tasks.id, input.taskId),
+              eq(tasks.projectId, input.projectId),
+            ),
+          )
+      )[0]
+    : null;
+  const nativeInput = assertNativeAgentInputBinding({
+    taskId: input.taskId ?? null,
+    taskInput: taskIntent?.delegationSpec?.nativeInput,
+    launchInput: input.nativeInput,
+    parentRunId: input.parentRunId ?? null,
+    agentId: input.agentId,
+  });
   const retryIntent = input.retryClaim
     ? await _db.transaction((tx: ExecutionDb) =>
         assertAgentRetryClaim(tx, input.retryClaim!),
@@ -2119,6 +2168,7 @@ async function launchAgentRunWithAdmission(
         ? {
             agentDefinitionId: input.agentId,
             revisionId: ctx.effective.packageInstallId,
+            ...(nativeInput ? { nativeInput } : {}),
           }
         : null,
       // ADR-165: the launch-time public-result contract, written in the SAME
@@ -2604,6 +2654,27 @@ async function taskContextBlock(
   _db: Db,
   run: Record<string, any>,
 ): Promise<string> {
+  const snapshot = run.delegationSnapshot;
+
+  if (
+    snapshot &&
+    (snapshot.kind === undefined || snapshot.kind === "agent") &&
+    snapshot.nativeInput !== undefined
+  ) {
+    const input = nativeDelegationExecutionInput(snapshot.nativeInput, {
+      parentRunId: run.parentRunId,
+      target: { kind: "agent", id: run.agentId },
+      knowledgeAccess: run.knowledgeAccess,
+    });
+
+    return [
+      "## Delegated objective",
+      input.title,
+      "",
+      input.prompt,
+      ...(run.taskId ? [`Carrier taskId: ${run.taskId}`] : []),
+    ].join("\n");
+  }
   if (!run.taskId) return "";
 
   const rows = await _db

@@ -18,6 +18,7 @@ import { eq } from "drizzle-orm";
 import { taskLaunchFlowAssetsPathForRun } from "@/lib/tasks/launch-flow-assets";
 import { taskLaunchInputForRun } from "@/lib/tasks/launch-execution-input";
 import { MaisterError } from "@/lib/errors";
+import { nativeDelegationExecutionInput } from "@/lib/orchestrator/native-input";
 import { runtimeRoot as configuredRuntimeRoot } from "@/lib/runtime-root";
 import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
 import * as schemaModule from "@/lib/db/schema";
@@ -359,7 +360,7 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
   return {
     // project_id is guaranteed (a flow run always has a project; ADR-097).
     run: { ...run, projectId: requireRunProjectId(run.projectId, runId) },
-    task,
+    task: executionTaskInput(run, task),
     flow,
     manifest,
     executor,
@@ -370,6 +371,29 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
     flowInstallPath,
     execTrust,
   };
+}
+
+/** The private witnessed request is execution input; the shared carrier remains safe metadata. */
+function executionTaskInput(run: RunRow, task: TaskRow): TaskRow {
+  const snapshot = run.delegationSnapshot;
+
+  if (snapshot?.kind !== "flow" || snapshot.nativeInput === undefined)
+    return task;
+  const input = nativeDelegationExecutionInput(snapshot.nativeInput, {
+    parentRunId: run.parentRunId,
+    target: run.sourceAgentId
+      ? { kind: "agent", id: run.sourceAgentId }
+      : { kind: "flow", id: run.flowId! },
+    knowledgeAccess: run.knowledgeAccess,
+  });
+
+  if (snapshot.carrierTaskId !== task.id)
+    throw new MaisterError(
+      "PRECONDITION",
+      "The native Flow input does not match its frozen source and carrier binding",
+    );
+
+  return { ...task, title: input.title, prompt: input.prompt };
 }
 
 // Minimal authorization lookup for read paths that must not parse a stored

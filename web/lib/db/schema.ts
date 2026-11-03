@@ -1,4 +1,5 @@
 import type { CoordinatorChildLaunchContext } from "@/lib/orchestrator/child-launch-context";
+import type { NativeDelegationInput } from "@/lib/orchestrator/native-input-types";
 import type {
   KnowledgeAccessCapture,
   NativeKnowledgeActor,
@@ -2054,6 +2055,7 @@ export type DelegationSnapshot =
       kind?: "agent";
       agentDefinitionId: string;
       revisionId: string;
+      nativeInput?: NativeDelegationInput;
     }
   | {
       kind: "runner";
@@ -2077,6 +2079,7 @@ export type DelegationSnapshot =
   // only.
   | {
       kind: "flow";
+      nativeInput?: NativeDelegationInput;
       flowId: string;
       flowRefId: string;
       flowRevisionId: string;
@@ -2102,6 +2105,7 @@ export type DelegationSnapshot =
 export type TaskDelegationSpec =
   | {
       kind?: "agent";
+      nativeInput?: NativeDelegationInput;
       agentId: string;
       workspace?: "none" | "repo_read" | "worktree";
       runnerOverride?: string;
@@ -2113,6 +2117,7 @@ export type TaskDelegationSpec =
     }
   | {
       kind: "flow";
+      nativeInput?: NativeDelegationInput;
       flowId: string;
       runnerOverride?: string;
     };

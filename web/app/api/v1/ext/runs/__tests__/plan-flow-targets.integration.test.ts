@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
+import { eq } from "drizzle-orm";
 import {
   afterAll,
   afterEach,
@@ -18,6 +19,7 @@ import {
 import { bindQueuedDelegationResponse } from "@/test-support/queued-delegation";
 import {
   countRows,
+  enrollNativeDelegationParent,
   type DelegationSeedCtx,
   planRequest,
   resetDelegationFixture,
@@ -32,6 +34,11 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import { runs, domainEvents } from "@/lib/db/schema";
+import { buildAutoLaunchRunPlanConsumer } from "@/lib/domain-events/auto-launch";
+import { emitDomainEvent } from "@/lib/domain-events/outbox";
+import { resolveEffectiveAgentDefinition } from "@/lib/agents/effective";
+import { buildAgentPrompt } from "@/lib/agents/launch";
 
 // ADR-163 REQ-01/REQ-09/REQ-11/REQ-12/REQ-15 for the `run_plan` entry point.
 
@@ -107,7 +114,10 @@ beforeEach(async () => {
 
   const orchestrator = await seedAgent(ctx, { id: "orchestrator" });
 
-  workerAgentId = await seedAgent(ctx, { id: "worker" });
+  workerAgentId = await seedAgent(ctx, {
+    id: "worker",
+    triggers: ["manual", "domain_event"],
+  });
 
   const task = await seedTask(ctx);
 
@@ -123,6 +133,115 @@ afterEach(() => {
 });
 
 describe("run_plan flow targets (ADR-163)", () => {
+  it("IT-CBE-06 native mixed plans retain source-bound input privately for immediate and queued work", async () => {
+    await enrollNativeDelegationParent(ctx, parentRunId);
+    const privatePrompt =
+      "Private source finding reserved for delegated execution";
+    const privateTitle = "Private diagnostic assertion";
+    const response = await planPost(
+      planRequest(secret, {
+        tasks: [
+          {
+            key: "inspect",
+            target: { flowId: "delegated-flow" },
+            prompt: privatePrompt,
+            title: privateTitle,
+            dependsOn: [],
+          },
+          {
+            key: "diagnose",
+            target: { agentId: workerAgentId },
+            prompt: privatePrompt,
+            title: privateTitle,
+            dependsOn: ["inspect"],
+          },
+        ],
+      }),
+      {},
+    );
+
+    expect(response.status).toBe(202);
+    const result = (await response.json()) as {
+      tasks: { key: string; taskId: string; childRunId?: string }[];
+    };
+
+    for (const item of result.tasks) {
+      const task = (
+        await pool.query(
+          "SELECT title,prompt,delegation_spec FROM tasks WHERE id=$1",
+          [item.taskId],
+        )
+      ).rows[0]!;
+
+      expect(task.title).not.toContain(privateTitle);
+      expect(task.prompt).not.toContain(privatePrompt);
+      expect(task.delegation_spec.nativeInput).toMatchObject({
+        sourceRunId: parentRunId,
+        title: privateTitle,
+        prompt: privatePrompt,
+      });
+      if (item.childRunId) {
+        const child = (
+          await pool.query("SELECT delegation_snapshot FROM runs WHERE id=$1", [
+            item.childRunId,
+          ])
+        ).rows[0]!;
+
+        expect(child.delegation_snapshot.nativeInput).toEqual(
+          task.delegation_spec.nativeInput,
+        );
+      }
+    }
+    const source = result.tasks.find((item) => item.key === "inspect")!;
+    const dependent = result.tasks.find((item) => item.key === "diagnose")!;
+
+    await pool.query(
+      "UPDATE runs SET status='Done',ended_at=now() WHERE id=$1",
+      [source.childRunId],
+    );
+    await emitDomainEvent({
+      db,
+      kind: "run.done",
+      projectId: ctx.projectId,
+      taskId: source.taskId,
+      runId: source.childRunId!,
+      parentRunId,
+      actor: { type: "system", id: null },
+      payload: { runKind: "flow", status: "Done" },
+    });
+    const events = await db
+      .select()
+      .from(domainEvents)
+      .where(eq(domainEvents.runId, source.childRunId!));
+    const consumer = buildAutoLaunchRunPlanConsumer({ db });
+
+    await consumer.handle(events);
+    const [launched] = await db
+      .select()
+      .from(runs)
+      .where(eq(runs.taskId, dependent.taskId));
+
+    expect(launched).toBeDefined();
+    expect(launched!.delegationSnapshot).toMatchObject({
+      nativeInput: { prompt: privatePrompt },
+    });
+    const effective = await resolveEffectiveAgentDefinition(
+      { agentId: workerAgentId, projectId: ctx.projectId },
+      db,
+    );
+
+    expect(await buildAgentPrompt(db, effective.parsed, launched!)).toContain(
+      privatePrompt,
+    );
+    await consumer.handle(events);
+    expect(
+      await db
+        .select({ id: runs.id })
+        .from(runs)
+        .where(eq(runs.taskId, dependent.taskId)),
+    ).toHaveLength(1);
+  });
+
   it("a MIXED agent+flow DAG writes every task, spec, and requires edge in one transaction", async () => {
     const res = await planPost(
       planRequest(secret, {
