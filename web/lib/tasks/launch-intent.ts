@@ -517,23 +517,7 @@ export async function acceptTaskLaunch(
     if (prepared.kind === "prepared")
       return await commitPreparedTaskLaunch(db, prepared);
 
-    return await db.transaction(async (tx) => {
-      await tx.execute(
-        sql`SELECT pg_advisory_xact_lock(1818326382, hashtext(${`${authority.principalKind}:${authority.principalId}:${prepared.projectId}:${authority.operation}:${requestKey}`}))`,
-      );
-      const replay = await replayTaskLaunch(
-        tx,
-        authority,
-        prepared.projectId,
-        requestKey,
-        prepared.payloadDigest,
-      );
-
-      if (!replay) throw launchRefusal("launch_state_changed");
-      await authority.recordSuccessAudit?.(tx, replay);
-
-      return replay;
-    });
+    return await commitTaskLaunchReplay(db, authority, prepared, requestKey);
   } catch (error) {
     const context = {
       taskId: request.taskId,
@@ -552,6 +536,32 @@ export async function acceptTaskLaunch(
       );
     throw error;
   }
+}
+
+/** Replays audit with current access in a short key-scoped transaction. */
+export async function commitTaskLaunchReplay(
+  db: Db,
+  authority: LaunchAcceptanceAuthority,
+  prepared: Extract<TaskLaunchPreparationOutcome, { kind: "replayed" }>,
+  requestKey: string,
+): Promise<TaskLaunchReceipt> {
+  return db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(1818326382, hashtext(${`${authority.principalKind}:${authority.principalId}:${prepared.projectId}:${authority.operation}:${requestKey}`}))`,
+    );
+    const replay = await replayTaskLaunch(
+      tx,
+      authority,
+      prepared.projectId,
+      requestKey,
+      prepared.payloadDigest,
+    );
+
+    if (!replay) throw launchRefusal("launch_state_changed");
+    await authority.recordSuccessAudit?.(tx, replay);
+
+    return replay;
+  });
 }
 
 /** Accept one explicit session action. No client-provided actor, source or flag can create its authority. */
@@ -600,37 +610,47 @@ export async function acceptTokenTaskLaunch(
       );
     throw error;
   }
-  const actorUserId = taskLaunchTokenActorUserId(principal.origin);
 
   return acceptTaskLaunch(
     db,
-    {
-      [launchAuthority]: true,
-      operation: "launch",
-      replacesIntentId: null,
-      expectedStateVersion: null,
-      principalKind: "project_token",
-      principalId: principal.origin.tokenId,
-      actorUserId,
-      launchSource: "api",
-      actor: actorUserId
-        ? { type: "user", id: actorUserId }
-        : principal.origin.agentId
-          ? { type: "agent", id: principal.origin.agentId }
-          : { type: "system", id: null },
-      assertVisibility: (tx, projectId) =>
-        assertTaskLaunchTokenVisibility(tx, principal, projectId),
-      assert: (tx, projectId, actions) =>
-        assertTaskLaunchTokenAuthority(tx, principal, projectId, actions),
-      admit: async (tx, task, settings) => ({
-        ...(await armedAutomaticTaskLaunchBasis(tx, task, settings)),
-        origin: principal.origin,
-      }),
-      recordSuccessAudit: audit?.recordSuccessAudit,
-    },
+    tokenTaskLaunchAuthority(principal, audit),
     request,
     requestKey,
   );
+}
+
+/** A bearer constructor preserves automated admission even when the token has a human owner. */
+export function tokenTaskLaunchAuthority(
+  principal: TokenTaskLaunchPrincipal,
+  audit?: TaskLaunchAuditContext,
+): LaunchAcceptanceAuthority {
+  assertTokenTaskLaunchPrincipal(principal);
+  const actorUserId = taskLaunchTokenActorUserId(principal.origin);
+
+  return {
+    [launchAuthority]: true,
+    operation: "launch",
+    replacesIntentId: null,
+    expectedStateVersion: null,
+    principalKind: "project_token",
+    principalId: principal.origin.tokenId,
+    actorUserId,
+    launchSource: "api",
+    actor: actorUserId
+      ? { type: "user", id: actorUserId }
+      : principal.origin.agentId
+        ? { type: "agent", id: principal.origin.agentId }
+        : { type: "system", id: null },
+    assertVisibility: (tx, projectId) =>
+      assertTaskLaunchTokenVisibility(tx, principal, projectId),
+    assert: (tx, projectId, actions) =>
+      assertTaskLaunchTokenAuthority(tx, principal, projectId, actions),
+    admit: async (tx, task, settings) => ({
+      ...(await armedAutomaticTaskLaunchBasis(tx, task, settings)),
+      origin: principal.origin,
+    }),
+    recordSuccessAudit: audit?.recordSuccessAudit,
+  };
 }
 
 /** Internal constructor; session proof stays opaque even to other launch adapters. */

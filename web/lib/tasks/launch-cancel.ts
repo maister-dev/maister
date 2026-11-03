@@ -2,6 +2,9 @@ import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
 import type { InteractiveTaskLaunchPrincipal } from "./admission-types";
+import type { LaunchAcceptanceAuthority } from "./launch-intent";
+import type { TaskLaunchAuditContext } from "./launch-intent";
+import type { TokenTaskLaunchPrincipal } from "./launch-token";
 import type { TaskLaunchCancelRequest } from "./launch-schema";
 import type {
   TaskLaunchReceipt,
@@ -13,7 +16,11 @@ import { and, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { assertInteractiveTaskLaunchPrincipal } from "./admission-types";
-import { assertTaskLaunchUserAuthority } from "./launch-authority";
+import {
+  interactiveTaskLaunchAuthority,
+  tokenTaskLaunchAuthority,
+} from "./launch-intent";
+import { assertTaskLaunchTokenAuthentication } from "./launch-token";
 import {
   lockTaskLaunchReservation,
   lockTaskLaunchBoundRun,
@@ -22,7 +29,7 @@ import { launchRefusal } from "./launch-resolution";
 import { taskLaunchReceipt } from "./launch-receipt";
 import { taskLaunchCancelBodySchema } from "./launch-schema";
 import { emitTaskLaunchChanged } from "./launch-events";
-import { taskLaunchForUser } from "./launch-access";
+import { taskLaunchForUser, taskLaunchForTokenWrite } from "./launch-access";
 
 import { runs, taskLaunchIntents } from "@/lib/db/schema";
 import { retryDigest } from "@/lib/agents/retry-guards";
@@ -100,40 +107,78 @@ export async function cancelInteractiveTaskLaunch(
   requestKey: string,
 ): Promise<TaskLaunchReceipt> {
   assertInteractiveTaskLaunchPrincipal(principal);
+  const parsed = parseCancellation(request, requestKey);
+  const initial = await taskLaunchForUser(db, intentId, principal.userId);
+
+  return cancelTaskLaunch(
+    db,
+    interactiveTaskLaunchAuthority(principal),
+    initial,
+    parsed,
+    requestKey,
+  );
+}
+
+function parseCancellation(
+  request: TaskLaunchCancelRequest,
+  requestKey: string,
+): TaskLaunchCancelRequest {
   const parsed = taskLaunchCancelBodySchema.safeParse(request);
 
   if (!parsed.success || !requestKey || requestKey.length > 256)
     throw launchRefusal("launch_request_invalid", "CONFIG");
-  const initial = await taskLaunchForUser(db, intentId, principal.userId);
+
+  return parsed.data;
+}
+
+export async function cancelTokenTaskLaunch(
+  db: Db,
+  principal: TokenTaskLaunchPrincipal,
+  intentId: string,
+  request: TaskLaunchCancelRequest,
+  requestKey: string,
+  audit?: TaskLaunchAuditContext,
+): Promise<TaskLaunchReceipt> {
+  await assertTaskLaunchTokenAuthentication(db, principal);
+  const parsed = parseCancellation(request, requestKey);
+  const initial = await taskLaunchForTokenWrite(db, intentId, principal);
+
+  return cancelTaskLaunch(
+    db,
+    tokenTaskLaunchAuthority(principal, audit),
+    initial,
+    parsed,
+    requestKey,
+  );
+}
+
+async function cancelTaskLaunch(
+  db: Db,
+  authority: LaunchAcceptanceAuthority,
+  initial: typeof taskLaunchIntents.$inferSelect,
+  request: TaskLaunchCancelRequest,
+  requestKey: string,
+): Promise<TaskLaunchReceipt> {
+  const intentId = initial.id;
   const actions = requiresLaunchUnattended(
     initial.settingsSnapshot.executionPolicy,
   )
     ? (["launchRun", "launchUnattended"] as const)
     : (["launchRun"] as const);
 
-  await assertTaskLaunchUserAuthority(
-    db,
-    initial.projectId,
-    principal.userId,
-    actions,
-  );
+  await authority.assert(db, initial.projectId, actions);
   const payloadDigest = retryDigest({
     version: 1,
     operation: "cancel",
     intentId,
-    request: parsed.data,
+    request,
   });
   const result = await db.transaction(async (tx) => {
     await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(1818326382, hashtext(${`session_user:${principal.userId}:${initial.projectId}:cancel:${requestKey}`}))`,
+      sql`SELECT pg_advisory_xact_lock(1818326382, hashtext(${`${authority.principalKind}:${authority.principalId}:${initial.projectId}:cancel:${requestKey}`}))`,
     );
     await lockTaskLaunchReservation(tx, initial.taskId);
-    await assertTaskLaunchUserAuthority(
-      tx,
-      initial.projectId,
-      principal.userId,
-      actions,
-    );
+    await authority.assert(tx, initial.projectId, actions);
     await lockTaskLaunchBoundRun(tx, intentId);
     const [intent] = await tx
       .select()
@@ -148,8 +193,8 @@ export async function cancelInteractiveTaskLaunch(
       cancellationReceipt: TaskLaunchCancellationReceipt;
     }>(sql`
       SELECT id,cancellation_receipt AS "cancellationReceipt" FROM task_launch_intents
-      WHERE project_id=${initial.projectId} AND cancellation_receipt->>'principalKind'='session_user'
-        AND cancellation_receipt->>'principalId'=${principal.userId} AND cancellation_receipt->>'requestKey'=${requestKey}`);
+      WHERE project_id=${initial.projectId} AND cancellation_receipt->>'principalKind'=${authority.principalKind}
+        AND cancellation_receipt->>'principalId'=${authority.principalId} AND cancellation_receipt->>'requestKey'=${requestKey}`);
 
     if (replay.rows.length) {
       if (
@@ -158,26 +203,30 @@ export async function cancelInteractiveTaskLaunch(
       )
         throw launchRefusal("launch_request_key_conflict");
       log.info(
-        { intentId, principalKind: "session_user" },
+        { intentId, principalKind: authority.principalKind },
         "task-launch-cancel-replayed",
       );
 
-      return taskLaunchReceipt(intent);
+      const receipt = taskLaunchReceipt(intent);
+
+      await authority.recordSuccessAudit?.(tx, receipt);
+
+      return receipt;
     }
     const time = await tx.execute<{ acceptedAt: string }>(
       sql`SELECT clock_timestamp()::text AS "acceptedAt"`,
     );
     const cancelled = await cancelLockedTaskLaunch(tx, intent, {
-      expectedStateVersion: parsed.data.expectedStateVersion,
-      actor: { type: "user", id: principal.userId },
+      expectedStateVersion: request.expectedStateVersion,
+      actor: authority.actor,
       receipt: {
         version: 1,
-        principalKind: "session_user",
-        principalId: principal.userId,
-        actorUserId: principal.userId,
+        principalKind: authority.principalKind,
+        principalId: authority.principalId,
+        actorUserId: authority.actorUserId,
         requestKey,
         payloadDigest,
-        expectedStateVersion: parsed.data.expectedStateVersion,
+        expectedStateVersion: request.expectedStateVersion,
         cancelledAt: new Date(time.rows[0].acceptedAt).toISOString(),
       },
     });
@@ -191,7 +240,11 @@ export async function cancelInteractiveTaskLaunch(
       "task-launch-cancelled",
     );
 
-    return taskLaunchReceipt(cancelled);
+    const receipt = taskLaunchReceipt(cancelled);
+
+    await authority.recordSuccessAudit?.(tx, receipt);
+
+    return receipt;
   });
 
   return result;

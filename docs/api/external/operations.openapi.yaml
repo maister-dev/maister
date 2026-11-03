@@ -5033,7 +5033,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ExtErrorBody"
         "503":
-          description: No acceptance when storage is unavailable; replay the same key after recovery.
+          description: Intent metadata storage is unavailable; retry the authorized read after recovery.
           content:
             application/json:
               schema:
@@ -5048,7 +5048,8 @@ paths:
         Scope runs:launch for writes, runs:read for metadata. Token scope and live
         owner/project action are rechecked. Automated roots require current accepted ready
         qualification; children require existing bound-parent proof. No body manual/actor/source or
-        copied intent ID grants human authority. Cancel only before dispatch commitment, using exact
+        copied intent ID grants human authority. Cancellation requires current scoped launch authority,
+        without a fresh assessment or automatic arm. Cancel only before dispatch commitment, using exact
         stateVersion and request key. Bound never-dispatched run terminalizes through existing owner
         and arms cleanup; release reservation and wake capacity atomically. A dispatch winner returns
         409 and must use existing Stop.
@@ -5127,7 +5128,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ExtErrorBody"
         "503":
-          description: No acceptance when storage is unavailable; replay the same key after recovery.
+          description:
+            Storage is unavailable. Replay the same key or inspect the intent after recovery; a lost
+            commit acknowledgement may have left a durable cancellation.
           content:
             application/json:
               schema:
@@ -5221,7 +5224,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ExtErrorBody"
         "503":
-          description: No acceptance when storage is unavailable; replay the same key after recovery.
+          description:
+            Storage is unavailable. Replay the same key after recovery; a lost commit acknowledgement
+            may have left a durable successor intent. Do not assume that a new key is safe.
           content:
             application/json:
               schema:

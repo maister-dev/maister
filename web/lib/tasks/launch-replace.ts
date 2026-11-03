@@ -4,6 +4,11 @@ import type { Db } from "@/lib/execution-host/db";
 import type { InteractiveTaskLaunchPrincipal } from "./admission-types";
 import type { TaskLaunchReplaceRequest } from "./launch-schema";
 import type { TaskLaunchReceipt } from "./launch-types";
+import type { TokenTaskLaunchPrincipal } from "./launch-token";
+import type {
+  TaskLaunchAuditContext,
+  LaunchAcceptanceAuthority,
+} from "./launch-intent";
 
 import { eq, sql } from "drizzle-orm";
 import pino from "pino";
@@ -12,6 +17,8 @@ import { launchRefusal } from "./launch-resolution";
 import { taskLaunchReplaceBodySchema } from "./launch-schema";
 import {
   interactiveTaskLaunchAuthority,
+  tokenTaskLaunchAuthority,
+  commitTaskLaunchReplay,
   replayTaskLaunch,
   taskLaunchPayloadDigest,
   prepareTaskLaunchRequest,
@@ -22,7 +29,8 @@ import {
   lockTaskLaunchBoundRun,
 } from "./launch-locks";
 import { cancelLockedTaskLaunch } from "./launch-cancel";
-import { taskLaunchForUser } from "./launch-access";
+import { taskLaunchForUser, taskLaunchForTokenWrite } from "./launch-access";
+import { assertTaskLaunchTokenAuthentication } from "./launch-token";
 
 import { taskLaunchIntents } from "@/lib/db/schema";
 import { assertUpgradeMaintenanceAllows } from "@/lib/maintenance/upgrade-fence";
@@ -33,6 +41,26 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
+export async function replaceTokenTaskLaunch(
+  db: Db,
+  principal: TokenTaskLaunchPrincipal,
+  intentId: string,
+  request: TaskLaunchReplaceRequest,
+  requestKey: string,
+  audit?: TaskLaunchAuditContext,
+): Promise<TaskLaunchReceipt> {
+  await assertTaskLaunchTokenAuthentication(db, principal);
+
+  return replaceTaskLaunch(
+    db,
+    tokenTaskLaunchAuthority(principal, audit),
+    intentId,
+    request,
+    requestKey,
+    () => taskLaunchForTokenWrite(db, intentId, principal),
+  );
+}
+
 export async function replaceInteractiveTaskLaunch(
   db: Db,
   principal: InteractiveTaskLaunchPrincipal,
@@ -40,8 +68,26 @@ export async function replaceInteractiveTaskLaunch(
   request: TaskLaunchReplaceRequest,
   requestKey: string,
 ): Promise<TaskLaunchReceipt> {
+  return replaceTaskLaunch(
+    db,
+    interactiveTaskLaunchAuthority(principal),
+    intentId,
+    request,
+    requestKey,
+    () => taskLaunchForUser(db, intentId, principal.userId),
+  );
+}
+
+async function replaceTaskLaunch(
+  db: Db,
+  principal: LaunchAcceptanceAuthority,
+  intentId: string,
+  request: TaskLaunchReplaceRequest,
+  requestKey: string,
+  loadInitial: () => Promise<typeof taskLaunchIntents.$inferSelect>,
+): Promise<TaskLaunchReceipt> {
   const authority = {
-    ...interactiveTaskLaunchAuthority(principal),
+    ...principal,
     operation: "replace" as const,
     replacesIntentId: intentId,
     expectedStateVersion: request.expectedStateVersion,
@@ -53,7 +99,7 @@ export async function replaceInteractiveTaskLaunch(
   if (!parsed.success || !requestKey || requestKey.length > 256)
     throw launchRefusal("launch_request_invalid", "CONFIG");
   const { expectedStateVersion, ...launch } = parsed.data;
-  const initial = await taskLaunchForUser(db, intentId, principal.userId);
+  const initial = await loadInitial();
   const actions = requiresLaunchUnattended(
     initial.settingsSnapshot.executionPolicy,
   )
@@ -71,11 +117,12 @@ export async function replaceInteractiveTaskLaunch(
     requestKey,
   );
 
-  if (prepared.kind === "replayed") return prepared.receipt;
+  if (prepared.kind === "replayed")
+    return commitTaskLaunchReplay(db, authority, prepared, requestKey);
 
   return db.transaction(async (tx) => {
     await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(1818326382, hashtext(${`session_user:${principal.userId}:${initial.projectId}:replace:${requestKey}`}))`,
+      sql`SELECT pg_advisory_xact_lock(1818326382, hashtext(${`${authority.principalKind}:${authority.principalId}:${initial.projectId}:replace:${requestKey}`}))`,
     );
     await lockTaskLaunchReservation(tx, initial.taskId);
     await authority.assert(tx, initial.projectId, actions);
@@ -87,7 +134,11 @@ export async function replaceInteractiveTaskLaunch(
       payloadDigest,
     );
 
-    if (replay) return replay;
+    if (replay) {
+      await authority.recordSuccessAudit?.(tx, replay);
+
+      return replay;
+    }
     await lockTaskLaunchBoundRun(tx, intentId);
     const [intent] = await tx
       .select()

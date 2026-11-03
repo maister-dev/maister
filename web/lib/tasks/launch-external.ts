@@ -6,7 +6,11 @@ import type {
   ExtOperationContinuation,
 } from "@/lib/tokens/ext-handler";
 import type { TaskLaunchAuditContext } from "./launch-intent";
-import type { TaskLaunchRequest } from "./launch-schema";
+import type {
+  TaskLaunchRequest,
+  TaskLaunchCancelRequest,
+  TaskLaunchReplaceRequest,
+} from "./launch-schema";
 import type { TokenTaskLaunchPrincipal } from "./launch-token";
 import type { TaskLaunchReceipt } from "./launch-types";
 
@@ -15,7 +19,11 @@ import { NextResponse } from "next/server";
 import pino from "pino";
 
 import { readTaskLaunchBody, taskLaunchErrorResponse } from "./launch-http";
-import { taskLaunchBodySchema } from "./launch-schema";
+import {
+  taskLaunchBodySchema,
+  taskLaunchCancelBodySchema,
+  taskLaunchReplaceBodySchema,
+} from "./launch-schema";
 import { tokenTaskLaunchPrincipal } from "./launch-token";
 import { taskLaunchForTokenWrite } from "./launch-access";
 import { taskLaunchReceipt } from "./launch-receipt";
@@ -35,6 +43,11 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
+export type ExternalTaskLaunchOperation = Readonly<{
+  endpoint: string;
+  statusCode: 200 | 202;
+}>;
+
 export async function readExternalTaskLaunchBody(
   request: Request,
 ): Promise<TaskLaunchRequest> {
@@ -46,6 +59,30 @@ export async function readExternalTaskLaunchBody(
     throw new MaisterError("CONFIG", "Task launch body is invalid", {
       details: { reason: "launch_request_invalid" },
     });
+
+  return parsed.data;
+}
+
+export async function readExternalTaskLaunchCancellation(
+  request: Request,
+): Promise<TaskLaunchCancelRequest> {
+  const parsed = taskLaunchCancelBodySchema.safeParse(
+    await readTaskLaunchBody(request),
+  );
+
+  if (!parsed.success) throw launchRefusal("launch_request_invalid", "CONFIG");
+
+  return parsed.data;
+}
+
+export async function readExternalTaskLaunchReplacement(
+  request: Request,
+): Promise<TaskLaunchReplaceRequest> {
+  const parsed = taskLaunchReplaceBodySchema.safeParse(
+    await readTaskLaunchBody(request),
+  );
+
+  if (!parsed.success) throw launchRefusal("launch_request_invalid", "CONFIG");
 
   return parsed.data;
 }
@@ -109,7 +146,7 @@ export async function externalTaskLaunchPrincipal(
 
 export function externalTaskLaunchAudit(
   context: ExtCtx,
-  endpoint: string,
+  contract: ExternalTaskLaunchOperation,
 ): TaskLaunchAuditContext {
   return {
     recordSuccessAudit: async (db, receipt) => {
@@ -126,7 +163,7 @@ export function externalTaskLaunchAudit(
         if (operation.status === "admitted") admittedOperationId = operation.id;
         else if (
           operation.status !== "succeeded" ||
-          operation.result?.statusCode !== 202 ||
+          operation.result?.statusCode !== contract.statusCode ||
           typeof operation.result.body !== "object" ||
           operation.result.body === null ||
           !("intentId" in operation.result.body) ||
@@ -139,15 +176,15 @@ export function externalTaskLaunchAudit(
           ...tokenAuditIdentity(context.actor),
           projectId: context.projectId,
           scopeUsed: "runs:launch",
-          endpoint,
+          endpoint: contract.endpoint,
           method: "POST",
           result: "ok",
-          statusCode: 202,
+          statusCode: contract.statusCode,
           operationId: context.operationId,
           operation: admittedOperationId
             ? {
                 id: admittedOperationId,
-                result: { statusCode: 202, body: receipt },
+                result: { statusCode: contract.statusCode, body: receipt },
               }
             : undefined,
         },
@@ -161,6 +198,7 @@ export function externalTaskLaunchAudit(
 export function externalTaskLaunchContinuation(
   db: Db,
   request: Request,
+  contract: ExternalTaskLaunchOperation,
   work: (context: ExtCtx) => Promise<NextResponse>,
 ): ExtOperationContinuation {
   return {
@@ -189,15 +227,18 @@ export function externalTaskLaunchContinuation(
               throw launchRefusal("launch_not_found", "PRECONDITION");
             const current = taskLaunchReceipt(intent);
 
-            await externalTaskLaunchAudit(
-              context,
-              "POST /api/v1/ext/task-launch-intents",
-            ).recordSuccessAudit(tx, current);
+            await externalTaskLaunchAudit(context, contract).recordSuccessAudit(
+              tx,
+              current,
+            );
 
             return current;
           });
 
-          return externalTaskLaunchReceiptResponse(receipt);
+          return externalTaskLaunchReceiptResponse(
+            receipt,
+            contract.statusCode,
+          );
         } catch (error) {
           return externalTaskLaunchErrorResponse(error);
         }
@@ -232,9 +273,10 @@ export function externalTaskLaunchContinuation(
 
 export function externalTaskLaunchReceiptResponse(
   receipt: TaskLaunchReceipt,
+  statusCode: 200 | 202 = 202,
 ): NextResponse {
   return NextResponse.json(receipt, {
-    status: 202,
+    status: statusCode,
     headers: {
       Location: `/api/v1/ext/task-launch-intents/${receipt.intentId}`,
       "Cache-Control": "no-store",

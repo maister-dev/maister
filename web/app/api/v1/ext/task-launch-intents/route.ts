@@ -16,6 +16,7 @@ import {
 } from "@/lib/tasks/launch-external";
 
 const ENDPOINT = "POST /api/v1/ext/task-launch-intents";
+const CONTRACT = { endpoint: ENDPOINT, statusCode: 202 } as const;
 
 export async function POST(request: Request): Promise<NextResponse> {
   const db = getDb();
@@ -29,7 +30,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         principal,
         body,
         key,
-        externalTaskLaunchAudit(context, ENDPOINT),
+        externalTaskLaunchAudit(context, CONTRACT),
       );
 
       return externalTaskLaunchReceiptResponse(receipt);
@@ -58,7 +59,12 @@ export async function POST(request: Request): Promise<NextResponse> {
           keyMaxLength: 256,
           target: { route: "/api/v1/ext/task-launch-intents" },
           parseBody: readExternalTaskLaunchBody,
-          continuation: externalTaskLaunchContinuation(db, request, accept),
+          continuation: externalTaskLaunchContinuation(
+            db,
+            request,
+            CONTRACT,
+            accept,
+          ),
         },
       },
       accept,

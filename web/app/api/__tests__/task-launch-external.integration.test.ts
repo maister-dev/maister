@@ -6,6 +6,8 @@ import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
 import { POST } from "@/app/api/v1/ext/task-launch-intents/route";
 import { GET } from "@/app/api/v1/ext/task-launch-intents/[intentId]/route";
+import { POST as CANCEL } from "@/app/api/v1/ext/task-launch-intents/[intentId]/cancel/route";
+import { POST as REPLACE } from "@/app/api/v1/ext/task-launch-intents/[intentId]/replace/route";
 import { tasks } from "@/lib/db/schema";
 import { issueToken } from "@/lib/tokens/issue";
 import { issueLibrarianTurnToken } from "@/lib/librarian/authority";
@@ -108,6 +110,245 @@ function read(intentId: string, secret: string): Promise<Response> {
     { params: Promise.resolve({ intentId }) },
   );
 }
+
+it("LA13 a launch-only bearer cancels through the scoped HTTP contract and retains its cancellation audit", async () => {
+  const token = await issueToken(
+    {
+      projectId: fixture.projectId,
+      name: "Cancel intent API",
+      scopes: ["runs:launch"],
+    },
+    database.db,
+  );
+  const body = await input();
+
+  await ready(body.taskId);
+  const accepted = await POST(request(body, token.secret));
+  const receipt = await accepted.json();
+  const params = { params: Promise.resolve({ intentId: receipt.intentId }) };
+  const payload = { expectedStateVersion: receipt.stateVersion };
+  const key = randomUUID();
+  const response = await CANCEL(request(payload, token.secret, key), params);
+  const cancelled = await response.json();
+
+  expect(response.status).toBe(200);
+  expect(cancelled).toMatchObject({
+    intentId: receipt.intentId,
+    basis: "automatic",
+    state: "cancelled",
+  });
+  expect(response.headers.get("location")).toBe(
+    accepted.headers.get("location"),
+  );
+  expect(
+    await (await CANCEL(request(payload, token.secret, key), params)).json(),
+  ).toEqual(cancelled);
+  expect(
+    (
+      await CANCEL(
+        request(
+          { expectedStateVersion: cancelled.stateVersion },
+          token.secret,
+          key,
+        ),
+        params,
+      )
+    ).status,
+  ).toBe(409);
+  const audits = await database.pool.query(
+    "SELECT status_code FROM token_audit_log WHERE token_id=$1 AND endpoint LIKE '%/cancel' ORDER BY created_at",
+    [token.tokenId],
+  );
+
+  expect(
+    audits.rows.map((row: { status_code: number }) => row.status_code),
+  ).toEqual([200, 200, 409]);
+  expect((await read(receipt.intentId, token.secret)).status).toBe(403);
+});
+
+it("LA13 Librarian replace and cancel replay retain their distinct receipts and operation identities", async () => {
+  const turnId = await seedLibrarianTurn(database.db, fixture.userId);
+  const token = await issueLibrarianTurnToken(
+    {
+      ownerUserId: fixture.userId,
+      turnId,
+      scopes: ["runs:launch"],
+      expiresAt: new Date(Date.now() + 60_000),
+    },
+    database.db,
+  );
+  const body = await input();
+
+  await ready(body.taskId);
+  const original = await (await POST(request(body, token.secret))).json();
+  const key = randomUUID();
+  const payload = {
+    ...body,
+    expectedStateVersion: original.stateVersion,
+    autoPromote: true,
+  };
+  const params = { params: Promise.resolve({ intentId: original.intentId }) };
+  const response = await REPLACE(request(payload, token.secret, key), params);
+  const successor = await response.json();
+
+  expect(response.status).toBe(202);
+  expect(successor).toMatchObject({
+    basis: "automatic",
+    state: "queued",
+    supersedesIntentId: original.intentId,
+    snapshot: { autoPromote: true },
+  });
+  expect(successor.intentId).not.toBe(original.intentId);
+  const replay = await REPLACE(request(payload, token.secret, key), params);
+
+  expect(replay.status).toBe(202);
+  expect(replay.headers.get("location")).toBe(response.headers.get("location"));
+  expect(await replay.json()).toEqual(successor);
+  const cancellation = { expectedStateVersion: successor.stateVersion };
+  const cancelKey = randomUUID();
+  const successorParams = {
+    params: Promise.resolve({ intentId: successor.intentId }),
+  };
+  const cancelledResponse = await CANCEL(
+    request(cancellation, token.secret, cancelKey),
+    successorParams,
+  );
+  const cancelled = await cancelledResponse.json();
+
+  expect(cancelledResponse.status).toBe(200);
+  const cancelReplay = await CANCEL(
+    request(cancellation, token.secret, cancelKey),
+    successorParams,
+  );
+
+  expect(cancelReplay.status).toBe(200);
+  expect(cancelReplay.headers.get("cache-control")).toBe("no-store");
+  expect(await cancelReplay.json()).toEqual(cancelled);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT kind,status,result->>'statusCode' AS status_code FROM librarian_operations WHERE turn_id=$1 ORDER BY created_at",
+        [turnId],
+      )
+    ).rows,
+  ).toEqual([
+    { kind: "run_launch", status: "succeeded", status_code: "202" },
+    { kind: "task_launch_replace", status: "succeeded", status_code: "202" },
+    { kind: "task_launch_cancel", status: "succeeded", status_code: "200" },
+  ]);
+});
+
+it("LA13 required mutation audit failures preserve the old intent and allow same-key recovery", async () => {
+  const turnId = await seedLibrarianTurn(database.db, fixture.userId);
+  const token = await issueLibrarianTurnToken(
+    {
+      ownerUserId: fixture.userId,
+      turnId,
+      scopes: ["runs:launch"],
+      expiresAt: new Date(Date.now() + 60_000),
+    },
+    database.db,
+  );
+  const cancelInput = await input();
+  const replaceInput = await input();
+
+  await ready(cancelInput.taskId);
+  await ready(replaceInput.taskId);
+  const cancelIntent = await (
+    await POST(request(cancelInput, token.secret))
+  ).json();
+  const replaceIntent = await (
+    await POST(request(replaceInput, token.secret))
+  ).json();
+  const cancelParams = {
+    params: Promise.resolve({ intentId: cancelIntent.intentId }),
+  };
+  const replaceParams = {
+    params: Promise.resolve({ intentId: replaceIntent.intentId }),
+  };
+  const cancelBody = { expectedStateVersion: cancelIntent.stateVersion };
+  const replaceBody = {
+    ...replaceInput,
+    expectedStateVersion: replaceIntent.stateVersion,
+    autoPromote: true,
+  };
+  const cancelKey = randomUUID();
+  const replaceKey = randomUUID();
+
+  await database.pool.query(
+    `CREATE FUNCTION launch_mutation_audit_fault() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.token_id='${token.tokenId}' AND NEW.result='ok' THEN RAISE EXCEPTION 'fixture mutation audit outage' USING ERRCODE='40001'; END IF; RETURN NEW; END; $$`,
+  );
+  await database.pool.query(
+    "CREATE TRIGGER launch_mutation_audit_fault BEFORE INSERT ON token_audit_log FOR EACH ROW EXECUTE FUNCTION launch_mutation_audit_fault()",
+  );
+  try {
+    expect(
+      (await CANCEL(request(cancelBody, token.secret, cancelKey), cancelParams))
+        .status,
+    ).toBe(503);
+    expect(
+      (
+        await REPLACE(
+          request(replaceBody, token.secret, replaceKey),
+          replaceParams,
+        )
+      ).status,
+    ).toBe(503);
+    const retained = await database.pool.query(
+      "SELECT id,state,state_version,cancellation_receipt FROM task_launch_intents WHERE task_id=ANY($1::text[]) ORDER BY id",
+      [[cancelInput.taskId, replaceInput.taskId]],
+    );
+
+    expect(retained.rows).toHaveLength(2);
+    expect(
+      retained.rows.every(
+        (row: {
+          state: string;
+          state_version: number;
+          cancellation_receipt: unknown;
+        }) =>
+          row.state === "queued" &&
+          row.state_version === 1 &&
+          row.cancellation_receipt === null,
+      ),
+    ).toBe(true);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS n FROM librarian_operations WHERE turn_id=$1 AND status='admitted'",
+          [turnId],
+        )
+      ).rows[0].n,
+    ).toBe(2);
+  } finally {
+    await database.pool.query(
+      "DROP TRIGGER launch_mutation_audit_fault ON token_audit_log",
+    );
+    await database.pool.query("DROP FUNCTION launch_mutation_audit_fault()");
+  }
+  expect(
+    (await CANCEL(request(cancelBody, token.secret, cancelKey), cancelParams))
+      .status,
+  ).toBe(200);
+  const replacement = await REPLACE(
+    request(replaceBody, token.secret, replaceKey),
+    replaceParams,
+  );
+
+  expect(replacement.status).toBe(202);
+  expect(await replacement.json()).toMatchObject({
+    supersedesIntentId: replaceIntent.intentId,
+    basis: "automatic",
+  });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS n FROM librarian_operations WHERE turn_id=$1 AND status='admitted'",
+        [turnId],
+      )
+    ).rows[0].n,
+  ).toBe(0);
+});
 
 it("LA07 external auth precedes validation; bearer metadata cannot forge manual admission", async () => {
   expect((await POST(request({ mode: "manual" }, null))).status).toBe(401);

@@ -25,6 +25,8 @@ import {
   taskLaunchSettingsToken,
 } from "@/lib/tasks/launch-intent";
 import { tokenTaskLaunchPrincipal } from "@/lib/tasks/launch-token";
+import { cancelTokenTaskLaunch } from "@/lib/tasks/launch-cancel";
+import { replaceTokenTaskLaunch } from "@/lib/tasks/launch-replace";
 import { issueToken } from "@/lib/tokens/issue";
 import { recordTokenAudit } from "@/lib/tokens/audit";
 import { MaisterError } from "@/lib/errors";
@@ -677,6 +679,157 @@ it("LA05 refuses an inherited revision-runner default changed after the user pre
       randomUUID(),
     ),
   ).rejects.toMatchObject({ details: { reason: "launch_settings_changed" } });
+});
+
+it("LA13 a scoped bearer cancels a manual intent without triage or borrowing its human admission", async () => {
+  const taskId = await task();
+  const manual = await acceptInteractiveTaskLaunch(
+    database.db,
+    await interactiveTaskLaunchPrincipal(),
+    await request(taskId),
+    randomUUID(),
+  );
+  const token = await issueToken(
+    { projectId, name: "Cancel manual intent", scopes: ["runs:launch"] },
+    database.db,
+  );
+  const principal = await tokenTaskLaunchPrincipal(database.db, token.secret);
+  const key = randomUUID();
+  const cancel = { expectedStateVersion: manual.stateVersion };
+  const cancelled = await cancelTokenTaskLaunch(
+    database.db,
+    principal,
+    manual.intentId,
+    cancel,
+    key,
+  );
+
+  expect(cancelled).toMatchObject({
+    intentId: manual.intentId,
+    state: "cancelled",
+    basis: "manual",
+  });
+  expect(
+    await cancelTokenTaskLaunch(
+      database.db,
+      principal,
+      manual.intentId,
+      cancel,
+      key,
+    ),
+  ).toEqual(cancelled);
+  const [intent] = await database.db
+    .select()
+    .from(taskLaunchIntents)
+    .where(eq(taskLaunchIntents.id, manual.intentId));
+  const [unchanged] = await database.db
+    .select()
+    .from(tasks)
+    .where(eq(tasks.id, taskId));
+
+  expect(intent.cancellationReceipt).toMatchObject({
+    principalKind: "project_token",
+    principalId: token.tokenId,
+    actorUserId: null,
+    requestKey: key,
+  });
+  expect(unchanged).toMatchObject({
+    currentQualificationId: null,
+    launchIntent: "none",
+    triageStatus: "flagged",
+  });
+  await database.pool.query(
+    "UPDATE project_tokens SET scopes='[]'::jsonb WHERE id=$1",
+    [token.tokenId],
+  );
+  await expect(
+    cancelTokenTaskLaunch(database.db, principal, manual.intentId, cancel, key),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+});
+
+it("LA13 a bearer replacement requires fresh automatic admission and preserves manual predecessor history", async () => {
+  const taskId = await task();
+  const input = await request(taskId);
+  const manual = await acceptInteractiveTaskLaunch(
+    database.db,
+    await interactiveTaskLaunchPrincipal(),
+    input,
+    randomUUID(),
+  );
+  const token = await issueToken(
+    { projectId, name: "Replace manual intent", scopes: ["runs:launch"] },
+    database.db,
+  );
+  const principal = await tokenTaskLaunchPrincipal(database.db, token.secret);
+  const key = randomUUID();
+  const replacement = { ...input, expectedStateVersion: manual.stateVersion };
+
+  await expect(
+    replaceTokenTaskLaunch(
+      database.db,
+      principal,
+      manual.intentId,
+      replacement,
+      key,
+    ),
+  ).rejects.toMatchObject({ details: { reason: "qualification_required" } });
+  expect(
+    (
+      await database.db
+        .select()
+        .from(taskLaunchIntents)
+        .where(eq(taskLaunchIntents.id, manual.intentId))
+    )[0].state,
+  ).toBe("queued");
+  await publishReadyQualification(taskId);
+  await database.db
+    .update(tasks)
+    .set({ launchIntent: "triage_then_launch", launchMode: "auto" })
+    .where(eq(tasks.id, taskId));
+  const current = {
+    ...(await request(taskId)),
+    expectedStateVersion: manual.stateVersion,
+  };
+  const successor = await replaceTokenTaskLaunch(
+    database.db,
+    principal,
+    manual.intentId,
+    current,
+    key,
+  );
+
+  expect(successor).toMatchObject({
+    basis: "automatic",
+    state: "queued",
+    supersedesIntentId: manual.intentId,
+  });
+  expect(
+    await replaceTokenTaskLaunch(
+      database.db,
+      principal,
+      manual.intentId,
+      current,
+      key,
+    ),
+  ).toEqual(successor);
+  const [predecessor] = await database.db
+    .select()
+    .from(taskLaunchIntents)
+    .where(eq(taskLaunchIntents.id, manual.intentId));
+  const [accepted] = await database.db
+    .select()
+    .from(taskLaunchIntents)
+    .where(eq(taskLaunchIntents.id, successor.intentId));
+
+  expect(predecessor).toMatchObject({
+    state: "cancelled",
+    basis: { kind: "manual", userId },
+  });
+  expect(accepted).toMatchObject({
+    principalKind: "project_token",
+    principalId: token.tokenId,
+    basis: { kind: "automatic", origin: { tokenId: token.tokenId } },
+  });
 });
 
 it("LA13 commits bearer audit with admission and replays, rolling back both on audit failure", async () => {

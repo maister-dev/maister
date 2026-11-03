@@ -173,6 +173,16 @@ releases its assignment and arms workspace cleanup in that transaction. Physical
 cleanup occurs after commitment through existing cleanup owners. Dispatch
 commitment or any execution command/session witness refuses cancellation.
 
+Bearer cancellation uses current scoped launch authority and records the token
+principal separately from the immutable original admission. It requires no fresh
+assessment or automatic arm. Bearer replacement must acquire a new automatic
+basis; it cannot inherit the predecessor's human authorization. Both mutations
+commit their required audit and Librarian receipt with the state change and use
+the same resumable journal contract as acceptance. Cancellation returns 200 and
+replacement returns 202; their operation keys and retained receipts are distinct.
+An audit outage rolls back cancellation and successor creation, preserving the
+original reservation for same-key recovery.
+
 Read scope remains independent of launch availability: archiving a project
 preserves authorized receipt inspection. A caller without task/intent visibility
 receives the same not-found response as an unknown selector. Cancellation remains
