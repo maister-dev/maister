@@ -24,6 +24,7 @@ import { signInWithCredentials, startRealWeb } from "./real-web";
 import { startSupervisorFaultProxy } from "./supervisor-fault-proxy";
 import { mkdtempReal } from "./worktree-test-root";
 import { holdDatabaseWrite } from "./fault-barriers";
+import { launchFlowThroughHttp } from "./launch-flow-through-http";
 
 import { readLaunchResult } from "@/e2e/_seed/launch-stream";
 
@@ -362,22 +363,12 @@ async function startProductionFaultFixture(
           installedPath: root,
           terminalDelayMs: 0,
         });
-        const response = await api("/api/runs", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ taskId: seeded.taskId }),
+
+        return launchFlowThroughHttp({
+          api,
+          origin: web!.url,
+          taskId: seeded.taskId,
         });
-
-        if (![200, 201, 202].includes(response.status))
-          throw new Error(
-            `flow launch ${response.status}: ${await response.text()}`,
-          );
-        const body = (await response.json()) as { runId?: string; id?: string };
-        const runId = body.runId ?? body.id;
-
-        if (!runId) throw new Error("flow launch omitted run ID");
-
-        return runId;
       },
       async tails(): Promise<{
         web: string;

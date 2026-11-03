@@ -65,6 +65,11 @@ import {
 import { seedAgentRun } from "@/test-support/agent-run-seed";
 import { addWorktree, initRepo } from "@/test-support/git-fixture";
 import { seedGraphRun } from "@/test-support/graph-run-seed";
+import { captureOwnedAdapterProcess } from "@/test-support/capture-supervisor-process-groups";
+import {
+  invocationFromEnvironment,
+  signalInvocationProcess,
+} from "@/test-support/process-invocation";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -320,21 +325,39 @@ afterAll(async () => {
     .filter((driver) => !driver.settled)
     .map((driver) => driver.what);
 
+  const failures: unknown[] = [];
+  const cleanup: ReadonlyArray<() => Promise<unknown>> = [
+    // Release blocked wire operations before joining their worker owners.
+    async () => proxy?.close(),
+    async () => sup?.kill(),
+    stopRuntimeEventConsumers,
+    ...durable.map((worker) => () => worker.stop()),
+    async () => projectionWorker?.stop(),
+    async () => Promise.all(detached.map((driver) => driver.done)),
+    async () => testDatabase?.stop(),
+  ];
+
+  for (const release of cleanup) {
+    try {
+      await release();
+    } catch (error) {
+      failures.push(error);
+    }
+  }
   restoreUrl();
   for (const [key, value] of Object.entries(savedEnv)) {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
   }
-  await stopRuntimeEventConsumers();
-  for (const worker of durable) await worker.stop();
-  await projectionWorker?.stop();
-  await proxy?.close();
-  await sup?.kill();
-  await Promise.all(detached.map((driver) => driver.done));
-  await testDatabase?.stop();
-  expect(unsettled, "a case returned with its driver still running").toEqual(
-    [],
-  );
+  try {
+    expect(unsettled, "a case returned with its driver still running").toEqual(
+      [],
+    );
+  } catch (error) {
+    failures.push(error);
+  }
+  if (failures.length > 0)
+    throw new AggregateError(failures, "Crash-boundary fixture cleanup failed");
 });
 
 async function runRow(runId: string) {
@@ -364,36 +387,44 @@ async function sessionRow(runId: string) {
 }
 
 // The adapter child of the run's host session, from the host's own registry.
-async function adapterPid(runId: string): Promise<number> {
+async function crashAdapter(runId: string): Promise<void> {
   const { hostSessionId } = await sessionRow(runId);
 
-  return adapterPidForSession(hostSessionId);
+  await crashAdapterForSession(hostSessionId, runId);
 }
 
-async function adapterPidForSession(hostSessionId: string): Promise<number> {
-  const rows = (await (await fetch(`${sup.url}/sessions`)).json()) as Array<{
-    sessionId: string;
-    pid: number;
-  }>;
-  const record = rows.find((row) => row.sessionId === hostSessionId);
+async function crashAdapterForSession(
+  hostSessionId: string,
+  runId: string,
+): Promise<void> {
+  const invocation = invocationFromEnvironment();
 
-  if (!record) throw new Error(`no host session ${hostSessionId}`);
+  if (!invocation) throw new Error("Adapter crash requires a test invocation");
+  const captured = await captureOwnedAdapterProcess({
+    invocation,
+    supervisor: sup,
+    sessionId: hostSessionId,
+    expected: { runId },
+  });
 
-  return record.pid;
+  await signalInvocationProcess(invocation, captured.adapter, "SIGKILL");
 }
 
-async function gateAdapterPid(hitl: Record<string, unknown>): Promise<number> {
+async function crashGateAdapter(hitl: Record<string, unknown>): Promise<void> {
   const commandId = (hitl.schema as { flowPrompt: { commandId: string } })
     .flowPrompt.commandId;
   const [command] = await db
-    .select({ targetSessionId: schema.executionCommands.targetSessionId })
+    .select({
+      targetSessionId: schema.executionCommands.targetSessionId,
+      runId: schema.executionCommands.runId,
+    })
     .from(schema.executionCommands)
     .where(eq(schema.executionCommands.id, commandId));
 
   if (!command?.targetSessionId)
     throw new Error(`gate prompt ${commandId} has no target session`);
 
-  return adapterPidForSession(command.targetSessionId);
+  await crashAdapterForSession(command.targetSessionId, command.runId);
 }
 
 async function pendingPermission(runId: string, what: string) {
@@ -424,7 +455,7 @@ async function settleGateRecoveryDriver(
     const open = rows.at(-1);
 
     if (open && !open.respondedAt) {
-      process.kill(await gateAdapterPid(open), "SIGKILL");
+      await crashGateAdapter(open);
       await settled(runId, what);
     }
   }
@@ -696,7 +727,7 @@ describe("the crash boundary with a permission pending (G0, no answer sent)", ()
   it("(i) flow: the adapter child dies under a live host → Crashed (session-crashed), recoverable, row closed; Recover asks again", async () => {
     const { runId, hitl, flow } = await flowOnPermission("flow-sigkill");
 
-    process.kill(await adapterPid(runId), "SIGKILL");
+    await crashAdapter(runId);
     await settled(runId, "flow-sigkill");
     await flow;
     expect(await boundaryState(runId)).toEqual(FLOW_SESSION_CRASHED);
@@ -736,7 +767,7 @@ describe("the crash boundary with a permission pending (G0, no answer sent)", ()
 
     // The resumed driver waits on that fresh permission. End its session the
     // way the case began, so the driver settles before the case returns.
-    process.kill(await adapterPid(runId), "SIGKILL");
+    await crashAdapter(runId);
     await settled(runId, "flow-sigkill: the resumed session dies");
     await resumed;
   }, 240_000);
@@ -745,7 +776,7 @@ describe("the crash boundary with a permission pending (G0, no answer sent)", ()
     const { runId, driver } =
       await launchScratchOnPermission("scratch-sigkill");
 
-    process.kill(await adapterPid(runId), "SIGKILL");
+    await crashAdapter(runId);
     await settled(runId, "scratch-sigkill");
     await driver;
     // The scratch consumer settles the run from the session stream, ahead of
@@ -763,7 +794,7 @@ describe("the crash boundary with a permission pending (G0, no answer sent)", ()
   it("(iii-b) agent: the adapter child dies under a live host → Failed, row closed (D-G3)", async () => {
     const { runId, driver } = await agentOnPermission("agent-sigkill");
 
-    process.kill(await adapterPid(runId), "SIGKILL");
+    await crashAdapter(runId);
     await settled(runId, "agent-sigkill");
     await driver;
     expect(await boundaryState(runId)).toEqual(AGENT_CHILD_KILLED);
@@ -789,7 +820,7 @@ describe("a gate permission park whose adapter dies under a live host (G1)", () 
     );
 
     try {
-      process.kill(await gateAdapterPid(hitl), "SIGKILL");
+      await crashGateAdapter(hitl);
       await held.awaitReached();
       const commandId = (hitl.schema as { flowPrompt: { commandId: string } })
         .flowPrompt.commandId;
@@ -845,7 +876,7 @@ describe("a gate permission park whose adapter dies under a live host (G1)", () 
     await durable[1].stop();
     await durable[0].stop();
     try {
-      process.kill(await gateAdapterPid(hitl), "SIGKILL");
+      await crashGateAdapter(hitl);
       await waitFor(async () => {
         const [command] = await db
           .select()
@@ -912,7 +943,7 @@ describe("a gate permission park whose adapter dies under a live host (G1)", () 
     );
 
     try {
-      process.kill(await gateAdapterPid(hitl), "SIGKILL");
+      await crashGateAdapter(hitl);
       await waitFor(
         async () => (await runRow(runId)).status === "Crashed",
         "gate-sigkill: crashed run",
@@ -1031,7 +1062,7 @@ describe("a gate permission park whose adapter dies under a live host (G1)", () 
     );
 
     try {
-      process.kill(await gateAdapterPid(hitl), "SIGKILL");
+      await crashGateAdapter(hitl);
       await waitFor(
         async () => (await runRow(runId)).status === "Crashed",
         "gate-witness-missing: crashed run",
@@ -1068,7 +1099,7 @@ describe("a gate permission park whose adapter dies under a live host (G1)", () 
     );
 
     try {
-      process.kill(await gateAdapterPid(hitl), "SIGKILL");
+      await crashGateAdapter(hitl);
       await waitFor(
         async () => (await runRow(runId)).status === "Crashed",
         "skill-gate-sigkill: crashed run",
@@ -1096,7 +1127,7 @@ describe("a gate permission park whose adapter dies under a live host (G1)", () 
     );
 
     try {
-      process.kill(await gateAdapterPid(hitl), "SIGKILL");
+      await crashGateAdapter(hitl);
       await waitFor(
         async () => (await runRow(runId)).status === "Crashed",
         "gate-queued-recover: crashed run",
@@ -1194,7 +1225,7 @@ describe("a gate permission park whose adapter dies under a live host (G1)", () 
     );
 
     try {
-      process.kill(await gateAdapterPid(hitl), "SIGKILL");
+      await crashGateAdapter(hitl);
       await waitFor(
         async () => (await runRow(runId)).status === "Crashed",
         "gate-prefix-preserved: crashed run",
@@ -1307,7 +1338,7 @@ describe("an answer to a dead session never fails the run (G1, D-G2)", () => {
     let released = false;
 
     try {
-      process.kill(await adapterPid(runId), "SIGKILL");
+      await crashAdapter(runId);
       await held.awaitReached();
       const response = await answer(runId, hitl.id);
 
@@ -1353,7 +1384,7 @@ describe("an answer to a dead session never fails the run (G1, D-G2)", () => {
     let released = false;
 
     try {
-      process.kill(await adapterPid(runId), "SIGKILL");
+      await crashAdapter(runId);
       await held.awaitReached();
       const response = await answer(runId, hitlId);
 
@@ -1427,7 +1458,7 @@ describe("an answer to a dead session never fails the run (G1, D-G2)", () => {
     expect((await runRow(runId)).status).toBe("NeedsInput");
     expect((await answer(runId, hitl.id)).status).toBe(410);
     // End the dialog so the next case starts clean.
-    process.kill(await adapterPid(runId), "SIGKILL");
+    await crashAdapter(runId);
     await settled(runId, "scratch-not-pending");
     await driver;
   }, 180_000);

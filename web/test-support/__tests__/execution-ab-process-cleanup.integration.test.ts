@@ -1196,6 +1196,8 @@ describe("S5.2 invocation process ownership", () => {
       const ready = await new Promise<{
         supervisorPid: number;
         adapterPid: number;
+        gatePid: number;
+        watchdogPid: number;
         runtimeRoot: string;
       }>((resolve, reject) => {
         parent.once("message", (message) =>
@@ -1203,6 +1205,8 @@ describe("S5.2 invocation process ownership", () => {
             message as {
               supervisorPid: number;
               adapterPid: number;
+              gatePid: number;
+              watchdogPid: number;
               runtimeRoot: string;
             },
           ),
@@ -1221,7 +1225,17 @@ describe("S5.2 invocation process ownership", () => {
       expect(
         before.find((entry) => entry.pid === ready.adapterPid)?.owned,
       ).toBe(true);
-      process.kill(ready.adapterPid, "SIGTERM");
+      const adapter = before.find((entry) => entry.pid === ready.adapterPid);
+      const gate = before.find((entry) => entry.pid === ready.gatePid);
+      const watchdog = before.find((entry) => entry.pid === ready.watchdogPid);
+
+      expect(adapter?.ppid).toBe(ready.gatePid);
+      expect(adapter?.pgid).toBe(ready.gatePid);
+      expect(gate?.ppid).toBe(ready.supervisorPid);
+      expect(watchdog?.owned).toBe(true);
+      if (!adapter)
+        throw new Error("Cleanup fixture adapter identity is absent");
+      await signalInvocationProcess(invocation, adapter, "SIGTERM");
       expect(
         (await readProcessSnapshot(invocation)).find(
           (entry) => entry.pid === ready.adapterPid,

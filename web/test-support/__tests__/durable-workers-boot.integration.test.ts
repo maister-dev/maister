@@ -30,6 +30,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { readLaunchResult } from "@/e2e/_seed/launch-stream";
+import { launchFlowThroughHttp } from "@/test-support/launch-flow-through-http";
 import * as schema from "@/lib/db/schema";
 import {
   startMainAndBrainPostgresTestDb,
@@ -135,25 +136,11 @@ const domains: DomainRow[] = [
     domain: "flow",
     ownerKind: "flow_node_attempt",
     launch: async () => {
-      const res = await api("/api/runs", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ taskId: flowTaskId }),
+      return launchFlowThroughHttp({
+        api,
+        origin: web.url,
+        taskId: flowTaskId,
       });
-
-      if (![200, 201, 202].includes(res.status))
-        throw new Error(
-          `flow launch answered ${res.status}: ${await res.text()}`,
-        );
-      const body = (await res.json()) as { id?: string; runId?: string };
-      const runId = body.runId ?? body.id;
-
-      if (!runId)
-        throw new Error(
-          `flow launch returned no run id: ${JSON.stringify(body)}`,
-        );
-
-      return runId;
     },
     expectedTerminal: async (runId) =>
       ["Review", "Done", "Running"].includes(await runStatus(runId)),

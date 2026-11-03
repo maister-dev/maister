@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -15,6 +14,11 @@ import {
 } from "vitest";
 
 import { readLaunchResult } from "@/e2e/_seed/launch-stream";
+import {
+  readAdapterInvocations,
+  readAdapterPrompts,
+} from "@/test-support/adapter-invocations";
+import { captureOwnedAdapterProcess } from "@/test-support/capture-supervisor-process-groups";
 import { poll } from "@/test-support/durable-workers-ledger";
 import { type DatabaseFaultBarrier } from "@/test-support/fault-barriers";
 import { type StartedPostgresTestDb } from "@/test-support/pg-container";
@@ -26,7 +30,7 @@ import {
 } from "@/test-support/supervisor-fault-proxy";
 import { mkdtempReal } from "@/test-support/worktree-test-root";
 import {
-  processIdentity,
+  signalInvocationProcess,
   invocationFromEnvironment,
 } from "@/test-support/process-invocation";
 import {
@@ -175,12 +179,14 @@ async function assertOneApplication(id: string): Promise<void> {
   );
 
   expect(duplicate.rows[0]?.count).toBe("1");
-  const invocations = (await readFile(adapterLog, "utf8")).trim().split("\n");
+  const invocations = await readAdapterInvocations(adapterLog);
 
-  expect(invocations).toHaveLength(1);
-  expect(JSON.parse(invocations[0]!)).toMatchObject({
-    method: "session/prompt",
-  });
+  expect(
+    invocations.filter((row) => row.method === "session/new"),
+  ).toHaveLength(1);
+  expect(
+    invocations.filter((row) => row.method === "session/prompt"),
+  ).toHaveLength(1);
   const detailResponse = await api(`/api/scratch-runs/${row.run_id}`);
 
   expect(detailResponse.status).toBe(200);
@@ -534,8 +540,13 @@ describe("S5.2 production-boot fault partitions", () => {
       },
       { role: "assistant", content: "next reply" },
     ]);
+    const effects = await readAdapterInvocations(adapterLog);
+
+    expect(effects.filter((row) => row.method === "session/new")).toHaveLength(
+      1,
+    );
     expect(
-      (await readFile(adapterLog, "utf8")).trim().split("\n"),
+      effects.filter((row) => row.method === "session/prompt"),
     ).toHaveLength(2);
     await launched.catch(() => undefined);
     proxy!.assertDrained();
@@ -1102,25 +1113,23 @@ it("P4: delayed checkpoint ACK reaches its original handler after successor epoc
     successorPrompt.release();
     const second = await poll(
       async () => {
-        const rows = (await readFile(stack.adapterLog, "utf8"))
-          .trim()
-          .split("\n");
+        const rows = await readAdapterPrompts(stack.adapterLog);
 
-        return rows.length === 2
-          ? (JSON.parse(rows[1]!) as { pid: number })
-          : null;
+        return rows.length === 2 ? rows[1] : null;
       },
       60_000,
       "successor ACP prompt held",
     );
-    const identity = await processIdentity(
-      invocationFromEnvironment()!,
-      second.pid,
-    );
+    const invocation = invocationFromEnvironment()!;
+    const { adapter } = await captureOwnedAdapterProcess({
+      invocation,
+      supervisor: stack.supervisor,
+      sessionId: successor.hostSessionId!,
+      expected: { runId, assignmentEpoch: 2, acpSessionId: second.sessionId },
+    });
 
-    expect(identity?.owned).toBe(true);
-    expect(identity?.ppid).toBe(stack.supervisor.pid);
-    process.kill(second.pid, "SIGUSR1");
+    expect(adapter.pid).toBe(second.pid);
+    await signalInvocationProcess(invocation, adapter, "SIGUSR1");
     const applied = await poll(
       async () => {
         const result = await stack.database.pool.query<{

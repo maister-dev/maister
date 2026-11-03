@@ -46,6 +46,7 @@ import { prepareFlowPermissionResult } from "@/lib/flows/graph/permission-resume
 import { failCheckpointedFlowPermission } from "@/lib/flows/graph/permission-rejection";
 import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
 import { interruptPermissionInputAcknowledgement } from "@/test-support/permission-ack-fault";
+import { captureOwnedAdapterProcess } from "@/test-support/capture-supervisor-process-groups";
 import { resumeRun } from "@/lib/runs/resume";
 import {
   seedGraphRun,
@@ -705,23 +706,27 @@ describe("Owned Flow completed-command failure handoff", () => {
         expect(beforeSelection.acpSessionId).toBe(incarnation.acpSessionId);
         expect(beforeSelection.pendingPermission).toBeDefined();
         if (publicationBarrier) {
-          const session = (await hosts.transport.listSessions()).find(
-            (candidate) => candidate.sessionId === source.targetSessionId,
-          );
-
-          if (!session || session.acpSessionId !== incarnation.acpSessionId)
+          if (!source.executionAssignmentId)
             throw new Error(
-              "Selected journal publisher has no exact host session",
+              "Selected journal publisher has no exact execution assignment",
             );
-          const [identity] = await findProcessIdentities(invocation, [
-            session.pid,
-          ]);
-
-          if (!identity || !identity.owned || !identity.inspected)
+          if (!incarnation.acpSessionId)
             throw new Error(
-              "Selected journal publisher is not an inspectable owned process",
+              "Selected journal publisher has no exact ACP session",
             );
-          publisher = identity;
+          const captured = await captureOwnedAdapterProcess({
+            invocation,
+            supervisor,
+            sessionId: source.targetSessionId!,
+            expected: {
+              runId: seeded.runId,
+              assignmentId: source.executionAssignmentId,
+              assignmentEpoch: source.assignmentEpoch,
+              acpSessionId: incarnation.acpSessionId,
+            },
+          });
+
+          publisher = captured.adapter;
         }
 
         startRuntimeEventConsumer({

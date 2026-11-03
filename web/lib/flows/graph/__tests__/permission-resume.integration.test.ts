@@ -15,6 +15,11 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { atomicWriteJson } from "@/lib/atomic";
 import { interruptPermissionInputAcknowledgement as interruptPermissionAck } from "@/test-support/permission-ack-fault";
+import { captureOwnedAdapterProcess } from "@/test-support/capture-supervisor-process-groups";
+import {
+  invocationFromEnvironment,
+  signalInvocationProcess,
+} from "@/test-support/process-invocation";
 import {
   domainEvents,
   executionAssignments,
@@ -673,19 +678,22 @@ describe("Owned Flow checkpointed permission resume", () => {
           { timeout: 15_000 },
         )
         .toEqual({ state: "accepted", transportState: "acknowledged" });
-      const sessions = await fetch(`${supervisor.url}/sessions`);
+      const invocation = invocationFromEnvironment();
 
-      expect(sessions.ok).toBe(true);
-      const children = (await sessions.json()) as Array<{
-        sessionId: string;
-        pid: number;
-      }>;
-      const child = children.find(
-        (session) => session.sessionId === resumed.targetSessionId,
-      );
+      if (!invocation)
+        throw new Error("Resumed adapter crash requires a test invocation");
+      const captured = await captureOwnedAdapterProcess({
+        invocation,
+        supervisor,
+        sessionId: resumed.targetSessionId!,
+        expected: {
+          runId: seeded.runId,
+          assignmentId: resumed.executionAssignmentId,
+          assignmentEpoch: resumed.assignmentEpoch,
+        },
+      });
 
-      if (!child) throw new Error("resumed prompt has no live adapter child");
-      process.kill(child.pid, "SIGKILL");
+      await signalInvocationProcess(invocation, captured.adapter, "SIGKILL");
       expect((await fetch(`${supervisor.url}/health`)).ok).toBe(true);
       await expect
         .poll(
