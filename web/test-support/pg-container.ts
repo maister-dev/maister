@@ -24,6 +24,7 @@ import {
 import { migrateTestDatabase } from "./migrate-test-database";
 
 import {
+  declareWriterCapability,
   TASK_QUALIFICATION_WRITER_SETTING,
   TASK_QUALIFICATION_WRITER_CAPABILITY,
 } from "@/lib/db/writer-capability";
@@ -609,6 +610,27 @@ async function readMainMigrationStatements(tag: string): Promise<string[]> {
     .filter((statement) => statement.length > 0);
 }
 
+/** Declare the single existing fixture connection and future pool connections. */
+export async function declareCurrentTestDatabaseWriter(
+  database: StartedPostgresTestDb,
+): Promise<void> {
+  if (
+    database.pool.waitingCount !== 0 ||
+    database.pool.totalCount > 1 ||
+    database.pool.idleCount !== database.pool.totalCount
+  )
+    throw new Error(
+      "Initialize fixture writer capabilities before concurrent pool use",
+    );
+
+  database.pool.on("connect", (client) => {
+    void declareWriterCapability(client).catch((error) =>
+      logger.error({ error }, "test writer declaration failed"),
+    );
+  });
+  await declareWriterCapability(database.pool);
+}
+
 // Apply a single main-lineage migration by tag, one statement at a time. Suits
 // migrations whose statements are self-contained (no cross-statement temp-table
 // or session state) — used to advance a partially-migrated test database across
@@ -697,6 +719,7 @@ export async function startMainAndBrainPostgresTestDb(
   const database = await startBarePostgresTestDb(options);
 
   try {
+    await declareCurrentTestDatabaseWriter(database);
     await migrateTestDatabase(database.pool, {
       migrationsFolder: "./lib/db/migrations",
     });

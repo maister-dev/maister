@@ -582,7 +582,7 @@ describe("brain docs-as-code projection tasks (T12.2)", () => {
     );
   });
 
-  it("stamps projection flow triage and is eligible for auto-launch", async () => {
+  it("configures projection flow without fabricating qualification or launch authority", async () => {
     const flowId = await seedProjectionFlow();
 
     await ctx.db.execute(sql`
@@ -641,7 +641,15 @@ describe("brain docs-as-code projection tasks (T12.2)", () => {
       },
     });
 
-    expect(launchedTaskIds).toEqual([applied.taskId]);
-    expect(promoted.promotedRunId).toBe("projection-run-1");
+    expect(launchedTaskIds).toEqual([]);
+    expect(promoted.promotedRunId).toBeNull();
+    const admission = await ctx.db.execute(sql`
+      SELECT
+        (SELECT count(*)::int FROM task_qualifications WHERE task_id = ${applied.taskId}) AS assessments,
+        (SELECT count(*)::int FROM task_launch_intents WHERE task_id = ${applied.taskId}) AS intents,
+        (SELECT count(*)::int FROM runs WHERE task_id = ${applied.taskId}) AS runs
+    `);
+
+    expect(admission.rows).toEqual([{ assessments: 0, intents: 0, runs: 0 }]);
   });
 });

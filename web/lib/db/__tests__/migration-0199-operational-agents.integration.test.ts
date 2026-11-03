@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { seedProjectRow, seedRun } from "@/test-support/execution-host-seed";
 import {
+  declareCurrentTestDatabaseWriter,
   startMainPostgresTestDbUpTo,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
@@ -59,6 +60,7 @@ beforeAll(async () => {
     ],
   );
   await migrate(database.db, { migrationsFolder: "./lib/db/migrations" });
+  await declareCurrentTestDatabaseWriter(database);
   // Current-writer controls exercise domain guards, not the obsolete-binary floor.
   await database.pool.query("SET maister.agent_preparation_writer='v1'");
 }, 180_000);

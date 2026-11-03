@@ -120,6 +120,7 @@ async function seedTask(
     status: opts.status ?? "Backlog",
     stage: "Backlog",
     triageStatus: opts.triageStatus ?? "triaged",
+    triageFlagOrigin: opts.triageStatus === "flagged" ? "unknown" : null,
   });
 }
 

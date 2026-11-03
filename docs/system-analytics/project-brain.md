@@ -397,8 +397,12 @@ and requires catalog permission. Rejection records a human-authored reason. ADR,
 roadmap, and state projection require the project task-creation gate, create a
 Backlog task with drafted target path/content, link `brain_proposals.task_id`,
 and, when `brain_project_config.projection_flow_id` is set, apply the normal
-triage verdict with `launch_mode='auto'` so the existing scheduler can launch
-it. Brain services never write repo files directly.
+triage routing verdict with `launch_mode='auto'`. This is configuration, not an
+accepted qualification or a manual launch decision. The existing scheduler still
+requires current accepted qualification and the independent automatic-launch
+intent; proposal acceptance cannot fabricate either or grant future execution.
+The normal qualification opt-in/automation or explicit manual Launch workflow
+owns subsequent admission. Brain services never write repo files directly.
 
 ### (j) Serena catalog seed (Implemented — Sub-project C)
 
