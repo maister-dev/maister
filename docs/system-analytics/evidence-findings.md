@@ -236,3 +236,67 @@ New `operational_evidence_v2` carries existing operational outcome/coverage/coun
 - [ADR-204](../decisions.md#adr-204-native-evidence-findings-and-governed-reduction), [Company Brain evidence](company-brain-evidence.md), [cooperation](specialist-cooperation.md), [run results](run-results.md).
 - [Web API](../api/web.openapi.yaml), [external API](../api/external/operations.openapi.yaml), [Flow DSL](../flow-dsl.md).
 - Existing owners: `web/lib/run-results/`, `web/lib/brain/ambient.ts`, `web/lib/flows/graph/run-context.ts`, package result profile/export loaders and `run_collect`.
+
+
+### Reduction and disclosure contract
+
+A native reducer accounts for every finding in the latest **actually collected**
+native result revision of each direct child. It may also name an older collected
+revision explicitly; each named revision then requires complete selection
+accounting. The server-established parent edge and existing write-once collection marker
+are the authority. A generic child result is not upgraded by resembling native
+JSON. More than 256 consumed source findings or selected source identities is an
+explicit bounded-contract refusal. Native reduction input is capped at 4 MiB across the selected result values and capture metadata before bodies are loaded.
+
+Each `(childRunId, resultRevision, findingId)` appears once in the selection
+manifest. An omitted finding has no output IDs and a nonblank reason. A retained
+finding maps to one output with the same assertion and basis. A combined finding
+maps to existing outputs; a changed conclusion is inferred. Output source-finding
+links and non-omitted selection mappings agree in both directions. Every output
+preserves the supporting and contradicting references, limitations, missing
+evidence and open questions of its selected sources. Known version/digest fields
+cannot disappear. A reducer may add evidence or limitations. Resolving an old
+question requires an explicit omission reason and a separately supported finding;
+it cannot silently erase the old source's unresolved information.
+
+The next coordinator names its direct intermediate child; original witnesses
+survive in that child's required evidence closure. Intermediate source-finding
+edges remain inspectable on their exact retained result revisions. A root cannot
+turn this lineage into direct access to a grandchild. An original result reference copied from a selected, actually collected intermediate finding may survive as an opaque reference: the server validates its exact retained revision and version/digest, checks the intermediate's ancestry proof and current original-source access, and does not expose a new collection endpoint or child body. An invented grandchild reference has no such proof and is refused. Stale in-progress rework
+cannot be retained as current work; it can be accounted for as an explicit
+omission. Previously collected superseded revisions remain identifiable.
+
+All outward execution material from an enrolled run uses the run's complete
+server-recorded source union, independently of whether citations were emitted or
+the output contract is native. This includes legacy output text, inline artifact
+locators, transcript pages/downloads, runtime objects, branch/file exports, live
+events, RSC payloads and inspector summaries. Existing project/data-class gates
+still apply. A current receiving user or presented token is required; the
+server-only settlement inspector never substitutes for an outward recipient.
+Legacy runs with NULL capture retain their existing read behavior. Unknown or
+unfinished enrolled capture is explicitly unavailable. Source denial does not
+expose the missing source's content or existence details.
+
+Collection checks the parent recipient before revealing any child material and
+records the child's complete source union on the existing parent capture before
+response bytes. Denial cannot return result values through output text or artifact
+metadata and cannot mark an unserved revision collected. Deferred/streamed
+content rechecks current source authority before each emitted page/chunk; an
+initial admission does not authorize bytes after revocation. No new collection,
+execution or attempt ledger is introduced.
+
+
+Execution read admission batches a page's run classifications and captures in one
+transaction (at most 256 run identities), then authorizes the combined bounded
+source closure. It does not issue one result-body query per run. Source-controlled
+stream wrappers apply backpressure, recheck after each asynchronous read, and
+cancel/release upstream readers on denial or consumer cancellation. They never
+hold PostgreSQL locks while waiting for upstream chunks; deleting a project can
+complete while its stream is open. Company-owned records survive that deletion.
+The next chunk is unavailable because its project/run source no longer exists.
+
+The T15 collection/reduction and protected artifact/transcript/inspector slice is
+implemented behind the existing native capability floor. The engine remains
+3.10.0 until the remaining outward channels, shared-store writes, evidence-link
+presentation, and recovery/performance qualification pass. These implemented
+boundaries do not establish native package or pilot readiness.

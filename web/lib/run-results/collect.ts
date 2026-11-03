@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { KnowledgeAccessCapture } from "@/lib/company/types";
+import type { KnowledgeRecipient } from "@/lib/brain/knowledge-run-disclosure";
 import type { OperationalOutcome } from "@/lib/run-results/operational-types";
 import type { ArtifactLocator } from "@/lib/db/schema";
 import type {
@@ -12,6 +14,11 @@ import type {
 import { and, desc, eq } from "drizzle-orm";
 import pino from "pino";
 
+import {
+  assertRunKnowledgeDisclosure,
+  authorizeRunKnowledgeDisclosure,
+} from "@/lib/brain/knowledge-run-disclosure";
+import { usesStructuredKnowledgeContext } from "@/lib/run-results/contract";
 import { loadOperationalOutcome } from "@/lib/run-results/operational-projection";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
@@ -154,16 +161,23 @@ const SETTLED: ReadonlySet<string> = new Set(SETTLED_RUN_STATUSES);
 export type CollectedChild = {
   result: CollectResult;
   servedResultId: string | null;
+  knowledgeDisclosureRequired?: true;
 };
 
 export async function collectChild(
   db: Db,
-  args: { parentRunId: string; projectId: string; childRunId: string },
+  args: {
+    parentRunId: string;
+    projectId: string;
+    childRunId: string;
+    recipient: KnowledgeRecipient;
+  },
 ): Promise<CollectedChild> {
   const runRows = (await db
     .select({
       status: runs.status,
       resultContract: runs.resultContract,
+      knowledgeAccess: runs.knowledgeAccess,
     })
     .from(runs)
     .where(
@@ -172,7 +186,11 @@ export async function collectChild(
         eq(runs.parentRunId, args.parentRunId),
         eq(runs.projectId, args.projectId),
       ),
-    )) as { status: string; resultContract: RunResultContract | null }[];
+    )) as {
+    status: string;
+    resultContract: RunResultContract | null;
+    knowledgeAccess: KnowledgeAccessCapture | null;
+  }[];
   const run = runRows[0];
 
   if (!run) {
@@ -181,6 +199,11 @@ export async function collectChild(
       "run is not a child of the bound orchestrator run",
     );
   }
+
+  const knowledgeDisclosureRequired = usesStructuredKnowledgeContext(run);
+
+  if (knowledgeDisclosureRequired)
+    await assertRunKnowledgeDisclosure(db, args.recipient, args.childRunId);
 
   const artifactRows = (await db
     .select({
@@ -218,6 +241,9 @@ export async function collectChild(
 
   return {
     servedResultId: servedRow?.id ?? null,
+    ...(knowledgeDisclosureRequired
+      ? { knowledgeDisclosureRequired: true as const }
+      : {}),
     result: {
       operationalOutcome: await loadOperationalOutcome(db, args.childRunId),
       childRunId: args.childRunId,
@@ -303,15 +329,24 @@ export async function directChildRunIds(
 export async function markCollected(
   db: Db,
   collected: readonly CollectedChild[],
+  recipient: KnowledgeRecipient,
 ): Promise<void> {
   const served = collected.filter(
     (c): c is CollectedChild & { servedResultId: string } =>
       c.result.resultStatus === "valid" && c.servedResultId !== null,
   );
 
-  if (served.length === 0) return;
+  const governed = collected.filter((item) => item.knowledgeDisclosureRequired);
+
+  if (served.length === 0 && governed.length === 0) return;
 
   await db.transaction(async (tx: Db) => {
+    for (const item of governed)
+      await authorizeRunKnowledgeDisclosure(
+        tx,
+        recipient,
+        item.result.childRunId,
+      );
     for (const item of served) {
       // Keyed on the SERVED row, not the run: a rework that superseded it and
       // published a new revision between the read above and this write must not

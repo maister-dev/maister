@@ -107,6 +107,7 @@ export async function POST(
               parentRunId,
               projectId: ctx.projectId,
               childRunId: id,
+              recipient: { kind: "token", tokenId: ctx.actor.tokenId },
             }),
           );
         }
@@ -122,7 +123,10 @@ export async function POST(
       // ADR-165 (T7.2 / W6): the marker commits BEFORE the response. A caller
       // that never sees the body simply retries — the read is idempotent and
       // the marker is write-once, so the body is byte-identical either way.
-      await markCollected(db, collected);
+      await markCollected(db, collected, {
+        kind: "token",
+        tokenId: ctx.actor.tokenId,
+      });
 
       // Only the wire DTO leaves the boundary — `servedResultId` is an internal
       // ledger handle the marker needs and a caller must never see.

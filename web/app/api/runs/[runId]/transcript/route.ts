@@ -6,6 +6,8 @@ import pino from "pino";
 import { peekQuery, peekResponse, parsePeekRunId } from "@/lib/runs/peek-http";
 import { readTranscriptPage } from "@/lib/runs/transcript-page";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
+import { assertRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
+import { getDb } from "@/lib/db/client";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { getRunDetail } from "@/lib/queries/run";
@@ -123,7 +125,7 @@ export async function GET(
   }
 
   try {
-    await requireActiveSession();
+    const user = await requireActiveSession();
 
     const detail = await getRunDetail(runId);
 
@@ -132,6 +134,9 @@ export async function GET(
     }
 
     await requireProjectAction(detail.projectId, "readRepoFiles");
+    const recipient = { kind: "user" as const, userId: user.id };
+
+    await assertRunKnowledgeDisclosure(getDb(), recipient, runId);
 
     const nodeId = new URL(req.url).searchParams.get("node");
 
@@ -139,6 +144,8 @@ export async function GET(
     // coalesce the durable events log in memory (no flow-node ledger exists).
     if (!nodeId) {
       const transcript = await getAgentRunTranscript(runId);
+
+      await assertRunKnowledgeDisclosure(getDb(), recipient, runId);
 
       return NextResponse.json({
         messages: transcript.messages,
@@ -171,6 +178,8 @@ export async function GET(
 
     await projectRunTranscript(runId);
     const transcript = await getRunNodeTranscript(runId, nodeId);
+
+    await assertRunKnowledgeDisclosure(getDb(), recipient, runId);
 
     return NextResponse.json({
       compatible: true,

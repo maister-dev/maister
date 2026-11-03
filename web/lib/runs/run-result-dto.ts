@@ -1,10 +1,16 @@
 import "server-only";
 
+import type { KnowledgeRecipient } from "@/lib/brain/knowledge-run-disclosure";
+import type { KnowledgeAccessCapture } from "@/lib/company/types";
+import type { RunResultContract } from "@/lib/run-results/types";
 import type { OperationalOutcome } from "@/lib/run-results/operational-types";
 import type { ResultStatus } from "@/lib/run-results/types";
 
 import { eq } from "drizzle-orm";
 
+import { assertRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
+import { usesStructuredKnowledgeContext } from "@/lib/run-results/contract";
+import { MaisterError } from "@/lib/errors";
 import { loadOperationalOutcome } from "@/lib/run-results/operational-projection";
 import * as schemaModule from "@/lib/db/schema";
 import { deriveResultStatus } from "@/lib/run-results/status";
@@ -51,24 +57,36 @@ export type RunPublicResultDto = {
 export async function loadRunPublicResult(
   db: Db,
   runId: string,
+  recipient?: KnowledgeRecipient,
 ): Promise<RunPublicResultDto | null> {
   const runRows = (await db
     .select({
       status: runs.status,
       resultContract: runs.resultContract,
+      knowledgeAccess: runs.knowledgeAccess,
       promotedHeadSha: runs.promotedHeadSha,
       mergeCommitSha: runs.mergeCommitSha,
     })
     .from(runs)
     .where(eq(runs.id, runId))) as {
     status: string;
-    resultContract: { schemaRef: string; required: boolean } | null;
+    resultContract: RunResultContract | null;
+    knowledgeAccess: KnowledgeAccessCapture | null;
     promotedHeadSha: string | null;
     mergeCommitSha: string | null;
   }[];
   const run = runRows[0];
 
   if (!run) return null;
+  if (usesStructuredKnowledgeContext(run)) {
+    if (!recipient)
+      throw new MaisterError(
+        "CONFIG",
+        "Native execution material requires a current receiving principal",
+        { details: { reason: "native_recipient_required" } },
+      );
+    await assertRunKnowledgeDisclosure(db, recipient, runId);
+  }
 
   const { resolvePublicResult } = await import("@/lib/run-results/ledger");
   const { newest, valid } = await resolvePublicResult(db, runId);

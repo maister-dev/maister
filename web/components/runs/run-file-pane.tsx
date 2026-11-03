@@ -10,6 +10,12 @@ import {
 } from "@/components/workbench/code-view";
 import { FilePaneShell } from "@/components/workbench/file-pane-shell";
 import { requireProjectAction } from "@/lib/authz";
+import { getDb } from "@/lib/db/client";
+import {
+  assertRunKnowledgeDisclosure,
+  isRunKnowledgeUnavailable,
+} from "@/lib/brain/knowledge-run-disclosure";
+import { RunSourceUnavailable } from "@/components/runs/run-source-unavailable";
 import { workbenchMaxFileBytes } from "@/lib/instance-config";
 import { getRunDetail } from "@/lib/queries/run";
 import { readBlob, repoRelPathSchema } from "@/lib/worktree";
@@ -56,7 +62,18 @@ export async function renderRunFilePane({
 
   // Auth BEFORE any read; projectId is server-derived from the run row, never a
   // request field. Mirrors the retired files/content route's gate.
-  await requireProjectAction(detail.projectId, "readRepoFiles");
+  const { user } = await requireProjectAction(
+    detail.projectId,
+    "readRepoFiles",
+  );
+  const recipient = { kind: "user" as const, userId: user.id };
+
+  try {
+    await assertRunKnowledgeDisclosure(getDb(), recipient, runId);
+  } catch (error) {
+    if (isRunKnowledgeUnavailable(error)) return RunSourceUnavailable();
+    throw error;
+  }
 
   if (file === null || detail.agentKind === "operational") {
     return (
@@ -91,6 +108,13 @@ export async function renderRunFilePane({
     path: file,
     maxBytes: workbenchMaxFileBytes(),
   });
+
+  try {
+    await assertRunKnowledgeDisclosure(getDb(), recipient, runId);
+  } catch (error) {
+    if (isRunKnowledgeUnavailable(error)) return RunSourceUnavailable();
+    throw error;
+  }
 
   // Non-empty text gets a copy-to-clipboard header over the viewer (the viewer
   // itself dispatches Markdown -> rich, else -> Shiki source). Binary, empty,

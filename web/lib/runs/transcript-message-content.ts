@@ -6,6 +6,7 @@ import { sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { getDb } from "@/lib/db/client";
+import { protectRunKnowledgeStream } from "@/lib/brain/knowledge-run-disclosure";
 import { MaisterError } from "@/lib/errors";
 import { authorizePeekRun } from "@/lib/runs/peek-read-model";
 
@@ -157,5 +158,14 @@ export async function openTranscriptMessageContent(input: {
     { highWaterMark: 0 },
   );
 
-  return { body, bytes: message.bytes, role: message.role };
+  return {
+    body: await protectRunKnowledgeStream(
+      db,
+      { kind: "user", userId: input.userId },
+      input.runId,
+      body,
+    ),
+    bytes: message.bytes,
+    role: message.role,
+  };
 }

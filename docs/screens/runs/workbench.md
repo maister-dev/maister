@@ -299,9 +299,12 @@ preview and an authorized **Download complete content** action.
 
 Evidence filtering follows the [Evidence viewport contract](../../system-analytics/workbench.md#evidence-viewport-implemented). Transcript controls follow the [transcript viewport contract](../../system-analytics/workbench.md#transcript-viewport-implemented).
 
-## Package 2 presentation (Implemented)
+### Native evidence source access
 
-Results and checks is the primary evidence view. The provenance graph remains available through the same workbench address and preserves existing filters.
-Results show every effective blocker, including a gate recorded before a newer
-check in the same slot. An artifact preview shows up to 64 KiB. When clipped it
-shows plain text, an explicit truncation label and the original download link.
+An execution enrolled in native evidence capture requires current access to all
+retained sources in addition to its project and repository-content permissions.
+When a source disappears or access is revoked, its run detail and file pane show
+the localized source-access notice in English or Russian. Findings, files and
+transcript bytes are withheld. Artifact and transcript requests return a safe
+409; ongoing protected downloads stop before another unauthorized chunk.
+Historical runs with no native capture retain their existing access behavior.

@@ -13,6 +13,10 @@ import {
 } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import {
+  assertRunKnowledgeDisclosure,
+  isRunKnowledgeUnavailable,
+} from "@/lib/brain/knowledge-run-disclosure";
+import {
   executionEvents,
   localPackages,
   projects,
@@ -185,11 +189,14 @@ function canonicalBrowserEvent(
 
 function canonicalRunEventStream(input: {
   req: NextRequest;
+  userId: string;
   run: RunLite;
   replayEvents: boolean;
   replayCursor: bigint | null;
   startedAt: number;
 }): Response {
+  const cancellation = new AbortController();
+  const signal = AbortSignal.any([input.req.signal, cancellation.signal]);
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const encoder = new TextEncoder();
@@ -217,8 +224,15 @@ function canonicalRunEventStream(input: {
       }
 
       try {
-        while (!input.req.signal.aborted) {
+        while (!signal.aborted) {
           const events = await readCanonicalRunEvents(input.run.id, cursor);
+
+          await assertRunKnowledgeDisclosure(
+            getDb(),
+            { kind: "user", userId: input.userId },
+            input.run.id,
+          );
+          if (signal.aborted) break;
 
           for (const event of events) {
             const sequence = event.runSequence;
@@ -250,6 +264,7 @@ function canonicalRunEventStream(input: {
             if (!status || TERMINAL_RUN_STATUS.has(status.status)) break;
           }
           if (Date.now() - lastEventAt > maxQuietMs) {
+            if (signal.aborted) break;
             controller.enqueue(
               encoder.encode(
                 formatSyntheticSseEvent(
@@ -265,16 +280,20 @@ function canonicalRunEventStream(input: {
           // A local wake only reduces latency. The next iteration always
           // replays from the durable sequence, including after a missed wake
           // from another web process or a manager restart.
-          await runEventWakeBus.wait(input.run.id, CANONICAL_WAKE_TIMEOUT_MS);
+          await runEventWakeBus.wait(
+            input.run.id,
+            CANONICAL_WAKE_TIMEOUT_MS,
+            signal,
+          );
         }
       } catch (error) {
         log.warn(
           {
             runId: input.run.id,
-            reason:
-              error instanceof Error
-                ? error.message
-                : "canonical_stream_failure",
+            code: isMaisterError(error) ? error.code : "CRASH",
+            reason: isMaisterError(error)
+              ? error.details?.reason
+              : "canonical_stream_failure",
           },
           "canonical-run-stream-error",
         );
@@ -290,6 +309,9 @@ function canonicalRunEventStream(input: {
           "stream disconnect",
         );
       }
+    },
+    cancel(reason: unknown) {
+      cancellation.abort(reason);
     },
   });
 
@@ -349,9 +371,16 @@ export async function GET(
         requireLock: false,
       });
     }
+    await assertRunKnowledgeDisclosure(
+      getDb(),
+      { kind: "user", userId: sessionUser.id },
+      runId,
+    );
   } catch (err) {
     if (isMaisterError(err)) {
-      const status = httpStatusForAuthz(err.code) ?? 500;
+      const status =
+        httpStatusForAuthz(err.code) ??
+        (isRunKnowledgeUnavailable(err) ? 409 : 500);
 
       return NextResponse.json(
         { code: err.code, message: err.message },
@@ -394,6 +423,7 @@ export async function GET(
 
   return canonicalRunEventStream({
     req,
+    userId: sessionUser.id,
     run,
     replayEvents,
     replayCursor,

@@ -4,6 +4,8 @@ import type { RuntimeObjectWithRun } from "@/lib/execution-host/runtime-objects"
 
 import { requireProjectAction } from "@/lib/authz";
 import { MaisterError } from "@/lib/errors";
+import { getDb } from "@/lib/db/client";
+import { assertRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
 import { assertLocalPackageAssistantActor } from "@/lib/scratch-runs/authorization";
 
 export async function authorizeRuntimeObjectActor(
@@ -12,6 +14,11 @@ export async function authorizeRuntimeObjectActor(
 ): Promise<void> {
   if (loaded.projectId) {
     await requireProjectAction(loaded.projectId, "readBoard");
+    await assertRunKnowledgeDisclosure(
+      getDb(),
+      { kind: "user", userId },
+      loaded.object.runId,
+    );
 
     return;
   }
@@ -25,6 +32,11 @@ export async function authorizeRuntimeObjectActor(
     await assertLocalPackageAssistantActor(loaded, userId, {
       requireLock: false,
     });
+    await assertRunKnowledgeDisclosure(
+      getDb(),
+      { kind: "user", userId },
+      loaded.object.runId,
+    );
   } catch (error) {
     if (!(error instanceof MaisterError) || error.code !== "UNAUTHORIZED") {
       throw error;
@@ -42,6 +54,11 @@ export async function authorizeRuntimeObjectContentActor(
 ): Promise<void> {
   if (loaded.projectId) {
     await requireProjectAction(loaded.projectId, "readRepoFiles");
+    await assertRunKnowledgeDisclosure(
+      getDb(),
+      { kind: "user", userId },
+      loaded.object.runId,
+    );
 
     return;
   }

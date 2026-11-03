@@ -109,6 +109,11 @@ import {
   projectRolesForActions,
 } from "@/lib/authz";
 import { isMaisterError } from "@/lib/errors";
+import {
+  assertRunKnowledgeDisclosure,
+  isRunKnowledgeUnavailable,
+} from "@/lib/brain/knowledge-run-disclosure";
+import { RunSourceUnavailable } from "@/components/runs/run-source-unavailable";
 import { prepareDiff } from "@/lib/diff/prepare";
 import { reposRoot, worktreesRoot } from "@/lib/instance-config";
 import {
@@ -376,6 +381,16 @@ export default async function RunDetailLayout({
 
   // Hide existence from non-members (mirrors the project board page).
   if (!role) notFound();
+  try {
+    await assertRunKnowledgeDisclosure(
+      getDb(),
+      { kind: "user", userId: user.id },
+      runId,
+    );
+  } catch (error) {
+    if (isRunKnowledgeUnavailable(error)) return RunSourceUnavailable();
+    throw error;
+  }
 
   const canAct = role === "owner" || role === "admin" || role === "member";
   // The consensus draft download serves agent output that can quote repository
@@ -420,16 +435,11 @@ export default async function RunDetailLayout({
   // ADR-165 (T8.1/T8.2): the run's own public result, and the labels the panel
   // and the child glyphs share. `null` means "render no panel".
   const tActivity = await getTranslations("agentActivity");
-  const publicResult = await loadRunPublicResult(getDb(), runId);
-  const isOperational =
-    detail.runKind === "agent" && detail.agentKind === "operational";
-  const operational = isOperational
-    ? (publicResult?.operationalOutcome ??
-      (await loadOperationalOutcome(getDb(), runId)))
-    : null;
-  const tOperational = await getTranslations("operationalAgents");
-  const hasOperationalResult =
-    operational?.state === "terminal" || isLiveRunStatus(detail.status);
+  const publicResult = await loadRunPublicResult(getDb(), runId, {
+    kind: "user",
+    userId: user.id,
+  });
+  const operational = publicResult?.operationalOutcome ?? null;
   const resultStatusLabels: Record<ResultStatus, string> = {
     pending: t("publicResultStatusPending"),
     valid: t("publicResultStatusValid"),

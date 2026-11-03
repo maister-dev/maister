@@ -20,6 +20,10 @@ import {
   requireProjectRoleForUser,
 } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
+import {
+  assertRunKnowledgeDisclosure,
+  assertRunsKnowledgeDisclosure,
+} from "@/lib/brain/knowledge-run-disclosure";
 import { runs, workspaces } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { delegationTarget } from "@/lib/queries/run";
@@ -122,6 +126,12 @@ export async function authorizePeekRun(
     )
       throw unavailablePeekRun();
 
+    await assertRunKnowledgeDisclosure(
+      getDb(),
+      { kind: "user", userId },
+      runId,
+    );
+
     return { run, user, canReadTranscript: true };
   }
   try {
@@ -129,6 +139,12 @@ export async function authorizePeekRun(
       userId,
       run.projectId,
       "viewer",
+    );
+
+    await assertRunKnowledgeDisclosure(
+      getDb(),
+      { kind: "user", userId },
+      runId,
     );
 
     return {
@@ -185,6 +201,11 @@ export async function peekPath(
       authorizedProjects.add(row.projectId);
     }
   }
+  await assertRunsKnowledgeDisclosure(
+    getDb(),
+    { kind: "user", userId },
+    path.map((row) => row.id),
+  );
 
   if (anchorIndex < 0) {
     if (chain.rows.some((row) => row.cycle))
@@ -274,6 +295,12 @@ export async function peekSummaries(
   );
   const byId = new Map(rows.rows.map((row) => [row.id, summaryDto(row)]));
 
+  await assertRunsKnowledgeDisclosure(
+    getDb(),
+    { kind: "user", userId: user.id },
+    ids,
+  );
+
   return ids.map((id) => {
     const summary = byId.get(id);
 
@@ -347,6 +374,12 @@ export async function readRunPeekChildren(
     ),
   ]);
   const items = rows.rows.slice(0, limit).map(summaryDto);
+
+  await assertRunsKnowledgeDisclosure(
+    getDb(),
+    { kind: "user", userId },
+    items.map((item) => item.runId),
+  );
   const hasMore = rows.rows.length > limit;
   const last = items.at(-1);
 
@@ -481,7 +514,7 @@ export async function readRunPeekSnapshot(
     });
   const [breadcrumbs, publicResult, workspace, content] = await Promise.all([
     peekSummaries(access.user, path),
-    loadRunPublicResult(getDb(), selectedId),
+    loadRunPublicResult(getDb(), selectedId, { kind: "user", userId }),
     workspaceState(access.run),
     access.run.runKind === "flow"
       ? flowContent(access.run, query.node)

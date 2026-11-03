@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { httpStatusForAuthz, requireActiveSession } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
+import { protectRunKnowledgeStream } from "@/lib/brain/knowledge-run-disclosure";
 import { isMaisterError } from "@/lib/errors";
 import {
   getRuntimeObjectForRun,
@@ -142,7 +143,14 @@ export async function GET(
       "runtime object content served",
     );
 
-    return new Response(content.body, {
+    const body = await protectRunKnowledgeStream(
+      db,
+      { kind: "user", userId: sessionUser.id },
+      runId,
+      content.body,
+    );
+
+    return new Response(body, {
       status: content.contentRange ? 206 : 200,
       headers,
     });

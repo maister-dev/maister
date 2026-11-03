@@ -2022,6 +2022,13 @@ paths:
       tags: [runs]
       summary: (M37 — Implemented) Collect terminal results of orchestrator children
       description: |
+        For enrolled native evidence runs, authorize the current receiving token
+        against every source before any child output text, artifact metadata or
+        result value is returned. Capture the source union on the existing parent
+        run before assembly and recheck before the write-once collection marker
+        and response. Source refusal returns a safe 409 without marking an
+        unserved result collected. The exact served revision is marked even if
+        concurrent rework supersedes or stales it; a newer revision is not marked.
         (M37 — Implemented, ADR-098.) Scope `runs:collect`. Returns
         terminal-result summaries for the calling orchestrator's children. Backs
         the `run_collect` delegation tool. Reads each child's `RunDTO` projection plus

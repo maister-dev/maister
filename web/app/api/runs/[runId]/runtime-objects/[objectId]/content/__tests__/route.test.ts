@@ -11,6 +11,22 @@ import {
 const RUN_ID = "run-runtime-object";
 const OBJECT_ID = "d0b23d15-a3de-49e8-a73f-5e9e96c847cb";
 
+// These route fixtures represent legacy runs; native source policy is exercised with real Postgres in findings-disclosure.integration.test.ts.
+vi.mock("@/lib/brain/knowledge-run-disclosure", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("@/lib/brain/knowledge-run-disclosure")
+  >()),
+  assertRunKnowledgeDisclosure: vi.fn(async () => undefined),
+  protectRunKnowledgeStream: vi.fn(
+    async (
+      _db: unknown,
+      _recipient: unknown,
+      _runId: string,
+      body: ReadableStream<Uint8Array>,
+    ) => body,
+  ),
+}));
+
 vi.mock("@/lib/db/client", () => ({ getDb: () => ({}) }));
 
 vi.mock("@/lib/authz", () => ({
