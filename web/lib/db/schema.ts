@@ -245,6 +245,14 @@ export const companyGrants = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
+    creationKey: text("creation_key"),
+    creationDigest: text("creation_digest"),
+    revocationKey: text("revocation_key"),
+    revocationDigest: text("revocation_digest"),
+    revokedBy: text("revoked_by").references(() => users.id, {
+      onDelete: "restrict",
+    }),
+    revocationReason: text("revocation_reason"),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
   },
   (t) => ({
@@ -253,6 +261,19 @@ export const companyGrants = pgTable(
     )
       .on(t.companyId, t.principalType, t.principalId, t.action)
       .where(sql`${t.revokedAt} IS NULL`),
+    creationRequestAction: uniqueIndex(
+      "company_grants_creation_request_action_unique",
+    )
+      .on(t.companyId, t.createdBy, t.creationKey, t.action)
+      .where(sql`${t.creationKey} IS NOT NULL`),
+    creationReceiptCheck: check(
+      "company_grants_creation_receipt_check",
+      sql`((${t.creationKey} IS NULL AND ${t.creationDigest} IS NULL) OR (length(${t.creationKey}) BETWEEN 8 AND 128 AND ${t.creationDigest} ~ '^[a-f0-9]{64}$')) IS TRUE`,
+    ),
+    revocationReceiptCheck: check(
+      "company_grants_revocation_receipt_check",
+      sql`(((${t.revocationKey} IS NULL AND ${t.revocationDigest} IS NULL AND ${t.revokedBy} IS NULL AND ${t.revocationReason} IS NULL) OR (${t.revokedAt} IS NOT NULL AND ${t.revokedBy} IS NOT NULL AND length(${t.revocationKey}) BETWEEN 8 AND 128 AND ${t.revocationDigest} ~ '^[a-f0-9]{64}$' AND length(${t.revocationReason}) BETWEEN 1 AND 2000 AND ${t.revision}>1)) AND (${t.creationKey} IS NULL OR ${t.revokedAt} IS NULL OR ${t.revocationKey} IS NOT NULL)) IS TRUE`,
+    ),
     principalCheck: check(
       "company_grants_principal_check",
       sql`${t.principalType} IN ('user','agent','system') AND length(${t.principalId}) BETWEEN 1 AND 128`,

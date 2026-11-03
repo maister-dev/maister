@@ -5591,11 +5591,11 @@ paths:
   /api/v1/ext/knowledge/proposals:
     get:
       operationId: knowledgeProposalsList
-      summary: Designed — List authorized native knowledge proposals
-      description: Designed. Requires current knowledge read/review and source restrictions. Only native knowledge
+      summary: List authorized native knowledge proposals
+      description: Requires current knowledge read/review and source restrictions. Only native knowledge
         proposals are returned; existing improvement proposal APIs remain separate. Ownership does not grant
         access.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       x-required-scope: knowledge:read and knowledge:review
       responses:
         "200":
@@ -5648,17 +5648,20 @@ paths:
             type: string
             minLength: 1
             maxLength: 128
+        - name: status
+          in: query
+          schema: {type: string, enum: [pending, accepted, rejected]}
     post:
       operationId: extKnowledgePropose
-      summary: Designed — Propose new knowledge or exact correction
-      description: Designed; no implementation is implied. Requires current knowledge:propose. URL identifiers are
+      summary: Propose new knowledge or exact correction
+      description: Requires current knowledge:propose. URL identifiers are
         untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
         target endpoint and execution ownership are derived from authenticated context/server state. Writes
         compare canonical payload digest and expected revision; exact replay returns the original currently
         accessible receipt, changed payload conflicts. Existing external-handler CONFIG/JSON/schema failures are
         422; PRECONDITION/CONFLICT remain 409. Scope authorization plus required transactional token audit
         apply.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       x-required-scope: knowledge:propose
       requestBody:
         required: true
@@ -5699,15 +5702,15 @@ paths:
   /api/v1/ext/knowledge/proposals/{proposalId}/decision:
     post:
       operationId: extKnowledgeDecide
-      summary: Designed — Accept or reject publication
-      description: Designed; no implementation is implied. Requires current knowledge:review. URL identifiers are
+      summary: Accept or reject publication
+      description: Requires current knowledge:review. URL identifiers are
         untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
         target endpoint and execution ownership are derived from authenticated context/server state. Writes
         compare canonical payload digest and expected revision; exact replay returns the original currently
         accessible receipt, changed payload conflicts. Existing external-handler CONFIG/JSON/schema failures are
         422; PRECONDITION/CONFLICT remain 409. Scope authorization plus required transactional token audit
         apply.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       x-required-scope: knowledge:review
       requestBody:
         required: true
@@ -5750,15 +5753,15 @@ paths:
   /api/v1/ext/knowledge/{recordId}/confirmations:
     post:
       operationId: extKnowledgeConfirm
-      summary: Designed — Confirm or revoke exact assertion
-      description: Designed; no implementation is implied. Requires current knowledge:confirm. URL identifiers are
+      summary: Confirm or revoke exact assertion
+      description: Requires current knowledge:confirm. URL identifiers are
         untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
         target endpoint and execution ownership are derived from authenticated context/server state. Writes
         compare canonical payload digest and expected revision; exact replay returns the original currently
         accessible receipt, changed payload conflicts. Existing external-handler CONFIG/JSON/schema failures are
         422; PRECONDITION/CONFLICT remain 409. Scope authorization plus required transactional token audit
         apply.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       x-required-scope: knowledge:confirm
       requestBody:
         required: true
@@ -6772,11 +6775,11 @@ paths:
   /api/v1/ext/knowledge/proposals/{proposalId}:
     get:
       operationId: knowledgeProposalGet
-      summary: Designed — Inspect a native proposal and its exact publication
-      description: Designed. Current source/owner read is required with review authority, or proposer authority for
+      summary: Inspect a native proposal and its exact publication
+      description: Current source/owner read is required with review authority, or proposer authority for
         the originating principal. Missing and concealed proposals share an existence-safe response. Publication
         record identity and revision are server-recorded.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       x-required-scope: knowledge:read and authorized proposal inspection
       responses:
         "200":
@@ -6872,6 +6875,48 @@ paths:
           in: query
           schema: {type: integer, minimum: 1, maximum: 2147483647}
           description: Exact accepted revision. The record head must still match the authorized conflict cursor.
+  /api/v1/ext/knowledge/witnesses/{witnessId}:
+    get:
+      operationId: extKnowledgeWitnessGet
+      summary: Inspect an authorized retained evidence witness
+      description: Requires current token scope and owner/source read authority. Returns the original witness
+        identity, exact source version, availability and bounded captured excerpt, including before publication.
+        Missing and inaccessible references share an existence-safe refusal. CONFIG/JSON/schema failures are
+        422; PRECONDITION/CONFLICT remain 409. Current scope and transactional token audit apply.
+      x-implementation-status: Implemented
+      x-required-scope: knowledge:read
+      responses:
+        "200":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBEvidenceWitness"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "422":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - projectToken: []
+      parameters:
+        - name: witnessId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: URL selector resolved and authorized against server state; no filesystem path.
 
 components:
   securitySchemes:
@@ -13191,6 +13236,7 @@ components:
                   type: string
                   minLength: 1
                   maxLength: 256
+                  pattern: '^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$'
                 kind:
                   type: string
                   enum:
@@ -13205,6 +13251,7 @@ components:
                   type: string
                   minLength: 1
                   maxLength: 32000
+                  pattern: '^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$'
                 basis:
                   type: string
                   enum:
@@ -13237,6 +13284,7 @@ components:
                         type: string
                         minLength: 1
                         maxLength: 1000
+                        pattern: '^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$'
                   maxItems: 32
                 limitations:
                   type: array
@@ -13244,6 +13292,7 @@ components:
                     type: string
                     minLength: 1
                     maxLength: 1000
+                    pattern: '^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$'
                   maxItems: 32
             - type: object
               additionalProperties: false
@@ -13275,6 +13324,7 @@ components:
                   type: string
                   minLength: 1
                   maxLength: 256
+                  pattern: '^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$'
                 kind:
                   type: string
                   enum:
@@ -13289,6 +13339,7 @@ components:
                   type: string
                   minLength: 1
                   maxLength: 32000
+                  pattern: '^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$'
                 basis:
                   type: string
                   enum:
@@ -13321,6 +13372,7 @@ components:
                         type: string
                         minLength: 1
                         maxLength: 1000
+                        pattern: '^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$'
                   maxItems: 32
                 limitations:
                   type: array
@@ -13328,6 +13380,7 @@ components:
                     type: string
                     minLength: 1
                     maxLength: 1000
+                    pattern: '^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$'
                   maxItems: 32
     CBReceipt:
       type: object
@@ -13385,6 +13438,7 @@ components:
           type: string
           minLength: 1
           maxLength: 2000
+          pattern: '^(?=[\s\S]*\S)(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$'
         idempotencyKey:
           type: string
           minLength: 8
@@ -13420,6 +13474,7 @@ components:
           type: string
           minLength: 1
           maxLength: 2000
+          pattern: '^(?=[\s\S]*\S)(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$'
         idempotencyKey:
           type: string
           minLength: 8
@@ -13758,6 +13813,7 @@ components:
           type: string
           minLength: 1
           maxLength: 2000
+          pattern: '^(?=[\s\S]*\S)(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$'
         idempotencyKey:
           type: string
           minLength: 8
@@ -14877,7 +14933,7 @@ components:
           type: array
           maxItems: 50
           items:
-            $ref: "#/components/schemas/CBKnowledgeProposal"
+            $ref: "#/components/schemas/CBKnowledgeProposalSummary"
         nextCursor:
           type: string
           nullable: true
@@ -14892,6 +14948,7 @@ components:
         - status
         - content
         - attribution
+        - evidence
         - acceptedRecordId
         - acceptedRecordRevision
         - createdAt
@@ -14914,6 +14971,10 @@ components:
             - rejected
         content:
           $ref: "#/components/schemas/CBProposalInput/properties/content"
+        evidence:
+          type: array
+          maxItems: 64
+          items: {$ref: "#/components/schemas/CBRecordEvidenceSummary"}
         attribution:
           $ref: "#/components/schemas/CBActor"
         acceptedRecordId:
@@ -15102,5 +15163,27 @@ components:
           nullable: true
         attribution:
           $ref: "#/components/schemas/CBActor"
+    CBKnowledgeProposalSummary:
+      type: object
+      additionalProperties: false
+      required: [id, owner, revision, status, attribution, acceptedRecordId, acceptedRecordRevision, createdAt, updatedAt, change, title, kind, basis, assertionPreview, assertionTruncated, targetRecordId, expectedRecordRevision]
+      properties:
+        id: {type: string, minLength: 1, maxLength: 128}
+        owner: {$ref: "#/components/schemas/CBOwner"}
+        revision: {type: integer, minimum: 1, maximum: 2147483647}
+        status: {type: string, enum: [pending, accepted, rejected]}
+        attribution: {$ref: "#/components/schemas/CBActor"}
+        acceptedRecordId: {type: string, minLength: 1, maxLength: 128, nullable: true}
+        acceptedRecordRevision: {type: integer, minimum: 1, maximum: 2147483647, nullable: true}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+        change: {type: string, enum: [add, correct]}
+        title: {type: string, minLength: 1, maxLength: 256}
+        kind: {type: string, enum: [assertion, observation, decision, procedure, lesson, state_fact, direction]}
+        basis: {type: string, enum: [observed, inferred, unknown]}
+        assertionPreview: {type: string, maxLength: 1000}
+        assertionTruncated: {type: boolean}
+        targetRecordId: {type: string, minLength: 1, maxLength: 128, nullable: true}
+        expectedRecordRevision: {type: integer, minimum: 1, maximum: 2147483647, nullable: true}
 
 # Scheduled request privacy: runs:read and MCP run_get/run_collect never expose raw scheduled requests or request snapshots. No schedule CRUD scope or tool is added.

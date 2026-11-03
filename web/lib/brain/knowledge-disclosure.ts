@@ -3,6 +3,7 @@ import "server-only";
 import type {
   KnowledgeAccessCapture,
   KnowledgeAccessRestriction,
+  Owner,
 } from "@/lib/company/types";
 import type { KnowledgePrincipal } from "./knowledge-types";
 import type { KnowledgeTransaction } from "./knowledge-access";
@@ -30,6 +31,32 @@ export function canonicalKnowledgeRestrictions(
   );
 
   return [...entries.keys()].sort().map((key) => entries.get(key)!);
+}
+
+/** Destination ownership already supplies its own read gate; narrower record/source dependencies remain. */
+export function additionalKnowledgeRestrictions(
+  owner: Owner,
+  restrictions: readonly KnowledgeAccessRestriction[],
+): KnowledgeAccessRestriction[] {
+  const destination = contentDigest(owner);
+
+  const retained = canonicalKnowledgeRestrictions(
+    restrictions.filter(
+      (restriction) => contentDigest(restriction) !== destination,
+    ),
+  );
+
+  if (
+    !knowledgeRestrictionsSchema.safeParse(retained).success ||
+    Buffer.byteLength(JSON.stringify(retained), "utf8") > 65536
+  )
+    throw new MaisterError(
+      "PRECONDITION",
+      "Inherited knowledge source access exceeds its bounded contract",
+      { details: { reason: "knowledge_capture_limit" } },
+    );
+
+  return retained;
 }
 
 /** Lock the consumer before record/grant reads; concurrent tools cannot upgrade shared run locks. */

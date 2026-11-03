@@ -1,34 +1,69 @@
 import "server-only";
 
 import type { KnowledgePrincipal } from "./knowledge-types";
-import type { KnowledgeTransaction } from "./knowledge-access";
+import type {
+  KnowledgeTransaction,
+  KnowledgeDatabase,
+} from "./knowledge-access";
 import type { KnowledgeAccessWalk } from "./knowledge-restrictions";
 import type { KnowledgeWitnessDto } from "./knowledge-read-types";
 
 import { sql } from "drizzle-orm";
 
-import { knowledgeOwner } from "./knowledge-access";
+import { knowledgeOwner, resolveKnowledgePrincipal } from "./knowledge-access";
+import {
+  lockKnowledgeReadConsumer,
+  recordKnowledgeDisclosure,
+} from "./knowledge-disclosure";
 import {
   authorizeSourceRestrictions,
   parseKnowledgeRestrictions,
   unavailableKnowledgeReference,
+  restrictionsForKnowledgeAccess,
 } from "./knowledge-restrictions";
 import { knowledgeWitnessSchema } from "./knowledge-read-types";
 import { sha256 } from "./codec";
 
 import { MaisterError } from "@/lib/errors";
 import { truncateUtf8 } from "@/lib/utf8";
+import { postgresTextSchema } from "@/lib/text-schema";
+import { redactQueryError } from "@/lib/db/pg-error";
+import { databaseTimestamp as knowledgeTimestamp } from "@/lib/db/timestamp";
 
-export function knowledgeTimestamp(value: unknown): string | null {
-  if (value === null) return null;
-  if (!(value instanceof Date) && typeof value !== "string")
-    throw new MaisterError("CONFIG", "Stored knowledge timestamp is invalid");
-  const parsed = new Date(value);
+export { databaseTimestamp as knowledgeTimestamp } from "@/lib/db/timestamp";
 
-  if (!Number.isFinite(parsed.getTime()))
-    throw new MaisterError("CONFIG", "Stored knowledge timestamp is invalid");
+/** Inspect pending-proposal proof without requiring a published carrier record. */
+export async function getKnowledgeWitness(
+  db: KnowledgeDatabase,
+  principal: KnowledgePrincipal,
+  witnessId: string,
+): Promise<KnowledgeWitnessDto> {
+  if (!postgresTextSchema.min(1).max(128).safeParse(witnessId).success)
+    throw new MaisterError("CONFIG", "Invalid evidence witness identity");
+  try {
+    return await db.transaction(async (tx) => {
+      await tx.execute(sql`SET LOCAL statement_timeout='10s'`);
+      await tx.execute(sql`SET LOCAL lock_timeout='5s'`);
+      const consumer = await lockKnowledgeReadConsumer(tx, principal);
 
-  return parsed.toISOString();
+      await resolveKnowledgePrincipal(tx, principal, "knowledge:read");
+      const inspection = await inspectKnowledgeWitness(
+        tx,
+        principal,
+        witnessId,
+      );
+
+      await recordKnowledgeDisclosure(
+        tx,
+        consumer,
+        restrictionsForKnowledgeAccess(inspection.access),
+      );
+
+      return inspection.witness;
+    });
+  } catch (error) {
+    throw redactQueryError(error);
+  }
 }
 
 /** Return retained capture bytes only after current owner and inherited-source authorization. */

@@ -327,6 +327,14 @@ export const brainProposals = pgTable("brain_proposals", {
   projectId: text("project_id"),
   companyId: text("company_id"),
   revision: integer("revision").notNull().default(1),
+  sourceRestrictions: jsonb("source_restrictions").$type<
+    readonly KnowledgeAccessRestriction[]
+  >(),
+  sourceAclKey: text("source_acl_key")
+    .notNull()
+    .default(
+      "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+    ),
   principalKey: text("principal_key"),
   submissionKey: text("submission_key"),
   requestDigest: text("request_digest"),

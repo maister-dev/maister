@@ -9,6 +9,7 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { seedProjectRow, seedRun } from "@/test-support/execution-host-seed";
 import {
   startMainPostgresTestDb,
+  applyMainMigration,
   startMainPostgresTestDbUpTo,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
@@ -199,6 +200,19 @@ it("IT-CBX-01 populated Brain upgrade preserves honest legacy provenance and pen
       migrationsFolder: "./lib/db/brain-migrations",
       migrationsTable: "__drizzle_brain_migrations",
     });
+    expect(
+      (
+        await legacy.pool.query(
+          "SELECT source_restrictions,source_acl_key FROM brain_proposals WHERE id='legacy-proposal'",
+        )
+      ).rows,
+    ).toEqual([
+      {
+        source_restrictions: null,
+        source_acl_key:
+          "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      },
+    ]);
     const table = await legacy.pool.query<{ present: boolean }>(
       "SELECT to_regclass('public.brain_record_revisions') IS NOT NULL AS present",
     );
@@ -258,3 +272,95 @@ it("IT-CBX-01 populated Brain upgrade preserves honest legacy provenance and pen
     await legacy.stop();
   }
 });
+
+it("IT-CBX-01 company grant receipt migration preserves existing policy without inventing historical delivery or revocation authority", async () => {
+  const legacy = await startMainPostgresTestDbUpTo(
+    { databaseName: "company_grant_upgrade" },
+    "0231_company_knowledge_events",
+  );
+
+  try {
+    const companyId = String(
+      (await legacy.pool.query("SELECT id FROM companies")).rows[0].id,
+    );
+
+    await legacy.pool.query(
+      "INSERT INTO users(id,email,role,account_status) VALUES('existing-policy-author','existing-policy-author@example.test','admin','active')",
+    );
+    await legacy.pool.query(
+      "INSERT INTO company_grants(id,company_id,principal_type,principal_id,action,created_by,revoked_at) VALUES('existing-live-policy',$1,'user','existing-policy-author','knowledge:read','existing-policy-author',NULL),('existing-revoked-policy',$1,'user','existing-policy-author','knowledge:review','existing-policy-author',now())",
+      [companyId],
+    );
+    const before = (
+      await legacy.pool.query(
+        "SELECT to_jsonb(g) AS value FROM company_grants g ORDER BY id",
+      )
+    ).rows.map((row) => row.value);
+
+    await legacy.db.transaction(async (tx) => {
+      await applyMainMigration(tx, "0232_company_grant_requests");
+    });
+    const after = (
+      await legacy.pool.query(
+        "SELECT to_jsonb(g) AS value FROM company_grants g ORDER BY id",
+      )
+    ).rows.map((row) => row.value);
+
+    expect(after).toEqual(
+      before.map((value) => ({
+        ...value,
+        creation_key: null,
+        creation_digest: null,
+        revocation_key: null,
+        revocation_digest: null,
+        revoked_by: null,
+        revocation_reason: null,
+      })),
+    );
+    await expect(
+      legacy.pool.query(
+        "UPDATE company_grants SET principal_id='a-new-principal' WHERE id='existing-live-policy'",
+      ),
+    ).rejects.toMatchObject({
+      code: "23514",
+      constraint: "company_grants_history_immutable",
+    });
+    await expect(
+      legacy.pool.query(
+        "UPDATE company_grants SET revoked_at=NULL WHERE id='existing-revoked-policy'",
+      ),
+    ).rejects.toMatchObject({
+      code: "23514",
+      constraint: "company_grants_history_immutable",
+    });
+    await expect(
+      legacy.pool.query(
+        "INSERT INTO company_grants(company_id,principal_type,principal_id,action,created_by,creation_key) VALUES($1,'user','existing-policy-author','knowledge:propose','existing-policy-author','incomplete_receipt')",
+        [companyId],
+      ),
+    ).rejects.toMatchObject({
+      code: "23514",
+      constraint: "company_grants_creation_receipt_check",
+    });
+    await expect(
+      legacy.pool.query(
+        "UPDATE company_grants SET revoked_at=now(),revision=2,revocation_key='incomplete_revocation' WHERE id='existing-live-policy'",
+      ),
+    ).rejects.toMatchObject({
+      code: "23514",
+      constraint: "company_grants_revocation_receipt_check",
+    });
+    await legacy.pool.query(
+      "UPDATE company_grants SET revoked_at=now() WHERE id='existing-live-policy'",
+    );
+    expect(
+      (
+        await legacy.pool.query(
+          "SELECT revision,revoked_by,revocation_key FROM company_grants WHERE id='existing-live-policy'",
+        )
+      ).rows,
+    ).toEqual([{ revision: 1, revoked_by: null, revocation_key: null }]);
+  } finally {
+    await legacy.stop();
+  }
+}, 180000);

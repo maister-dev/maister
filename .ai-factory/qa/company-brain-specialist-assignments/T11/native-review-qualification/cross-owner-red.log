@@ -1,0 +1,50 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.5 /Users/kaa/.codex/worktrees/2599/mAIster/web
+
+{"level":30,"time":1793667463135,"pid":77509,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793667463186,"pid":77509,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-daemon-contact","outcome":"passed","durationMs":17,"serverVersion":"29.4.2","strategy":"ConfigurationStrategy","msg":"test container daemon contacted"}
+{"level":30,"time":1793667463186,"pid":77509,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"started","msg":"constructing test container runtime client"}
+{"level":30,"time":1793667463196,"pid":77509,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"passed","durationMs":10,"serverVersion":"29.4.2","msg":"test container runtime client ready"}
+{"level":30,"time":1793667463196,"pid":77509,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-create-start","preparationDurationMs":27,"storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"starting owned PostgreSQL container"}
+{"level":30,"time":1793667464077,"pid":77509,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-start","outcome":"passed","durationMs":880,"containerId":"6d88be940459d19fd652ad6b1087edd203a0cc88207bed41a50b425f55c58280","storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"started owned PostgreSQL container"}
+{"level":30,"time":1793667464091,"pid":77509,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"bare","phase":"ready","durationMs":921,"containerId":"6d88be940459d19fd652ad6b1087edd203a0cc88207bed41a50b425f55c58280","endpoint":"postgres://localhost:63906/native_knowledge_http","msg":"started bare test database"}
+{"level":30,"time":1793667464370,"pid":77509,"hostname":"MacBook-Pro-2.local","name":"test-database-migrations","migrationsFolder":"./lib/db/migrations","migrationsTable":"__drizzle_migrations","migrationCount":213,"querySubmissions":6,"durationMs":279,"msg":"applied test database migration lineage"}
+{"level":30,"time":1793667464404,"pid":77509,"hostname":"MacBook-Pro-2.local","name":"test-database-migrations","migrationsFolder":"./lib/db/brain-migrations","migrationsTable":"__drizzle_brain_migrations","migrationCount":10,"querySubmissions":6,"durationMs":34,"msg":"applied test database migration lineage"}
+{"level":30,"time":1793667464404,"pid":77509,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"main+brain","phase":"migrate","endpoint":"postgres://localhost:63906/native_knowledge_http","msg":"applied Brain test database migrations"}
+{"level":30,"time":1793667464687,"pid":77509,"hostname":"MacBook-Pro-2.local","name":"brain:source-capture","ownerKind":"project","ownerId":"446aba53-5f99-4928-87e1-d58f521e444f","sourceId":"0c15c12d-d3b5-467a-bd55-4187ee23c78c","witnessId":"db76fa57-62f3-453c-9d56-a9e2f05ea82c","bytes":63,"duplicate":false,"msg":"source capture retained"}
+{"level":30,"time":1793667464890,"pid":77509,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"stop","durationMs":196,"containerId":"6d88be940459d19fd652ad6b1087edd203a0cc88207bed41a50b425f55c58280","endpoint":"postgres://localhost:63906/native_knowledge_http","msg":"stopped test database"}
+ ❯ |integration| app/api/knowledge/__tests__/knowledge.integration.test.ts (9 tests | 1 failed | 8 skipped) 1725ms
+   × IT-CBE-06 cross-owner proposal evidence inherits current source access and never obstructs source-project deletion 20ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |integration| app/api/knowledge/__tests__/knowledge.integration.test.ts > IT-CBE-06 cross-owner proposal evidence inherits current source access and never obstructs source-project deletion
+MaisterError: Cross-owner evidence requires inherited source restrictions
+ ❯ evidenceLinks lib/brain/knowledge-proposals.ts:209:13
+    207|
+    208|     if (contentDigest(knowledgeOwner(row)) !== contentDigest(owner))
+    209|       throw new MaisterError(
+       |             ^
+    210|         "PRECONDITION",
+    211|         "Cross-owner evidence requires inherited source restrictions",
+ ❯ lib/brain/knowledge-proposals.ts:347:7
+ ❯ NodePgSession.transaction ../node_modules/.pnpm/drizzle-orm@0.45.4_@opentelemetry+api@1.10.0_@types+pg@8.23.1_pg@8.23.1/node_modules/src/node-postgres/session.ts:259:19
+ ❯ createKnowledgeProposal lib/brain/knowledge-proposals.ts:320:12
+ ❯ app/api/knowledge/__tests__/knowledge.integration.test.ts:1093:20
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 8 skipped (9)
+   Start at  03:57:42
+   Duration  2.24s (tests 79%, import 16%, transform 4%)

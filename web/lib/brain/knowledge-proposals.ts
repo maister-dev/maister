@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { Owner } from "@/lib/company/types";
+import type { KnowledgeAccessRestriction, Owner } from "@/lib/company/types";
 import type { KnowledgeAttribution } from "./record-types";
 import type {
   CreateKnowledgeProposalInput,
@@ -28,7 +28,23 @@ import {
   knowledgeRevisionSchema,
 } from "./knowledge-types";
 import { sha256 } from "./codec";
+import {
+  knowledgeProposalDecisionSchema,
+  knowledgeConfirmationInputSchema,
+} from "./knowledge-write-types";
+import { inspectKnowledgeWitness } from "./knowledge-witnesses";
+import {
+  additionalKnowledgeRestrictions,
+  lockKnowledgeReadConsumer,
+} from "./knowledge-disclosure";
+import {
+  authorizeKnowledgeRecordRead,
+  authorizeSourceRestrictions,
+  parseKnowledgeRestrictions,
+  authorizeKnowledgeRevisionRead,
+} from "./knowledge-restrictions";
 
+import { postgresTextSchema } from "@/lib/text-schema";
 import { ownerSchema } from "@/lib/company/types";
 import { contentDigest } from "@/lib/evaluations/digest";
 import { MaisterError } from "@/lib/errors";
@@ -115,6 +131,7 @@ async function recordAccess(
       "Knowledge reference is unavailable",
       { details: { reason: "knowledge_reference_unavailable" } },
     );
+  await authorizeKnowledgeRecordRead(tx, principal, recordId);
   const authority = await authorizeKnowledge(
     tx,
     principal,
@@ -158,27 +175,8 @@ async function witness(
       "Evidence reference is unavailable",
       { details: { reason: "knowledge_reference_unavailable" } },
     );
-  await authorizeKnowledge(
-    tx,
-    principal,
-    knowledgeOwner(row),
-    "knowledge:read",
-  );
-  if (!Array.isArray(row.restrictions))
-    throw new MaisterError(
-      "CONFIG",
-      "Stored evidence restrictions are invalid",
-    );
-  for (const restriction of row.restrictions) {
-    const parsed = ownerSchema.safeParse(restriction);
-
-    if (!parsed.success)
-      throw new MaisterError(
-        "PRECONDITION",
-        "Evidence has an unsupported access restriction",
-      );
-    await authorizeKnowledge(tx, principal, parsed.data, "knowledge:read");
-  }
+  await authorizeSourceRestrictions(tx, principal, [knowledgeOwner(row)]);
+  await authorizeSourceRestrictions(tx, principal, row.restrictions);
 
   return row;
 }
@@ -205,12 +203,6 @@ async function evidenceLinks(
       );
     const row = await witness(tx, principal, entry.reference.id);
 
-    if (contentDigest(knowledgeOwner(row)) !== contentDigest(owner))
-      throw new MaisterError(
-        "PRECONDITION",
-        "Cross-owner evidence requires inherited source restrictions",
-        { details: { reason: "cross_owner_evidence_requires_capture" } },
-      );
     if (
       (entry.reference.sha256 !== undefined &&
         entry.reference.sha256 !== row.content_sha256) ||
@@ -230,7 +222,10 @@ async function evidenceLinks(
         sourceVersion: row.source_version,
         sha256: row.content_sha256,
         selector: row.selector,
-        restrictions: row.restrictions,
+        restrictions: additionalKnowledgeRestrictions(owner, [
+          knowledgeOwner(row),
+          ...(parseKnowledgeRestrictions(row.restrictions) ?? []),
+        ]),
       },
     });
   }
@@ -289,9 +284,8 @@ export async function createKnowledgeProposal(
     );
   if (input.kind === "knowledge_correct") {
     if (
-      typeof input.targetRecordId !== "string" ||
-      input.targetRecordId.length === 0 ||
-      input.targetRecordId.length > 128 ||
+      !postgresTextSchema.min(1).max(128).safeParse(input.targetRecordId)
+        .success ||
       !knowledgeRevisionSchema.safeParse(input.expectedRecordRevision).success
     )
       throw new MaisterError(
@@ -318,6 +312,9 @@ export async function createKnowledgeProposal(
 
   try {
     return await db.transaction(async (tx) => {
+      await tx.execute(sql`SET LOCAL statement_timeout='10s'`);
+      await tx.execute(sql`SET LOCAL lock_timeout='5s'`);
+      const consumer = await lockKnowledgeReadConsumer(tx, input.principal);
       const authority = await authorizeKnowledge(
         tx,
         input.principal,
@@ -344,11 +341,63 @@ export async function createKnowledgeProposal(
           "CONFLICT",
           "Knowledge delivery key already names different input",
         );
-      await evidenceLinks(tx, input.principal, draft, owner.data);
+      const links = await evidenceLinks(tx, input.principal, draft, owner.data);
+      let restrictions = additionalKnowledgeRestrictions(owner.data, [
+        ...(consumer?.capture.restrictions ?? []),
+        ...links.flatMap(
+          (link) =>
+            parseKnowledgeRestrictions(link.snapshot.restrictions) ?? [],
+        ),
+      ]);
+
+      if (prior)
+        await authorizeSourceRestrictions(
+          tx,
+          input.principal,
+          prior.source_restrictions,
+        );
       if (prior) return replayedReceipt(prior);
+      let correctionHead: number | null = null;
+
+      if (input.targetRecordId !== undefined) {
+        const target = await recordAccess(
+          tx,
+          input.principal,
+          input.targetRecordId,
+          "knowledge:propose",
+        );
+
+        await authorizeKnowledgeRevisionRead(
+          tx,
+          input.principal,
+          input.targetRecordId,
+          input.expectedRecordRevision!,
+        );
+        const base = (
+          await tx.execute(
+            sql`SELECT source_restrictions FROM brain_record_revisions WHERE record_id=${input.targetRecordId} AND revision=${input.expectedRecordRevision!}`,
+          )
+        ).rows[0];
+
+        if (
+          contentDigest(knowledgeOwner(target.row)) !==
+          contentDigest(owner.data)
+        )
+          throw new MaisterError(
+            "CONFLICT",
+            "Knowledge correction owner does not match its record",
+          );
+        correctionHead = Number(target.row.current_revision);
+        restrictions = additionalKnowledgeRestrictions(owner.data, [
+          ...restrictions,
+          ...(parseKnowledgeRestrictions(base.source_restrictions) ?? []),
+          { kind: "record", recordId: input.targetRecordId },
+        ]);
+      }
+      await authorizeSourceRestrictions(tx, input.principal, restrictions);
       const identical = (
         await tx.execute(
-          sql`SELECT * FROM brain_proposals WHERE project_id IS NOT DISTINCT FROM ${owner.data.kind === "project" ? owner.data.projectId : null} AND company_id IS NOT DISTINCT FROM ${owner.data.kind === "company" ? owner.data.companyId : null} AND principal_key=${principalKey} AND request_digest=${digest}`,
+          sql`SELECT * FROM brain_proposals WHERE project_id IS NOT DISTINCT FROM ${owner.data.kind === "project" ? owner.data.projectId : null} AND company_id IS NOT DISTINCT FROM ${owner.data.kind === "company" ? owner.data.companyId : null} AND principal_key=${principalKey} AND request_digest=${digest} AND source_restrictions IS NOT DISTINCT FROM ${JSON.stringify(restrictions)}::jsonb`,
         )
       ).rows[0];
 
@@ -364,35 +413,19 @@ export async function createKnowledgeProposal(
 
         return replayedReceipt(identical);
       }
-      if (input.targetRecordId !== undefined) {
-        const target = await recordAccess(
-          tx,
-          input.principal,
-          input.targetRecordId,
-          "knowledge:propose",
+      if (
+        correctionHead !== null &&
+        correctionHead !== input.expectedRecordRevision
+      )
+        throw new MaisterError(
+          "CONFLICT",
+          "Knowledge correction base is stale",
         );
-
-        await recordAccess(
-          tx,
-          input.principal,
-          input.targetRecordId,
-          "knowledge:read",
-        );
-        if (
-          contentDigest(knowledgeOwner(target.row)) !==
-            contentDigest(owner.data) ||
-          Number(target.row.current_revision) !== input.expectedRecordRevision
-        )
-          throw new MaisterError(
-            "CONFLICT",
-            "Knowledge correction base is stale",
-          );
-      }
       const id = randomUUID();
       const row = (
         await tx.execute(sql`
-        INSERT INTO brain_proposals(id,project_id,company_id,kind,draft,actor,run_id,principal_key,submission_key,request_digest,knowledge_attribution,target_record_id,expected_record_revision,authority_snapshot)
-        VALUES(${id},${owner.data.kind === "project" ? owner.data.projectId : null},${owner.data.kind === "company" ? owner.data.companyId : null},${input.kind},${JSON.stringify(draft)}::jsonb,${JSON.stringify({ type: authority.actor.kind, id: authority.actor.id })}::jsonb,${authority.actor.runId},${principalKey},${input.idempotencyKey},${digest},${JSON.stringify(authority.actor)}::jsonb,${input.targetRecordId ?? null},${input.expectedRecordRevision ?? null},${JSON.stringify({ submit: authority.policy })}::jsonb)
+        INSERT INTO brain_proposals(id,project_id,company_id,kind,draft,actor,run_id,principal_key,submission_key,request_digest,knowledge_attribution,target_record_id,expected_record_revision,authority_snapshot,source_restrictions)
+        VALUES(${id},${owner.data.kind === "project" ? owner.data.projectId : null},${owner.data.kind === "company" ? owner.data.companyId : null},${input.kind},${JSON.stringify(draft)}::jsonb,${JSON.stringify({ type: authority.actor.kind, id: authority.actor.id })}::jsonb,${authority.actor.runId},${principalKey},${input.idempotencyKey},${digest},${JSON.stringify(authority.actor)}::jsonb,${input.targetRecordId ?? null},${input.expectedRecordRevision ?? null},${JSON.stringify({ submit: authority.policy })}::jsonb,${JSON.stringify(restrictions)}::jsonb)
         RETURNING *
       `)
       ).rows[0];
@@ -431,6 +464,7 @@ async function identicalPublication(
   owner: Owner,
   draft: KnowledgeDraft,
   links: readonly WitnessLink[],
+  restrictions: readonly KnowledgeAccessRestriction[],
 ): Promise<PublishedRecord | null> {
   const row = (
     await tx.execute(sql`
@@ -438,7 +472,7 @@ async function identicalPublication(
     JOIN brain_record_revisions r ON r.record_id=i.id AND r.revision=i.current_revision
     WHERE i.project_id IS NOT DISTINCT FROM ${owner.kind === "project" ? owner.projectId : null}
       AND i.company_id IS NOT DISTINCT FROM ${owner.kind === "company" ? owner.companyId : null}
-      AND i.content_hash=${sha256(draft.assertion)} AND i.status='active' AND i.visibility='owner_grants' FOR UPDATE OF i
+      AND i.source_restrictions IS NOT DISTINCT FROM ${JSON.stringify(restrictions)}::jsonb AND i.content_hash=${sha256(draft.assertion)} AND i.status='active' AND i.visibility='owner_grants' FOR UPDATE OF i
   `)
   ).rows[0];
 
@@ -485,6 +519,7 @@ async function writeKnowledgeRevision(
     recordId: string;
     revision: number;
     priorRevision: number | null;
+    restrictions: readonly KnowledgeAccessRestriction[];
   }>,
 ): Promise<void> {
   await tx.execute(
@@ -492,15 +527,15 @@ async function writeKnowledgeRevision(
   );
   if (input.priorRevision === null) {
     await tx.execute(
-      sql`INSERT INTO brain_items(id,project_id,company_id,current_revision,kind,title,content,confidence,content_hash,source_run_id) VALUES(${input.recordId},${input.owner.kind === "project" ? input.owner.projectId : null},${input.owner.kind === "company" ? input.owner.companyId : null},${input.revision},${input.draft.kind},${input.draft.title},${input.draft.assertion},0.3,${sha256(input.draft.assertion)},${input.attribution.runId})`,
+      sql`INSERT INTO brain_items(id,project_id,company_id,current_revision,kind,title,content,confidence,content_hash,source_run_id,source_restrictions) VALUES(${input.recordId},${input.owner.kind === "project" ? input.owner.projectId : null},${input.owner.kind === "company" ? input.owner.companyId : null},${input.revision},${input.draft.kind},${input.draft.title},${input.draft.assertion},0.3,${sha256(input.draft.assertion)},${input.attribution.runId},${JSON.stringify(input.restrictions)}::jsonb)`,
     );
   } else {
     await tx.execute(
-      sql`UPDATE brain_items SET current_revision=${input.revision},kind=${input.draft.kind},title=${input.draft.title},content=${input.draft.assertion},content_hash=${sha256(input.draft.assertion)},updated_at=now() WHERE id=${input.recordId}`,
+      sql`UPDATE brain_items SET source_restrictions=${JSON.stringify(input.restrictions)}::jsonb,current_revision=${input.revision},kind=${input.draft.kind},title=${input.draft.title},content=${input.draft.assertion},content_hash=${sha256(input.draft.assertion)},updated_at=now() WHERE id=${input.recordId}`,
     );
   }
   await tx.execute(
-    sql`INSERT INTO brain_record_revisions(record_id,revision,assertion,title,kind,basis,content_sha256,attribution,freshness,limitations,missing_evidence,proposal_id,provenance) VALUES(${input.recordId},${input.revision},${input.draft.assertion},${input.draft.title},${input.draft.kind},${input.draft.basis},${sha256(input.draft.assertion)},${JSON.stringify(input.attribution)}::jsonb,${JSON.stringify({ state: "unknown", applicability: "unknown", observedAt: null, sourceAt: null, capturedAt: new Date().toISOString() })}::jsonb,${JSON.stringify(input.draft.limitations)}::jsonb,${JSON.stringify(input.draft.missingEvidence)}::jsonb,${input.proposalId},'submitted')`,
+    sql`INSERT INTO brain_record_revisions(record_id,revision,assertion,title,kind,basis,content_sha256,attribution,freshness,limitations,missing_evidence,proposal_id,provenance,source_restrictions) VALUES(${input.recordId},${input.revision},${input.draft.assertion},${input.draft.title},${input.draft.kind},${input.draft.basis},${sha256(input.draft.assertion)},${JSON.stringify(input.attribution)}::jsonb,${JSON.stringify({ state: "unknown", applicability: "unknown", observedAt: null, sourceAt: null, capturedAt: new Date().toISOString() })}::jsonb,${JSON.stringify(input.draft.limitations)}::jsonb,${JSON.stringify(input.draft.missingEvidence)}::jsonb,${input.proposalId},'submitted',${JSON.stringify(input.restrictions)}::jsonb)`,
   );
   for (const link of input.links)
     await tx.execute(
@@ -550,16 +585,9 @@ async function acceptKnowledgeProposal(
     links: readonly WitnessLink[];
     principal: KnowledgePrincipal;
     reviewer: KnowledgeAuthorityActor;
+    restrictions: readonly KnowledgeAccessRestriction[];
   }>,
 ): Promise<PublishedRecord> {
-  const ownerId =
-    input.owner.kind === "company"
-      ? input.owner.companyId
-      : input.owner.projectId;
-
-  await tx.execute(
-    sql`SELECT pg_advisory_xact_lock(hashtextextended(${`knowledge-publication:${input.owner.kind}:${ownerId}:${sha256(input.draft.assertion)}`},0))`,
-  );
   let recordId: string = randomUUID();
   let priorRevision: number | null = null;
 
@@ -592,6 +620,7 @@ async function acceptKnowledgeProposal(
       input.owner,
       input.draft,
       input.links,
+      input.restrictions,
     );
 
     if (identical) return identical;
@@ -621,16 +650,18 @@ export async function reviewKnowledgeProposal(
     idempotencyKey: string;
   }>,
 ): Promise<KnowledgeProposalReceipt> {
-  validKey(input.idempotencyKey);
-  if (!knowledgeRevisionSchema.safeParse(input.expectedRevision).success)
+  if (
+    !postgresTextSchema.min(1).max(128).safeParse(input.proposalId).success ||
+    !knowledgeProposalDecisionSchema.safeParse({
+      expectedRevision: input.expectedRevision,
+      decision: input.decision,
+      reason: input.reason,
+      idempotencyKey: input.idempotencyKey,
+    }).success
+  )
     throw new MaisterError(
       "CONFIG",
-      "An exact bounded knowledge revision is required",
-    );
-  if (!input.reason.trim() || input.reason.length > 2000)
-    throw new MaisterError(
-      "CONFIG",
-      "A bounded knowledge review reason is required",
+      "Invalid exact-revision knowledge review decision",
     );
   const digest = contentDigest({
     revision: input.expectedRevision,
@@ -640,6 +671,9 @@ export async function reviewKnowledgeProposal(
 
   try {
     return await db.transaction(async (tx) => {
+      await tx.execute(sql`SET LOCAL statement_timeout='10s'`);
+      await tx.execute(sql`SET LOCAL lock_timeout='5s'`);
+      await lockKnowledgeReadConsumer(tx, input.principal);
       const proposal = await nativeProposal(tx, input.proposalId);
       const owner = knowledgeOwner(proposal);
       const authority = await authorizeKnowledge(
@@ -651,6 +685,11 @@ export async function reviewKnowledgeProposal(
 
       await authorizeKnowledge(tx, input.principal, owner, "knowledge:read");
       if (proposal.status !== "pending") {
+        await authorizeSourceRestrictions(
+          tx,
+          input.principal,
+          proposal.source_restrictions,
+        );
         if (
           proposal.decision_key === input.idempotencyKey &&
           proposal.decision_digest === digest
@@ -673,6 +712,26 @@ export async function reviewKnowledgeProposal(
           "CONFIG",
           "Stored knowledge proposal does not match its contract",
         );
+      if (input.decision === "accept") {
+        const ownerId =
+          owner.kind === "company" ? owner.companyId : owner.projectId;
+
+        await tx.execute(
+          sql`SELECT pg_advisory_xact_lock(hashtextextended(${`knowledge-publication:${owner.kind}:${ownerId}:${sha256(parsed.data.assertion)}`},0))`,
+        );
+        if (proposal.kind === "knowledge_correct")
+          await recordAccess(
+            tx,
+            input.principal,
+            String(proposal.target_record_id),
+            "knowledge:review",
+          );
+      }
+      await authorizeSourceRestrictions(
+        tx,
+        input.principal,
+        proposal.source_restrictions,
+      );
       let publication: PublishedRecord | null = null;
 
       if (input.decision === "accept") {
@@ -690,6 +749,13 @@ export async function reviewKnowledgeProposal(
           links,
           principal: input.principal,
           reviewer: authority.actor,
+          restrictions: additionalKnowledgeRestrictions(owner, [
+            ...(parseKnowledgeRestrictions(proposal.source_restrictions) ?? []),
+            ...links.flatMap(
+              (link) =>
+                parseKnowledgeRestrictions(link.snapshot.restrictions) ?? [],
+            ),
+          ]),
         });
       }
       const recordId = publication?.recordId ?? null;
@@ -738,20 +804,19 @@ export async function confirmKnowledgeRecord(
   status: "confirmed" | "revoked";
   duplicate: boolean;
 }> {
-  validKey(input.idempotencyKey);
-  if (!knowledgeRevisionSchema.safeParse(input.expectedRevision).success)
-    throw new MaisterError(
-      "CONFIG",
-      "An exact bounded knowledge revision is required",
-    );
   if (
-    !input.reason.trim() ||
-    input.reason.length > 2000 ||
-    input.witnessIds.length > 64
+    !postgresTextSchema.min(1).max(128).safeParse(input.recordId).success ||
+    !knowledgeConfirmationInputSchema.safeParse({
+      expectedRevision: input.expectedRevision,
+      decision: input.decision,
+      witnessIds: input.witnessIds,
+      reason: input.reason,
+      idempotencyKey: input.idempotencyKey,
+    }).success
   )
     throw new MaisterError(
       "CONFIG",
-      "Confirmation reason or evidence exceeds its contract bounds",
+      "Invalid exact-revision knowledge confirmation decision",
     );
   const digest = contentDigest({
     revision: input.expectedRevision,
@@ -762,6 +827,9 @@ export async function confirmKnowledgeRecord(
 
   try {
     return await db.transaction(async (tx) => {
+      await tx.execute(sql`SET LOCAL statement_timeout='10s'`);
+      await tx.execute(sql`SET LOCAL lock_timeout='5s'`);
+      await lockKnowledgeReadConsumer(tx, input.principal);
       const current = await recordAccess(
         tx,
         input.principal,
@@ -832,6 +900,18 @@ export async function confirmKnowledgeRecord(
             throw new MaisterError(
               "PRECONDITION",
               "Confirmation evidence must support this exact assertion revision",
+            );
+          const inspection = await inspectKnowledgeWitness(
+            tx,
+            input.principal,
+            id,
+          );
+
+          if (inspection.witness.availability !== "available")
+            throw new MaisterError(
+              "PRECONDITION",
+              "Factual confirmation requires currently available supporting evidence",
+              { details: { reason: "knowledge_evidence_unavailable" } },
             );
           evidence.push(await witness(tx, input.principal, id));
         }

@@ -176,6 +176,30 @@ function deref<T extends { $ref?: string }>(node: T): T {
 // the same routing `resolveRouting` encodes; restating it here as the contract
 // anchor means a divergence in either place is caught.
 const TOOL_OP: Record<string, { method: string; path: string }> = {
+  knowledge_witness_get: {
+    method: "get",
+    path: "/api/v1/ext/knowledge/witnesses/{witnessId}",
+  },
+  knowledge_propose: {
+    method: "post",
+    path: "/api/v1/ext/knowledge/proposals",
+  },
+  knowledge_proposal_get: {
+    method: "get",
+    path: "/api/v1/ext/knowledge/proposals/{proposalId}",
+  },
+  knowledge_proposals_list: {
+    method: "get",
+    path: "/api/v1/ext/knowledge/proposals",
+  },
+  knowledge_decide: {
+    method: "post",
+    path: "/api/v1/ext/knowledge/proposals/{proposalId}/decision",
+  },
+  knowledge_confirm: {
+    method: "post",
+    path: "/api/v1/ext/knowledge/{recordId}/confirmations",
+  },
   knowledge_search: { method: "get", path: "/api/v1/ext/knowledge" },
   knowledge_get: { method: "get", path: "/api/v1/ext/knowledge/{recordId}" },
   knowledge_evidence: {
@@ -575,7 +599,10 @@ describe("TOOL_SPECS ↔ external OpenAPI contract", () => {
     const queryFields = queryParamSchemas(op);
 
     // Native MCP owner objects map to the two URL selector fields; nested ownership stays closed.
-    if (toolName === "knowledge_search") {
+    if (
+      toolName === "knowledge_search" ||
+      toolName === "knowledge_proposals_list"
+    ) {
       delete queryFields.ownerKind;
       delete queryFields.ownerId;
       queryFields.owner = deref({ $ref: "#/components/schemas/CBOwner" });

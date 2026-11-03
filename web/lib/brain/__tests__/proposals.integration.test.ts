@@ -9,6 +9,7 @@ import {
   createBrainProposalWithAutonomy,
   transitionBrainProposal,
 } from "@/lib/brain/proposals";
+import { captureKnowledgeSource } from "@/lib/brain/knowledge-source-capture";
 import { promoteNextPending } from "@/lib/scheduler";
 import {
   seedBrainProject,
@@ -861,8 +862,6 @@ it("IT-CBK-03 company knowledge publication is attributable, idempotent and sepa
 it("IT-CBK-05 deleting a project removes native proposals, revisions, confirmations and evidence without touching company knowledge", async () => {
   const native = await import("@/lib/brain/proposals");
   const reviewerId = randomUUID();
-  const observationId = randomUUID();
-  const witnessId = randomUUID();
   const companyRecordId = randomUUID();
   const companyId = (
     await ctx.pool.query<{ id: string }>("SELECT id FROM companies")
@@ -881,33 +880,14 @@ it("IT-CBK-05 deleting a project removes native proposals, revisions, confirmati
       companyRecordId,
     ],
   );
-  await ctx.pool.query(
-    "INSERT INTO brain_evidence_observations(id,project_id,source_id,source_version,content_sha256,attribution) VALUES($1,$2,$3,'version-1',repeat('a',64),$4::jsonb)",
-    [
-      observationId,
-      projectId,
-      randomUUID(),
-      JSON.stringify({
-        kind: "user",
-        id: reviewerId,
-        runId: null,
-        attemptId: null,
-      }),
-    ],
-  );
-  await ctx.pool.query(
-    "INSERT INTO brain_evidence_witnesses(id,observation_id,source_version,content_sha256,selector,restrictions,capture_locator) VALUES($1,$2,'version-1',repeat('a',64),'service:health',$3::jsonb,$4::jsonb)",
-    [
-      witnessId,
-      observationId,
-      JSON.stringify([{ kind: "project", projectId }]),
-      JSON.stringify({
-        kind: "submitted_text",
-        content: "Independent health check passed",
-      }),
-    ],
-  );
   const principal = { kind: "user" as const, userId: reviewerId };
+  const capture = await captureKnowledgeSource(ctx.db, principal, {
+    owner: { kind: "project", projectId },
+    title: "Independent project health observation",
+    content: "Independent health check passed",
+    idempotencyKey: "project_deletion_source_001",
+  });
+  const witnessId = capture.witness.id;
   const input = {
     owner: { kind: "project" as const, projectId },
     kind: "knowledge_add" as const,
@@ -924,8 +904,8 @@ it("IT-CBK-05 deleting a project removes native proposals, revisions, confirmati
           reference: {
             kind: "witness" as const,
             id: witnessId,
-            version: "version-1",
-            sha256: "a".repeat(64),
+            version: capture.witness.sourceVersion!,
+            sha256: capture.witness.sha256!,
           },
         },
       ],

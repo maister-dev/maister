@@ -148,6 +148,8 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | `web/lib/supervisor-client.ts` | The ONLY place `web/` talks to `supervisor/` (HTTP+SSE) |
 | `web/lib/errors.ts` | `MaisterError` discriminated union (11 codes) |
 | `web/lib/db/schema.ts` | Drizzle schema; `node_attempts` is the sole Flow execution ledger |
+| `web/lib/company/grants.ts` | Current administrator company grants, content-guarded delivery and exact-revision revocation |
+| `web/lib/brain/knowledge-proposal-read.ts` | Source-authorized native proposal review queue and publication inspection |
 | `web/lib/brain/knowledge-records.ts` | Structured company/project records, exact revisions and current source access |
 | `web/lib/tokens/owned-ext-handler.ts` | Shared bearer verification and audit for operations without a project requirement |
 | `web/lib/agents/activity-queries.ts` | Scoped active executions and retained run/attempt history |
@@ -189,7 +191,7 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | Product View | `docs/PRODUCT_VIEW.md` | Lean Canvas, JTBD, gaps, MVP / Phase 2 / Later |
 | Architecture | `docs/architecture.md` | Current system architecture, C4 diagrams, data flows |
 | Decisions | `docs/decisions.md` | ADRs and locked technical decisions |
-| Company Brain design | `docs/system-analytics/company-brain.md` | Designed structured ownership, review and evidence |
+| Company Brain design | `docs/system-analytics/company-brain.md` | Native structured ownership, review and evidence; UI/runtime qualification pending |
 | Agent activity design | `docs/system-analytics/agent-activity-history.md` | Active executions and retained history |
 | Task qualification design | `docs/system-analytics/task-qualification.md` | Incoming requests and admission contracts |
 | Task launch admission | `docs/system-analytics/task-launch-admission.md` | Explicit manual authority and qualified automation |

@@ -19617,13 +19617,11 @@ paths:
   /api/company/grants:
     get:
       operationId: companyGrantsList
-      summary: Designed — Inspect explicit installation company grants
-      description: Designed; no implementation is implied. Requires current global administrator. URL identifiers
-        are untrusted selectors resolved through current server ownership/access. Actors, grants, source
-        witnesses, target endpoint and execution ownership are derived from authenticated context/server state.
-        Writes compare canonical payload digest and expected revision; exact replay returns the original
-        currently accessible receipt, changed payload conflicts.
-      x-implementation-status: Designed
+      summary: Inspect explicit installation company grants
+      description: Requires the current active installation administrator role. No implicit content grant is
+        conferred. Pages retain exact creation/revocation metadata within a 128 KiB response and use a signed
+        administrator-bound keyset cursor. Every page rechecks current role and account state.
+      x-implementation-status: Implemented
       x-required-scope: global administrator
       responses:
         "200":
@@ -19665,13 +19663,13 @@ paths:
             default: 20
     post:
       operationId: companyGrantCreate
-      summary: Designed — Grant explicit company authority without implicit content disclosure
-      description: Designed; no implementation is implied. Requires current global administrator. URL identifiers
+      summary: Grant explicit company authority without implicit content disclosure
+      description: Requires current global administrator. URL identifiers
         are untrusted selectors resolved through current server ownership/access. Actors, grants, source
         witnesses, target endpoint and execution ownership are derived from authenticated context/server state.
-        Writes compare canonical payload digest and expected revision; exact replay returns the original
+        Creation compares canonical policy digest and administrator-scoped delivery key; exact replay returns the original
         currently accessible receipt, changed payload conflicts.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       x-required-scope: global administrator
       requestBody:
         required: true
@@ -19712,13 +19710,13 @@ paths:
   /api/company/grants/{grantId}:
     delete:
       operationId: companyGrantRevoke
-      summary: Designed — Revoke exact company grant revision
-      description: Designed; no implementation is implied. Requires current global administrator. URL identifiers
+      summary: Revoke exact company grant revision
+      description: Requires current global administrator. URL identifiers
         are untrusted selectors resolved through current server ownership/access. Actors, grants, source
         witnesses, target endpoint and execution ownership are derived from authenticated context/server state.
         Writes compare canonical payload digest and expected revision; exact replay returns the original
         currently accessible receipt, changed payload conflicts.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       x-required-scope: global administrator
       requestBody:
         required: true
@@ -20022,11 +20020,11 @@ paths:
   /api/knowledge/proposals:
     get:
       operationId: knowledgeProposalsList
-      summary: Designed — List authorized native knowledge proposals
-      description: Designed. Requires current knowledge read/review and source restrictions. Only native knowledge
+      summary: List authorized native knowledge proposals
+      description: Requires current knowledge read/review and source restrictions. Only native knowledge
         proposals are returned; existing improvement proposal APIs remain separate. Ownership does not grant
         access.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       x-required-scope: knowledge:read and knowledge:review
       responses:
         "200":
@@ -20079,15 +20077,18 @@ paths:
             type: string
             minLength: 1
             maxLength: 128
+        - name: status
+          in: query
+          schema: {type: string, enum: [pending, accepted, rejected]}
     post:
       operationId: knowledgePropose
-      summary: Designed — Propose new knowledge or exact correction
-      description: Designed; no implementation is implied. Requires current knowledge:propose. URL identifiers are
+      summary: Propose new knowledge or exact correction
+      description: Requires current knowledge:propose. URL identifiers are
         untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
         target endpoint and execution ownership are derived from authenticated context/server state. Writes
         compare canonical payload digest and expected revision; exact replay returns the original currently
         accessible receipt, changed payload conflicts.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       x-required-scope: knowledge:propose
       requestBody:
         required: true
@@ -20128,13 +20129,13 @@ paths:
   /api/knowledge/proposals/{proposalId}/decision:
     post:
       operationId: knowledgeDecide
-      summary: Designed — Accept or reject publication
-      description: Designed; no implementation is implied. Requires current knowledge:review. URL identifiers are
+      summary: Accept or reject publication
+      description: Requires current knowledge:review. URL identifiers are
         untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
         target endpoint and execution ownership are derived from authenticated context/server state. Writes
         compare canonical payload digest and expected revision; exact replay returns the original currently
         accessible receipt, changed payload conflicts.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       x-required-scope: knowledge:review
       requestBody:
         required: true
@@ -20177,13 +20178,13 @@ paths:
   /api/knowledge/{recordId}/confirmations:
     post:
       operationId: knowledgeConfirm
-      summary: Designed — Confirm or revoke exact assertion
-      description: Designed; no implementation is implied. Requires current knowledge:confirm. URL identifiers are
+      summary: Confirm or revoke exact assertion
+      description: Requires current knowledge:confirm. URL identifiers are
         untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
         target endpoint and execution ownership are derived from authenticated context/server state. Writes
         compare canonical payload digest and expected revision; exact replay returns the original currently
         accessible receipt, changed payload conflicts.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       x-required-scope: knowledge:confirm
       requestBody:
         required: true
@@ -21566,11 +21567,11 @@ paths:
   /api/knowledge/proposals/{proposalId}:
     get:
       operationId: knowledgeProposalGet
-      summary: Designed — Inspect a native proposal and its exact publication
-      description: Designed. Current source/owner read is required with review authority, or proposer authority for
+      summary: Inspect a native proposal and its exact publication
+      description: Current source/owner read is required with review authority, or proposer authority for
         the originating principal. Missing and concealed proposals share an existence-safe response. Publication
         record identity and revision are server-recorded.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       x-required-scope: knowledge:read and authorized proposal inspection
       responses:
         "200":
@@ -21664,6 +21665,48 @@ paths:
           in: query
           schema: {type: integer, minimum: 1, maximum: 2147483647}
           description: Exact accepted revision. The record head must still match the authorized conflict cursor.
+  /api/knowledge/witnesses/{witnessId}:
+    get:
+      operationId: knowledgeWitnessGet
+      summary: Inspect an authorized retained evidence witness
+      description: Requires current owner/source read authority. Returns the original witness identity, exact
+        source version, availability and bounded captured excerpt, including before proposal publication.
+        Missing and inaccessible witness identities have the same existence-safe refusal. Missing support
+        never authorizes a fabricated citation or a new confirmation.
+      x-implementation-status: Implemented
+      x-required-scope: knowledge:read
+      responses:
+        "200":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBEvidenceWitness"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: witnessId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: URL selector resolved and authorized against server state; no filesystem path.
 
 components:
   securitySchemes:
@@ -34717,9 +34760,11 @@ components:
       type: object
       additionalProperties: false
       required:
+        - companyId
         - items
         - nextCursor
       properties:
+        companyId: {type: string, minLength: 1, maxLength: 128}
         items:
           type: array
           items:
@@ -34740,6 +34785,11 @@ components:
         - action
         - revision
         - revokedAt
+        - confirmationClasses
+        - createdBy
+        - createdAt
+        - revokedBy
+        - revocationReason
       properties:
         id:
           type: string
@@ -34786,7 +34836,20 @@ components:
           type: string
           format: date-time
           nullable: true
+        confirmationClasses:
+          type: array
+          maxItems: 4
+          items: {type: string, enum: [assertion, observation, decision, procedure]}
+        createdBy: {type: string, minLength: 1, maxLength: 128}
+        createdAt: {type: string, format: date-time}
+        revokedBy: {type: string, minLength: 1, maxLength: 128, nullable: true}
+        revocationReason: {type: string, minLength: 1, maxLength: 2000, nullable: true}
     CBCompanyGrantInput:
+      description: >-
+        Select an existing user or specialist identity. Actions and confirmation classes must be distinct.
+        confirmationClasses is permitted only when actions includes knowledge:confirm; an agent confirmation
+        grant requires at least one explicitly configured class. Invalid combinations return CONFIG (400).
+        Current installation administrators are derived from the session and database, never this payload.
       type: object
       additionalProperties: false
       required:
@@ -34830,6 +34893,7 @@ components:
               - targets:recover
               - targets:manage
           maxItems: 20
+          uniqueItems: true
           minItems: 1
         confirmationClasses:
           type: array
@@ -34841,10 +34905,7 @@ components:
               - decision
               - procedure
           maxItems: 4
-        expectedRevision:
-          type: integer
-          minimum: 1
-          maximum: 2147483647
+          uniqueItems: true
         idempotencyKey:
           type: string
           minLength: 8
@@ -34866,6 +34927,7 @@ components:
           type: string
           minLength: 1
           maxLength: 2000
+          pattern: '^(?=[\s\S]*\S)(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$'
         idempotencyKey:
           type: string
           minLength: 8
@@ -35369,6 +35431,7 @@ components:
                   type: string
                   minLength: 1
                   maxLength: 256
+                  pattern: '^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$'
                 kind:
                   type: string
                   enum:
@@ -35383,6 +35446,7 @@ components:
                   type: string
                   minLength: 1
                   maxLength: 32000
+                  pattern: '^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$'
                 basis:
                   type: string
                   enum:
@@ -35415,6 +35479,7 @@ components:
                         type: string
                         minLength: 1
                         maxLength: 1000
+                        pattern: '^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$'
                   maxItems: 32
                 limitations:
                   type: array
@@ -35422,6 +35487,7 @@ components:
                     type: string
                     minLength: 1
                     maxLength: 1000
+                    pattern: '^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$'
                   maxItems: 32
             - type: object
               additionalProperties: false
@@ -35453,6 +35519,7 @@ components:
                   type: string
                   minLength: 1
                   maxLength: 256
+                  pattern: '^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$'
                 kind:
                   type: string
                   enum:
@@ -35467,6 +35534,7 @@ components:
                   type: string
                   minLength: 1
                   maxLength: 32000
+                  pattern: '^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$'
                 basis:
                   type: string
                   enum:
@@ -35499,6 +35567,7 @@ components:
                         type: string
                         minLength: 1
                         maxLength: 1000
+                        pattern: '^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$'
                   maxItems: 32
                 limitations:
                   type: array
@@ -35506,6 +35575,7 @@ components:
                     type: string
                     minLength: 1
                     maxLength: 1000
+                    pattern: '^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$'
                   maxItems: 32
     CBProposalDecision:
       type: object
@@ -35529,6 +35599,7 @@ components:
           type: string
           minLength: 1
           maxLength: 2000
+          pattern: '^(?=[\s\S]*\S)(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$'
         idempotencyKey:
           type: string
           minLength: 8
@@ -35564,6 +35635,7 @@ components:
           type: string
           minLength: 1
           maxLength: 2000
+          pattern: '^(?=[\s\S]*\S)(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$'
         idempotencyKey:
           type: string
           minLength: 8
@@ -37387,7 +37459,7 @@ components:
           type: array
           maxItems: 50
           items:
-            $ref: "#/components/schemas/CBKnowledgeProposal"
+            $ref: "#/components/schemas/CBKnowledgeProposalSummary"
         nextCursor:
           type: string
           nullable: true
@@ -37402,6 +37474,7 @@ components:
         - status
         - content
         - attribution
+        - evidence
         - acceptedRecordId
         - acceptedRecordRevision
         - createdAt
@@ -37424,6 +37497,10 @@ components:
             - rejected
         content:
           $ref: "#/components/schemas/CBProposalInput/properties/content"
+        evidence:
+          type: array
+          maxItems: 64
+          items: {$ref: "#/components/schemas/CBRecordEvidenceSummary"}
         attribution:
           $ref: "#/components/schemas/CBActor"
         acceptedRecordId:
@@ -37612,3 +37689,25 @@ components:
           nullable: true
         attribution:
           $ref: "#/components/schemas/CBActor"
+    CBKnowledgeProposalSummary:
+      type: object
+      additionalProperties: false
+      required: [id, owner, revision, status, attribution, acceptedRecordId, acceptedRecordRevision, createdAt, updatedAt, change, title, kind, basis, assertionPreview, assertionTruncated, targetRecordId, expectedRecordRevision]
+      properties:
+        id: {type: string, minLength: 1, maxLength: 128}
+        owner: {$ref: "#/components/schemas/CBOwner"}
+        revision: {type: integer, minimum: 1, maximum: 2147483647}
+        status: {type: string, enum: [pending, accepted, rejected]}
+        attribution: {$ref: "#/components/schemas/CBActor"}
+        acceptedRecordId: {type: string, minLength: 1, maxLength: 128, nullable: true}
+        acceptedRecordRevision: {type: integer, minimum: 1, maximum: 2147483647, nullable: true}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+        change: {type: string, enum: [add, correct]}
+        title: {type: string, minLength: 1, maxLength: 256}
+        kind: {type: string, enum: [assertion, observation, decision, procedure, lesson, state_fact, direction]}
+        basis: {type: string, enum: [observed, inferred, unknown]}
+        assertionPreview: {type: string, maxLength: 1000}
+        assertionTruncated: {type: boolean}
+        targetRecordId: {type: string, minLength: 1, maxLength: 128, nullable: true}
+        expectedRecordRevision: {type: integer, minimum: 1, maximum: 2147483647, nullable: true}

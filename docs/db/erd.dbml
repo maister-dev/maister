@@ -543,10 +543,19 @@ table company_grants {
   confirmation_classes jsonb [not null, default: `[]`]
   created_by text [not null]
   created_at "timestamp with time zone" [not null, default: `now()`]
+  creation_key text
+  creation_digest text
+  revocation_key text
+  revocation_digest text
+  revoked_by text
+  revocation_reason text
   revoked_at "timestamp with time zone"
 
   indexes {
     (company_id, principal_type, principal_id, action) [name: 'company_grants_live_principal_action_unique', unique]
+    (company_id, created_by, creation_key, action) [name: 'company_grants_creation_request_action_unique', unique]
+
+
 
 
 
@@ -3693,6 +3702,8 @@ table brain_proposals {
   project_id text
   company_id text
   revision integer [not null, default: 1]
+  source_restrictions jsonb
+  source_acl_key text [not null, default: '74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b']
   principal_key text
   submission_key text
   request_digest text
@@ -3941,6 +3952,8 @@ ref capability_records_project_id_projects_id_fk: capability_records.project_id 
 ref company_grants_company_id_companies_id_fk: company_grants.company_id > companies.id [delete: restrict, update: no action]
 
 ref company_grants_created_by_users_id_fk: company_grants.created_by > users.id [delete: restrict, update: no action]
+
+ref company_grants_revoked_by_users_id_fk: company_grants.revoked_by > users.id [delete: restrict, update: no action]
 
 ref consensus_round_verdicts_run_id_runs_id_fk: consensus_round_verdicts.run_id > runs.id [delete: cascade, update: no action]
 

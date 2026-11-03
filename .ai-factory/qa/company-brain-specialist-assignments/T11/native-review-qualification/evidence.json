@@ -1,0 +1,94 @@
+{
+  "task": "T11",
+  "status": "native API and storage checkpoint qualified locally; full CB0/CB1 remains incomplete",
+  "postgres": {
+    "files": 18,
+    "tests": 140,
+    "fixtureConcurrency": 4,
+    "actualBuiltMcpHttpPostgresRoundTrip": true,
+    "disposableTargetsOnly": true
+  },
+  "mcpUnitContract": {
+    "files": 6,
+    "tests": 402
+  },
+  "mcpStdio": {
+    "files": 1,
+    "tests": 8
+  },
+  "webUnit": {
+    "files": 17,
+    "tests": 134
+  },
+  "contracts": {
+    "officialParserTests": 10,
+    "explicitSurfaceExamples": 60,
+    "generatedNestedSchemas": "current"
+  },
+  "migrations": {
+    "main": "0217_company_grant_requests",
+    "brain": "0011_proposal_source_access",
+    "schemaAgreement": "No schema changes",
+    "populatedLegacyMetadata": "preserved; new receipt/source metadata remains NULL"
+  },
+  "checks": [
+    "web and MCP typecheck",
+    "affected lint",
+    "test discovery",
+    "all docs gates",
+    "164-table ERD",
+    "current API/schema parity"
+  ],
+  "scenarios": [
+    "acceptance does not confirm",
+    "exact decision replay and changed-payload conflict",
+    "current scope/grant revocation before replay",
+    "proposer-only inspection and unrelated proposer concealment",
+    "stale source cannot establish new confirmation",
+    "cross-owner source restriction inheritance",
+    "omitted citations retain complete agent disclosure restrictions",
+    "source ACL before LIMIT and bounded review pages",
+    "project deletion cascades local history without blocking and preserves company history",
+    "fresh-install explicit administrator authority without a project",
+    "concurrent administrators retain one live grant and return actionable conflict",
+    "grant create replay after revocation does not restore authority"
+  ],
+  "redGreen": {
+    "grantConcurrency": "removing principal serialization produces transactionid wait instead of advisory serialization; restored guard passes",
+    "captureInheritance": "removing ambient profile union drops required private source references",
+    "staleConfirmation": "previous implementation accepts stale support; available-version inspection refuses it",
+    "nativeHttp": "unimplemented endpoints fail actual HTTP scenario before implementation"
+  },
+  "resolvedRegression": "The stricter confirmation resolver exposed an inconsistent older deletion-test witness with invented hash and nonexistent source. The test now uses the real native source capture, then still verifies project deletion.",
+  "environmentObservation": "One broad run hit Invalid argument creating a Git temporary commit file in an unchanged sources fixture. Disk had 2 TiB free. The complete owning suite passes with bounded fixture concurrency; failure retained separately.",
+  "remaining": [
+    "T12 EN/RU UI",
+    "T13 browser and mixed reader/writer/cyclic-source concurrency qualification",
+    "T14 full launch input and derived output inheritance",
+    "actual installed agent/Flow package and live ACP qualification",
+    "durable specialist assignments and real stand pilot"
+  ],
+  "logs": [
+    "postgres.log",
+    "mcp-unit-contract.log",
+    "mcp-stdio.log",
+    "web-unit.log",
+    "cursor-artifact.log",
+    "contracts.log",
+    "docs.log",
+    "web-typecheck.log",
+    "mcp-typecheck.log",
+    "discovery.log",
+    "schema-agreement.log",
+    "grant-concurrency-red.log",
+    "grant-concurrency-green.log",
+    "omitted-citations-red.log",
+    "stale-confirmation-red.log",
+    "http-review-red.log",
+    "cross-owner-red.log",
+    "first-full-regression.log",
+    "git-fixture-environment-failure.log",
+    "web-lint.log",
+    "mcp-lint.log"
+  ]
+}

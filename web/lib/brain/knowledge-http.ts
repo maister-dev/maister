@@ -34,6 +34,23 @@ export function knowledgeErrorResponse(
 ): NextResponse {
   if (isMaisterError(error)) {
     const reason = error.details?.reason;
+
+    if (error.code === "CRASH")
+      log.error(
+        {
+          route,
+          code: error.code,
+          sqlState:
+            typeof error.details?.sqlState === "string"
+              ? error.details.sqlState
+              : undefined,
+          constraint:
+            typeof error.details?.constraint === "string"
+              ? error.details.constraint
+              : undefined,
+        },
+        "knowledge database operation failed",
+      );
     const status =
       httpStatusForAuthz(error.code) ??
       (reason === "knowledge_reference_unavailable"
@@ -52,7 +69,17 @@ export function knowledgeErrorResponse(
       {
         code: error.code,
         message: error.message,
-        ...(typeof reason === "string" ? { details: { reason } } : {}),
+        ...(typeof reason === "string" ||
+        typeof error.details?.currentRevision === "number"
+          ? {
+              details: {
+                ...(typeof reason === "string" ? { reason } : {}),
+                ...(typeof error.details?.currentRevision === "number"
+                  ? { currentRevision: error.details.currentRevision }
+                  : {}),
+              },
+            }
+          : {}),
       },
       status,
     );

@@ -1,13 +1,65 @@
 import type { KnowledgeSearch } from "./knowledge-read-types";
+import type { KnowledgeProposalList } from "./knowledge-write-types";
+import type { Owner } from "@/lib/company/types";
 import type { KnowledgeRecordSelector } from "./knowledge-records";
 import type { KnowledgePageInput } from "./knowledge-read-types";
 
 import { knowledgeSearchSchema } from "./knowledge-read-types";
+import { knowledgeProposalListSchema } from "./knowledge-write-types";
 import { knowledgeRevisionSchema } from "./knowledge-types";
 import { knowledgePageInputSchema } from "./knowledge-read-types";
 
 import { MaisterError } from "@/lib/errors";
 import { postgresTextSchema } from "@/lib/text-schema";
+import { ownerSchema } from "@/lib/company/types";
+
+function ownerFromUrl(params: URLSearchParams): Owner | undefined {
+  const kind = params.get("ownerKind");
+  const id = params.get("ownerId");
+
+  if (kind === null && id === null) return undefined;
+  const parsed = ownerSchema.safeParse(
+    kind === "company" ? { kind, companyId: id } : { kind, projectId: id },
+  );
+
+  if (!parsed.success)
+    throw new MaisterError(
+      "CONFIG",
+      "Knowledge owner kind and bounded identity must be supplied together",
+    );
+
+  return parsed.data;
+}
+
+export function knowledgeProposalsFromUrl(
+  params: URLSearchParams,
+): KnowledgeProposalList {
+  requireKnowledgeQueryKeys(params, [
+    "ownerKind",
+    "ownerId",
+    "status",
+    "limit",
+    "cursor",
+  ]);
+  const limit = params.get("limit");
+
+  if (limit !== null && !/^[1-9][0-9]*$/.test(limit))
+    throw new MaisterError(
+      "CONFIG",
+      "Knowledge proposal page limit must be a bounded positive integer",
+    );
+  const parsed = knowledgeProposalListSchema.safeParse({
+    owner: ownerFromUrl(params),
+    status: params.get("status") ?? undefined,
+    limit: limit === null ? undefined : Number(limit),
+    cursor: params.get("cursor") ?? undefined,
+  });
+
+  if (!parsed.success)
+    throw new MaisterError("CONFIG", "Invalid knowledge proposal list filters");
+
+  return parsed.data;
+}
 
 export function knowledgeRecordSelector(
   recordId: string,
@@ -82,20 +134,7 @@ export function knowledgeSearchFromUrl(
     "limit",
     "cursor",
   ]);
-  const ownerKind = params.get("ownerKind");
-  const ownerId = params.get("ownerId");
-
-  if ((ownerKind === null) !== (ownerId === null))
-    throw new MaisterError(
-      "CONFIG",
-      "Knowledge owner kind and identity must be supplied together",
-    );
-  const owner =
-    ownerKind === null
-      ? undefined
-      : ownerKind === "company"
-        ? { kind: "company", companyId: ownerId }
-        : { kind: ownerKind, projectId: ownerId };
+  const owner = ownerFromUrl(params);
   const rawLimit = params.get("limit");
 
   if (rawLimit !== null && !/^[1-9][0-9]*$/.test(rawLimit))

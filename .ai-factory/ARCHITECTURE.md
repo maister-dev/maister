@@ -25,6 +25,12 @@ Inside `web/`, two organizational axes coexist:
    `supervisor-client`, `projects`, `scheduler`, `db`, `reconcile`)
    organized by concern, not by feature.
 
+Native company identity and grant administration live in `web/lib/company/`; structured knowledge,
+proposal review and evidence inspection extend `web/lib/brain/`. Session and bearer Route Handlers
+share these server-only services, while generated MCP inputs preserve the same native contracts.
+Private agent and personal librarian memory remain separate stores. Current contracts and persistence
+boundaries live in `docs/system-analytics/company-brain.md` and `docs/db/company-brain-domain.md`.
+
 Inside `supervisor/`, modules organized by concern: `acp-client`, `spawn`,
 `heartbeat`, `checkpoint`, `http-api`.
 

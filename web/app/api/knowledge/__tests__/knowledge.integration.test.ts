@@ -23,6 +23,7 @@ import { startMainAndBrainPostgresTestDb } from "@/test-support/pg-container";
 import {
   createBrainProposal,
   reviewKnowledgeProposal,
+  confirmKnowledgeRecord,
 } from "@/lib/brain/proposals";
 import { GET as readEvidence } from "@/app/api/knowledge/[recordId]/evidence/route";
 import { GET as searchRecords } from "@/app/api/knowledge/route";
@@ -39,18 +40,32 @@ import { GET as extEvidence } from "@/app/api/v1/ext/knowledge/[recordId]/eviden
 import { GET as extConflicts } from "@/app/api/v1/ext/knowledge/[recordId]/conflicts/route";
 import { GET as extSearch } from "@/app/api/v1/ext/knowledge/route";
 import { GET as extRecord } from "@/app/api/v1/ext/knowledge/[recordId]/route";
+import { GET as extWitness } from "@/app/api/v1/ext/knowledge/witnesses/[witnessId]/route";
+import { GET as extProposal } from "@/app/api/v1/ext/knowledge/proposals/[proposalId]/route";
+import {
+  GET as extProposals,
+  POST as extPropose,
+} from "@/app/api/v1/ext/knowledge/proposals/route";
+import { POST as extDecide } from "@/app/api/v1/ext/knowledge/proposals/[proposalId]/decision/route";
+import { POST as extConfirm } from "@/app/api/v1/ext/knowledge/[recordId]/confirmations/route";
 import { POST as extCapture } from "@/app/api/v1/ext/knowledge/sources/route";
 import { issueToken, issueUserAccessToken } from "@/lib/tokens/issue";
 import { normalizeTokenScopes } from "@/lib/tokens/scopes";
 import { GET as readConflicts } from "@/app/api/knowledge/[recordId]/conflicts/route";
 import { getKnowledgeConflictsPage } from "@/lib/brain/knowledge-conflicts";
 import { getKnowledgeEvidencePage } from "@/lib/brain/knowledge-evidence-page";
+import { sha256 } from "@/lib/brain/codec";
 import { captureKnowledgeSource } from "@/lib/brain/knowledge-source-capture";
 import { searchKnowledge } from "@/lib/brain/knowledge-search";
 import { knowledgeSearchSchema } from "@/lib/brain/knowledge-read-types";
 import { issueAgentRunToken } from "@/lib/agents/tokens";
 import { seedRun } from "@/test-support/execution-host-seed";
 import { seedProjectRow } from "@/test-support/execution-host-seed";
+import { GET as listProposals } from "@/app/api/knowledge/proposals/route";
+import { GET as getProposal } from "@/app/api/knowledge/proposals/[proposalId]/route";
+import { POST as proposeKnowledge } from "@/app/api/knowledge/proposals/route";
+import { POST as decideKnowledge } from "@/app/api/knowledge/proposals/[proposalId]/decision/route";
+import { POST as confirmKnowledge } from "@/app/api/knowledge/[recordId]/confirmations/route";
 import { POST as captureSource } from "@/app/api/knowledge/sources/route";
 
 let database: StartedPostgresTestDb;
@@ -770,9 +785,19 @@ it("IT-CBX-02 the built MCP publishes nested native schemas and calls the real H
     {
       ownerUserId: readerId,
       name: "Built MCP qualification",
-      scopes: normalizeTokenScopes(["knowledge:read", "knowledge:propose"]),
+      scopes: normalizeTokenScopes([
+        "knowledge:read",
+        "knowledge:propose",
+        "knowledge:review",
+        "knowledge:confirm",
+      ]),
     },
     database.db,
+  );
+
+  await database.pool.query(
+    "INSERT INTO company_grants(company_id,principal_type,principal_id,action,created_by) VALUES($1,'user',$2,'knowledge:confirm',$2)",
+    [companyId, readerId],
   );
   const recordId = randomUUID();
   const query = randomUUID();
@@ -800,21 +825,46 @@ it("IT-CBX-02 the built MCP publishes nested native schemas and calls the real H
       });
 
       received.push(`${incoming.method} ${url.pathname}`);
-      const params = { params: Promise.resolve({ recordId }) };
-      const response =
-        url.pathname === "/api/v1/ext/knowledge/sources"
-          ? await extCapture(request)
-          : url.pathname === "/api/v1/ext/knowledge"
-            ? await extSearch(request)
-            : url.pathname === `/api/v1/ext/knowledge/${recordId}/evidence`
-              ? await extEvidence(request, params)
-              : url.pathname === `/api/v1/ext/knowledge/${recordId}/conflicts`
-                ? await extConflicts(request, params)
-                : url.pathname === `/api/v1/ext/knowledge/${recordId}`
-                  ? await extRecord(request, params)
-                  : new Response("Unknown native qualification route", {
-                      status: 404,
-                    });
+      const segments = url.pathname.split("/");
+      const selectedId = segments[5];
+      let response: Response;
+
+      if (url.pathname === "/api/v1/ext/knowledge/sources")
+        response = await extCapture(request);
+      else if (url.pathname === "/api/v1/ext/knowledge")
+        response = await extSearch(request);
+      else if (url.pathname === "/api/v1/ext/knowledge/proposals")
+        response =
+          incoming.method === "POST"
+            ? await extPropose(request)
+            : await extProposals(request);
+      else if (selectedId === "proposals") {
+        const params = { params: Promise.resolve({ proposalId: segments[6] }) };
+
+        response =
+          segments[7] === "decision"
+            ? await extDecide(request, params)
+            : await extProposal(request, params);
+      } else if (selectedId === "witnesses")
+        response = await extWitness(request, {
+          params: Promise.resolve({ witnessId: segments[6] }),
+        });
+      else {
+        const params = { params: Promise.resolve({ recordId: selectedId }) };
+
+        if (segments[6] === "evidence")
+          response = await extEvidence(request, params);
+        else if (segments[6] === "conflicts")
+          response = await extConflicts(request, params);
+        else if (segments[6] === "confirmations") {
+          response = await extConfirm(request, params);
+          if (response.ok)
+            await database.pool.query(
+              "UPDATE company_grants SET revoked_at=now(),revision=revision+1 WHERE company_id=$1 AND principal_id=$2 AND action='knowledge:confirm' AND revoked_at IS NULL",
+              [companyId, readerId],
+            );
+        } else response = await extRecord(request, params);
+      }
 
       outgoing.writeHead(
         response.status,
@@ -907,6 +957,10 @@ it("IT-CBX-02 the built MCP publishes nested native schemas and calls the real H
 
     expect(code, diagnostics).toBe(0);
     const result = JSON.parse(output) as {
+      workflow: Record<
+        string,
+        { isError?: boolean; content: { text: string }[] }
+      >;
       tools: { name: string; inputSchema: unknown }[];
       capture: { isError?: boolean; content: { text: string }[] };
       record: { isError?: boolean; content: { text: string }[] };
@@ -946,7 +1000,49 @@ it("IT-CBX-02 the built MCP publishes nested native schemas and calls the real H
       items: [],
       nextCursor: null,
     });
-    expect(result.malformed).toHaveLength(6);
+    const workflow = Object.fromEntries(
+      Object.entries(result.workflow).map(([name, response]) => [
+        name,
+        JSON.parse(response.content[0].text),
+      ]),
+    );
+
+    for (const [name, response] of Object.entries(result.workflow)) {
+      if (name !== "revokedReplay")
+        expect(response.isError, JSON.stringify({ name, response })).not.toBe(
+          true,
+        );
+    }
+    assertContract("CBEvidenceWitness", workflow.witness);
+    assertContract("CBKnowledgeProposal", workflow.pending);
+    assertContract("CBKnowledgeProposalPage", workflow.queue);
+    assertContract("CBKnowledgeProposal", workflow.published);
+    expect(workflow.pending).toMatchObject({
+      status: "pending",
+      attribution: { kind: "user", id: readerId },
+    });
+    expect(
+      workflow.queue.items.map((item: { id: string }) => item.id),
+    ).toContain(workflow.pending.id);
+    expect(workflow.accepted).toMatchObject({
+      status: "accepted",
+      revision: 2,
+      duplicate: false,
+    });
+    expect(workflow.replayed).toMatchObject({
+      id: workflow.pending.id,
+      duplicate: true,
+    });
+    expect(workflow.unconfirmed).toMatchObject({
+      confirmation: { state: "unconfirmed" },
+    });
+    expect(workflow.confirmation).toMatchObject({ status: "confirmed" });
+    expect(workflow.confirmed).toMatchObject({
+      confirmation: { state: "confirmed", witnessIds: [workflow.witness.id] },
+    });
+    expect(result.workflow.revokedReplay.isError).toBe(true);
+    expect(workflow.revokedReplay).toMatchObject({ code: "UNAUTHORIZED" });
+    expect(result.malformed).toHaveLength(8);
     for (const invalid of result.malformed) {
       expect(invalid.isError).toBe(true);
       expect(JSON.parse(invalid.content[0].text)).toMatchObject({
@@ -954,7 +1050,7 @@ it("IT-CBX-02 the built MCP publishes nested native schemas and calls the real H
         details: { reason: "knowledge_tool_input_invalid" },
       });
     }
-    expect(received).toHaveLength(5);
+    expect(received).toHaveLength(16);
     expect(failures).toEqual([]);
   } finally {
     clearTimeout(deadline);
@@ -1067,6 +1163,97 @@ it("IT-CBE-06 run-bound native reads bind current grants to the immutable role/p
       { kind: "company", companyId },
     ]),
   });
+  const projectFindingId = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO brain_items(id,project_id,kind,title,content,content_hash,confidence) VALUES($1,$2,'observation','Project-restricted diagnostic','A private diagnostic detail',$3,0.3)",
+    [projectFindingId, project.id, randomUUID()],
+  );
+  const projectRead = await extRecord(
+    new NextRequest(
+      `http://localhost/api/v1/ext/knowledge/${projectFindingId}`,
+      { headers: { Authorization: `Bearer ${token.secret}` } },
+    ),
+    { params: Promise.resolve({ recordId: projectFindingId }) },
+  );
+
+  expect(projectRead.status).toBe(200);
+  await database.pool.query(
+    "INSERT INTO company_grants(company_id,principal_type,principal_id,action,created_by) VALUES($1,'agent',$2,'knowledge:propose',$3)",
+    [companyId, agentId, readerId],
+  );
+  const proposed = await createBrainProposal(database.db, {
+    kind: "knowledge_add",
+    owner: { kind: "company", companyId },
+    principal: { kind: "token", tokenId: token.tokenId },
+    idempotencyKey: `${runId}_without_citations`,
+    draft: {
+      title: "Derived diagnostic without quoted citations",
+      kind: "observation",
+      assertion: "A conclusion made after private project reads",
+      basis: "inferred",
+      evidence: [],
+      missingEvidence: [
+        {
+          state: "absent",
+          reason: "The submitted finding supplies no explicit source citation.",
+        },
+      ],
+      limitations: [],
+    },
+  });
+  const inherited = (
+    await database.pool.query(
+      "SELECT source_restrictions,knowledge_attribution FROM brain_proposals WHERE id=$1",
+      [proposed.id],
+    )
+  ).rows[0];
+
+  expect(inherited.source_restrictions).toEqual(
+    expect.arrayContaining([
+      { kind: "project", projectId: project.id },
+      { kind: "record", recordId: projectFindingId },
+    ]),
+  );
+  expect(inherited.knowledge_attribution).toMatchObject({
+    kind: "agent",
+    id: agentId,
+    runId,
+  });
+  await expect(
+    reviewKnowledgeProposal(database.db, {
+      proposalId: proposed.id,
+      principal: { kind: "user", userId: readerId },
+      expectedRevision: 1,
+      decision: "accept",
+      reason: "Cannot widen private diagnostic visibility",
+      idempotencyKey: `${runId}_withheld_review`,
+    }),
+  ).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "knowledge_reference_unavailable" },
+  });
+  await database.pool.query(
+    "INSERT INTO project_members(id,project_id,user_id,role) VALUES($1,$2,$3,'owner')",
+    [randomUUID(), project.id, readerId],
+  );
+  const publication = await reviewKnowledgeProposal(database.db, {
+    proposalId: proposed.id,
+    principal: { kind: "user", userId: readerId },
+    expectedRevision: 1,
+    decision: "accept",
+    reason: "Publish with the retained private-source restrictions",
+    idempotencyKey: `${runId}_authorized_review`,
+  });
+
+  expect(
+    (
+      await database.pool.query(
+        "SELECT source_restrictions FROM brain_items WHERE id=$1",
+        [publication.acceptedRecordId],
+      )
+    ).rows[0].source_restrictions,
+  ).toEqual(inherited.source_restrictions);
   await database.pool.query(
     "UPDATE project_tokens SET agent_id=$2 WHERE id=$1",
     [token.tokenId, otherAgentId],
@@ -1081,4 +1268,701 @@ it("IT-CBE-06 run-bound native reads bind current grants to the immutable role/p
     [installationId],
   );
   expect((await read()).status).toBe(403);
+  await database.pool.query("DELETE FROM projects WHERE id=$1", [project.id]);
+  expect(
+    (
+      await database.pool.query("SELECT id FROM brain_items WHERE id=$1", [
+        publication.acceptedRecordId,
+      ])
+    ).rows,
+  ).toEqual([{ id: publication.acceptedRecordId }]);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT run_id,knowledge_attribution FROM brain_proposals WHERE id=$1",
+        [proposed.id],
+      )
+    ).rows[0],
+  ).toMatchObject({
+    run_id: null,
+    knowledge_attribution: { kind: "agent", id: agentId, runId },
+  });
+});
+
+it("IT-CBE-06 cross-owner proposal evidence inherits current source access and never obstructs source-project deletion", async () => {
+  const project = await seedProjectRow(database.db);
+
+  await database.pool.query(
+    "UPDATE projects SET brain_enabled=true WHERE id=$1",
+    [project.id],
+  );
+  await database.pool.query("UPDATE users SET role='admin' WHERE id=$1", [
+    readerId,
+  ]);
+  const principal = { kind: "user" as const, userId: readerId };
+  const captured = await captureKnowledgeSource(database.db, principal, {
+    owner: { kind: "project", projectId: project.id },
+    title: "Project-restricted source",
+    content: "Configured source observation remains restricted to its project",
+    idempotencyKey: `${readerId}_project_capture`,
+  });
+  const proposal = await createBrainProposal(database.db, {
+    kind: "knowledge_add",
+    owner: { kind: "company", companyId },
+    principal,
+    idempotencyKey: `${readerId}_derived_company`,
+    draft: {
+      title: "Company-owned derived observation",
+      kind: "observation",
+      assertion: "A finding derived from project evidence",
+      basis: "inferred",
+      evidence: [
+        {
+          relation: "supports",
+          reference: {
+            kind: "witness",
+            id: captured.witness.id,
+            sha256: captured.witness.sha256!,
+            version: captured.witness.sourceVersion!,
+          },
+        },
+      ],
+      missingEvidence: [],
+      limitations: [],
+    },
+  });
+  const accepted = await reviewKnowledgeProposal(database.db, {
+    proposalId: proposal.id,
+    principal,
+    expectedRevision: 1,
+    decision: "accept",
+    reason: "Publish with inherited source policy",
+    idempotencyKey: `${readerId}_publish_derived`,
+  });
+  const recordId = accepted.acceptedRecordId!;
+
+  expect((await readRecord(recordId)).status).toBe(200);
+  const metadata = (
+    await database.pool.query(
+      "SELECT i.source_restrictions AS current,r.source_restrictions AS retained FROM brain_items i JOIN brain_record_revisions r ON r.record_id=i.id AND r.revision=i.current_revision WHERE i.id=$1",
+      [recordId],
+    )
+  ).rows[0];
+
+  expect(metadata.current).toEqual(
+    expect.arrayContaining([{ kind: "project", projectId: project.id }]),
+  );
+  expect(metadata.retained).toEqual(metadata.current);
+  await database.pool.query("UPDATE users SET role='member' WHERE id=$1", [
+    readerId,
+  ]);
+  expect((await readRecord(recordId)).status).toBe(404);
+  expect(
+    (
+      await searchKnowledge(
+        database.db,
+        principal,
+        knowledgeSearchSchema.parse({ q: "Company-owned derived observation" }),
+      )
+    ).items,
+  ).toEqual([]);
+  await database.pool.query("DELETE FROM projects WHERE id=$1", [project.id]);
+  expect(
+    (
+      await database.pool.query("SELECT id FROM brain_items WHERE id=$1", [
+        recordId,
+      ])
+    ).rows,
+  ).toEqual([{ id: recordId }]);
+  expect(
+    (
+      await database.pool.query("SELECT id FROM brain_proposals WHERE id=$1", [
+        proposal.id,
+      ])
+    ).rows,
+  ).toEqual([{ id: proposal.id }]);
+  expect((await readRecord(recordId)).status).toBe(404);
+});
+
+it("IT-CBK-03 stale source support cannot establish a new factual confirmation", async () => {
+  const principal = { kind: "user" as const, userId: readerId };
+  const owner = { kind: "company" as const, companyId };
+
+  await database.pool.query(
+    "INSERT INTO company_grants(company_id,principal_type,principal_id,action,created_by) VALUES($1,'user',$2,'knowledge:confirm',$2)",
+    [companyId, readerId],
+  );
+  const sourceId = randomUUID();
+  const observationId = randomUUID();
+  const witnessId = randomUUID();
+  const content =
+    "The retained configured runbook version permits a bounded restart.";
+  const hash = sha256(content);
+  const attribution = {
+    kind: "user",
+    id: readerId,
+    runId: null,
+    attemptId: null,
+  };
+
+  await database.pool.query(
+    "INSERT INTO brain_sources(id,company_id,kind,path,title,submitted_content,source_hash,chunker_id,chunker_version) VALUES($1,$2,'text',$3,'Retained legacy runbook',$4,$5,'legacy_submission','1')",
+    [sourceId, companyId, `submitted:${sourceId}`, content, hash],
+  );
+  await database.pool.query(
+    "INSERT INTO brain_evidence_observations(id,company_id,source_id,source_version,content_sha256,attribution) VALUES($1,$2,$3,$4,$5,$6::jsonb)",
+    [
+      observationId,
+      companyId,
+      sourceId,
+      `sha256:${hash}`,
+      hash,
+      JSON.stringify(attribution),
+    ],
+  );
+  await database.pool.query(
+    "INSERT INTO brain_evidence_witnesses(id,observation_id,source_version,content_sha256,selector,restrictions,capture_locator) VALUES($1,$2,$3,$4,'retained:text',$5::jsonb,$6::jsonb)",
+    [
+      witnessId,
+      observationId,
+      `sha256:${hash}`,
+      hash,
+      JSON.stringify([owner]),
+      JSON.stringify({ kind: "inline", content }),
+    ],
+  );
+  const proposed = await createBrainProposal(database.db, {
+    kind: "knowledge_add",
+    owner,
+    principal,
+    idempotencyKey: `${readerId}_source_version`,
+    draft: {
+      title: "Version-supported runbook claim",
+      assertion: content,
+      kind: "procedure",
+      basis: "inferred",
+      evidence: [
+        {
+          relation: "supports",
+          reference: {
+            kind: "witness",
+            id: witnessId,
+            version: `sha256:${hash}`,
+            sha256: hash,
+          },
+        },
+      ],
+      missingEvidence: [],
+      limitations: [],
+    },
+  });
+  const published = await reviewKnowledgeProposal(database.db, {
+    proposalId: proposed.id,
+    principal,
+    expectedRevision: 1,
+    decision: "accept",
+    reason: "Publish the version-bound assertion",
+    idempotencyKey: `${readerId}_source_accept`,
+  });
+  const confirmation = {
+    recordId: published.acceptedRecordId!,
+    principal,
+    expectedRevision: 1,
+    witnessIds: [witnessId],
+    reason: "Confirm against the current retained source version",
+    idempotencyKey: `${readerId}_confirm_current`,
+    decision: "confirm" as const,
+  };
+
+  expect(await confirmKnowledgeRecord(database.db, confirmation)).toMatchObject(
+    { status: "confirmed", duplicate: false },
+  );
+  await confirmKnowledgeRecord(database.db, {
+    ...confirmation,
+    decision: "revoke",
+    witnessIds: [],
+    reason: "Reassess source currency",
+    idempotencyKey: `${readerId}_revoke_current`,
+  });
+  await database.pool.query(
+    "UPDATE brain_sources SET source_hash=$2 WHERE id=$1",
+    [sourceId, sha256("A newer source version")],
+  );
+  await expect(
+    confirmKnowledgeRecord(database.db, {
+      ...confirmation,
+      idempotencyKey: `${readerId}_confirm_stale`,
+    }),
+  ).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "knowledge_evidence_unavailable" },
+  });
+  expect((await readRecord(published.acceptedRecordId!)).status).toBe(200);
+});
+
+it("IT-CBK-03 native HTTP publication and evidence-bound confirmation are separate current-authority decisions", async () => {
+  const owner = { kind: "company", companyId };
+  const captured = await captureSource(
+    jsonRequest("/api/knowledge/sources", {
+      owner,
+      title: "HTTP review proof",
+      content: "Inspect the configured service and verify independent health.",
+      idempotencyKey: `${readerId}_http_review_source`,
+    }),
+  );
+  const witness = (await captured.json()) as KnowledgeWitnessDto;
+  const body = {
+    idempotencyKey: `${readerId}_http_propose`,
+    content: {
+      change: "add",
+      owner,
+      title: "HTTP published procedure",
+      kind: "procedure",
+      assertion: "Follow the configured health check",
+      basis: "inferred",
+      evidence: [
+        {
+          relation: "supports",
+          reference: {
+            kind: "witness",
+            id: witness.id,
+            version: witness.sourceVersion,
+            sha256: witness.sha256,
+          },
+        },
+      ],
+      missingEvidence: [],
+      limitations: [],
+    },
+  };
+  const created = await proposeKnowledge(
+    jsonRequest("/api/knowledge/proposals", body),
+  );
+
+  expect(created.status).toBe(201);
+  const proposal = (await created.json()) as { id: string; revision: number };
+
+  assertContract("CBReceipt", proposal);
+  const replay = await proposeKnowledge(
+    jsonRequest("/api/knowledge/proposals", body),
+  );
+
+  expect(replay.status).toBe(200);
+  expect(await replay.json()).toMatchObject({
+    id: proposal.id,
+    duplicate: true,
+  });
+  const proposerToken = await issueUserAccessToken(
+    {
+      ownerUserId: readerId,
+      name: "Own proposal inspection",
+      scopes: normalizeTokenScopes(["knowledge:read", "knowledge:propose"]),
+    },
+    database.db,
+  );
+  const proposerHeaders = { Authorization: `Bearer ${proposerToken.secret}` };
+  const proposerContext = {
+    params: Promise.resolve({ proposalId: proposal.id }),
+  };
+
+  expect(
+    (
+      await extProposal(
+        new NextRequest(
+          `http://localhost/api/v1/ext/knowledge/proposals/${proposal.id}`,
+          { headers: proposerHeaders },
+        ),
+        proposerContext,
+      )
+    ).status,
+  ).toBe(200);
+  expect(
+    (
+      await extProposals(
+        new NextRequest("http://localhost/api/v1/ext/knowledge/proposals", {
+          headers: proposerHeaders,
+        }),
+      )
+    ).status,
+  ).toBe(403);
+  expect(
+    (
+      await extDecide(
+        new NextRequest(
+          `http://localhost/api/v1/ext/knowledge/proposals/${proposal.id}/decision`,
+          {
+            method: "POST",
+            headers: proposerHeaders,
+            body: JSON.stringify({
+              expectedRevision: 1,
+              decision: "accept",
+              reason: "A proposer cannot grant themselves review",
+              idempotencyKey: `${readerId}_forbidden_review`,
+            }),
+          },
+        ),
+        proposerContext,
+      )
+    ).status,
+  ).toBe(403);
+  const unrelatedId = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'member','active')",
+    [unrelatedId, `${unrelatedId}@example.test`],
+  );
+  await database.pool.query(
+    "INSERT INTO company_grants(company_id,principal_type,principal_id,action,created_by) SELECT $1,'user',$2,action,$2 FROM unnest(ARRAY['knowledge:read','knowledge:propose']) action",
+    [companyId, unrelatedId],
+  );
+  const unrelatedToken = await issueUserAccessToken(
+    {
+      ownerUserId: unrelatedId,
+      name: "Unrelated proposer",
+      scopes: normalizeTokenScopes(["knowledge:read", "knowledge:propose"]),
+    },
+    database.db,
+  );
+
+  expect(
+    (
+      await extProposal(
+        new NextRequest(
+          `http://localhost/api/v1/ext/knowledge/proposals/${proposal.id}`,
+          { headers: { Authorization: `Bearer ${unrelatedToken.secret}` } },
+        ),
+        proposerContext,
+      )
+    ).status,
+  ).toBe(404);
+  const changed = await proposeKnowledge(
+    jsonRequest("/api/knowledge/proposals", {
+      ...body,
+      content: { ...body.content, assertion: "A different assertion" },
+    }),
+  );
+
+  expect(changed.status).toBe(409);
+  const detail = await getProposal(
+    new NextRequest(`http://localhost/api/knowledge/proposals/${proposal.id}`),
+    { params: Promise.resolve({ proposalId: proposal.id }) },
+  );
+
+  expect(detail.status).toBe(200);
+  const detailBody = await detail.json();
+
+  assertContract("CBKnowledgeProposal", detailBody);
+  expect(detailBody).toMatchObject({
+    id: proposal.id,
+    owner,
+    content: body.content,
+    evidence: [
+      {
+        relation: "supports",
+        witness: { id: witness.id, availability: "available" },
+      },
+    ],
+  });
+  const list = await listProposals(
+    new NextRequest(
+      `http://localhost/api/knowledge/proposals?ownerKind=company&ownerId=${companyId}&status=pending`,
+    ),
+  );
+
+  expect(list.status).toBe(200);
+  const proposalsPage = await list.json();
+
+  assertContract("CBKnowledgeProposalPage", proposalsPage);
+  expect(proposalsPage.items.map((item: { id: string }) => item.id)).toContain(
+    proposal.id,
+  );
+  const decision = {
+    expectedRevision: 1,
+    decision: "accept",
+    reason: "Publish this version-bound procedure",
+    idempotencyKey: `${readerId}_http_accept`,
+  };
+  const context = { params: Promise.resolve({ proposalId: proposal.id }) };
+  const accepted = await decideKnowledge(
+    jsonRequest(`/api/knowledge/proposals/${proposal.id}/decision`, decision),
+    context,
+  );
+
+  expect(accepted.status).toBe(200);
+  const acceptedBody = await accepted.json();
+
+  assertContract("CBReceipt", acceptedBody);
+  expect(acceptedBody).toMatchObject({
+    id: proposal.id,
+    revision: 2,
+    status: "accepted",
+    duplicate: false,
+  });
+  const recordId = String(
+    (
+      await database.pool.query(
+        "SELECT published_record_id FROM brain_proposals WHERE id=$1",
+        [proposal.id],
+      )
+    ).rows[0].published_record_id,
+  );
+
+  expect(await (await readRecord(recordId)).json()).toMatchObject({
+    confirmation: { state: "unconfirmed" },
+  });
+  const repeated = await decideKnowledge(
+    jsonRequest(`/api/knowledge/proposals/${proposal.id}/decision`, decision),
+    context,
+  );
+
+  expect(await repeated.json()).toMatchObject({ duplicate: true });
+  expect(
+    (
+      await decideKnowledge(
+        jsonRequest(`/api/knowledge/proposals/${proposal.id}/decision`, {
+          ...decision,
+          decision: "reject",
+        }),
+        context,
+      )
+    ).status,
+  ).toBe(409);
+  const confirmation = {
+    expectedRevision: 1,
+    decision: "confirm",
+    witnessIds: [witness.id],
+    reason: "Confirm using the authorized current source version",
+    idempotencyKey: `${readerId}_http_confirm`,
+  };
+  const recordContext = { params: Promise.resolve({ recordId }) };
+
+  expect(
+    (
+      await confirmKnowledge(
+        jsonRequest(`/api/knowledge/${recordId}/confirmations`, confirmation),
+        recordContext,
+      )
+    ).status,
+  ).toBe(403);
+  await database.pool.query(
+    "INSERT INTO company_grants(company_id,principal_type,principal_id,action,created_by) VALUES($1,'user',$2,'knowledge:confirm',$2)",
+    [companyId, readerId],
+  );
+  const confirmed = await confirmKnowledge(
+    jsonRequest(`/api/knowledge/${recordId}/confirmations`, confirmation),
+    recordContext,
+  );
+
+  expect(confirmed.status).toBe(200);
+  const confirmationBody = await confirmed.json();
+
+  assertContract("CBReceipt", confirmationBody);
+  expect(confirmationBody).toMatchObject({
+    status: "confirmed",
+    revision: 1,
+    duplicate: false,
+  });
+  expect(await (await readRecord(recordId)).json()).toMatchObject({
+    confirmation: { state: "confirmed", witnessIds: [witness.id] },
+  });
+  expect(
+    (
+      await confirmKnowledge(
+        jsonRequest(`/api/knowledge/${recordId}/confirmations`, {
+          ...confirmation,
+          confirmer: { id: "forged" },
+        }),
+        recordContext,
+      )
+    ).status,
+  ).toBe(400);
+  await database.pool.query(
+    "UPDATE company_grants SET revoked_at=now(),revision=revision+1 WHERE company_id=$1 AND principal_id=$2 AND action='knowledge:confirm'",
+    [companyId, readerId],
+  );
+  expect(
+    (
+      await confirmKnowledge(
+        jsonRequest(`/api/knowledge/${recordId}/confirmations`, confirmation),
+        recordContext,
+      )
+    ).status,
+  ).toBe(403);
+});
+
+it("IT-CBK-06 review pagination applies source authority before LIMIT, bounds summaries and rechecks authority after continuation", async () => {
+  vi.stubEnv("AUTH_SECRET", "native-proposal-cursor-test-secret");
+  const principal = { kind: "user" as const, userId: readerId };
+  const owner = { kind: "company" as const, companyId };
+  const visible: string[] = [];
+
+  for (let index = 0; index < 26; index++) {
+    const proposed = await createBrainProposal(database.db, {
+      kind: "knowledge_add",
+      owner,
+      principal,
+      idempotencyKey: `${readerId}_queue_${index}`,
+      draft: {
+        title: `Bounded review ${index}`,
+        kind: "assertion",
+        assertion: "\u001f".repeat(2000) + `${readerId}_${index}`,
+        basis: "inferred",
+        evidence: [],
+        missingEvidence: [
+          {
+            state: "absent",
+            reason:
+              "This is an explicitly unsupported assumption awaiting investigation.",
+          },
+        ],
+        limitations: [],
+      },
+    });
+
+    visible.push(proposed.id);
+  }
+  const project = await seedProjectRow(database.db);
+
+  await database.pool.query(
+    "UPDATE projects SET brain_enabled=true WHERE id=$1",
+    [project.id],
+  );
+  await database.pool.query("UPDATE users SET role='admin' WHERE id=$1", [
+    readerId,
+  ]);
+  const source = await captureKnowledgeSource(database.db, principal, {
+    owner: { kind: "project", projectId: project.id },
+    title: "Restricted review source",
+    content: "Restricted diagnostic observation",
+    idempotencyKey: `${readerId}_restricted_queue_source`,
+  });
+  const hidden: string[] = [];
+
+  for (let index = 0; index < 3; index++) {
+    const proposed = await createBrainProposal(database.db, {
+      kind: "knowledge_add",
+      owner,
+      principal,
+      idempotencyKey: `${readerId}_hidden_queue_${index}`,
+      draft: {
+        title: `Private review ${index}`,
+        kind: "assertion",
+        assertion: `${readerId} private observation ${index}`,
+        basis: "observed",
+        evidence: [
+          {
+            relation: "supports",
+            reference: {
+              kind: "witness",
+              id: source.witness.id,
+              version: source.witness.sourceVersion!,
+              sha256: source.witness.sha256!,
+            },
+          },
+        ],
+        missingEvidence: [],
+        limitations: [],
+      },
+    });
+
+    hidden.push(proposed.id);
+  }
+  await database.pool.query("UPDATE users SET role='member' WHERE id=$1", [
+    readerId,
+  ]);
+  const single = await listProposals(
+    new NextRequest(
+      `http://localhost/api/knowledge/proposals?ownerKind=company&ownerId=${companyId}&status=pending&limit=1`,
+    ),
+  );
+
+  expect(single.status).toBe(200);
+  const first = await single.json();
+
+  expect(first.items.map((item: { id: string }) => item.id)).toEqual([
+    visible.at(-1),
+  ]);
+  expect(first.nextCursor).not.toBeNull();
+  for (const proposalId of hidden)
+    expect(
+      (
+        await getProposal(
+          new NextRequest(
+            `http://localhost/api/knowledge/proposals/${proposalId}`,
+          ),
+          { params: Promise.resolve({ proposalId }) },
+        )
+      ).status,
+    ).toBe(404);
+  let cursor: string | null = null;
+  let pages = 0;
+  const found: string[] = [];
+
+  do {
+    const response = await listProposals(
+      new NextRequest(
+        `http://localhost/api/knowledge/proposals?ownerKind=company&ownerId=${companyId}&status=pending&limit=50${cursor === null ? "" : `&cursor=${cursor}`}`,
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    const raw = await response.text();
+
+    expect(Buffer.byteLength(raw, "utf8")).toBeLessThanOrEqual(131072);
+    const page = JSON.parse(raw) as {
+      items: {
+        id: string;
+        assertionPreview: string;
+        assertionTruncated: boolean;
+        content?: unknown;
+      }[];
+      nextCursor: string | null;
+    };
+
+    assertContract("CBKnowledgeProposalPage", page);
+    for (const item of page.items) {
+      expect(hidden).not.toContain(item.id);
+      expect(item.content).toBeUndefined();
+      if (visible.includes(item.id)) {
+        expect(item.assertionPreview).toHaveLength(1000);
+        expect(item.assertionTruncated).toBe(true);
+        found.push(item.id);
+      }
+    }
+    cursor = page.nextCursor;
+    if (++pages > 20) throw new Error("Bounded review queue failed to advance");
+  } while (cursor !== null);
+  expect(found.sort()).toEqual([...visible].sort());
+  expect(pages).toBeGreaterThan(1);
+  await database.pool.query("DELETE FROM projects WHERE id=$1", [project.id]);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT id FROM brain_proposals WHERE id=ANY($1::text[])",
+        [hidden],
+      )
+    ).rows,
+  ).toHaveLength(3);
+  await database.pool.query(
+    "UPDATE company_grants SET revoked_at=now(),revision=revision+1 WHERE company_id=$1 AND principal_id=$2 AND action='knowledge:review'",
+    [companyId, readerId],
+  );
+  expect(
+    (
+      await listProposals(
+        new NextRequest(
+          `http://localhost/api/knowledge/proposals?ownerKind=company&ownerId=${companyId}&status=pending&limit=1&cursor=${first.nextCursor}`,
+        ),
+      )
+    ).status,
+  ).toBe(400);
+  const afterRevocation = await listProposals(
+    new NextRequest(
+      `http://localhost/api/knowledge/proposals?ownerKind=company&ownerId=${companyId}&status=pending&limit=1`,
+    ),
+  );
+
+  expect(afterRevocation.status).toBe(200);
+  expect(await afterRevocation.json()).toEqual({ items: [], nextCursor: null });
+  vi.unstubAllEnvs();
 });

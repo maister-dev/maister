@@ -71,6 +71,13 @@
       "when": 1793661833389,
       "tag": "0010_source_access",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1793667660307,
+      "tag": "0011_proposal_source_access",
+      "breakpoints": true
     }
   ]
 }

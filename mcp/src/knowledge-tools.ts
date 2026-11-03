@@ -6,6 +6,18 @@ import schemas from "../../runtime/knowledge-tool-input.schema.json";
 
 export type KnowledgeToolName = keyof typeof schemas;
 const descriptions: Readonly<Record<KnowledgeToolName, string>> = {
+  knowledge_witness_get:
+    "Inspect an accessible original evidence witness, including its exact source version, availability and limitations. Missing evidence must remain explicit.",
+  knowledge_propose:
+    "Submit an attributable knowledge addition or revision-bound correction for review. Acceptance and factual confirmation are separate actions. Reuse the same idempotencyKey for the same delivery.",
+  knowledge_proposal_get:
+    "Inspect an accessible proposal, its evidence, review state and accepted publication. A proposal is not a confirmed fact.",
+  knowledge_proposals_list:
+    "List proposals the current principal may review, with bounded summaries and authorization-scoped continuation. Follow nextCursor to continue.",
+  knowledge_decide:
+    "Accept or reject an exact proposal revision only under explicit current review authority. Acceptance does not confirm the published assertion. Ordinary specialist tokens cannot review.",
+  knowledge_confirm:
+    "Confirm or revoke confirmation of an exact record revision under explicit current confirmation authority. Confirmation requires available versioned evidence; agent completion does not confer this authority.",
   knowledge_search:
     "Search accessible structured company/project knowledge. Ownership does not grant visibility. Results separate observations, assumptions, confirmation and freshness. Use the exact returned identities and revisions for follow-up; retrieval rank never confirms a claim.",
   knowledge_get:
@@ -57,8 +69,32 @@ export function knowledgeToolRouting(
       path: "/api/v1/ext/knowledge/sources",
       body: args,
     };
+  if (name === "knowledge_propose")
+    return {
+      method: "POST",
+      path: "/api/v1/ext/knowledge/proposals",
+      body: args,
+    };
+  if (name === "knowledge_decide") {
+    const { proposalId, ...body } = args;
+
+    return {
+      method: "POST",
+      path: `/api/v1/ext/knowledge/proposals/${encodeURIComponent(String(proposalId))}/decision`,
+      body,
+    };
+  }
+  if (name === "knowledge_confirm") {
+    const { recordId, ...body } = args;
+
+    return {
+      method: "POST",
+      path: `/api/v1/ext/knowledge/${encodeURIComponent(String(recordId))}/confirmations`,
+      body,
+    };
+  }
   const query = new URLSearchParams();
-  const { recordId, owner, ...parameters } = args;
+  const { recordId, proposalId, witnessId, owner, ...parameters } = args;
 
   if (owner !== undefined) {
     const selected = owner as
@@ -75,10 +111,24 @@ export function knowledgeToolRouting(
     if (value !== undefined) query.set(key, String(value));
   }
   const suffix = query.size === 0 ? "" : `?${query.toString()}`;
-  const resource =
-    name === "knowledge_search"
-      ? ""
-      : `/${encodeURIComponent(String(recordId))}`;
+  let resource: string;
+
+  switch (name) {
+    case "knowledge_search":
+      resource = "";
+      break;
+    case "knowledge_proposals_list":
+      resource = "/proposals";
+      break;
+    case "knowledge_proposal_get":
+      resource = `/proposals/${encodeURIComponent(String(proposalId))}`;
+      break;
+    case "knowledge_witness_get":
+      resource = `/witnesses/${encodeURIComponent(String(witnessId))}`;
+      break;
+    default:
+      resource = `/${encodeURIComponent(String(recordId))}`;
+  }
   const detail =
     name === "knowledge_evidence"
       ? "/evidence"

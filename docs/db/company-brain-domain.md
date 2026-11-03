@@ -1,6 +1,6 @@
 # Company Brain persistence
 
-**Partially implemented — ADR-202.** Main migration `0230_company_ownership` supplies singleton identity and explicit company grants. Brain migration `0007_company_records` adds owners, restricted-record grants, immutable revisions/change history, honest legacy baselines and repository-free text-source storage. Brain migration `0008_company_evidence` adds immutable captures, revision evidence snapshots and exact-version potential-conflict edges. Review extensions and management HTTP routes remain Designed. This is the additive native Brain record/evidence model; the [existing Project Brain ERD](brain-domain.md) remains the implemented baseline. [Records](../system-analytics/company-brain.md) and [evidence](../system-analytics/company-brain-evidence.md) own behavior.
+**Partially implemented — ADR-202.** Main migration `0230_company_ownership` supplies singleton identity and explicit company grants. Brain migration `0007_company_records` adds owners, restricted-record grants, immutable revisions/change history, honest legacy baselines and repository-free text-source storage. Brain migration `0008_company_evidence` adds immutable captures, revision evidence snapshots and exact-version potential-conflict edges. Brain `0009_knowledge_review` and `0011_proposal_source_access` retain native review decisions and inherited source access; main `0232_company_grant_requests` retains administrator grant delivery/revocation receipts. Native review and grant-management HTTP routes are implemented locally; UI and live-package qualification remain pending. This is the additive native Brain record/evidence model; the [existing Project Brain ERD](brain-domain.md) remains the implemented baseline. [Records](../system-analytics/company-brain.md) and [evidence](../system-analytics/company-brain-evidence.md) own behavior.
 
 ## Lineages and reservations
 
@@ -36,6 +36,22 @@ erDiagram
         text action
         integer revision
         timestamptz revoked_at
+        text creation_key
+        text creation_digest
+        text revocation_key
+        text revocation_digest
+        text revoked_by FK
+        text revocation_reason
+    }
+    BRAIN_PROPOSALS {
+        text id PK
+        text project_id FK
+        text company_id FK
+        text kind
+        integer revision
+        jsonb source_restrictions
+        text source_acl_key
+        jsonb authority_snapshot
     }
     BRAIN_ITEMS {
         text id PK
@@ -163,7 +179,7 @@ Main generated migrations retain SQL/journal/snapshot/schema agreement. Brain is
 
 ## Native review storage
 
-Implemented internally in `knowledge-proposals.ts`: add/correct proposal submission, current authority checks, exact-base acceptance, rejection, separately authorized evidence-bound confirm/revoke and immutable delivery receipts. Same-principal identical input under a new delivery key aliases the original proposal; every alias remains content-guarded. Publication of identical accessible content and metadata reuses the accepted record without changing attribution or adding corroboration. A different evidence set or metadata requires a correction. Narrower records are outside the owner-visible deduplication index. Missing-evidence declarations remain on each immutable revision. Local proposal/history and submission/proposal owner constraints prevent a cross-owner cascade. Ordinary proposal and confirmation deletion is guarded; explicit project deletion cascades all project-owned review data. HTTP/MCP exposure, inherited source restrictions, non-witness reference resolvers and read projections remain in their later implementation tasks.
+Implemented internally in `knowledge-proposals.ts`: add/correct proposal submission, current authority checks, exact-base acceptance, rejection, separately authorized evidence-bound confirm/revoke and immutable delivery receipts. Same-principal identical input under a new delivery key aliases the original proposal; every alias remains content-guarded. Publication of identical accessible content and metadata reuses the accepted record without changing attribution or adding corroboration. A different evidence set or metadata requires a correction. Narrower records are outside the owner-visible deduplication index. Missing-evidence declarations remain on each immutable revision. Local proposal/history and submission/proposal owner constraints prevent a cross-owner cascade. Ordinary proposal and confirmation deletion is guarded; explicit project deletion cascades all project-owned review data. HTTP/MCP proposal and witness inspection, native decision/confirmation endpoints and inherited source restrictions are implemented locally. Non-witness result/operation reference resolvers and complete launch/output inheritance remain in the following runtime tasks.
 
 
 ## Owned outbox and run source capture
@@ -175,6 +191,13 @@ Implemented by main migration `0231_company_knowledge_events`. `domain_events.pr
 
 ## Native source access extension
 
-Implemented by Brain `0010_source_access`, after immutable committed migration `0009_knowledge_review`: nullable server-derived source_restrictions on current records, exact revisions and submitted sources. NULL records historical classification uncertainty; it is never a source-free assertion. Known sets contain company/project owners or logical restricted-record identities and are canonically sorted and deduplicated. These logical dependencies never FK a project or record, so revocation/deletion changes resolution without obstructing project deletion. Current head and immutable revision must agree on restrictions. The T11/T14 writer integration must retain inherited restrictions on native corrections; model citation omission must not remove them. Active deduplication includes a server-generated source-access digest, preventing a hidden record from causing an existence-revealing unique conflict. Legacy project projections exclude records with additional known restrictions; native projections authorize their current intersection.
+Implemented by Brain `0010_source_access`, after immutable committed migration `0009_knowledge_review`: nullable server-derived source_restrictions on current records, exact revisions and submitted sources. NULL records historical classification uncertainty; it is never a source-free assertion. Known sets contain company/project owners or logical restricted-record identities and are canonically sorted and deduplicated. These logical dependencies never FK a project or record, so revocation/deletion changes resolution without obstructing project deletion. Current head and immutable revision must agree on restrictions. T11 retains inherited restrictions on native proposals and corrections; T14 still owns launch-wide input and outward-result coverage; model citation omission must not remove them. Active deduplication includes a server-generated source-access digest, preventing a hidden record from causing an existence-revealing unique conflict. Legacy project projections exclude records with additional known restrictions; native projections authorize their current intersection.
 
 Source capture delivery receipts bind exclusive owner, stable server principal, bounded delivery key and canonical input digest to one immutable source/witness capture. Same key with changed bytes/metadata conflicts; same content can reuse the captured source without inventing independent observation. Receipt immutability allows only the owning project deletion cascade. Unknown legacy run capture metadata refuses native agent disclosure until a compatible server-owned launch profile establishes capture coverage. Captured excerpts are bounded to 8192 UTF-8 bytes with an explicit truncation marker and the digest of full captured bytes; unavailable capture content is never reconstructed from a digest.
+
+
+### Proposal source access and company grant receipts
+
+Brain `0011_proposal_source_access` adds nullable `brain_proposals.source_restrictions` with at most 256 references and 65536 stored bytes, and a server-triggered source-access digest. Historical proposals retain NULL classification; migration does not invent a source-free footprint. Canonical submission deduplication includes the source-access digest in addition to owner/principal/input digest. Delivery keys remain content guarded. Native proposal input, submit authority snapshot and settled decision authority snapshot are immutable. The existing originating-run FK remains nullable on run/project deletion; logical server attribution is not rewritten.
+
+Main `0232_company_grant_requests` adds nullable creation/revocation key and canonical digest, revoked-by user and bounded reason to existing `company_grants`. Existing rows preserve their complete policy, creator and timestamps with NULL new historical metadata. No receipt ledger or scheduler is introduced. A partial company/creator/key/action unique index retains original creation deliveries. Native input and settled revocation cannot change or be deleted. Native revocation increments exactly one revision and requires its complete receipt; old rows remain compatible with existing raw revocation writers and do not acquire invented decision authority. Main migration and schema have no dependency on a Brain table. Apply main before Brain as usual; committed earlier migrations remain unchanged.

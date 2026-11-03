@@ -339,3 +339,43 @@ cases:
       edgeId: edge_example
       classification: declared_conflict
       reference: {kind: knowledge, id: conflicting_record}
+
+  - id: explicit-company-user-grant-does-not-require-a-project
+    surfaces: [web]
+    schema: CBCompanyGrantInput
+    valid: true
+    value:
+      principalKind: user
+      principalId: existing_user_example
+      actions: [knowledge:read, knowledge:propose]
+      idempotencyKey: explicit_company_grant_001
+  - id: grant-creation-rejects-fabricated-administrator
+    surfaces: [web]
+    schema: CBCompanyGrantInput
+    valid: false
+    value:
+      principalKind: user
+      principalId: existing_user_example
+      actions: [knowledge:read]
+      createdBy: forged_administrator
+      idempotencyKey: forged_company_grant_001
+  - id: confirmation-rejects-blank-reason
+    surfaces: [web, external]
+    schema: CBConfirmationInput
+    valid: false
+    value:
+      expectedRevision: 1
+      decision: confirm
+      witnessIds: []
+      reason: "   "
+      idempotencyKey: blank_confirmation_001
+  - id: confirmation-rejects-malformed-database-text
+    surfaces: [web, external]
+    schema: CBConfirmationInput
+    valid: false
+    value:
+      expectedRevision: 1
+      decision: confirm
+      witnessIds: []
+      reason: "invalid\0reason"
+      idempotencyKey: invalid_confirmation_001

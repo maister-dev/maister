@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { SQL } from "drizzle-orm";
+import type { SqlDatabase, SqlTransaction } from "@/lib/db/sql-types";
 import type { Owner } from "@/lib/company/types";
 import type { KnowledgeAction, KnowledgePrincipal } from "./knowledge-types";
 import type { KnowledgeAttribution } from "./record-types";
@@ -12,12 +12,8 @@ import { projectRolesForActions } from "@/lib/authz";
 import { MaisterError } from "@/lib/errors";
 import { parseBoundRunId } from "@/lib/tokens/verify";
 
-export type KnowledgeTransaction = {
-  execute(query: SQL): Promise<{ rows: Record<string, unknown>[] }>;
-};
-export type KnowledgeDatabase = KnowledgeTransaction & {
-  transaction<T>(action: (tx: KnowledgeTransaction) => Promise<T>): Promise<T>;
-};
+export type KnowledgeTransaction = SqlTransaction;
+export type KnowledgeDatabase = SqlDatabase;
 export type KnowledgeAuthorityActor = KnowledgeAttribution &
   Readonly<{ kind: "user" | "agent"; id: string }>;
 export type KnowledgeAuthority = Readonly<{

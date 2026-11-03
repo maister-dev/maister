@@ -2,37 +2,66 @@ import "server-only";
 
 import type { SQL } from "drizzle-orm";
 import type { KnowledgePrincipalIdentity } from "./knowledge-access";
+import type { KnowledgeAction } from "./knowledge-types";
 
 import { sql } from "drizzle-orm";
 
 import { projectRolesForActions } from "@/lib/authz";
+
+export function knowledgeOwnerActionPolicy(
+  identity: KnowledgePrincipalIdentity,
+  project: SQL,
+  company: SQL,
+  action: KnowledgeAction,
+): SQL {
+  if (identity.kind === "user" && identity.boundProjectId !== null) {
+    const projectPolicy = knowledgeOwnerActionPolicy(
+      { ...identity, boundProjectId: null },
+      project,
+      sql`NULL::text`,
+      action,
+    );
+
+    return sql`${project}=${identity.boundProjectId} AND (${projectPolicy})`;
+  }
+  const companyPolicy = sql`EXISTS (SELECT 1 FROM company_grants cg WHERE cg.company_id=${company} AND cg.principal_type=${identity.actor.kind} AND cg.principal_id=${identity.actor.id} AND cg.action=${action} AND cg.revoked_at IS NULL FOR SHARE)`;
+  const projectAction =
+    action === "knowledge:read"
+      ? "readBrain"
+      : action === "knowledge:propose"
+        ? "writeBrain"
+        : "editSettings";
+  const agentAllowed =
+    identity.kind === "agent" &&
+    (action === "knowledge:read"
+      ? identity.canReadBrain
+      : action === "knowledge:propose"
+        ? identity.canWriteBrain
+        : false);
+  const projectRole =
+    identity.kind === "agent"
+      ? sql`${project}=${identity.projectId} AND ${agentAllowed}`
+      : identity.user.role === "admin"
+        ? sql`true`
+        : sql`EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id=${project} AND pm.user_id=${identity.user.id} AND pm.role IN (${sql.join(
+            projectRolesForActions([projectAction]).map((role) => sql`${role}`),
+            sql`, `,
+          )}) FOR SHARE)`;
+
+  return sql`((${company} IS NOT NULL AND ${companyPolicy}) OR (${project} IS NOT NULL AND EXISTS (SELECT 1 FROM projects knowledge_owner_project WHERE knowledge_owner_project.id=${project} AND knowledge_owner_project.brain_enabled AND (${projectRole}) FOR SHARE)))`;
+}
 
 function readableOwner(
   identity: KnowledgePrincipalIdentity,
   project: SQL,
   company: SQL,
 ): SQL {
-  if (identity.kind === "user" && identity.boundProjectId !== null) {
-    const projectPolicy = readableOwner(
-      { ...identity, boundProjectId: null },
-      project,
-      sql`NULL::text`,
-    );
-
-    return sql`${project}=${identity.boundProjectId} AND (${projectPolicy})`;
-  }
-  const companyPolicy = sql`EXISTS (SELECT 1 FROM company_grants cg WHERE cg.company_id=${company} AND cg.principal_type=${identity.actor.kind} AND cg.principal_id=${identity.actor.id} AND cg.action='knowledge:read' AND cg.revoked_at IS NULL FOR SHARE)`;
-  const projectRole =
-    identity.kind === "agent"
-      ? sql`${project}=${identity.projectId} AND ${identity.canReadBrain}`
-      : identity.user.role === "admin"
-        ? sql`true`
-        : sql`EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id=${project} AND pm.user_id=${identity.user.id} AND pm.role IN (${sql.join(
-            projectRolesForActions(["readBrain"]).map((role) => sql`${role}`),
-            sql`, `,
-          )}) FOR SHARE)`;
-
-  return sql`((${company} IS NOT NULL AND ${companyPolicy}) OR (${project} IS NOT NULL AND EXISTS (SELECT 1 FROM projects p WHERE p.id=${project} AND p.brain_enabled AND (${projectRole}) FOR SHARE)))`;
+  return knowledgeOwnerActionPolicy(
+    identity,
+    project,
+    company,
+    "knowledge:read",
+  );
 }
 
 function readableRecord(
