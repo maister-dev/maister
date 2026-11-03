@@ -14,6 +14,8 @@ import { POST as CANCEL } from "@/app/api/task-launch-intents/[intentId]/cancel/
 import { POST as REPLACE } from "@/app/api/task-launch-intents/[intentId]/replace/route";
 import { tasks } from "@/lib/db/schema";
 import { updateTask } from "@/lib/services/tasks";
+import { prepareTaskQualification } from "@/lib/tasks/qualification";
+import { qualificationFixture } from "@/test-support/task-qualification";
 import * as worktree from "@/lib/worktree";
 import { mintAssignment } from "@/lib/execution-host/assignments";
 import { seedWorkspace } from "@/test-support/execution-host-seed";
@@ -154,6 +156,107 @@ it("LA10 preview supplies the displayed revision, automatic triage state and exi
   expect((await PREVIEW(new NextRequest(malformed))).status).toBe(422);
   malformed.searchParams.set("packageVersions", '{"package":"adopt"}');
   expect((await PREVIEW(new NextRequest(malformed))).status).toBe(422);
+});
+
+it("manual and concurrent previews preserve negative-qualification advice, independent holds and queue pause", async () => {
+  const input = await body();
+  const db: Db = database.db;
+  const qualification = qualificationFixture();
+  const prepared = await prepareTaskQualification(db, {
+    projectId: fixture.projectId,
+    taskId: input.taskId,
+    author: {
+      kind: "user",
+      identity: fixture.userId,
+      userId: fixture.userId,
+    },
+    request: {
+      requestKey: randomUUID(),
+      expectedInputRevision: 1,
+      expectedQualificationRevision: null,
+      qualification: {
+        ...qualification,
+        decision: "needs_review",
+        checks: qualification.checks.map((check) =>
+          check.dimension === "acceptance"
+            ? { ...check, state: "unknown", rationale: "Needs a decision" }
+            : check,
+        ),
+        reasonCodes: ["acceptance_incomplete"],
+        nextActions: ["Clarify acceptance before automatic execution"],
+      },
+      enqueue: false,
+    },
+  });
+
+  await db.transaction(prepared.apply);
+  const before = await database.pool.query(
+    "SELECT id,value,publication_state FROM task_qualifications WHERE task_id=$1",
+    [input.taskId],
+  );
+  const preview = async () => {
+    const response = await PREVIEW(
+      new NextRequest(
+        `http://localhost/api/runs/launch-options?taskId=${input.taskId}`,
+      ),
+    );
+
+    expect(response.status).toBe(200);
+
+    return response.json();
+  };
+  const advised = await preview();
+
+  expect(advised.qualification).toMatchObject({
+    decision: "needs_review",
+    freshness: "current",
+  });
+  expect(advised.launchability).toMatchObject({
+    launchable: true,
+    reason: "launchable",
+  });
+  expect(advised.relaunch).toMatchObject({
+    launchable: true,
+    reason: "launchable",
+  });
+  for (const origin of ["explicit", "dispatch_failure", "unknown"] as const) {
+    await database.pool.query(
+      "UPDATE tasks SET triage_status='flagged',triage_flag_origin=$2 WHERE id=$1",
+      [input.taskId, origin],
+    );
+    const held = await preview();
+
+    expect(held.launchability).toMatchObject({
+      launchable: false,
+      reason: "flagged",
+    });
+    expect(held.relaunch).toMatchObject({
+      launchable: false,
+      reason: "flagged",
+    });
+  }
+  await database.pool.query(
+    "UPDATE tasks SET triage_status='flagged',triage_flag_origin='qualification',queue_paused=true WHERE id=$1",
+    [input.taskId],
+  );
+  const paused = await preview();
+
+  expect(paused.launchability).toMatchObject({
+    launchable: false,
+    reason: "queue_paused",
+  });
+  expect(paused.relaunch).toMatchObject({
+    launchable: false,
+    reason: "queue_paused",
+  });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT id,value,publication_state FROM task_qualifications WHERE task_id=$1",
+        [input.taskId],
+      )
+    ).rows,
+  ).toEqual(before.rows);
 });
 
 it("LA13 accepts a recoverable intent-only response, replays its key, and GET exposes no input or mutation", async () => {

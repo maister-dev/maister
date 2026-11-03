@@ -519,6 +519,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const launchabilityTask = {
       status: task.status ?? "Backlog",
       triageStatus: (task.triageStatus as "triaged" | "flagged" | null) ?? null,
+      triageFlagOrigin: task.triageFlagOrigin,
+      queuePaused: task.queuePaused,
     };
     const manualLaunchability = classifyManualTaskLaunchability(
       launchabilityTask,

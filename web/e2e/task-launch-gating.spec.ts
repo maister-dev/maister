@@ -462,8 +462,25 @@ test.describe("Manual task admission through the real browser and controlled pro
     const ownedFence = fence as Awaited<
       ReturnType<typeof holdManualTaskLaunchRepository>
     >;
+    let releaseObservation: () => void = () => {};
+    const observationReleased = new Promise<void>((resolve) => {
+      releaseObservation = resolve;
+    });
+    let holdFirstObservation = true;
 
     try {
+      await page.route("**/api/task-launch-intents/*", async (route) => {
+        if (holdFirstObservation && route.request().method() === "GET") {
+          const actual = await route.fetch();
+          const observed = (await actual.json()) as TaskLaunchReceipt;
+
+          if (observed.taskId === failed.taskId) await observationReleased;
+          await route.fulfill({ response: actual });
+
+          return;
+        }
+        await route.continue();
+      });
       for (const [task, copy] of [
         [failed, "Triager завершился ошибкой до публикации оценки."],
         [negative, "Триаж не рекомендует автоматическое выполнение."],
@@ -492,6 +509,7 @@ test.describe("Manual task admission through the real browser and controlled pro
 
         expect(response.status()).toBe(202);
         const receipt = (await response.json()) as TaskLaunchReceipt;
+        let cancellationIntentId = receipt.intentId;
 
         await expect(dialog).toContainText(
           "Разрешён один ручной запуск этой редакции.",
@@ -534,7 +552,12 @@ test.describe("Manual task admission through the real browser and controlled pro
           await dialog
             .getByRole("button", { name: "Запустить", exact: true })
             .click();
-          expect((await replaced).status()).toBe(202);
+          const replacementResponse = await replaced;
+
+          expect(replacementResponse.status()).toBe(202);
+          cancellationIntentId = (
+            (await replacementResponse.json()) as TaskLaunchReceipt
+          ).intentId;
           await expect(dialog).toContainText(
             "Разрешён один ручной запуск этой редакции.",
           );
@@ -545,6 +568,84 @@ test.describe("Manual task admission through the real browser and controlled pro
             lineage.find((row) => row.id === receipt.intentId)?.state,
           ).toBe("cancelled");
         }
+        await expect
+          .poll(
+            async () =>
+              (await launchRows(task.taskId)).find(
+                (row) => row.id === cancellationIntentId,
+              ),
+            { timeout: 20_000 },
+          )
+          .toMatchObject({
+            state: "queued",
+            reason: "operation_busy",
+            run_id: null,
+          });
+        let staleCancellationKey: string | null = null;
+
+        if (task === failed) {
+          const staleCancellation = page.waitForResponse(
+            (result) =>
+              result
+                .url()
+                .endsWith(
+                  `/api/task-launch-intents/${cancellationIntentId}/cancel`,
+                ) && result.request().method() === "POST",
+          );
+
+          await dialog
+            .getByRole("button", {
+              name: "Отменить запуск в очереди",
+              exact: true,
+            })
+            .click();
+          const staleResponse = await staleCancellation;
+
+          expect(staleResponse.status(), await staleResponse.text()).toBe(409);
+          expect(await staleResponse.json()).toMatchObject({
+            code: "CONFLICT",
+            details: { reason: "launch_state_changed" },
+          });
+          expect(staleResponse.request().postDataJSON()).toEqual({
+            expectedStateVersion: receipt.stateVersion,
+          });
+          staleCancellationKey = staleResponse.request().headers()[
+            "idempotency-key"
+          ];
+          expect(staleCancellationKey).toEqual(expect.any(String));
+          expect(staleCancellationKey).not.toBe("");
+          await expect(dialog.getByRole("alert")).toContainText(
+            "Состояние запуска изменилось. Обновите статус перед новым решением.",
+          );
+          holdFirstObservation = false;
+          releaseObservation();
+        }
+        const refreshed = page.waitForRequest(
+          (request) =>
+            request.method() === "GET" &&
+            request
+              .url()
+              .endsWith(`/api/task-launch-intents/${cancellationIntentId}`),
+        );
+
+        await dialog
+          .getByRole("button", { name: "Обновить статус", exact: true })
+          .click();
+        const refreshResponse = await (await refreshed).response();
+
+        expect(refreshResponse?.status()).toBe(200);
+        const refreshedReceipt =
+          (await refreshResponse!.json()) as TaskLaunchReceipt;
+
+        expect(refreshedReceipt).toMatchObject({
+          intentId: cancellationIntentId,
+          state: "queued",
+          reason: "operation_busy",
+          runId: null,
+        });
+        await expect(dialog).toContainText(
+          "Техническая проверка препятствует выполнению.",
+        );
         const cancelled = page.waitForResponse(
           (result) =>
             result.url().includes("/api/task-launch-intents/") &&
@@ -558,7 +659,23 @@ test.describe("Manual task admission through the real browser and controlled pro
             exact: true,
           })
           .click();
-        expect((await cancelled).status()).toBe(200);
+        const cancellationResponse = await cancelled;
+
+        expect(
+          cancellationResponse.status(),
+          await cancellationResponse.text(),
+        ).toBe(200);
+        expect(
+          cancellationResponse.request().postDataJSON().expectedStateVersion,
+        ).toBeGreaterThanOrEqual(refreshedReceipt.stateVersion);
+        if (task === failed) {
+          expect(
+            cancellationResponse.request().headers()["idempotency-key"],
+          ).not.toBe(staleCancellationKey);
+          expect(
+            cancellationResponse.request().postDataJSON().expectedStateVersion,
+          ).toBeGreaterThan(receipt.stateVersion);
+        }
         await expect(dialog).toContainText("Запуск отменён");
         expect(
           (await launchRows(task.taskId)).every(
@@ -570,7 +687,13 @@ test.describe("Manual task admission through the real browser and controlled pro
         ).toBe(true);
       }
     } finally {
-      await ownedFence.release();
+      holdFirstObservation = false;
+      releaseObservation();
+      try {
+        await page.unroute("**/api/task-launch-intents/*");
+      } finally {
+        await ownedFence.release();
+      }
     }
     expect(
       await withE2EDb(
@@ -707,10 +830,14 @@ async function completeQualifier(page: Page, task: Task): Promise<void> {
     .toBe("Done");
 }
 
-async function launchRows(
-  taskId: string,
-): Promise<
-  Array<{ id: string; basis: string; state: string; run_id: string | null }>
+async function launchRows(taskId: string): Promise<
+  Array<{
+    id: string;
+    basis: string;
+    state: string;
+    reason: string | null;
+    run_id: string | null;
+  }>
 > {
   return withE2EDb(
     async (pool) =>
@@ -719,9 +846,10 @@ async function launchRows(
           id: string;
           basis: string;
           state: string;
+          reason: string | null;
           run_id: string | null;
         }>(
-          "SELECT id,basis->>'kind' AS basis,state,run_id FROM task_launch_intents WHERE task_id=$1 ORDER BY accepted_at",
+          "SELECT id,basis->>'kind' AS basis,state,reason,run_id FROM task_launch_intents WHERE task_id=$1 ORDER BY accepted_at",
           [taskId],
         )
       ).rows,
