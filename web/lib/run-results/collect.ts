@@ -245,7 +245,11 @@ export async function collectChild(
       ? { knowledgeDisclosureRequired: true as const }
       : {}),
     result: {
-      operationalOutcome: await loadOperationalOutcome(db, args.childRunId),
+      operationalOutcome: await loadOperationalOutcome(
+        db,
+        args.childRunId,
+        args.recipient,
+      ),
       childRunId: args.childRunId,
       status: run.status,
       settled: SETTLED.has(run.status),

@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
+import type { KnowledgeRecipient } from "@/lib/brain/knowledge-run-disclosure";
 import type {
   OperationalCleanup,
   OperationalTerminal,
@@ -11,17 +12,36 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 
 import { runs, runResults, tasks, projects } from "@/lib/db/schema";
 import { operationalResultV1Schema } from "@/lib/run-results/operational-schema";
+import { authorizeRunsKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
 
 /** Diagnostic plane: a failed operation never becomes an ordinary usable result. */
 export async function loadOperationalOutcome(
   db: Db,
   runId: string,
+  recipient?: KnowledgeRecipient,
 ): Promise<OperationalOutcome | null> {
-  return (await loadOperationalOutcomes(db, [runId])).get(runId) ?? null;
+  return (
+    (await loadOperationalOutcomes(db, [runId], recipient)).get(runId) ?? null
+  );
 }
 
-/** One batch for all surfaces; reference lookup never crosses the run's project. */
+/** One guarded read transaction for outward diagnostic pages; legacy NULL capture retains its existing caller gate. */
 export async function loadOperationalOutcomes(
+  db: Db,
+  runIds: readonly string[],
+  recipient?: KnowledgeRecipient,
+): Promise<Map<string, OperationalOutcome>> {
+  if (!runIds.length) return new Map();
+
+  return db.transaction(async (tx) => {
+    await authorizeRunsKnowledgeDisclosure(tx, recipient, runIds);
+
+    return inspectOperationalOutcomes(tx, runIds);
+  });
+}
+
+/** Server-only index maintenance or an already source-authorized transaction; never an outward admission substitute. */
+export async function inspectOperationalOutcomes(
   db: Db,
   runIds: readonly string[],
 ): Promise<Map<string, OperationalOutcome>> {

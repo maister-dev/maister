@@ -184,9 +184,7 @@ paths:
       operationId: getProjectAgentHistory
       summary: (Implemented — ADR-196–198) getProjectAgentHistory
       description:
-        Identifiers are URL parameters; actor/project/source context is derived from
-        authenticated server state. Canonical same-origin session authorization precedes parsing and retry admission.
-        Existing data grants apply before aggregation and nested evidence serialization. No secrets, host paths or session handles are returned.
+        "Identifiers are URL parameters; actor/project/source context is derived from authenticated server state. Canonical same-origin session authorization precedes parsing and retry admission. Existing data grants apply before aggregation and nested evidence serialization. Governed execution evidence requires the current receiving user to retain every captured source grant; unavailable source closure returns PRECONDITION/409 before diagnostic prose or snapshot evidence is returned. No secrets, host paths or session handles are returned."
       parameters:
         - &a2
           name: slug
@@ -297,7 +295,10 @@ paths:
       description:
         Identifiers are URL parameters; actor/project/source context is derived from
         authenticated server state. Existing data grants apply before aggregation and nested evidence
-        serialization. No secrets, host paths or session handles are returned.
+        serialization. Governed execution evidence requires the current receiving user
+        to retain every captured source grant; unavailable source closure returns
+        PRECONDITION/409 before diagnostic prose or snapshot evidence is returned.
+        No secrets, host paths or session handles are returned.
       parameters:
         - *a2
         - *a3
@@ -16977,6 +16978,9 @@ paths:
         PATCH. The opaque versioned cursor encodes the full stable tuple:
         active rows by `nextActionAt`, kind rank, and id; then terminal/no-next
         rows by `updatedAt`, kind rank, and id.
+        Governed execution evidence is authorized for the current receiving user
+        before the selected page/detail is hydrated. Unavailable captured source
+        closure returns PRECONDITION/409 without diagnostic prose.
       operationId: listProjectAutomations
       parameters:
         - name: slug
@@ -17000,6 +17004,8 @@ paths:
         "400": { $ref: "#/components/responses/Config" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Governed execution source unavailable to the current receiving user.
 
   /api/projects/{slug}/automations/{kind}/{automationId}:
     get:
@@ -17010,6 +17016,9 @@ paths:
         mismatched, missing, or foreign records return a project-scoped 404. The
         endpoint is read-only and preserves the row owner's model instead of
         exposing unified mutation.
+        Governed execution evidence is authorized for the current receiving user
+        before the selected page/detail is hydrated. Unavailable captured source
+        closure returns PRECONDITION/409 without diagnostic prose.
       operationId: getProjectAutomationDetail
       parameters:
         - name: slug
@@ -17041,6 +17050,9 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+
+        "409":
+          description: Governed execution source unavailable to the current receiving user.
 
   # ── ADR-077 Outbound webhooks — platform-admin subscriptions ────────────────
 

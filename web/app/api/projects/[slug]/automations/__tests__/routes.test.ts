@@ -80,6 +80,7 @@ describe("GET /api/projects/[slug]/automations", () => {
       nextCursor: "next",
     });
     expect(mocks.listProjectAutomations).toHaveBeenCalledWith({
+      recipient: { kind: "user", userId: "user-1" },
       cursor: "cursor-a",
       limit: 2,
       projectId: "project-1",
@@ -123,6 +124,7 @@ describe("GET /api/projects/[slug]/automations/[kind]/[automationId]", () => {
 
     expect(response.status).toBe(200);
     expect(mocks.getProjectAutomationDetail).toHaveBeenCalledWith({
+      recipient: { kind: "user", userId: "user-1" },
       automationId: "automation-1",
       kind: "one_time_task_launch",
       projectId: "project-1",

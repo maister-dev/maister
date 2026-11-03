@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "task": "T15",
+  "baselineCommit": "35746956d",
+  "status": "partial_checkpoint_qualified",
+  "engineVersion": "3.10.0",
+  "qualified": [
+    "Actual operational finalization retains valid diagnostic results on a failed run; source-denied agent history and automation list/detail refuse without prose, and explicit current company grants permit inspection.",
+    "Selected aggregate evidence bodies and snapshots are hydrated under current source authorization in the same SQL transaction; safe control metadata remains separate.",
+    "The native execution fixture inserts operational launch snapshots atomically under the existing immutable snapshot guard.",
+    "Existing EN/RU unavailable-source notices cover aggregate history and automations; project settings and deletion do not require evidence access."
+  ],
+  "tests": {
+    "owningIntegration": {
+      "passed": 87,
+      "files": 10
+    },
+    "automationRouteUnit": {
+      "passed": 5,
+      "files": 1
+    },
+    "fullWebUnit": {
+      "passed": 9261,
+      "files": 886
+    },
+    "typecheck": "passed",
+    "lint": "passed",
+    "contracts": "passed",
+    "docsAnd164TableErd": "passed"
+  },
+  "redLimits": [
+    "Earlier fixture-construction failures are not behavior RED evidence.",
+    "Automation caller RED establishes missing current-recipient propagation after the shared guard, not a demonstrated content leak."
+  ],
+  "pending": [
+    "Remaining activity/HITL/review/export/notification channels.",
+    "Structured evidence-link UI, exact retained result inspection and additional recovery/bounds checks.",
+    "Full integration phase checkpoint, capability activation and actual installable package/live ACP/pilot qualification."
+  ],
+  "logs": [
+    {
+      "path": "history-red.log.gz",
+      "uncompressedSha256": "002fa31770b59a518515284a13a3c8f8882d4cf443f64f1ec927cb145ba2db75"
+    },
+    {
+      "path": "automation-caller-red.log.gz",
+      "uncompressedSha256": "f24af0a5badd35b368792f5ee6bce442cd7d5435af74cb24bdc6a368cc367663"
+    },
+    {
+      "path": "owning-integration-green.log.gz",
+      "uncompressedSha256": "a47df5c1db0e202751d32eefa510b34ce42179e415f4a2c9c76ecb7d524b6e4f"
+    },
+    {
+      "path": "automation-route-unit-green.log.gz",
+      "uncompressedSha256": "400337ab093c86829c1448756ca690b7db6ea1eab8b916dff88f1770a437b65a"
+    },
+    {
+      "path": "full-web-unit-green.log.gz",
+      "uncompressedSha256": "8dca511572283ae8ace0cb577c8b1a2a1676493f67a58132038d76c3f99d8ccb"
+    },
+    {
+      "path": "typecheck-green.log.gz",
+      "uncompressedSha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+    },
+    {
+      "path": "contracts-green.log.gz",
+      "uncompressedSha256": "cf80bb9a15248ecd7e80d98e93fdd45b25e8c9c3e070101334710e54036a6cdc"
+    },
+    {
+      "path": "docs-green.log.gz",
+      "uncompressedSha256": "314a349c4532b8cdfc4f5e553f79c1192f49fd596b788a95375f75079b83724d"
+    }
+  ]
+}

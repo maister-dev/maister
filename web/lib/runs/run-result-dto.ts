@@ -115,7 +115,7 @@ export async function loadRunPublicResult(
   const served = resultStatus === "valid" ? valid : null;
 
   const result: RunPublicResultDto = {
-    operationalOutcome: await loadOperationalOutcome(db, runId),
+    operationalOutcome: await loadOperationalOutcome(db, runId, recipient),
     schemaRef: run.resultContract?.schemaRef ?? newest?.schemaRef ?? null,
     resultStatus,
     revision: valid?.revision ?? newest?.revision ?? null,

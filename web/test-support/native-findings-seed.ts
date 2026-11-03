@@ -4,7 +4,7 @@ import type { StartedPostgresTestDb } from "./pg-container";
 
 import { randomUUID } from "node:crypto";
 
-import { seedProjectRow, seedRun } from "./execution-host-seed";
+import { seedProjectRow } from "./execution-host-seed";
 
 import { issueAgentRunToken } from "@/lib/agents/tokens";
 import { captureKnowledgeSource } from "@/lib/brain/knowledge-source-capture";
@@ -35,6 +35,8 @@ export async function seedNativeFindingsExecution(
   const installationId = randomUUID();
   const packageName = `native-${installationId}`;
   const agentId = `${packageName}:${agentStem}`;
+  const agentKind =
+    contract.kind === "agent_operational" ? "operational" : "code_delivery";
   const userId = randomUUID();
   const company = await database.pool.query<{ id: string }>(
     "SELECT id FROM companies",
@@ -64,8 +66,15 @@ export async function seedNativeFindingsExecution(
     [randomUUID(), project.id, installationId, packageName],
   );
   await database.pool.query(
-    "INSERT INTO agents(id,package_name,version_label,origin,name,description,workspace,mode,triggers,risk_tier,source_path) VALUES($1,$2,'v1.0.0','git','Researcher','Native findings fixture','none','session','[\"manual\"]','read_only','/tmp/native-findings-role/maister-agents/researcher.md')",
-    [agentId, packageName],
+    "INSERT INTO agents(id,package_name,version_label,origin,name,description,workspace,mode,triggers,risk_tier,source_path,kind,completion_contract) VALUES($1,$2,'v1.0.0','git','Researcher','Native findings fixture','none','session','[\"manual\"]','read_only','/tmp/native-findings-role/maister-agents/researcher.md',$3,$4::jsonb)",
+    [
+      agentId,
+      packageName,
+      agentKind,
+      agentKind === "operational"
+        ? JSON.stringify({ contract: "operational_v1" })
+        : null,
+    ],
   );
   await database.pool.query(
     "INSERT INTO agent_project_links(id,project_id,agent_id,enabled,can_read_brain) VALUES($1,$2,$3,true,true)",
@@ -120,12 +129,7 @@ export async function seedNativeFindingsExecution(
     "SELECT published_record_id FROM brain_proposals WHERE id=$1",
     [proposal.id],
   );
-  const runId = await seedRun(database.db, {
-    projectId: project.id,
-    runKind: "agent",
-    status: "Running",
-    agentWorkspace: "none",
-  });
+  const runId = randomUUID();
   const snapshot = {
     version: 1,
     agentId,
@@ -137,10 +141,12 @@ export async function seedNativeFindingsExecution(
     packageRevision: "pinned-revision",
   };
 
+  // Frozen operational fields must exist at INSERT; the real snapshot guard forbids even a Pending-row rewrite.
   await database.pool.query(
-    "UPDATE runs SET agent_id=$2,source_agent_id=$2,launched_at=now(),activity_sort_at=now(),activity_timestamp_provenance='launch',agent_activity_snapshot=$3::jsonb,result_contract=$4::jsonb,knowledge_access=$5::jsonb WHERE id=$1",
+    "INSERT INTO runs(id,project_id,run_kind,status,flow_version,flow_revision,agent_workspace,agent_id,source_agent_id,launched_at,activity_sort_at,activity_timestamp_provenance,agent_activity_snapshot,result_contract,knowledge_access,agent_kind) VALUES($1,$2,'agent','Running','agent','manual','none',$3,$3,now(),now(),'launch',$4::jsonb,$5::jsonb,$6::jsonb,$7)",
     [
       runId,
+      project.id,
       agentId,
       JSON.stringify(snapshot),
       JSON.stringify(contract),
@@ -150,6 +156,7 @@ export async function seedNativeFindingsExecution(
         generation: 1,
         restrictions: [],
       }),
+      agentKind === "operational" ? agentKind : null,
     ],
   );
   const token = await issueAgentRunToken({

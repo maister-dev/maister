@@ -16,6 +16,8 @@ import {
   loadAgentAttemptEvidence,
   loadAgentHistoryEvidence,
 } from "@/lib/agents/activity-queries";
+import { isRunKnowledgeUnavailable } from "@/lib/brain/knowledge-run-disclosure";
+import { RunSourceUnavailable } from "@/components/runs/run-source-unavailable";
 import { RUN_STATUS_VALUES } from "@/lib/runs/run-status-values";
 import {
   AgentRunHistory,
@@ -116,15 +118,31 @@ export default async function ProjectAgentPage({
         })
       : null;
 
-  const scope = { projectId: access.projectId, agentId: access.agentId };
-  const history =
-    rawHistory && access.canReadDefinition
-      ? await loadAgentHistoryEvidence(access.db, rawHistory, scope)
-      : rawHistory;
-  const attempts =
-    rawAttempts && access.canReadDefinition
-      ? await loadAgentAttemptEvidence(access.db, rawAttempts, scope)
-      : rawAttempts;
+  const scope = {
+    projectId: access.projectId,
+    agentId: access.agentId,
+    recipient: { kind: "user" as const, userId: access.actor.id },
+  };
+  const evidence = await (async () => {
+    try {
+      return {
+        history:
+          rawHistory && access.canReadDefinition
+            ? await loadAgentHistoryEvidence(access.db, rawHistory, scope)
+            : rawHistory,
+        attempts:
+          rawAttempts && access.canReadDefinition
+            ? await loadAgentAttemptEvidence(access.db, rawAttempts, scope)
+            : rawAttempts,
+        unavailable: false,
+      };
+    } catch (error) {
+      if (!isRunKnowledgeUnavailable(error)) throw error;
+
+      return { history: rawHistory, attempts: rawAttempts, unavailable: true };
+    }
+  })();
+  const { history, attempts } = evidence;
 
   return (
     <div
@@ -241,6 +259,7 @@ export default async function ProjectAgentPage({
           </Link>
         ))}
       </nav>
+      {evidence.unavailable ? <RunSourceUnavailable /> : null}
       {history ? (
         <AgentRunHistory
           agentId={access.agentId}

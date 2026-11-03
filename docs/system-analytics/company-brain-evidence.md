@@ -99,3 +99,10 @@ Search returns an explicit assertion preview with a truncation marker and exact 
 
 
 Conflict detail is bounded to 64 accessible opposing identities with an explicit incomplete marker. The conflicts endpoint provides authorized continuation and exact original opposing revisions. Source closure is filtered before its page limit, including historical revision restrictions; hidden edges cannot occupy all public slots. Neither retrieval confidence nor a newer opposing head resolves the retained conflict.
+
+
+## Governed operational projections
+
+**Implemented locally; T15 qualification remains in progress.** Agent run/attempt history and automation list/detail hydrate diagnostic bodies and immutable input snapshots only after current receiving-source authorization. The shared operational projection checks the selected bounded run set and reads bodies in the same SQL transaction. Failed operational runs retain classified diagnostic results; failure does not make their prose public. Automation pagination selects control metadata before hydrating only the visible page, so an unrelated off-page result cannot disclose content or deny the selected page.
+
+Internal activity-index repair uses an explicit server-only inspection function to maintain enum/status metadata; it cannot select a public bypass through request JSON. Historical runs with NULL knowledge profiles retain their existing project access rules. Enrolled runs require a current recipient and complete source capture. The history UI preserves safe control metadata and shows the existing EN/RU source-unavailable notice; project settings and deletion do not depend on reading that evidence.

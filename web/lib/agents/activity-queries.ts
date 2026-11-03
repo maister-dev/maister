@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { KnowledgeRecipient } from "@/lib/brain/knowledge-run-disclosure";
 import type { Db } from "@/lib/execution-host/db";
 import type { TaskLaunchReceipt } from "@/lib/tasks/launch-types";
 import type { RunStatusValue } from "@/lib/runs/run-status-values";
@@ -35,7 +36,8 @@ import { TERMINAL_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 import { RUN_STATUS_VALUES } from "@/lib/runs/run-status-values";
 import { MaisterError } from "@/lib/errors";
 import { parseScheduledRequestSnapshot } from "@/lib/agents/scheduled-request";
-import { loadOperationalOutcomes } from "@/lib/run-results/operational-projection";
+import { inspectOperationalOutcomes } from "@/lib/run-results/operational-projection";
+import { authorizeRunsKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
 
 type AgentOutcome = OperationalTerminal["effectiveOutcome"];
 type RunSummary = {
@@ -274,82 +276,94 @@ export async function getAgentRunHistory(
 export async function loadAgentHistoryEvidence(
   db: Db,
   page: ActivityPage<AgentHistoryItem>,
-  scope: { projectId: string; agentId: string },
+  scope: { projectId: string; agentId: string; recipient?: KnowledgeRecipient },
 ): Promise<
   ActivityPage<AgentHistoryItem & { operationalOutcome?: OperationalOutcome }>
 > {
   const ids = page.items.map((row) => row.runId);
-  const [outcomes, snapshots] = await Promise.all([
-    loadOperationalOutcomes(db, ids),
-    ids.length
-      ? db
-          .select({ id: runs.id, snapshot: runs.scheduledRequestSnapshot })
-          .from(runs)
-          .where(
-            and(
-              eq(runs.projectId, scope.projectId),
-              eq(runs.sourceAgentId, scope.agentId),
-              inArray(runs.id, ids),
-            ),
-          )
-      : Promise.resolve([]),
-  ]);
-  const requests = new Map(
-    snapshots.map((row) => [
-      row.id,
-      parseScheduledRequestSnapshot(row.snapshot),
-    ]),
-  );
 
-  return {
-    ...page,
-    items: page.items.map((row) => {
-      const operationalOutcome = outcomes.get(row.runId);
-      const scheduledRequest = requests.get(row.runId);
+  return db.transaction(async (tx) => {
+    await authorizeRunsKnowledgeDisclosure(tx, scope.recipient, ids);
+    const [outcomes, snapshots] = await Promise.all([
+      inspectOperationalOutcomes(tx, ids),
+      ids.length
+        ? tx
+            .select({ id: runs.id, snapshot: runs.scheduledRequestSnapshot })
+            .from(runs)
+            .where(
+              and(
+                eq(runs.projectId, scope.projectId),
+                eq(runs.sourceAgentId, scope.agentId),
+                inArray(runs.id, ids),
+              ),
+            )
+        : Promise.resolve([]),
+    ]);
+    const requests = new Map(
+      snapshots.map((row) => [
+        row.id,
+        parseScheduledRequestSnapshot(row.snapshot),
+      ]),
+    );
 
-      return {
-        ...row,
-        ...(operationalOutcome ? { operationalOutcome } : {}),
-        ...(scheduledRequest ? { scheduledRequest } : {}),
-      };
-    }),
-  };
+    return {
+      ...page,
+      items: page.items.map((row) => {
+        const operationalOutcome = outcomes.get(row.runId);
+        const scheduledRequest = requests.get(row.runId);
+
+        return {
+          ...row,
+          ...(operationalOutcome ? { operationalOutcome } : {}),
+          ...(scheduledRequest ? { scheduledRequest } : {}),
+        };
+      }),
+    };
+  });
 }
 
 /** Call only after a live readRepoFiles grant; raw input never enters the base page projection. */
 export async function loadAgentAttemptEvidence(
   db: Db,
   page: ActivityPage<AgentAttemptItem>,
-  scope: { projectId: string; agentId: string },
+  scope: { projectId: string; agentId: string; recipient?: KnowledgeRecipient },
 ): Promise<ActivityPage<AgentAttemptItem>> {
   const ids = page.items.map((row) => row.attemptId);
 
-  if (!ids.length) return page;
-  const rows = await db
-    .select({
-      id: agentTriggerAttempts.id,
-      snapshot: agentTriggerAttempts.scheduledRequestSnapshot,
-    })
-    .from(agentTriggerAttempts)
-    .where(
-      and(
-        eq(agentTriggerAttempts.projectId, scope.projectId),
-        eq(agentTriggerAttempts.sourceAgentId, scope.agentId),
-        inArray(agentTriggerAttempts.id, ids),
-      ),
+  return db.transaction(async (tx) => {
+    await authorizeRunsKnowledgeDisclosure(
+      tx,
+      scope.recipient,
+      page.items.flatMap((row) => (row.runId === null ? [] : [row.runId])),
     );
-  const requests = new Map(
-    rows.map((row) => [row.id, parseScheduledRequestSnapshot(row.snapshot)]),
-  );
 
-  return {
-    ...page,
-    items: page.items.map((row) => {
-      const scheduledRequest = requests.get(row.attemptId);
+    if (!ids.length) return page;
+    const rows = await tx
+      .select({
+        id: agentTriggerAttempts.id,
+        snapshot: agentTriggerAttempts.scheduledRequestSnapshot,
+      })
+      .from(agentTriggerAttempts)
+      .where(
+        and(
+          eq(agentTriggerAttempts.projectId, scope.projectId),
+          eq(agentTriggerAttempts.sourceAgentId, scope.agentId),
+          inArray(agentTriggerAttempts.id, ids),
+        ),
+      );
+    const requests = new Map(
+      rows.map((row) => [row.id, parseScheduledRequestSnapshot(row.snapshot)]),
+    );
 
-      return { ...row, ...(scheduledRequest ? { scheduledRequest } : {}) };
-    }),
-  };
+    return {
+      ...page,
+      items: page.items.map((row) => {
+        const scheduledRequest = requests.get(row.attemptId);
+
+        return { ...row, ...(scheduledRequest ? { scheduledRequest } : {}) };
+      }),
+    };
+  });
 }
 
 /** Server-private execution evidence; the page owner must authorize repository-content access first. */

@@ -35,10 +35,10 @@ const log = pino({
 /** Authorize a bounded execution page in one read transaction; no per-run payload query is needed. */
 export async function authorizeRunsKnowledgeDisclosure(
   tx: SqlTransaction,
-  recipient: KnowledgePrincipal,
+  recipient: KnowledgePrincipal | undefined,
   runIds: readonly string[],
 ): Promise<void> {
-  if (recipient.kind === "execution")
+  if (recipient?.kind === "execution")
     throw new MaisterError(
       "UNAUTHORIZED",
       "Execution settlement inspection cannot authorize outward disclosure; identify a current receiving user or token",
@@ -65,6 +65,12 @@ export async function authorizeRunsKnowledgeDisclosure(
     .map((row) => row.id);
 
   if (!governed.length) return;
+  if (!recipient)
+    throw new MaisterError(
+      "CONFIG",
+      "Native execution material requires a current receiving principal",
+      { details: { reason: "native_recipient_required" } },
+    );
   const consumer = await lockKnowledgeReadConsumer(tx, recipient);
   const rows = (
     await tx.execute(

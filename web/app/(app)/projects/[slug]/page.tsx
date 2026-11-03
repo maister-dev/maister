@@ -32,6 +32,8 @@ import {
   getSessionUser,
   requireProjectAction,
 } from "@/lib/authz";
+import { isRunKnowledgeUnavailable } from "@/lib/brain/knowledge-run-disclosure";
+import { RunSourceUnavailable } from "@/components/runs/run-source-unavailable";
 import { isBrainSchemaApplied } from "@/lib/brain/guard";
 import { isProjectBrainIndexingAvailable } from "@/lib/brain/availability";
 import {
@@ -318,14 +320,25 @@ export default async function ProjectBoardPage({
           proposals: [],
           sources: [],
         };
-  const automationsPage =
-    tab === "automations"
-      ? await listProjectAutomations({
+  const automations = await (async () => {
+    if (tab !== "automations") return { page: null, unavailable: false };
+    try {
+      return {
+        page: await listProjectAutomations({
+          recipient: { kind: "user", userId: user.id },
           projectId: project.id,
           projectSlug: slug,
           limit: 50,
-        })
-      : null;
+        }),
+        unavailable: false,
+      };
+    } catch (error) {
+      if (!isRunKnowledgeUnavailable(error)) throw error;
+
+      return { page: null, unavailable: true };
+    }
+  })();
+  const automationsPage = automations.page;
 
   return (
     <>
@@ -721,7 +734,10 @@ export default async function ProjectBoardPage({
           tokens={integrationsTokens}
         />
       ) : null}
-      {tab === "automations" ? (
+      {tab === "automations" && automations.unavailable ? (
+        <RunSourceUnavailable />
+      ) : null}
+      {tab === "automations" && !automations.unavailable ? (
         <AutomationsPanel
           canManage={canAct}
           initialNextCursor={automationsPage?.nextCursor ?? null}

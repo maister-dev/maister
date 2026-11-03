@@ -28,7 +28,7 @@ export async function GET(
   const { slug } = await params;
 
   try {
-    await requireActiveSession();
+    const user = await requireActiveSession();
     const project = await resolveProject(slug);
 
     await requireProjectAction(project.id, "readBoard");
@@ -42,6 +42,7 @@ export async function GET(
     }
     const query = parsedQuery.data;
     const page = await listProjectAutomations({
+      recipient: { kind: "user", userId: user.id },
       projectId: project.id,
       projectSlug: slug,
       limit: query.limit,
