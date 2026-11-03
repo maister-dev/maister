@@ -13,6 +13,7 @@ import { ZodError } from "zod";
 import { canAgentReachProject } from "@/lib/agents/cross-project-reach";
 import { requireProjectActionForUser } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
+import { assertNativeProjectStoreWrite } from "@/lib/brain/knowledge-project-sinks";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { queryErrorDiagnostics } from "@/lib/db/pg-error";
@@ -906,6 +907,47 @@ export async function handleExt(
 
   // 4. Run work().
   let response: NextResponse;
+
+  if (actor.boundRunId && opts.method !== "GET" && opts.method !== "HEAD") {
+    try {
+      await assertNativeProjectStoreWrite(d, actor.boundRunId, scopeLabel);
+    } catch (error) {
+      if (
+        !isMaisterError(error) ||
+        ![
+          "native_unclassified_sink",
+          "knowledge_reference_unavailable",
+        ].includes(String(error.details?.reason))
+      )
+        throw error;
+      await recordRequiredTokenAudit(
+        {
+          ...tokenAuditIdentity(actor),
+          projectId: auditProjectId,
+          scopeUsed: scopeLabel,
+          endpoint: opts.endpoint,
+          method: opts.method,
+          result: "error",
+          statusCode: 409,
+        },
+        d,
+      );
+      log.warn(
+        {
+          runId: actor.boundRunId,
+          tokenId: actor.tokenId,
+          scope: scopeLabel,
+          reason: error.details?.reason,
+        },
+        "native unclassified project write refused before effects",
+      );
+
+      return NextResponse.json(
+        { code: error.code, message: error.message, details: error.details },
+        { status: 409 },
+      );
+    }
+  }
 
   try {
     const context: ExtCtx = {

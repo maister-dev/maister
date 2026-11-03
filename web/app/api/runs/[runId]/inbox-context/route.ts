@@ -6,6 +6,7 @@ import pino from "pino";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
+import { assertRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { getInboxCardContext } from "@/lib/queries/inbox-context";
@@ -30,6 +31,9 @@ function httpStatusForCode(code: string): number {
     case "PASSWORD_CHANGE_REQUIRED":
     case "ACCOUNT_INACTIVE":
       return 403;
+    case "PRECONDITION":
+    case "CONFLICT":
+      return 409;
     default:
       return 500;
   }
@@ -59,7 +63,7 @@ export async function GET(
   const { runId } = await params;
 
   try {
-    await requireActiveSession();
+    const user = await requireActiveSession();
 
     const db = getDb() as unknown as Db;
     const runRows = await db.select().from(runs).where(eq(runs.id, runId));
@@ -70,6 +74,9 @@ export async function GET(
     }
 
     await requireProjectAction(run.projectId, "readBoard");
+    const recipient = { kind: "user" as const, userId: user.id };
+
+    await assertRunKnowledgeDisclosure(getDb(), recipient, runId);
 
     const context = await getInboxCardContext({
       id: run.id,
@@ -78,6 +85,8 @@ export async function GET(
       flowRevisionId: run.flowRevisionId ?? null,
       flowId: run.flowId ?? null,
     });
+
+    await assertRunKnowledgeDisclosure(getDb(), recipient, runId);
 
     return NextResponse.json(context);
   } catch (err) {

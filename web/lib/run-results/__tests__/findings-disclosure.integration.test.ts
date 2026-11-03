@@ -1,4 +1,5 @@
 import type { EvidenceFindingsV1 } from "@/lib/run-results/findings-types";
+import type { SqlTransaction } from "@/lib/db/sql-types";
 import type { StartedPostgresTestDb } from "@/test-support/pg-container";
 
 import { randomUUID } from "node:crypto";
@@ -7,6 +8,7 @@ import { NextRequest } from "next/server";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 
 import { recordNativeRunSources } from "@/lib/brain/knowledge-execution-access";
+import { getKnowledgeRecord } from "@/lib/brain/knowledge-records";
 import { createCompanyGrants, revokeCompanyGrant } from "@/lib/company/grants";
 import { buildAgentProfileContract } from "@/lib/run-results/contract";
 import { executionEvents } from "@/lib/db/schema";
@@ -46,6 +48,118 @@ afterEach(() => {
 afterAll(async () => {
   await database?.stop();
 });
+
+it("IT-CBE-06 result DTO assembly rechecks a grant revoked after initial admission", async () => {
+  const source = await completedRun();
+  let firstAdmission = true;
+  const racedDb = {
+    select: database.db.select.bind(database.db),
+    async transaction<T>(
+      action: (tx: SqlTransaction) => Promise<T>,
+    ): Promise<T> {
+      const result = await database.db.transaction(action);
+
+      if (firstAdmission) {
+        firstAdmission = false;
+        const grant = (
+          await database.pool.query<{ id: string; revision: number }>(
+            "SELECT id,revision FROM company_grants WHERE principal_type='user' AND principal_id=$1 AND action='knowledge:read' AND revoked_at IS NULL",
+            [source.submitterId],
+          )
+        ).rows[0]!;
+
+        await revokeCompanyGrant(database.db, source.submitterId, grant.id, {
+          expectedRevision: grant.revision,
+          reason:
+            "Revoke after initial DTO admission and before delayed projection reads.",
+          idempotencyKey: `dto-assembly-revoke:${grant.id}`,
+        });
+      }
+
+      return result;
+    },
+  };
+  const { loadRunPublicResult } = await import("@/lib/runs/run-result-dto");
+
+  await expect(
+    loadRunPublicResult(racedDb, source.runId, {
+      kind: "user",
+      userId: source.submitterId,
+    }),
+  ).rejects.toMatchObject({ code: "PRECONDITION" });
+});
+
+it.each(["task", "comment"] as const)(
+  "IT-CBE-06 native source-derived %s cannot be laundered into an unclassified project store",
+  async (kind) => {
+    const source = await seedNativeFindingsExecution(database, contract);
+    const record = await getKnowledgeRecord(
+      database.db,
+      { kind: "token", tokenId: source.tokenId },
+      { recordId: source.recordId },
+    );
+    const privateText = record.assertion;
+    const project = (
+      await database.pool.query<{ slug: string }>(
+        "SELECT slug FROM projects WHERE id=$1",
+        [source.projectId],
+      )
+    ).rows[0]!;
+    const taskId = randomUUID();
+
+    await database.pool.query(
+      "INSERT INTO tasks(id,project_id,number,title,prompt) VALUES($1,$2,1,'Assignment input','Perform bounded diagnosis.')",
+      [taskId, source.projectId],
+    );
+    const request = new NextRequest(
+      `http://localhost/api/v1/ext/projects/${project.slug}/tasks${kind === "comment" ? `/${taskId}/comments` : ""}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${source.tokenSecret}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(
+          kind === "comment"
+            ? { body: privateText }
+            : { title: "Source-derived task", prompt: privateText },
+        ),
+      },
+    );
+    const response =
+      kind === "comment"
+        ? await (
+            await import("@/app/api/v1/ext/projects/[slug]/tasks/[taskId]/comments/route")
+          ).POST(request, {
+            params: Promise.resolve({ slug: project.slug, taskId }),
+          })
+        : await (
+            await import("@/app/api/v1/ext/projects/[slug]/tasks/route")
+          ).POST(request, { params: Promise.resolve({ slug: project.slug }) });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      code: "PRECONDITION",
+      details: { reason: "native_unclassified_sink" },
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT id FROM tasks WHERE project_id=$1 AND prompt=$2",
+          [source.projectId, privateText],
+        )
+      ).rows,
+    ).toEqual([]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT id FROM task_comments WHERE task_id=$1",
+          [taskId],
+        )
+      ).rows,
+    ).toEqual([]);
+  },
+);
 
 async function completedRun(): Promise<
   Awaited<ReturnType<typeof seedNativeFindingsExecution>>
@@ -167,7 +281,12 @@ it.each(["list", "payload"] as const)(
   },
 );
 
-it.each(["transcript", "paged transcript", "event stream"] as const)(
+it.each([
+  "transcript",
+  "paged transcript",
+  "event stream",
+  "inbox context",
+] as const)(
   "IT-CBE-06 actual %s requires current source authority in addition to project membership",
   async (kind) => {
     const source = await completedRun();
@@ -204,9 +323,15 @@ it.each(["transcript", "paged transcript", "event stream"] as const)(
     sessionUserId = userId;
     const read = async (): Promise<Response> => {
       const request = new NextRequest(
-        `http://localhost/api/runs/${source.runId}/${kind === "event stream" ? "stream?replay=1" : kind === "paged transcript" ? "transcript?limit=10" : "transcript"}`,
+        `http://localhost/api/runs/${source.runId}/${kind === "inbox context" ? "inbox-context" : kind === "event stream" ? "stream?replay=1" : kind === "paged transcript" ? "transcript?limit=10" : "transcript"}`,
       );
       const params = { params: Promise.resolve({ runId: source.runId }) };
+
+      if (kind === "inbox context")
+        return (await import("@/app/api/runs/[runId]/inbox-context/route")).GET(
+          request,
+          params,
+        );
 
       return kind === "event stream"
         ? (await import("@/app/api/runs/[runId]/stream/route")).GET(

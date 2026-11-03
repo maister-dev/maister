@@ -11,9 +11,9 @@ import { z } from "zod";
 import {
   assertAgentMemoryWithinCap,
   readAgentMemoryRaw,
-  writeAgentMemoryCas,
   type AgentMemoryState,
 } from "@/lib/agents/memory-store";
+import { writeExecutionAgentMemory } from "@/lib/agents/native-memory-write";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -52,7 +52,13 @@ const bodySchema = z
 function extError(err: unknown): NextResponse {
   if (isMaisterError(err)) {
     return NextResponse.json(
-      { code: err.code, message: err.message },
+      {
+        code: err.code,
+        message: err.message,
+        ...(err.details?.reason === "native_unclassified_memory"
+          ? { details: { reason: "native_unclassified_memory" } }
+          : {}),
+      },
       { status: httpStatusForExtCode(err.code) },
     );
   }
@@ -207,13 +213,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
             },
           ]);
 
-        const result = await writeAgentMemoryCas(
-          db,
-          target.projectSlug,
-          target.agentId,
-          parsed.data.content,
-          parsed.data.ifHash ?? null,
-        );
+        const result = await writeExecutionAgentMemory(db, {
+          runId: ctx.actor.boundRunId,
+          tokenId: ctx.actor.tokenId,
+          projectId: ctx.projectId,
+          projectSlug: target.projectSlug,
+          agentId: target.agentId,
+          content: parsed.data.content,
+          ifHash: parsed.data.ifHash ?? null,
+        });
 
         if (!result.ok) {
           // The current state rides the 409 so the caller can merge and retry

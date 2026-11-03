@@ -148,6 +148,7 @@ export function isRunKnowledgeUnavailable(
       "knowledge_reference_unavailable",
       "knowledge_capture_profile_required",
       "knowledge_capture_limit",
+      "knowledge_reference_budget_exceeded",
     ].includes(String(error.details?.reason))
   );
 }

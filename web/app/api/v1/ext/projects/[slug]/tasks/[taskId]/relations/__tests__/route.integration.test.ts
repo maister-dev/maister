@@ -15,6 +15,7 @@ import { issueAgentRunToken } from "@/lib/agents/tokens";
 import { issueLibrarianTurnToken } from "@/lib/librarian/authority";
 import { createTask } from "@/lib/services/tasks";
 import { issueToken } from "@/lib/tokens/issue";
+import { seedRun } from "@/test-support/execution-host-seed";
 import {
   addProjectMember,
   seedActiveUser,

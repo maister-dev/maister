@@ -300,3 +300,30 @@ implemented behind the existing native capability floor. The engine remains
 3.10.0 until the remaining outward channels, shared-store writes, evidence-link
 presentation, and recovery/performance qualification pass. These implemented
 boundaries do not establish native package or pilot readiness.
+
+### Shared destination admission
+
+Native enrollment applies to output destinations as well as direct reads. The
+existing task-create/update/complete/triage, comment-create, relation-create/delete
+and agent-question request routes have no retained source/recipient envelope.
+An enrolled run (including a generic child inheriting native capture) receives
+409 PRECONDITION `native_unclassified_sink` before effects on those routes,
+independently of whether it included a citation or has read a source yet. This
+prevents a concurrent read from making an already-admitted write unsafe. The
+presented token is authenticated and its scope/project checked first; refusal is
+recorded in the existing token audit. A task/comment is not created as a delivery
+workaround. Existing NULL-capture execution remains compatible. Native findings,
+source-aware knowledge proposals and bounded child cooperation remain separate
+authorized channels; later assignment clarification/delivery must retain current
+recipient authority before admitting a source-controlled message.
+
+Private professional notes retain their existing attachment/role policy and
+content-hash CAS. A native write may carry only that same project's repository
+context and that same role's private-memory restrictions; company, record,
+foreign-project or other-role restrictions cannot be dropped into the file.
+Source admission locks the existing run capture until the existing memory CAS
+and atomic local rename finish, so a concurrent tool cannot add a new source
+between admission and effect. No network waits occur under this lock. Additional
+restrictions return 409 `native_unclassified_memory` without modifying the file.
+Safe native private writes and their CAS-conflict disclosure remain supported;
+private notes are not migrated into shared knowledge.

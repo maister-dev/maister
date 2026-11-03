@@ -32,6 +32,17 @@ info:
     **DTO policy.** Response DTOs NEVER include `acp_session_id`, absolute
     worktree paths, `token_hash`, or supervisor-internal handles.
 
+    **Native shared destination policy.** After token scope/project admission,
+    runs enrolled in native source capture cannot write unclassified task,
+    comment, relation or agent-question stores. The task-create/update/complete/
+    triage, comment-create, relation-create/delete and HITL-request operations
+    return 409 PRECONDITION with `details.reason: native_unclassified_sink`
+    before effects, retaining a refusal audit. Findings and source-aware knowledge
+    proposals remain available. Legacy NULL-capture runs keep existing behavior.
+    Native private-note writes retain the separate same-project/same-role memory
+    policy; additional source restrictions return 409 with
+    `details.reason: native_unclassified_memory`, leaving the file unchanged.
+
     See also:
       - [`../web.openapi.yaml`](../web.openapi.yaml) — token-management routes and session-auth surface
       - [`../../decisions.md`](../../decisions.md) — ADR-045, ADR-046, ADR-047
@@ -1556,6 +1567,10 @@ paths:
       tags: [agent-memory]
       summary: Replace this agent's memory file through a content-hash CAS
       description: |
+        Native execution writes authorize their current same-project/same-role
+        source footprint under the run-capture lock through the existing CAS.
+        Additional sources return PRECONDITION without writing or returning the
+        proposed replacement as an accepted state. See the native destination policy.
         (ADR-152) Scope `agent_memory:write`, mapped to the dedicated
         `writeAgentMemory` project action (minimum `member`) — never the
         `readBoard` fallback. BOTH the scope and the per-attachment
@@ -1621,10 +1636,18 @@ paths:
           description: |
             CAS loss (`CONFLICT`) — `ifHash` did not match the current on-disk
             hash. The body carries the current state so the caller can merge.
+            Native source-policy refusal is PRECONDITION, with no current-state
+            field; native_unclassified_memory is a safe machine-readable reason.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ExtAgentMemoryConflictBody"
+                oneOf:
+                  - $ref: "#/components/schemas/ExtAgentMemoryConflictBody"
+                  - allOf:
+                      - $ref: "#/components/schemas/ExtErrorBody"
+                      - type: object
+                        properties:
+                          code: { type: string, enum: [PRECONDITION] }
         "422":
           description: |
             Body failed schema validation, or `content` exceeds

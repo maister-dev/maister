@@ -1536,73 +1536,16 @@ export default async function RunDetailLayout({
       </section>
     ) : null;
 
-  let nextAction: RunNextAction | undefined;
-
-  if (detail.pendingHitl && !isCutoverHistory) {
-    nextAction = {
-      label: t(
-        canAct ? "inspectorActionOpenPendingInput" : "outcomeInspectDecision",
-      ),
-      href: "#pending-input",
-      reason: t(canAct ? "outcomeDecisionRequired" : "outcomeReadOnly"),
-    };
-  } else if (
-    detail.continuation.claim ||
-    detail.continuation.reworkClaimAvailable ||
-    isHumanWorking
-  ) {
-    nextAction = {
-      label: t("handoff"),
-      href: "#run-handoff",
-      reason: t(canAct ? "outcomeHandoffAvailable" : "outcomeReadOnly"),
-    };
-  } else if (
-    isOperational &&
-    operational?.state === "terminal" &&
-    (!operational.successful || operational.cleanup?.state === "exhausted")
-  ) {
-    nextAction = {
-      label: tOperational("title"),
-      href: "#operation-result",
-      reason: t(canAct ? "outcomeOperationAttention" : "outcomeReadOnly"),
-    };
-  } else if (detail.status === "Crashed" && !isOperational) {
-    nextAction = {
-      label: t("crashTitle"),
-      href: "#run-recovery",
-      reason: t(
-        canAct && detail.recoverable
-          ? "crashRecoverableHint"
-          : canAct
-            ? "notRecoverable"
-            : "outcomeReadOnly",
-      ),
-    };
-  } else if (showReview && reviewData) {
-    nextAction = {
-      label: t("flowCenterReviewChanges"),
-      href: "#review-panel",
-      reason: t(
-        !canAct
-          ? "outcomeReadOnly"
-          : headerPromotionOperation
-            ? "outcomeDeliveryAvailable"
-            : "outcomeReviewRequired",
-      ),
-    };
+  try {
+    await assertRunKnowledgeDisclosure(
+      getDb(),
+      { kind: "user", userId: user.id },
+      runId,
+    );
+  } catch (error) {
+    if (isRunKnowledgeUnavailable(error)) return RunSourceUnavailable();
+    throw error;
   }
-
-  const outcomeSummary = isOperational
-    ? hasOperationalResult && operational
-      ? tOperational(operational.effectiveOutcome ?? "pending")
-      : t("outcomeUnknown")
-    : publicResult
-      ? resultStatusLabels[publicResult.resultStatus]
-      : t(
-          isLiveRunStatus(detail.status)
-            ? "outcomeRunning"
-            : "outcomeNoStructuredResult",
-        );
 
   return (
     <RunPeekController

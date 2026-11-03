@@ -7177,6 +7177,9 @@ paths:
       tags: [runs]
       summary: Implemented (inbox card redesign) — lazy per-card decision context
       description: |
+        Enrolled native evidence runs require current source authority before
+        loading or returning the agent-message summary. Missing source access
+        returns a safe 409 PRECONDITION; project membership alone is insufficient.
         Read-only context for an expanded inbox HITL card: the last agent
         message, the current node attempt's gates, a diff summary, and stage
         progress. For `budget_breach` cards the same DTO also carries the
@@ -7197,6 +7200,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/InboxCardContext" }
+        "409":
+          $ref: "#/components/responses/Precondition"
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":

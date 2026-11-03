@@ -114,7 +114,7 @@ export async function loadRunPublicResult(
   // nulls `result` for exactly this case. One plane, one rule.
   const served = resultStatus === "valid" ? valid : null;
 
-  return {
+  const result: RunPublicResultDto = {
     operationalOutcome: await loadOperationalOutcome(db, runId),
     schemaRef: run.resultContract?.schemaRef ?? newest?.schemaRef ?? null,
     resultStatus,
@@ -131,4 +131,9 @@ export async function loadRunPublicResult(
     completedWithoutPromotion:
       run.status === "Done" && !run.promotedHeadSha && !run.mergeCommitSha,
   };
+
+  if (recipient && usesStructuredKnowledgeContext(run))
+    await assertRunKnowledgeDisclosure(db, recipient, runId);
+
+  return result;
 }

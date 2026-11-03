@@ -23,7 +23,10 @@ import { assertNativeRunKnowledgeInputs } from "@/lib/brain/knowledge-execution-
 import { seedProjectRow, seedRun } from "@/test-support/execution-host-seed";
 import { seedNativeFindingsExecution } from "@/test-support/native-findings-seed";
 import { startMainAndBrainPostgresTestDb } from "@/test-support/pg-container";
-import { writeAgentMemoryCas } from "@/lib/agents/memory-store";
+import {
+  readAgentMemoryRaw,
+  writeAgentMemoryCas,
+} from "@/lib/agents/memory-store";
 import { applyAgentMemoryForLaunch } from "@/lib/agents/launch";
 import { runDirPath } from "@/lib/flows/graph/mutation-check";
 
@@ -58,6 +61,53 @@ afterAll(async () => {
   } finally {
     vi.unstubAllEnvs();
   }
+});
+
+it("IT-CBE-06 native private notes preserve their separate source policy and cannot store company-derived content", async () => {
+  const execution = await seedNativeFindingsExecution(database, contract);
+
+  await database.pool.query(
+    "UPDATE agent_project_links SET memory_enabled=true WHERE project_id=$1 AND agent_id=$2",
+    [execution.projectId, execution.agentId],
+  );
+  const project = (
+    await database.pool.query<{ slug: string }>(
+      "SELECT slug FROM projects WHERE id=$1",
+      [execution.projectId],
+    )
+  ).rows[0]!;
+  const { POST } = await import("@/app/api/v1/ext/agent/memory/route");
+  const write = (content: string, ifHash: string | null): Promise<Response> =>
+    POST(
+      new NextRequest("http://localhost/api/v1/ext/agent/memory", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${execution.tokenSecret}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ content, ifHash }),
+      }),
+    );
+  const localNotes = "Private procedural notes for this professional role.";
+  const allowed = await write(localNotes, null);
+
+  expect(allowed.status).toBe(200);
+  const prior: { hash: string } = await allowed.json();
+  const record = await getKnowledgeRecord(
+    database.db,
+    { kind: "token", tokenId: execution.tokenId },
+    { recordId: execution.recordId },
+  );
+  const denied = await write(record.assertion, prior.hash);
+
+  expect(denied.status).toBe(409);
+  expect(await denied.json()).toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "native_unclassified_memory" },
+  });
+  expect(
+    await readAgentMemoryRaw(project.slug, execution.agentId),
+  ).toMatchObject({ content: localNotes, hash: prior.hash });
 });
 
 const contextCases = [
