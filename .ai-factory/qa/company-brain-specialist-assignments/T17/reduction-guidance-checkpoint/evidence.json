@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "task": "T17",
+  "status": "reduction_guidance_checkpoint_qualified_actual_workflow_open",
+  "engineVersion": "3.11.1",
+  "basePlatformCommit": "710c9c93a",
+  "failedLivePackage": {
+    "tag": "rah/v1.0.1",
+    "commit": "14275946ea5587a5d52f9c864ccab5f4ec25d4e7"
+  },
+  "nextPackage": {
+    "tag": "rah/v1.0.2",
+    "commit": "1b1682b28b6131a794af7e3751ed9c56cf7d7c32",
+    "localAnnotatedTag": true,
+    "published": false
+  },
+  "qualified": [
+    "The actual pinned v1.0.1 root and both child prompts received the generated native grammar. Both real researchers published valid result revision 1 and reached Done. Root parked and resumed under the existing host/run/attempt contracts.",
+    "The root final value accounted for all seven child findings but rewrote retained assertions, labelled changed combined conclusions observed, and paraphrased limitation/missing-evidence entries. Existing validation refused it; bounded retries exhausted and the run failed. Cleanup reported zero leaks. No valid root or depth-2 outcome is claimed.",
+    "A real-Postgres regression demonstrates reduction feedback lost its safe selection path as $. The same case now receives selection[0] and a preservation instruction. Source authority refusals remain existence-concealing; reference/closure validation is not relaxed.",
+    "Platform guidance and production companion coordinators default to verbatim retention, changing only output identity and direct-child source pointers. Retained preserves exact assertion/basis and one mapped output; rewritten/combined conclusions are inferred and still preserve original evidence/limitation/question entries exactly. The native 32-finding bound replaces the package arbitrary seven/eight-finding summary target.",
+    "Actual package installation fails without root proposal GET and passes with it. Only root profiles gain bounded read-only inspection; no listing/review/confirmation/capture/shell authority is granted. The clean companion release wrapper passed and tagged exact committed v1.0.2 bytes."
+  ],
+  "checks": {
+    "reductionPathRed": {
+      "failed": 1,
+      "unselected": 18
+    },
+    "owningPostgresGreen": {
+      "passed": 48,
+      "files": 3
+    },
+    "actualPackagePolicyRed": {
+      "failed": 1
+    },
+    "actualPackagePolicyGreen": {
+      "passed": 1
+    },
+    "normalReleaseWrapper": {
+      "exitCode": 0
+    },
+    "fullWebUnit": {
+      "passed": 9263,
+      "files": 886
+    },
+    "typecheck": {
+      "exitCode": 0
+    },
+    "lint": {
+      "exitCode": 0
+    },
+    "contracts": {
+      "exitCode": 0
+    },
+    "docsAndErd": {
+      "exitCode": 0
+    }
+  },
+  "limits": [
+    "Actual immutable v1.0.2 depth-1/depth-2 reduction, root proposal acceptance and revoked-reference control still require a fresh real ACP run. T16/T17 remain open.",
+    "The failed run ended and shut down before an attempted normal abandon request could connect; no abandon action was applied. Its ordinary harness cleanup was clean.",
+    "The local Git source rewrite qualifies local tag loading and pinning; it does not establish a published package or remote availability."
+  ],
+  "noRefactor": "The fix reuses the existing reducer, runtime schema, prompt ownership and result ledger; only safe diagnostics and producer instructions change. No schema migration or alternate reducer executes model work.",
+  "logs": "log-index.json",
+  "actualQualification": "failed-live-qualification.json"
+}

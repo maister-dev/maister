@@ -207,11 +207,14 @@ it("IT-CBE-04 installs exact native RAH contracts without combining install, tru
           "mcp__maister__knowledge_conflicts",
         ]),
       );
-      if (["rah-root-d1", "rah-root-d2"].includes(manifest.name))
+      if (["rah-root-d1", "rah-root-d2"].includes(manifest.name)) {
         expect(profile?.tools?.allow).toContain(
           "mcp__maister__knowledge_propose",
         );
-      else
+        expect(profile?.tools?.allow).toContain(
+          "mcp__maister__knowledge_proposal_get",
+        );
+      } else
         expect(profile?.tools?.allow).not.toContain(
           "mcp__maister__knowledge_propose",
         );

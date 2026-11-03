@@ -17,6 +17,7 @@ import {
   closeSucceededAttemptWithResult,
 } from "@/lib/run-results/close-attempt";
 import { nativeKnowledgeCaptureAtLaunch } from "@/lib/brain/knowledge-launch-capture";
+import { validateFindingsReferences } from "@/lib/run-results/findings-references";
 import { inspectFindingsReduction } from "@/lib/run-results/findings-reduction";
 import { launchConsensusDraftRuns } from "@/lib/flows/graph/consensus/drafts";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
@@ -742,7 +743,7 @@ const brokenReductions: readonly BrokenReduction[] = [
 
 it.each(brokenReductions)(
   "IT-CBE-05 refuses a reduction that $name at actual result publication",
-  async ({ alter }) => {
+  async ({ name, alter }) => {
     const source = await seedNativeFindingsExecution(database, agentContract);
     const parent = await coordinator(source);
     const childRunId = await child(source, parent.runId);
@@ -750,6 +751,29 @@ it.each(brokenReductions)(
 
     await finishChild(childRunId, input);
     expect((await collect(parent.secret, childRunId)).status).toBe(200);
+    if (name === "drops original support") {
+      const value = alter(reduce(input, childRunId));
+      const diagnostic = await database.db.transaction((tx) =>
+        validateFindingsReferences(
+          tx,
+          parent.runId,
+          flowContract,
+          {
+            kind: "valid",
+            value,
+            valueBytes: Buffer.byteLength(JSON.stringify(value)),
+          },
+          parent.attemptId,
+        ),
+      );
+
+      expect(diagnostic).toMatchObject({
+        kind: "invalid",
+        reason: "reference_invalid",
+        message:
+          "Native findings reduction is invalid at selection[0]; preserve the exact collected finding and its evidence, limitations and questions",
+      });
+    }
     await expect(
       finishCoordinator(parent, alter(reduce(input, childRunId))),
     ).rejects.toMatchObject({ code: "PRECONDITION" });

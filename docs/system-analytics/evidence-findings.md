@@ -92,7 +92,10 @@ platform's existing stable JSON key ordering. Neither is a retrieval score or a
 confirmation. Witness digest/version values retain their immutable capture
 meaning. Missing identities, denied access and witness mismatches share the safe
 `reference_invalid` result failure class; diagnostic logs contain only the
-candidate's structural path and reason class. Invalid candidates are not
+candidate's structural path and reason class. Reduction retry feedback preserves
+the exact failing selection/finding path and a preservation instruction; it does
+not misclassify a reduction mismatch as an unavailable source at `$`. Source
+authority refusals retain their existence-concealing message. Invalid candidates are not
 published as a successful result or silently removed from it.
 
 The existing child's immutable parent binding plus its exact `run_results` row's

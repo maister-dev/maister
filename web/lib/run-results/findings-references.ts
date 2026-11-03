@@ -323,18 +323,20 @@ export async function validateFindingsReferences(
         ))
     )
       throw error;
+    const reductionInvalid =
+      error.details?.reason === "findings_reduction_invalid";
+    const failurePath =
+      reductionInvalid && typeof error.details?.path === "string"
+        ? error.details.path
+        : path;
+
     log.warn(
       {
         runId,
-        path:
-          error.details?.reason === "findings_reduction_invalid" &&
-          typeof error.details.path === "string"
-            ? error.details.path
-            : path,
-        reason:
-          error.details?.reason === "findings_reduction_invalid"
-            ? "findings_reduction_invalid"
-            : "reference_unavailable",
+        path: failurePath,
+        reason: reductionInvalid
+          ? "findings_reduction_invalid"
+          : "reference_unavailable",
         schemaSha256: contract.sha256,
       },
       "native findings publication refused",
@@ -343,7 +345,9 @@ export async function validateFindingsReferences(
     return {
       kind: "invalid",
       reason: "reference_invalid",
-      message: `Execution result reference or source capture is unavailable at ${path}`,
+      message: reductionInvalid
+        ? `Native findings reduction is invalid at ${failurePath}; preserve the exact collected finding and its evidence, limitations and questions`
+        : `Execution result reference or source capture is unavailable at ${failurePath}`,
     };
   }
 }

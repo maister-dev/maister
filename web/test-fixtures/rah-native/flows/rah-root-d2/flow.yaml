@@ -43,6 +43,7 @@ nodes:
           - mcp__maister__knowledge_conflicts
           - mcp__maister__knowledge_witness_get
           - mcp__maister__knowledge_propose
+          - mcp__maister__knowledge_proposal_get
           - mcp__maister__run_delegate
           - mcp__maister__run_collect
           - mcp__maister__run_cancel
@@ -70,11 +71,17 @@ nodes:
         The harness parks this same run and resumes it when child work settles. On resume collect the existing child IDs;
         do not launch replacement children, poll in a loop, start a shell timer, or read background-task files.
         Do not accept process exit, prose, or child Done alone as evidence of the required outcome.
-        For each consumed source finding, selection must name the exact childRunId, resultRevision and findingId,
-        with disposition retained/combined and real outputFindingIds, or omitted with a specific reason and empty outputFindingIds.
-        Each derived finding names its original direct-child sourceFindings and preserves ALL their original supporting,
-        contradicting, missing-evidence, limitation and unresolved-question entries. Original evidence must survive intermediate summaries.
-        Novel combined conclusions are inferred, never mechanically confirmed. Keep fewer than eight output findings.
+        Default to lossless retention rather than summarizing the child result. For each collected child finding,
+        copy assertion, basis, supporting, contradicting, missingEvidence, limitations and openQuestions EXACTLY.
+        Change only id to a compact unique output id, and replace sourceFindings with the exact direct-child
+        {childRunId,resultRevision,findingId}. Add selection with disposition retained and exactly that one outputFindingId.
+        Retained requires byte-identical assertion and unchanged basis; never paraphrase an entry while calling it retained.
+        Copy every original version/digest field and every missing-evidence/limitation/question string, without shortening or rewriting.
+        If an explicitly requested combined conclusion is necessary, use disposition combined and basis inferred,
+        and copy ALL original evidence, missingEvidence, limitations and openQuestions entries exactly into every mapped output.
+        Use omitted only with a specific reason and empty outputFindingIds. Never drop a source silently.
+        Use up to 32 findings so bounded child output can survive depth two; no extra summary-size target overrides evidence preservation.
+        Original evidence survives intermediate coordinators; acceptance never confirms a fact.
         Never fetch grandchildren directly. Use only governed delegation/collection; no Task, Agent, hidden subagents,
         parallel scheduler, independent retry loop or filesystem-based handoff. Source denial is a blocker, not permission to paraphrase withheld content.
         After collecting and evaluating the required findings, submit one evidence-linked knowledge_propose only when
@@ -85,7 +92,7 @@ nodes:
         Return exactly one final fenced block labelled json maister:output. Its value must be evidence_findings_v1:
         {"schemaVersion":1,"findings":[],"knowledgeProposals":[],"selection":[]}.
         Each finding has id, assertion, basis (observed or inferred), supporting and contradicting reference arrays,
-        missingEvidence, limitations, openQuestions, and sourceFindings. Use at most eight findings.
+        missingEvidence, limitations, openQuestions, and sourceFindings. Use at most 32 findings.
         References identify an actual accessible knowledge record at its returned revision, an original witness,
         or an exact collected result revision. Preserve returned version/content witnesses when present.
         Do not fabricate an ID, citation, timestamp, source, author, permission or confirmation.
