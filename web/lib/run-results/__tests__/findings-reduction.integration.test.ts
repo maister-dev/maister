@@ -17,6 +17,9 @@ import {
   closeSucceededAttemptWithResult,
 } from "@/lib/run-results/close-attempt";
 import { nativeKnowledgeCaptureAtLaunch } from "@/lib/brain/knowledge-launch-capture";
+import { launchConsensusDraftRuns } from "@/lib/flows/graph/consensus/drafts";
+import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
+import { platformAcpRunners } from "@/lib/db/schema";
 import { createCompanyGrants, revokeCompanyGrant } from "@/lib/company/grants";
 import {
   buildAgentProfileContract,
@@ -175,6 +178,84 @@ async function collect(secret: string, childRunId: string): Promise<Response> {
     {},
   );
 }
+
+it.each(["new", "retained"] as const)(
+  "IT-CBE-06 a native coordinator cannot create or resume an unclassified %s runner-only consensus child",
+  async (phase) => {
+    const source = await seedNativeFindingsExecution(database, agentContract);
+    const parent = await coordinator(source);
+    const runnerId = randomUUID();
+
+    await database.db
+      .insert(platformAcpRunners)
+      .values(testPlatformRunnerRow(runnerId, "claude"));
+    const retainedId = randomUUID();
+
+    if (phase === "retained")
+      await database.pool.query(
+        "INSERT INTO runs(id,project_id,run_kind,status,flow_version,flow_revision,agent_workspace,parent_run_id,delegation_snapshot,trigger_payload) VALUES($1,$2,'agent','Pending','agent','manual','repo_read',$3,$4::jsonb,$5::jsonb)",
+        [
+          retainedId,
+          source.projectId,
+          parent.runId,
+          JSON.stringify({
+            kind: "runner",
+            runnerId,
+            participantId: "unbound",
+            nodeId: "coordinator",
+            nodeAttemptId: parent.attemptId,
+            round: 1,
+            workspaceMode: "repo_read",
+          }),
+          JSON.stringify({
+            kind: "consensus_draft",
+            nodeId: "coordinator",
+            nodeAttemptId: parent.attemptId,
+            round: 1,
+            participantId: "unbound",
+            participantKind: "runner",
+            prompt: "Retained native input",
+            workspaceMode: "repo_read",
+          }),
+        ],
+      );
+    await expect(
+      launchConsensusDraftRuns({
+        db: database.db,
+        rootDb: database.db,
+        projectId: source.projectId,
+        taskId: null,
+        flowRevisionId: null,
+        runDefaultRunnerId: runnerId,
+        runnerProfiles: undefined,
+        parentRunId: parent.runId,
+        rootRunId: parent.runId,
+        nodeId: "coordinator",
+        nodeAttemptId: parent.attemptId,
+        round: 1,
+        participants: [{ id: "unbound", runner: runnerId }],
+        prompts: [
+          {
+            participantId: "unbound",
+            prompt: "Source-controlled native diagnostic input",
+          },
+        ],
+        workspaceMode: "repo_read",
+      }),
+    ).rejects.toMatchObject({
+      code: "PRECONDITION",
+      details: { reason: "native_professional_role_required" },
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT id FROM runs WHERE parent_run_id=$1",
+          [parent.runId],
+        )
+      ).rows,
+    ).toEqual(phase === "retained" ? [{ id: retainedId }] : []);
+  },
+);
 
 it("IT-CBE-06 collection gates every derived child field, records the source union before bytes and retains exact one-time consumption", async () => {
   const source = await seedNativeFindingsExecution(database, agentContract);

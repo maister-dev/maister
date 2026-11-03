@@ -759,6 +759,13 @@ orchestrator node debuts at `1.6.0`, the new engine floor). Flows without an
 
 ## Node `consensus` (Implemented)
 
+Native evidence-enrolled parents cannot use runner-only participants: a runner
+does not identify an authorized receiving professional role. This path refuses
+with `native_professional_role_required` before creating a child run/session;
+native research cooperation uses declared agent/Flow delegation with inherited
+source policy. Legacy consensus participants retain the contract below. See
+[native evidence boundaries](system-analytics/evidence-findings.md#physical-workspace-sharing).
+
 **(Implemented, [ADR-109](decisions.md#adr-109-consensus-flow-graph-node--engine-owned-unanimous-draft-verification-and-human-resolution).)**
 `type: consensus` is an engine-owned supervisory node for high-stakes planning
 or review decisions where one agent answer is not enough. It fans out read-only

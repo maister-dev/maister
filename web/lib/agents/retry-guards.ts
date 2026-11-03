@@ -17,6 +17,7 @@ import {
   hasRejectedAgentCreateEvidence,
   hasUnprovenAgentCreateFailure,
 } from "@/lib/agents/execution-quiescence";
+import { usesStructuredKnowledgeContext } from "@/lib/run-results/contract";
 
 export function retryDigest(value: unknown): string {
   return createHash("sha256").update(canonicalCommandJson(value)).digest("hex");
@@ -76,6 +77,7 @@ export async function freshQualificationSafetyReason(
   source: Run,
 ): Promise<string | null> {
   if (
+    usesStructuredKnowledgeContext(source) ||
     source.runKind !== "agent" ||
     source.persistent ||
     source.parentRunId ||
@@ -159,6 +161,7 @@ export async function retrySafetyReason(
   source: Run,
 ): Promise<string | null> {
   if (
+    usesStructuredKnowledgeContext(source) ||
     source.runKind !== "agent" ||
     source.persistent ||
     source.parentRunId ||

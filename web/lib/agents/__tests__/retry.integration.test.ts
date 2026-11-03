@@ -136,6 +136,58 @@ async function finishedFixture(runId: string): Promise<{
   };
 }
 
+it.each(["pre_work_retry", "fresh_qualification"] as const)(
+  "IT-CBE-06 legacy %s retry admission cannot downgrade a native source through a previously issued preview",
+  async (strategy) => {
+    const source =
+      strategy === "fresh_qualification"
+        ? await failedQualificationFixture()
+        : await fixture();
+    const preview = await getAgentRetryOptions(
+      database.db,
+      source.runId,
+      source.userId,
+    );
+
+    expect(preview.eligible).toBe(true);
+    await database.pool.query(
+      "UPDATE runs SET knowledge_access=$2::jsonb WHERE id=$1",
+      [
+        source.runId,
+        JSON.stringify({
+          schemaVersion: 1,
+          state: "complete",
+          generation: 1,
+          restrictions: [
+            { kind: "project_context", projectId: source.projectId },
+          ],
+        }),
+      ],
+    );
+    expect(
+      await getAgentRetryOptions(database.db, source.runId, source.userId),
+    ).toMatchObject({ eligible: false, reason: "retry_source_unsupported" });
+    await expect(
+      acceptAgentRetry(database.db, source.runId, source.userId, {
+        requestKey: randomUUID(),
+        previewFingerprint: preview.previewFingerprint,
+        runnerId: source.runnerId,
+      }),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "retry_source_unsupported" },
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT id FROM agent_retry_intents WHERE source_run_id=$1",
+          [source.runId],
+        )
+      ).rows,
+    ).toEqual([]);
+  },
+);
+
 it("accepts a positively proven operational pre-dispatch failure even when its outcome cause is operational_execution_failed", async () => {
   const runId = await seedAgentRun(database.db, {
     runtimeRoot: root,

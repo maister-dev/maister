@@ -453,6 +453,23 @@ is derived from retained capture metadata, without a live Brain dependency.
 
 ### Physical workspace sharing
 
+Native child work requires an identifiable authorized professional role. The
+legacy consensus participant selected only by a runner has no such role binding;
+it refuses with `native_professional_role_required` before creating a child run,
+session or execution assignment. It cannot become an unclassified child simply
+by omitting a result profile. Legacy consensus behavior is unchanged; native RAH
+cooperation delegates to declared agent/Flow targets through the qualified
+source-inheriting launcher.
+
+Legacy standalone pre-work retry and fresh-qualification recipes do not retain
+native result/input/source bindings. Native sources explicitly report the
+existing `retry_source_unsupported` disposition on those paths, including a
+stale preview accepted before enrollment was detected. Same-run continuation
+keeps its frozen sources and current dispatch checks. CB1 assignment recovery
+extends the existing immutable retry recipe and ownership mechanisms before
+qualifying native replacement attempts; silently launching a NULL-capture
+replacement is forbidden.
+
 Native cooperation uses separate owned workspaces or workspace-none execution.
 The legacy physical `workspaceMode: shared` has no recipient-aware source envelope
 for every process reading its common files; native enrollment therefore refuses
