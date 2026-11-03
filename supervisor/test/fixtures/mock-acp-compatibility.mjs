@@ -71,7 +71,11 @@ class CompatibilityAgent {
     };
   }
 
-  async newSession() {
+  async newSession(params) {
+    if (process.argv.includes("--require-capability-server") &&
+        !params.mcpServers.some(server => server.name === "maister" && server.command && server.args.some(arg => arg.endsWith("smoke-capability-server.ts")))) {
+      throw new Error("Capability probe requires its isolated MCP server");
+    }
     if (mode === "gemini-load-only") {
       throw new Error("newSession fallback must not run for Gemini resume");
     }
@@ -129,6 +133,14 @@ class CompatibilityAgent {
   }
 
   async prompt(params) {
+    if (process.argv.includes("--duplicate-first-capability-probe")) {
+      if (toolNameForPrompt(params).startsWith("mcp__")) return { stopReason: "end_turn" };
+      await this.connection.requestPermission({
+        sessionId: params.sessionId,
+        toolCall: { toolCallId: "extra-first-probe-call", kind: "other", title: "mcp__maister__hitl_list" },
+        options: [{ optionId: "deny", kind: "reject_once", name: "Deny" }],
+      });
+    }
     const effectivePermissionKind = permissionKindForPrompt(params);
     const result = await this.connection.requestPermission({
       sessionId: params.sessionId,

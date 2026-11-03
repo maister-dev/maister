@@ -341,6 +341,32 @@ class GuardrailAgent {
     } else if (scenario === "capability_allow") {
       // One in-profile tool call (name in the tools allow-list) → auto-allowed.
       await this.requestTool(sessionId, "Read", "tc-cap-allow");
+    } else if (scenario === "capability_permission_delta") {
+      const pending = (id, owner) => ({ sessionId: owner, update: {
+        sessionUpdate: "tool_call", toolCallId: id, title: "Read", kind: "read", status: "pending",
+        _meta: { claudeCode: { toolName: "Read" } },
+      }});
+      const completed = id => ({ sessionId, update: {
+        sessionUpdate: "tool_call_update", toolCallId: id, status: "completed",
+      }});
+
+      for (const [id, notifications] of [
+        ["tc-delta-own", [pending("tc-delta-own", sessionId)]],
+        ["tc-delta-foreign", [pending("tc-delta-foreign", "foreign-session")]],
+        ["tc-delta-terminal", [pending("tc-delta-terminal", sessionId), completed("tc-delta-terminal")]],
+        ["tc-delta-evicted", [pending("tc-delta-evicted", sessionId), ...Array.from({length:32},(_, index) => pending(`tc-delta-bound-${index}`, sessionId))]],
+        ["tc-delta-bound-31", []],
+      ]) {
+        for (const notification of notifications) await this.connection.sessionUpdate(notification);
+        const response = await this.connection.requestPermission({
+          sessionId,
+          toolCall: { toolCallId: id, title: "Read a controlled file" },
+          options: OPTIONS,
+        });
+
+        this.outcomes.push(response.outcome.outcome);
+        await this.connection.sessionUpdate(completed(id));
+      }
     } else if (scenario === "capability_deny") {
       // One out-of-profile tool call (name NOT in the allow-list) → denied.
       await this.requestTool(sessionId, "WebFetch", "tc-cap-deny");

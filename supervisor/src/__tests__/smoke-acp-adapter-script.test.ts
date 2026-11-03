@@ -17,13 +17,16 @@ const hangingFixturePath = fileURLToPath(
   new URL("../../test/fixtures/mock-acp-hang-ignore-term.mjs", import.meta.url),
 );
 
-async function fixtureBinary(fixture: string = fixturePath): Promise<string> {
+async function fixtureBinary(
+  fixture: string = fixturePath,
+  args: readonly string[] = [],
+): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "maister-smoke-script-test-"));
   const binaryPath = join(dir, "opencode");
 
   await writeFile(
     binaryPath,
-    `#!/usr/bin/env node\nimport ${JSON.stringify(pathToFileURL(fixture).href)};\n`,
+    `#!/usr/bin/env node\nprocess.argv.push(...${JSON.stringify(args)});\nawait import(${JSON.stringify(pathToFileURL(fixture).href)});\n`,
     "utf8",
   );
   await chmod(binaryPath, 0o755);
@@ -116,7 +119,9 @@ describe("smoke ACP adapter CLI helpers", () => {
   });
 
   it("produces ok capability-enforcement evidence after write + MCP tool-identity probes (ADR-130)", async () => {
-    const binaryPath = await fixtureBinary();
+    const binaryPath = await fixtureBinary(fixturePath, [
+      "--require-capability-server",
+    ]);
 
     cleanupDirs.push(dirname(binaryPath));
     process.env.MAISTER_ADAPTER_BINARY_OPENCODE = binaryPath;
@@ -132,6 +137,24 @@ describe("smoke ACP adapter CLI helpers", () => {
         status: "ok",
         protocolVersion: expect.any(Number),
       },
+    });
+  });
+
+  it("does not count repeated first-probe callbacks as evidence for an unobserved second probe", async () => {
+    const binaryPath = await fixtureBinary(fixturePath, [
+      "--duplicate-first-capability-probe",
+    ]);
+
+    cleanupDirs.push(dirname(binaryPath));
+    process.env.MAISTER_ADAPTER_BINARY_OPENCODE = binaryPath;
+
+    const result = await smokeAdapter("opencode", {
+      capabilityEnforcement: true,
+    });
+
+    expect(result.capabilityEnforcement).toMatchObject({
+      status: "error",
+      reason: "opencode capability probe did not reach requestPermission",
     });
   });
 

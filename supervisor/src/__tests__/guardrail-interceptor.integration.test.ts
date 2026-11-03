@@ -534,6 +534,37 @@ describe("capability_guard interceptor (ADR-130)", () => {
     expect(pendingPermissions.size(sessionId)).toBe(0);
   });
 
+  it("retains the actual tool identity for partial permission requests without borrowing foreign-session or completed-call metadata", async () => {
+    const host = await boot(["--scenario", "capability_permission_delta"]);
+    const sessionId = await createSession(host, {
+      cwd: host.runtimeRoot,
+      autoApprovePermissions: false,
+      enforcementProfile: { ...toolsProfile, escalationThreshold: 10 },
+    });
+    const events: SessionEvent[] = [];
+    const unsubscribe = host.registry.subscribe(sessionId, (event) => {
+      if (event.type === "session.hook_trip") events.push(event);
+    });
+
+    try {
+      await sendPrompt(host, sessionId);
+    } finally {
+      unsubscribe();
+    }
+
+    const trips = hookTrips(events);
+
+    expect(trips.map((trip) => trip.disposition)).toEqual([
+      "deny",
+      "deny",
+      "deny",
+    ]);
+    expect(
+      trips.map((trip) => (trip.toolCall as { toolCallId: string }).toolCallId),
+    ).toEqual(["tc-delta-foreign", "tc-delta-terminal", "tc-delta-evicted"]);
+    expect(pendingPermissions.size(sessionId)).toBe(0);
+  });
+
   it("out-of-profile: denies at the seam (wins over B1 auto-approve), run continues", async () => {
     const host = await boot(["--scenario", "capability_deny"]);
     const { registry, runtimeRoot } = host;

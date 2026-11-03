@@ -30,6 +30,7 @@ import {
 } from "../node_modules/@agentclientprotocol/sdk/dist/v1/unstable/schema/zod.gen.js";
 
 import { SupervisorError, type SupervisorErrorDetails } from "./types";
+import { createAcpToolCallContext } from "./acp-tool-call-context";
 
 export const MAX_ACP_FRAME_BYTES = 1_048_576;
 const MAX_PRODUCERS = 20;
@@ -509,6 +510,7 @@ export function boundedAcpStream(input: {
     throw incomplete("producer_frame_invalid");
   const iterator = input.source[Symbol.asyncIterator]();
   const pendingPermissions = new Set<Promise<void>>();
+  const toolCalls = createAcpToolCallContext();
   let stopped = false;
   const send = (message: AnyMessage): Promise<void> =>
     writeChunk(
@@ -542,7 +544,10 @@ export function boundedAcpStream(input: {
     const admission = new Promise<void>((resolve) => {
       prepared = resolve;
     });
-    const result = input.client.requestPermission(parsed.data, prepared);
+    const result = input.client.requestPermission(
+      toolCalls.permission(parsed.data),
+      prepared,
+    );
 
     const settled: Promise<void> = result
       .then(
@@ -568,6 +573,7 @@ export function boundedAcpStream(input: {
       input.onLine?.(line);
       throw incomplete("producer_update_invalid");
     }
+    toolCalls.observe(parsed.data);
     if (input.onUpdateFrame) {
       await input.onUpdateFrame(parsed.data, line);
     } else {

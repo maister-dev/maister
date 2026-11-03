@@ -418,6 +418,33 @@ crashes, so an older probe cannot overwrite a newer generic failure. Initialize,
 creation, and each permission probe are independently bounded to ten seconds;
 a timeout is an error and never produces fresh eligibility evidence.
 
+Strict tools/MCP launch also requires `smoke.capabilityEnforcement.status="ok"`.
+Run `smoke:acp claude --capability-enforcement --runner /path/to/runner.json --cache /path/to/adapter-smoke-cache.json`
+with the installed runner's `RunnerLaunch` JSON (version, runnerId, adapter,
+capabilityAgent, model, provider and default permission policy). Provider secrets
+remain environment references. A runner file requires exactly its matching adapter.
+The probe creates an isolated working directory and a private MCP server with one
+empty `hitl_list` tool; it has no connection to the application's Inbox or Brain.
+Claude's local settings explicitly select default/ask permissions and the supplied
+model, rather than inheriting automatic host permissions. Each shell/MCP prompt
+must independently reach `requestPermission`; duplicate callbacks from another
+prompt cannot qualify it. Requests are denied without persisting permission rules.
+Capability prompts have a 60-second deadline; initialization/session creation keep
+the ten-second bound. A successful probe demonstrates these observed permission
+callbacks and identities, not completion of an application workflow or pilot.
+
+ACP permission requests may contain only changes to an earlier tool-call event.
+The production bounded decoder and smoke client share a live identity context,
+keyed by ACP session and tool-call ID. Only explicit adapter tool-name metadata
+and kind are retained, at most 32 entries and 4 KiB of encoded identity data per
+connection; raw input, diffs and arbitrary metadata are not cached. Terminal
+calls are removed, and bounded eviction cannot lend identity to another call.
+Contradictory announced/requested names or kinds fail before permission dispatch
+with `ACP_PROTOCOL`, `required_output_incomplete` and
+`outputFailure="producer_permission_invalid"`. An identity exceeding the context
+bound uses the existing `producer_retained_limit` classification. Current source
+authority and permission decisions remain separate from this protocol context.
+
 `envRefs` contains a fixed safe catalog of known runner env-ref names plus the
 comma-separated names in `MAISTER_DIAGNOSTIC_ENV_REFS`. It reports presence
 only, never values.

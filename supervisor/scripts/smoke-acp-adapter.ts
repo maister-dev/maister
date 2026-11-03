@@ -5,7 +5,14 @@ import type {
 import type { ExecutorAgent, RunnerLaunch } from "../src/types";
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { access, mkdtemp, rm } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { delimiter, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -15,7 +22,7 @@ import {
   type Readable as NodeReadable,
   type Writable as NodeWritable,
 } from "node:stream";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import * as acp from "@agentclientprotocol/sdk/unstable";
 
@@ -42,6 +49,8 @@ import {
 import { withAdapterSmokeCacheLock } from "../src/adapter-smoke-cache-lock";
 import { provisionRunnerLaunch } from "../src/runner-provisioner";
 import { buildChildEnv } from "../src/spawn";
+import { readSessionModels } from "../src/session-models";
+import { RunnerLaunchSchema } from "../src/types";
 
 type SmokeStatus = "ok" | "skipped" | "error";
 
@@ -74,6 +83,7 @@ type CapabilityEnforcementSmokeResult = NonNullable<
 type SmokeAdapterOptions = {
   readonly readOnlySession?: boolean;
   readonly capabilityEnforcement?: boolean;
+  readonly runner?: RunnerLaunch;
 };
 
 type CliArgs = {
@@ -81,6 +91,8 @@ type CliArgs = {
   readonly cachePath?: string;
   readonly readOnlySession: boolean;
   readonly capabilityEnforcement: boolean;
+  readonly runnerPath?: string;
+  readonly runner?: RunnerLaunch;
 };
 
 type PermissionProbeObservation = {
@@ -131,16 +143,16 @@ const SMOKE_TEARDOWN_GRACE_MS = 2_000;
 // ADR-130 capability_guard smoke (DES-8): prove `requestPermission` fires per
 // write-class call under permissionPolicy=default AND that `params.toolCall`
 // carries a stable tool identity — a plain tool name and an MCP
-// `mcp__<server>__<tool>` name whose server is resolvable. Drives the mock's
-// `tool-name:X` / `permission-kind:X` prompt hints.
+// `mcp__<server>__<tool>` name whose server is resolvable. The hints retain the
+// fixture adapter contract; real adapters receive executable, isolated probes.
 const CAPABILITY_ENFORCEMENT_PROBES = [
   {
     prompt:
-      "MAIster capability-enforcement smoke probe tool-name:Bash permission-kind:execute. Request permission for a tool call, then stop.",
+      "MAIster capability-enforcement smoke probe tool-name:Bash permission-kind:execute. Use your shell tool to create only ./capability-probe.txt containing probe. This is an isolated temporary directory. If permission is denied or cancelled, stop immediately without another tool or method.",
   },
   {
     prompt:
-      "MAIster capability-enforcement smoke probe tool-name:mcp__maister__hitl_list permission-kind:other. Request permission for an MCP tool call, then stop.",
+      "MAIster capability-enforcement smoke probe tool-name:mcp__maister__hitl_list permission-kind:other. Call the configured maister MCP tool hitl_list exactly once with {}. It is a harmless isolated probe, not a real Inbox. If permission is denied or cancelled, stop immediately. Do not simulate the tool result.",
   },
 ] as const;
 
@@ -160,6 +172,7 @@ function errorMessage(err: unknown): string {
 async function withSmokeTimeout<T>(
   operation: Promise<T>,
   label: string,
+  timeoutMs: number = SMOKE_OPERATION_TIMEOUT_MS,
 ): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
 
@@ -169,7 +182,7 @@ async function withSmokeTimeout<T>(
       new Promise<never>((_resolve, reject) => {
         timer = setTimeout(
           () => reject(new Error(`${label} timed out`)),
-          SMOKE_OPERATION_TIMEOUT_MS,
+          timeoutMs,
         );
       }),
     ]);
@@ -235,7 +248,9 @@ function createCapabilityEnforcementProbeClient(
     async requestPermission(params) {
       const started = performance.now();
       const identity = extractToolIdentity(params.toolCall);
-      const allowOption = params.options[0]?.optionId ?? null;
+      const denyOption = params.options.find(
+        (option) => option.kind === "reject_once",
+      )?.optionId;
 
       observations.push({
         kind: toolCallKind(params.toolCall),
@@ -244,12 +259,11 @@ function createCapabilityEnforcementProbeClient(
         latencyMs: performance.now() - started,
       });
 
-      // The probe proves the seam SEES the call with identity; it approves so the
-      // adapter completes the turn (the enforcement decision is exercised by the
-      // interceptor unit/e2e tests, not the smoke).
-      if (!allowOption) return { outcome: { outcome: "cancelled" } };
+      // Never persist an allow rule or execute the requested mutation. Reaching
+      // the callback is the evidence; the controlled tool is denied inline.
+      if (!denyOption) return { outcome: { outcome: "cancelled" } };
 
-      return { outcome: { outcome: "selected", optionId: allowOption } };
+      return { outcome: { outcome: "selected", optionId: denyOption } };
     },
   };
 }
@@ -301,10 +315,23 @@ async function smokeCapabilityEnforcement(args: {
 }): Promise<CapabilityEnforcementSmokeResult> {
   try {
     for (const probe of CAPABILITY_ENFORCEMENT_PROBES) {
-      await args.connection.prompt({
-        sessionId: args.sessionId,
-        prompt: [{ type: "text", text: probe.prompt }],
-      });
+      const start = args.observations.length;
+
+      await withSmokeTimeout(
+        args.connection.prompt({
+          sessionId: args.sessionId,
+          prompt: [{ type: "text", text: probe.prompt }],
+        }),
+        `${args.adapter} capability permission probe`,
+        60_000,
+      );
+      if (args.observations.length === start) {
+        return {
+          status: "error",
+          protocolVersion: args.protocolVersion,
+          reason: `${args.adapter} capability probe did not reach requestPermission`,
+        };
+      }
     }
   } catch (err) {
     return {
@@ -423,10 +450,20 @@ function parseArgs(): CliArgs {
   let cachePath: string | undefined;
   let readOnlySession = false;
   let capabilityEnforcement = false;
+  let runnerPath: string | undefined;
   const argv = process.argv.slice(2);
 
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
+
+    if (value === "--runner") {
+      runnerPath = argv[index + 1];
+      if (!runnerPath)
+        throw new Error("--runner requires a RunnerLaunch JSON path");
+      index += 1;
+
+      continue;
+    }
 
     if (value === "--cache") {
       const path = argv[index + 1];
@@ -459,6 +496,7 @@ function parseArgs(): CliArgs {
       cachePath: cachePath ?? process.env.MAISTER_ADAPTER_SMOKE_CACHE_PATH,
       readOnlySession,
       capabilityEnforcement,
+      runnerPath,
     };
   }
 
@@ -477,6 +515,7 @@ function parseArgs(): CliArgs {
     cachePath: cachePath ?? process.env.MAISTER_ADAPTER_SMOKE_CACHE_PATH,
     readOnlySession,
     capabilityEnforcement,
+    runnerPath,
   };
 }
 
@@ -618,10 +657,33 @@ export async function smokeAdapter(
     };
   }
 
-  const cwd = await mkdtemp(join(tmpdir(), `maister-acp-smoke-${adapter}-`));
-  const runner = runnerFor(adapter);
+  const runner = options.runner ?? runnerFor(adapter);
+
+  if (
+    runner.adapter !== adapter ||
+    runner.capabilityAgent !== adapter ||
+    runner.permissionPolicy !== "default"
+  ) {
+    throw new Error(
+      "smoke runner must match the adapter and use default permissions",
+    );
+  }
   const provisioned = provisionRunnerLaunch(runner);
   const childEnv = buildChildEnv({ executor: provisioned.executor });
+  const cwd = await mkdtemp(join(tmpdir(), `maister-acp-smoke-${adapter}-`));
+
+  if (adapter === "claude" && options.capabilityEnforcement) {
+    await mkdir(join(cwd, ".claude"));
+    await writeFile(
+      join(cwd, ".claude", "settings.local.json"),
+      JSON.stringify({
+        permissions: { defaultMode: "default" },
+        ...(options.runner
+          ? { model: runner.model, availableModels: [runner.model] }
+          : {}),
+      }),
+    );
+  }
   const child = spawn(resolvedPath, runtime.defaultArgs, {
     cwd,
     env: childEnv,
@@ -659,9 +721,42 @@ export async function smokeAdapter(
       `${adapter} initialize`,
     );
     const session = await withSmokeTimeout(
-      connection.newSession({ cwd, mcpServers: [] }),
+      connection.newSession({
+        cwd,
+        mcpServers: options.capabilityEnforcement
+          ? [
+              {
+                name: "maister",
+                command: process.execPath,
+                args: [
+                  "--import",
+                  import.meta.resolve("tsx"),
+                  fileURLToPath(
+                    new URL("./smoke-capability-server.ts", import.meta.url),
+                  ),
+                ],
+                env: [],
+              },
+            ]
+          : [],
+      }),
       `${adapter} newSession`,
     );
+
+    if (options.runner && runtime.modelChannel === "set_session_model") {
+      const models = readSessionModels(session);
+
+      if (!models.configId)
+        throw new Error("smoke adapter exposes no model configuration option");
+      await withSmokeTimeout(
+        connection.setSessionConfigOption({
+          sessionId: session.sessionId,
+          configId: models.configId,
+          value: runner.model,
+        }),
+        `${adapter} configured model`,
+      );
+    }
     const readOnlySession =
       options.readOnlySession && !options.capabilityEnforcement
         ? await smokeReadOnlySession({
@@ -716,6 +811,7 @@ async function smokeAndCache(args: CliArgs): Promise<SmokeResult[]> {
     const result = await smokeAdapter(adapter, {
       readOnlySession: args.readOnlySession,
       capabilityEnforcement: args.capabilityEnforcement,
+      runner: args.runner,
     });
 
     results.push(result);
@@ -750,7 +846,20 @@ async function smokeAndCache(args: CliArgs): Promise<SmokeResult[]> {
 }
 
 async function main(): Promise<void> {
-  const args = parseArgs();
+  const parsed = parseArgs();
+  const runner = parsed.runnerPath
+    ? RunnerLaunchSchema.parse(
+        JSON.parse(await readFile(parsed.runnerPath, "utf8")),
+      )
+    : undefined;
+
+  if (
+    runner &&
+    (parsed.adapters.length !== 1 || parsed.adapters[0] !== runner.adapter)
+  ) {
+    throw new Error("--runner requires exactly its matching adapter argument");
+  }
+  const args: CliArgs = { ...parsed, runner };
   const results = args.cachePath
     ? await withAdapterSmokeCacheLock(args.cachePath, () => smokeAndCache(args))
     : await smokeAndCache(args);
