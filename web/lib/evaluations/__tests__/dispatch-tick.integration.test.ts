@@ -17,6 +17,7 @@ import {
 import { evaluateAndAdvancePanel } from "@/lib/evaluations/aggregation/worker";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import { maxConcurrentAgentRunsCap } from "@/lib/scheduler";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -897,7 +898,15 @@ describe("dispatch liveness fixes", () => {
       })),
     );
     try {
-      const summary = await runEvaluationDispatchTick(stubDeps(), db);
+      // This started Run has never created a session. Its current controlled
+      // host proves the empty exact-run scope before the terminal owner acts.
+      const { hosts, fake } = await fakeExecutionHosts(db, {
+        runId: runningRunId,
+      });
+      const summary = await runEvaluationDispatchTick(
+        stubDeps({ executionHosts: hosts }),
+        db,
+      );
 
       // >= 1: attempts of long-lived judging executions from earlier tests may
       // also cross their 60s timeout while this file runs.
@@ -944,6 +953,7 @@ describe("dispatch liveness fixes", () => {
         .where(eq(schema.runs.id, runningRunId));
 
       expect(stoppedRun.status).toBe("Abandoned");
+      expect(fake.callsOf("createSession")).toHaveLength(0);
     } finally {
       for (const id of holders)
         await db.delete(schema.runs).where(eq(schema.runs.id, id));

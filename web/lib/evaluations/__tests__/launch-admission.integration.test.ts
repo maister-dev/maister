@@ -64,7 +64,7 @@ beforeAll(async () => {
   root = await mkdtempReal("evaluation-task-admission-");
   fixture = await seedTaskLaunchFixture(database, root);
   await writeFile(
-    path.join(root, "intake.json"),
+    path.join(root, "flow", "intake.json"),
     JSON.stringify({
       schemaVersion: 1,
       fields: [{ name: "environment", type: "string", required: true }],

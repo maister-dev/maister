@@ -9,14 +9,15 @@
 //      CONFLICT {assignment_fenced} → the resumed driver auto-delivers the
 //      stored intent and the run finishes → teardown + reconcile leave the run
 //      consistent (no live session, every assignment released);
-//   E2 rollbackResumedRun after a retryable spawn failure marks the fresh
-//      assignment released{resume_rollback}.
+//   E2 unavailable scoped inventory sends no create and retains the exact
+//      owned resume generation until the same command can dispatch.
 
 import type { Db } from "@/lib/execution-host/db";
 import type { ExecutionHosts } from "@/lib/execution-host/client";
 import type { RealSupervisor } from "@/test-support/real-supervisor";
 
 import { randomUUID } from "node:crypto";
+import { createServer, request as httpRequest } from "node:http";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,13 +26,13 @@ import { asc, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
+import { listSessions, listSessionsForRun } from "@/lib/supervisor-client";
 import { canonicalProjectors } from "@/lib/execution-host/events/projection-runtime";
 import {
   startProjectionWorker,
   type ProjectionWorker,
 } from "@/lib/execution-host/events/projection-worker";
 import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer";
-import { MaisterError } from "@/lib/errors";
 import { releaseAssignmentForRun } from "@/lib/execution-host/assignments";
 import { createExecutionHosts } from "@/lib/execution-host/client";
 import { setDefaultTransportForTests } from "@/lib/execution-host/default-transport";
@@ -50,6 +51,7 @@ import { createLocalDirectTransport } from "@/lib/execution-host/transports/loca
 import { runFlow } from "@/lib/flows/runner";
 import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
 import { resumeRun } from "@/lib/runs/resume";
+import { continueResumeSessionCreate } from "@/lib/runs/resume-session-create";
 import { respondToHitl, type HitlActor } from "@/lib/services/hitl";
 import { addWorktree, initRepo } from "@/test-support/git-fixture";
 import { seedGraphRun } from "@/test-support/graph-run-seed";
@@ -537,51 +539,182 @@ describe("Stage A lifecycle regression (real supervisor)", () => {
     ).toHaveLength(0);
   }, 180_000);
 
-  it("E2: a retryable spawn failure on resume rolls the claim back and releases the fresh generation as resume_rollback", async () => {
-    const { runId } = await seedAgentRun("e2", {
-      status: "NeedsInputIdle",
-      checkpointAt: new Date(),
+  it("E2: a zero-POST ownership deferral retains the checkpoint resume and repairs through the same command", async () => {
+    const { runId } = await seedAgentRun("e2", { currentStepId: "implement" });
+    const original = await hosts.forRun(runId);
+    const source = await original.createSession({
+      stepId: "implement",
+      executor: { agent: "claude", model: "claude-sonnet-4-6" },
     });
 
-    await db
-      .update(schema.runSessions)
-      .set({ acpSessionId: "acp-e2", hostSessionId: "sess-e2" })
-      .where(eq(schema.runSessions.runId, runId));
-    await db.transaction((tx) =>
-      releaseAssignmentForRun(tx as unknown as Db, runId, "checkpointed"),
-    );
+    await original.checkpoint(source.sessionId);
+    await waitFor(
+      async () => {
+        const [incarnation] = await db
+          .select()
+          .from(fullSchema.runSessionIncarnations)
+          .where(
+            eq(
+              fullSchema.runSessionIncarnations.hostSessionId,
+              source.sessionId,
+            ),
+          );
 
-    const wire = createLocalDirectTransport();
-    const failing = createExecutionHosts({
-      db,
-      transport: {
-        ...wire,
-        createSession: async () => {
-          throw new MaisterError("EXECUTOR_UNAVAILABLE", "supervisor 503", {
-            details: { httpStatus: 503 },
-          });
-        },
+        return incarnation?.state === "checkpointed" ? true : null;
       },
+      "the canonical source checkpoint before releasing its assignment",
+      { runId },
+    );
+    await db.transaction((tx) =>
+      releaseAssignmentForRun(tx, runId, "checkpointed"),
+    );
+    await db
+      .update(fullSchema.runs)
+      .set({ status: "NeedsInputIdle", checkpointAt: new Date() })
+      .where(eq(fullSchema.runs.id, runId));
+    let ready = false;
+    const blockedRunIds: string[] = [];
+    const postedIds: string[] = [];
+    const proxyErrors: Error[] = [];
+    const peer = createServer((request, response) => {
+      const url = new URL(request.url ?? "/", sup.url);
+
+      if (
+        request.method === "GET" &&
+        url.pathname === "/sessions" &&
+        url.searchParams.get("runId") === runId &&
+        !ready
+      ) {
+        blockedRunIds.push(url.searchParams.get("runId")!);
+        response.writeHead(503, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({
+            code: "EXECUTOR_UNAVAILABLE",
+            message: "The original process owner awaits reconciliation",
+            details: { reason: "session_process_owner_unconfirmed" },
+          }),
+        );
+
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/sessions") {
+        const bytes: Buffer[] = [];
+
+        request.on("data", (chunk: Buffer) => bytes.push(chunk));
+        request.on("end", () => {
+          const body = JSON.parse(Buffer.concat(bytes).toString("utf8")) as {
+            command: { id: string };
+          };
+
+          postedIds.push(body.command.id);
+        });
+      }
+      const upstream = httpRequest(
+        url,
+        {
+          method: request.method,
+          headers: { ...request.headers, host: url.host },
+        },
+        (answer) => {
+          response.writeHead(answer.statusCode ?? 502, answer.headers);
+          answer.pipe(response);
+        },
+      );
+
+      upstream.on("error", (error) => {
+        if (response.destroyed) return;
+        proxyErrors.push(error);
+        response.writeHead(502, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({
+            code: "EXECUTOR_UNAVAILABLE",
+            message: "Controlled upstream failed",
+          }),
+        );
+      });
+      response.on("close", () => upstream.destroy());
+      request.pipe(upstream);
     });
 
-    const r = await resumeRun(runId, { db, executionHosts: failing });
+    await new Promise<void>((resolve) => peer.listen(0, "127.0.0.1", resolve));
+    const address = peer.address();
 
-    expect(r).toMatchObject({
-      ok: false,
-      code: "EXECUTOR_UNAVAILABLE",
-      retryable: true,
-    });
-    expect((await runRow(runId)).status).toBe("NeedsInputIdle");
-    expect(
-      (await assignmentsOf(runId)).map((a) => [
-        a.epoch,
-        a.state,
-        a.placementReason,
-        a.releasedReason,
-      ]),
-    ).toEqual([
-      [1, "released", "launch", "checkpointed"],
-      [2, "released", "resume", "resume_rollback"],
-    ]);
+    if (!address || typeof address === "string")
+      throw new Error("Resume ownership peer has no port");
+    const restore = useRealSupervisorUrl(`http://127.0.0.1:${address.port}`);
+
+    try {
+      await expect(listSessions()).resolves.toEqual(expect.any(Array));
+      await expect(listSessionsForRun(randomUUID())).resolves.toEqual([]);
+      expect(blockedRunIds).toEqual([]);
+      const resumed = await resumeRun(runId, { db, executionHosts: hosts });
+
+      expect(resumed, JSON.stringify(resumed)).toMatchObject({
+        ok: true,
+        runStatus: "NeedsInput",
+        newSupervisorSessionId: null,
+      });
+      if (!resumed.ok || !resumed.assignmentId)
+        throw new Error("The current owned resume was refused");
+      const assignmentId = resumed.assignmentId;
+
+      expect(blockedRunIds.length).toBeGreaterThan(0);
+      expect([...new Set(blockedRunIds)]).toEqual([runId]);
+      expect(postedIds).toEqual([]);
+      expect((await runRow(runId)).status).toBe("NeedsInput");
+      expect(
+        (await assignmentsOf(runId)).map((row) => [
+          row.epoch,
+          row.state,
+          row.placementReason,
+          row.releasedReason,
+        ]),
+      ).toEqual([
+        [1, "released", "launch", "checkpointed"],
+        [2, "active", "resume", null],
+      ]);
+      const [pending] = await db
+        .select()
+        .from(fullSchema.executionCommands)
+        .where(
+          eq(fullSchema.executionCommands.executionAssignmentId, assignmentId),
+        );
+
+      expect(pending).toMatchObject({
+        kind: "session.create",
+        state: "queued",
+        createIntent: { owner: { variant: "flow_resume" } },
+      });
+      ready = true;
+      await db
+        .update(fullSchema.executionCommands)
+        .set({ nextAttemptAt: new Date(0) })
+        .where(eq(fullSchema.executionCommands.id, pending.id));
+      const repaired = await continueResumeSessionCreate({
+        runId,
+        assignmentId,
+        db,
+        executionHosts: hosts,
+      });
+
+      expect(postedIds).toEqual([pending.id]);
+      expect(repaired.acpSessionId).toBe(source.acpSessionId);
+      const resumedCreates = (await commandsOf(runId)).filter(
+        (command) =>
+          command.executionAssignmentId === assignmentId &&
+          command.kind === "session.create",
+      );
+
+      expect(
+        resumedCreates.map((command) => [command.id, command.state]),
+      ).toEqual([[pending.id, "succeeded"]]);
+      expect(proxyErrors).toEqual([]);
+    } finally {
+      restore();
+      peer.closeAllConnections();
+      await new Promise<void>((resolve, reject) =>
+        peer.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
   }, 120_000);
 });

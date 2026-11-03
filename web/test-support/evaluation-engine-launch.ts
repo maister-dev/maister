@@ -6,13 +6,14 @@ import { randomUUID } from "node:crypto";
 
 import { and, eq } from "drizzle-orm";
 
-import { tasks, flows, taskLaunchIntents } from "@/lib/db/schema";
+import { tasks, flows, runs, taskLaunchIntents } from "@/lib/db/schema";
 import { createStudy } from "@/lib/evaluations/studies";
 import { createControlledRecipe } from "@/lib/evaluations/recipes";
 import {
   createControlledLaunchBatch,
   runControlledLaunchBatch,
   type ControlledLaunchResult,
+  type LaunchRunSeam,
 } from "@/lib/evaluations/launch-batch";
 import { defaultLaunchRunSeam } from "@/lib/evaluations/launch-seam";
 import { buildFlowContractProjection } from "@/lib/evaluations/preflight-loaders";
@@ -31,11 +32,18 @@ type EvaluationEngineFixtureSelection = Readonly<{
 }>;
 
 /** Persist a real controlled recipe and source item, then use its normal preflight/acceptance before technical engine assertions. */
-export async function launchEvaluationEngineFixture(
+export async function prepareEvaluationEngineFixture(
   db: Db,
   selection: EvaluationEngineFixtureSelection,
   context: LaunchRunContext,
-): Promise<{ runId: string; status: string }> {
+): Promise<
+  Readonly<{
+    studyId: string;
+    recipeId: string;
+    batchItemId: string;
+    launch: () => Promise<{ runId: string; status: string }>;
+  }>
+> {
   const [row] = await db
     .select({ task: tasks, flow: flows })
     .from(tasks)
@@ -121,6 +129,7 @@ export async function launchEvaluationEngineFixture(
   );
   const seam = defaultLaunchRunSeam(context, db);
   const acceptedResults: ControlledLaunchResult[] = [];
+  const selections: Parameters<LaunchRunSeam>[0][] = [];
   const failures: unknown[] = [];
 
   await runControlledLaunchBatch(
@@ -130,6 +139,7 @@ export async function launchEvaluationEngineFixture(
         const accepted = await seam(args);
 
         acceptedResults.push(accepted);
+        selections.push(args);
 
         return accepted;
       } catch (error) {
@@ -151,13 +161,52 @@ export async function launchEvaluationEngineFixture(
     throw new Error(
       "A fresh evaluation fixture unexpectedly reused a bound Run",
     );
-  const [intent] = await db
-    .select()
-    .from(taskLaunchIntents)
-    .where(eq(taskLaunchIntents.id, result.intentId));
+  const selectionAtAcceptance = selections[0];
 
-  if (!intent)
-    throw new Error("Evaluation fixture has no durable accepted intent");
+  if (!selectionAtAcceptance)
+    throw new Error("Evaluation fixture has no accepted source item");
 
-  return bindAcceptedEngineFixture(db, taskLaunchReceipt(intent));
+  return {
+    studyId: study.id as string,
+    recipeId: recipe.id as string,
+    batchItemId: selectionAtAcceptance.launchKey,
+    launch: async () => {
+      const current = await seam(selectionAtAcceptance);
+      let bound: { runId: string; status: string };
+
+      if ("runId" in current) {
+        const [run] = await db
+          .select()
+          .from(runs)
+          .where(eq(runs.id, current.runId));
+
+        if (!run) throw new Error("Bound evaluation fixture Run is missing");
+
+        bound = { runId: run.id, status: run.status };
+      } else {
+        const [intent] = await db
+          .select()
+          .from(taskLaunchIntents)
+          .where(eq(taskLaunchIntents.id, current.intentId));
+
+        if (!intent)
+          throw new Error("Evaluation fixture has no durable accepted intent");
+
+        bound = await bindAcceptedEngineFixture(db, taskLaunchReceipt(intent));
+      }
+      await runControlledLaunchBatch(batch.batchId, seam, db);
+
+      return bound;
+    },
+  };
+}
+
+export async function launchEvaluationEngineFixture(
+  db: Db,
+  selection: EvaluationEngineFixtureSelection,
+  context: LaunchRunContext,
+): Promise<{ runId: string; status: string }> {
+  return (
+    await prepareEvaluationEngineFixture(db, selection, context)
+  ).launch();
 }
