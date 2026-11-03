@@ -3,9 +3,11 @@ import "server-only";
 import { NextRequest, NextResponse } from "next/server";
 
 import { getDb } from "@/lib/db/client";
+import { assertRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
+import { isMaisterError } from "@/lib/errors";
 import { getRunDTO } from "@/lib/services/runs";
 import { runProjectResolver } from "@/lib/tokens/run-project";
-import { handleExt } from "@/lib/tokens/ext-handler";
+import { handleExt, httpStatusForExtCode } from "@/lib/tokens/ext-handler";
 
 const ENDPOINT = "GET /api/v1/ext/runs/[runId]";
 
@@ -23,22 +25,44 @@ export async function GET(
     {
       scopeLabel: "runs:read",
       admitLibrarian: true,
-      resolveLibrarianProjectId: runProjectResolver(runId),
+      resolveProjectId: runProjectResolver(runId),
       endpoint: ENDPOINT,
       method: "GET",
       db,
     },
     async (ctx) => {
-      const run = await getRunDTO(runId, ctx.projectId, db);
+      try {
+        if ((await runProjectResolver(runId)({ db })) !== ctx.projectId)
+          return NextResponse.json(
+            { code: "NOT_FOUND", message: "run not found" },
+            { status: 404 },
+          );
+        const recipient = {
+          kind: "token" as const,
+          tokenId: ctx.actor.tokenId,
+        };
 
-      if (!run) {
-        return NextResponse.json(
-          { code: "NOT_FOUND", message: "run not found" },
-          { status: 404 },
-        );
+        await assertRunKnowledgeDisclosure(db, recipient, runId);
+        const run = await getRunDTO(runId, ctx.projectId, db);
+
+        if (!run) {
+          return NextResponse.json(
+            { code: "NOT_FOUND", message: "run not found" },
+            { status: 404 },
+          );
+        }
+
+        await assertRunKnowledgeDisclosure(db, recipient, runId);
+
+        return NextResponse.json(run, { status: 200 });
+      } catch (error) {
+        if (isMaisterError(error))
+          return NextResponse.json(
+            { code: error.code, message: error.message },
+            { status: httpStatusForExtCode(error.code) },
+          );
+        throw error;
       }
-
-      return NextResponse.json(run, { status: 200 });
     },
   );
 }

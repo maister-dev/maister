@@ -6,6 +6,7 @@ import pino from "pino";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
+import { assertRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
 import * as schemaModule from "@/lib/db/schema";
 import {
   filterDiffByPath,
@@ -324,7 +325,8 @@ export async function GET(
   const { runId } = await params;
 
   try {
-    await requireActiveSession();
+    const user = await requireActiveSession();
+    const recipient = { kind: "user" as const, userId: user.id };
 
     const scope = parseScope(req);
 
@@ -346,6 +348,7 @@ export async function GET(
       const { scratch, workspace } = await loadScratchDiffRows(db, runId);
 
       await requireProjectAction(run.projectId, "readScratchRun");
+      await assertRunKnowledgeDisclosure(getDb(), recipient, runId);
 
       const targetBranch = scratch.targetBranch ?? scratch.baseBranch;
       // The scratch agent edits files without committing, so the diff must be
@@ -375,6 +378,8 @@ export async function GET(
         };
       });
 
+      await assertRunKnowledgeDisclosure(getDb(), recipient, runId);
+
       return NextResponse.json({
         runId,
         scope: "run",
@@ -391,6 +396,7 @@ export async function GET(
     }
 
     await requireProjectAction(run.projectId, "readBoard");
+    await assertRunKnowledgeDisclosure(getDb(), recipient, runId);
 
     const { workspace, project } = await loadFlowDiffRows(db, run);
 
@@ -529,6 +535,8 @@ export async function GET(
       },
       "[diff-scope] resolved",
     );
+
+    await assertRunKnowledgeDisclosure(getDb(), recipient, runId);
 
     return NextResponse.json({
       runId,

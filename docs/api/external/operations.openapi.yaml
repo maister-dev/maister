@@ -2753,6 +2753,15 @@ paths:
       tags: [runs]
       summary: Get run status
       description: |
+        Enrolled native evidence runs require the current receiving principal to
+        access every retained source, in addition to existing project/content
+        permissions. A safe 409 PRECONDITION withholds source-derived material.
+        Source authority is rechecked after asynchronous assembly before response.
+        The bearer additionally needs knowledge:read for native source inspection;
+        an unbound project token cannot assert a professional role or company grant.
+        Global personal-user tokens resolve the target project from the persisted
+        run and require their live owner account, project action and source grants.
+        Project-bound credentials retain their project-only knowledge boundary.
         Scope `runs:read`. Returns the `RunDTO` for the run identified by
         `runId`. The run's `projectId` is re-validated against the token's
         project — mismatch → 404 (existence-hide).
@@ -2780,6 +2789,11 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RunDTO" }
+        "409":
+          description: Native source authority is unavailable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtErrorBody" }
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
         "403":
@@ -3083,6 +3097,15 @@ paths:
       tags: [readiness]
       summary: Get run readiness
       description: |
+        Enrolled native evidence runs require the current receiving principal to
+        access every retained source, in addition to existing project/content
+        permissions. A safe 409 PRECONDITION withholds source-derived material.
+        Source authority is rechecked after asynchronous assembly before response.
+        The bearer additionally needs knowledge:read for native source inspection;
+        an unbound project token cannot assert a professional role or company grant.
+        Global personal-user tokens resolve the target project from the persisted
+        run and require their live owner account, project action and source grants.
+        Project-bound credentials retain their project-only knowledge boundary.
         Scope `readiness:read`. Returns the `ReadinessDTO` for the run —
         whether the run is ready to be promoted, blocked by outstanding gates,
         stale, failed, still waiting, or overridden. Includes external gate
@@ -3113,6 +3136,11 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ReadinessDTO" }
+        "409":
+          description: Native source authority is unavailable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtErrorBody" }
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
         "403":
@@ -3196,6 +3224,15 @@ paths:
       tags: [activity]
       summary: Get semantic assistant activity for one run
       description: |
+        Enrolled native evidence runs require the current receiving principal to
+        access every retained source, in addition to existing project/content
+        permissions. A safe 409 PRECONDITION withholds source-derived material.
+        Source authority is rechecked after asynchronous assembly before response.
+        The bearer additionally needs knowledge:read for native source inspection;
+        an unbound project token cannot assert a professional role or company grant.
+        Global personal-user tokens resolve the target project from the persisted
+        run and require their live owner account, project action and source grants.
+        Project-bound credentials retain their project-only knowledge boundary.
         Scope `runs:read`. Returns a semantic activity feed for the run
         identified by `runId`, plus the current run snapshot using the same
         semantic fields as the project pulse.
@@ -3263,6 +3300,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ExtRunActivityResponse"
+        "409":
+          description: Native source authority is unavailable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtErrorBody" }
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
         "403":

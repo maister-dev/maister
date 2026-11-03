@@ -327,3 +327,24 @@ between admission and effect. No network waits occur under this lock. Additional
 restrictions return 409 `native_unclassified_memory` without modifying the file.
 Safe native private writes and their CAS-conflict disclosure remain supported;
 private notes are not migrated into shared knowledge.
+
+
+The protected read slice also includes workbench file lists, prepared diffs and
+change summaries, and external run summaries, readiness and activity. External
+routes prove the server-held run belongs to the admitted project before source
+inspection, and recheck the current token after delayed assembly. These resource GETs also admit global personal-user tokens through the existing
+run-project resolver and live owner account/project-action admission. Project-bound
+credentials remain restricted to their project and cannot acquire company source
+authority through the owner's separate company grant. Native bearer inspection additionally requires the
+knowledge:read scope and a supported human owner or attested professional role.
+These routes do not grant publication/declassification authority over a repository
+or replace the remaining source-aware export and aggregate-projection work.
+
+The legacy automatic Project Brain distiller does not receive enrolled native
+execution events, including generic children carrying inherited capture. It
+classifies a dispatch batch's persisted run identities before resolving a model
+provider; missing source runs are also ineligible. The existing event consumer
+advances past this intentional non-consumption without a new attempt/skip ledger.
+Native reusable knowledge is proposed through the attributed, source-aware
+proposal API and reviewed under its explicit policy. Legacy NULL-capture harvest
+retains its existing provenance, deduplication, retry and permanent-failure rules.

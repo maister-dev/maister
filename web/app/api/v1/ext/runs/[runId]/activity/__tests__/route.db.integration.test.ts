@@ -174,9 +174,11 @@ describe("GET /api/v1/ext/runs/[runId]/activity (real DB path)", () => {
     });
 
     expect(res.status).toBe(404);
-    await expect(res.json()).resolves.toMatchObject({
+    const refused = await res.json();
+
+    expect(refused).toMatchObject({
       code: "NOT_FOUND",
-      message: "run not found",
+      message: "resource not found",
     });
 
     const auditRows = await db
@@ -190,5 +192,15 @@ describe("GET /api/v1/ext/runs/[runId]/activity (real DB path)", () => {
       status_code: 404,
       scope_used: "runs:read",
     });
+    const missingId = randomUUID();
+    const missingRequest = makeRequest(missingId);
+
+    missingRequest.headers.set("authorization", `Bearer ${token.secret}`);
+    const missing = await GET(missingRequest, {
+      params: Promise.resolve({ runId: missingId }),
+    });
+
+    expect(missing.status).toBe(404);
+    expect(await missing.json()).toEqual(refused);
   });
 });

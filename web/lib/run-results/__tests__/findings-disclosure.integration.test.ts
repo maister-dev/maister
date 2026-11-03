@@ -1,17 +1,21 @@
 import type { EvidenceFindingsV1 } from "@/lib/run-results/findings-types";
 import type { SqlTransaction } from "@/lib/db/sql-types";
+import type { OpenAiCompatibleClient } from "@/lib/brain/openai-compatible";
 import type { StartedPostgresTestDb } from "@/test-support/pg-container";
 
 import { randomUUID } from "node:crypto";
 
 import { NextRequest } from "next/server";
+import { and, eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 
 import { recordNativeRunSources } from "@/lib/brain/knowledge-execution-access";
 import { getKnowledgeRecord } from "@/lib/brain/knowledge-records";
 import { createCompanyGrants, revokeCompanyGrant } from "@/lib/company/grants";
 import { buildAgentProfileContract } from "@/lib/run-results/contract";
-import { executionEvents } from "@/lib/db/schema";
+import { issueToken, issueUserAccessToken } from "@/lib/tokens/issue";
+import { domainEvents, executionEvents } from "@/lib/db/schema";
+import { harvestEvents } from "@/lib/domain-events/memory-harvest";
 import { seedNativeFindingsExecution } from "@/test-support/native-findings-seed";
 import { startMainAndBrainPostgresTestDb } from "@/test-support/pg-container";
 
@@ -48,6 +52,117 @@ afterEach(() => {
 afterAll(async () => {
   await database?.stop();
 });
+
+it("IT-CBE-06 actual native completion cannot enter the legacy automatic Brain distiller", async () => {
+  const source = await completedRun();
+
+  await database.pool.query(
+    "UPDATE projects SET brain_enabled=true WHERE id=$1",
+    [source.projectId],
+  );
+  const [event] = await database.db
+    .select()
+    .from(domainEvents)
+    .where(
+      and(
+        eq(domainEvents.runId, source.runId),
+        eq(domainEvents.kind, "run.done"),
+      ),
+    );
+
+  if (!event)
+    throw new Error(
+      "The native finalizer did not retain its actual completion event",
+    );
+  const resolveClient = vi.fn(async (): Promise<OpenAiCompatibleClient> => {
+    throw new Error(
+      "Native source-controlled work reached the legacy distiller",
+    );
+  });
+
+  await expect(
+    harvestEvents([event], { db: database.db, resolveClient }),
+  ).resolves.toBeUndefined();
+  expect(resolveClient).not.toHaveBeenCalled();
+  expect(
+    (
+      await database.pool.query(
+        "SELECT id FROM brain_items WHERE project_id=$1",
+        [source.projectId],
+      )
+    ).rows,
+  ).toEqual([]);
+});
+
+it.each(["run summary", "readiness", "activity"] as const)(
+  "IT-CBE-06 external %s requires the receiving token's current source authority",
+  async (kind) => {
+    const source = await completedRun();
+    const userId = randomUUID();
+
+    await database.pool.query(
+      "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'member','active')",
+      [userId, `${userId}@example.test`],
+    );
+    await database.pool.query(
+      "INSERT INTO project_members(id,project_id,user_id,role) VALUES($1,$2,$3,'member')",
+      [randomUUID(), source.projectId, userId],
+    );
+    const token = await issueUserAccessToken(
+      {
+        ownerUserId: userId,
+        name: "Native source reader",
+        scopes: ["runs:read", "readiness:read", "knowledge:read"],
+      },
+      database.db,
+    );
+    const read = async (secret: string = token.secret): Promise<Response> => {
+      const request = new NextRequest(
+        `http://localhost/api/v1/ext/runs/${source.runId}${kind === "run summary" ? "" : `/${kind}`}`,
+        { headers: { Authorization: `Bearer ${secret}` } },
+      );
+      const params = { params: Promise.resolve({ runId: source.runId }) };
+
+      if (kind === "run summary")
+        return (await import("@/app/api/v1/ext/runs/[runId]/route")).GET(
+          request,
+          params,
+        );
+      if (kind === "readiness")
+        return (
+          await import("@/app/api/v1/ext/runs/[runId]/readiness/route")
+        ).GET(request, params);
+
+      return (await import("@/app/api/v1/ext/runs/[runId]/activity/route")).GET(
+        request,
+        params,
+      );
+    };
+    const refused = await read();
+
+    expect(refused.status).toBe(409);
+    expect(await refused.text()).not.toContain(source.witness.id);
+    await createCompanyGrants(database.db, source.submitterId, {
+      principalKind: "user",
+      principalId: userId,
+      actions: ["knowledge:read"],
+      idempotencyKey: `external-source-reader:${source.runId}`,
+    });
+    expect((await read()).status).toBe(200);
+    const constrained = await issueToken(
+      {
+        projectId: source.projectId,
+        tokenKind: "user",
+        ownerUserId: userId,
+        name: "Project-only read authority",
+        scopes: ["runs:read", "readiness:read", "knowledge:read"],
+      },
+      database.db,
+    );
+
+    expect((await read(constrained.secret)).status).toBe(409);
+  },
+);
 
 it("IT-CBE-06 result DTO assembly rechecks a grant revoked after initial admission", async () => {
   const source = await completedRun();

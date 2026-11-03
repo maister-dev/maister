@@ -34,6 +34,13 @@ const PROJECT_ID = "project-1";
 const WORKTREE_PATH = "/repos/demo/.maister/worktrees/run-files-1";
 const BRANCH = "maister/task-1-attempt-1";
 
+// Legacy route fixture; native worktree/source grants are qualified against real Git and Postgres.
+vi.mock("@/lib/brain/knowledge-run-disclosure", () => ({
+  assertRunKnowledgeDisclosure: vi.fn(async () => undefined),
+}));
+
+vi.mock("@/lib/db/client", () => ({ getDb: () => ({}) }));
+
 vi.mock("@/lib/authz", () => ({
   requireActiveSession: vi.fn(async () => ({
     id: "user-1",

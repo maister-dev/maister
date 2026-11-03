@@ -7092,6 +7092,10 @@ paths:
       tags: [runs]
       summary: Implemented (M22, ADR-138) — read workspace diff
       description: |
+        Enrolled native evidence runs require the current receiving principal to
+        access every retained source, in addition to existing project/content
+        permissions. A safe 409 PRECONDITION withholds source-derived material.
+        Source authority is rechecked after asynchronous assembly before response.
         Returns the diff between the run workspace branch and its
         server-resolved base commit, plus a changed-files summary (`files`).
         **Flow runs (M22):** base = `workspaces.base_commit ?? resolveBaseRef(...)`,
@@ -7214,6 +7218,10 @@ paths:
       tags: [runs]
       summary: Implemented (M35, ADR-138) — read lightweight workspace change summary
       description: |
+        Enrolled native evidence runs require the current receiving principal to
+        access every retained source, in addition to existing project/content
+        permissions. A safe 409 PRECONDITION withholds source-derived material.
+        Source authority is rechecked after asynchronous assembly before response.
         Read-only run-inspector data. Returns repo-relative file status rows and
         total additions/deletions without preparing the full highlighted diff.
         The route uses the same scope allow-list and base/ref semantics as
@@ -7512,6 +7520,10 @@ paths:
       tags: [runs]
       summary: Implemented (M22) — list git-tracked worktree files (one level)
       description: |
+        Enrolled native evidence runs require the current receiving principal to
+        access every retained source, in addition to existing project/content
+        permissions. A safe 409 PRECONDITION withholds source-derived material.
+        Source authority is rechecked after asynchronous assembly before response.
         Requires the `readRepoFiles` action (project `member` — strictly above
         `readBoard`). Lists git-tracked entries one level under `?path=` via
         `git ls-tree` against the run branch tip (server-state `ref`). Reads ONLY
@@ -7537,6 +7549,8 @@ paths:
               schema: { $ref: "#/components/schemas/FileTreeResponse" }
         "400":
           $ref: "#/components/responses/Config"
+        "409":
+          $ref: "#/components/responses/Precondition"
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
