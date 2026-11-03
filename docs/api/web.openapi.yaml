@@ -35532,6 +35532,13 @@ components:
           pattern: ^[A-Za-z0-9._:-]+$
     CBProposalInput:
       type: object
+      description: >-
+        Native evidence resolves immutable witness references and exact knowledge
+        record revisions under current source access at submission and review.
+        Knowledge references require revision; optional version is its decimal
+        revision and optional sha256 matches assertion bytes. Quoting a record
+        adds no independent corroboration or confirmation. Other reference kinds
+        require their owning native resolver and are explicitly refused here.
       additionalProperties: false
       required:
         - idempotencyKey

@@ -505,9 +505,14 @@ export const brainEvidenceWitnesses = pgTable("brain_evidence_witnesses", {
   sourceVersion: text("source_version"),
   contentSha256: text("content_sha256").notNull(),
   selector: text("selector").notNull(),
-  restrictions: jsonb("restrictions").$type<Owner[]>().notNull(),
+  restrictions: jsonb("restrictions")
+    .$type<KnowledgeAccessRestriction[]>()
+    .notNull(),
   captureLocator: jsonb("capture_locator")
-    .$type<{ kind: "inline"; content: string }>()
+    .$type<
+      | { kind: "inline"; content: string }
+      | { kind: "record"; recordId: string; revision: number; content: string }
+    >()
     .notNull(),
   capturedAt: timestamp("captured_at", { withTimezone: true, mode: "date" })
     .notNull()

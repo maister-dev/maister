@@ -8,6 +8,7 @@ import type {
   KnowledgePrincipal,
   KnowledgeProposalDto,
   KnowledgeAction,
+  KnowledgeReference,
 } from "./knowledge-types";
 import type {
   KnowledgeDatabase,
@@ -26,6 +27,7 @@ import {
   knowledgeDraftSchema,
   knowledgeDeliveryKeySchema,
   knowledgeRevisionSchema,
+  knowledgeReferenceSchema,
 } from "./knowledge-types";
 import { sha256 } from "./codec";
 import {
@@ -33,6 +35,7 @@ import {
   knowledgeConfirmationInputSchema,
 } from "./knowledge-write-types";
 import { inspectKnowledgeWitness } from "./knowledge-witnesses";
+import { captureKnowledgeRecordReference } from "./knowledge-record-capture";
 import {
   additionalKnowledgeRestrictions,
   lockKnowledgeWriteConsumer,
@@ -61,6 +64,7 @@ type WitnessLink = Readonly<{
   relation: KnowledgeDraft["evidence"][number]["relation"];
   id: string;
   snapshot: Record<string, unknown>;
+  recordReference: KnowledgeReference | null;
 }>;
 export type KnowledgeProposalReceipt = Pick<
   KnowledgeProposalDto,
@@ -164,7 +168,7 @@ async function witness(
 ): Promise<Record<string, unknown>> {
   const row = (
     await tx.execute(sql`
-    SELECT w.id,w.source_version,w.content_sha256,w.selector,w.restrictions,o.source_id,o.project_id,o.company_id
+    SELECT w.id,w.source_version,w.content_sha256,w.selector,w.restrictions,w.capture_locator,o.source_id,o.project_id,o.company_id
     FROM brain_evidence_witnesses w JOIN brain_evidence_observations o ON o.id=w.observation_id WHERE w.id=${id} FOR SHARE OF w,o
   `)
   ).rows[0];
@@ -181,27 +185,64 @@ async function witness(
   return row;
 }
 
+function capturedRecordReference(
+  row: Record<string, unknown>,
+): KnowledgeReference | null {
+  const locator = row.capture_locator as Readonly<Record<string, unknown>>;
+
+  if (locator.kind !== "record") return null;
+  const parsed = knowledgeReferenceSchema.safeParse({
+    kind: "knowledge",
+    id: locator.recordId,
+    revision: locator.revision,
+  });
+
+  if (!parsed.success || parsed.data.revision === undefined)
+    throw new MaisterError(
+      "CONFIG",
+      "Stored record evidence has an invalid revision locator",
+    );
+
+  return parsed.data;
+}
+
 async function evidenceLinks(
   tx: KnowledgeTransaction,
   principal: KnowledgePrincipal,
   draft: KnowledgeDraft,
   owner: Owner,
+  actor: KnowledgeAttribution,
 ): Promise<WitnessLink[]> {
   const links: WitnessLink[] = [];
 
   for (const entry of draft.evidence) {
-    if (entry.reference.kind !== "witness")
+    if (
+      entry.reference.kind !== "witness" &&
+      entry.reference.kind !== "knowledge"
+    )
       throw new MaisterError(
         "PRECONDITION",
         "This evidence kind requires its native reference resolver",
         { details: { reason: "native_reference_kind_unavailable" } },
       );
-    if (entry.reference.revision !== undefined)
+    if (
+      entry.reference.kind === "witness" &&
+      entry.reference.revision !== undefined
+    )
       throw new MaisterError(
         "CONFLICT",
         "Immutable witness references do not have record revisions",
       );
-    const row = await witness(tx, principal, entry.reference.id);
+    const witnessId =
+      entry.reference.kind === "knowledge"
+        ? await captureKnowledgeRecordReference(
+            tx,
+            principal,
+            entry.reference,
+            actor,
+          )
+        : entry.reference.id;
+    const row = await witness(tx, principal, witnessId);
 
     if (
       (entry.reference.sha256 !== undefined &&
@@ -216,6 +257,7 @@ async function evidenceLinks(
     links.push({
       relation: entry.relation,
       id: String(row.id),
+      recordReference: capturedRecordReference(row),
       snapshot: {
         id: row.id,
         sourceId: row.source_id,
@@ -230,7 +272,11 @@ async function evidenceLinks(
     });
   }
 
-  return links;
+  return [
+    ...new Map(
+      links.map((link) => [`${link.id}:${link.relation}`, link]),
+    ).values(),
+  ];
 }
 
 async function nativeProposal(
@@ -341,7 +387,13 @@ export async function createKnowledgeProposal(
           "CONFLICT",
           "Knowledge delivery key already names different input",
         );
-      const links = await evidenceLinks(tx, input.principal, draft, owner.data);
+      const links = await evidenceLinks(
+        tx,
+        input.principal,
+        draft,
+        owner.data,
+        authority.actor,
+      );
       let restrictions = additionalKnowledgeRestrictions(owner.data, [
         ...(consumer?.capture.restrictions ?? []),
         ...links.flatMap(
@@ -541,6 +593,24 @@ async function writeKnowledgeRevision(
     await tx.execute(
       sql`INSERT INTO brain_revision_evidence(record_id,revision,witness_id,relation,witness_snapshot) VALUES(${input.recordId},${input.revision},${link.id},${link.relation},${JSON.stringify(link.snapshot)}::jsonb) ON CONFLICT DO NOTHING`,
     );
+  const contradictions = new Map(
+    input.links
+      .filter(
+        (entry) =>
+          entry.relation === "contradicts" && entry.recordReference !== null,
+      )
+      .map((entry) => [
+        `${entry.recordReference!.id}:${entry.recordReference!.revision}`,
+        entry.recordReference!,
+      ]),
+  );
+
+  for (const reference of contradictions.values()) {
+    await tx.execute(sql`
+      INSERT INTO brain_edges(id,project_id,company_id,from_ref,to_ref,relation,confidence,claim_state,from_revision,to_revision,claim_actor)
+      VALUES(${randomUUID()},${input.owner.kind === "project" ? input.owner.projectId : null},${input.owner.kind === "company" ? input.owner.companyId : null},${JSON.stringify({ type: "item", id: input.recordId })}::jsonb,${JSON.stringify({ type: "item", id: reference.id })}::jsonb,'contradicts',0,'declared_conflict',${input.revision},${reference.revision!},${JSON.stringify(input.attribution)}::jsonb)
+    `);
+  }
   const change = (
     await tx.execute(
       sql`INSERT INTO brain_record_changes(record_id,prior_revision,accepted_revision,proposal_id,actor,originating_work) VALUES(${input.recordId},${input.priorRevision},${input.revision},${input.proposalId},${JSON.stringify(input.reviewer)}::jsonb,${JSON.stringify({ runId: input.attribution.runId })}::jsonb) RETURNING id`,
@@ -740,6 +810,7 @@ export async function reviewKnowledgeProposal(
           input.principal,
           parsed.data,
           owner,
+          authority.actor,
         );
 
         publication = await acceptKnowledgeProposal(tx, {

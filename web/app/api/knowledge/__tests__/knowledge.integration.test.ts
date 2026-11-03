@@ -2,6 +2,8 @@ import type { KnowledgeDatabase } from "@/lib/brain/knowledge-access";
 import type { SessionUser } from "@/lib/authz";
 import type { StartedPostgresTestDb } from "@/test-support/pg-container";
 import type { KnowledgeWitnessDto } from "@/lib/brain/knowledge-read-types";
+import type { CreateKnowledgeProposalInput } from "@/lib/brain/knowledge-types";
+import type { KnowledgeProposalReceipt } from "@/lib/brain/knowledge-proposals";
 
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
@@ -1305,7 +1307,229 @@ it("IT-CBE-06 run-bound native reads bind current grants to the immutable role/p
   });
 });
 
-it("IT-CBE-06 cross-owner proposal evidence inherits current source access and never obstructs source-project deletion", async () => {
+it("IT-CBE-01 record references pin exact evidence, reuse one capture and retain declared opposition across corrections", async () => {
+  const principal = { kind: "user" as const, userId: readerId };
+  const owner = { kind: "company" as const, companyId };
+  const draft = {
+    title: "Referenced assertion",
+    kind: "assertion" as const,
+    assertion: `Configured component ${readerId} requires a separate health check`,
+    basis: "inferred" as const,
+    evidence: [],
+    missingEvidence: [
+      { state: "absent" as const, reason: "No live stand observation" },
+    ],
+    limitations: [],
+  };
+
+  async function publish(
+    input: CreateKnowledgeProposalInput,
+  ): Promise<KnowledgeProposalReceipt> {
+    const proposal = await createBrainProposal(database.db, input);
+
+    return reviewKnowledgeProposal(database.db, {
+      proposalId: proposal.id,
+      principal,
+      expectedRevision: 1,
+      decision: "accept",
+      reason: "Publish reviewed evidence relationship",
+      idempotencyKey: `${proposal.id}_review`,
+    });
+  }
+  const original = await publish({
+    owner,
+    principal,
+    kind: "knowledge_add",
+    draft,
+    idempotencyKey: `${readerId}_original`,
+  });
+  const reference = {
+    kind: "knowledge" as const,
+    id: original.acceptedRecordId!,
+    revision: 1,
+    version: "1",
+    sha256: sha256(draft.assertion),
+  };
+  const derivedInput = {
+    owner,
+    principal,
+    kind: "knowledge_add" as const,
+    draft: {
+      ...draft,
+      title: "Derived assertion",
+      assertion: `Derived ${readerId}`,
+      evidence: [{ relation: "derived_from" as const, reference }],
+    },
+    idempotencyKey: `${readerId}_derived`,
+  };
+
+  for (const invalid of [
+    { ...reference, revision: undefined },
+    { ...reference, revision: 999 },
+    { ...reference, version: "2" },
+    { ...reference, sha256: "f".repeat(64) },
+  ]) {
+    await expect(
+      createBrainProposal(database.db, {
+        ...derivedInput,
+        idempotencyKey: randomUUID(),
+        draft: {
+          ...derivedInput.draft,
+          evidence: [{ relation: "derived_from", reference: invalid }],
+        },
+      }),
+    ).rejects.toMatchObject({
+      code:
+        invalid.revision === undefined
+          ? "CONFIG"
+          : invalid.revision === 999
+            ? "PRECONDITION"
+            : "CONFLICT",
+    });
+  }
+  const proposals = await Promise.all(
+    [0, 1].map((index) =>
+      createBrainProposal(database.db, {
+        ...derivedInput,
+        idempotencyKey: `${readerId}_copy_${index}`,
+      }),
+    ),
+  );
+
+  expect(proposals[0]!.id).toBe(proposals[1]!.id);
+  const derived = await publish(derivedInput);
+  const proof = await getKnowledgeEvidencePage(
+    database.db,
+    principal,
+    { recordId: derived.acceptedRecordId!, revision: 1 },
+    { limit: 10 },
+  );
+  const item = proof.items[0]!;
+
+  expect(proof.items).toHaveLength(1);
+  if (!("witness" in item)) throw new Error("Expected exact record witness");
+  expect(item.witness).toMatchObject({
+    sourceVersion: "1",
+    sha256: reference.sha256,
+    excerpt: draft.assertion,
+    availability: "available",
+    independenceGroupId: null,
+    observedAt: null,
+    sourceAt: null,
+    attribution: { kind: "user", id: readerId },
+  });
+  const otherId = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'member','active')",
+    [otherId, `${otherId}@example.test`],
+  );
+  await database.pool.query(
+    "INSERT INTO company_grants(company_id,principal_type,principal_id,action,created_by) SELECT $1,'user',$2,action,$3 FROM unnest(ARRAY['knowledge:read','knowledge:propose']) action",
+    [companyId, otherId, readerId],
+  );
+  const opposingInput: CreateKnowledgeProposalInput = {
+    ...derivedInput,
+    principal: { kind: "user", userId: otherId },
+    idempotencyKey: `${readerId}_opposite`,
+    draft: {
+      ...draft,
+      title: "Opposing assertion",
+      assertion: `Opposing ${readerId}`,
+      evidence: [
+        { relation: "contradicts", reference },
+        {
+          relation: "contradicts",
+          reference: { kind: "knowledge", id: reference.id, revision: 1 },
+        },
+      ],
+    },
+  };
+  const opposingWitness = await publish({
+    ...opposingInput,
+    idempotencyKey: `${readerId}_opposite_witness`,
+    draft: {
+      ...opposingInput.draft,
+      evidence: [
+        {
+          relation: "contradicts",
+          reference: { kind: "witness", id: item.witness.id },
+        },
+      ],
+    },
+  });
+  const opposite = await publish(opposingInput);
+
+  expect(opposite.acceptedRecordId).toBe(opposingWitness.acceptedRecordId);
+  const originalBody = await (await readRecord(reference.id)).json();
+
+  expect(originalBody.conflict).toMatchObject({
+    state: "unresolved",
+    accessibleRecordIds: [opposite.acceptedRecordId],
+  });
+  expect(originalBody.confirmation.state).toBe("unconfirmed");
+  expect(
+    (
+      await database.pool.query(
+        "SELECT w.id FROM brain_evidence_witnesses w JOIN brain_evidence_observations o ON o.id=w.observation_id WHERE w.capture_locator->>'recordId'=$1",
+        [reference.id],
+      )
+    ).rows,
+  ).toEqual([{ id: item.witness.id }]);
+  await publish({
+    owner,
+    principal,
+    kind: "knowledge_correct",
+    targetRecordId: reference.id,
+    expectedRecordRevision: 1,
+    idempotencyKey: `${readerId}_correct`,
+    draft: { ...draft, assertion: `Corrected ${readerId}` },
+  });
+  const retained = await getKnowledgeEvidencePage(
+    database.db,
+    principal,
+    { recordId: derived.acceptedRecordId!, revision: 1 },
+    { limit: 10 },
+  );
+
+  expect(retained.items[0]).toMatchObject({
+    witness: {
+      id: item.witness.id,
+      excerpt: draft.assertion,
+      availability: "stale",
+      sha256: reference.sha256,
+    },
+  });
+  const historicalConflicts = await getKnowledgeConflictsPage(
+    database.db,
+    principal,
+    { recordId: reference.id, revision: 1 },
+    { limit: 10 },
+  );
+
+  expect(historicalConflicts.items).toMatchObject([
+    {
+      classification: "declared_conflict",
+      reference: { id: opposite.acceptedRecordId, revision: 1 },
+    },
+  ]);
+  await database.pool.query(
+    "UPDATE brain_items SET visibility='restricted' WHERE id=$1",
+    [reference.id],
+  );
+  expect((await readRecord(derived.acceptedRecordId!)).status).toBe(404);
+  await expect(
+    createBrainProposal(database.db, {
+      ...derivedInput,
+      idempotencyKey: randomUUID(),
+    }),
+  ).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "knowledge_reference_unavailable" },
+  });
+});
+
+it("IT-CBE-06 cross-owner record evidence inherits current source access and never obstructs source-project deletion", async () => {
   const project = await seedProjectRow(database.db);
 
   await database.pool.query(
@@ -1322,6 +1546,34 @@ it("IT-CBE-06 cross-owner proposal evidence inherits current source access and n
     content: "Configured source observation remains restricted to its project",
     idempotencyKey: `${readerId}_project_capture`,
   });
+  const sourceProposal = await createBrainProposal(database.db, {
+    kind: "knowledge_add",
+    owner: { kind: "project", projectId: project.id },
+    principal,
+    idempotencyKey: `${readerId}_source_record`,
+    draft: {
+      title: "Source project record",
+      kind: "observation",
+      assertion: `Source ${readerId}`,
+      basis: "observed",
+      evidence: [
+        {
+          relation: "supports",
+          reference: { kind: "witness", id: captured.witness.id },
+        },
+      ],
+      missingEvidence: [],
+      limitations: [],
+    },
+  });
+  const sourceRecord = await reviewKnowledgeProposal(database.db, {
+    proposalId: sourceProposal.id,
+    principal,
+    expectedRevision: 1,
+    decision: "accept",
+    reason: "Publish original project evidence",
+    idempotencyKey: `${readerId}_source_review`,
+  });
   const proposal = await createBrainProposal(database.db, {
     kind: "knowledge_add",
     owner: { kind: "company", companyId },
@@ -1336,10 +1588,9 @@ it("IT-CBE-06 cross-owner proposal evidence inherits current source access and n
         {
           relation: "supports",
           reference: {
-            kind: "witness",
-            id: captured.witness.id,
-            sha256: captured.witness.sha256!,
-            version: captured.witness.sourceVersion!,
+            kind: "knowledge",
+            id: sourceRecord.acceptedRecordId!,
+            revision: 1,
           },
         },
       ],
@@ -1347,14 +1598,25 @@ it("IT-CBE-06 cross-owner proposal evidence inherits current source access and n
       limitations: [],
     },
   });
-  const accepted = await reviewKnowledgeProposal(database.db, {
+  const decision = {
     proposalId: proposal.id,
     principal,
     expectedRevision: 1,
-    decision: "accept",
+    decision: "accept" as const,
     reason: "Publish with inherited source policy",
     idempotencyKey: `${readerId}_publish_derived`,
-  });
+  };
+
+  await database.pool.query("UPDATE users SET role='member' WHERE id=$1", [
+    readerId,
+  ]);
+  await expect(
+    reviewKnowledgeProposal(database.db, decision),
+  ).rejects.toMatchObject({ code: "PRECONDITION" });
+  await database.pool.query("UPDATE users SET role='admin' WHERE id=$1", [
+    readerId,
+  ]);
+  const accepted = await reviewKnowledgeProposal(database.db, decision);
   const recordId = accepted.acceptedRecordId!;
 
   expect((await readRecord(recordId)).status).toBe(200);
