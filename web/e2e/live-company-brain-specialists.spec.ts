@@ -19,7 +19,10 @@ import {
   knowledgeRecordSchema,
   knowledgeWitnessSchema,
 } from "@/lib/brain/knowledge-read-types";
-import { knowledgeMutationReceiptSchema } from "@/lib/brain/knowledge-write-types";
+import {
+  knowledgeMutationReceiptSchema,
+  knowledgeProposalContentSchema,
+} from "@/lib/brain/knowledge-write-types";
 import { evidenceFindingsV1Schema } from "@/lib/run-results/findings-types";
 
 const idSchema = z.object({ id: z.string().min(1) });
@@ -211,6 +214,7 @@ test("QL-CBX-03 the real pinned RAH package retrieves structured company knowled
   );
 
   const runIds: string[] = [];
+  const browserRuns: Array<{ flowId: string; runId: string }> = [];
   const proofs: RunProof[][] = [];
   const enforcementProofs: Array<{
     runId: string;
@@ -691,6 +695,7 @@ test("QL-CBX-03 the real pinned RAH package retrieves structured company knowled
         await request.get(`/api/knowledge/proposals/${proposalId}`),
         z.object({
           status: z.literal("pending"),
+          content: knowledgeProposalContentSchema,
           attribution: z.object({
             kind: z.literal("agent"),
             id: z.literal("rah:coordinator"),
@@ -701,24 +706,38 @@ test("QL-CBX-03 the real pinned RAH package retrieves structured company knowled
       );
 
       expect(runIds).toContain(proposed.attribution.runId);
-      await page.goto(`/runs/${launched.runId}`);
-      await expect(page.getByTestId("native-findings")).toBeVisible();
-      for (const locale of ["en", "ru"]) {
-        await context.addCookies([
-          {
-            name: "NEXT_LOCALE",
-            value: locale,
-            url: new URL(page.url()).origin,
-          },
-        ]);
-        await page.reload();
-        await expect(page.getByTestId("native-findings")).toBeVisible();
-        await page.screenshot({
-          path: testInfo.outputPath(`${flowId}-${locale}.png`),
-          fullPage: true,
-          caret: "initial",
-        });
+      const resultProposal = root.value.knowledgeProposals.find(
+        (content) =>
+          content.assertion === proposed.content.assertion &&
+          content.title === proposed.content.title,
+      );
+
+      expect(
+        resultProposal,
+        "Published findings must carry the actual submitted proposal content",
+      ).toBeDefined();
+      if (!resultProposal)
+        throw new Error("Submitted proposal is absent from the actual result");
+      const { evidence, missingEvidence, limitations, ...submittedFields } =
+        proposed.content;
+      const {
+        evidence: resultEvidence,
+        missingEvidence: resultMissing,
+        limitations: resultLimits,
+        ...resultFields
+      } = resultProposal;
+
+      expect(resultFields).toEqual(submittedFields);
+      // The native submission service deduplicates and orders these sets.
+      for (const [submitted, returned] of [
+        [evidence, resultEvidence],
+        [missingEvidence, resultMissing],
+        [limitations, resultLimits],
+      ] as const) {
+        expect(submitted).toEqual(expect.arrayContaining(returned));
+        expect(returned).toEqual(expect.arrayContaining(submitted));
       }
+      browserRuns.push({ flowId, runId: launched.runId });
     }
     for (const recordId of [current.id, dependent.id, opposing.id]) {
       const record = await readResponse(
@@ -832,6 +851,46 @@ test("QL-CBX-03 the real pinned RAH package retrieves structured company knowled
       ),
     ).toBe(true);
     proofs.push(unavailable);
+    for (const { flowId, runId } of browserRuns) {
+      await page.goto(`/runs/${runId}`);
+      const findingsPanel = page
+        .getByTestId("run-shell-inspector")
+        .filter({ visible: true })
+        .getByTestId("native-findings");
+
+      for (const locale of ["en", "ru"] as const) {
+        await context.addCookies([
+          {
+            name: "NEXT_LOCALE",
+            value: locale,
+            url: new URL(page.url()).origin,
+          },
+        ]);
+        await page.reload();
+        await expect(findingsPanel).toHaveCount(1);
+        await expect(findingsPanel).toBeVisible();
+        await expect(
+          findingsPanel.getByRole("heading", {
+            name:
+              locale === "en"
+                ? "Evidence-linked findings"
+                : "Выводы со ссылками на доказательства",
+            exact: true,
+            level: 3,
+          }),
+        ).toBeVisible();
+        await expect(
+          findingsPanel
+            .locator(`a[href="/knowledge/witnesses/${witness.id}"]`)
+            .first(),
+        ).toBeVisible();
+        await page.screenshot({
+          path: testInfo.outputPath(`${flowId}-${locale}.png`),
+          fullPage: true,
+          caret: "initial",
+        });
+      }
+    }
   } finally {
     const ledgerDiagnostics = await withE2EDb(async (pool) => {
       const result = await pool.query<RunDiagnostic>(

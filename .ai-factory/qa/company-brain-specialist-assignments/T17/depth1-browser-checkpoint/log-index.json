@@ -1,0 +1,18 @@
+[
+  {
+    "path": "actual-v102-depth1-browser-failure.log.gz",
+    "uncompressedSha256": "05d79c34e770db03be87aa3905c23dc8ad386c3103f35ce1f96ffbb9279758cb"
+  },
+  {
+    "path": "actual-qualification.json.gz",
+    "uncompressedSha256": "d7274ffa857fa4fae5a9f23ab7f584dbb1a3fcebe3b6ed6ae647cbebcf497453"
+  },
+  {
+    "path": "harness-typecheck.log.gz",
+    "uncompressedSha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+  },
+  {
+    "path": "harness-lint.log.gz",
+    "uncompressedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+]

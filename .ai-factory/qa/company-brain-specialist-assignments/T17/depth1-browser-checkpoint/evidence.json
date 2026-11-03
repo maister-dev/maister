@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "task": "T17",
+  "status": "actual_depth1_checkpoint_qualified_browser_and_depth2_open",
+  "platformCommit": "70b646d3d",
+  "engineVersion": "3.11.1",
+  "companionTag": "rah/v1.0.2",
+  "companionCommit": "1b1682b28b6131a794af7e3751ed9c56cf7d7c32",
+  "rootRunId": "961eaf8a-7743-439a-93dd-91ff518f91f3",
+  "proposalId": "3e56669a-bd35-4782-93a6-c8bdb48483b7",
+  "qualified": [
+    "The actual immutable v1.0.2 package installed/trusted/bound/enabled through the real Git loader. The real root and two researchers published valid native result revision 1, all reached Done, and original source evidence survived exact child collection/selection. The root retained ten findings under the native 32-finding bound.",
+    "The root submitted a pending proposal with server-recorded coordinator/run/node-attempt attribution. The corresponding public result endpoint agreed with retained native values and schema hashes. No fact confirmation occurred.",
+    "The end-to-end case then failed in browser inspection after a locale reload because an unscoped test ID matched two rendered findings panels. Existing visible-inspector scoping is now used, with exact EN/RU headings and original witness-link checks. Browser checks run after both live functional trees and the refusal control, so a locator failure cannot prevent collecting their evidence.",
+    "The live harness now compares the submitted proposal content with the actual result draft, preserving exact fields while allowing only documented set deduplication/ordering. This additional assertion requires the next actual run."
+  ],
+  "checks": {
+    "actualDepth1": {
+      "validResults": 3,
+      "rootFindings": 10,
+      "pendingProposals": 1
+    },
+    "actualCase": {
+      "passed": 1,
+      "failed": 1,
+      "failureClass": "browser_locator_ambiguity",
+      "processLeaks": 0
+    },
+    "harnessTypecheck": {
+      "exitCode": 0
+    },
+    "harnessLint": {
+      "exitCode": 0
+    }
+  },
+  "limits": [
+    "This is not full QL-CBX-03 success. Depth two, human proposal acceptance, revoked-reference control, exact proposal/result equality and localized browser assertions still need a fresh actual run. T16/T17 remain open.",
+    "The localhost Git rewrite proves local pinned installation, not public package publication."
+  ],
+  "logs": "log-index.json"
+}
