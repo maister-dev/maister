@@ -79,6 +79,7 @@ test.describe("Manual task admission through the real browser and controlled pro
     await context.addCookies([
       { name: "NEXT_LOCALE", value: "en", url: baseURL! },
     ]);
+    await tickScheduler(page, "auto_promote");
     const settings = await page.request.patch(
       `/api/projects/${fixture.slug}/settings`,
       {
@@ -128,8 +129,15 @@ test.describe("Manual task admission through the real browser and controlled pro
 
     expect(created.status()).toBe(201);
     const task = (await created.json()) as Pick<Task, "taskId" | "number">;
+    const previewResponse = page.waitForResponse(
+      (response) =>
+        response.url().includes("/api/runs/launch-options?") &&
+        new URL(response.url()).searchParams.get("taskId") === task.taskId,
+    );
     const dialog = await openLaunch(page, title);
+    const preview = await previewResponse;
 
+    expect(preview.status(), await preview.text()).toBe(200);
     await expect(dialog).toContainText(
       "No current assessment. Automatic execution requires accepted triage; you can launch this revision manually.",
     );
@@ -258,7 +266,7 @@ test.describe("Manual task admission through the real browser and controlled pro
             ) as {
               request: {
                 runId: string;
-                runner?: { id: string; model: string; adapter: string };
+                runner?: { runnerId: string; model: string; adapter: string };
               };
             },
         ),
@@ -267,7 +275,7 @@ test.describe("Manual task admission through the real browser and controlled pro
     expect(
       records.find((record) => record.request.runId === runId)?.request.runner,
     ).toMatchObject({
-      id: fixture.runnerId,
+      runnerId: fixture.runnerId,
       model: "gpt-6.1-sol",
       adapter: "codex",
     });
@@ -288,17 +296,17 @@ test.describe("Manual task admission through the real browser and controlled pro
 
     await page.getByRole("button", { name: "Approve", exact: true }).click();
     expect((await approval).status()).toBe(200);
-    await expect
-      .poll(
-        () =>
-          withE2EDb(
-            async (pool) =>
-              (await pool.query("SELECT status FROM runs WHERE id=$1", [runId]))
-                .rows[0].status,
-          ),
-        { timeout: 15_000 },
-      )
-      .toBe("Review");
+    const reviewed = await withE2EDb(
+      async (pool) =>
+        (
+          await pool.query(
+            "SELECT response->>'decision' AS decision,responded_at IS NOT NULL AS responded FROM hitl_requests WHERE run_id=$1 AND step_id='review' AND kind='human'",
+            [runId],
+          )
+        ).rows,
+    );
+
+    expect(reviewed).toEqual([{ decision: "approve", responded: true }]);
     await schedulerJob(page, "auto_promote");
     await expect
       .poll(
@@ -726,7 +734,11 @@ async function schedulerJob(page: Page, kind: "auto_promote"): Promise<void> {
     { data: { nextRunAt: new Date(0).toISOString(), enabled: true } },
   );
 
-  expect(due.status()).toBe(200);
+  expect(due.status(), await due.text()).toBe(200);
+  await tickScheduler(page, kind);
+}
+
+async function tickScheduler(page: Page, kind: "auto_promote"): Promise<void> {
   const tick = await page.request.post(`/api/cron/tick?jobKind=${kind}`, {
     headers: {
       Authorization: `Bearer ${process.env.MAISTER_CRON_TOKEN ?? "e2e-cron-token-change-me"}`,

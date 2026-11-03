@@ -385,6 +385,7 @@ export async function startTestSupervisor(
   const childPrompt = opts.childPrompt ?? ((i: number) => `sub-task ${i}`);
 
   const sessions = new Map<string, SessionRecord>();
+  const pendingSessionCreates = new Map<string, string>();
   const created: Array<{
     runId: string;
     runKind: string;
@@ -730,7 +731,7 @@ export async function startTestSupervisor(
     return envelope;
   };
 
-  // Answer the held prompt of the permission scenario (idempotent).
+  // Answer a held permission or controlled operational prompt (idempotent).
   const resolvePendingPrompt = (
     rec: SessionRecord,
     stopReason: "end_turn" | "cancelled",
@@ -1199,8 +1200,8 @@ export async function startTestSupervisor(
   }
 
   const server = createServer((req, res) => {
-    const url = new URL(req.url ?? "/", "http://test-supervisor.local")
-      .pathname;
+    const requestUrl = new URL(req.url ?? "/", "http://test-supervisor.local");
+    const url = requestUrl.pathname;
     const method = req.method ?? "GET";
 
     // ---- stub-supervisor superset: readiness surfaces --------------------
@@ -1854,10 +1855,39 @@ export async function startTestSupervisor(
 
     // ---- GET /sessions — reconcile/keepalive/parkOrchestratorSession view --
     if (method === "GET" && url === "/sessions") {
+      const scopedRunId = requestUrl.searchParams.get("runId");
+
+      if (
+        scopedRunId !== null &&
+        (!/^[0-9a-f-]{36}$/i.test(scopedRunId) ||
+          requestUrl.searchParams.getAll("runId").length !== 1)
+      ) {
+        sendJson(400, {
+          code: "CONFIG",
+          message: "Scoped session inventory requires one run ID",
+        });
+
+        return;
+      }
+      if (
+        scopedRunId !== null &&
+        [...pendingSessionCreates.values()].includes(scopedRunId)
+      ) {
+        sendJson(503, {
+          code: "EXECUTOR_UNAVAILABLE",
+          message: "Controlled session creation is still pending",
+          details: { reason: "session_process_owner_unconfirmed" },
+        });
+
+        return;
+      }
       // The real `SessionListEntry` projection over the shared registry; a
       // checkpointed (detached) or evicted session is no longer listed live.
       const records = [...sessions.values()]
-        .filter((s) => !s.detached)
+        .filter(
+          (s) =>
+            !s.detached && (scopedRunId === null || s.runId === scopedRunId),
+        )
         .map((s) => {
           const entry = stubSessions.get(s.sessionId);
 
@@ -1884,7 +1914,12 @@ export async function startTestSupervisor(
           };
         });
 
-      res.writeHead(200, { "content-type": "application/json" });
+      res.writeHead(200, {
+        "content-type": "application/json",
+        ...(scopedRunId !== null
+          ? { "X-Maister-Session-Ownership-Version": "1" }
+          : {}),
+      });
       res.end(JSON.stringify(records));
 
       return;
@@ -1933,7 +1968,13 @@ export async function startTestSupervisor(
             code: "CONFIG",
             message:
               "Controlled runner binary is unavailable before session creation",
-            details: { reason: "e2e_runner_prework_unavailable" },
+            details: {
+              reason: "e2e_runner_prework_unavailable",
+              sessionCreateQuiescence: {
+                version: 1,
+                process: "not_started",
+              },
+            },
           };
 
           stubRecord(env, 422, failure);
@@ -1994,6 +2035,8 @@ export async function startTestSupervisor(
         const acpSessionId = (body.resumeSessionId as string) || randomUUID();
         const runId = resolved.runId;
         const mcpServers = (body.mcpServers as AgentMcpServer[]) ?? [];
+
+        pendingSessionCreates.set(env.command.id, runId);
         const runKind = await lookupRunKind(runId);
         const permission =
           runKind === "flow" &&
@@ -2147,6 +2190,7 @@ export async function startTestSupervisor(
           sessionName: rec.sessionName,
           acpSessionId,
         });
+        pendingSessionCreates.delete(env.command.id);
         sendJson(201, out);
       });
 
@@ -2259,11 +2303,7 @@ export async function startTestSupervisor(
           });
         };
 
-        // Permission scenario: admission is already durable. `/input` or
-        // `/checkpoint` settles the prompt receipt and terminal event later.
-        if (rec.permission) {
-          const requestId = randomUUID();
-
+        const registerPendingPrompt = (requestId: string): void => {
           rec.pendingPrompt = {
             requestId,
             env,
@@ -2287,6 +2327,14 @@ export async function startTestSupervisor(
               });
             },
           };
+        };
+
+        // Permission scenario: admission is already durable. `/input` or
+        // `/checkpoint` settles the prompt receipt and terminal event later.
+        if (rec.permission) {
+          const requestId = randomUUID();
+
+          registerPendingPrompt(requestId);
           emitOrQueue(rec, {
             type: "session.permission_request",
             sessionId: rec.sessionId,
@@ -2302,6 +2350,34 @@ export async function startTestSupervisor(
               kind: "edit",
             },
           });
+
+          return;
+        }
+        // Operational result-contract sessions auto-drive, so their explicit
+        // controlled hold needs a real pending command rather than stub mode.
+        if (!rec.stub && JSON.stringify(body).includes(E2E_HOLD_TURN_MARKER)) {
+          registerPendingPrompt(`e2e:held:${env.command.id}`);
+          const pending = rec.pendingPrompt;
+
+          if (!pending)
+            throw new Error("Controlled hold has no pending prompt");
+          const deadline = setTimeout(() => {
+            if (rec.pendingPrompt !== held) return;
+            resolvePendingPrompt(rec, "cancelled");
+            rec.exitPending = true;
+            rec.exitCode = 0;
+            flushExit(rec);
+          }, E2E_HOLD_TURN_BACKSTOP_MS);
+          const held: NonNullable<SessionRecord["pendingPrompt"]> = {
+            ...pending,
+            respond: (status: number, result: unknown): void => {
+              clearTimeout(deadline);
+              pending.respond(status, result);
+            },
+          };
+
+          rec.pendingPrompt = held;
+          stubAppendPrompt(rec.sessionId, body);
 
           return;
         }
@@ -2555,6 +2631,15 @@ export async function startTestSupervisor(
 
         stubRecord(env, 200, out);
         sendJson(200, out);
+        if (
+          inputMatch[2] === "cancel" &&
+          rec?.pendingPrompt?.requestId.startsWith("e2e:held:")
+        ) {
+          resolvePendingPrompt(rec, "cancelled");
+          rec.exitPending = true;
+          rec.exitCode = 0;
+          flushExit(rec);
+        }
         // Permission scenario: the delivered answer completes the held turn and
         // the session ends cleanly (the flow runner drives the graph on).
         const payload = stubPayload(body) as {
@@ -2605,6 +2690,11 @@ export async function startTestSupervisor(
         }
         if (rec) {
           resolvePendingPrompt(rec, "cancelled");
+          if (stubSessions.get(rec.sessionId)?.status === "live") {
+            rec.exitPending = true;
+            rec.exitCode = 0;
+            flushExit(rec);
+          }
           if (rec.emit) rec.emit = null;
           sessions.delete(deleteMatch[1]);
         }

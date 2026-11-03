@@ -1,7 +1,7 @@
 import { rm, readdir, readFile, mkdir, writeFile, cp } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 import { STUB_SESSIONS_DIR } from "./_seed/stub-supervisor";
 import { withE2EDb } from "./_seed/db";
@@ -375,20 +375,35 @@ test.describe("Agent execution visibility and retained history", () => {
       expect(launch.status()).toBe(202);
       const source = (await launch.json()) as { runId: string };
 
-      await expect
-        .poll(
-          () =>
-            withE2EDb(
-              async (pool) =>
-                (
-                  await pool.query("SELECT status FROM runs WHERE id=$1", [
-                    source.runId,
-                  ])
-                ).rows[0].status,
-            ),
-          { timeout: 30000 },
-        )
-        .toBe("Failed");
+      let lastPreworkFacts = "{}";
+
+      try {
+        await expect
+          .poll(
+            async () => {
+              const facts = await withE2EDb(
+                async (pool) =>
+                  (
+                    await pool.query(
+                      "SELECT r.status,r.execution_assignment_id,r.agent_config,r.operational_terminal,(SELECT jsonb_agg(jsonb_build_object('id',a.id,'epoch',a.epoch,'state',a.state,'placementReason',a.placement_reason)) FROM execution_assignments a WHERE a.run_id=r.id) AS assignments,(SELECT jsonb_agg(jsonb_build_object('phase',p.phase,'failure',p.failure,'leaseExpiresAt',p.lease_expires_at,'assignmentId',p.assignment_id,'assignmentEpoch',p.assignment_epoch)) FROM agent_preparation_operations p WHERE p.run_id=r.id) AS preparations,(SELECT jsonb_agg(jsonb_build_object('kind',c.kind,'state',c.state,'attempts',c.attempts,'errorCode',c.last_error->>'code','reason',coalesce(c.last_error->>'reason',c.last_error->'details'->>'reason'),'receiptPhase',c.receipt_evidence->>'phase','receiptInflight',c.receipt_evidence->'inflight','receiptHttpStatus',c.receipt_evidence->'httpStatus')) FROM execution_commands c WHERE c.run_id=r.id) AS commands,(SELECT jsonb_agg(jsonb_build_object('variant',t.variant,'state',t.state)) FROM agent_turns t WHERE t.run_id=r.id) AS turns,(SELECT jsonb_agg(jsonb_build_object('state',i.state,'assignmentEpoch',i.assignment_epoch)) FROM run_session_incarnations i WHERE i.run_id=r.id) AS incarnations FROM runs r WHERE r.id=$1",
+                      [source.runId],
+                    )
+                  ).rows[0],
+              );
+
+              lastPreworkFacts = JSON.stringify(facts);
+
+              return facts;
+            },
+            { timeout: 30000 },
+          )
+          .toMatchObject({ status: "Failed" });
+      } finally {
+        await test.info().attach("source-prework-facts", {
+          body: lastPreworkFacts,
+          contentType: "application/json",
+        });
+      }
       await page.goto(
         `/projects/${slug}/agents/${encodeURIComponent(operationId)}`,
       );
@@ -598,6 +613,7 @@ test.describe("Agent execution visibility and retained history", () => {
     await context.addCookies([
       { name: "NEXT_LOCALE", value: "en", url: baseURL! },
     ]);
+    await tickAutomaticLaunchScheduler(page);
     await withE2EDb((pool) =>
       pool.query(
         "UPDATE projects SET task_qualification_override='required' WHERE id=$1",
@@ -656,12 +672,8 @@ test.describe("Agent execution visibility and retained history", () => {
     await expect(assessment.getByLabel(/Reason codes|commit SHA/i)).toHaveCount(
       0,
     );
-    await assessment
-      .getByLabel("Assessment decision", { exact: true })
-      .selectOption("ready");
-    await assessment
-      .getByLabel("Task evidence", { exact: true })
-      .selectOption(task.taskId);
+    await assessment.getByLabel(/^Assessment decision/).selectOption("ready");
+    await assessment.getByLabel(/^Task evidence/).selectOption(task.taskId);
     await assessment
       .getByRole("button", { name: "Add task evidence", exact: true })
       .click();
@@ -689,7 +701,7 @@ test.describe("Agent execution visibility and retained history", () => {
       });
 
       await check
-        .getByLabel("Check result", { exact: true })
+        .getByLabel(/^Check result/)
         .selectOption(dimension === "Bug evidence" ? "not_applicable" : "pass");
       await check
         .getByLabel("Rationale", { exact: true })
@@ -1097,17 +1109,8 @@ test.describe("Agent execution visibility and retained history", () => {
         },
       );
 
-      expect(due.status()).toBe(200);
-      const tick = await page.request.post(
-        "/api/cron/tick?jobKind=auto_launch_triaged",
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.MAISTER_CRON_TOKEN ?? "e2e-cron-token-change-me"}`,
-          },
-        },
-      );
-
-      expect(tick.ok(), await tick.text()).toBe(true);
+      expect(due.status(), await due.text()).toBe(200);
+      await tickAutomaticLaunchScheduler(page);
     }
     await expect
       .poll(automaticIntent, { timeout: 15000 })
@@ -1154,3 +1157,16 @@ test.describe("Agent execution visibility and retained history", () => {
     });
   });
 });
+
+async function tickAutomaticLaunchScheduler(page: Page): Promise<void> {
+  const tick = await page.request.post(
+    "/api/cron/tick?jobKind=auto_launch_triaged",
+    {
+      headers: {
+        Authorization: `Bearer ${process.env.MAISTER_CRON_TOKEN ?? "e2e-cron-token-change-me"}`,
+      },
+    },
+  );
+
+  expect(tick.ok(), await tick.text()).toBe(true);
+}

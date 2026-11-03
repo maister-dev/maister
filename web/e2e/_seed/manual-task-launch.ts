@@ -58,7 +58,9 @@ export async function seedManualTaskLaunchFixture(): Promise<ManualTaskLaunchFix
       {
         id: "implement",
         type: "ai_coding",
-        action: { prompt: "Implement {{ task.prompt }}" },
+        action: {
+          prompt: "Implement {{ task.prompt }}\n\n{{ review_comments }}",
+        },
         transitions: { success: "review" },
         pre_finish: {
           gates: [
@@ -75,7 +77,7 @@ export async function seedManualTaskLaunchFixture(): Promise<ManualTaskLaunchFix
       {
         id: "review",
         type: "human",
-        decisions: ["approve", "rework"],
+        finish: { human: { decisions: ["approve", "rework"] } },
         transitions: { approve: "done", rework: "implement" },
         rework: {
           allowedTargets: ["implement"],
@@ -212,4 +214,19 @@ export async function holdManualTaskLaunchRepository(
     await import("@/lib/project-config-persistence/repository-lock");
 
   return acquireRepositoryMutationFence(repo);
+}
+
+/** Preparation may fail before publishing a workspace row; resolve its real owned checkout identity. */
+export async function manualQualifierCheckoutPath(
+  projectSlug: string,
+  runId: string,
+): Promise<string> {
+  register(
+    new URL("../../scripts/_server-only-shim.mjs", import.meta.url),
+    import.meta.url,
+  );
+  const { agentReadOnlyWorkdirPath } =
+    await import("@/lib/agents/workspace-paths");
+
+  return agentReadOnlyWorkdirPath(projectSlug, runId);
 }
