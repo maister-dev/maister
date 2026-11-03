@@ -96,6 +96,20 @@ Commit intent/snapshot/audit/outbox together. Git/host effects occur outside SQL
 
 New intent APIs return a versioned receipt with nullable runId and Location. Existing run APIs retain run-bound success schemas. Idempotency-Key is mandatory for new launch mutations; absent keys refuse before writes. Bounded compatibility waits may return typed `launch_pending` with `accepted:true`, intentId and Location, distinct from no-acceptance failure. UI preserves key and resumes the accepted receipt after disconnect. Existing attention ticks invalidate authorized intent state before a run exists; GET has no recovery side effects.
 
+External acceptance commits its required token audit and any Librarian operation
+receipt in the admission transaction. The new resource supports keys up to 256
+characters, including Librarian requests; older external operation limits remain
+unchanged. A reused admitted Librarian operation re-enters the same idempotent
+admission service, so an interrupted preflight can recover and concurrent requests
+converge on one intent. A completed operation reads its original intent under
+current scoped launch and frozen-policy authority, without granting another
+execution. Every successful replay returns the intent DTO, `Location` and
+`Cache-Control: no-store`; a generic `202 admitted` is insufficient. Business
+refusals retain their original operation result. Transient storage failures return
+503 and retain the key for recovery; a lost commit acknowledgement can leave an
+accepted intent, so clients replay the original key instead of assuming failure
+means no work was accepted. Unknown non-database effects require reconciliation.
+
 No historic assessment/run receipt is rewritten. Writer floor fences v2 and intent-owned legacy tasks. `taskAdmissionCheckedAt` alone is not evidence that execution started or inputs were frozen. Queued/checked-but-undispatched v1 requests lacking immutable evidence are held; a live session is not killed to repair metadata, but an unreconstructible later prompt/resume is refused. Explicit legacy qualification opt-in preserves old receipts and enables future automatic qualification.
 
 ## Expectations

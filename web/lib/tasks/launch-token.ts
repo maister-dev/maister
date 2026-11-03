@@ -227,6 +227,18 @@ export async function assertTaskLaunchTokenVisibility(
   await assertLiveTaskLaunchToken(db, principal);
 }
 
+/** Metadata scope is distinct from launch authority and stays readable after archival. */
+export async function assertTaskLaunchTokenReadAuthority(
+  db: Db,
+  principal: TokenTaskLaunchPrincipal,
+  projectId: string,
+): Promise<void> {
+  await assertTaskLaunchTokenVisibility(db, principal, projectId);
+  const scopes = await assertLiveTaskLaunchToken(db, principal);
+
+  if (!tokenHasScope(scopes, "runs:read")) throw tokenAuthorityRevoked();
+}
+
 /** Recheck current grants and metadata without retaining or rereading the bearer secret. */
 export async function assertTaskLaunchTokenAuthority(
   db: Db,

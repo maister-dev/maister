@@ -26,6 +26,8 @@ import {
 } from "@/lib/tasks/launch-intent";
 import { tokenTaskLaunchPrincipal } from "@/lib/tasks/launch-token";
 import { issueToken } from "@/lib/tokens/issue";
+import { recordTokenAudit } from "@/lib/tokens/audit";
+import { MaisterError } from "@/lib/errors";
 import { updateTask } from "@/lib/services/tasks";
 import {
   prepareTaskQualification,
@@ -675,6 +677,94 @@ it("LA05 refuses an inherited revision-runner default changed after the user pre
       randomUUID(),
     ),
   ).rejects.toMatchObject({ details: { reason: "launch_settings_changed" } });
+});
+
+it("LA13 commits bearer audit with admission and replays, rolling back both on audit failure", async () => {
+  const taskId = await task();
+  const issued = await issueToken(
+    { projectId, name: "Atomic launch audit", scopes: ["runs:launch"] },
+    database.db,
+  );
+  const principal = await tokenTaskLaunchPrincipal(database.db, issued.secret);
+
+  await publishReadyQualification(taskId);
+  await database.db
+    .update(tasks)
+    .set({ launchIntent: "triage_then_launch", launchMode: "auto" })
+    .where(eq(tasks.id, taskId));
+  const input = await request(taskId);
+  const key = randomUUID();
+  const endpoint = "POST /api/v1/ext/task-launch-intents";
+  const audit = async (tx: Db): Promise<void> =>
+    recordTokenAudit(
+      {
+        tokenId: issued.tokenId,
+        projectId,
+        actorLabel: "token:fixture",
+        scopeUsed: "runs:launch",
+        endpoint,
+        method: "POST",
+        result: "ok",
+        statusCode: 202,
+      },
+      tx,
+    );
+  const failure = new MaisterError("CRASH", "Audit transaction control");
+
+  await expect(
+    acceptTokenTaskLaunch(database.db, principal, input, key, {
+      recordSuccessAudit: async (tx) => {
+        await audit(tx);
+        throw failure;
+      },
+    }),
+  ).rejects.toBe(failure);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS n FROM task_launch_intents WHERE task_id=$1",
+        [taskId],
+      )
+    ).rows[0].n,
+  ).toBe(0);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS n FROM token_audit_log WHERE token_id=$1",
+        [issued.tokenId],
+      )
+    ).rows[0].n,
+  ).toBe(0);
+
+  const receipt = await acceptTokenTaskLaunch(
+    database.db,
+    principal,
+    input,
+    key,
+    { recordSuccessAudit: audit },
+  );
+
+  expect(
+    await acceptTokenTaskLaunch(database.db, principal, input, key, {
+      recordSuccessAudit: audit,
+    }),
+  ).toEqual(receipt);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS n FROM task_launch_intents WHERE task_id=$1",
+        [taskId],
+      )
+    ).rows[0].n,
+  ).toBe(1);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS n FROM token_audit_log WHERE token_id=$1",
+        [issued.tokenId],
+      )
+    ).rows[0].n,
+  ).toBe(2);
 });
 
 it("LA07 verifies a real user token without treating its owner as a human launch, and refuses revoked receipt replay", async () => {

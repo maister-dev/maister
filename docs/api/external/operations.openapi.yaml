@@ -4953,7 +4953,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/ExtErrorBody"
         "503":
-          description: No acceptance when storage is unavailable; replay the same key after recovery.
+          description:
+            Storage is unavailable. Replay the same key after recovery; a lost commit acknowledgement
+            may have left a durable intent. Never create a different key merely because this response
+            could not confirm acceptance.
           content:
             application/json:
               schema:

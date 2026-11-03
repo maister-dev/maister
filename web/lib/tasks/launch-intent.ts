@@ -108,6 +108,11 @@ export type LaunchAcceptanceAuthority = Readonly<{
     task: typeof tasks.$inferSelect,
     settings: TaskLaunchSettingsSnapshot,
   ) => Promise<TaskLaunchBasis>;
+  recordSuccessAudit?: (db: Db, receipt: TaskLaunchReceipt) => Promise<void>;
+}>;
+
+export type TaskLaunchAuditContext = Readonly<{
+  recordSuccessAudit: (db: Db, receipt: TaskLaunchReceipt) => Promise<void>;
 }>;
 
 export function taskLaunchPayloadDigest(
@@ -182,7 +187,12 @@ export type PreparedTaskLaunch = Readonly<{
 }>;
 export type TaskLaunchPreparationOutcome =
   | PreparedTaskLaunch
-  | Readonly<{ kind: "replayed"; receipt: TaskLaunchReceipt }>;
+  | Readonly<{
+      kind: "replayed";
+      receipt: TaskLaunchReceipt;
+      projectId: string;
+      payloadDigest: string;
+    }>;
 
 /** Resolve read-only Git facts before any acceptance/replacement transaction. */
 export async function prepareTaskLaunchRequest(
@@ -216,7 +226,13 @@ export async function prepareTaskLaunchRequest(
     payloadDigest,
   );
 
-  if (replay) return { kind: "replayed", receipt: replay };
+  if (replay)
+    return {
+      kind: "replayed",
+      receipt: replay,
+      projectId: initial.project.id,
+      payloadDigest,
+    };
   if (initial.task.revision !== request.expectedTaskRevision)
     throw launchRefusal("launch_input_changed");
   const resolved = await resolveFlowLaunchSettings(
@@ -326,7 +342,11 @@ export async function applyPreparedTaskLaunch(
     payloadDigest,
   );
 
-  if (existing) return existing;
+  if (existing) {
+    await authority.recordSuccessAudit?.(tx, existing);
+
+    return existing;
+  }
   const [reserved] = await tx
     .select({ id: taskLaunchIntents.id })
     .from(taskLaunchIntents)
@@ -467,7 +487,11 @@ export async function applyPreparedTaskLaunch(
     "task-launch-accepted",
   );
 
-  return taskLaunchReceipt(accepted);
+  const receipt = taskLaunchReceipt(accepted);
+
+  await authority.recordSuccessAudit?.(tx, receipt);
+
+  return receipt;
 }
 
 export async function acceptTaskLaunch(
@@ -490,9 +514,26 @@ export async function acceptTaskLaunch(
       requestKey,
     );
 
-    return prepared.kind === "replayed"
-      ? prepared.receipt
-      : await commitPreparedTaskLaunch(db, prepared);
+    if (prepared.kind === "prepared")
+      return await commitPreparedTaskLaunch(db, prepared);
+
+    return await db.transaction(async (tx) => {
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(1818326382, hashtext(${`${authority.principalKind}:${authority.principalId}:${prepared.projectId}:${authority.operation}:${requestKey}`}))`,
+      );
+      const replay = await replayTaskLaunch(
+        tx,
+        authority,
+        prepared.projectId,
+        requestKey,
+        prepared.payloadDigest,
+      );
+
+      if (!replay) throw launchRefusal("launch_state_changed");
+      await authority.recordSuccessAudit?.(tx, replay);
+
+      return replay;
+    });
   } catch (error) {
     const context = {
       taskId: request.taskId,
@@ -533,6 +574,7 @@ export async function acceptTokenTaskLaunch(
   principal: TokenTaskLaunchPrincipal,
   request: TaskLaunchRequest,
   requestKey: string,
+  audit?: TaskLaunchAuditContext,
 ): Promise<TaskLaunchReceipt> {
   assertTokenTaskLaunchPrincipal(principal);
   log.debug(
@@ -584,6 +626,7 @@ export async function acceptTokenTaskLaunch(
         ...(await armedAutomaticTaskLaunchBasis(tx, task, settings)),
         origin: principal.origin,
       }),
+      recordSuccessAudit: audit?.recordSuccessAudit,
     },
     request,
     requestKey,
