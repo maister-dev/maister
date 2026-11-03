@@ -1174,18 +1174,34 @@ describe("agent-question lifecycle (ADR-136, integration)", () => {
     );
 
     const events = await db
-      .select({ kind: schema.domainEvents.kind })
+      .select({
+        kind: schema.domainEvents.kind,
+        payload: schema.domainEvents.payload,
+      })
       .from(schema.domainEvents)
       .where(
         and(
           eq(schema.domainEvents.taskId, seeded.taskId),
           gt(schema.domainEvents.id, beforeAnswer),
         ),
-      );
+      )
+      .orderBy(schema.domainEvents.id);
 
-    expect(events).toEqual([
+    expect(events.map(({ kind }) => ({ kind }))).toEqual([
+      { kind: "task.qualification_changed" },
       { kind: "task.triage_requeued" },
       { kind: "task.clarification_answered" },
     ]);
+    const [task] = await db
+      .select({ inputRevision: schema.tasks.qualificationInputRevision })
+      .from(schema.tasks)
+      .where(eq(schema.tasks.id, seeded.taskId));
+
+    expect(events[0].payload).toEqual({
+      projectId: seeded.projectId,
+      taskId: seeded.taskId,
+      inputRevision: task.inputRevision,
+      qualificationRevision: null,
+    });
   });
 });

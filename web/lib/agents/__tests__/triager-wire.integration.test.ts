@@ -40,6 +40,10 @@ import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import { registerPackageAgents } from "@/lib/agents/registry";
 import { actorForUserId } from "@/lib/social/activity";
 import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
+import { initRepo } from "@/test-support/git-fixture";
+import { qualificationFixture } from "@/test-support/task-qualification";
+import { prepareTaskQualification } from "@/lib/tasks/qualification";
+import { applyTriageFlag, sendTaskToTriage } from "@/lib/services/triage";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -60,6 +64,7 @@ let db: NodePgDatabase;
 let cacheRoot: string;
 let worktreesTmp: string;
 let originalWorktreesRoot: string | undefined;
+const assessmentUserId = randomUUID();
 
 let triggers: typeof import("@/lib/agents/triggers");
 let applyTriageVerdict: typeof import("@/lib/services/triage").applyTriageVerdict;
@@ -83,6 +88,10 @@ beforeAll(async () => {
 
   pool = testDatabase.pool;
   db = testDatabase.db;
+  await pool.query(
+    "INSERT INTO users(id,email,role,account_status,must_change_password) VALUES($1,$2,'admin','active',false)",
+    [assessmentUserId, `${assessmentUserId}@test.local`],
+  );
   // ADR-166: every launch places the run on the local execution host.
   await fakeExecutionHosts(db);
 
@@ -122,10 +131,11 @@ beforeEach(async () => {
 
   projectId = randomUUID();
   executorId = randomUUID();
+  const repoPath = await initRepo(path.join(cacheRoot, `repo-${projectId}`));
 
   await pool.query(
     `INSERT INTO "projects" ("id", "slug", "name", "repo_path", "main_branch", "branch_prefix", "maister_yaml_path", "task_key", "next_task_number")
-     VALUES ($1, $2, 'P', '/tmp/wire-repo', 'main', 'maister/', '/tmp/maister.yaml', $3, 1)`,
+     VALUES ($1, $2, 'P', $4, 'main', 'maister/', '/tmp/maister.yaml', $3, 1)`,
     [
       projectId,
       `p-${projectId.slice(0, 8)}`,
@@ -133,6 +143,7 @@ beforeEach(async () => {
         .replace(/[^0-9A-Za-z]/g, "")
         .slice(0, 7)
         .toUpperCase()}`,
+      repoPath,
     ],
   );
 
@@ -347,7 +358,7 @@ describe("(a) task.created -> agent_triggers consumer enqueues a triager run", (
 });
 
 describe("(b) triager verdict + enqueue -> auto_launch_triaged tick launches a flow run", () => {
-  it("applyTriageVerdict(enqueue) stamps triaged+auto and the tick launches the flow run", async () => {
+  it("a legacy enqueue proposal needs explicit current qualification before the tick launches the selected Flow", async () => {
     const taskId = await seedTask();
 
     // Simulate the triager recording its verdict with enqueue:true (the same op
@@ -378,6 +389,53 @@ describe("(b) triager verdict + enqueue -> auto_launch_triaged tick launches a f
     expect(task.launch_mode).toBe("auto");
     expect(task.flow_id).toBe(flowId);
 
+    const unqualifiedLaunch = vi.fn(async () => ({
+      runId: randomUUID(),
+      status: "Running" as const,
+    }));
+    const unqualified = await runAutoLaunchTriagedJob({
+      db,
+      launch: unqualifiedLaunch,
+    });
+
+    expect(unqualified.launched).toBe(0);
+    expect(unqualifiedLaunch).not.toHaveBeenCalled();
+    await sendTaskToTriage(
+      {
+        taskId,
+        projectId,
+        taskRef: "Fixture-1",
+        title: "Qualified automatic delivery",
+        actor: { type: "user", id: assessmentUserId },
+      },
+      testDatabase.db,
+    );
+    const current = await pool.query(
+      "SELECT qualification_input_revision FROM tasks WHERE id=$1",
+      [taskId],
+    );
+
+    const assessment = await prepareTaskQualification(testDatabase.db, {
+      projectId,
+      taskId,
+      author: {
+        kind: "user",
+        identity: assessmentUserId,
+        userId: assessmentUserId,
+      },
+      request: {
+        requestKey: randomUUID(),
+        expectedInputRevision: current.rows[0].qualification_input_revision,
+        expectedQualificationRevision: null,
+        qualification: qualificationFixture(),
+        flowId,
+        runnerId: executorId,
+        enqueue: true,
+      },
+    });
+
+    await testDatabase.db.transaction(assessment.apply);
+
     // The tick runs with an injected launch (no real git/supervisor) and picks
     // up the candidate.
     const launches: Array<{ taskId: string | undefined }> = [];
@@ -398,11 +456,12 @@ describe("(b) triager verdict + enqueue -> auto_launch_triaged tick launches a f
   it("a flagged task is NOT launched by the tick (held)", async () => {
     const taskId = await seedTask();
 
-    // The triager flagged the task instead of triaging — set the state the flag
-    // op produces (flagged, no enqueue).
-    await pool.query(
-      `UPDATE "tasks" SET "triage_status" = 'flagged' WHERE "id" = $1`,
-      [taskId],
+    await db.transaction((tx) =>
+      applyTriageFlag(tx, {
+        taskId,
+        projectId,
+        actor: actorForUserId(null),
+      }),
     );
 
     const launches: string[] = [];

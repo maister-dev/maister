@@ -23,7 +23,7 @@ the failed teardown remains a defect to correct, not a green cleanup result.
 - [x] Repair the scoped session-probe fixture and its false-positive network
   assertion. Replace duplicated generic race claims with actual reconcile and
   scheduler/Recover entry checks against the existing shared serializer.
-- [ ] Declare current writers on current-schema test connections, retain
+- [x] Declare current writers on current-schema test connections, retain
   historical-upgrade evidence, and provide explicit flag provenance. Repair
   remaining service/evaluation/GC fixtures or proven production defects without
   weakening admission, process-quiescence or immutable-input protections.
