@@ -3624,6 +3624,8 @@ table brain_index_jobs {
 }
 
 table brain_items {
+  source_acl_key text [not null, default: '74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b']
+  source_restrictions jsonb
   id text [pk, not null]
   project_id text
   company_id text
@@ -3743,6 +3745,7 @@ table brain_record_grants {
 }
 
 table brain_record_revisions {
+  source_restrictions jsonb
   record_id text [not null]
   revision integer [not null]
   assertion text [not null]
@@ -3792,7 +3795,21 @@ table brain_snapshots {
   created_at "timestamp with time zone" [not null, default: `now()`]
 }
 
+table brain_source_submissions {
+  id text [pk, not null, default: `gen_random_uuid()::text`]
+  project_id text
+  company_id text
+  principal_key text [not null]
+  delivery_key text [not null]
+  request_digest text [not null]
+  source_id text [not null]
+  witness_id text [not null]
+  attribution jsonb [not null]
+  received_at "timestamp with time zone" [not null, default: `now()`]
+}
+
 table brain_sources {
+  source_restrictions jsonb
   id text [pk, not null]
   project_id text
   company_id text

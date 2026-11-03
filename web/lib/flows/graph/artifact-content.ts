@@ -9,6 +9,7 @@ import path from "node:path";
 import { and, eq } from "drizzle-orm";
 import pino from "pino";
 
+import { truncateUtf8 } from "@/lib/utf8";
 import * as schemaModule from "@/lib/db/schema";
 import { readRuntimeObjectContent } from "@/lib/execution-host/runtime-objects";
 import { MaisterError } from "@/lib/errors";
@@ -325,21 +326,6 @@ export function artifactContentToTemplateText(
         `artifact "${artifactId}" body not found — cannot inject content`,
       );
   }
-}
-
-// UTF-8-boundary-safe byte truncation. Returns the largest prefix whose UTF-8
-// encoding is <= maxBytes without splitting a multibyte sequence.
-export function boundArtifactText(
-  text: string,
-  maxBytes: number,
-): { text: string; truncated: boolean } {
-  if (Buffer.byteLength(text, "utf8") <= maxBytes)
-    return { text, truncated: false };
-
-  const buf = Buffer.alloc(maxBytes);
-  const bytesWritten = buf.write(text, 0, maxBytes, "utf8");
-
-  return { text: buf.toString("utf8", 0, bytesWritten), truncated: true };
 }
 
 // D3: cap a resolved body for prompt injection. Byte-bounded by `maxBytes`

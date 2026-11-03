@@ -1,10 +1,11 @@
 import "server-only";
 
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 
 import { z } from "zod";
 
 import { MaisterError } from "@/lib/errors";
+import { cursorSignature } from "@/lib/cursor-signature";
 
 const cursorSchema = z.tuple([
   z.literal(1),
@@ -19,20 +20,6 @@ export type AgentActivityCursor = {
   at: string;
   id: string;
 };
-
-function cursorSignature(payload: string): Buffer {
-  const secret = process.env.AUTH_SECRET;
-
-  if (!secret)
-    throw new MaisterError(
-      "CONFIG",
-      "AUTH_SECRET is required to sign agent history cursors",
-    );
-
-  return createHmac("sha256", secret)
-    .update(`maister.agent-activity.v1:${payload}`)
-    .digest();
-}
 
 function cursorScope(scope: string): string {
   return createHash("sha256")
@@ -50,7 +37,7 @@ export function encodeAgentActivityCursor(
     JSON.stringify([1, cursorScope(scope), cursor.upper, cursor.at, cursor.id]),
   ).toString("base64url");
 
-  return `${payload}.${cursorSignature(payload).toString("base64url")}`;
+  return `${payload}.${cursorSignature("maister.agent-activity.v1", payload).toString("base64url")}`;
 }
 
 export function decodeAgentActivityCursor(
@@ -66,7 +53,7 @@ export function decodeAgentActivityCursor(
   ) {
     throw new MaisterError("CONFIG", "Invalid agent history cursor");
   }
-  const expected = cursorSignature(parts[0]);
+  const expected = cursorSignature("maister.agent-activity.v1", parts[0]);
   const signature = Buffer.from(parts[1], "base64url");
 
   if (

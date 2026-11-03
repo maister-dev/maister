@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { KnowledgeDraft } from "./knowledge-types";
-import type { Owner } from "@/lib/company/types";
+import type { Owner, KnowledgeAccessRestriction } from "@/lib/company/types";
 import type { KnowledgeAttribution, KnowledgeFreshness } from "./record-types";
 
 import { sql } from "drizzle-orm";
@@ -53,6 +53,14 @@ export const vector = customType<{ data: number[]; driverData: string }>({
 });
 
 export const brainItems = pgTable("brain_items", {
+  sourceAclKey: text("source_acl_key")
+    .notNull()
+    .default(
+      "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+    ),
+  sourceRestrictions: jsonb("source_restrictions").$type<
+    readonly KnowledgeAccessRestriction[] | null
+  >(),
   id: text("id").primaryKey(),
   projectId: text("project_id"),
   companyId: text("company_id"),
@@ -96,6 +104,9 @@ export const brainItems = pgTable("brain_items", {
 });
 
 export const brainSources = pgTable("brain_sources", {
+  sourceRestrictions: jsonb("source_restrictions").$type<
+    readonly KnowledgeAccessRestriction[] | null
+  >(),
   id: text("id").primaryKey(),
   projectId: text("project_id"),
   companyId: text("company_id"),
@@ -384,6 +395,9 @@ export const brainProposals = pgTable("brain_proposals", {
 export const brainRecordRevisions = pgTable(
   "brain_record_revisions",
   {
+    sourceRestrictions: jsonb("source_restrictions").$type<
+      readonly KnowledgeAccessRestriction[] | null
+    >(),
     recordId: text("record_id").notNull(),
     revision: integer("revision").notNull(),
     assertion: text("assertion").notNull(),
@@ -543,6 +557,23 @@ export const brainKnowledgeSubmissions = pgTable(
       .defaultNow(),
   },
 );
+
+export const brainSourceSubmissions = pgTable("brain_source_submissions", {
+  id: text("id")
+    .primaryKey()
+    .default(sql`gen_random_uuid()::text`),
+  projectId: text("project_id"),
+  companyId: text("company_id"),
+  principalKey: text("principal_key").notNull(),
+  deliveryKey: text("delivery_key").notNull(),
+  requestDigest: text("request_digest").notNull(),
+  sourceId: text("source_id").notNull(),
+  witnessId: text("witness_id").notNull(),
+  attribution: jsonb("attribution").$type<KnowledgeAttribution>().notNull(),
+  receivedAt: timestamp("received_at", { withTimezone: true, mode: "date" })
+    .notNull()
+    .defaultNow(),
+});
 
 export const brainConfirmations = pgTable("brain_confirmations", {
   decisionSequence: bigint("decision_sequence", { mode: "bigint" })

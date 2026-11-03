@@ -5322,15 +5322,15 @@ paths:
   /api/v1/ext/knowledge:
     get:
       operationId: extKnowledgeSearch
-      summary: Designed — Search accessible owned records
-      description: Designed; no implementation is implied. Requires current knowledge:read. URL identifiers are
+      summary: Search accessible owned records
+      description: Implemented native read/capture boundary. Requires current knowledge:read. URL identifiers are
         untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
         target endpoint and execution ownership are derived from authenticated context/server state. Writes
         compare canonical payload digest and expected revision; exact replay returns the original currently
         accessible receipt, changed payload conflicts. Existing external-handler CONFIG/JSON/schema failures are
         422; PRECONDITION/CONFLICT remain 409. Scope authorization plus required transactional token audit
         apply.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       x-required-scope: knowledge:read
       responses:
         "200":
@@ -5427,15 +5427,15 @@ paths:
   /api/v1/ext/knowledge/{recordId}:
     get:
       operationId: extKnowledgeGet
-      summary: Designed — Inspect exact record revision
-      description: Designed; no implementation is implied. Requires current knowledge:read. URL identifiers are
+      summary: Inspect exact record revision
+      description: Implemented native read/capture boundary. Requires current knowledge:read. URL identifiers are
         untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
         target endpoint and execution ownership are derived from authenticated context/server state. Writes
         compare canonical payload digest and expected revision; exact replay returns the original currently
         accessible receipt, changed payload conflicts. Existing external-handler CONFIG/JSON/schema failures are
         422; PRECONDITION/CONFLICT remain 409. Scope authorization plus required transactional token audit
         apply.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       x-required-scope: knowledge:read
       responses:
         "200":
@@ -5474,20 +5474,20 @@ paths:
           schema:
             type: integer
             minimum: 1
-            maximum: 9007199254740991
+            maximum: 2147483647
           description: Exact accepted revision; absent selects current authorized head.
   /api/v1/ext/knowledge/{recordId}/evidence:
     get:
       operationId: extKnowledgeEvidence
-      summary: Designed — Inspect exact authorized evidence
-      description: Designed; no implementation is implied. Requires current knowledge:read. URL identifiers are
+      summary: Inspect exact authorized evidence
+      description: Implemented native read/capture boundary. Requires current knowledge:read. URL identifiers are
         untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
         target endpoint and execution ownership are derived from authenticated context/server state. Writes
         compare canonical payload digest and expected revision; exact replay returns the original currently
         accessible receipt, changed payload conflicts. Existing external-handler CONFIG/JSON/schema failures are
         422; PRECONDITION/CONFLICT remain 409. Scope authorization plus required transactional token audit
         apply.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       x-required-scope: knowledge:read
       responses:
         "200":
@@ -5535,18 +5535,22 @@ paths:
             minimum: 1
             maximum: 50
             default: 20
+        - name: revision
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 2147483647}
+          description: Exact accepted revision. Continuations retain the first page's revision.
   /api/v1/ext/knowledge/sources:
     post:
       operationId: extKnowledgeCaptureSource
-      summary: Designed — Capture bounded submitted source content
-      description: Designed; no implementation is implied. Requires current knowledge:propose. URL identifiers are
+      summary: Capture bounded submitted source content
+      description: Implemented native read/capture boundary. Requires current knowledge:propose. URL identifiers are
         untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
         target endpoint and execution ownership are derived from authenticated context/server state. Writes
         compare canonical payload digest and expected revision; exact replay returns the original currently
         accessible receipt, changed payload conflicts. Existing external-handler CONFIG/JSON/schema failures are
         422; PRECONDITION/CONFLICT remain 409. Scope authorization plus required transactional token audit
         apply.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       x-required-scope: knowledge:propose
       requestBody:
         required: true
@@ -6805,6 +6809,69 @@ paths:
             type: string
             minLength: 1
             maxLength: 128
+  /api/v1/ext/knowledge/{recordId}/conflicts:
+    get:
+      operationId: extKnowledgeEvidence
+      summary: Inspect authorized unresolved conflict references
+      description: Implemented native read/capture boundary. Requires current knowledge:read. URL identifiers are
+        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
+        target endpoint and execution ownership are derived from authenticated context/server state. Writes
+        compare canonical payload digest and expected revision; exact replay returns the original currently
+        accessible receipt, changed payload conflicts. Existing external-handler CONFIG/JSON/schema failures are
+        422; PRECONDITION/CONFLICT remain 409. Scope authorization plus required transactional token audit
+        apply.
+      x-implementation-status: Implemented
+      x-required-scope: knowledge:read
+      responses:
+        "200":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBKnowledgeConflictPage"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "422":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - projectToken: []
+      parameters:
+        - name: recordId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: URL selector resolved and authorized against server state; no filesystem path.
+        - name: cursor
+          in: query
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2048
+          description: Opaque owner/filter/current-access-bound keyset cursor.
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+        - name: revision
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 2147483647}
+          description: Exact accepted revision. The record head must still match the authorized conflict cursor.
 
 components:
   securitySchemes:
@@ -12670,7 +12737,7 @@ components:
         items:
           type: array
           items:
-            $ref: "#/components/schemas/CBKnowledgeRecord"
+            $ref: "#/components/schemas/CBKnowledgeSummary"
           maxItems: 50
         nextCursor:
           type: string
@@ -12686,11 +12753,13 @@ components:
         - revision
         - title
         - assertion
+        - assertionTruncated
         - kind
         - basis
         - lifecycle
         - visibility
         - evidence
+        - missingEvidence
         - confirmation
         - attribution
         - freshness
@@ -12716,6 +12785,9 @@ components:
           type: string
           minLength: 1
           maxLength: 32000
+        assertionTruncated:
+          type: boolean
+          description: True only when an oversized legacy assertion is displayed as an explicit prefix; retained original bytes and identity are unchanged.
         kind:
           type: string
           enum:
@@ -12747,8 +12819,23 @@ components:
         evidence:
           type: array
           items:
-            $ref: "#/components/schemas/CBRecordEvidence"
+            $ref: "#/components/schemas/CBRecordEvidenceSummary"
           maxItems: 64
+        missingEvidence:
+          type: array
+          maxItems: 32
+          items:
+            type: object
+            additionalProperties: false
+            required: [state, reason]
+            properties:
+              state:
+                type: string
+                enum: [absent, stale, missing, inaccessible, unknown]
+              reason:
+                type: string
+                minLength: 1
+                maxLength: 1000
         confirmation:
           type: object
           additionalProperties: false
@@ -12898,6 +12985,7 @@ components:
               type: string
               minLength: 1
               maxLength: 128
+              pattern: '^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$'
         - type: object
           additionalProperties: false
           required:
@@ -12912,6 +13000,7 @@ components:
               type: string
               minLength: 1
               maxLength: 128
+              pattern: '^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$'
     CBEvidenceWitness:
       type: object
       additionalProperties: false
@@ -12927,6 +13016,8 @@ components:
         - sourceAt
         - independenceGroupId
         - attribution
+        - excerpt
+        - excerptTruncated
       properties:
         id:
           type: string
@@ -12976,6 +13067,14 @@ components:
           nullable: true
         attribution:
           $ref: "#/components/schemas/CBActor"
+        excerpt:
+          type: string
+          nullable: true
+          maxLength: 8192
+          description: Bounded bytes decoded from the authorized immutable capture; null when no retained capture is available. Never reconstructed by a model.
+        excerptTruncated:
+          type: boolean
+          description: True when the full captured content exceeds the returned excerpt; the witness digest still identifies the full capture.
     CBActor:
       type: object
       additionalProperties: false
@@ -13039,14 +13138,17 @@ components:
           type: string
           minLength: 1
           maxLength: 256
+          pattern: '^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$'
         content:
           type: string
           minLength: 1
           maxLength: 32000
+          pattern: '^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$'
         reportedSourceVersion:
           type: string
           minLength: 1
           maxLength: 256
+          pattern: '^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$'
         idempotencyKey:
           type: string
           minLength: 8
@@ -14839,15 +14941,19 @@ components:
         reference:
           $ref: "#/components/schemas/CBRef"
     CBRecordEvidence:
-      type: object
-      additionalProperties: false
-      required: [relation, witness]
-      properties:
-        relation:
-          type: string
-          enum: [supports, contradicts, derived_from, refines, references]
-        witness:
-          $ref: "#/components/schemas/CBEvidenceWitness"
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [relation, witness]
+          properties:
+            relation: {type: string, enum: [supports, contradicts, derived_from, refines, references]}
+            witness: {$ref: "#/components/schemas/CBEvidenceWitness"}
+        - type: object
+          additionalProperties: false
+          required: [relation, unavailable]
+          properties:
+            relation: {type: string, enum: [supports, contradicts, derived_from, refines, references]}
+            unavailable: {$ref: "#/components/schemas/CBUnavailableEvidence"}
     CBRecordEvidencePage:
       type: object
       additionalProperties: false
@@ -14865,5 +14971,136 @@ components:
           minLength: 1
           maxLength: 2048
           nullable: true
+    CBRecordEvidenceSummary:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [relation, witness]
+          properties:
+            relation: {type: string, enum: [supports, contradicts, derived_from, refines, references]}
+            witness: {$ref: "#/components/schemas/CBEvidenceWitnessSummary"}
+        - type: object
+          additionalProperties: false
+          required: [relation, unavailable]
+          properties:
+            relation: {type: string, enum: [supports, contradicts, derived_from, refines, references]}
+            unavailable: {$ref: "#/components/schemas/CBUnavailableEvidence"}
+    CBUnavailableEvidence:
+      type: object
+      additionalProperties: false
+      required: [state, reason]
+      properties:
+        state: {type: string, enum: [missing, inaccessible, unknown]}
+        reason: {type: string, minLength: 1, maxLength: 1000}
+    CBKnowledgeConflictPage:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          maxItems: 50
+          items: {$ref: "#/components/schemas/CBKnowledgeConflict"}
+        nextCursor: {type: string, minLength: 1, maxLength: 2048, nullable: true}
+    CBKnowledgeConflict:
+      type: object
+      additionalProperties: false
+      required: [edgeId, classification, reference]
+      properties:
+        edgeId: {type: string, minLength: 1, maxLength: 128}
+        classification: {type: string, enum: [potential_conflict, declared_conflict]}
+        reference:
+          type: object
+          additionalProperties: false
+          required: [kind, id, revision]
+          properties:
+            kind: {type: string, enum: [knowledge]}
+            id: {type: string, minLength: 1, maxLength: 128}
+            revision: {type: integer, minimum: 1, maximum: 2147483647}
+            version: {type: string, minLength: 1, maxLength: 256}
+            sha256: {type: string, pattern: '^[a-f0-9]{64}$'}
+    CBKnowledgeSummary:
+      type: object
+      additionalProperties: false
+      required: [id, owner, revision, title, assertionPreview, assertionTruncated, kind, basis, lifecycle, visibility, confirmationState, freshnessState, conflict, updatedAt]
+      properties:
+        id: {type: string, minLength: 1, maxLength: 128}
+        owner: {$ref: "#/components/schemas/CBOwner"}
+        revision: {type: integer, minimum: 1, maximum: 2147483647}
+        title: {type: string, minLength: 1, maxLength: 256}
+        assertionPreview: {type: string, maxLength: 1000}
+        assertionTruncated: {type: boolean}
+        kind: {type: string, enum: [assertion, observation, decision, procedure, lesson, state_fact, direction]}
+        basis: {type: string, enum: [observed, inferred, unknown]}
+        lifecycle: {type: string, enum: [active, expired, superseded, withdrawn]}
+        visibility: {type: string, enum: [owner_grants, restricted]}
+        confirmationState: {type: string, enum: [unconfirmed, confirmed, revoked]}
+        freshnessState: {type: string, enum: [current, stale, unknown]}
+        conflict: {$ref: "#/components/schemas/CBKnowledgeRecord/properties/conflict"}
+        updatedAt: {type: string, format: date-time}
+    CBEvidenceWitnessSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - sourceId
+        - sourceVersion
+        - sha256
+        - selector
+        - availability
+        - capturedAt
+        - observedAt
+        - sourceAt
+        - independenceGroupId
+        - attribution
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        sourceId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          nullable: true
+        sourceVersion:
+          type: string
+          minLength: 1
+          maxLength: 256
+          nullable: true
+        sha256:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+          nullable: true
+        selector:
+          type: string
+          minLength: 0
+          maxLength: 512
+        availability:
+          type: string
+          enum:
+            - available
+            - stale
+            - missing
+            - inaccessible
+            - unknown
+        capturedAt:
+          type: string
+          format: date-time
+        observedAt:
+          type: string
+          format: date-time
+          nullable: true
+        sourceAt:
+          type: string
+          format: date-time
+          nullable: true
+        independenceGroupId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          nullable: true
+        attribution:
+          $ref: "#/components/schemas/CBActor"
 
 # Scheduled request privacy: runs:read and MCP run_get/run_collect never expose raw scheduled requests or request snapshots. No schedule CRUD scope or tool is added.

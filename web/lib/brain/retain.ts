@@ -134,7 +134,7 @@ export async function retain(
           const prior = await tx.execute(sql`
             SELECT id FROM brain_items
             WHERE project_id = ${projectId}
-              AND source_domain_event_id = ${provenance.sourceDomainEventId} AND visibility = 'owner_grants'
+              AND source_domain_event_id = ${provenance.sourceDomainEventId} AND visibility = 'owner_grants' AND (source_restrictions IS NULL OR source_restrictions='[]'::jsonb)
             LIMIT 1
           `);
 
@@ -149,7 +149,7 @@ export async function retain(
       const dup = await tx.execute(sql`
         SELECT id FROM brain_items
         WHERE project_id = ${projectId} AND content_hash = ${contentHash}
-          AND status = 'active' AND visibility = 'owner_grants'
+          AND status = 'active' AND visibility = 'owner_grants' AND (source_restrictions IS NULL OR source_restrictions='[]'::jsonb)
         LIMIT 1
       `);
 
@@ -166,7 +166,7 @@ export async function retain(
                MIN((e.vector::vector(${dimRaw})) <=> ${queryVec}::vector(${dimRaw})) AS dist
         FROM brain_embeddings e
         JOIN brain_items i ON i.id = e.item_id
-        WHERE i.project_id = ${projectId} AND i.status = 'active' AND i.visibility = 'owner_grants'
+        WHERE i.project_id = ${projectId} AND i.status = 'active' AND i.visibility = 'owner_grants' AND (i.source_restrictions IS NULL OR i.source_restrictions='[]'::jsonb)
           AND i.kind = ${kind}
           AND e.embedding_model = ${client.model}
           AND e.embedding_dimensions = ${n}
@@ -226,7 +226,7 @@ export async function retain(
           SELECT ${randomUUID()},${projectId},${JSON.stringify({ type: "item", id: itemId })}::jsonb,
             ${JSON.stringify({ type: "item", id: potentialConflict.id })}::jsonb,'references',0,'potential_conflict',1,${potentialConflict.revision},
             '{"kind":"system","id":"similarity_candidate","runId":null,"attemptId":null}'::jsonb
-          FROM brain_items WHERE id=${potentialConflict.id} AND project_id=${projectId} AND visibility='owner_grants'
+          FROM brain_items WHERE id=${potentialConflict.id} AND project_id=${projectId} AND visibility='owner_grants' AND (source_restrictions IS NULL OR source_restrictions='[]'::jsonb)
         `);
         log.debug(
           { projectId, itemId, candidateId: potentialConflict.id },
@@ -250,7 +250,7 @@ export async function retain(
       const existing = await db.execute(sql`
         SELECT id FROM brain_items
         WHERE project_id = ${projectId} AND content_hash = ${contentHash}
-          AND status = 'active' AND visibility = 'owner_grants'
+          AND status = 'active' AND visibility = 'owner_grants' AND (source_restrictions IS NULL OR source_restrictions='[]'::jsonb)
         LIMIT 1
       `);
 

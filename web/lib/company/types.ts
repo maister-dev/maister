@@ -1,31 +1,51 @@
 import { z } from "zod";
 
+import { postgresTextSchema } from "@/lib/text-schema";
+
 export const ownerSchema = z.discriminatedUnion("kind", [
   z
     .object({
       kind: z.literal("company"),
-      companyId: z.string().min(1).max(128),
+      companyId: postgresTextSchema.min(1).max(128),
     })
     .strict(),
   z
     .object({
       kind: z.literal("project"),
-      projectId: z.string().min(1).max(128),
+      projectId: postgresTextSchema.min(1).max(128),
     })
     .strict(),
 ]);
 
 export type Owner = z.infer<typeof ownerSchema>;
 
+export const knowledgeAccessRestrictionSchema = z.union([
+  ownerSchema,
+  z
+    .object({
+      kind: z.literal("record"),
+      recordId: postgresTextSchema.min(1).max(128),
+    })
+    .strict(),
+]);
+export const knowledgeRestrictionsSchema = z
+  .array(knowledgeAccessRestrictionSchema)
+  .max(256);
+export type KnowledgeAccessRestriction = z.infer<
+  typeof knowledgeAccessRestrictionSchema
+>;
 /** Server-captured source restrictions on an existing run; NULL remains unknown. */
-export type KnowledgeAccessRestriction =
-  Owner | Readonly<{ kind: "record"; recordId: string }>;
-export type KnowledgeAccessCapture = Readonly<{
-  schemaVersion: 1;
-  state: "capturing" | "complete" | "unknown";
-  generation: number;
-  restrictions: readonly KnowledgeAccessRestriction[];
-}>;
+export const knowledgeAccessCaptureSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    state: z.enum(["capturing", "complete", "unknown"]),
+    generation: z.number().int().positive().max(2147483647),
+    restrictions: knowledgeRestrictionsSchema,
+  })
+  .strict();
+export type KnowledgeAccessCapture = Readonly<
+  z.infer<typeof knowledgeAccessCaptureSchema>
+>;
 
 export const COMPANY_ACTIONS = [
   "knowledge:read",

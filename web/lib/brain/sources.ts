@@ -478,7 +478,7 @@ export async function listBrainSources(
            count(c.id)::int AS chunk_count
     FROM brain_sources s
     LEFT JOIN brain_chunks c ON c.source_id = s.id
-    WHERE s.project_id = ${projectId}
+    WHERE s.project_id = ${projectId} AND s.chunker_id <> 'native_submission' AND (s.source_restrictions IS NULL OR s.source_restrictions='[]'::jsonb)
     GROUP BY s.id
     ORDER BY s.created_at ASC, s.path ASC
   `);
@@ -578,7 +578,7 @@ export async function updateBrainSource(
         chunker_version = ${BRAIN_SOURCE_CHUNKER_VERSION},
         enabled = ${input.enabled ?? current.enabled},
         updated_at = now()
-    WHERE id = ${args.sourceId} AND project_id = ${args.projectId}
+    WHERE id = ${args.sourceId} AND project_id = ${args.projectId} AND chunker_id <> 'native_submission' AND (source_restrictions IS NULL OR source_restrictions='[]'::jsonb)
   `);
 
   log.info(
@@ -601,7 +601,7 @@ export async function deleteBrainSource(
 ): Promise<void> {
   const deleted = await db.execute(sql`
     DELETE FROM brain_sources
-    WHERE id = ${args.sourceId} AND project_id = ${args.projectId}
+    WHERE id = ${args.sourceId} AND project_id = ${args.projectId} AND chunker_id <> 'native_submission' AND (source_restrictions IS NULL OR source_restrictions='[]'::jsonb)
     RETURNING id, kind, path
   `);
 
@@ -816,7 +816,7 @@ export async function seedDefaultBrainSourcesForFirstSetup(
   const existing = await db.execute(sql`
     SELECT id
     FROM brain_sources
-    WHERE project_id = ${projectId}
+    WHERE project_id = ${projectId} AND chunker_id <> 'native_submission' AND (source_restrictions IS NULL OR source_restrictions='[]'::jsonb)
     LIMIT 1
   `);
 
@@ -858,7 +858,7 @@ async function getBrainSource(
            count(c.id)::int AS chunk_count
     FROM brain_sources s
     LEFT JOIN brain_chunks c ON c.source_id = s.id
-    WHERE s.project_id = ${projectId} AND s.id = ${sourceId}
+    WHERE s.project_id = ${projectId} AND s.chunker_id <> 'native_submission' AND (s.source_restrictions IS NULL OR s.source_restrictions='[]'::jsonb) AND s.id = ${sourceId}
     GROUP BY s.id
   `);
   const row = rows.rows[0];

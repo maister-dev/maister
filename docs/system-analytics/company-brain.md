@@ -2,7 +2,7 @@
 
 ## Purpose
 
-**Designed — ADR-202.** Structured company/project knowledge extends Project Brain. This domain owns record identity, publication and confirmation; [evidence](company-brain-evidence.md) owns source witnesses. Personal librarian and private agent memory are separate stores.
+**Partially implemented — ADR-202.** Storage, internal review/confirmation policy, native session/bearer read APIs and the built MCP read/capture facade are implemented locally. Public review surfaces, launch-wide capture inheritance and the installable-package/pilot qualification remain pending. Structured company/project knowledge extends Project Brain. This domain owns record identity, publication and confirmation; [evidence](company-brain-evidence.md) owns source witnesses. Personal librarian and private agent memory are separate stores.
 
 ## Domain entities
 
@@ -72,7 +72,7 @@ sequenceDiagram
 | Freshness | source/observation/capture times remain distinct UTC values; freshness current/stale/unknown and applicability known/unknown plus limitations; absent observation is unknown |
 | Identity | stable item ID and positive integer revision; old revisions addressable under current access |
 | Bounds | title 1–256 characters; content 1–32000; proposal/review reason <=2000; query <=2000; <=10 tags of <=64 characters; <=64 evidence refs per revision |
-| Reads | default 20/max 50 records, <=256 KiB response; stable `(updatedAt,id)` cursor bound to owner/filter/access-policy digest; changed authorization invalidates cursor, never widens it |
+| Reads | default 20/max 50 records, <=128 KiB summary/evidence pages and <=512 KiB record detail; stable `(createdAt,id)` cursor bound to owner/filter/access-policy digest; changed authorization invalidates cursor, never widens it |
 
 ### Authority
 
@@ -133,3 +133,10 @@ DB changes are one transaction; the existing outbox publishes only after commit.
 - [ADR-202](../decisions.md#adr-202-company-ownership-and-evidence-linked-knowledge-revisions), [Company Brain persistence](../db/company-brain-domain.md).
 - [Evidence](company-brain-evidence.md), [Project Brain](project-brain.md), [web API](../api/web.openapi.yaml), [external operations](../api/external/operations.openapi.yaml).
 - Owning implementation: `web/lib/brain/`, `web/lib/authz.ts`, `web/lib/tokens/`, `mcp/src/`; separate [private agent memory](agent-memory.md) and [personal librarian memory](librarian-memory.md).
+
+
+## Native read and capture boundary (Implemented locally)
+
+`/api/knowledge` and `/api/v1/ext/knowledge` share current principal/owner/source-closure gates. Search uses literal text matching and stable creation-time/identity keysets. Signed cursors bind credentials, filters and the current principal authority snapshot; every page also resolves current object/source access. Exact record, evidence and conflict reads revalidate current head policy as well as retained revision restrictions. A project-limited user token cannot widen its resource boundary to company knowledge. Company operations do not require a project; the existing token audit records a nullable project identity.
+
+The MCP `knowledge_search`, `knowledge_get`, `knowledge_evidence`, `knowledge_conflicts` and `knowledge_capture_source` tools publish generated nested schemas from the native input contract, validate them before routing, and retain structured refusal reasons. They are excluded from the personal librarian toolset. Native agent disclosure commits the source-access union under the existing run lock before returning bytes; historical/unknown run capture profiles refuse this path. Compatible launch-profile creation and all derived-output guards belong to the following findings/runtime slices and are not yet qualified.

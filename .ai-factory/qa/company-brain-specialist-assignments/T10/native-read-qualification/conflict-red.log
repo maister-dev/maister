@@ -1,0 +1,77 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.5 /Users/kaa/.codex/worktrees/2599/mAIster/web
+
+{"level":30,"time":1793666233984,"pid":57213,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793666234022,"pid":57213,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-daemon-contact","outcome":"passed","durationMs":16,"serverVersion":"29.4.2","strategy":"ConfigurationStrategy","msg":"test container daemon contacted"}
+{"level":30,"time":1793666234022,"pid":57213,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"started","msg":"constructing test container runtime client"}
+{"level":30,"time":1793666234031,"pid":57213,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"passed","durationMs":9,"serverVersion":"29.4.2","msg":"test container runtime client ready"}
+{"level":30,"time":1793666234031,"pid":57213,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-create-start","preparationDurationMs":26,"storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"starting owned PostgreSQL container"}
+{"level":30,"time":1793666234917,"pid":57213,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-start","outcome":"passed","durationMs":885,"containerId":"f05e55c7938ee30ba24980dfbca627ca6abdde34df506f4c02eb3e2724ead621","storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"started owned PostgreSQL container"}
+{"level":30,"time":1793666234931,"pid":57213,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"bare","phase":"ready","durationMs":926,"containerId":"f05e55c7938ee30ba24980dfbca627ca6abdde34df506f4c02eb3e2724ead621","endpoint":"postgres://localhost:63842/native_knowledge_http","msg":"started bare test database"}
+{"level":30,"time":1793666235213,"pid":57213,"hostname":"MacBook-Pro-2.local","name":"test-database-migrations","migrationsFolder":"./lib/db/migrations","migrationsTable":"__drizzle_migrations","migrationCount":213,"querySubmissions":6,"durationMs":282,"msg":"applied test database migration lineage"}
+{"level":30,"time":1793666235247,"pid":57213,"hostname":"MacBook-Pro-2.local","name":"test-database-migrations","migrationsFolder":"./lib/db/brain-migrations","migrationsTable":"__drizzle_brain_migrations","migrationCount":10,"querySubmissions":6,"durationMs":34,"msg":"applied test database migration lineage"}
+{"level":30,"time":1793666235247,"pid":57213,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"main+brain","phase":"migrate","endpoint":"postgres://localhost:63842/native_knowledge_http","msg":"applied Brain test database migrations"}
+{"level":30,"time":1793666235533,"pid":57213,"hostname":"MacBook-Pro-2.local","name":"brain:source-capture","ownerKind":"company","ownerId":"3fbc584c-a7bd-4754-a431-881014f7628e","sourceId":"395dc23d-a9a6-461e-8f74-3f0dfd6412fc","witnessId":"7823108b-3a4c-4f96-a3a9-e44fe348c805","bytes":67,"duplicate":false,"msg":"source capture retained"}
+{"level":30,"time":1793666235547,"pid":57213,"hostname":"MacBook-Pro-2.local","name":"brain:knowledge","proposalId":"7a78791c-5a52-4aec-a647-f3bfb3f96848","ownerKind":"company","ownerId":"3fbc584c-a7bd-4754-a431-881014f7628e","actorId":"d4123559-669a-4d0e-beae-7ce7de8259f4","msg":"knowledge proposed"}
+{"level":30,"time":1793666235554,"pid":57213,"hostname":"MacBook-Pro-2.local","name":"brain:knowledge","recordId":"b9d57ea9-8cfa-49a0-a4be-1cce675b439c","revision":1,"priorRevision":null,"proposalId":"7a78791c-5a52-4aec-a647-f3bfb3f96848","actorId":"d4123559-669a-4d0e-beae-7ce7de8259f4","msg":"knowledge revision published"}
+{"level":30,"time":1793666235555,"pid":57213,"hostname":"MacBook-Pro-2.local","name":"brain:knowledge","proposalId":"7a78791c-5a52-4aec-a647-f3bfb3f96848","decision":"accept","expectedRevision":1,"policyId":"df7e486b-a533-40dc-a4cb-177c915293d5","recordId":"b9d57ea9-8cfa-49a0-a4be-1cce675b439c","msg":"knowledge proposal reviewed"}
+{"level":30,"time":1793666235927,"pid":57213,"hostname":"MacBook-Pro-2.local","name":"brain:source-capture","ownerKind":"company","ownerId":"3fbc584c-a7bd-4754-a431-881014f7628e","sourceId":"2073d7c2-30c8-445c-9cb9-03c17d06c5ec","witnessId":"802652cb-00b9-4e2c-8769-2910ee746d9f","bytes":12009,"duplicate":false,"msg":"source capture retained"}
+{"level":30,"time":1793666235934,"pid":57213,"hostname":"MacBook-Pro-2.local","name":"brain:source-capture","ownerKind":"company","ownerId":"3fbc584c-a7bd-4754-a431-881014f7628e","sourceId":"656e718c-ee33-4a21-b2f5-e89a79019c36","witnessId":"81244d34-1bcd-4bb6-bb45-f70a1f282f99","bytes":12009,"duplicate":false,"msg":"source capture retained"}
+{"level":30,"time":1793666235941,"pid":57213,"hostname":"MacBook-Pro-2.local","name":"brain:source-capture","ownerKind":"company","ownerId":"3fbc584c-a7bd-4754-a431-881014f7628e","sourceId":"0edab903-99b4-49bd-af03-e47dc44af6f4","witnessId":"731371b4-9707-4b8e-9601-5c13a6391b34","bytes":12009,"duplicate":false,"msg":"source capture retained"}
+{"level":30,"time":1793666235946,"pid":57213,"hostname":"MacBook-Pro-2.local","name":"brain:source-capture","ownerKind":"company","ownerId":"3fbc584c-a7bd-4754-a431-881014f7628e","sourceId":"068178de-68c6-4f23-8a95-421355d5ed6b","witnessId":"613857c3-596b-4e3e-9be4-844686b64274","bytes":12009,"duplicate":false,"msg":"source capture retained"}
+{"level":30,"time":1793666235950,"pid":57213,"hostname":"MacBook-Pro-2.local","name":"brain:source-capture","ownerKind":"company","ownerId":"3fbc584c-a7bd-4754-a431-881014f7628e","sourceId":"c73907ac-f60d-48bd-80c9-b297676fdccf","witnessId":"6fc0e877-746d-4975-b1ef-60aeec73ab09","bytes":12009,"duplicate":false,"msg":"source capture retained"}
+{"level":30,"time":1793666235954,"pid":57213,"hostname":"MacBook-Pro-2.local","name":"brain:source-capture","ownerKind":"company","ownerId":"3fbc584c-a7bd-4754-a431-881014f7628e","sourceId":"fd966d2b-8938-41a8-a1ba-054e88dee1d3","witnessId":"9e73b02b-d6b1-4088-85e5-8ccdc5fee14e","bytes":12009,"duplicate":false,"msg":"source capture retained"}
+{"level":30,"time":1793666235958,"pid":57213,"hostname":"MacBook-Pro-2.local","name":"brain:source-capture","ownerKind":"company","ownerId":"3fbc584c-a7bd-4754-a431-881014f7628e","sourceId":"e6f3cc46-1ba2-47a3-a4f9-63d63e08b1f6","witnessId":"796971ab-3509-46a6-920b-0cc4c1f2159f","bytes":12009,"duplicate":false,"msg":"source capture retained"}
+{"level":30,"time":1793666235963,"pid":57213,"hostname":"MacBook-Pro-2.local","name":"brain:source-capture","ownerKind":"company","ownerId":"3fbc584c-a7bd-4754-a431-881014f7628e","sourceId":"a702bfd8-1412-4d72-86ba-471a9cb45108","witnessId":"4d0cd7ce-0b93-46f4-90f8-e7ec04c4860c","bytes":12009,"duplicate":false,"msg":"source capture retained"}
+{"level":30,"time":1793666235967,"pid":57213,"hostname":"MacBook-Pro-2.local","name":"brain:source-capture","ownerKind":"company","ownerId":"3fbc584c-a7bd-4754-a431-881014f7628e","sourceId":"5d95b9d6-bfb2-4b1a-9aeb-8e6f81d510ae","witnessId":"661692d5-f3bb-48f9-aa79-6fccb5410ba2","bytes":12009,"duplicate":false,"msg":"source capture retained"}
+{"level":30,"time":1793666235971,"pid":57213,"hostname":"MacBook-Pro-2.local","name":"brain:source-capture","ownerKind":"company","ownerId":"3fbc584c-a7bd-4754-a431-881014f7628e","sourceId":"d32ae923-347c-48bd-b8d9-8db794f22833","witnessId":"ff836fd9-4e32-4fce-b5fe-afdd54759dfe","bytes":12009,"duplicate":false,"msg":"source capture retained"}
+{"level":30,"time":1793666235975,"pid":57213,"hostname":"MacBook-Pro-2.local","name":"brain:source-capture","ownerKind":"company","ownerId":"3fbc584c-a7bd-4754-a431-881014f7628e","sourceId":"39c64136-3f2c-438e-b17d-f2dc304901b9","witnessId":"51a48fed-5d23-4e61-991a-4f2120dc0729","bytes":12010,"duplicate":false,"msg":"source capture retained"}
+{"level":30,"time":1793666235979,"pid":57213,"hostname":"MacBook-Pro-2.local","name":"brain:source-capture","ownerKind":"company","ownerId":"3fbc584c-a7bd-4754-a431-881014f7628e","sourceId":"2756ab4a-05a8-406c-a4d1-4904ef8d801c","witnessId":"e9a491d4-f881-4f50-ad15-496053a28123","bytes":12010,"duplicate":false,"msg":"source capture retained"}
+{"level":30,"time":1793666235983,"pid":57213,"hostname":"MacBook-Pro-2.local","name":"brain:source-capture","ownerKind":"company","ownerId":"3fbc584c-a7bd-4754-a431-881014f7628e","sourceId":"0bdd8446-9842-40cc-984b-9653b50cb74e","witnessId":"6a14ea13-1db1-4bec-8133-d17d2b049b01","bytes":12010,"duplicate":false,"msg":"source capture retained"}
+{"level":30,"time":1793666235987,"pid":57213,"hostname":"MacBook-Pro-2.local","name":"brain:source-capture","ownerKind":"company","ownerId":"3fbc584c-a7bd-4754-a431-881014f7628e","sourceId":"aa76b23c-a1c0-4173-ab52-bdc954c2f594","witnessId":"cb237eca-f0e3-4cfd-99c4-31b3f29340a0","bytes":12010,"duplicate":false,"msg":"source capture retained"}
+{"level":30,"time":1793666235991,"pid":57213,"hostname":"MacBook-Pro-2.local","name":"brain:source-capture","ownerKind":"company","ownerId":"3fbc584c-a7bd-4754-a431-881014f7628e","sourceId":"27cbcdeb-250f-460f-87b6-38033d9e4486","witnessId":"8a2e6cf9-6c15-4f64-bf25-4384694841a7","bytes":12010,"duplicate":false,"msg":"source capture retained"}
+{"level":30,"time":1793666235995,"pid":57213,"hostname":"MacBook-Pro-2.local","name":"brain:source-capture","ownerKind":"company","ownerId":"3fbc584c-a7bd-4754-a431-881014f7628e","sourceId":"aeb06a71-43ee-4622-bbdd-6aee62e1d682","witnessId":"3d889540-81ec-4bcd-85c9-7d65f54a01b3","bytes":12010,"duplicate":false,"msg":"source capture retained"}
+{"level":30,"time":1793666235999,"pid":57213,"hostname":"MacBook-Pro-2.local","name":"brain:source-capture","ownerKind":"company","ownerId":"3fbc584c-a7bd-4754-a431-881014f7628e","sourceId":"aaddb13f-6e14-47a2-ba30-06cb0da94d6c","witnessId":"10a98a55-face-415d-abb9-c5617f37b6bc","bytes":12010,"duplicate":false,"msg":"source capture retained"}
+{"level":30,"time":1793666236002,"pid":57213,"hostname":"MacBook-Pro-2.local","name":"brain:source-capture","ownerKind":"company","ownerId":"3fbc584c-a7bd-4754-a431-881014f7628e","sourceId":"fe4727b3-7a09-40f6-a273-3086cfb65005","witnessId":"6de299ef-e009-431b-9b55-b39c9ac084a1","bytes":12010,"duplicate":false,"msg":"source capture retained"}
+{"level":30,"time":1793666236021,"pid":57213,"hostname":"MacBook-Pro-2.local","name":"brain:knowledge","proposalId":"2481fd2d-9db3-4b20-97ac-c51614b0e91e","ownerKind":"company","ownerId":"3fbc584c-a7bd-4754-a431-881014f7628e","actorId":"985a51c2-f142-4cff-94de-d1ca8126701c","msg":"knowledge proposed"}
+{"level":30,"time":1793666236043,"pid":57213,"hostname":"MacBook-Pro-2.local","name":"brain:knowledge","recordId":"37094fae-863d-4caf-86c7-2e9804d032f6","revision":1,"priorRevision":null,"proposalId":"2481fd2d-9db3-4b20-97ac-c51614b0e91e","actorId":"985a51c2-f142-4cff-94de-d1ca8126701c","msg":"knowledge revision published"}
+{"level":30,"time":1793666236043,"pid":57213,"hostname":"MacBook-Pro-2.local","name":"brain:knowledge","proposalId":"2481fd2d-9db3-4b20-97ac-c51614b0e91e","decision":"accept","expectedRevision":1,"policyId":"fbe83b54-53e1-40a1-b823-0627ec812b5b","recordId":"37094fae-863d-4caf-86c7-2e9804d032f6","msg":"knowledge proposal reviewed"}
+{"level":30,"time":1793666236355,"pid":57213,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"stop","durationMs":204,"containerId":"f05e55c7938ee30ba24980dfbca627ca6abdde34df506f4c02eb3e2724ead621","endpoint":"postgres://localhost:63842/native_knowledge_http","msg":"stopped test database"}
+ ❯ |integration| app/api/knowledge/__tests__/knowledge.integration.test.ts (5 tests | 1 failed) 2354ms
+   × IT-CBE-03 accessible conflicts remain discoverable beyond inaccessible edges and the detail display bound 65ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |integration| app/api/knowledge/__tests__/knowledge.integration.test.ts > IT-CBE-03 accessible conflicts remain discoverable beyond inaccessible edges and the detail display bound
+AssertionError: expected [] to have a length of 64 but got +0
+
+- Expected
++ Received
+
+- 64
++ 0
+
+ ❯ app/api/knowledge/__tests__/knowledge.integration.test.ts:390:45
+    388|   expect(response.status).toBe(200);
+    389|   expect(body.conflict).toMatchObject({ state: "limited", incomplete: …
+    390|   expect(body.conflict.accessibleRecordIds).toHaveLength(64);
+       |                                             ^
+    391|   expect(body.conflict.accessibleRecordIds.every((id: string) => recor…
+    392|   vi.unstubAllEnvs();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 4 passed (5)
+   Start at  03:37:13
+   Duration  2.86s (tests 84%, import 13%, transform 3%)

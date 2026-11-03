@@ -14,6 +14,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import pino from "pino";
 
+import { isKnowledgeTool } from "./knowledge-tools";
 import { httpAuthContext, type AuthContext } from "./auth";
 import { isLaunchAdmissionTool } from "./task-launch-tools";
 import {
@@ -123,7 +124,8 @@ function buildServer(transportType: "stdio" | "http"): Server {
               (toolName === "hitl_respond" ||
                 toolName === "ask_human" ||
                 isLaunchAdmissionTool(toolName) ||
-                isDelegationAdmissionTool(toolName)) &&
+                isDelegationAdmissionTool(toolName) ||
+                isKnowledgeTool(toolName)) &&
               result.publicBody
                 ? JSON.stringify(result.publicBody)
                 : (result.message ?? `Error ${result.status}`),

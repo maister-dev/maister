@@ -60,7 +60,7 @@ export async function enqueueSourceReindexForEvents(
       FROM brain_sources s
       JOIN projects p ON p.id = s.project_id AND p.brain_enabled = true
       WHERE s.project_id = ${event.projectId}
-        AND s.enabled = true
+        AND s.enabled = true AND s.chunker_id <> 'native_submission' AND (s.source_restrictions IS NULL OR s.source_restrictions='[]'::jsonb)
         AND NOT EXISTS (
           SELECT 1 FROM brain_index_jobs j
           WHERE j.source_id = s.id

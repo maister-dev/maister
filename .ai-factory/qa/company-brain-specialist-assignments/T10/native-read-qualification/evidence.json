@@ -1,0 +1,59 @@
+{
+  "task": "T10",
+  "baseRevision": "f6919a13d",
+  "qualifiedAt": "2026-11-03T00:54:17.950065+00:00",
+  "specSha256": {
+    "docs/system-analytics/company-brain.md": "370f3f678a4319770a54e0d6399fc9e20a8dbbbcb1f8d4ad6a173023d0371ad8",
+    "docs/system-analytics/company-brain-evidence.md": "8ae4fc96b20acfd2825918ec00d6b31059fdb89eddb80e528bba7912681c7f27",
+    "docs/db/company-brain-domain.md": "8084c0e45f2932966e628e39a9b74870a36cb4b3fa5946387cfab3bb204d7ac1",
+    "docs/api/web.openapi.yaml": "d9d29fd5b650de65c69cfa940bce377718ad6636ca10cbdcd99144cc6259b362",
+    "docs/api/external/operations.openapi.yaml": "a13ae34f9c3689196a49e35f65d7663344f0c112259b79bd8c3a36ce939b57cf",
+    "runtime/knowledge-tool-input.schema.json": "051e604059a161095bf229e209ce57e3bc70e3dedd3d2a4b9eb956fc4e616639"
+  },
+  "greenRefactor": {
+    "integration": {
+      "files": 17,
+      "passed": 131,
+      "failed": 0,
+      "skipped": 0,
+      "output": "integration-green.log"
+    },
+    "webUnit": {
+      "files": 15,
+      "passed": 148,
+      "failed": 0,
+      "output": "unit-green.log"
+    },
+    "mcpUnit": {
+      "files": 6,
+      "passed": 378,
+      "failed": 0
+    },
+    "mcpStdioIntegration": {
+      "files": 1,
+      "passed": 8,
+      "failed": 0
+    },
+    "contractTests": 10,
+    "explicitSchemaSurfaceExamples": 54,
+    "docsAll": "passed",
+    "typecheck": "passed",
+    "generatedErdTables": 164
+  },
+  "invariants": [
+    "Project deletion cascades project-owned records, source captures, witnesses and submission receipts; company records survive and logical source restrictions do not block deletion.",
+    "Current owner, narrow record and complete source-closure policies apply before SQL page limits and are locked/rechecked before disclosure.",
+    "Current and exact historical revision restrictions constrain evidence/conflict references; conflicting original revisions remain distinct.",
+    "Search cursors bind credential, filters and current principal authority; only authorized visible anchors enter the signed payload.",
+    "Search/evidence pages fit 128 KiB; evidence retains bounded actual UTF-8 captured bytes with hashes and explicit truncation.",
+    "Invalid NUL, unpaired surrogates, invalid UTF-8, forged attribution, extra owner fields, replayed keys with changed content and revision overflow are rejected.",
+    "Company-only bearer operations use the existing verifier and token audit without a dummy project. Project-limited credentials cannot widen owner scope.",
+    "Native agent disclosure requires an active trusted pinned role/run binding and a compatible server-owned capture profile; source restrictions persist before response.",
+    "The built MCP bundle tools/list schemas equal the generated nested native contract and tools/call reaches real HTTP handlers, actual bearer verification and PostgreSQL. Malformed nested inputs refuse before HTTP."
+  ],
+  "limitations": [
+    "T11 review/confirmation API and source-restriction writer inheritance remain pending; internal review storage already exists.",
+    "T14 compatible launch-profile construction and all derived-output guards remain pending. Historical/unknown profiles refuse native agent reads.",
+    "Fixture package catalog rows qualify authority boundaries only. No real installed agent/Flow package, browser UX or stand pilot readiness is claimed."
+  ]
+}

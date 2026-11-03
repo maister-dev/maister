@@ -1,0 +1,60 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.5 /Users/kaa/.codex/worktrees/2599/mAIster/web
+
+{"level":30,"time":1793665711444,"pid":41210,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793665711480,"pid":41210,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-daemon-contact","outcome":"passed","durationMs":18,"serverVersion":"29.4.2","strategy":"ConfigurationStrategy","msg":"test container daemon contacted"}
+{"level":30,"time":1793665711480,"pid":41210,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"started","msg":"constructing test container runtime client"}
+{"level":30,"time":1793665711489,"pid":41210,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"passed","durationMs":9,"serverVersion":"29.4.2","msg":"test container runtime client ready"}
+{"level":30,"time":1793665711490,"pid":41210,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-create-start","preparationDurationMs":28,"storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"starting owned PostgreSQL container"}
+{"level":30,"time":1793665712374,"pid":41210,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-start","outcome":"passed","durationMs":882,"containerId":"5787a3bab6fe170daff3355c5c70b675209b5e2c9afc2e9a111d4eb06abee747","storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"started owned PostgreSQL container"}
+{"level":30,"time":1793665712388,"pid":41210,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"bare","phase":"ready","durationMs":926,"containerId":"5787a3bab6fe170daff3355c5c70b675209b5e2c9afc2e9a111d4eb06abee747","endpoint":"postgres://localhost:63816/native_knowledge_http","msg":"started bare test database"}
+{"level":30,"time":1793665712668,"pid":41210,"hostname":"MacBook-Pro-2.local","name":"test-database-migrations","migrationsFolder":"./lib/db/migrations","migrationsTable":"__drizzle_migrations","migrationCount":213,"querySubmissions":6,"durationMs":279,"msg":"applied test database migration lineage"}
+{"level":30,"time":1793665712703,"pid":41210,"hostname":"MacBook-Pro-2.local","name":"test-database-migrations","migrationsFolder":"./lib/db/brain-migrations","migrationsTable":"__drizzle_brain_migrations","migrationCount":10,"querySubmissions":6,"durationMs":35,"msg":"applied test database migration lineage"}
+{"level":30,"time":1793665712704,"pid":41210,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"main+brain","phase":"migrate","endpoint":"postgres://localhost:63816/native_knowledge_http","msg":"applied Brain test database migrations"}
+{"level":30,"time":1793665712981,"pid":41210,"hostname":"MacBook-Pro-2.local","name":"brain:source-capture","ownerKind":"company","ownerId":"a16d5fb2-51c7-4aed-98ae-9088502400f2","sourceId":"95380629-126a-4b2c-a58d-4c585d72ab3d","witnessId":"1d2006de-40a2-418d-8e8e-53e9f50bbbff","bytes":67,"duplicate":false,"msg":"source capture retained"}
+{"level":30,"time":1793665712994,"pid":41210,"hostname":"MacBook-Pro-2.local","name":"brain:knowledge","proposalId":"c7bca728-fd9e-4b63-ba67-83c6cde3f6a4","ownerKind":"company","ownerId":"a16d5fb2-51c7-4aed-98ae-9088502400f2","actorId":"61c51cc1-1210-439a-a184-ede9c100c9c2","msg":"knowledge proposed"}
+{"level":30,"time":1793665713001,"pid":41210,"hostname":"MacBook-Pro-2.local","name":"brain:knowledge","recordId":"81407c02-7269-4460-b731-463da76a5904","revision":1,"priorRevision":null,"proposalId":"c7bca728-fd9e-4b63-ba67-83c6cde3f6a4","actorId":"61c51cc1-1210-439a-a184-ede9c100c9c2","msg":"knowledge revision published"}
+{"level":30,"time":1793665713001,"pid":41210,"hostname":"MacBook-Pro-2.local","name":"brain:knowledge","proposalId":"c7bca728-fd9e-4b63-ba67-83c6cde3f6a4","decision":"accept","expectedRevision":1,"policyId":"5bd38b96-6a66-4425-ba64-2cd9659268e9","recordId":"81407c02-7269-4460-b731-463da76a5904","msg":"knowledge proposal reviewed"}
+{"level":30,"time":1793665713201,"pid":41210,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"stop","durationMs":173,"containerId":"5787a3bab6fe170daff3355c5c70b675209b5e2c9afc2e9a111d4eb06abee747","endpoint":"postgres://localhost:63816/native_knowledge_http","msg":"stopped test database"}
+ ❯ |integration| app/api/knowledge/__tests__/knowledge.integration.test.ts (2 tests | 1 failed) 1741ms
+   × IT-CBK-06 native writes reject model attribution and bound streamed JSON independently of content-length 7ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |integration| app/api/knowledge/__tests__/knowledge.integration.test.ts > IT-CBK-06 native writes reject model attribution and bound streamed JSON independently of content-length
+AssertionError: expected 500 to be 400 // Object.is equality
+
+- Expected
++ Received
+
+- 400
++ 500
+
+ ❯ app/api/knowledge/__tests__/knowledge.integration.test.ts:259:29
+    257|     const rejected = await captureSource(jsonRequest("/api/knowledge/s…
+    258|
+    259|     expect(rejected.status).toBe(400);
+       |                             ^
+    260|   }
+    261|   let cancelled = false;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 1 passed (2)
+   Start at  03:28:30
+   Duration  2.24s (tests 80%, import 16%, transform 4%)
+
+undefined
+/Users/kaa/.codex/worktrees/2599/mAIster/web:
+[ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL] Command failed with exit code 1: vitest run --project integration app/api/knowledge/__tests__/knowledge.integration.test.ts

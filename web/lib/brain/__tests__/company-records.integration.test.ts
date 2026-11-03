@@ -1,7 +1,24 @@
+import { randomUUID } from "node:crypto";
+
+import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
 import { requireCompanyActionForUser } from "@/lib/authz";
-import { seedProjectRow } from "@/test-support/execution-host-seed";
+import { getKnowledgeRecord } from "@/lib/brain/knowledge-records";
+import { resolveKnowledgePrincipal } from "@/lib/brain/knowledge-access";
+import { knowledgeReadPolicyCte } from "@/lib/brain/knowledge-query-policy";
+import { authorizeKnowledgeRecordRead } from "@/lib/brain/knowledge-restrictions";
+import { loadProjectBrainPanelData } from "@/lib/brain/ui-queries";
+import { issueOrchestratorRunToken } from "@/lib/agents/tokens";
+import {
+  lockKnowledgeReadConsumer,
+  recordKnowledgeDisclosure,
+} from "@/lib/brain/knowledge-disclosure";
+import { captureKnowledgeSource } from "@/lib/brain/knowledge-source-capture";
+import { inspectKnowledgeWitness } from "@/lib/brain/knowledge-witnesses";
+import { listBrainSources } from "@/lib/brain/sources";
+import { sha256 } from "@/lib/brain/codec";
+import { seedProjectRow, seedRun } from "@/test-support/execution-host-seed";
 import {
   startMainAndBrainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -283,4 +300,514 @@ it("IT-CBK-01 narrower grants cannot leave or restore a broadly readable project
       )
     ).rows[0]?.visibility,
   ).toBe("restricted");
+});
+
+it("IT-CBE-06 inherited source restrictions are immutable, partition deduplication and never block project deletion", async () => {
+  const columns = await database.pool.query<{ column_name: string }>(
+    "SELECT column_name FROM information_schema.columns WHERE table_name='brain_record_revisions' AND column_name='source_restrictions'",
+  );
+
+  expect(columns.rows).toEqual([{ column_name: "source_restrictions" }]);
+  const project = await seedProjectRow(database.db);
+
+  await database.pool.query(
+    "UPDATE projects SET brain_enabled=true WHERE id=$1",
+    [project.id],
+  );
+  const companyId = (
+    await database.pool.query<{ id: string }>("SELECT id FROM companies")
+  ).rows[0]!.id;
+  const derivedId = randomUUID();
+  const ordinaryId = randomUUID();
+  const projectRecordId = randomUUID();
+  const sourceRestrictions = [{ kind: "project", projectId: project.id }];
+  const connection = await database.pool.connect();
+
+  try {
+    await connection.query("BEGIN");
+    await connection.query(
+      "SELECT set_config('maister.knowledge_writer','native_v1',true)",
+    );
+    for (const [id, restrictions] of [
+      [derivedId, sourceRestrictions],
+      [ordinaryId, []],
+    ] as const) {
+      await connection.query(
+        "INSERT INTO brain_items(id,company_id,kind,title,content,content_hash,confidence,source_restrictions) VALUES($1,$2,'procedure','Procedure','Same assertion in different access domains','scoped-duplicate',0.3,$3::jsonb)",
+        [id, companyId, JSON.stringify(restrictions)],
+      );
+      await connection.query(
+        "INSERT INTO brain_record_revisions(record_id,revision,assertion,title,kind,basis,content_sha256,attribution,freshness,provenance,source_restrictions) SELECT id,1,content,title,kind,'inferred',encode(sha256(convert_to(content,'UTF8')),'hex'),$2::jsonb,$3::jsonb,'submitted',source_restrictions FROM brain_items WHERE id=$1",
+        [
+          id,
+          JSON.stringify({
+            kind: "system",
+            id: "test",
+            runId: null,
+            attemptId: null,
+          }),
+          JSON.stringify({ state: "unknown" }),
+        ],
+      );
+    }
+    await connection.query("COMMIT");
+  } finally {
+    connection.release();
+  }
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(DISTINCT source_acl_key)::int AS n FROM brain_items WHERE id=ANY($1::text[])",
+        [[derivedId, ordinaryId]],
+      )
+    ).rows,
+  ).toEqual([{ n: 2 }]);
+  await expect(
+    database.pool.query(
+      "UPDATE brain_items SET source_restrictions=$2::jsonb WHERE id=$1",
+      [derivedId, JSON.stringify([{ kind: "company", companyId }])],
+    ),
+  ).rejects.toMatchObject({
+    code: "23514",
+    constraint: "brain_record_head_matches_revision",
+  });
+  await expect(
+    database.pool.query(
+      "UPDATE brain_record_revisions SET source_restrictions='[]' WHERE record_id=$1",
+      [derivedId],
+    ),
+  ).rejects.toMatchObject({
+    code: "23514",
+    constraint: "brain_record_revision_immutable",
+  });
+  await database.pool.query(
+    "INSERT INTO brain_items(id,project_id,kind,title,content,content_hash,confidence,source_restrictions) VALUES($1,$2,'lesson','Restricted projection','source-classification-canary','source-classification-canary',0.3,$3::jsonb)",
+    [
+      projectRecordId,
+      project.id,
+      JSON.stringify([{ kind: "company", companyId }]),
+    ],
+  );
+  expect(
+    (
+      await loadProjectBrainPanelData(
+        database.db,
+        project.id,
+        "source-classification-canary",
+      )
+    ).memory,
+  ).toEqual([]);
+  const readerId = randomUUID();
+  const principal = { kind: "user" as const, userId: readerId };
+
+  await database.pool.query(
+    "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'member','active')",
+    [readerId, `${readerId}@example.test`],
+  );
+  await database.pool.query(
+    "INSERT INTO project_members(id,project_id,user_id,role) VALUES($1,$2,$3,'member')",
+    [randomUUID(), project.id, readerId],
+  );
+  await database.pool.query(
+    "INSERT INTO company_grants(company_id,principal_type,principal_id,action,created_by) VALUES($1,'user',$2,'knowledge:read',$2)",
+    [companyId, readerId],
+  );
+  expect(
+    (
+      await database.db.transaction((tx) =>
+        authorizeKnowledgeRecordRead(tx, principal, derivedId),
+      )
+    ).record.id,
+  ).toBe(derivedId);
+  const visible = () =>
+    database.db.transaction(async (tx) => {
+      const identity = await resolveKnowledgePrincipal(
+        tx,
+        principal,
+        "knowledge:read",
+      );
+      const policy = knowledgeReadPolicyCte(
+        identity,
+        sql`i.id IN (${derivedId},${ordinaryId})`,
+      );
+
+      return (
+        await tx.execute(
+          sql`${policy} SELECT id FROM knowledge_readable_records ORDER BY id`,
+        )
+      ).rows;
+    });
+
+  expect(await visible()).toHaveLength(2);
+  await database.pool.query(
+    "DELETE FROM project_members WHERE project_id=$1 AND user_id=$2",
+    [project.id, readerId],
+  );
+  await expect(
+    database.db.transaction((tx) =>
+      authorizeKnowledgeRecordRead(tx, principal, derivedId),
+    ),
+  ).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "knowledge_reference_unavailable" },
+  });
+  expect(
+    (
+      await database.db.transaction((tx) =>
+        authorizeKnowledgeRecordRead(tx, principal, ordinaryId),
+      )
+    ).record.id,
+  ).toBe(ordinaryId);
+  expect(await visible()).toEqual([{ id: ordinaryId }]);
+  await database.pool.query("DELETE FROM projects WHERE id=$1", [project.id]);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT source_restrictions FROM brain_items WHERE id=$1",
+        [derivedId],
+      )
+    ).rows,
+  ).toEqual([{ source_restrictions: sourceRestrictions }]);
+  expect(
+    (
+      await database.pool.query("SELECT id FROM brain_items WHERE id=$1", [
+        projectRecordId,
+      ])
+    ).rows,
+  ).toEqual([]);
+});
+
+it("IT-CBE-06 run-bound disclosure captures are durable, serialized and refuse unknown historical input", async () => {
+  const project = await seedProjectRow(database.db);
+  const companyId = (
+    await database.pool.query<{ id: string }>("SELECT id FROM companies")
+  ).rows[0]!.id;
+  const runId = await seedRun(database.db, {
+    projectId: project.id,
+    status: "Running",
+  });
+  const issued = await issueOrchestratorRunToken({
+    projectId: project.id,
+    runId,
+    db: database.db,
+  });
+  const principal = { kind: "token" as const, tokenId: issued.tokenId };
+
+  await expect(
+    database.db.transaction((tx) => lockKnowledgeReadConsumer(tx, principal)),
+  ).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "knowledge_capture_profile_required" },
+  });
+  await database.pool.query(
+    "UPDATE runs SET knowledge_access=$2::jsonb WHERE id=$1",
+    [
+      runId,
+      JSON.stringify({
+        schemaVersion: 1,
+        state: "complete",
+        generation: 1,
+        restrictions: [],
+      }),
+    ],
+  );
+  let releaseFirst: () => void = () => {
+    throw new Error("first disclosure transaction has not started");
+  };
+  let firstLocked: () => void = () => {
+    throw new Error("first disclosure barrier is not initialized");
+  };
+  const release = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  const locked = new Promise<void>((resolve) => {
+    firstLocked = resolve;
+  });
+  const first = database.db.transaction(async (tx) => {
+    const consumer = await lockKnowledgeReadConsumer(tx, principal);
+
+    await recordKnowledgeDisclosure(tx, consumer, [
+      { kind: "company", companyId },
+    ]);
+    firstLocked();
+    await release;
+  });
+
+  await locked;
+  const second = database.db.transaction(async (tx) => {
+    const consumer = await lockKnowledgeReadConsumer(tx, principal);
+
+    await recordKnowledgeDisclosure(tx, consumer, [
+      { kind: "project", projectId: project.id },
+    ]);
+  });
+
+  try {
+    await expect
+      .poll(
+        async () =>
+          Number(
+            (
+              await database.pool.query(
+                "SELECT count(*)::int AS n FROM pg_stat_activity WHERE wait_event_type='Lock' AND query ILIKE '%SELECT knowledge_access FROM runs%FOR UPDATE%'",
+              )
+            ).rows[0]!.n,
+          ),
+        { timeout: 5000 },
+      )
+      .toBe(1);
+  } finally {
+    releaseFirst();
+    await Promise.all([first, second]);
+  }
+  const capture = (
+    await database.pool.query("SELECT knowledge_access FROM runs WHERE id=$1", [
+      runId,
+    ])
+  ).rows[0]!.knowledge_access;
+
+  expect(capture).toMatchObject({
+    schemaVersion: 1,
+    state: "complete",
+    generation: 3,
+    restrictions: expect.arrayContaining([
+      { kind: "company", companyId },
+      { kind: "project", projectId: project.id },
+    ]),
+  });
+  expect(capture.restrictions).toHaveLength(2);
+  await database.pool.query(
+    "UPDATE project_tokens SET revoked_at=now() WHERE id=$1",
+    [issued.tokenId],
+  );
+  await expect(
+    database.db.transaction((tx) => lockKnowledgeReadConsumer(tx, principal)),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+});
+
+it("IT-CBE-01 repository-free source capture retains exact bounded evidence and content-guarded receipts across project deletion", async () => {
+  const companyId = (
+    await database.pool.query<{ id: string }>("SELECT id FROM companies")
+  ).rows[0]!.id;
+  const userId = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'member','active')",
+    [userId, `${userId}@example.test`],
+  );
+  await database.pool.query(
+    "INSERT INTO company_grants(company_id,principal_type,principal_id,action,created_by) SELECT $1,'user',$2,action,$2 FROM unnest(ARRAY['knowledge:read','knowledge:propose']) action",
+    [companyId, userId],
+  );
+  const principal = { kind: "user" as const, userId };
+  const input = {
+    owner: { kind: "company" as const, companyId },
+    title: "Versioned submitted runbook",
+    content: "Проверить 🧠service\n".repeat(700),
+    reportedSourceVersion: "operator-upload-v1",
+    idempotencyKey: "source_capture_delivery_001",
+  };
+  const first = await captureKnowledgeSource(database.db, principal, input);
+
+  expect(first).toMatchObject({
+    duplicate: false,
+    witness: {
+      availability: "available",
+      sourceVersion: `sha256:${sha256(input.content)}`,
+      sha256: sha256(input.content),
+      excerptTruncated: true,
+      observedAt: null,
+      sourceAt: null,
+      independenceGroupId: null,
+      attribution: { kind: "user", id: userId, runId: null, attemptId: null },
+    },
+  });
+  await expect(
+    database.pool.query(
+      "UPDATE brain_sources SET submitted_content='overwritten' WHERE id=$1",
+      [first.witness.sourceId],
+    ),
+  ).rejects.toMatchObject({
+    code: "23514",
+    constraint: "brain_native_capture_immutable",
+  });
+  await expect(
+    database.pool.query("DELETE FROM brain_sources WHERE id=$1", [
+      first.witness.sourceId,
+    ]),
+  ).rejects.toMatchObject({
+    code: "23514",
+    constraint: "brain_native_capture_immutable",
+  });
+  expect(Buffer.byteLength(first.witness.excerpt!, "utf8")).toBeLessThanOrEqual(
+    8192,
+  );
+  expect(first.witness.excerpt).not.toContain("�");
+  expect(input.content.startsWith(first.witness.excerpt!)).toBe(true);
+  expect(
+    await captureKnowledgeSource(database.db, principal, input),
+  ).toMatchObject({ duplicate: true, witness: { id: first.witness.id } });
+  await expect(
+    captureKnowledgeSource(database.db, principal, {
+      ...input,
+      content: `${input.content} changed`,
+    }),
+  ).rejects.toMatchObject({ code: "CONFLICT" });
+  expect(
+    await captureKnowledgeSource(database.db, principal, {
+      ...input,
+      idempotencyKey: "source_capture_delivery_alias",
+    }),
+  ).toMatchObject({ duplicate: true, witness: { id: first.witness.id } });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT id FROM brain_evidence_observations WHERE source_id=$1",
+        [first.witness.sourceId],
+      )
+    ).rows,
+  ).toHaveLength(1);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT id FROM brain_source_submissions WHERE source_id=$1",
+        [first.witness.sourceId],
+      )
+    ).rows,
+  ).toHaveLength(2);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT project_id,submitted_content FROM brain_sources WHERE id=$1",
+        [first.witness.sourceId],
+      )
+    ).rows,
+  ).toEqual([{ project_id: null, submitted_content: input.content }]);
+  const project = await seedProjectRow(database.db);
+
+  await database.pool.query(
+    "UPDATE projects SET brain_enabled=true WHERE id=$1",
+    [project.id],
+  );
+  await database.pool.query(
+    "INSERT INTO project_members(id,project_id,user_id,role) VALUES($1,$2,$3,'member')",
+    [randomUUID(), project.id, userId],
+  );
+  const local = await captureKnowledgeSource(database.db, principal, {
+    ...input,
+    owner: { kind: "project", projectId: project.id },
+    content: "Project-local submitted runbook",
+    idempotencyKey: "source_capture_project_001",
+  });
+
+  expect(await listBrainSources(database.db, project.id)).toEqual([]);
+  await database.pool.query("DELETE FROM projects WHERE id=$1", [project.id]);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT id FROM brain_source_submissions WHERE source_id=$1",
+        [local.witness.sourceId],
+      )
+    ).rows,
+  ).toEqual([]);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT id FROM brain_evidence_witnesses WHERE id=$1",
+        [local.witness.id],
+      )
+    ).rows,
+  ).toEqual([]);
+  expect(
+    (
+      await database.db.transaction((tx) =>
+        inspectKnowledgeWitness(tx, principal, first.witness.id),
+      )
+    ).witness,
+  ).toEqual(first.witness);
+  await database.pool.query(
+    "UPDATE company_grants SET revoked_at=now() WHERE company_id=$1 AND principal_id=$2 AND action='knowledge:read'",
+    [companyId, userId],
+  );
+  await expect(
+    captureKnowledgeSource(database.db, principal, input),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  await expect(
+    database.db.transaction((tx) =>
+      inspectKnowledgeWitness(tx, principal, first.witness.id),
+    ),
+  ).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "knowledge_reference_unavailable" },
+  });
+});
+
+it("IT-CBK-05 native reads keep oversized legacy assertions usable without inventing authorship or confirmation", async () => {
+  const project = await seedProjectRow(database.db);
+  const userId = randomUUID();
+  const recordId = randomUUID();
+  const original = `${"Ж".repeat(31999)}🧠${"?".repeat(1000)}`;
+
+  await database.pool.query(
+    "UPDATE projects SET brain_enabled=true WHERE id=$1",
+    [project.id],
+  );
+  await database.pool.query(
+    "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'member','active')",
+    [userId, `${userId}@example.test`],
+  );
+  await database.pool.query(
+    "INSERT INTO project_members(id,project_id,user_id,role) VALUES($1,$2,$3,'member')",
+    [randomUUID(), project.id, userId],
+  );
+  await database.pool.query(
+    "INSERT INTO brain_items(id,project_id,kind,title,content,content_hash,confidence) VALUES($1,$2,'state_fact','Legacy retained finding',$3,$4,0.99)",
+    [recordId, project.id, original, randomUUID()],
+  );
+  const result = await getKnowledgeRecord(
+    database.db,
+    { kind: "user", userId },
+    { recordId },
+  );
+
+  expect(result).toMatchObject({
+    id: recordId,
+    revision: 1,
+    assertionTruncated: true,
+    basis: "unknown",
+    confirmation: { state: "unconfirmed" },
+    attribution: {
+      kind: "legacy_unknown",
+      id: null,
+      runId: null,
+      attemptId: null,
+    },
+    freshness: {
+      state: "unknown",
+      applicability: "unknown",
+      observedAt: null,
+      sourceAt: null,
+    },
+  });
+  expect(result.assertion).toBe("Ж".repeat(31999));
+  expect(result.limitations).toContain(
+    "Legacy assertion exceeds the native display limit; the returned assertion is an explicit prefix of the retained original.",
+  );
+  expect(
+    (
+      await database.pool.query("SELECT content FROM brain_items WHERE id=$1", [
+        recordId,
+      ])
+    ).rows,
+  ).toEqual([{ content: original }]);
+  await database.pool.query(
+    "DELETE FROM project_members WHERE project_id=$1 AND user_id=$2",
+    [project.id, userId],
+  );
+  await expect(
+    getKnowledgeRecord(database.db, { kind: "user", userId }, { recordId }),
+  ).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "knowledge_reference_unavailable" },
+  });
 });

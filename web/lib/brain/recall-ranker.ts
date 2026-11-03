@@ -120,7 +120,7 @@ export const pgVectorRecallRanker: RecallRanker = {
             SELECT 1 FROM brain_items bi
             WHERE bi.id = brain_embeddings.item_id
               AND bi.project_id = ${q.projectId}
-              AND bi.status = 'active' AND bi.visibility = 'owner_grants'
+              AND bi.status = 'active' AND bi.visibility = 'owner_grants' AND (bi.source_restrictions IS NULL OR bi.source_restrictions='[]'::jsonb)
               AND (bi.expires_at IS NULL OR bi.expires_at > now())
           )
         ORDER BY (vector::vector(${nRaw})) <=> ${queryVec}::vector(${nRaw})
@@ -138,7 +138,7 @@ export const pgVectorRecallRanker: RecallRanker = {
       FROM brain_items i
       LEFT JOIN vec v ON v.item_id = i.id
       WHERE i.project_id = ${q.projectId}
-        AND i.status = 'active' AND i.visibility = 'owner_grants'
+        AND i.status = 'active' AND i.visibility = 'owner_grants' AND (i.source_restrictions IS NULL OR i.source_restrictions='[]'::jsonb)
         AND (i.expires_at IS NULL OR i.expires_at > now())
         AND (v.item_id IS NOT NULL
              OR i.tsv @@ plainto_tsquery('english', ${q.queryText}))
@@ -217,7 +217,7 @@ async function rankIndexedChunks(
         AND embedding_dimensions = ${q.nRaw}
         AND EXISTS (
           SELECT 1 FROM brain_chunks bc
-          JOIN brain_sources bs ON bs.id = bc.source_id AND bs.enabled = true
+          JOIN brain_sources bs ON bs.id = bc.source_id AND bs.enabled = true AND bs.chunker_id <> 'native_submission' AND (bs.source_restrictions IS NULL OR bs.source_restrictions='[]'::jsonb)
           WHERE bc.id = brain_embeddings.chunk_id
             AND bc.project_id = ${q.projectId}
         )
@@ -233,7 +233,7 @@ async function rankIndexedChunks(
              + LEAST(COALESCE(ts_rank(c.tsv, plainto_tsquery('english', ${q.queryText})), 0), 1) * ${q.lexW}
              + ${INDEXED_CONFIDENCE} * ${q.confW} )::float8 AS score
     FROM brain_chunks c
-    JOIN brain_sources s ON s.id = c.source_id AND s.enabled = true
+    JOIN brain_sources s ON s.id = c.source_id AND s.enabled = true AND s.chunker_id <> 'native_submission' AND (s.source_restrictions IS NULL OR s.source_restrictions='[]'::jsonb)
     LEFT JOIN vec v ON v.chunk_id = c.id
     WHERE c.project_id = ${q.projectId}
       AND (v.chunk_id IS NOT NULL

@@ -254,7 +254,7 @@ export async function listBrainItemEdges(
     SELECT id, to_ref, relation, confidence::float8 AS confidence, degraded
     FROM brain_edges
     WHERE project_id = ${args.projectId}
-      AND EXISTS (SELECT 1 FROM brain_items i WHERE i.id = ${args.itemId} AND i.project_id = ${args.projectId} AND i.visibility = 'owner_grants')
+      AND EXISTS (SELECT 1 FROM brain_items i WHERE i.id = ${args.itemId} AND i.project_id = ${args.projectId} AND i.visibility = 'owner_grants' AND (i.source_restrictions IS NULL OR i.source_restrictions='[]'::jsonb))
       AND from_ref = ${JSON.stringify({ type: "item", id: args.itemId })}::jsonb
     ORDER BY created_at ASC
   `);

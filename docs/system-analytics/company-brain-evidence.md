@@ -2,7 +2,7 @@
 
 ## Purpose
 
-**Partially implemented — ADR-202.** Indexed-source captures, immutable witnesses, correlated reuse and potential-conflict edges are implemented in storage. Native retrieval, review and external tool surfaces remain Designed. This domain owns immutable source/version witnesses, source-observation independence and conflict-preserving retrieval. [Records](company-brain.md) owns publication/confirmation; current repository search anchors remain navigational projections.
+**Partially implemented — ADR-202.** Indexed-source captures, immutable witnesses, correlated reuse and potential-conflict edges are implemented in storage. Native session/bearer retrieval, bounded evidence/conflict pages and the built MCP read/capture facade are implemented locally. Public review, launch-wide inheritance and installable-package/pilot qualification remain pending. This domain owns immutable source/version witnesses, source-observation independence and conflict-preserving retrieval. [Records](company-brain.md) owns publication/confirmation; current repository search anchors remain navigational projections.
 
 ## Domain entities
 
@@ -91,3 +91,11 @@ Witness rows and evidence links are immutable; source deletion retires capture a
 - [Records and authority](company-brain.md), [persistence](../db/company-brain-domain.md), [ADR-202](../decisions.md#adr-202-company-ownership-and-evidence-linked-knowledge-revisions).
 - [Project Brain](project-brain.md), [web API](../api/web.openapi.yaml), [error taxonomy](../error-taxonomy.md).
 - Owning implementation: `web/lib/brain/{sources,edges,retain,recall,indexer,reindex}.ts` and result reference validation.
+
+
+## Bounded native inspection
+
+Search returns an explicit assertion preview with a truncation marker and exact record identity/revision; full assertions are retrieved separately. Record detail embeds evidence metadata, while the evidence endpoint returns authorized captured excerpts bounded to 8192 UTF-8 bytes. Missing proof uses a safe unavailable entry without inventing a witness identity, source version, attribution or capture time. Search/evidence pages have a 128 KiB serialized response budget and an authorized continuation when the requested item count exceeds it. Full record detail is bounded to 512 KiB. Source-closure authorization is applied in SQL before page limits, then current grants are locked and revalidated before disclosure. A cursor contains only an authorized visible anchor, binds the authenticated credential/query filters and rechecks current access on every page; it never carries hidden record identities. Stable creation-time/identity ordering prevents accepted corrections from moving page anchors.
+
+
+Conflict detail is bounded to 64 accessible opposing identities with an explicit incomplete marker. The conflicts endpoint provides authorized continuation and exact original opposing revisions. Source closure is filtered before its page limit, including historical revision restrictions; hidden edges cannot occupy all public slots. Neither retrieval confidence nor a newer opposing head resolves the retained conflict.

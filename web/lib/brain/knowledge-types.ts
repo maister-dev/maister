@@ -2,13 +2,10 @@ import { z } from "zod";
 
 import { KNOWLEDGE_KINDS, type KnowledgeAttribution } from "./record-types";
 
+import { postgresTextSchema } from "@/lib/text-schema";
 import { ownerSchema } from "@/lib/company/types";
 
-export const knowledgeRevisionSchema = z
-  .number()
-  .int()
-  .positive()
-  .max(2147483647);
+export const knowledgeRevisionSchema = z.number().int().min(1).max(2147483647);
 
 export const knowledgeReferenceSchema = z
   .object({
@@ -19,9 +16,9 @@ export const knowledgeReferenceSchema = z
       "operation",
       "verification",
     ]),
-    id: z.string().min(1).max(128),
+    id: postgresTextSchema.min(1).max(128),
     revision: knowledgeRevisionSchema.optional(),
-    version: z.string().min(1).max(256).optional(),
+    version: postgresTextSchema.min(1).max(256).optional(),
     sha256: z
       .string()
       .regex(/^[a-f0-9]{64}$/)
@@ -31,9 +28,9 @@ export const knowledgeReferenceSchema = z
 
 export const knowledgeDraftSchema = z
   .object({
-    title: z.string().min(1).max(256),
+    title: postgresTextSchema.min(1).max(256),
     kind: z.enum(KNOWLEDGE_KINDS),
-    assertion: z.string().min(1).max(32000),
+    assertion: postgresTextSchema.min(1).max(32000),
     basis: z.enum(["observed", "inferred", "unknown"]),
     evidence: z
       .array(
@@ -62,12 +59,12 @@ export const knowledgeDraftSchema = z
               "inaccessible",
               "unknown",
             ]),
-            reason: z.string().min(1).max(1000),
+            reason: postgresTextSchema.min(1).max(1000),
           })
           .strict(),
       )
       .max(32),
-    limitations: z.array(z.string().min(1).max(1000)).max(32),
+    limitations: z.array(postgresTextSchema.min(1).max(1000)).max(32),
   })
   .strict();
 

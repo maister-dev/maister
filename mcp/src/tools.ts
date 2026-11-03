@@ -20,6 +20,12 @@ import {
   taskLaunchRouting,
   TASK_LAUNCH_TOOL_SPECS,
 } from "./task-launch-tools";
+import {
+  KNOWLEDGE_TOOL_SPECS,
+  isKnowledgeTool,
+  parseKnowledgeToolArguments,
+  knowledgeToolRouting,
+} from "./knowledge-tools";
 
 export type ToolSpec = {
   description: string;
@@ -28,6 +34,7 @@ export type ToolSpec = {
 
 export const TOOL_SPECS: Record<string, ToolSpec> = {
   ...TASK_LAUNCH_TOOL_SPECS,
+  ...KNOWLEDGE_TOOL_SPECS,
   task_create: {
     description:
       "Create a new task in a project (flowId optional — a flowless task is a simple-intent task awaiting triage). `flowId` accepts either the flow's UUID or its ref (e.g. `aif-bugfix`), as returned by `flow_list` (`id` or `ref`).",
@@ -1259,9 +1266,29 @@ export async function dispatchTool(opts: {
     }
   }
 
+  const nativeArguments = isKnowledgeTool(name)
+    ? parseKnowledgeToolArguments(name, args)
+    : args;
+
+  if (nativeArguments === null) {
+    const publicBody = {
+      code: "CONFIG",
+      message: "Invalid structured knowledge tool input",
+      details: { reason: "knowledge_tool_input_invalid" },
+    };
+
+    return {
+      isError: true,
+      status: 400,
+      code: publicBody.code,
+      message: publicBody.message,
+      publicBody,
+    };
+  }
+
   // ADR-187: the librarian's operation key rides the `Idempotency-Key` header,
   // never the body — the ext routes validate their bodies strictly.
-  const { operationKey, ...routedArgs } = args;
+  const { operationKey, ...routedArgs } = nativeArguments;
   const { method, path, body } = resolveRouting(
     name,
     coerceNumericArgs(name, routedArgs),
@@ -1294,7 +1321,8 @@ export async function dispatchTool(opts: {
       name === "hitl_respond" ||
       name === "ask_human" ||
       isLaunchAdmissionTool(name) ||
-      isDelegationAdmissionTool(name)
+      isDelegationAdmissionTool(name) ||
+      isKnowledgeTool(name)
     )
       return structuredResponseToToolError(res);
 
@@ -1362,6 +1390,7 @@ function resolveRouting(
   body?: unknown;
 } {
   if (isTaskLaunchTool(name)) return taskLaunchRouting(name, args);
+  if (isKnowledgeTool(name)) return knowledgeToolRouting(name, args);
 
   switch (name) {
     case "project_list":

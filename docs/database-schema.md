@@ -23,7 +23,7 @@ supported.
 
 ### Installation company and authority (Implemented storage)
 
-Migration `0230_company_ownership` creates one server-generated `companies` identity without a project. `company_grants` has explicit principal/action/revision, optional confirmation classes, server creator/time and revocation. Live principal/action uniqueness is independent of revoked history; CHECKs constrain actions, principal shape and confirmation classes. No grants are seeded. Current active-user authorization is `requireCompanyActionForUser` in `web/lib/authz.ts`; global administrator status does not grant company content access. Management HTTP and record-specific restrictions remain Designed in [Company Brain](system-analytics/company-brain.md).
+Migration `0230_company_ownership` creates one server-generated `companies` identity without a project. `company_grants` has explicit principal/action/revision, optional confirmation classes, server creator/time and revocation. Live principal/action uniqueness is independent of revoked history; CHECKs constrain actions, principal shape and confirmation classes. No grants are seeded. Current active-user authorization is `requireCompanyActionForUser` in `web/lib/authz.ts`; global administrator status does not grant company content access. Native knowledge reads enforce record-specific restrictions; management HTTP remains Designed in [Company Brain](system-analytics/company-brain.md).
 
 The implemented schema contains auth, platform runner, project, capability, run, workspace,
 graph-runner, scratch-run, evaluation-lab, HITL, and outbound-webhook tables. Scratch-run persistence landed as
@@ -4728,6 +4728,10 @@ idempotent.
   createdAt, updatedAt
 }
 ```
+
+## Native knowledge source restrictions (Implemented storage)
+
+Brain migration `0010_source_access` adds nullable retained source restrictions to current/exact revisions and captures, plus `brain_source_submissions` delivery receipts. Access-aware content dedup uses a server-computed restriction digest. Submitted source bytes, witnesses and delivery receipts are immutable except for the owning project deletion cascade; cross-owner dependencies remain logical references and never block project deletion. See the [Company Brain domain schema](db/company-brain-domain.md#native-source-access-extension) for the native ownership and recovery contract.
 
 ## Project Brain tables (A/B/C implemented — ADR-122/127/128)
 

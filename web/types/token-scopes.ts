@@ -60,6 +60,12 @@ export const TOKEN_SCOPES = [
   // tokens, the can_read_brain / can_write_brain link axes.
   "memory:read",
   "memory:write",
+  // Native structured knowledge has separate current owner/source policies.
+  "knowledge:read",
+  "knowledge:propose",
+  "knowledge:review",
+  "knowledge:confirm",
+  "knowledge:manage",
   // ADR-152 (agent memory): the agent's OWN per-attachment memory.md. A SEPARATE
   // store from Project Brain — reusing `memory:write` would make one grant open
   // two stores, re-coupling exactly the axes ADR-152 separates. Access is
@@ -124,6 +130,9 @@ export const AGENT_TOKEN_SCOPES = [
   // still gated by can_read_brain / can_write_brain on the agent-project link.
   "memory:read",
   "memory:write",
+  // Read/propose only. Work acceptance never grants factual confirmation authority.
+  "knowledge:read",
+  "knowledge:propose",
   // ADR-152: in the fixed agent-token set; the per-link memory_enabled axis
   // still gates the actual write.
   "agent_memory:write",

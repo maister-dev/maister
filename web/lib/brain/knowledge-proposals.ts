@@ -13,6 +13,7 @@ import type {
   KnowledgeDatabase,
   KnowledgeTransaction,
   KnowledgeAuthority,
+  KnowledgeAuthorityActor,
 } from "./knowledge-access";
 
 import { randomUUID } from "node:crypto";
@@ -20,7 +21,7 @@ import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import pino from "pino";
 
-import { authorizeKnowledge } from "./knowledge-access";
+import { authorizeKnowledge, knowledgeOwner } from "./knowledge-access";
 import {
   knowledgeDraftSchema,
   knowledgeDeliveryKeySchema,
@@ -55,14 +56,6 @@ export type KnowledgeProposalReceipt = Pick<
   | "acceptedRecordRevision"
 > &
   Readonly<{ duplicate: boolean }>;
-
-export function knowledgeOwner(row: Readonly<Record<string, unknown>>): Owner {
-  if (typeof row.company_id === "string" && row.project_id === null)
-    return { kind: "company", companyId: row.company_id };
-  if (typeof row.project_id === "string" && row.company_id === null)
-    return { kind: "project", projectId: row.project_id };
-  throw new MaisterError("CONFIG", "Knowledge ownership is invalid");
-}
 
 function receipt(row: StoredProposal): KnowledgeProposalReceipt {
   return {
@@ -488,7 +481,7 @@ async function writeKnowledgeRevision(
     links: readonly WitnessLink[];
     proposalId: string;
     attribution: KnowledgeAttribution;
-    reviewer: KnowledgeAttribution;
+    reviewer: KnowledgeAuthorityActor;
     recordId: string;
     revision: number;
     priorRevision: number | null;
@@ -532,10 +525,7 @@ async function writeKnowledgeRevision(
     changeId: change.id,
     cause: "published",
     actor: {
-      type:
-        input.reviewer.kind === "legacy_unknown"
-          ? "system"
-          : input.reviewer.kind,
+      type: input.reviewer.kind,
       id: input.reviewer.id,
     },
   });
@@ -559,7 +549,7 @@ async function acceptKnowledgeProposal(
     draft: KnowledgeDraft;
     links: readonly WitnessLink[];
     principal: KnowledgePrincipal;
-    reviewer: KnowledgeAttribution;
+    reviewer: KnowledgeAuthorityActor;
   }>,
 ): Promise<PublishedRecord> {
   const ownerId =
@@ -859,10 +849,7 @@ export async function confirmKnowledgeRecord(
         changeId: id,
         cause: input.decision === "confirm" ? "confirmed" : "revoked",
         actor: {
-          type:
-            current.authority.actor.kind === "legacy_unknown"
-              ? "system"
-              : current.authority.actor.kind,
+          type: current.authority.actor.kind,
           id: current.authority.actor.id,
         },
       });

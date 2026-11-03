@@ -294,3 +294,48 @@ cases:
         evidence: [{ kind: witness, id: witness_example }]
         missingEvidence: []
         limitations: []
+  - id: witness-inspection-includes-bounded-captured-bytes
+    surfaces: [web, external]
+    schema: CBEvidenceWitness
+    valid: true
+    value:
+      id: witness_example
+      sourceId: source_example
+      sourceVersion: version_example
+      sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      selector: submitted:text
+      availability: available
+      capturedAt: '2026-11-03T00:00:00.000Z'
+      observedAt: null
+      sourceAt: null
+      independenceGroupId: null
+      attribution: {kind: user, id: user_example, runId: null, attemptId: null}
+      excerpt: Inspect configured component and verify health separately.
+      excerptTruncated: false
+  - id: unavailable-proof-does-not-fabricate-identity-or-capture-time
+    surfaces: [web, external]
+    schema: CBRecordEvidence
+    valid: true
+    value:
+      relation: supports
+      unavailable:
+        state: missing
+        reason: Retained proof is currently unavailable; no source metadata is reconstructed.
+  - id: conflict-reference-retains-original-revision
+    surfaces: [web, external]
+    schema: CBKnowledgeConflictPage
+    valid: true
+    value:
+      items:
+        - edgeId: edge_example
+          classification: declared_conflict
+          reference: {kind: knowledge, id: conflicting_record, revision: 1}
+      nextCursor: null
+  - id: conflict-reference-cannot-omit-original-revision
+    surfaces: [web, external]
+    schema: CBKnowledgeConflict
+    valid: false
+    value:
+      edgeId: edge_example
+      classification: declared_conflict
+      reference: {kind: knowledge, id: conflicting_record}
