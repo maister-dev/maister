@@ -1599,7 +1599,10 @@ export function LaunchPopover({
                     </p>
                     {options.qualification?.sourceFailure ? (
                       <p className="text-sm text-ink-2" role="note">
-                        {t("admission.beforeModelFailure")}{" "}
+                        {options.qualification.sourceFailure.modelStarted ===
+                        false
+                          ? `${t("admission.beforeModelFailure")} `
+                          : null}
                         <a
                           className="underline"
                           href={`/runs/${encodeURIComponent(options.qualification.sourceFailure.runId)}`}

@@ -228,38 +228,48 @@ it.each([
   },
 );
 
-it("explains a pre-model Triager infrastructure failure without blocking manual launch", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () =>
-      Response.json({
-        ...options,
-        qualification: {
-          ...options.qualification,
-          sourceFailure: {
-            runId: "triager-failed",
-            stage: "baseline",
-            causeCode: "ENOENT",
-            modelStarted: false,
+it.each([false, null] as const)(
+  "explains failed Triager without inventing model-start evidence (%s)",
+  async (modelStarted) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          ...options,
+          qualification: {
+            ...options.qualification,
+            sourceFailure: {
+              runId: "triager-failed",
+              stage: modelStarted === false ? "baseline" : null,
+              causeCode: modelStarted === false ? "ENOENT" : null,
+              modelStarted,
+            },
           },
-        },
-      }),
-    ),
-  );
-  await open();
-  expect(document.body.textContent).toContain("launch.admission.triageFailed");
-  expect(document.body.textContent).toContain(
-    "launch.admission.beforeModelFailure",
-  );
-  expect(
-    document.querySelector('a[href="/runs/triager-failed"]'),
-  ).not.toBeNull();
-  const launch = [...document.querySelectorAll("button")].find(
-    (button) => button.textContent === "launch.createRun",
-  );
+        }),
+      ),
+    );
+    await open();
+    expect(document.body.textContent).toContain(
+      "launch.admission.triageFailed",
+    );
+    if (modelStarted === false)
+      expect(document.body.textContent).toContain(
+        "launch.admission.beforeModelFailure",
+      );
+    else
+      expect(document.body.textContent).not.toContain(
+        "launch.admission.beforeModelFailure",
+      );
+    expect(
+      document.querySelector('a[href="/runs/triager-failed"]'),
+    ).not.toBeNull();
+    const launch = [...document.querySelectorAll("button")].find(
+      (button) => button.textContent === "launch.createRun",
+    );
 
-  expect(launch?.disabled).toBe(false);
-});
+    expect(launch?.disabled).toBe(false);
+  },
+);
 
 it("retries an uncertain response with the exact same request key and body across closing the dialog", async () => {
   let attempts = 0;

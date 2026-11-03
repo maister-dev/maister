@@ -8,7 +8,10 @@ import type { ActivityPage } from "@/lib/agents/activity-queries";
 import { sql } from "drizzle-orm";
 import { eq, and, desc } from "drizzle-orm";
 
-import { taskQualificationReceipt } from "@/lib/tasks/qualification";
+import {
+  loadTaskQualificationInput,
+  taskQualificationReceipt,
+} from "@/lib/tasks/qualification";
 import { taskQualifications } from "@/lib/db/schema";
 import {
   encodeAgentActivityCursor,
@@ -32,7 +35,8 @@ export type TaskQualificationSummary = {
     runId: string;
     stage: string | null;
     causeCode: string | null;
-    modelStarted: false;
+    /** Null reports a failed qualifier without making a model-start claim. */
+    modelStarted: false | null;
   };
 };
 
@@ -44,6 +48,7 @@ export async function getTaskQualificationSummaries(
   if (!taskIds.length) return new Map();
   const result = await db.execute<{
     id: string;
+    project_id: string;
     mode: TaskQualificationSummary["mode"];
     input_revision: number;
     qualification_id: string | null;
@@ -55,8 +60,9 @@ export async function getTaskQualificationSummaries(
     candidate: TaskQualificationReceipt | null;
     previously_accepted: boolean;
     source_failure: TaskQualificationSummary["sourceFailure"] | null;
+    source_input_digest: string | null;
   }>(sql`
-    SELECT t.id,t.qualification_mode mode,t.qualification_input_revision input_revision,
+    SELECT t.id,t.project_id,t.qualification_mode mode,t.qualification_input_revision input_revision,
       q.id qualification_id,q.revision qualification_revision,q.value->>'decision' decision,
       q.publication_state state,q.input_revision assessment_input_revision,q.value->'nextActions' next_actions,
       EXISTS(SELECT 1 FROM task_qualifications prior WHERE prior.task_id=t.id AND prior.project_id=t.project_id AND prior.publication_state='accepted') previously_accepted,
@@ -68,7 +74,10 @@ export async function getTaskQualificationSummaries(
        ORDER BY c.revision DESC LIMIT 1) candidate,
       CASE WHEN source.status IN ('Failed','Crashed')
         AND length(source.id) BETWEEN 1 AND 256 AND source.id ~ '^[A-Za-z0-9_-]+$'
-        AND jsonb_typeof(source.operational_terminal->'infrastructureFailure')='object'
+        AND source.qualification_snapshot->'inputRevision'=to_jsonb(t.qualification_input_revision)
+        AND jsonb_typeof(source.qualification_snapshot->'inputDigest')='string'
+        AND source.qualification_snapshot->>'inputDigest' ~ '^[a-f0-9]{64}$'
+      THEN CASE WHEN jsonb_typeof(source.operational_terminal->'infrastructureFailure')='object'
         AND source.operational_terminal->'infrastructureFailure'->>'stage' IN
           ('workspace_acquisition','checkout','baseline','materialize','capability_materialization','materialization_witness')
         AND NOT EXISTS(SELECT 1 FROM execution_commands command WHERE command.run_id=source.id AND command.kind IN ('session.create','session.prompt'))
@@ -83,57 +92,69 @@ export async function getTaskQualificationSummaries(
           ) WITH ORDINALITY AS causes(cause,ordinal)
           WHERE cause->>'code' ~ '^[A-Za-z0-9_]{1,64}$' ORDER BY ordinal LIMIT 1),
         'modelStarted',false)
-      ELSE NULL END source_failure
+      ELSE jsonb_build_object('runId',source.id,'stage',null,'causeCode',null,'modelStarted',null) END
+      ELSE NULL END source_failure,
+      source.qualification_snapshot->>'inputDigest' source_input_digest
     FROM tasks t LEFT JOIN task_qualifications q ON q.id=t.current_qualification_id AND q.task_id=t.id
     LEFT JOIN LATERAL (
-      SELECT r.id,r.status,r.operational_terminal FROM runs r
+      SELECT r.id,r.status,r.operational_terminal,r.task_qualification_snapshot qualification_snapshot FROM runs r
       WHERE r.task_id=t.id AND r.project_id=t.project_id AND r.agent_kind='operational'
         AND r.task_qualification_snapshot->>'role'='qualifier'
       ORDER BY coalesce(r.launched_at,r.started_at) DESC,r.id DESC LIMIT 1
     ) source ON true
     WHERE t.id IN ${[...taskIds]}`);
 
-  return new Map(
-    result.rows.map((row) => {
-      const current =
-        row.state === "accepted" &&
-        row.assessment_input_revision === row.input_revision;
-      const ready = current && row.decision === "ready";
-      const required = row.mode === "required";
+  const summaries = new Map<string, TaskQualificationSummary>();
 
-      return [
+  for (const row of result.rows) {
+    const current =
+      row.state === "accepted" &&
+      row.assessment_input_revision === row.input_revision;
+    const ready = current && row.decision === "ready";
+    const required = row.mode === "required";
+    let sourceFailure: TaskQualificationSummary["sourceFailure"];
+
+    if (!current && row.source_failure) {
+      const currentInput = await loadTaskQualificationInput(
+        db,
+        row.project_id,
         row.id,
-        {
-          required,
-          mode: row.mode,
-          inputRevision: row.input_revision,
-          qualificationId: row.qualification_id,
-          qualificationRevision: row.qualification_revision,
-          decision: current ? row.decision : null,
-          publicationState:
-            row.state ?? row.candidate?.publicationState ?? null,
-          freshness:
-            current || row.mode === "execution_child"
-              ? "current"
-              : row.qualification_id || row.previously_accepted
-                ? "stale"
-                : "unassessed",
-          blockedReason:
-            !required || ready
-              ? null
-              : current
-                ? row.decision
-                : (row.candidate?.publicationReason ??
-                  "qualification_required"),
-          nextActions: current ? (row.next_actions ?? []) : [],
-          candidate: row.candidate,
-          ...(!current && row.source_failure
-            ? { sourceFailure: row.source_failure }
-            : {}),
-        } satisfies TaskQualificationSummary,
-      ];
-    }),
-  );
+      );
+
+      if (
+        currentInput.inputRevision === row.input_revision &&
+        currentInput.inputDigest === row.source_input_digest
+      )
+        sourceFailure = row.source_failure;
+    }
+
+    summaries.set(row.id, {
+      required,
+      mode: row.mode,
+      inputRevision: row.input_revision,
+      qualificationId: row.qualification_id,
+      qualificationRevision: row.qualification_revision,
+      decision: current ? row.decision : null,
+      publicationState: row.state ?? row.candidate?.publicationState ?? null,
+      freshness:
+        current || row.mode === "execution_child"
+          ? "current"
+          : row.qualification_id || row.previously_accepted
+            ? "stale"
+            : "unassessed",
+      blockedReason:
+        !required || ready
+          ? null
+          : current
+            ? row.decision
+            : (row.candidate?.publicationReason ?? "qualification_required"),
+      nextActions: current ? (row.next_actions ?? []) : [],
+      candidate: row.candidate,
+      ...(sourceFailure ? { sourceFailure } : {}),
+    });
+  }
+
+  return summaries;
 }
 
 export type TaskQualificationHistoryItem = TaskQualificationReceipt & {

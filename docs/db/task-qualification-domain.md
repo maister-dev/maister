@@ -28,6 +28,20 @@ erDiagram
 | evidence            | Active pointers cannot be pruned; run/actor navigation may become unavailable without losing immutable provenance or granting acceptance.                                                                                           |
 | invalidation        | Every semantic writer increments input revision and clears current acceptance/old enqueue in its transaction. Priority/pause and ordinary discussion do not silently change requirements.                                           |
 
+## Qualifier source input binding
+
+The immutable version-1 `runs.task_qualification_snapshot` retains `role`,
+`taskId`, `target` and `sha`. New qualifier launches additionally freeze
+`inputRevision` (positive integer) and `inputDigest` (64 lowercase hex characters)
+from the authoritative semantic qualification input. Both fields are optional
+for reading old snapshots; a new qualifier producer writes both together.
+The existing JSONB column and snapshot CHECK permit these additive keys, and
+the existing immutability trigger protects them. No column, CHECK, generated
+schema snapshot or ERD changes, migration or historical backfill are needed.
+Readers must not infer a current input binding when either field is absent.
+The [failed-source projection contract](../system-analytics/task-qualification.md#failed-qualifier-source-without-an-assessment)
+defines current-input comparison and safe legacy presentation.
+
 ## Transactions and indexes
 
 Index all hot project/agent/task/due/status and keyset paths; bounded scans use dueAt/id or timestamp/id. All current pointers, receipt uniqueness, payload comparison, state CHECKs and same-project relationships are database/service invariants with direct-write negative tests. Source run precedes task and agent-advisory/episode locks; task-only human writes do not lock a run later. No Git/host/network effect inside PostgreSQL transactions.

@@ -21761,7 +21761,7 @@ components:
         sourceFailure:
           type: object
           additionalProperties: false
-          description: Latest qualifier failed before model dispatch; absent for current accepted assessments or any newer non-failed attempt. Safe metadata only; no assessment is fabricated.
+          description: Latest qualifier failed without a current accepted assessment and its frozen inputRevision/inputDigest match the current task input; absent for unbound legacy snapshots, input drift, current accepted assessments or any newer non-failed attempt. modelStarted false requires proven pre-model preparation failure; null makes no model-start claim and also has null stage/causeCode. Safe metadata only; no assessment is fabricated.
           required: [runId, stage, causeCode, modelStarted]
           properties:
             runId:
@@ -21792,7 +21792,7 @@ components:
                 pattern: "^[A-Za-z0-9_]+$",
                 nullable: true,
               }
-            modelStarted: { type: boolean, enum: [false] }
+            modelStarted: { type: boolean, nullable: true, enum: [false, null] }
         candidate:
           oneOf:
             - $ref: "#/components/schemas/TaskQualificationReceipt"

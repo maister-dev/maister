@@ -1602,6 +1602,8 @@ async function launchAgentRunWithAdmission(
         taskId: input.taskId,
         target: qualificationInput.target,
         sha: frozenSha ?? currentSha,
+        inputRevision: qualificationInput.inputRevision,
+        inputDigest: qualificationInput.inputDigest,
       };
     } else
       taskQualificationSnapshot = {

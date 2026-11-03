@@ -159,8 +159,9 @@ export function TaskAgentLaunchControl({
       ? "triageAccepted"
       : qualification?.freshness === "stale"
         ? "triageStale"
-        : qualification?.candidate?.publicationReason ===
-            "qualification_source_failed"
+        : qualification?.sourceFailure ||
+            qualification?.candidate?.publicationReason ===
+              "qualification_source_failed"
           ? "triageFailed"
           : qualification?.decision && qualification.decision !== "ready"
             ? "triageNegative"

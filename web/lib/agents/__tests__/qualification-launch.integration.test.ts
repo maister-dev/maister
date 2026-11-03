@@ -1,3 +1,5 @@
+import type { Db } from "@/lib/execution-host/db";
+
 import { randomUUID } from "node:crypto";
 import { rm, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -9,6 +11,12 @@ import {
   resolveWorkspaceRefCommittish,
 } from "@/lib/agents/launch";
 import { frozenOperationalDefinition } from "@/lib/agents/launch-contract";
+import { prepareUndispatchedAgentFailure } from "@/lib/agents/finalization";
+import {
+  loadTaskQualificationInput,
+  requireTaskRequalification,
+} from "@/lib/tasks/qualification";
+import { getTaskQualificationSummaries } from "@/lib/tasks/qualification-queries";
 import { seedAgentRun } from "@/test-support/agent-run-seed";
 import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import { mkdtempReal } from "@/test-support/worktree-test-root";
@@ -100,6 +108,11 @@ it("IT-UX-19 IT-UX-12 allows an operational qualifier to inspect held intake, re
     "INSERT INTO tasks(id,project_id,number,title,prompt) VALUES ($1,$2,1,'Unclear request','Needs repository evidence')",
     [taskId, source.project_id],
   );
+  const frozenInput = await loadTaskQualificationInput(
+    database.db,
+    source.project_id,
+    taskId,
+  );
   const launched = await launchAgentRun({
     db: database.db,
     agentId: source.agent_id,
@@ -127,6 +140,8 @@ it("IT-UX-19 IT-UX-12 allows an operational qualifier to inspect held intake, re
       taskId,
       target: "main",
       sha,
+      inputRevision: frozenInput.inputRevision,
+      inputDigest: frozenInput.inputDigest,
     },
   });
   await writeFile(
@@ -161,4 +176,26 @@ it("IT-UX-19 IT-UX-12 allows an operational qualifier to inspect held intake, re
       )
     ).rows[0],
   ).toEqual({ current_qualification_id: null, launch_mode: null });
+  const failure = await prepareUndispatchedAgentFailure(launched.runId, {
+    db: database.db,
+    reason: "controlled_qualifier_preparation_failure",
+  });
+
+  const db: Db = database.db;
+  const applied = await db.transaction((tx) => failure.apply(tx));
+
+  expect(applied).toMatchObject({ finalized: true });
+  await failure.afterCommit(applied);
+  expect(
+    (await getTaskQualificationSummaries(database.db, [taskId])).get(taskId),
+  ).toHaveProperty("sourceFailure", {
+    runId: launched.runId,
+    stage: null,
+    causeCode: null,
+    modelStarted: null,
+  });
+  await requireTaskRequalification(database.db, source.project_id, taskId);
+  expect(
+    (await getTaskQualificationSummaries(database.db, [taskId])).get(taskId),
+  ).not.toHaveProperty("sourceFailure");
 });

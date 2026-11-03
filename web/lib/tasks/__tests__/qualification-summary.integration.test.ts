@@ -9,7 +9,11 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 
 import { runs, tasks, runSessions, executionCommands } from "@/lib/db/schema";
 import { getTaskQualificationSummaries } from "@/lib/tasks/qualification-queries";
-import { prepareTaskQualification } from "@/lib/tasks/qualification";
+import {
+  loadTaskQualificationInput,
+  prepareTaskQualification,
+  requireTaskRequalification,
+} from "@/lib/tasks/qualification";
 import { admitAgentGenerationTurn } from "@/lib/agents/generation-turn";
 import { qualificationFixture } from "@/test-support/task-qualification";
 import { operationalContractFixture } from "@/test-support/operational-agent";
@@ -87,8 +91,14 @@ function terminal(runId: string): OperationalTerminal {
 async function source(
   taskId: string,
   status: "Running" | "Failed" = "Failed",
+  storedDigest?: string,
 ): Promise<string> {
   const id = randomUUID();
+  const input = await loadTaskQualificationInput(
+    database.db,
+    fixture.projectId,
+    taskId,
+  );
 
   await database.db.insert(runs).values({
     id,
@@ -108,6 +118,8 @@ async function source(
       taskId,
       target: "main",
       sha: "a".repeat(40),
+      inputRevision: input.inputRevision,
+      inputDigest: storedDigest ?? input.inputDigest,
     },
     operationalTerminal: status === "Failed" ? terminal(id) : null,
   });
@@ -153,6 +165,75 @@ it("latest Running qualifier suppresses an older before-model failure", async ()
   await source(taskId);
   await source(taskId, "Running");
   expect(await summary(taskId)).not.toHaveProperty("sourceFailure");
+});
+
+it("a semantic task edit suppresses an older failed qualifier instead of relabeling the new input", async () => {
+  const taskId = await task();
+  const db: Db = database.db;
+
+  await source(taskId);
+  await db.transaction(async (tx) => {
+    await tx
+      .update(tasks)
+      .set({ prompt: "The request has changed" })
+      .where(eq(tasks.id, taskId));
+    await requireTaskRequalification(tx, fixture.projectId, taskId);
+  });
+  expect(await summary(taskId)).not.toHaveProperty("sourceFailure");
+});
+
+it("a legacy qualifier with no frozen input binding remains historical rather than current failure", async () => {
+  const taskId = await task();
+  const runId = randomUUID();
+
+  await database.db.insert(runs).values({
+    id: runId,
+    projectId: fixture.projectId,
+    taskId,
+    runKind: "agent",
+    status: "Failed",
+    startedAt: new Date(),
+    flowVersion: "agent",
+    agentKind: "operational",
+    agentWorkspace: "repo_read",
+    resultContract: operationalContractFixture("repo_read"),
+    taskQualificationSnapshot: {
+      version: 1,
+      role: "qualifier",
+      taskId,
+      target: "main",
+      sha: "a".repeat(40),
+    },
+    operationalTerminal: terminal(runId),
+  });
+  expect(await summary(taskId)).not.toHaveProperty("sourceFailure");
+});
+
+it("matching input revision alone cannot authorize a failed-source claim with a different digest", async () => {
+  const taskId = await task();
+
+  await source(taskId, "Failed", "b".repeat(64));
+  expect(await summary(taskId)).not.toHaveProperty("sourceFailure");
+});
+
+it("a newer unrelated operational Run does not hide this task's current failed qualifier", async () => {
+  const taskId = await task();
+  const runId = await source(taskId);
+
+  await database.db.insert(runs).values({
+    id: randomUUID(),
+    projectId: fixture.projectId,
+    taskId,
+    runKind: "agent",
+    status: "Running",
+    startedAt: new Date(Date.now() + 1000),
+    launchedAt: new Date(Date.now() + 1000),
+    flowVersion: "agent",
+    agentKind: "operational",
+    agentWorkspace: "none",
+    resultContract: operationalContractFixture("none"),
+  });
+  expect(await summary(taskId)).toHaveProperty("sourceFailure.runId", runId);
 });
 
 it.each(["ready", "needs_review"] as const)(
@@ -204,7 +285,53 @@ it.each(["ready", "needs_review"] as const)(
   },
 );
 
-it("a real admitted create and bound host session disprove a before-model claim", async () => {
+it("a real host-rejected create remains visible without claiming a before-model preparation failure", async () => {
+  const taskId = await task();
+  const runId = await source(taskId, "Running");
+  const { hosts } = await fakeExecutionHosts(database.db);
+  const client = await hosts.forRun(runId);
+  const db: Db = database.db;
+
+  await database.db
+    .insert(runSessions)
+    .values({ id: randomUUID(), runId, sessionName: "default" });
+  const turn = await db.transaction((tx) =>
+    admitAgentGenerationTurn(tx, {
+      runId,
+      assignmentId: client.assignment.id,
+      variant: "initial",
+      prompt: "Assess the task",
+    }),
+  );
+
+  await client.ensureWorkspace();
+  await expect(
+    client.createOwnedSession(
+      { variant: "agent", turnId: turn.id, promptOrdinal: turn.ordinal },
+      async () => ({
+        stepId: "host-refuses/invalid-segment",
+        executor: { agent: "claude", model: "mock" },
+      }),
+    ),
+  ).rejects.toMatchObject({ code: "PRECONDITION" });
+  await database.db
+    .update(runs)
+    .set({ status: "Failed", operationalTerminal: terminal(runId) })
+    .where(eq(runs.id, runId));
+  expect(await summary(taskId)).toMatchObject({
+    decision: null,
+    freshness: "unassessed",
+    candidate: null,
+    sourceFailure: {
+      runId,
+      stage: null,
+      causeCode: null,
+      modelStarted: null,
+    },
+  });
+});
+
+it("a real admitted create and bound host session report failed triage without a before-model claim", async () => {
   const taskId = await task();
   const runId = await source(taskId, "Running");
   const { hosts } = await fakeExecutionHosts(database.db);
@@ -245,5 +372,10 @@ it("a real admitted create and bound host session disprove a before-model claim"
         .where(eq(executionCommands.runId, runId))
     ).some((command) => command.kind === "session.create"),
   ).toBe(true);
-  expect(await summary(taskId)).not.toHaveProperty("sourceFailure");
+  expect(await summary(taskId)).toHaveProperty("sourceFailure", {
+    runId,
+    stage: null,
+    causeCode: null,
+    modelStarted: null,
+  });
 });

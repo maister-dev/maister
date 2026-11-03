@@ -520,18 +520,29 @@ upgrade preserves existing evidence and refuses future unclassified flags.
 ### Failed qualifier source without an assessment
 
 The optional summary `sourceFailure` identifies the latest operational qualifier
-attempt for this task and project when it failed before model dispatch and no
-current accepted assessment exists. Immutable `taskQualificationSnapshot.role`
+attempt for this task and project when it failed without publishing a current
+accepted assessment. Immutable `taskQualificationSnapshot.role`
 identifies the qualifier, including after catalog changes or deletion. Select the
 latest attempt before inspecting its outcome; a newer Running or successful
 attempt suppresses an older failure. A current accepted negative or ready decision
 retains its existing meaning and suppresses this diagnostic.
 
-Eligibility requires Failed/Crashed, a persisted infrastructure failure at
-workspace acquisition, checkout, baseline or platform materialization, and no
-session.create/session.prompt command or retained ACP/host session binding. The
-projection contains only bounded run ID, recognized stage, safe native cause code
-and `modelStarted:false`. It never returns messages, paths, credential values or
+The [immutable qualifier input binding](../db/task-qualification-domain.md#qualifier-source-input-binding)
+must match both current server-owned qualification input revision and digest
+before a source failure is presented as current. An edited/requalified task or a
+digest mismatch suppresses the old failure. Historical snapshots without this
+binding remain available in Run history and are not rewritten or represented as
+a failure of the current input.
+
+Eligibility requires Failed/Crashed. `modelStarted:false` additionally requires a
+persisted infrastructure failure at workspace acquisition, checkout, baseline or
+platform materialization, and no session.create/session.prompt command or retained
+ACP/host session binding or incarnation. Otherwise `modelStarted:null` means the
+summary makes no claim about model startup; stage and cause code are also null.
+The UI shows the specific failed-Triager explanation and Run link in both cases,
+and the before-model explanation only for literal false. The projection contains
+only bounded run ID, recognized stage and safe native cause code when proven.
+It never returns messages, paths, credential values or
 assessment content, and never fabricates an assessment. Existing freshness,
 blocked reason, candidate/history and access grants remain unchanged. Detailed
 diagnostics stay on the privileged Run surface. Real PostgreSQL projection

@@ -91,4 +91,7 @@ export type TaskQualificationLaunchSnapshot = {
   taskId: string | null;
   target: string | null;
   sha: string | null;
+  /** New qualifier launches bind diagnostics to this exact semantic input; legacy snapshots omit both fields. */
+  inputRevision?: number;
+  inputDigest?: string;
 };
