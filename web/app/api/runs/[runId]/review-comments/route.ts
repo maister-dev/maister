@@ -9,6 +9,7 @@ import pino from "pino";
 import { z } from "zod";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
+import { assertRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { runs } from "@/lib/db/schema";
@@ -118,7 +119,7 @@ export async function GET(
       req.nextUrl.searchParams.get("scope"),
     );
 
-    await requireActiveSession();
+    const user = await requireActiveSession();
 
     const dbh = db();
     const run = await loadRun(dbh, runId);
@@ -128,6 +129,9 @@ export async function GET(
     }
 
     await requireProjectAction(run.projectId, "readBoard");
+    const recipient = { kind: "user" as const, userId: user.id };
+
+    await assertRunKnowledgeDisclosure(dbh, recipient, runId);
 
     const threads = await listThreads(dbh, runId);
 
@@ -151,6 +155,8 @@ export async function GET(
         "diff unavailable — placements degrade to outdated",
       );
     }
+
+    await assertRunKnowledgeDisclosure(dbh, recipient, runId);
 
     return NextResponse.json({
       threads: threads.map((thread) => ({
@@ -202,6 +208,9 @@ export async function POST(
     }
 
     await requireProjectAction(run.projectId, "answerHitl");
+    const recipient = { kind: "user" as const, userId: sessionUser.id };
+
+    await assertRunKnowledgeDisclosure(dbh, recipient, runId);
 
     if (scope !== "review") {
       throw new MaisterError(
@@ -220,6 +229,8 @@ export async function POST(
         parentId: body.parentId,
         body: body.body,
       });
+
+      await assertRunKnowledgeDisclosure(dbh, recipient, runId);
 
       return NextResponse.json(
         { comment: toCommentDto(created) },
@@ -248,6 +259,8 @@ export async function POST(
       lineContent: extraction.lineContent,
       body: body.body,
     });
+
+    await assertRunKnowledgeDisclosure(dbh, recipient, runId);
 
     return NextResponse.json(
       { comment: toCommentDto(created) },

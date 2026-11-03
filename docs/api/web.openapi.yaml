@@ -9512,7 +9512,10 @@ paths:
         Requires project membership at `viewer` or above
         (`requireProjectAction("readBoard")`); `projectId` is derived from the
         run row, never the body. NOT status-gated — thread history stays
-        visible after the gate closes, like the diff.
+        visible after the gate closes, like the diff. Governed runs additionally
+        require current captured-source authority before thread/anchor reads and
+        before delayed serialization. Unavailable source closure returns 409;
+        retained comments cannot bypass source access after worktree cleanup.
 
         Returns the run's review-comment threads (root + replies) with a
         computed `placement` per thread: `scope=review` (ADR-138 Implemented) uses
@@ -9647,6 +9650,9 @@ paths:
       tags: [review-comments]
       summary: Implemented (ADR-072) — edit body (author-only) or resolve/unresolve (root-only)
       description: |
+        Governed result bodies require current captured-source authority before
+        edits and before the response is serialized. This content gate does not
+        add a dependency to comment deletion or project deletion.
         Requires `answerHitl` (member) + the same open-review-gate guard as
         POST (409 `PRECONDITION` otherwise). The row is loaded and
         `row.run_id === runId` is compared server-state — mismatch or unknown

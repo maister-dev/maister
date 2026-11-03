@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { KnowledgeRecipient } from "@/lib/brain/knowledge-run-disclosure";
 import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { Assignment, HitlRequest, RunnerSnapshot } from "@/lib/db/schema";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
@@ -20,6 +21,10 @@ import {
   sql,
 } from "drizzle-orm";
 
+import {
+  readableKnowledgeRunIds,
+  assertRunsKnowledgeDisclosure,
+} from "@/lib/brain/knowledge-run-disclosure";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { projectHitlAnswer } from "@/lib/hitl-answer-view";
@@ -413,7 +418,7 @@ export function isInboxVisibleHitlRow(
 
 export async function getHitlInbox(
   projectId: string,
-  deps?: { db?: NodePgDatabase<typeof schema> },
+  deps?: { db?: NodePgDatabase<typeof schema>; recipient?: KnowledgeRecipient },
 ): Promise<HitlInbox> {
   const now = new Date();
   const client = deps?.db ?? db();
@@ -422,6 +427,7 @@ export async function getHitlInbox(
     .select({
       hitlRequestId: hitlRequests.id,
       runId: hitlRequests.runId,
+      nativeKnowledge: sql<boolean>`${runs.knowledgeAccess} IS NOT NULL OR ${runs.resultContract}->>'nativeContract'='evidence_findings_v1'`,
       kind: hitlRequests.kind,
       prompt: hitlRequests.prompt,
       rawSchema: hitlRequests.schema,
@@ -477,7 +483,16 @@ export async function getHitlInbox(
       ),
     )
     .orderBy(asc(hitlRequests.createdAt));
+  const nativeIds = rows
+    .filter((row) => row.nativeKnowledge)
+    .map((row) => row.runId);
+  const readable = await readableKnowledgeRunIds(
+    client,
+    deps?.recipient,
+    nativeIds,
+  );
   const visibleRows = rows
+    .filter((row) => !row.nativeKnowledge || readable.has(row.runId))
     .map(withProjectRunKind)
     .filter(isInboxVisibleHitlRow);
   const hitlIds = visibleRows.map((row) => row.hitlRequestId);
@@ -520,6 +535,13 @@ export async function getHitlInbox(
     now,
     nodeInterruptByHitlId,
   );
+
+  if (deps?.recipient)
+    await assertRunsKnowledgeDisclosure(
+      client,
+      deps.recipient,
+      visibleRows.filter((row) => row.nativeKnowledge).map((row) => row.runId),
+    );
 
   return {
     items,

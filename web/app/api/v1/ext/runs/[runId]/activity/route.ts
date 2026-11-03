@@ -82,6 +82,7 @@ export async function GET(
           limit,
           salience,
           client: db,
+          recipient,
         });
 
         if (!response) {

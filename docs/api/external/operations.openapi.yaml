@@ -3394,6 +3394,12 @@ paths:
         agent tokens return 403 because they do not carry a user-wide project
         set.
 
+        Governed prompts and their schemas/responses require current source
+        authority under the actual bearer credential, including `knowledge:read`.
+        Source-denied items are excluded from both items and count; unrelated
+        authorized project work remains visible. Current grants are rechecked
+        before returning the selected content.
+
         Identifier labels:
 
         | Identifier | Source | Trust |
@@ -3695,6 +3701,10 @@ paths:
         project; global personal user tokens authorize the owner against that
         project. Mismatch or inaccessible project → 404 (existence-hide).
 
+        Governed run content also requires current receiving-token source
+        authority and `knowledge:read`. Unavailable capture/source closure returns
+        PRECONDITION/409 before prompts, options, schemas or responses are returned.
+
         Identifier labels:
 
         | Identifier | Source | Trust |
@@ -3747,6 +3757,8 @@ paths:
           $ref: "#/components/responses/HitlForbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: Governed execution source unavailable to the current receiving token.
 
   /api/v1/ext/runs/{runId}/hitl/{hitlRequestId}/respond:
     post:

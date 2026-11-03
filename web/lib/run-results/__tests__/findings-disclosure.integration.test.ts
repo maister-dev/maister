@@ -94,7 +94,7 @@ it("IT-CBE-06 actual native completion cannot enter the legacy automatic Brain d
   ).toEqual([]);
 });
 
-it.each(["run summary", "readiness", "activity"] as const)(
+it.each(["run summary", "readiness", "activity", "hitl"] as const)(
   "IT-CBE-06 external %s requires the receiving token's current source authority",
   async (kind) => {
     const source = await completedRun();
@@ -112,7 +112,7 @@ it.each(["run summary", "readiness", "activity"] as const)(
       {
         ownerUserId: userId,
         name: "Native source reader",
-        scopes: ["runs:read", "readiness:read", "knowledge:read"],
+        scopes: ["runs:read", "readiness:read", "knowledge:read", "hitl:read"],
       },
       database.db,
     );
@@ -132,6 +132,12 @@ it.each(["run summary", "readiness", "activity"] as const)(
         return (
           await import("@/app/api/v1/ext/runs/[runId]/readiness/route")
         ).GET(request, params);
+
+      if (kind === "hitl")
+        return (await import("@/app/api/v1/ext/runs/[runId]/hitl/route")).GET(
+          request,
+          params,
+        );
 
       return (await import("@/app/api/v1/ext/runs/[runId]/activity/route")).GET(
         request,
@@ -155,7 +161,7 @@ it.each(["run summary", "readiness", "activity"] as const)(
         tokenKind: "user",
         ownerUserId: userId,
         name: "Project-only read authority",
-        scopes: ["runs:read", "readiness:read", "knowledge:read"],
+        scopes: ["runs:read", "readiness:read", "knowledge:read", "hitl:read"],
       },
       database.db,
     );

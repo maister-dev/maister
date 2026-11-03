@@ -68,6 +68,11 @@ const fakeDb = {
   select: selectChain,
 };
 
+// Source policy is exercised with actual PostgreSQL/Git in findings-workbench.integration.test.ts.
+vi.mock("@/lib/brain/knowledge-run-disclosure", () => ({
+  assertRunKnowledgeDisclosure: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock("@/lib/db/client", () => ({
   getDb: () => fakeDb,
 }));

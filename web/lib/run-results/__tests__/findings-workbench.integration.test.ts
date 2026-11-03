@@ -9,6 +9,8 @@ import { NextRequest } from "next/server";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
 import { getKnowledgeRecord } from "@/lib/brain/knowledge-records";
+import { hitlRequests } from "@/lib/db/schema";
+import { createRoot } from "@/lib/review-comments/service";
 import { createCompanyGrants } from "@/lib/company/grants";
 import { buildAgentProfileContract } from "@/lib/run-results/contract";
 import { seedWorkspace } from "@/test-support/execution-host-seed";
@@ -52,7 +54,7 @@ afterAll(async () => {
   }
 });
 
-it.each(["files", "diff", "change-summary"] as const)(
+it.each(["files", "diff", "change-summary", "review-comments"] as const)(
   "IT-CBE-06 actual %s checks source authority before exposing a native worktree and permits an authorized reader",
   async (kind) => {
     const source = await seedNativeFindingsExecution(database, contract);
@@ -102,6 +104,32 @@ it.each(["files", "diff", "change-summary"] as const)(
       [randomUUID(), source.projectId, userId],
     );
     sessionUserId = userId;
+    if (kind === "review-comments") {
+      await database.pool.query(
+        "UPDATE runs SET status='NeedsInput' WHERE id=$1",
+        [source.runId],
+      );
+      await database.db.insert(hitlRequests).values({
+        id: randomUUID(),
+        runId: source.runId,
+        stepId: "review",
+        kind: "human",
+        prompt: "Review finding",
+        schema: { review: true },
+      });
+      await createRoot(
+        database.db,
+        { userId, label: "Reviewer" },
+        source.runId,
+        {
+          filePath: privateFile,
+          side: "new",
+          line: 1,
+          lineContent: record.assertion,
+          body: "Check retained assertion",
+        },
+      );
+    }
     const read = async (): Promise<Response> => {
       const request = new NextRequest(
         `http://localhost/api/runs/${source.runId}/${kind}`,
@@ -118,6 +146,11 @@ it.each(["files", "diff", "change-summary"] as const)(
           request,
           params,
         );
+
+      if (kind === "review-comments")
+        return (
+          await import("@/app/api/runs/[runId]/review-comments/route")
+        ).GET(request, params);
 
       return (await import("@/app/api/runs/[runId]/change-summary/route")).GET(
         request,

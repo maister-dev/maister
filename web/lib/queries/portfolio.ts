@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { KnowledgeRecipient } from "@/lib/brain/knowledge-run-disclosure";
 import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type {
   GlobalRole,
@@ -45,6 +46,10 @@ import {
   activeSessionRunnerSnapshot,
 } from "@/lib/runs/active-run-session";
 import { gcAgeDays, gcWarningDays } from "@/lib/instance-config";
+import {
+  readableKnowledgeRunIds,
+  assertRunsKnowledgeDisclosure,
+} from "@/lib/brain/knowledge-run-disclosure";
 import { isInboxVisibleHitlRow, mapRowsToHitlItems } from "@/lib/queries/hitl";
 import {
   resolveNodeInterruptMatrices,
@@ -1234,6 +1239,7 @@ function critRank(c: string | null): number {
  * want the reader's whole inbox pass nothing, exactly as before.
  */
 export interface CrossProjectHitlScope {
+  recipient?: KnowledgeRecipient;
   projectIds?: readonly string[];
 }
 
@@ -1276,6 +1282,7 @@ export async function getCrossProjectHitlInbox(
     .select({
       hitlRequestId: hitlRequests.id,
       runId: hitlRequests.runId,
+      nativeKnowledge: sql<boolean>`${runs.knowledgeAccess} IS NOT NULL OR ${runs.resultContract}->>'nativeContract'='evidence_findings_v1'`,
       kind: hitlRequests.kind,
       prompt: hitlRequests.prompt,
       rawSchema: hitlRequests.schema,
@@ -1333,7 +1340,13 @@ export async function getCrossProjectHitlInbox(
     )
     .orderBy(asc(hitlRequests.createdAt));
 
+  const recipient = scope.recipient ?? { kind: "user" as const, userId };
+  const nativeIds = rows
+    .filter((row) => row.nativeKnowledge)
+    .map((row) => row.runId);
+  const readable = await readableKnowledgeRunIds(client, recipient, nativeIds);
   const visibleRows = rows
+    .filter((row) => !row.nativeKnowledge || readable.has(row.runId))
     .map(withProjectRunKind)
     .filter(isInboxVisibleHitlRow);
 
@@ -1415,5 +1428,11 @@ export async function getCrossProjectHitlInbox(
   // getPortfolio.totalNeeds (the actionable-ASSIGNMENT total, which also counts
   // HumanWorking/Review runs): the home "needs you" headline reflects
   // totalNeeds, while this `count` titles the HITL inbox block specifically.
+  await assertRunsKnowledgeDisclosure(
+    client,
+    recipient,
+    visibleRows.filter((row) => row.nativeKnowledge).map((row) => row.runId),
+  );
+
   return { items, count: items.length };
 }

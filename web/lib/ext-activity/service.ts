@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { KnowledgeRecipient } from "@/lib/brain/knowledge-run-disclosure";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type {
   ActivityPulseResponse,
@@ -369,6 +370,7 @@ export async function getActivityPulse(
     salience: ActivitySalience;
     now?: Date;
     client?: DbClient;
+    recipient?: KnowledgeRecipient;
   },
 ): Promise<ActivityPulseResponse> {
   const client = input.client ?? db();
@@ -377,7 +379,10 @@ export async function getActivityPulse(
   // past the snapshot loop — but it has no dependency on `promotable`, so the
   // two synthesized blocks are fetched as one wave rather than in series.
   const [needsYou, promotable, mentionCandidates] = await Promise.all([
-    listProjectNeedsYou(projectId, { db: client }),
+    listProjectNeedsYou(projectId, {
+      db: client,
+      ...(input.recipient ? { recipient: input.recipient } : {}),
+    }),
     listProjectPromotable(projectId, { db: client }),
     listMentionCandidateAgents(client, projectId),
   ]);
@@ -494,6 +499,7 @@ export async function getRunActivityResponse(
     salience: ActivitySalience;
     now?: Date;
     client?: DbClient;
+    recipient?: KnowledgeRecipient;
   },
 ): Promise<{
   items: RunActivityItem[];
@@ -507,7 +513,10 @@ export async function getRunActivityResponse(
   if (!run) return null;
 
   const now = input.now ?? new Date();
-  const needsYou = await listProjectNeedsYou(projectId, { db: client });
+  const needsYou = await listProjectNeedsYou(projectId, {
+    db: client,
+    ...(input.recipient ? { recipient: input.recipient } : {}),
+  });
   const { snapshot, items } = await buildRunSnapshot(
     run,
     needsYou,

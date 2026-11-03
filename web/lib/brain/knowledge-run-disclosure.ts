@@ -114,6 +114,78 @@ export async function authorizeRunsKnowledgeDisclosure(
   );
 }
 
+/** Select authorized native Inbox rows without disclosing denied prompts or counts; legacy rows stay at their caller's project gate. */
+export async function readableKnowledgeRunIds(
+  db: SqlDatabase,
+  recipient: KnowledgeRecipient | undefined,
+  runIds: readonly string[],
+): Promise<ReadonlySet<string>> {
+  const ids = [...new Set(runIds)].sort();
+
+  if (!ids.length || !recipient) return new Set();
+
+  return db.transaction(async (tx) => {
+    const consumer = await lockKnowledgeReadConsumer(tx, recipient);
+
+    await resolveKnowledgePrincipal(tx, recipient, "knowledge:read");
+    let access = await authorizeSourceRestrictions(
+      tx,
+      recipient,
+      consumer?.capture.restrictions ?? [],
+    );
+    const readable = new Set<string>();
+
+    for (let offset = 0; offset < ids.length; offset += 256) {
+      const page = ids.slice(offset, offset + 256);
+      const rows = (
+        await tx.execute(sql`SELECT id,knowledge_access FROM runs
+        WHERE id IN (${sql.join(
+          page.map((id) => sql`${id}`),
+          sql`, `,
+        )}) ORDER BY id FOR SHARE`)
+      ).rows;
+
+      for (const row of rows) {
+        const capture = knowledgeAccessCaptureSchema.safeParse(
+          row.knowledge_access,
+        );
+
+        if (!capture.success || capture.data.state !== "complete") continue;
+        try {
+          access = await authorizeSourceRestrictions(
+            tx,
+            recipient,
+            capture.data.restrictions,
+            access,
+          );
+          readable.add(String(row.id));
+        } catch (error) {
+          if (
+            !isRunKnowledgeUnavailable(error) ||
+            error.details?.reason !== "knowledge_reference_unavailable"
+          )
+            throw error;
+          log.debug(
+            {
+              runId: row.id,
+              recipientKind: recipient.kind,
+              reason: error.details?.reason,
+            },
+            "source-denied execution excluded from Inbox content",
+          );
+        }
+      }
+    }
+    await recordKnowledgeDisclosure(
+      tx,
+      consumer,
+      restrictionsForKnowledgeAccess(access),
+    );
+
+    return readable;
+  });
+}
+
 /** Authorize the receiving principal and retain the source union before derived bytes leave one run. */
 export async function authorizeRunKnowledgeDisclosure(
   tx: SqlTransaction,
@@ -129,6 +201,7 @@ export async function assertRunsKnowledgeDisclosure(
   recipient: KnowledgeRecipient,
   runIds: readonly string[],
 ): Promise<void> {
+  if (!runIds.length) return;
   await db.transaction((tx) =>
     authorizeRunsKnowledgeDisclosure(tx, recipient, runIds),
   );

@@ -227,7 +227,9 @@ export default async function ProjectBoardPage({
     await Promise.all([
       getProjectPageData(project),
       getBoardData(project.id),
-      getHitlInbox(project.id),
+      getHitlInbox(project.id, {
+        recipient: { kind: "user", userId: user.id },
+      }),
       getPlatformStatus(),
       // ADR-169 D8: the project-scoped slice of the SAME canonical queue, not a
       // second local sum that is free to disagree with the rail badge.
