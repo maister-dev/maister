@@ -764,7 +764,7 @@ does not identify an authorized receiving professional role. This path refuses
 with `native_professional_role_required` before creating a child run/session;
 native research cooperation uses declared agent/Flow delegation with inherited
 source policy. Legacy consensus participants retain the contract below. See
-[native evidence boundaries](system-analytics/evidence-findings.md#physical-workspace-sharing).
+[native evidence boundaries](system-analytics/evidence-findings.md#native-recipient-and-reentry-boundaries).
 
 **(Implemented, [ADR-109](decisions.md#adr-109-consensus-flow-graph-node--engine-owned-unanimous-draft-verification-and-human-resolution).)**
 `type: consensus` is an engine-owned supervisory node for high-stakes planning

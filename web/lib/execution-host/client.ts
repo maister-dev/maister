@@ -97,6 +97,10 @@ import { streamCanonicalSessionEvents } from "./events/session-stream";
 import { asExecutionWorkspaceId, asHostSessionId } from "./types";
 
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import {
+  assertNativeRunKnowledgeInputs,
+  assertNativeRunKnowledgeInputsInTransaction,
+} from "@/lib/brain/knowledge-execution-access";
 import { getDb } from "@/lib/db/client";
 import {
   executionAssignments,
@@ -346,6 +350,35 @@ function throwSessionCreateFailure(
       },
     );
   throw error;
+}
+
+/** A withdrawn source grant cannot turn a previous unknown delivery into proof of rejection. */
+async function assertSteerDeliverySources(
+  db: Db,
+  command: Readonly<{ id: string; runId: string }>,
+): Promise<void> {
+  try {
+    await assertNativeRunKnowledgeInputs(db, command.runId);
+  } catch (error) {
+    const [currentAttempt] = await db
+      .select({ attempts: executionCommands.attempts })
+      .from(executionCommands)
+      .where(eq(executionCommands.id, command.id));
+
+    if (currentAttempt && currentAttempt.attempts > 1)
+      throw new MaisterError(
+        "EXECUTOR_UNAVAILABLE",
+        "Steering source authority is unavailable after a possible delivery; reconcile the existing command receipt before recovery",
+        {
+          cause: error,
+          details: {
+            reason: "native_steer_reconciliation_required",
+            commandId: command.id,
+          },
+        },
+      );
+    throw error;
+  }
 }
 
 export function createExecutionHosts(
@@ -696,6 +729,7 @@ export function createExecutionHosts(
         };
       },
       async prepareSteer(tx, sessionId, payload) {
+        await assertNativeRunKnowledgeInputsInTransaction(tx, current.runId);
         const issued = await issue(tx, "session.steer", payload, sessionId);
 
         return {
@@ -704,8 +738,15 @@ export function createExecutionHosts(
           deliver: (opts) =>
             deliver<SteerPayload, SteerResult>(
               issued,
-              (env) =>
-                transport.steer(sessionId, env, timeoutFor("session.steer")),
+              async (env) => {
+                await assertSteerDeliverySources(db, issued.row);
+
+                return transport.steer(
+                  sessionId,
+                  env,
+                  timeoutFor("session.steer"),
+                );
+              },
               {
                 targetSessionId: sessionId,
                 onAck: opts?.onAck,

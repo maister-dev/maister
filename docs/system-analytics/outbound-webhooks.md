@@ -272,7 +272,7 @@ and run status references remain available. Native failure prose and decisions
 remain in current-authorized execution views. This requires no Brain lookup,
 confirmation, scheduler, ledger or deletion guard. Legacy NULL-capture payloads
 and numeric user-scoped attention events keep their existing shapes. The full
-source contract is [evidence-linked findings](evidence-findings.md#attention-and-gate-chat).
+source contract is [evidence-linked findings](evidence-findings.md#project-webhook-delivery).
 
 ```json
 {

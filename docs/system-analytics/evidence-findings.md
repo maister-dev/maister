@@ -404,7 +404,30 @@ No private input is added to cached shared run/task DTOs. Company-only assignmen
 inspection extends this reader's owner admission in CB1 rather than fabricating
 a project.
 
-### Attention and gate chat
+### Cross-recipient input and steering
+
+Native run messages and rework requests admit private input only to an actual
+direct agent child. Before turn acceptance, the platform locks the source before
+the child, resolves the actual originating professional token, checks its current
+sources, and authorizes the child's current professional role against the whole
+source union. The same existing run capture retains that union before private
+prompt bytes can be persisted. Missing/legacy target capture cannot be upgraded;
+unknown sources, wrong ancestry and revoked receiver grants refuse without a
+turn or source update. Legacy tree-wide addressing keeps its existing contract.
+Input admission and execution dispatch both require current authority; steering
+also rechecks at its own wire boundary. These are input/source checks, never
+result acceptance or fact confirmation.
+
+Source refusal before a steer's first wire attempt is definitive. If an earlier
+attempt may already have been injected and its acknowledgement was lost,
+withdrawn/unavailable source authority withholds another send and leaves the
+existing command for read-only receipt reconciliation
+(`native_steer_reconciliation_required`). Recovery may establish the already
+applied effect without source-read authority; it must not label the prior effect
+not-applied merely because the current source grant is absent. No second
+command/attempt ledger is introduced.
+
+### Project webhook delivery
 
 Project webhook subscriptions have no Company Brain receiving principal.
 For native executions, per-event `data` is therefore the explicit
@@ -415,6 +438,8 @@ execution views. Capture uses the existing outbox INSERT and main run metadata,
 without a Brain read or teardown dependency. Fanout and send/replay enforce the
 same projection for retained native rows; legacy NULL-capture event payloads
 and user-scoped numeric attention facts retain their existing contracts.
+
+### Attention and gate chat
 
 Portfolio attention summaries/counts and project activity HITL text use the same
 current source policy as Inbox. Source-denied native questions are excluded;
@@ -451,7 +476,7 @@ local preservation path and withholds the optional archive push; it does not
 block local teardown because a knowledge grant was revoked. The source policy
 is derived from retained capture metadata, without a live Brain dependency.
 
-### Physical workspace sharing
+### Native recipient and reentry boundaries
 
 Native child work requires an identifiable authorized professional role. The
 legacy consensus participant selected only by a runner has no such role binding;
@@ -469,6 +494,8 @@ keeps its frozen sources and current dispatch checks. CB1 assignment recovery
 extends the existing immutable retry recipe and ownership mechanisms before
 qualifying native replacement attempts; silently launching a NULL-capture
 replacement is forbidden.
+
+### Physical workspace sharing
 
 Native cooperation uses separate owned workspaces or workspace-none execution.
 The legacy physical `workspaceMode: shared` has no recipient-aware source envelope

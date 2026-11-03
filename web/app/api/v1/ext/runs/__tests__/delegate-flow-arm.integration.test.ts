@@ -206,6 +206,189 @@ async function childRun(runId: string) {
   ).rows[0];
 }
 
+it.each(["message", "rework"] as const)(
+  "IT-CBE-06 native %s admits newly consumed sources only to a currently authorized child role",
+  async (action) => {
+    await enrollNativeDelegationParent(ctx, parentRunId);
+    const agentId = await seedAgent(ctx, { id: `input-${action}` });
+    const delegated = await delegatePost(
+      delegateRequest(secret, {
+        target: { agentId },
+        mode: "run",
+        prompt: "Original bounded objective",
+        ...(action === "message"
+          ? { persistent: true, addressableKey: `native-${action}` }
+          : { workspace: "worktree" }),
+      }),
+      {},
+    );
+
+    expect(delegated.status).toBe(202);
+    const { childRunId } = await delegated.json();
+    const launch = await import("@/lib/agents/launch");
+
+    if (action === "rework") {
+      await pool.query(
+        "UPDATE runs SET status='Running',started_at=now() WHERE id=$1",
+        [childRunId],
+      );
+      expect(
+        await launch.finalizeAgentRun(childRunId, "Done", { db }),
+      ).toMatchObject({ finalized: true, status: "Review" });
+    }
+    const companyId = (
+      await pool.query<{ id: string }>("SELECT id FROM companies")
+    ).rows[0]!.id;
+    const submittingUser = randomUUID();
+    const parentAgent = (
+      await pool.query<{ source_agent_id: string }>(
+        "SELECT source_agent_id FROM runs WHERE id=$1",
+        [parentRunId],
+      )
+    ).rows[0]!.source_agent_id;
+
+    await pool.query(
+      "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'admin','active')",
+      [submittingUser, `${submittingUser}@example.test`],
+    );
+    await pool.query(
+      "INSERT INTO company_grants(company_id,principal_type,principal_id,action,created_by) VALUES($1,'agent',$2,'knowledge:read',$3) ON CONFLICT DO NOTHING",
+      [companyId, parentAgent, submittingUser],
+    );
+    await pool.query(
+      "UPDATE agent_project_links SET can_read_brain=true WHERE project_id=$1 AND agent_id=$2",
+      [ctx.projectId, agentId],
+    );
+    await pool.query(
+      "UPDATE runs SET knowledge_access=jsonb_set(jsonb_set(knowledge_access,'{restrictions}',(knowledge_access->'restrictions') || $2::jsonb),'{generation}','2') WHERE id=$1",
+      [parentRunId, JSON.stringify([{ kind: "company", companyId }])],
+    );
+    const captures: unknown[] = [];
+    const observe = async (): Promise<void> => {
+      captures.push(
+        (
+          await pool.query("SELECT knowledge_access FROM runs WHERE id=$1", [
+            childRunId,
+          ])
+        ).rows[0]!.knowledge_access,
+      );
+    };
+    const message = vi
+      .spyOn(launch, "sendAgentMessage")
+      .mockImplementation(async () => {
+        await observe();
+
+        return {
+          childRunId,
+          messageId: randomUUID(),
+          status: "Pending",
+          messageState: "queued",
+          delivery: "queued",
+        };
+      });
+    const rework = vi
+      .spyOn(launch, "reworkChildRun")
+      .mockImplementation(async () => {
+        await observe();
+
+        return { childRunId, status: "Running" };
+      });
+    const route = action === "message" ? messagePost : reworkPost;
+    const request = (): NextRequest =>
+      new NextRequest(`http://localhost/api/v1/ext/runs/${action}`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${secret}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          childRunId,
+          prompt: "Private input based on the newly consumed company source.",
+        }),
+      });
+
+    try {
+      const before = (
+        await pool.query("SELECT knowledge_access FROM runs WHERE id=$1", [
+          childRunId,
+        ])
+      ).rows[0]!.knowledge_access;
+      const denied = await route(request(), {});
+
+      expect(denied.status).toBe(409);
+      expect(captures).toHaveLength(0);
+      expect(
+        (
+          await pool.query("SELECT knowledge_access FROM runs WHERE id=$1", [
+            childRunId,
+          ])
+        ).rows[0]!.knowledge_access,
+      ).toEqual(before);
+      await pool.query(
+        "INSERT INTO company_grants(company_id,principal_type,principal_id,action,created_by) VALUES($1,'agent',$2,'knowledge:read',$3)",
+        [companyId, agentId, submittingUser],
+      );
+      expect((await route(request(), {})).status).toBe(200);
+      expect(captures).toEqual([
+        expect.objectContaining({
+          state: "complete",
+          restrictions: expect.arrayContaining([
+            { kind: "company", companyId },
+          ]),
+        }),
+      ]);
+      await pool.query(
+        "UPDATE company_grants SET revoked_at=now() WHERE company_id=$1 AND principal_type='agent' AND principal_id=$2 AND action='knowledge:read'",
+        [companyId, agentId],
+      );
+      expect((await route(request(), {})).status).toBe(409);
+      expect(captures).toHaveLength(1);
+      await pool.query(
+        "INSERT INTO company_grants(company_id,principal_type,principal_id,action,created_by) VALUES($1,'agent',$2,'knowledge:read',$3)",
+        [companyId, agentId, submittingUser],
+      );
+      await pool.query("UPDATE runs SET knowledge_access=NULL WHERE id=$1", [
+        childRunId,
+      ]);
+      const historical = await route(request(), {});
+
+      expect(historical.status).toBe(409);
+      expect(await historical.json()).toMatchObject({
+        details: { reason: "knowledge_capture_profile_required" },
+      });
+      expect(
+        (
+          await pool.query("SELECT knowledge_access FROM runs WHERE id=$1", [
+            childRunId,
+          ])
+        ).rows[0]!.knowledge_access,
+      ).toBeNull();
+      await pool.query(
+        "UPDATE runs SET knowledge_access=$2::jsonb WHERE id=$1",
+        [
+          childRunId,
+          JSON.stringify({
+            schemaVersion: 1,
+            state: "unknown",
+            generation: 1,
+            restrictions: [],
+          }),
+        ],
+      );
+      const unknown = await route(request(), {});
+
+      expect(unknown.status).toBe(409);
+      expect(await unknown.json()).toMatchObject({
+        details: { reason: "knowledge_capture_profile_required" },
+      });
+      expect(captures).toHaveLength(1);
+    } finally {
+      message.mockRestore();
+      rework.mockRestore();
+    }
+  },
+);
+
 it.each(["task", "run"] as const)(
   "IT-CBE-06 native agent mode:%s preserves its private objective through canonical prompt composition",
   async (mode) => {

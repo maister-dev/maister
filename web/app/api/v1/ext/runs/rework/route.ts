@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { reworkChildRun } from "@/lib/agents/launch";
+import { captureNativeChildInput } from "@/lib/orchestrator/native-child-input";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
@@ -141,6 +142,11 @@ export async function POST(
       }
 
       try {
+        await captureNativeChildInput(
+          db,
+          { kind: "token", tokenId: ctx.actor.tokenId },
+          { sourceRunId: parentRunId, childRunId: child.id },
+        );
         const result = await reworkChildRun(body.childRunId, body.prompt, {
           db,
         });
@@ -151,8 +157,21 @@ export async function POST(
         );
       } catch (err) {
         if (isMaisterError(err)) {
+          const reason = err.details?.reason;
+
           return NextResponse.json(
-            { code: err.code, message: err.message },
+            {
+              code: err.code,
+              message: err.message,
+              ...(typeof reason === "string" &&
+              [
+                "knowledge_reference_unavailable",
+                "knowledge_capture_profile_required",
+                "native_input_target_required",
+              ].includes(reason)
+                ? { details: { reason } }
+                : {}),
+            },
             { status: httpStatusForExtCode(err.code) },
           );
         }

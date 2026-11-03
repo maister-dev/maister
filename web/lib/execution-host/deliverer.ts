@@ -409,6 +409,23 @@ export async function deliverCommand<TResult>(
         throw err;
       }
 
+      if (
+        kind === "session.steer" &&
+        isMaisterError(err) &&
+        err.details?.reason === "native_steer_reconciliation_required"
+      ) {
+        logger.warn(
+          {
+            commandId: opts.command.id,
+            runId: opts.command.runId,
+            attempt: attempts,
+            outcome: "left_for_recovery",
+          },
+          "steer-source-withheld-pending-reconciliation",
+        );
+        throw err;
+      }
+
       if (isFencedError(err)) {
         await terminalWithRejection(opts, "fenced", attempts, err, {
           logger,

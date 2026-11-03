@@ -2253,6 +2253,18 @@ paths:
       tags: [runs]
       summary: (Implemented) Re-message a persistent swarm child
       description: |
+        Native knowledge input is admitted only to a direct professional agent
+        child with complete source capture. The server rechecks the originating
+        token and receiver's current source authority and retains the whole
+        source union before turn acceptance. Unknown/legacy target capture,
+        unavailable sources, wrong native ancestry or revoked receiver grants
+        refuse with PRECONDITION (409) before another turn. Steering rechecks
+        source authority at command admission and immediately before the wire.
+        If authority becomes unavailable after an uncertain steering attempt,
+        EXECUTOR_UNAVAILABLE (503), reason
+        `native_steer_reconciliation_required`, preserves the existing command
+        for receipt reconciliation instead of resending or declaring it refused.
+
         (Implemented, ADR-099.) Scope `runs:delegate`. Accepts a follow-up
         prompt to a PERSISTENT addressable child in the calling orchestrator's
         run-tree. Backs the `run_message` delegation tool. If the child is parked
@@ -2491,6 +2503,11 @@ paths:
       tags: [runs]
       summary: (M37 — Implemented) Re-open a reviewed delegated child for another turn
       description: |
+        Native rework transfers the current source union to the direct agent
+        child before turn acceptance, using current origin and receiving role
+        authority. Unknown/legacy capture or unavailable/revoked sources refuse
+        with PRECONDITION (409) without invalidating a result or starting a turn.
+
         (M37 — Implemented, ADR-100.) Scope `runs:delegate` (a run-bound
         orchestrator addressing its own child). CAS-flips a reviewed child
         `Review → Running` and resumes its session (`session/resume` on the

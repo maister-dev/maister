@@ -123,63 +123,65 @@ export async function assertNativeRunKnowledgeInputs(
   db: SqlDatabase,
   runId: string,
 ): Promise<void> {
-  await db.transaction(async (tx) => {
-    const row = (
-      await tx.execute(
-        sql`SELECT result_contract->>'nativeContract' AS native_contract,knowledge_access,status,context_mounts,workspace_mode FROM runs WHERE id=${runId} FOR UPDATE`,
-      )
-    ).rows[0];
+  await db.transaction((tx) =>
+    assertNativeRunKnowledgeInputsInTransaction(tx, runId),
+  );
+}
 
-    if (!row) throw unavailableKnowledgeReference();
-    if (
-      row.native_contract !== FINDINGS_CONTRACT &&
-      row.knowledge_access === null
+/** Authorize current input sources inside an existing command-admission transaction. */
+export async function assertNativeRunKnowledgeInputsInTransaction(
+  tx: SqlTransaction,
+  runId: string,
+): Promise<void> {
+  const row = (
+    await tx.execute(
+      sql`SELECT result_contract->>'nativeContract' AS native_contract,knowledge_access,status,context_mounts,workspace_mode FROM runs WHERE id=${runId} FOR UPDATE`,
     )
-      return;
-    const capture = knowledgeAccessCaptureSchema.safeParse(
-      row.knowledge_access,
-    );
+  ).rows[0];
 
-    if (
-      !capture.success ||
-      capture.data.state !== "complete" ||
-      ![
-        "Pending",
-        "Running",
-        "NeedsInput",
-        "NeedsInputIdle",
-        "WaitingOnChildren",
-        "Review",
-      ].includes(String(row.status))
-    )
-      throw new MaisterError(
-        "PRECONDITION",
-        "Native execution requires an active run and complete source classification",
-        { details: { reason: "knowledge_capture_profile_required" } },
-      );
-    assertNativeWorkspaceMode(row.workspace_mode);
-    const principal = await resolveRunKnowledgePrincipal(tx, runId);
+  if (!row) throw unavailableKnowledgeReference();
+  if (
+    row.native_contract !== FINDINGS_CONTRACT &&
+    row.knowledge_access === null
+  )
+    return;
+  const capture = knowledgeAccessCaptureSchema.safeParse(row.knowledge_access);
 
-    const mounts = mountedSourceRestrictions(row.context_mounts);
+  if (
+    !capture.success ||
+    capture.data.state !== "complete" ||
+    ![
+      "Pending",
+      "Running",
+      "NeedsInput",
+      "NeedsInputIdle",
+      "WaitingOnChildren",
+      "Review",
+    ].includes(String(row.status))
+  )
+    throw new MaisterError(
+      "PRECONDITION",
+      "Native execution requires an active run and complete source classification",
+      { details: { reason: "knowledge_capture_profile_required" } },
+    );
+  assertNativeWorkspaceMode(row.workspace_mode);
+  const principal = await resolveRunKnowledgePrincipal(tx, runId);
 
-    await authorizeSourceRestrictions(tx, principal, [
-      ...capture.data.restrictions,
-      ...mounts,
-    ]);
-    await recordKnowledgeDisclosure(
-      tx,
-      { runId, capture: capture.data },
-      mounts,
-    );
-    log.debug(
-      {
-        runId,
-        generation: capture.data.generation,
-        sourceCount: capture.data.restrictions.length,
-      },
-      "native execution input sources authorized before dispatch",
-    );
-  });
+  const mounts = mountedSourceRestrictions(row.context_mounts);
+
+  await authorizeSourceRestrictions(tx, principal, [
+    ...capture.data.restrictions,
+    ...mounts,
+  ]);
+  await recordKnowledgeDisclosure(tx, { runId, capture: capture.data }, mounts);
+  log.debug(
+    {
+      runId,
+      generation: capture.data.generation,
+      sourceCount: capture.data.restrictions.length,
+    },
+    "native execution input sources authorized before dispatch",
+  );
 }
 
 /** Capture actual server-classified consumption before private prompt snapshots or response bytes exist. */
@@ -188,44 +190,51 @@ export async function recordNativeRunSources(
   runId: string,
   restrictions: readonly KnowledgeAccessRestriction[],
 ): Promise<void> {
-  await db.transaction(async (tx) => {
-    const row = (
-      await tx.execute(
-        sql`SELECT result_contract->>'nativeContract' AS native_contract,knowledge_access,workspace_mode FROM runs WHERE id=${runId} FOR UPDATE`,
-      )
-    ).rows[0];
+  await db.transaction((tx) =>
+    recordNativeRunSourcesInTransaction(tx, runId, restrictions),
+  );
+}
 
-    if (!row) throw unavailableKnowledgeReference();
-    if (
-      row.native_contract !== FINDINGS_CONTRACT &&
-      row.knowledge_access === null
+/** Compose source capture into an existing source-before-child transaction using current execution authority. */
+export async function recordNativeRunSourcesInTransaction(
+  tx: SqlTransaction,
+  runId: string,
+  restrictions: readonly KnowledgeAccessRestriction[],
+): Promise<void> {
+  const row = (
+    await tx.execute(
+      sql`SELECT result_contract->>'nativeContract' AS native_contract,knowledge_access,workspace_mode FROM runs WHERE id=${runId} FOR UPDATE`,
     )
-      return;
-    assertNativeWorkspaceMode(row.workspace_mode);
-    const capture = knowledgeAccessCaptureSchema.safeParse(
-      row.knowledge_access,
-    );
+  ).rows[0];
 
-    if (!capture.success || capture.data.state !== "complete")
-      throw new MaisterError(
-        "PRECONDITION",
-        "Native source consumption requires complete server-owned capture",
-        { details: { reason: "knowledge_capture_profile_required" } },
-      );
-    const principal = await resolveRunKnowledgePrincipal(tx, runId);
+  if (!row) throw unavailableKnowledgeReference();
+  if (
+    row.native_contract !== FINDINGS_CONTRACT &&
+    row.knowledge_access === null
+  )
+    return;
+  assertNativeWorkspaceMode(row.workspace_mode);
+  const capture = knowledgeAccessCaptureSchema.safeParse(row.knowledge_access);
 
-    await authorizeSourceRestrictions(tx, principal, [
-      ...capture.data.restrictions,
-      ...restrictions,
-    ]);
-    await recordKnowledgeDisclosure(
-      tx,
-      { runId, capture: capture.data },
-      restrictions,
+  if (!capture.success || capture.data.state !== "complete")
+    throw new MaisterError(
+      "PRECONDITION",
+      "Native source consumption requires complete server-owned capture",
+      { details: { reason: "knowledge_capture_profile_required" } },
     );
-    log.debug(
-      { runId, addedSourceCount: restrictions.length },
-      "native execution source consumption captured before disclosure",
-    );
-  });
+  const principal = await resolveRunKnowledgePrincipal(tx, runId);
+
+  await authorizeSourceRestrictions(tx, principal, [
+    ...capture.data.restrictions,
+    ...restrictions,
+  ]);
+  await recordKnowledgeDisclosure(
+    tx,
+    { runId, capture: capture.data },
+    restrictions,
+  );
+  log.debug(
+    { runId, addedSourceCount: restrictions.length },
+    "native execution source consumption captured before disclosure",
+  );
 }
