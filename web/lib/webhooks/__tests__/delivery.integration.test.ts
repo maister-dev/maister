@@ -578,6 +578,80 @@ afterEach(async () => {
 // ===========================================================================
 
 describe("happy path — fanout + signed delivery", () => {
+  it.each(["fanout", "retained_payload", "lost_source"] as const)(
+    "IT-CBE-06 native %s preserves source restrictions and deletion through the real signed transport",
+    async (phase) => {
+      const run = await seedRun("Failed");
+
+      await db.execute(
+        sql`UPDATE runs SET knowledge_access='{"schemaVersion":1,"state":"complete","generation":1,"restrictions":[]}'::jsonb WHERE id=${run.runId}`,
+      );
+      const eventId = await seedEvent(run, "run.failed");
+      const privateText = `Private native failure ${randomUUID()}`;
+
+      await db.execute(
+        sql`UPDATE webhook_events SET data=${JSON.stringify({ errorCode: privateText })}::jsonb WHERE id=${eventId}`,
+      );
+      const subId = await seedSubscription({
+        projectId: run.projectId,
+        eventTypes: ["run.failed"],
+        url: stub.url,
+      });
+
+      if (phase !== "fanout") {
+        await freezeEventPayload(run, eventId, "run.failed");
+        await db.execute(
+          sql`UPDATE webhook_events SET payload=jsonb_set(payload,'{data}',${JSON.stringify({ errorCode: privateText })}::jsonb) WHERE id=${eventId}`,
+        );
+        await seedDelivery({ run, subId, eventId });
+        if (phase === "lost_source")
+          await db.execute(sql`DELETE FROM runs WHERE id=${run.runId}`);
+      }
+      const summary = await runWebhookDeliveryJob({ db });
+
+      if (phase === "lost_source") {
+        expect(summary.delivered).toBe(0);
+        expect(stub.requests).toHaveLength(0);
+        expect(
+          (
+            await db.execute(
+              sql`SELECT id FROM webhook_events WHERE id=${eventId}`,
+            )
+          ).rows,
+        ).toEqual([]);
+        expect(await fetchDeliveryByEvent(eventId)).toBeUndefined();
+
+        return;
+      }
+      expect(summary.delivered).toBe(1);
+      expect(stub.requests).toHaveLength(1);
+      const sent = stub.requests[0]!;
+      const body: unknown = JSON.parse(sent.rawBody);
+
+      expect(body).toMatchObject({
+        id: eventId,
+        type: "run.failed",
+        run: { id: run.runId, status: "Failed" },
+        data: { contentState: "source_restricted" },
+      });
+      expect(sent.rawBody).not.toContain(privateText);
+      const delivery = await fetchDeliveryByEvent(eventId);
+
+      expect(
+        verifySignatureHeader(
+          sent.headers["x-maister-signature"]!,
+          delivery!.id,
+          sent.rawBody,
+          SECRET,
+        ),
+      ).toBe(true);
+      if (phase === "fanout")
+        expect((await fetchEventPayload(eventId)).payload).toMatchObject({
+          data: { contentState: "source_restricted" },
+        });
+    },
+  );
+
   it("freezes the envelope, delivers, records an attempt, and the stub verifies the signature", async () => {
     const run = await seedRun("Review");
     const eventId = await seedEvent(run, "run.review");

@@ -406,6 +406,16 @@ a project.
 
 ### Attention and gate chat
 
+Project webhook subscriptions have no Company Brain receiving principal.
+For native executions, per-event `data` is therefore the explicit
+`{contentState: "source_restricted"}` projection. The existing envelope retains
+event identity/type/time and its server-controlled project/run status references;
+private failure prose, gate decisions and model payloads remain in authorized
+execution views. Capture uses the existing outbox INSERT and main run metadata,
+without a Brain read or teardown dependency. Fanout and send/replay enforce the
+same projection for retained native rows; legacy NULL-capture event payloads
+and user-scoped numeric attention facts retain their existing contracts.
+
 Portfolio attention summaries/counts and project activity HITL text use the same
 current source policy as Inbox. Source-denied native questions are excluded;
 unrelated legacy attention stays visible. The project page passes its actual

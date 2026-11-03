@@ -394,6 +394,11 @@ components:
         reused byte-identically across retries/replays; only `deliveryId` and
         `attempt` are injected per send. `data` carries IDs/statuses/titles
         only — NEVER secrets, env values, tokens, or raw agent output.
+        Native knowledge executions use DataSourceRestricted for every
+        project-scoped event type: project subscriptions confer no source
+        receiving authority. This projection is enforced at capture, fanout
+        and send/replay, including retained native payloads. The envelope
+        retains its server-controlled identity/type/status references.
       required:
         - apiVersion
         - id
@@ -437,6 +442,7 @@ components:
         data:
           description: Per-type payload (discriminated by `type`).
           oneOf:
+            - $ref: "#/components/schemas/DataSourceRestricted"
             - $ref: "#/components/schemas/DataRunStarted"
             - $ref: "#/components/schemas/DataRunNeedsInput"
             - $ref: "#/components/schemas/DataRunEscalated"
@@ -455,6 +461,16 @@ components:
             - $ref: "#/components/schemas/DataRunPrConflicts"
             - $ref: "#/components/schemas/DataGateDecided"
             - $ref: "#/components/schemas/DataPing"
+
+    DataSourceRestricted:
+      type: object
+      description: Native execution data is available through current-authorized execution views, not project subscription authority.
+      required: [contentState]
+      additionalProperties: false
+      properties:
+        contentState:
+          type: string
+          const: source_restricted
 
     DataRunStarted:
       type: object

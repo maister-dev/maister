@@ -13,6 +13,7 @@ import {
   type WebhookErrorKind,
 } from "@/lib/webhooks/backoff";
 import { matchSubscriptions } from "@/lib/webhooks/match";
+import { projectWebhookDataSql } from "@/lib/webhooks/knowledge-policy";
 import { pushPayloadFor } from "@/lib/notifications/payload";
 import { sendPush, type PushTarget } from "@/lib/notifications/push-sender";
 import {
@@ -253,7 +254,7 @@ async function runFanoutPass(db: Db, batch: number): Promise<number> {
         e.id,
         e.project_id,
         e.type,
-        e.data,
+        ${projectWebhookDataSql(sql`e.run_id`, sql`e.data`)} AS data,
         e.occurred_at,
         e.run_id,
         r.status AS run_status,
@@ -675,7 +676,8 @@ async function processWebhookDelivery(
   const sub = (subResult.rows ?? [])[0] as DrainSubRow | undefined;
 
   const evResult = await db.execute(sql`
-    SELECT payload, type FROM webhook_events WHERE id = ${claimed.event_id}
+    SELECT jsonb_set(e.payload,'{data}',${projectWebhookDataSql(sql`e.run_id`, sql`e.payload->'data'`)}) AS payload, e.type
+    FROM webhook_events e WHERE e.id = ${claimed.event_id}
   `);
   const eventRow = (evResult.rows ?? [])[0] as
     { payload: WebhookEnvelopePayload | null; type: string } | undefined;
