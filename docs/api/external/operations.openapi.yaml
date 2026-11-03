@@ -11595,6 +11595,7 @@ components:
                 - key_limit
                 - array_limit
                 - schema_mismatch
+                - reference_invalid
             message:
               type: string
         artifacts:
@@ -12926,7 +12927,7 @@ components:
                 id:
                   type: string
                   minLength: 1
-                  maxLength: 128
+                  maxLength: 192
                   nullable: true
                 runId:
                   type: string
@@ -13139,7 +13140,7 @@ components:
         id:
           type: string
           minLength: 1
-          maxLength: 128
+          maxLength: 192
           nullable: true
         runId:
           type: string

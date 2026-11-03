@@ -1,3 +1,4 @@
+import type { FindingsContract } from "@/lib/run-results/findings-contract";
 import "server-only";
 
 import { createHash } from "node:crypto";
@@ -24,6 +25,7 @@ import {
   type NodeMcpsConfig,
 } from "@/lib/config.schema";
 import { MaisterError } from "@/lib/errors";
+import { FINDINGS_ENGINE_MIN } from "@/lib/run-results/findings-contract";
 import { parseGraphOnlyFlowManifest } from "@/lib/flows/manifest-parser";
 import {
   collectContentArtifactIds,
@@ -1101,7 +1103,12 @@ function normalizeSchemaRef(ref: string): string {
 
 // ADR-165: the flow-level public-result export block, or null. Flow-level like
 // `reentry`, so it reads the manifest rather than the node list.
-type ResultExportDecl = { schema: string; from: string[]; required: boolean };
+type ResultExportDecl = {
+  schema: string;
+  from: string[];
+  required: boolean;
+  native_contract?: FindingsContract;
+};
 
 function resultExportOf(manifest: FlowYamlV1): ResultExportDecl | null {
   const declared = (manifest as { result?: { export?: ResultExportDecl } })
@@ -1425,6 +1432,14 @@ export function validateGraphManifest(
   const resultExport = resultExportOf(manifest);
 
   if (resultExport) {
+    if (
+      resultExport.native_contract !== undefined &&
+      !semverGte(engineMin, FINDINGS_ENGINE_MIN)
+    )
+      throw new MaisterError(
+        "CONFIG",
+        `graph flow ${flowYamlPath} declares ${resultExport.native_contract} but engine_min "${engineMin}" < ${FINDINGS_ENGINE_MIN} — bump compat.engine_min to ${FINDINGS_ENGINE_MIN}`,
+      );
     const ok = semverGte(engineMin, RAH_ENGINE_MIN);
 
     log.debug(

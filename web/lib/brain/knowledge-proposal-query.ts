@@ -7,6 +7,10 @@ import type { KnowledgeAction, KnowledgePrincipal } from "./knowledge-types";
 import { sql } from "drizzle-orm";
 
 import {
+  projectContextReadPolicy,
+  agentMemoryReadPolicy,
+} from "./knowledge-context-policy";
+import {
   knowledgeOwnerActionPolicy,
   knowledgeReadPolicyCte,
   knowledgeRevisionReadPolicyCte,
@@ -16,6 +20,8 @@ function credentialAllows(
   principal: KnowledgePrincipal,
   action: KnowledgeAction,
 ): SQL {
+  if (principal.kind === "execution") return sql`false`;
+
   return principal.kind === "user"
     ? sql`true`
     : sql`EXISTS (SELECT 1 FROM project_tokens t WHERE t.id=${principal.tokenId} AND t.revoked_at IS NULL AND (t.expires_at IS NULL OR t.expires_at>now()) AND (t.scopes ? '*' OR t.scopes ? ${action}) FOR SHARE)`;
@@ -30,6 +36,8 @@ function sourceAllows(identity: KnowledgePrincipalIdentity, ref: SQL): SQL {
   return sql`CASE ${ref}->>'kind'
     WHEN 'company' THEN ${knowledgeOwnerActionPolicy(identity, sql`NULL::text`, sql`${ref}->>'companyId'`, "knowledge:read")}
     WHEN 'project' THEN ${knowledgeOwnerActionPolicy(identity, sql`${ref}->>'projectId'`, sql`NULL::text`, "knowledge:read")}
+    WHEN 'project_context' THEN ${projectContextReadPolicy(identity, sql`${ref}->>'projectId'`)}
+    WHEN 'agent_memory' THEN ${agentMemoryReadPolicy(identity, sql`${ref}->>'projectId'`, sql`${ref}->>'agentId'`)}
     WHEN 'record' THEN EXISTS (${recordPolicy} SELECT 1 FROM knowledge_readable_records)
     ELSE false END`;
 }

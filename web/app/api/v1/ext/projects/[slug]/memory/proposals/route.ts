@@ -14,6 +14,7 @@ import {
 } from "@/lib/brain/guard";
 import { createBrainProposalWithAutonomy } from "@/lib/brain/proposals";
 import { getDb } from "@/lib/db/client";
+import { assertLegacyBrainTransport } from "@/lib/brain/knowledge-execution-access";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { tokenAuditIdentity } from "@/lib/tokens/audit";
 import {
@@ -120,6 +121,7 @@ export async function POST(
     },
     async (ctx: ExtCtx) => {
       try {
+        await assertLegacyBrainTransport(db, ctx.actor.boundRunId);
         await assertBrainSchemaApplied(db);
         await assertProjectBrainEnabled(db, ctx.projectId);
 

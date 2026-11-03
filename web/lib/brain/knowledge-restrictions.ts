@@ -1,14 +1,28 @@
 import "server-only";
 
-import type { KnowledgeAccessRestriction } from "@/lib/company/types";
+import type {
+  KnowledgeAccessRestriction,
+  ExecutionContextRestriction,
+} from "@/lib/company/types";
 import type { KnowledgePrincipal } from "./knowledge-types";
 import type { KnowledgeTransaction } from "./knowledge-access";
 
 import { sql } from "drizzle-orm";
 
-import { authorizeKnowledge, knowledgeOwner } from "./knowledge-access";
+import {
+  authorizeKnowledge,
+  knowledgeOwner,
+  resolveKnowledgePrincipal,
+} from "./knowledge-access";
+import {
+  projectContextReadPolicy,
+  agentMemoryReadPolicy,
+} from "./knowledge-context-policy";
 
-import { knowledgeRestrictionsSchema } from "@/lib/company/types";
+import {
+  knowledgeRestrictionsSchema,
+  knowledgeAccessRestrictionSchema,
+} from "@/lib/company/types";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 
 export type KnowledgeRecordMetadata = Readonly<{
@@ -63,7 +77,10 @@ function enterRestriction(
 async function authorizeOwnerRestriction(
   tx: KnowledgeTransaction,
   principal: KnowledgePrincipal,
-  restriction: Exclude<KnowledgeAccessRestriction, { kind: "record" }>,
+  restriction: Extract<
+    KnowledgeAccessRestriction,
+    { kind: "company" | "project" }
+  >,
   state: KnowledgeAccessWalk,
 ): Promise<KnowledgeAccessWalk> {
   const key =
@@ -85,6 +102,36 @@ async function authorizeOwnerRestriction(
   return next;
 }
 
+async function authorizeContextRestriction(
+  tx: KnowledgeTransaction,
+  principal: KnowledgePrincipal,
+  restriction: ExecutionContextRestriction,
+  state: KnowledgeAccessWalk,
+): Promise<KnowledgeAccessWalk> {
+  const key = `${restriction.kind}:${JSON.stringify(restriction)}`;
+
+  if (state.visited.includes(key)) return state;
+  const next = enterRestriction(state, key);
+  const identity = await resolveKnowledgePrincipal(
+    tx,
+    principal,
+    "knowledge:read",
+  );
+  const policy =
+    restriction.kind === "project_context"
+      ? projectContextReadPolicy(identity, sql`${restriction.projectId}`)
+      : agentMemoryReadPolicy(
+          identity,
+          sql`${restriction.projectId}`,
+          sql`${restriction.agentId}`,
+        );
+
+  if ((await tx.execute(sql`SELECT 1 WHERE ${policy}`)).rows.length === 0)
+    throw unavailableKnowledgeReference();
+
+  return next;
+}
+
 export async function authorizeSourceRestrictions(
   tx: KnowledgeTransaction,
   principal: KnowledgePrincipal,
@@ -96,16 +143,24 @@ export async function authorizeSourceRestrictions(
 
   for (const restriction of restrictions ?? []) {
     current =
-      restriction.kind === "record"
-        ? (
-            await authorizeKnowledgeRecordRead(
+      restriction.kind === "agent_memory" ||
+      restriction.kind === "project_context"
+        ? await authorizeContextRestriction(tx, principal, restriction, current)
+        : restriction.kind === "record"
+          ? (
+              await authorizeKnowledgeRecordRead(
+                tx,
+                principal,
+                restriction.recordId,
+                current,
+              )
+            ).access
+          : await authorizeOwnerRestriction(
               tx,
               principal,
-              restriction.recordId,
+              restriction,
               current,
-            )
-          ).access
-        : await authorizeOwnerRestriction(tx, principal, restriction, current);
+            );
   }
 
   return current;
@@ -191,6 +246,17 @@ export function restrictionsForKnowledgeAccess(
     if (kind === "record") return { kind, recordId: id };
     if (kind === "project") return { kind, projectId: id };
     if (kind === "company") return { kind, companyId: id };
+    if (kind === "agent_memory" || kind === "project_context") {
+      const parsed = knowledgeAccessRestrictionSchema.safeParse(
+        JSON.parse(id) as unknown,
+      );
+
+      if (parsed.success && parsed.data.kind === kind) return parsed.data;
+      throw new MaisterError(
+        "CONFIG",
+        "Execution source access resolution produced an invalid context dependency",
+      );
+    }
     throw new MaisterError(
       "CONFIG",
       "Knowledge access resolution produced an unknown dependency kind",

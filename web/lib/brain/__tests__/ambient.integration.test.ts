@@ -1,10 +1,18 @@
-import { mkdtemp, mkdir, readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
 import { sql } from "drizzle-orm";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 import {
   fakeEmbeddingClient,
@@ -21,6 +29,7 @@ import {
 } from "@/lib/brain/ambient";
 import { retain } from "@/lib/brain/retain";
 import { writeRunContext } from "@/lib/flows/graph/run-context";
+import { buildFlowExportContract } from "@/lib/run-results/contract";
 
 // T4.3 — ambient P7 (flow runs). Real pgvector; the embedding client is injected.
 
@@ -76,6 +85,64 @@ beforeEach(async () => {
 });
 
 describe("getAmbientBrainProjection (T4.3)", () => {
+  it("IT-CBE-06 native context advertises structured retrieval without embedding or injecting the unversioned ambient projection", async () => {
+    const contract = buildFlowExportContract({
+      flowRefId: "native-context",
+      resolvedRevision: "a".repeat(40),
+      flowRevisionId: "pinned-context",
+      schemaPath: "./schemas/findings.v1.json",
+      nativeContract: "evidence_findings_v1",
+      schema: { schemaVersion: 1, fields: [] },
+      sha256: "b".repeat(64),
+      required: true,
+      producerNodeIds: ["coordinator"],
+    });
+
+    await ctx.db.execute(
+      sql`UPDATE runs SET result_contract=${JSON.stringify(contract)}::jsonb WHERE id=${runId}`,
+    );
+    const embed = vi.fn(client.embed);
+    const brain = await getAmbientBrainProjection({
+      db: ctx.db,
+      projectId,
+      brainContext: true,
+      taskTitle: "Fix",
+      taskPrompt: "resolve the failing gate",
+      runId,
+      client: { ...client, embed },
+    });
+
+    expect(brain).toBeUndefined();
+    expect(embed).not.toHaveBeenCalled();
+    expect(await ambientSnapshotCount()).toBe(0);
+    const worktreePath = await mkdtemp(join(tmpdir(), "native-run-context-"));
+
+    try {
+      await mkdir(join(worktreePath, ".maister"), { recursive: true });
+      await writeRunContext({
+        runId,
+        worktreePath,
+        taskPrompt: "Use evidence-linked findings.",
+        db: ctx.db,
+        resultContract: contract,
+      });
+      const context: unknown = JSON.parse(
+        await readFile(join(worktreePath, ".maister", "run.json"), "utf8"),
+      );
+
+      expect(context).toMatchObject({
+        knowledge: {
+          schemaVersion: 1,
+          resultContract: "evidence_findings_v1",
+          retrieval: "structured_tools",
+        },
+      });
+      expect(context).not.toHaveProperty("brain");
+    } finally {
+      await rm(worktreePath, { recursive: true, force: true });
+    }
+  });
+
   it("returns top-K and writes an ambient snapshot when brain_context = true", async () => {
     const brain = await getAmbientBrainProjection({
       db: ctx.db,

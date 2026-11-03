@@ -1,5 +1,9 @@
+import type { FindingsContract } from "./findings-contract";
 import type { FormSchema } from "@/lib/config.schema";
 import type { RunResultInvalidReason } from "@/lib/run-results/types";
+
+import { evidenceFindingsV1Schema } from "./findings-types";
+import { FINDINGS_CONTRACT } from "./findings-contract";
 
 import { validateStructuredOutput } from "@/lib/flows/output-schema";
 
@@ -32,6 +36,7 @@ function stripBom(s: string): string {
 export function validateResultValue(args: {
   raw: string;
   schema: FormSchema;
+  nativeContract?: FindingsContract;
   maxBytes: number;
   /** Prefixes messages so a caller can tell WHICH payload failed. */
   label?: string;
@@ -81,6 +86,7 @@ export function validateResultValue(args: {
 export function validateParsedResultValue(args: {
   value: unknown;
   schema: FormSchema;
+  nativeContract?: FindingsContract;
   maxBytes: number;
   label?: string;
   valueBytes?: number;
@@ -108,6 +114,28 @@ export function validateParsedResultValue(args: {
       reason: verdict.reason ?? "schema_mismatch",
       message: `${label}: ${verdict.message}`,
     };
+  }
+
+  if (args.nativeContract !== undefined) {
+    if (args.nativeContract !== FINDINGS_CONTRACT)
+      return {
+        ok: false,
+        reason: "schema_mismatch",
+        message: `${label}: unsupported native findings contract`,
+      };
+    const native = evidenceFindingsV1Schema.safeParse(args.value);
+
+    if (!native.success)
+      return {
+        ok: false,
+        reason: "schema_mismatch",
+        message: `${label}: native findings validation failed at ${native.error.issues
+          .slice(0, 8)
+          .map((issue) => `${JSON.stringify(issue.path)} (${issue.code})`)
+          .join(", ")}`,
+      };
+
+    return { ok: true, value: native.data, valueBytes };
   }
 
   return {

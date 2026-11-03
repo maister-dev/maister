@@ -279,11 +279,30 @@ export async function issueJudgeAttemptToken(args: {
 // maister MCP facade via a PROJECT-kind, run-bound token (deterministic name →
 // terminal revoke matches on it) carrying ORCHESTRATOR_TOKEN_SCOPES (agent
 // scopes + the Phase-3 delegation toolset).
-export async function issueOrchestratorRunToken(args: {
+type NodeRunTokenInput = Readonly<{
   projectId: string;
   runId: string;
+  nodeAttemptId?: string;
   db?: Db;
-}): Promise<IssuedAgentToken> {
+}>;
+
+export async function issueOrchestratorRunToken(
+  args: NodeRunTokenInput,
+): Promise<IssuedAgentToken> {
+  return issueNodeRunToken(args, ORCHESTRATOR_TOKEN_SCOPES);
+}
+
+/** Native ordinary Flow nodes get knowledge tools without acquiring coordinator delegation authority. */
+export async function issueNativeNodeRunToken(
+  args: NodeRunTokenInput & Readonly<{ nodeAttemptId: string }>,
+): Promise<IssuedAgentToken> {
+  return issueNodeRunToken(args, AGENT_TOKEN_SCOPES);
+}
+
+async function issueNodeRunToken(
+  args: NodeRunTokenInput,
+  scopes: readonly (typeof TOKEN_SCOPES)[number][],
+): Promise<IssuedAgentToken> {
   const _db = args.db ?? getDb();
   const { secret, prefix, hash } = generateToken();
   const tokenId = randomUUID();
@@ -320,14 +339,20 @@ export async function issueOrchestratorRunToken(args: {
       token_kind: "project",
       prefix,
       token_hash: hash,
-      scopes: [...ORCHESTRATOR_TOKEN_SCOPES],
+      knowledge_node_attempt_id: args.nodeAttemptId ?? null,
+      scopes: [...scopes],
       expires_at: new Date(Date.now() + AGENT_TOKEN_TTL_HOURS * 3_600_000),
     });
   });
 
   log.info(
-    { runId: args.runId, tokenId },
-    "ephemeral orchestrator token issued",
+    {
+      runId: args.runId,
+      tokenId,
+      nodeAttemptId: args.nodeAttemptId,
+      scopeCount: scopes.length,
+    },
+    "ephemeral Flow node token issued",
   );
 
   return { tokenId, secret };

@@ -34804,7 +34804,7 @@ components:
         principalId:
           type: string
           minLength: 1
-          maxLength: 128
+          maxLength: 192
         action:
           type: string
           enum:
@@ -34866,7 +34866,7 @@ components:
         principalId:
           type: string
           minLength: 1
-          maxLength: 128
+          maxLength: 192
         actions:
           type: array
           items:
@@ -35121,7 +35121,7 @@ components:
                 id:
                   type: string
                   minLength: 1
-                  maxLength: 128
+                  maxLength: 192
                   nullable: true
                 runId:
                   type: string
@@ -35334,7 +35334,7 @@ components:
         id:
           type: string
           minLength: 1
-          maxLength: 128
+          maxLength: 192
           nullable: true
         runId:
           type: string

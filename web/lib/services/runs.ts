@@ -97,6 +97,7 @@ import { normalizeNodeMcps } from "@/lib/config.schema";
 import { loadProjectMcpBindings } from "@/lib/mcp/binding-service";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { resolveFlowExportContract } from "@/lib/run-results/flow-export";
+import { nativeKnowledgeCaptureAtLaunch } from "@/lib/brain/knowledge-launch-capture";
 import { parseExecutableStoredFlowManifest } from "@/lib/flows/manifest-parser";
 import { runDirPath } from "@/lib/flows/graph/mutation-check";
 import { assertFlowLaunchable } from "@/lib/flows/launchability-gate";
@@ -1959,6 +1960,16 @@ async function* executeFlowLaunch(
             projectId: project.id,
             reservation: input.agentTriggerReservation,
           });
+        const knowledgeAccess = await nativeKnowledgeCaptureAtLaunch(
+          tx,
+          resultContract,
+          {
+            parentRunId: input.parentRunId ?? null,
+            sourceRestrictions: [
+              { kind: "project_context", projectId: project.id },
+            ],
+          },
+        );
         const insertedRun = await tx
           .insert(runs)
           .values({
@@ -2067,6 +2078,7 @@ async function* executeFlowLaunch(
             // SAME insert as the pin it came from (W8). NULL when the flow
             // declares no `result.export`.
             resultContract,
+            knowledgeAccess,
           })
           .onConflictDoNothing()
           .returning({ id: runs.id });

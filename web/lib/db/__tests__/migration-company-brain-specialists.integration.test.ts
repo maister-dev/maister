@@ -32,6 +32,25 @@ it("IT-CBX-01 company migration preserves existing project data and identity acr
   const run = await seedRun(database.db, { projectId: project.id });
 
   await database.pool.query(
+    "INSERT INTO node_attempts(id,run_id,node_id,node_type,status,vars) VALUES('legacy-native-actor-attempt',$1,'coordinator','orchestrator','Succeeded','{\"legacyFinding\":\"preserve exact value\"}')",
+    [run],
+  );
+  await database.pool.query(
+    "INSERT INTO project_tokens(id,project_id,name,prefix,token_hash) VALUES('legacy-native-actor-token',$1,$2,'legacy-native-prefix','legacy-native-hash')",
+    [project.id, `orchestrator-run:${run}`],
+  );
+  const attemptBefore = (
+    await database.pool.query(
+      "SELECT to_jsonb(a) AS value FROM node_attempts a WHERE id='legacy-native-actor-attempt'",
+    )
+  ).rows[0]?.value as Record<string, unknown>;
+  const tokenBefore = (
+    await database.pool.query(
+      "SELECT to_jsonb(t) AS value FROM project_tokens t WHERE id='legacy-native-actor-token'",
+    )
+  ).rows[0]?.value as Record<string, unknown>;
+
+  await database.pool.query(
     "INSERT INTO users(id,email,role,account_status) VALUES ('legacy-admin','legacy-admin@example.test','admin','active')",
   );
   const before = await database.pool.query<{ value: unknown }>(
@@ -86,6 +105,20 @@ it("IT-CBX-01 company migration preserves existing project data and identity acr
 
   expect(after).toMatchObject(before.rows[0]!.value as Record<string, unknown>);
   expect(after.knowledge_access).toBeNull();
+  expect(
+    (
+      await database.pool.query(
+        "SELECT to_jsonb(a) AS value FROM node_attempts a WHERE id='legacy-native-actor-attempt'",
+      )
+    ).rows[0]?.value,
+  ).toEqual({ ...attemptBefore, knowledge_actor: null });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT to_jsonb(t) AS value FROM project_tokens t WHERE id='legacy-native-actor-token'",
+      )
+    ).rows[0]?.value,
+  ).toEqual({ ...tokenBefore, knowledge_node_attempt_id: null });
   expect(Object.keys(after).sort()).toEqual(
     [
       ...Object.keys(before.rows[0]!.value as Record<string, unknown>),

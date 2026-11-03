@@ -1,11 +1,20 @@
+import type { KnowledgeAccessCapture } from "@/lib/company/types";
 import type { NodeAttemptOutputContract } from "@/lib/db/schema";
 import type { RunResultContract } from "@/lib/run-results/types";
 import type { WorkspacePolicy } from "@/lib/config.schema";
 
-import { markNodeSucceeded } from "@/lib/flows/graph/ledger";
+import { markNodeFailed, markNodeSucceeded } from "@/lib/flows/graph/ledger";
 import { engineArtifactManifest } from "@/lib/run-results/artifact-manifest";
-import { isResultProducerNode } from "@/lib/run-results/contract";
-import { publishRunResult } from "@/lib/run-results/ledger";
+import {
+  isResultProducerNode,
+  usesStructuredKnowledgeContext,
+} from "@/lib/run-results/contract";
+import {
+  publishRunResult,
+  recordInvalidRunResult,
+} from "@/lib/run-results/ledger";
+import { validateFindingsReferences } from "@/lib/run-results/findings-references";
+import { MaisterError } from "@/lib/errors";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches lib/services/tasks.ts).
 type Db = any;
@@ -34,6 +43,7 @@ export type CloseSucceededAttemptArgs = {
   };
   /** The run's launch-time public-result contract, or null. */
   resultContract: RunResultContract | null;
+  knowledgeAccess?: KnowledgeAccessCapture | null;
   structuredOutput: SeamOutcomeForClose;
 };
 
@@ -76,7 +86,39 @@ export async function closeSucceededAttemptWithResult(
     return;
   }
 
-  await db.transaction(async (tx: Db) => {
+  const refused = await db.transaction(async (tx: Db): Promise<boolean> => {
+    const validated = {
+      kind: "valid" as const,
+      value: structuredOutput.value as Record<string, unknown>,
+      valueBytes: structuredOutput.valueBytes ?? 0,
+    };
+    const decision = usesStructuredKnowledgeContext(args)
+      ? await validateFindingsReferences(
+          tx,
+          args.runId,
+          args.resultContract,
+          validated,
+          args.nodeAttemptId,
+        )
+      : validated;
+
+    if (decision.kind === "invalid") {
+      await markNodeFailed(
+        args.nodeAttemptId,
+        { errorCode: "PRECONDITION", ...outputContract },
+        tx,
+      );
+      await recordInvalidRunResult(tx, {
+        runId: args.runId,
+        contract: args.resultContract as RunResultContract,
+        reason: decision.reason,
+        producerKind: "flow_node",
+        producerRef: args.nodeId,
+        nodeAttemptId: args.nodeAttemptId,
+      });
+
+      return true;
+    }
     await markNodeSucceeded(
       args.nodeAttemptId,
       { ...args.patch, ...outputContract },
@@ -94,5 +136,14 @@ export async function closeSucceededAttemptWithResult(
       // consistent with the attempt close it is committed alongside.
       artifactManifest: await engineArtifactManifest(tx, args.runId),
     });
+
+    return false;
   });
+
+  if (refused)
+    throw new MaisterError(
+      "PRECONDITION",
+      "Native findings references or source authority changed before publication; inspect the retained invalid result",
+      { details: { reason: "native_findings_reference_unavailable" } },
+    );
 }

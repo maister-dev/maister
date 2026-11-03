@@ -1,6 +1,6 @@
 # Stand operation persistence
 
-**Designed — ADR-205.** [Stand maintenance](../system-analytics/stand-maintenance.md) owns exact authority/effect/health/recovery semantics. Main migration reservation `0221_stand_operations` creates the entities; `0222_company_brain_constraints` adds separately reviewed cross-cutting constraints. These are allocations, not applied schema.
+**Designed — ADR-205.** [Stand maintenance](../system-analytics/stand-maintenance.md) owns exact authority/effect/health/recovery semantics. Main migration reservation `0222_stand_operations` creates the entities; `0223_company_brain_constraints` adds separately reviewed cross-cutting constraints. These are allocations, not applied schema.
 
 The resource claim links uncertainty across all assignment attempts, while verification stays independent.
 

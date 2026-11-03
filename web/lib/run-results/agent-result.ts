@@ -124,6 +124,10 @@ export function decideAgentResultFromOutput(args: {
   const verdict = validateResultValue({
     raw: JSON.stringify(block.value),
     schema: args.contract.schema,
+    nativeContract:
+      args.contract.kind === "agent_operational"
+        ? undefined
+        : args.contract.nativeContract,
     maxBytes: args.maxBytes ?? nodeOutputMaxBytes(),
     label: "public result",
   });

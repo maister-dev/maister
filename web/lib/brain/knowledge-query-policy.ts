@@ -6,6 +6,11 @@ import type { KnowledgeAction } from "./knowledge-types";
 
 import { sql } from "drizzle-orm";
 
+import {
+  projectContextReadPolicy,
+  agentMemoryReadPolicy,
+} from "./knowledge-context-policy";
+
 import { projectRolesForActions } from "@/lib/authz";
 
 export function knowledgeOwnerActionPolicy(
@@ -92,6 +97,8 @@ export function knowledgeRevisionReadPolicyCte(
   const dependencyPolicy = sql`CASE d.kind
     WHEN 'company' THEN ${readableOwner(identity, sql`NULL::text`, sql`d.identity`)}
     WHEN 'project' THEN ${readableOwner(identity, sql`d.identity`, sql`NULL::text`)}
+    WHEN 'project_context' THEN ${projectContextReadPolicy(identity, sql`d.identity`)}
+    WHEN 'agent_memory' THEN ${agentMemoryReadPolicy(identity, sql`(d.identity::jsonb)->>'projectId'`, sql`(d.identity::jsonb)->>'agentId'`)}
     WHEN 'record' THEN EXISTS (SELECT 1 FROM brain_items r WHERE r.id=d.identity AND ${readableRecord(identity, "r")} AND (d.revision IS NULL OR EXISTS (SELECT 1 FROM brain_record_revisions v WHERE v.record_id=r.id AND v.revision=d.revision)))
     ELSE false END`;
 
@@ -108,10 +115,10 @@ export function knowledgeRevisionReadPolicyCte(
     CROSS JOIN LATERAL (
       SELECT CASE WHEN r.project_id IS NULL THEN 'company' ELSE 'project' END AS kind,coalesce(r.project_id,r.company_id) AS identity,NULL::integer AS revision
       UNION ALL
-      SELECT ref->>'kind',CASE ref->>'kind' WHEN 'company' THEN ref->>'companyId' WHEN 'project' THEN ref->>'projectId' WHEN 'record' THEN ref->>'recordId' END,NULL::integer
+      SELECT ref->>'kind',CASE ref->>'kind' WHEN 'company' THEN ref->>'companyId' WHEN 'project' THEN ref->>'projectId' WHEN 'project_context' THEN ref->>'projectId' WHEN 'agent_memory' THEN ref::text WHEN 'record' THEN ref->>'recordId' END,NULL::integer
       FROM jsonb_array_elements(coalesce(v.source_restrictions,'[]'::jsonb)) ref
       UNION ALL
-      SELECT ref->>'kind',CASE ref->>'kind' WHEN 'company' THEN ref->>'companyId' WHEN 'project' THEN ref->>'projectId' WHEN 'record' THEN ref->>'recordId' END,NULL::integer
+      SELECT ref->>'kind',CASE ref->>'kind' WHEN 'company' THEN ref->>'companyId' WHEN 'project' THEN ref->>'projectId' WHEN 'project_context' THEN ref->>'projectId' WHEN 'agent_memory' THEN ref::text WHEN 'record' THEN ref->>'recordId' END,NULL::integer
       FROM brain_revision_evidence e CROSS JOIN LATERAL jsonb_array_elements(coalesce(e.witness_snapshot->'restrictions','[]'::jsonb)) ref
       WHERE e.record_id=r.id AND e.revision=v.revision
     ) child

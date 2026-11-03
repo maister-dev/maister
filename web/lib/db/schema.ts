@@ -1,5 +1,8 @@
 import type { CoordinatorChildLaunchContext } from "@/lib/orchestrator/child-launch-context";
-import type { KnowledgeAccessCapture } from "@/lib/company/types";
+import type {
+  KnowledgeAccessCapture,
+  NativeKnowledgeActor,
+} from "@/lib/company/types";
 import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
 import type { OperationalFailureDiagnostic } from "@/lib/agents/operational-diagnostics";
 import type {
@@ -276,7 +279,7 @@ export const companyGrants = pgTable(
     ),
     principalCheck: check(
       "company_grants_principal_check",
-      sql`${t.principalType} IN ('user','agent','system') AND length(${t.principalId}) BETWEEN 1 AND 128`,
+      sql`${t.principalType} IN ('user','agent','system') AND length(${t.principalId}) BETWEEN 1 AND 192`,
     ),
     actionCheck: check(
       "company_grants_action_check",
@@ -6421,6 +6424,10 @@ export const nodeAttempts = pgTable(
     materializationPlan: jsonb(
       "materialization_plan",
     ).$type<MaterializationPlan | null>(),
+    // Native role attribution belongs to this attempt, independently of the Flow's launch source agent.
+    knowledgeActor: jsonb(
+      "knowledge_actor",
+    ).$type<NativeKnowledgeActor | null>(),
     // ADR-162 (migration 0127): which structured-output contract judged this
     // attempt. Written on the SAME ledger UPDATE that closes the attempt, on
     // the success path AND on the seam-failure path; markNodeReworked never
@@ -6447,6 +6454,10 @@ export const nodeAttempts = pgTable(
       t.runId,
       t.nodeId,
       t.attempt,
+    ),
+    knowledgeActorCheck: check(
+      "node_attempts_knowledge_actor_check",
+      sql`${t.knowledgeActor} IS NULL OR (jsonb_typeof(${t.knowledgeActor})='object' AND ${t.knowledgeActor}->'schemaVersion'='1'::jsonb AND jsonb_typeof(${t.knowledgeActor}->'agentId')='string' AND length(${t.knowledgeActor}->>'agentId') BETWEEN 1 AND 192 AND jsonb_typeof(${t.knowledgeActor}->'packageInstallId')='string' AND length(${t.knowledgeActor}->>'packageInstallId') BETWEEN 1 AND 128 AND jsonb_typeof(${t.knowledgeActor}->'packageName')='string' AND length(${t.knowledgeActor}->>'packageName') BETWEEN 1 AND 128 AND jsonb_typeof(${t.knowledgeActor}->'definitionSha256')='string' AND ${t.knowledgeActor}->>'definitionSha256' ~ '^[a-f0-9]{64}$' AND ${t.knowledgeActor} - ARRAY['schemaVersion','agentId','packageInstallId','packageName','definitionSha256']='{}'::jsonb AND pg_column_size(${t.knowledgeActor})<=8192) IS TRUE`,
     ),
     actionPromptOrdinalCheck: check(
       "node_attempts_action_prompt_ordinal_check",
@@ -8035,6 +8046,11 @@ export const projectTokens = pgTable(
     // ADR-186: a librarian token is minted for exactly one librarian turn and
     // revoked when that turn ends.
     librarian_turn_id: text("librarian_turn_id"),
+    // Native coordinator authority is bound to the exact attempt that received this token.
+    knowledge_node_attempt_id: text("knowledge_node_attempt_id").references(
+      () => nodeAttempts.id,
+      { onDelete: "cascade" },
+    ),
     prefix: text("prefix").notNull(),
     token_hash: text("token_hash").notNull(),
     scopes: jsonb("scopes").$type<string[]>().notNull().default(["*"]),
@@ -8067,6 +8083,13 @@ export const projectTokens = pgTable(
     idxRunOrigin: index("project_tokens_run_origin_idx")
       .on(t.project_id, t.origin_kind, t.bound_run_id)
       .where(sql`${t.bound_run_id} IS NOT NULL`),
+    idxKnowledgeNodeAttempt: index(
+      "project_tokens_knowledge_node_attempt_idx",
+    ).on(t.knowledge_node_attempt_id),
+    knowledgeNodeAttemptCheck: check(
+      "project_tokens_knowledge_node_attempt_check",
+      sql`${t.knowledge_node_attempt_id} IS NULL OR (${t.token_kind}='project' AND ${t.name} ~ '^orchestrator-run:.+$')`,
+    ),
     idxOwnerCreated: index("project_tokens_owner_created_idx").on(
       t.owner_user_id,
       t.created_at,

@@ -141,6 +141,8 @@ import {
   setWorktreeProvenanceNode,
 } from "@/lib/worktree-provenance";
 import { getAmbientBrainProjection } from "@/lib/brain/ambient";
+import { usesStructuredKnowledgeContext } from "@/lib/run-results/contract";
+import { getTaskClarificationProjection } from "@/lib/queries/task-clarifications";
 import { gateAndOverlayMcpServers } from "@/lib/mcp/materialization-gate";
 import { materializeProjectBundlesIntoWorktree } from "@/lib/capabilities/materialize-bundle";
 import {
@@ -175,6 +177,7 @@ import { loadProjectMcpBindings } from "@/lib/mcp/binding-service";
 import { agentFacadeMcpServer } from "@/lib/agents/launch";
 import {
   issueOrchestratorRunToken,
+  issueNativeNodeRunToken,
   revokeOrchestratorRunTokensForRun,
 } from "@/lib/agents/tokens";
 import { atomicWriteJson } from "@/lib/atomic";
@@ -1508,6 +1511,8 @@ async function executeNodeAction(
 
   const def = node.source.node;
   const common = {
+    resultContract: loaded.run.resultContract,
+    knowledgeAccess: loaded.run.knowledgeAccess,
     runtimeRoot: ctx.runtimeRoot,
     projectSlug: loaded.projectSlug,
     runId: loaded.run.id,
@@ -1542,8 +1547,8 @@ async function executeNodeAction(
     case "ai_coding":
     case "judge":
     // M37 (ADR-098): an orchestrator runs as an ACP session exactly like an
-    // ai_coding node; it carries NO catalog-agent binding (agentBinding stays
-    // undefined below — the ai_coding-only guard short-circuits) and reaches
+    // ai_coding node; an explicitly selected catalog role uses the same binding
+    // seam below and reaches
     // the maister MCP facade via the run-bound token appended at the
     // materialization seam.
     case "orchestrator": {
@@ -1701,18 +1706,21 @@ async function executeNodeAction(
                   }
                 : { variant: "node" as const }),
             },
-            // M34 (ADR-089): catalog-agent binding (ai_coding only).
+            // Native coordinators honor the same declared role binding as ai_coding nodes.
             agentBinding:
-              def.type === "ai_coding" &&
+              (def.type === "ai_coding" ||
+                usesStructuredKnowledgeContext(loaded.run)) &&
               (def.settings as { agent?: string } | undefined)?.agent
                 ? { id: (def.settings as { agent: string }).agent }
                 : undefined,
             // M39 (ADR-106): an agent-driven flow run (run.agent_id set) injects
-            // the driving agent's persona on EVERY ai_coding node. The graph
+            // the driving agent's persona on ai_coding and enrolled ACP nodes. The graph
             // runner only loads flow runs, so agent_id here is the launch driver;
             // a per-node agentBinding (above) takes precedence for that node.
             runPersonaAgentId:
-              def.type === "ai_coding" && loaded.run.agentId
+              (def.type === "ai_coding" ||
+                usesStructuredKnowledgeContext(loaded.run)) &&
+              loaded.run.agentId
                 ? (loaded.run.agentId as string)
                 : undefined,
             // M30 (ADR-081): rework `resume` — the dispatch carries the prior
@@ -2023,6 +2031,10 @@ async function materializeNodeCapabilities(
       settings.skills?.length ||
       settings.restrictions?.length ||
       settings.tools?.[agent]?.length ||
+      ("agent" in settings &&
+        settings.agent &&
+        (node.nodeType === "ai_coding" ||
+          usesStructuredKnowledgeContext(loaded.run))) ||
       settings.permissionMode
     );
 
@@ -2034,7 +2046,8 @@ async function materializeNodeCapabilities(
   // codex node needs no materialization.
   const pinModelOnly = !declares && agent === "claude" && !!executor.model;
 
-  if (!declares && !pinModelOnly) return undefined;
+  if (!declares && !pinModelOnly && !usesStructuredKnowledgeContext(loaded.run))
+    return undefined;
 
   const selectedMcpIds =
     declares && settings
@@ -2859,6 +2872,8 @@ export async function runGraph(
         if (brain) lastBrain = brain;
 
         await writeRunContext({
+          resultContract: loaded.run.resultContract,
+          knowledgeAccess: loaded.run.knowledgeAccess,
           runId,
           worktreePath,
           taskPrompt: loaded.task.prompt,
@@ -3452,14 +3467,31 @@ export async function runGraph(
           // M37 (ADR-098): an orchestrator delegates through the maister MCP
           // facade, so issue its run-bound token and inject the facade server
           // into the materialized mcpServers handed to createSession.
-          if (node.nodeType === "orchestrator" && materialized) {
-            const issued = await issueOrchestratorRunToken({
+          if (
+            materialized &&
+            (node.nodeType === "orchestrator" ||
+              usesStructuredKnowledgeContext(loaded.run))
+          ) {
+            const issuer =
+              node.nodeType === "orchestrator"
+                ? issueOrchestratorRunToken
+                : issueNativeNodeRunToken;
+            const issued = await issuer({
               projectId: loaded.run.projectId,
               runId,
+              nodeAttemptId,
               db,
             });
 
+            orchestratorTokenIssued = true;
             const facadeServer = agentFacadeMcpServer(issued.secret);
+
+            if (!facadeServer && usesStructuredKnowledgeContext(loaded.run))
+              throw new MaisterError(
+                "PRECONDITION",
+                "Native Flow execution requires the built MAIster MCP facade before dispatch",
+                { details: { reason: "native_knowledge_facade_unavailable" } },
+              );
 
             materialized = {
               ...materialized,
@@ -3482,7 +3514,6 @@ export async function runGraph(
                     )
                   : materialized.enforcementProfile,
             };
-            orchestratorTokenIssued = true;
           }
         } catch (err) {
           const e = isMaisterError(err)
@@ -3978,6 +4009,7 @@ export async function runGraph(
         // ADR-165: a producer of the run's public result is judged by the
         // LAUNCH snapshot, not by a fresh read of the pinned revision.
         resultContract: loaded.run.resultContract ?? null,
+        knowledgeAccess: loaded.run.knowledgeAccess,
         db,
       });
 
@@ -4815,6 +4847,7 @@ export async function runGraph(
                 acpSessionId: result.acpSessionId,
               },
               resultContract: loaded.run.resultContract ?? null,
+              knowledgeAccess: loaded.run.knowledgeAccess,
               structuredOutput,
             });
             if (opts.driver)
@@ -4980,6 +5013,7 @@ export async function runGraph(
               acpSessionId: result.acpSessionId,
             },
             resultContract: loaded.run.resultContract ?? null,
+            knowledgeAccess: loaded.run.knowledgeAccess,
             structuredOutput,
           });
           if (opts.driver)
@@ -5340,6 +5374,7 @@ export async function runGraph(
               acpSessionId: result.acpSessionId,
             },
             resultContract: loaded.run.resultContract ?? null,
+            knowledgeAccess: loaded.run.knowledgeAccess,
             structuredOutput,
           });
           if (opts.driver)
@@ -5392,6 +5427,8 @@ export async function runGraph(
     // `git status` / the agent's `git add -A` / the promoted diff.
     if (runContextWriteSafe) {
       await writeRunContext({
+        resultContract: loaded.run.resultContract,
+        knowledgeAccess: loaded.run.knowledgeAccess,
         runId,
         worktreePath,
         taskPrompt: loaded.task.prompt,

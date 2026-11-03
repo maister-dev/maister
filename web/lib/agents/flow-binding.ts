@@ -9,6 +9,9 @@ import { materializeSubagentDefinition } from "@/lib/capabilities/adapter-home";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { buildAgentActivitySnapshot } from "@/lib/agents/activity-snapshot";
+import { recordNativeKnowledgeActor } from "@/lib/brain/knowledge-execution-actor";
+import { usesStructuredKnowledgeContext } from "@/lib/run-results/contract";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { agents, runs } = schemaModule as unknown as Record<string, any>;
@@ -32,6 +35,7 @@ export type FlowBoundAgentResolution =
 export async function resolveFlowBoundAgent(args: {
   agentId: string;
   runId: string;
+  nodeAttemptId?: string;
   executorAgent: string;
   worktreePath: string;
   db?: Db;
@@ -73,7 +77,11 @@ export async function resolveFlowBoundAgent(args: {
   // HOST RUN project's pinned revision of the providing package, behind the
   // same enablement/trust gates as a standalone launch.
   const runRows = await _db
-    .select({ projectId: runs.projectId })
+    .select({
+      projectId: runs.projectId,
+      resultContract: runs.resultContract,
+      knowledgeAccess: runs.knowledgeAccess,
+    })
     .from(runs)
     .where(eq(runs.id, args.runId));
   const projectId = runRows[0]?.projectId as string | undefined;
@@ -108,6 +116,28 @@ export async function resolveFlowBoundAgent(args: {
   }
 
   const source = await readFile(effective.sourcePath, "utf8");
+
+  if (usesStructuredKnowledgeContext(runRows[0] ?? {})) {
+    if (!args.nodeAttemptId || parsed.mode !== "session")
+      throw new MaisterError(
+        "PRECONDITION",
+        "Native Flow knowledge requires an explicit session role and current node attempt",
+        { details: { reason: "native_knowledge_actor_required" } },
+      );
+    const activity = buildAgentActivitySnapshot(args.agentId, effective);
+
+    await recordNativeKnowledgeActor(_db, {
+      runId: args.runId,
+      nodeAttemptId: args.nodeAttemptId,
+      actor: {
+        schemaVersion: 1,
+        agentId: args.agentId,
+        packageName: effective.packageName,
+        packageInstallId: effective.packageInstallId,
+        definitionSha256: activity.definitionSha256,
+      },
+    });
+  }
 
   if (parsed.mode === "subagent") {
     if (args.executorAgent !== "claude") {

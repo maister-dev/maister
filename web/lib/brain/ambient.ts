@@ -15,6 +15,7 @@ import {
 import { BRAIN_POLICY } from "./policy";
 import { queryHash, recall, writeBrainSnapshot } from "./recall";
 import { RANKER_VERSION } from "./recall-ranker";
+import { usesNativeKnowledgeTransport } from "./knowledge-execution-access";
 
 // Project Brain (ADR-122) ambient P7 injection (flow runs only). Best-effort:
 // NEVER throws — every failure (enablement query, provider, recall, snapshot)
@@ -90,6 +91,14 @@ export async function getAmbientBrainProjection(
   }
 
   try {
+    if (await usesNativeKnowledgeTransport(args.db, args.runId)) {
+      log.debug(
+        { runId: args.runId, retrieval: "structured_tools" },
+        "native execution retrieves versioned knowledge after role binding",
+      );
+
+      return undefined;
+    }
     // The project kill switch (ADR-122). A launch persists runs.brain_context
     // independently of projects.brain_enabled, and an admin can disable the
     // Brain AFTER a run launched opted-in, so ambient MUST re-check enablement

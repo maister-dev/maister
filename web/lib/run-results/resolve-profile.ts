@@ -6,6 +6,11 @@ import type {
 import { eq } from "drizzle-orm";
 import pino from "pino";
 
+import {
+  findingsContractSchema,
+  FINDINGS_ENGINE_MIN,
+} from "./findings-contract";
+
 import { RAH_ENGINE_MIN } from "@/lib/config.schema";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
@@ -128,12 +133,31 @@ export async function resolveResultProfile(
     );
   }
 
+  const native = findingsContractSchema
+    .optional()
+    .safeParse(profile.nativeContract);
+
+  if (!native.success)
+    throw new MaisterError(
+      "CONFIG",
+      "Pinned result profile selects an unsupported native contract",
+    );
+  if (
+    native.data !== undefined &&
+    !semverGte(revision.engineMin ?? "", FINDINGS_ENGINE_MIN)
+  )
+    throw new MaisterError(
+      "CONFIG",
+      `Native result profiles require the delegating Flow's engine_min >= ${FINDINGS_ENGINE_MIN}`,
+    );
+
   const contract = buildAgentProfileContract({
     profileName: args.name,
     flowRefId: revision.flowRefId,
     resolvedRevision: revision.resolvedRevision,
     sourceFlowRevisionId: flowRevisionId,
     schemaStem: profile.schemaStem,
+    nativeContract: native.data,
     schemaVersion: profile.schemaVersion,
     schema: profile.schema,
     sha256: profile.sha256,

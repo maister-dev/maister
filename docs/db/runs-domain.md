@@ -1,5 +1,14 @@
 # Runs domain ERD
 
+## Native knowledge actor snapshot (Designed — CB0 T14)
+
+Main `0233_native_knowledge_execution` adds nullable immutable
+`node_attempts.knowledge_actor` metadata to the existing ledger. It records the
+server-resolved role/package/digest that actually executed a native Flow node;
+legacy NULL remains unknown. Logical identity pointers and update-only guards
+leave project/attempt cascades intact. The exact shape, binding, recovery and
+source-capture rules are owned by [evidence findings](../system-analytics/evidence-findings.md#flow-role-attestation-and-source-capture).
+
 ## Cut-over runs-domain transition (ADR-131 — Implemented)
 
 The post-0093/0094 runs domain has no STEP_RUNS entity or fallback join.

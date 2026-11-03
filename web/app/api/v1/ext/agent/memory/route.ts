@@ -18,6 +18,7 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { handleExt, httpStatusForExtCode } from "@/lib/tokens/ext-handler";
+import { recordNativeRunSources } from "@/lib/brain/knowledge-execution-access";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { agentProjectLinks, projects } = schemaModule as unknown as Record<
@@ -130,6 +131,15 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
         if (!target) return forbidden();
 
+        if (ctx.actor.boundRunId)
+          await recordNativeRunSources(db, ctx.actor.boundRunId, [
+            {
+              kind: "agent_memory",
+              projectId: ctx.projectId,
+              agentId: target.agentId,
+            },
+          ]);
+
         const state = await readAgentMemoryRaw(
           target.projectSlug,
           target.agentId,
@@ -187,6 +197,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         // Checked BEFORE the CAS so an over-cap body answers 422 CONFIG rather
         // than a misleading 409 when the hash also happens to be stale.
         assertAgentMemoryWithinCap(parsed.data.content);
+
+        if (ctx.actor.boundRunId)
+          await recordNativeRunSources(db, ctx.actor.boundRunId, [
+            {
+              kind: "agent_memory",
+              projectId: ctx.projectId,
+              agentId: target.agentId,
+            },
+          ]);
 
         const result = await writeAgentMemoryCas(
           db,

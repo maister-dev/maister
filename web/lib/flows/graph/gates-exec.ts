@@ -419,6 +419,8 @@ async function runOneGate(
   }
 
   const common = {
+    resultContract: loaded.run.resultContract,
+    knowledgeAccess: loaded.run.knowledgeAccess,
     runtimeRoot: ctx.runtimeRoot,
     projectSlug: loaded.projectSlug,
     runId: loaded.run.id,
@@ -522,6 +524,8 @@ async function runOneGate(
                 db: ctx.db,
                 runId: loaded.run.id,
                 stepId: gate.id,
+                resultContract: loaded.run.resultContract,
+                knowledgeAccess: loaded.run.knowledgeAccess,
                 signal: ctx.signal,
               },
               {

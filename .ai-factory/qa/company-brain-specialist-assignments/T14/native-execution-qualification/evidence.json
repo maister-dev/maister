@@ -1,0 +1,163 @@
+{
+  "task": "T14",
+  "status": "Native execution contract and input/reference boundary qualified locally; native release capability remains disabled",
+  "nativeContract": "evidence_findings_v1",
+  "minimumEngineVersion": "3.11.0",
+  "currentEngineVersion": "3.10.0",
+  "storage": {
+    "mainMigration": "0218_native_knowledge_execution",
+    "brainMigration": null,
+    "legacyMetadata": "Unclassified legacy node actors, token bindings and launch capture remain NULL; populated/repeated upgrades retain before-images.",
+    "projectDeletion": "Project/attempt deletion cascades through token binding. Project-local Brain history deletes; company knowledge survives. Source project references are logical and become unavailable after deletion.",
+    "roleIdentityLimit": 192
+  },
+  "checks": {
+    "owningUnit": {
+      "files": 9,
+      "tests": 241,
+      "passed": true
+    },
+    "broaderOwningIntegrationBeforeFinalIdentityExtension": {
+      "files": 13,
+      "tests": 149,
+      "passed": true
+    },
+    "finalSourceAndMigrationIntegration": {
+      "files": 6,
+      "tests": 85,
+      "passed": true
+    },
+    "latestPrivacyAndPublicationIntegration": {
+      "files": 4,
+      "tests": 69,
+      "passed": true
+    },
+    "counts": "These are overlapping invocations, not a sum of distinct tests.",
+    "typecheck": true,
+    "affectedLint": true,
+    "contractsAndSchemaParity": true,
+    "internalDocsAnd164TableErd": true,
+    "fullUnit": {
+      "files": 886,
+      "tests": 9261,
+      "passed": true
+    },
+    "initialSandboxedFullUnit": {
+      "files": 886,
+      "failedFiles": 7,
+      "failedTests": 19,
+      "passedTests": 9242,
+      "unhandledErrors": 1,
+      "verdict": "failed",
+      "classification": "Socket listen, tsx IPC and process-table EPERM under sandbox; the identical full suite passed with required local test access. No product changes or quarantine were added."
+    }
+  },
+  "qualified": [
+    "Frozen profile/export marker, package/member engine floors and legacy generic profile compatibility",
+    "Closed producer grammar, explicit missing evidence, forged authority refusal and exact record/witness/direct-child result identities/version witnesses",
+    "Atomic result/attempt publication, recheck after post-action source revocation and source-taint preservation despite omitted citations",
+    "Launch capture and inheritance independent of result grammar; unknown parent capture cannot be upgraded implicitly",
+    "Actual effective catalog definition attestation, current/latest attempt fencing including post-action Succeeded state, changed-definition refusal",
+    "Attempt-bound Flow credentials with ordinary agent scopes or coordinator delegation scopes; revoked API credentials remain unusable",
+    "Server-only execution inspection can settle work after transport revocation but cannot propose/review/confirm knowledge",
+    "Project context, mounted source repositories and private memory retain separate current source policies across search, review, capture and deletion",
+    "Native ambient and legacy Brain transports cannot bypass the versioned knowledge protocol",
+    "Supported long catalog identities remain intact in grant input, DB storage and evidence attribution"
+  ],
+  "remaining": [
+    "T15 exact selected-finding/depth-2 reduction closure and every outward derived-data guard",
+    "T16 installable RAH companion",
+    "T17 actual immutable package/live ACP and bilingual CB0 release qualification",
+    "CB1 assignments, governed cooperation and real stand pilot"
+  ],
+  "artifacts": [
+    {
+      "path": "declaration-red.log.gz",
+      "sha256": "9b726744fe1632d7268a3f03d658b83c28473e043f6e66cf3fa661ae3bea26ae"
+    },
+    {
+      "path": "frozen-contract-red.log.gz",
+      "sha256": "7b9cf0934891c08192df62d3c13e508c34057d07155972ca201ef955b1277430"
+    },
+    {
+      "path": "findings-publication-red.log.gz",
+      "sha256": "f7d9788a5b35b0b0eb45a2433028dc241a6058f0eb76059901707af11e9b82b0"
+    },
+    {
+      "path": "flow-seam-red.log.gz",
+      "sha256": "3e55735644231e174be51fe65162e667aacf8801ad18efc00a8b3032fae48162"
+    },
+    {
+      "path": "coordinator-identity-red.log.gz",
+      "sha256": "dc22a736ecccdad22f539e00ef25ea7650c3b2b2d0191a82fc31d61547a6e3d4"
+    },
+    {
+      "path": "private-disclosure-red.log.gz",
+      "sha256": "460171f3fba3f5c561789a5bde5d4e4a3d37941c5bcdaaf1042f0cf20b5d2d2f"
+    },
+    {
+      "path": "project-input-capture-red.log.gz",
+      "sha256": "2568001c427953b9406edda60c3055ab0a6f15d5d69a1b6cfabefd71b9b7da92"
+    },
+    {
+      "path": "native-transport-red.log.gz",
+      "sha256": "bb509f7b24fee9312c0c66e29fb7eb8f79179881841e9972b407095159a2d5c1"
+    },
+    {
+      "path": "native-context-red.log.gz",
+      "sha256": "445de4c3ad096b4f50f0a10e5b961785b490fda1a13f353a39a28cdb2a7df270"
+    },
+    {
+      "path": "mounted-context-red.log.gz",
+      "sha256": "51143fbf0f44d320a9abffcecdac84e1452fac8020fa4bc5bbdcdcb9609b66b0"
+    },
+    {
+      "path": "long-role-red.log.gz",
+      "sha256": "72d434f374d807e3bc2f5386ed066fbdc25524d434e33d37abdb5ab6a47bb9e2"
+    },
+    {
+      "path": "node-token-red.log.gz",
+      "sha256": "6d503434dc585e2027e1bcc0d5e28300f4c049a7d582ec25f6ed7c160541d778"
+    },
+    {
+      "path": "owning-unit-final.log.gz",
+      "sha256": "f751c5c644cf524fe1c1f2e93b2d4c213a52cd2573ba7557dd898ba624b1475c"
+    },
+    {
+      "path": "owning-qualification.log.gz",
+      "sha256": "6251dadadb4661a2443306e8fb11f705c6cb31c7e0444981530d9ab196113864"
+    },
+    {
+      "path": "final-source-qualification.log.gz",
+      "sha256": "8cfa0445947c451b907c4ace30da3fb67c09980bec1c3f0b31530c449ee78d37"
+    },
+    {
+      "path": "final-access.log.gz",
+      "sha256": "36641af08ef15a1e6b0ba2ebf301e1c21cc461bfecb3fae6344d3c3ae9a1bd09"
+    },
+    {
+      "path": "native-floor-green.log.gz",
+      "sha256": "7990c4c4f55ca763d5ac00bc94f71f1069ff3132f8a04ef689acfe03e4bd45e5"
+    },
+    {
+      "path": "qualified-contracts.log.gz",
+      "sha256": "4cfe0b8665a8b842f2cac9c4e9b9fa86543bcfd286f3f92de02eddc7998ba076"
+    },
+    {
+      "path": "qualified-docs.log.gz",
+      "sha256": "6ba35f7b53d924a23dc19649969f8c019526f28cb048bab80cf68bc31663b6e1"
+    },
+    {
+      "path": "final-typecheck.log.gz",
+      "sha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+    },
+    {
+      "path": "full-unit.log.gz",
+      "sha256": "d024f8d5db5688de4739e47883e37e307eed2986449006f010e2dbf18a145584"
+    },
+    {
+      "path": "full-unit-local.log.gz",
+      "sha256": "0e0dcf2138f571f98ec6e2d9c6734b470d34166178e3859bb7de7e21aa834d99"
+    }
+  ]
+}

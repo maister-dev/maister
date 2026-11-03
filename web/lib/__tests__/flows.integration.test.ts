@@ -21,6 +21,7 @@ import { buildFlowFixture } from "./_fixtures/build-flow-plugin";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { installFlowPlugin } from "@/lib/flows";
+import { maisterPackageManifestSchema } from "@/lib/config.schema";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -456,6 +457,44 @@ nodes:
           },
         },
       });
+    });
+
+    it("IT-CBE-04 refuses a native findings profile below the member capability floor without publishing a partial revision map", async () => {
+      const dir = await writeProfileFlow({
+        name: "rp-native-floor",
+        engineMin: "3.7.0",
+      });
+      const manifest = maisterPackageManifestSchema.parse({
+        schemaVersion: 1,
+        name: "native-rah",
+        compat: { engine_min: "3.11.0" },
+        result_profiles: {
+          findings: {
+            schema: "./schemas/research-result.v1.json",
+            native_contract: "evidence_findings_v1",
+          },
+        },
+      });
+
+      await expect(
+        installWithProfiles({
+          dir,
+          flowId: "rp-native-floor",
+          profiles: manifest.result_profiles!,
+        }),
+      ).rejects.toMatchObject({
+        code: "FLOW_INSTALL",
+        message: expect.stringContaining("3.11.0"),
+      });
+      const rows = await db
+        .select({
+          profiles: schema.flowRevisions.resultProfiles,
+          status: schema.flowRevisions.packageStatus,
+        })
+        .from(schema.flowRevisions)
+        .where(eq(schema.flowRevisions.flowRefId, "rp-native-floor"));
+
+      expect(rows).toEqual([{ profiles: null, status: "Failed" }]);
     });
 
     it("leaves the column NULL when the package declares none", async () => {

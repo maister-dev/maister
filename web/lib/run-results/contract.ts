@@ -1,5 +1,9 @@
+import type { FindingsContract } from "./findings-contract";
 import type { FormSchema } from "@/lib/config.schema";
 import type { RunResultContract } from "@/lib/run-results/types";
+import type { KnowledgeAccessCapture } from "@/lib/company/types";
+
+import { FINDINGS_CONTRACT } from "./findings-contract";
 
 // ADR-165 (D2): the launch-time contract snapshot and the schema reference that
 // identifies it. Pure — no db, no `server-only` — so the launcher, the seam and
@@ -7,6 +11,30 @@ import type { RunResultContract } from "@/lib/run-results/types";
 
 /** How much of `resolved_revision` `schemaRef` carries. */
 export const SCHEMA_REF_REVISION_LEN = 12;
+
+export function isNativeFindingsContract(
+  contract: RunResultContract | null | undefined,
+): boolean {
+  return (
+    contract !== null &&
+    contract !== undefined &&
+    contract.kind !== "agent_operational" &&
+    contract.nativeContract === FINDINGS_CONTRACT
+  );
+}
+
+/** Input provenance remains governed even when a delegated child's output keeps its historical grammar. */
+export function usesStructuredKnowledgeContext(
+  run: Readonly<{
+    resultContract?: RunResultContract | null;
+    knowledgeAccess?: KnowledgeAccessCapture | null;
+  }>,
+): boolean {
+  return (
+    isNativeFindingsContract(run.resultContract) ||
+    (run.knowledgeAccess !== undefined && run.knowledgeAccess !== null)
+  );
+}
 
 /**
  * `<flowRefId>@<resolvedRevision[:12]>:<schemaStem>`.
@@ -41,13 +69,17 @@ export function buildFlowExportContract(args: {
   resolvedRevision: string;
   flowRevisionId: string;
   schemaPath: string;
+  nativeContract?: FindingsContract;
   schema: FormSchema;
   sha256: string;
   required: boolean;
   producerNodeIds: readonly string[];
-}): RunResultContract {
+}): Extract<RunResultContract, { kind: "flow_export" }> {
   return {
     kind: "flow_export",
+    ...(args.nativeContract === undefined
+      ? {}
+      : { nativeContract: args.nativeContract }),
     schemaRef: schemaRefFor({
       flowRefId: args.flowRefId,
       resolvedRevision: args.resolvedRevision,
@@ -74,12 +106,16 @@ export function buildAgentProfileContract(args: {
   resolvedRevision: string;
   sourceFlowRevisionId: string;
   schemaStem: string;
+  nativeContract?: FindingsContract;
   schemaVersion: number;
   schema: FormSchema;
   sha256: string;
-}): RunResultContract {
+}): Extract<RunResultContract, { kind: "agent_profile" }> {
   return {
     kind: "agent_profile",
+    ...(args.nativeContract === undefined
+      ? {}
+      : { nativeContract: args.nativeContract }),
     profileName: args.profileName,
     schemaRef: schemaRefFor({
       flowRefId: args.flowRefId,

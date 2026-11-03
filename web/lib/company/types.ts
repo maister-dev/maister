@@ -23,6 +23,19 @@ export const knowledgeAccessRestrictionSchema = z.union([
   ownerSchema,
   z
     .object({
+      kind: z.literal("project_context"),
+      projectId: postgresTextSchema.min(1).max(128),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("agent_memory"),
+      projectId: postgresTextSchema.min(1).max(128),
+      agentId: postgresTextSchema.min(1).max(192),
+    })
+    .strict(),
+  z
+    .object({
       kind: z.literal("record"),
       recordId: postgresTextSchema.min(1).max(128),
     })
@@ -33,6 +46,10 @@ export const knowledgeRestrictionsSchema = z
   .max(256);
 export type KnowledgeAccessRestriction = z.infer<
   typeof knowledgeAccessRestrictionSchema
+>;
+export type ExecutionContextRestriction = Extract<
+  KnowledgeAccessRestriction,
+  { kind: "project_context" | "agent_memory" }
 >;
 /** Server-captured source restrictions on an existing run; NULL remains unknown. */
 export const knowledgeAccessCaptureSchema = z
@@ -45,6 +62,20 @@ export const knowledgeAccessCaptureSchema = z
   .strict();
 export type KnowledgeAccessCapture = Readonly<
   z.infer<typeof knowledgeAccessCaptureSchema>
+>;
+
+/** Server-owned identity of the role that actually executes one Flow node attempt. */
+export const nativeKnowledgeActorSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    agentId: postgresTextSchema.min(1).max(192),
+    packageInstallId: postgresTextSchema.min(1).max(128),
+    packageName: postgresTextSchema.min(1).max(128),
+    definitionSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
+export type NativeKnowledgeActor = Readonly<
+  z.infer<typeof nativeKnowledgeActorSchema>
 >;
 
 export const COMPANY_ACTIONS = [

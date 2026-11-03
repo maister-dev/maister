@@ -22,7 +22,7 @@ const uniqueActions = z
 export const companyGrantInputSchema = z
   .object({
     principalKind: z.enum(["user", "agent"]),
-    principalId: identity,
+    principalId: postgresTextSchema.min(1).max(192),
     actions: uniqueActions,
     confirmationClasses: z
       .array(z.enum(CONFIRMATION_CLASSES))
@@ -73,7 +73,7 @@ export const companyGrantSchema = z
   .object({
     id: identity,
     principalKind: z.enum(["user", "agent", "system"]),
-    principalId: identity,
+    principalId: postgresTextSchema.min(1).max(192),
     action: z.enum(COMPANY_ACTIONS),
     revision: z.number().int().min(1).max(2147483647),
     confirmationClasses: z.array(z.enum(CONFIRMATION_CLASSES)).max(4),

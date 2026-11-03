@@ -47,6 +47,136 @@ sequenceDiagram
     DB-->>R: original refs and authorized limitations survive
 ```
 
+### Contract selection and frozen compatibility
+
+A package opts a result profile into native findings with
+`result_profiles.<name>.native_contract: evidence_findings_v1`; a Flow opts its
+export in with `result.export.native_contract: evidence_findings_v1`. Both retain
+their existing package-root `schema` document, exact-byte hash and producer/profile
+resolution. This declaration requires the owning package and Flow's effective
+`compat.engine_min >= 3.11.0`. An unsupported declaration or insufficient floor
+is a configuration refusal before launch. Generic FormSchema and existing
+operational_v1 declarations keep their meaning.
+
+The loader preserves the native selector in the pinned profile/export metadata.
+The launcher freezes it as `nativeContract` in the existing `runs.result_contract`.
+Publication selects native validation only from this server snapshot. The result
+body cannot select its validator, submitting actor, grants or confirmation policy.
+Historical contracts without the selector retain their original validation even
+when their JSON happens to resemble native findings; no content-based upgrade is
+allowed. The engine capability is enabled only with the complete launch/disclosure
+and derived-output read guards, not merely when the parser accepts the marker.
+
+A `knowledge` reference identifies a record and its exact accepted `revision`.
+A `result` reference identifies a child **run ID** and an exact result `revision`,
+matching the fields actually returned by `run_collect`. A `witness` reference
+identifies an immutable captured witness; supplied version/digest values must
+match that witness. Missing exact revision or an unsupported reference field is
+an explicit native-reference refusal, with guidance to retrieve the real version
+or declare missing evidence. Operation/verification references require their
+server resolvers and cannot become valid through producer prose.
+
+For knowledge and result references, an optional `version` is the decimal exact
+revision string. A knowledge digest is the accepted assertion's retained
+`content_sha256`; a result digest is SHA-256 of its value serialized with the
+platform's existing stable JSON key ordering. Neither is a retrieval score or a
+confirmation. Witness digest/version values retain their immutable capture
+meaning. Missing identities, denied access and witness mismatches share the safe
+`reference_invalid` result failure class; diagnostic logs contain only the
+candidate's structural path and reason class. Invalid candidates are not
+published as a successful result or silently removed from it.
+
+The existing child's immutable parent binding plus its exact `run_results` row's
+write-once `first_collected_at` establish which direct parent was served that
+revision. Reduction validation uses these facts; it does not introduce a parallel
+collection or execution ledger. The original immutable child result remains the
+source of depth-2 support, contradiction, missing-information and origin closure.
+
+### Flow role attestation and source capture
+
+Native Flow coordinators bind a catalog role with `settings.agent`; the role must
+be a session agent with the existing Flow trigger, current attachment and trust
+admission. Before its first prompt, the platform records an immutable version-1
+`node_attempts.knowledge_actor` containing the actual agent ID, package install
+ID/name and definition digest selected by the existing effective-definition
+resolver. This is an extension of the existing attempt ledger. It does not set
+`runs.source_agent_id`, which continues to mean the agent that launched a Flow.
+A native ordinary Flow node receives the existing agent tool scopes without coordinator delegation scopes. An orchestrator retains its existing delegation scopes. Both credentials use the existing run-bound Flow token container and bind their exact node attempt in nullable
+`project_tokens.knowledge_node_attempt_id` when issued. Native access requires
+that exact attempt to remain active and current; a token from an earlier node
+cannot impersonate the next node's role. Reissuing on wake preserves the same
+attempt binding. The pointer cascades on attempt deletion and cannot be changed
+after issuance. A bound Flow token resolves only that attempt's attested
+identity. The current action may already be Succeeded while post-action gates and publication still belong to it; a newer attempt or node transition fences that authority. Ordinary agent tokens keep their immutable run identity. Neither a
+model nor a result body can select an actor. A changed role/package on an
+unfinished attested attempt requires an explicit fresh attempt; it cannot rewrite
+the original attestation or silently switch the resumed session's authority.
+
+Main migration `0233_native_knowledge_execution` adds the nullable actor snapshot
+with a bounded shape CHECK and an immutable-on-update guard, plus the nullable
+token/attempt binding and its scoped CHECK/update guard. It also aligns company principal identity bounds with the existing 192-character catalog role contract; native attribution and grant API inputs/outputs retain the full identity. Existing rows stay NULL;
+there is no invented historical role or token binding. Role/package identity
+pointers are logical values. The token's attempt FK uses ON DELETE CASCADE.
+Attempt/project deletion continues through the existing
+cascade without an immutable-delete guard or new Brain dependency. Main SQL does
+not reference Brain tables. Remaining unapplied specialist/stand reservations
+move to `0219`–`0223` before generation.
+
+Launch-time source capture on existing `runs.knowledge_access` is separate from
+this role identity. Native children inherit the server-recorded parent source
+union; NULL/unknown parent capture cannot be upgraded to complete by a model's
+citations. Ambient and explicit knowledge disclosure must add exact record/source
+restrictions before delivering bytes. Capability 3.11 stays disabled until both
+capture and every derived read guard are qualified.
+
+Native capture also records two finite execution-context source classes, separate
+from Brain ownership: `project_context {projectId}` for project inputs/repository
+material and `agent_memory {projectId, agentId}` for private agent notes. Both are
+server-only classifications on the existing restriction union, not producer
+fields or searchable knowledge records. Users need the source project's current
+`readRepoFiles` authority; private memory additionally requires the source agent
+attachment to exist. An agent needs its current bound project or an explicit current source-project entry on its bound attachment's existing `context_repos` grant for project context;
+private memory requires the same professional role and its enabled memory axis.
+Company knowledge grants do not bypass either source policy. These finite native
+classes do not introduce provider contracts or migrate private stores.
+
+Project-owned native launches capture project context before queuing, and child
+launches retain the entire parent union. Retained repository mounts add their source-project restrictions before dispatch and on continuation, and current attachment consent is rechecked. Actual private-memory consumption adds
+its narrower source restriction before prompt snapshots or response bytes are
+written. Current source authorization is checked again before dispatch/resume and
+publication. The same union must constrain record/proposal search before LIMIT,
+direct evidence reads and every outward derived field. Source pointers remain
+logical; deleting their project leaves accepted company records retained but
+source-dependent disclosure unavailable, without blocking deletion.
+
+The initial native profile retrieves shared knowledge through the structured
+`knowledge_*` tools after role binding. It does not inject the older unversioned
+ambient projection or use the legacy Project Brain `memory_recall`,
+`memory_retain`, `memory_clusters` and `memory_propose` transports. Those retain
+their historical behavior for historical profiles; native callers receive an
+explicit versioned-transport precondition before retrieval or writes. Historical
+records remain inspectable through native tools with their honest limitations.
+Native `run.json` advertises the result contract and structured retrieval mode;
+this descriptor supplies neither permissions nor confirmation. Private agent
+memory continues through its separate store and captures its own source policy.
+
+Capture enrollment is independent of the result grammar. A child of an enrolled
+execution inherits its complete source protocol even when its existing result
+contract is generic; that contract is not upgraded to native findings. A wholly
+historical execution with NULL capture remains unknown. An enrolled unknown or
+unfinished parent cannot shed its classification by delegating generic work.
+
+Result settlement uses a server-only, read-only execution principal anchored to
+the immutable run role or exact current node attestation and current role/package
+bindings and source grants. It does not depend on an ephemeral API credential
+remaining live after work completes. API requests still require their presented
+current token and scopes; expiry or revocation grants no further API access.
+The inspection principal cannot propose, review, confirm or manage knowledge,
+even when its professional role has those grants. Stopped execution, replaced
+attempts, disabled bindings and revoked source grants still refuse inspection.
+Recording a completed result therefore remains distinct from publishing or
+confirming a Brain assertion.
+
 ### Native value and limits
 
 The authoritative OpenAPI components prefixed `CB` describe each closed shape; [synthetic examples](../api/company-brain-examples.yaml) distinguish valid explicit missing evidence from forged authority/unsupported fields. Package FormSchema exposes the same named fields; native semantic validation supplies closure/identity/limit checks beyond the generic field grammar. New capability minimum is designed engine 3.11.0; existing historical profiles keep their frozen schema/digest and meaning.

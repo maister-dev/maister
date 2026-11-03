@@ -218,6 +218,12 @@ import { resolveAgentLaunchExecutionPolicy } from "@/lib/agents/execution-policy
 import { runnerCatalogEntry } from "@/lib/agents/runner-catalog";
 export { runnerCatalogEntry } from "@/lib/agents/runner-catalog";
 import { issueAgentRunToken } from "@/lib/agents/tokens";
+import { nativeKnowledgeCaptureAtLaunch } from "@/lib/brain/knowledge-launch-capture";
+import {
+  assertNativeRunKnowledgeInputs,
+  recordNativeRunSources,
+} from "@/lib/brain/knowledge-execution-access";
+import { usesStructuredKnowledgeContext } from "@/lib/run-results/contract";
 import { type AgentMcpServer } from "@/lib/capabilities/agent-map";
 import {
   materializeAdapterCapabilityHome,
@@ -2203,7 +2209,20 @@ async function launchAgentRunWithAdmission(
           });
         const rows = await tx
           .insert(runs)
-          .values({ ...runRow, agentScheduleId })
+          .values({
+            ...runRow,
+            agentScheduleId,
+            knowledgeAccess: await nativeKnowledgeCaptureAtLaunch(
+              tx,
+              runRow.resultContract,
+              {
+                parentRunId: input.parentRunId ?? null,
+                sourceRestrictions: [
+                  { kind: "project_context", projectId: input.projectId },
+                ],
+              },
+            ),
+          })
           .onConflictDoNothing()
           .returning({ id: runs.id });
 
@@ -2854,7 +2873,13 @@ export async function applyAgentMemoryForLaunch(
 
   const runId = (run.id ?? run.runId) as string;
 
-  // Provenance is a BEST-EFFORT follow-up, never a launch precondition: this
+  if (usesStructuredKnowledgeContext(run)) {
+    await recordNativeRunSources(_db, runId, [
+      { kind: "agent_memory", projectId: run.projectId, agentId: run.agentId },
+    ]);
+  }
+
+  // Legacy provenance is best-effort. Native capture requires this exact witness. This
   // whole block sits inside the caller's spawn try/catch, whose catch finalizes
   // the run as `Failed`. REQ-C5 says memory must never block a launch, so a full
   // disk or an unwritable run dir degrades to a WARN — the agent still gets its
@@ -2874,6 +2899,15 @@ export async function applyAgentMemoryForLaunch(
       .set({ agentMemoryHash: memory.hash })
       .where(eq(runs.id, runId));
   } catch (err) {
+    if (usesStructuredKnowledgeContext(run))
+      throw new MaisterError(
+        "PRECONDITION",
+        "Native private-memory disclosure could not retain its exact prompt provenance; inspect the failed run before recovery",
+        {
+          cause: err,
+          details: { reason: "native_memory_provenance_unavailable", runId },
+        },
+      );
     log.warn(
       {
         runId,
@@ -4813,6 +4847,14 @@ async function driveAgentSession(
       // override branch below (which discards `basePrompt` and would otherwise
       // record provenance for a prompt that carried no memory).
       operationalSpawnStage = "prompt";
+      const issuedToken = await issueAgentRunToken({
+        agentId: agent.id,
+        projectId: project.id,
+        runId,
+        db: _db,
+      });
+      if (usesStructuredKnowledgeContext(run))
+        await assertNativeRunKnowledgeInputs(_db, runId);
       const memoryText = await applyAgentMemoryForLaunch(
         _db,
         run,
@@ -4833,12 +4875,6 @@ async function driveAgentSession(
             : basePrompt),
       );
 
-      const issuedToken = await issueAgentRunToken({
-        agentId: agent.id,
-        projectId: project.id,
-        runId,
-        db: _db,
-      });
 
       // RD7: the agent's capability_profile.mcps resolve through the existing
       // platform/project catalog (precedence + exec-trust stdio gate) and ride
@@ -4936,6 +4972,8 @@ async function driveAgentSession(
       }
 
       if (run.agentKind !== "operational") await prepareAttachedContextMounts();
+      if (usesStructuredKnowledgeContext(run))
+        await assertNativeRunKnowledgeInputs(_db, runId);
 
       operationalSpawnStage = "materialization_witness";
       if (

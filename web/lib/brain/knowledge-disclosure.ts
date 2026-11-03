@@ -74,6 +74,8 @@ export async function lockKnowledgeReadConsumer(
   principal: KnowledgePrincipal,
 ): Promise<KnowledgeReadConsumer> {
   if (principal.kind === "user") return null;
+  if (principal.kind === "execution")
+    return lockRunKnowledgeReadConsumer(tx, principal.runId);
   const token = (
     await tx.execute(
       sql`SELECT name,token_kind FROM project_tokens WHERE id=${principal.tokenId} AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>now()) FOR SHARE`,
@@ -98,6 +100,14 @@ export async function lockKnowledgeReadConsumer(
       "This token cannot consume shared native knowledge",
     );
   const runId = parseBoundRunId(String(token.name));
+
+  return lockRunKnowledgeReadConsumer(tx, runId);
+}
+
+async function lockRunKnowledgeReadConsumer(
+  tx: KnowledgeTransaction,
+  runId: string | null,
+): Promise<KnowledgeReadConsumer> {
   const run =
     runId === null
       ? undefined
@@ -128,6 +138,11 @@ export async function lockKnowledgeWriteConsumer(
   tx: KnowledgeTransaction,
   principal: KnowledgePrincipal,
 ): Promise<KnowledgeReadConsumer> {
+  if (principal.kind === "execution")
+    throw new MaisterError(
+      "UNAUTHORIZED",
+      "Execution inspection cannot authorize knowledge writes",
+    );
   const consumer = await lockKnowledgeReadConsumer(tx, principal);
 
   try {

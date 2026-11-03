@@ -15,7 +15,7 @@ const identity = postgresTextSchema.min(1).max(128);
 export const knowledgeActorSchema = z
   .object({
     kind: z.enum(["user", "agent", "system", "legacy_unknown"]),
-    id: identity.nullable(),
+    id: postgresTextSchema.min(1).max(192).nullable(),
     runId: identity.nullable(),
     attemptId: identity.nullable(),
   })

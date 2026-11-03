@@ -157,3 +157,36 @@ describe("isResultProducerNode", () => {
     ).toBe(false);
   });
 });
+
+it("freezes an explicit native findings selector in both producer contracts without changing their pinned schema identity", () => {
+  const flow = buildFlowExportContract({
+    flowRefId: "rah",
+    resolvedRevision: "a".repeat(40),
+    flowRevisionId: "revision",
+    schemaPath: "./schemas/findings.v1.json",
+    schema: SCHEMA,
+    sha256: "b".repeat(64),
+    required: true,
+    producerNodeIds: ["reduce"],
+    nativeContract: "evidence_findings_v1",
+  });
+  const agent = buildAgentProfileContract({
+    profileName: "findings",
+    flowRefId: "rah",
+    resolvedRevision: "a".repeat(40),
+    sourceFlowRevisionId: "revision",
+    schemaStem: "findings.v1",
+    schemaVersion: 2,
+    schema: SCHEMA,
+    sha256: "b".repeat(64),
+    nativeContract: "evidence_findings_v1",
+  });
+
+  for (const contract of [flow, agent])
+    expect(contract).toMatchObject({
+      nativeContract: "evidence_findings_v1",
+      sha256: "b".repeat(64),
+      schema: SCHEMA,
+      schemaRef: "rah@aaaaaaaaaaaa:findings.v1",
+    });
+});

@@ -1,6 +1,8 @@
 import "server-only";
 
 import type { ChildLaunchReceipt } from "@/lib/orchestrator/child-launch-context";
+import type { KnowledgeAccessCapture } from "@/lib/company/types";
+import type { RunResultContract } from "@/lib/run-results/types";
 import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
 import type { CapabilityAgent } from "@/lib/config.schema";
 import type { ScratchAdapterLaunch } from "@/lib/db/schema";
@@ -58,6 +60,8 @@ import {
   type FlowPermissionOwner,
 } from "./graph/prompt-permission";
 
+import { usesStructuredKnowledgeContext } from "@/lib/run-results/contract";
+import { assertNativeRunKnowledgeInputs } from "@/lib/brain/knowledge-execution-access";
 import { queryErrorDiagnostics, redactQueryError } from "@/lib/db/pg-error";
 import {
   parseScheduledRequestSnapshot,
@@ -143,6 +147,8 @@ type DbClientLike = any;
 export type { DbClientLike };
 
 export type RunAgentStepCtx = {
+  resultContract?: RunResultContract | null;
+  knowledgeAccess?: KnowledgeAccessCapture | null;
   runtimeRoot: string;
   projectSlug: string;
   runId: string;
@@ -1141,12 +1147,21 @@ async function assertGatePermissionSettled(
 export async function reattachGatePrompt(
   ctx: Pick<
     RunAgentStepCtx,
-    "db" | "runId" | "stepId" | "bindExecution" | "signal"
+    | "db"
+    | "runId"
+    | "stepId"
+    | "bindExecution"
+    | "signal"
+    | "resultContract"
+    | "knowledgeAccess"
   >,
   owner: GatePromptOwner,
   execution?: AgentExecution,
 ): Promise<StepResult | null> {
   const db = ctx.db ?? getDb();
+
+  if (usesStructuredKnowledgeContext(ctx))
+    await assertNativeRunKnowledgeInputs(db, ctx.runId);
   const existing = await findOwnedPrompt(
     db,
     ctx.runId,
@@ -1309,11 +1324,67 @@ export async function runAgentStep(
   }
 }
 
+async function resolveFlowRolePrompt(
+  prompt: string,
+  ctx: RunAgentStepCtx,
+): Promise<string> {
+  let promptTemplate = prompt;
+
+  // M34 (ADR-089): a catalog-agent binding substitutes the inline prompt —
+  // the agent's .md body becomes the system block and the node prompt is
+  // appended as the task block (mode=session), or the definition is
+  // materialized into .claude/agents/ for Claude self-delegation
+  // (mode=subagent; the inline prompt stays the driver).
+  if (ctx.agentBinding) {
+    const { resolveFlowBoundAgent } = await import("@/lib/agents/flow-binding");
+    const bound = await resolveFlowBoundAgent({
+      agentId: ctx.agentBinding.id,
+      runId: ctx.runId,
+      nodeAttemptId: ctx.nodeAttemptId,
+      executorAgent: ctx.executor.agent,
+      worktreePath: ctx.worktreePath,
+      db: ctx.db,
+    });
+
+    if (bound.mode === "session") {
+      promptTemplate = `${bound.prompt}\n\n## Task\n\n${prompt}`;
+    }
+  } else if (ctx.runPersonaAgentId) {
+    // M39 (ADR-106): the run's DRIVING agent (a launch with flow_ref) augments
+    // EVERY ai_coding node — its `.md` body is the persona/system block, the
+    // node keeps its own task prompt (order persona-then-task). The driving
+    // agent is launched by its own trigger and need not declare the "flow"
+    // trigger, so that check is skipped; launch validates mode=session.
+    const { resolveFlowBoundAgent } = await import("@/lib/agents/flow-binding");
+    const bound = await resolveFlowBoundAgent({
+      agentId: ctx.runPersonaAgentId,
+      runId: ctx.runId,
+      nodeAttemptId: ctx.nodeAttemptId,
+      executorAgent: ctx.executor.agent,
+      worktreePath: ctx.worktreePath,
+      db: ctx.db,
+      requireFlowTrigger: false,
+    });
+
+    if (bound.mode === "session") {
+      promptTemplate = `${bound.prompt}\n\n## Task\n\n${prompt}`;
+    }
+  }
+
+  return promptTemplate;
+}
+
 async function dispatchAgentStep(
   step: AgentStepLike,
   ctx: RunAgentStepCtx,
   execution?: AgentExecution,
 ): Promise<AgentStepResult> {
+  const preparedPrompt = usesStructuredKnowledgeContext(ctx)
+    ? await resolveFlowRolePrompt(step.prompt, ctx)
+    : undefined;
+
+  if (usesStructuredKnowledgeContext(ctx))
+    await assertNativeRunKnowledgeInputs(ctx.db ?? getDb(), ctx.runId);
   // Existing immutable requests do not depend on today's template or context.
   // A consensus cell re-enters through its own logical operation key instead.
   if (ctx.promptOwner) {
@@ -1326,46 +1397,8 @@ async function dispatchAgentStep(
 
     if (completed) return completed;
   }
-  let promptTemplate = step.prompt;
-
-  // M34 (ADR-089): a catalog-agent binding substitutes the inline prompt —
-  // the agent's .md body becomes the system block and the node prompt is
-  // appended as the task block (mode=session), or the definition is
-  // materialized into .claude/agents/ for Claude self-delegation
-  // (mode=subagent; the inline prompt stays the driver).
-  if (ctx.agentBinding) {
-    const { resolveFlowBoundAgent } = await import("@/lib/agents/flow-binding");
-    const bound = await resolveFlowBoundAgent({
-      agentId: ctx.agentBinding.id,
-      runId: ctx.runId,
-      executorAgent: ctx.executor.agent,
-      worktreePath: ctx.worktreePath,
-      db: ctx.db,
-    });
-
-    if (bound.mode === "session") {
-      promptTemplate = `${bound.prompt}\n\n## Task\n\n${step.prompt}`;
-    }
-  } else if (ctx.runPersonaAgentId) {
-    // M39 (ADR-106): the run's DRIVING agent (a launch with flow_ref) augments
-    // EVERY ai_coding node — its `.md` body is the persona/system block, the
-    // node keeps its own task prompt (order persona-then-task). The driving
-    // agent is launched by its own trigger and need not declare the "flow"
-    // trigger, so that check is skipped; launch validates mode=session.
-    const { resolveFlowBoundAgent } = await import("@/lib/agents/flow-binding");
-    const bound = await resolveFlowBoundAgent({
-      agentId: ctx.runPersonaAgentId,
-      runId: ctx.runId,
-      executorAgent: ctx.executor.agent,
-      worktreePath: ctx.worktreePath,
-      db: ctx.db,
-      requireFlowTrigger: false,
-    });
-
-    if (bound.mode === "session") {
-      promptTemplate = `${bound.prompt}\n\n## Task\n\n${step.prompt}`;
-    }
-  }
+  const promptTemplate =
+    preparedPrompt ?? (await resolveFlowRolePrompt(step.prompt, ctx));
 
   const rendered = renderStrict(
     promptTemplate,

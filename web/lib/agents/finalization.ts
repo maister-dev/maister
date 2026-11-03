@@ -74,6 +74,8 @@ import {
   decideAgentResultFromOutput,
 } from "@/lib/run-results/agent-result";
 import { engineArtifactManifest } from "@/lib/run-results/artifact-manifest";
+import { usesStructuredKnowledgeContext } from "@/lib/run-results/contract";
+import { validateFindingsReferences } from "@/lib/run-results/findings-references";
 import {
   publishRunResult,
   recordInvalidRunResult,
@@ -270,6 +272,7 @@ type FinalizationContext = Readonly<{
     | "agentWorkspace"
     | "rootRunId"
     | "resultContract"
+    | "knowledgeAccess"
     | "agentId"
     | "sourceAgentId"
     | "agentActivitySnapshot"
@@ -320,6 +323,7 @@ async function loadFinalizationContext(
       agentWorkspace: runs.agentWorkspace,
       rootRunId: runs.rootRunId,
       resultContract: runs.resultContract,
+      knowledgeAccess: runs.knowledgeAccess,
       agentId: runs.agentId,
       sourceAgentId: runs.sourceAgentId,
       agentActivitySnapshot: runs.agentActivitySnapshot,
@@ -807,29 +811,49 @@ async function prepareAgentFinalization(
       return { finalized: false };
     }
 
+    const referenceDecision = usesStructuredKnowledgeContext({
+      resultContract,
+      knowledgeAccess: current?.run.knowledgeAccess,
+    })
+      ? await validateFindingsReferences(
+          tx,
+          runId,
+          resultContract,
+          resultDecision,
+        )
+      : resultDecision;
+    const publicationDecision = operationalIntegrity
+      ? operationalTerminalDecision({
+          requested: outcome,
+          result: referenceDecision,
+          integrity: operationalIntegrity,
+        })
+      : null;
     const publication = await qualificationPublication(
       tx,
-      operationalDecision?.successful ?? false,
-      resultDecision.kind === "valid" &&
+      publicationDecision?.successful ?? false,
+      referenceDecision.kind === "valid" &&
         resultContract?.kind === "agent_operational"
-        ? (parseOperationalResult(resultDecision.value)?.references ?? [])
+        ? (parseOperationalResult(referenceDecision.value)?.references ?? [])
         : [],
     );
     const terminalDecision =
-      publication.reason && operationalDecision?.successful
+      publication.reason && publicationDecision?.successful
         ? {
-            ...operationalDecision,
+            ...publicationDecision,
             status: "Failed" as const,
             successful: false,
             effectiveOutcome: "blocked" as const,
             cause: publication.reason,
             reasonCodes: [
-              ...operationalDecision.reasonCodes,
+              ...publicationDecision.reasonCodes,
               publication.reason,
             ],
           }
-        : operationalDecision;
-    const terminalStatus = terminalDecision?.status ?? effectiveStatus;
+        : publicationDecision;
+    const terminalStatus =
+      terminalDecision?.status ??
+      (referenceDecision.kind === "invalid" ? "Failed" : effectiveStatus);
     const endedAt = new Date();
     const terminalTransitionId = randomUUID();
 
@@ -839,11 +863,11 @@ async function prepareAgentFinalization(
     let resultStatus: ResultStatus | null = null;
     let resultRevision: number | null = null;
 
-    if (resultDecision.kind === "valid") {
+    if (referenceDecision.kind === "valid") {
       const published = await publishRunResult(tx, {
         runId,
-        value: resultDecision.value,
-        valueBytes: resultDecision.valueBytes,
+        value: referenceDecision.value,
+        valueBytes: referenceDecision.valueBytes,
         contract: resultContract as RunResultContract,
         producerKind: "agent_session",
         producerRef: "session:default",
@@ -855,11 +879,11 @@ async function prepareAgentFinalization(
         terminalDecision && !terminalDecision.successful
           ? "unavailable"
           : "valid";
-    } else if (resultDecision.kind === "invalid") {
+    } else if (referenceDecision.kind === "invalid") {
       const invalid = await recordInvalidRunResult(tx, {
         runId,
         contract: resultContract as RunResultContract,
-        reason: resultDecision.reason,
+        reason: referenceDecision.reason,
         producerKind: "agent_session",
         producerRef: "session:default",
       });
@@ -871,11 +895,11 @@ async function prepareAgentFinalization(
           runId,
           outcome,
           resultStatus,
-          reasonClass: resultDecision.reason,
+          reasonClass: referenceDecision.reason,
         },
         "[run-result.agent] public result rejected — finalizing Failed",
       );
-    } else if (resultDecision.kind === "absent") {
+    } else if (referenceDecision.kind === "absent") {
       resultStatus = "absent";
     }
 
@@ -1044,9 +1068,9 @@ async function prepareAgentFinalization(
       reason: opts.causeReason ?? opts.reason,
       terminal: operationalTerminal,
       reported:
-        resultDecision.kind === "valid" &&
+        referenceDecision.kind === "valid" &&
         resultContract?.kind === "agent_operational"
-          ? parseOperationalResult(resultDecision.value)
+          ? parseOperationalResult(referenceDecision.value)
           : null,
     });
 
@@ -1100,7 +1124,7 @@ async function prepareAgentFinalization(
       // succeeded.
       const kind = terminalDecision
         ? DOMAIN_KIND_BY_OUTCOME[terminalDecision.status]
-        : resultDecision.kind === "invalid"
+        : referenceDecision.kind === "invalid"
           ? "run.failed"
           : DOMAIN_KIND_BY_OUTCOME[outcome];
       const event = {
@@ -1126,10 +1150,10 @@ async function prepareAgentFinalization(
             : {}),
           ...(opts.reason ? { reason: opts.reason } : {}),
           ...failureEvidence,
-          ...(resultDecision.kind === "invalid"
+          ...(referenceDecision.kind === "invalid"
             ? {
                 reason:
-                  resultDecision.reason === "result_missing"
+                  referenceDecision.reason === "result_missing"
                     ? "result_missing"
                     : "result_invalid",
               }
@@ -1146,8 +1170,8 @@ async function prepareAgentFinalization(
           cause: agentTerminalCause(
             terminalDecision?.status ?? outcome,
             terminalDecision?.cause ?? opts.causeReason ?? opts.reason,
-            resultDecision.kind === "invalid"
-              ? resultDecision.reason === "result_missing"
+            referenceDecision.kind === "invalid"
+              ? referenceDecision.reason === "result_missing"
                 ? "result_missing"
                 : "result_invalid"
               : null,

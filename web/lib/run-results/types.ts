@@ -1,3 +1,4 @@
+import type { FindingsContract } from "./findings-contract";
 import type { FormSchema } from "@/lib/config.schema";
 import type { ParsedAgentDefinition } from "@/lib/agents/definition";
 import type { PackageInstallManifest } from "@/lib/packages/attach";
@@ -24,7 +25,8 @@ export type RunResultInvalidReason =
   | "depth_limit"
   | "key_limit"
   | "array_limit"
-  | "schema_mismatch";
+  | "schema_mismatch"
+  | "reference_invalid";
 
 /** One entry of the engine artifact manifest captured AT PUBLISH (audit). */
 export type RunResultArtifactRef = {
@@ -42,6 +44,7 @@ export type RunResultArtifactRef = {
 export type RunResultContract =
   | {
       kind: "flow_export";
+      nativeContract?: FindingsContract;
       schemaRef: string;
       schemaVersion: number;
       sha256: string;
@@ -52,6 +55,7 @@ export type RunResultContract =
     }
   | {
       kind: "agent_profile";
+      nativeContract?: FindingsContract;
       profileName: string;
       schemaRef: string;
       schemaVersion: number;
@@ -145,6 +149,7 @@ export type ResultProfileMap = Record<
   string,
   {
     schemaPath: string;
+    nativeContract?: FindingsContract;
     schemaStem: string;
     schemaVersion: number;
     sha256: string;

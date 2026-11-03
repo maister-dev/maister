@@ -13,6 +13,11 @@ import {
   mcpHeaderMapSchema,
 } from "@/lib/mcp/value-grammar";
 import { validatePublicBranchTemplate } from "@/lib/workbench-git/public-branch-name";
+import {
+  findingsContractSchema,
+  FINDINGS_ENGINE_MIN,
+} from "@/lib/run-results/findings-contract";
+import { semverGte } from "@/lib/flows/semver";
 
 // Replicated from flow-paths.ts to avoid pulling the `server-only` constraint
 // (and its transitive MaisterError dep) into config.schema.ts, which must remain
@@ -1365,6 +1370,7 @@ export const flowYamlV1Schema = graphOnlyManifestInputSchema.pipe(
           export: z
             .object({
               schema: packageRootSchemaRefSchema,
+              native_contract: findingsContractSchema.optional(),
               from: z.array(z.string().min(1)).min(1),
               required: z.boolean().default(true),
             })
@@ -1702,12 +1708,28 @@ export const maisterPackageManifestSchema = z
     result_profiles: z
       .record(
         resultProfileNameSchema,
-        z.object({ schema: packageRootSchemaRefSchema }).strict(),
+        z
+          .object({
+            schema: packageRootSchemaRefSchema,
+            native_contract: findingsContractSchema.optional(),
+          })
+          .strict(),
       )
       .optional(),
   })
   .strict()
   .superRefine((manifest, ctx) => {
+    if (
+      Object.values(manifest.result_profiles ?? {}).some(
+        (profile) => profile.native_contract !== undefined,
+      ) &&
+      !semverGte(manifest.compat?.engine_min ?? "", FINDINGS_ENGINE_MIN)
+    )
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["compat", "engine_min"],
+        message: `Native findings profiles require compat.engine_min >= ${FINDINGS_ENGINE_MIN}`,
+      });
     addDuplicateIdIssues(ctx, "flows", manifest.flows);
     addDuplicateIdIssues(ctx, "capabilities", manifest.capabilities);
     addDuplicateIdIssues(ctx, "mcps", manifest.mcps);

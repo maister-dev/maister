@@ -269,6 +269,8 @@ function invalidReasonMessage(reason: RunResultInvalidReason): string {
       return "the published result exceeded the array length limit";
     case "schema_mismatch":
       return "the published result did not satisfy its declared schema";
+    case "reference_invalid":
+      return "the native findings contain an unavailable reference or incomplete source capture";
   }
 }
 

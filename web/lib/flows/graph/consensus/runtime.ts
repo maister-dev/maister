@@ -671,6 +671,8 @@ async function runVerifier(
       },
       {
         promptOwner: owner,
+        resultContract: args.loaded.run.resultContract,
+        knowledgeAccess: args.loaded.run.knowledgeAccess,
         runtimeRoot: args.runtimeRoot,
         projectSlug: args.loaded.projectSlug,
         runId: args.loaded.run.id,
@@ -1206,6 +1208,8 @@ async function synthesizeConsensus(
       },
       {
         promptOwner: owner,
+        resultContract: args.loaded.run.resultContract,
+        knowledgeAccess: args.loaded.run.knowledgeAccess,
         runtimeRoot: args.runtimeRoot,
         projectSlug: args.loaded.projectSlug,
         runId: args.loaded.run.id,

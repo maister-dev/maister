@@ -77,7 +77,13 @@ export type KnowledgeDraft = z.infer<typeof knowledgeDraftSchema>;
 export type KnowledgeReference = z.infer<typeof knowledgeReferenceSchema>;
 export type KnowledgePrincipal =
   | Readonly<{ kind: "user"; userId: string }>
-  | Readonly<{ kind: "token"; tokenId: string }>;
+  | Readonly<{ kind: "token"; tokenId: string }>
+  /** Server-only read inspection; no wire input accepts this principal. */
+  | Readonly<{
+      kind: "execution";
+      runId: string;
+      nodeAttemptId: string | null;
+    }>;
 export type KnowledgeAction =
   | "knowledge:read"
   | "knowledge:propose"

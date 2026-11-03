@@ -1,9 +1,11 @@
-import type { FormSchema } from "@/lib/config.schema";
+import type { FormSchema, MaisterPackageManifest } from "@/lib/config.schema";
+import type { FindingsContract } from "@/lib/run-results/findings-contract";
 
 import { createHash } from "node:crypto";
 
 import { readFormSchemaDocWithBytes } from "@/lib/config";
 import { OUTPUT_COORDINATOR_ENGINE_MIN } from "@/lib/config.schema";
+import { FINDINGS_ENGINE_MIN } from "@/lib/run-results/findings-contract";
 import { MaisterError } from "@/lib/errors";
 import { schemaDocUsesCoordinatorGrammar } from "@/lib/flows/artifact-validate";
 import { semverGte } from "@/lib/flows/engine-version";
@@ -17,6 +19,7 @@ import { isRootSchemaFilePath } from "@/lib/flows/editor/reference-sources";
 /** The persisted per-profile shape (`flow_revisions.result_profiles` value). */
 export type ResolvedResultProfile = {
   schemaPath: string;
+  nativeContract?: FindingsContract;
   schemaStem: string;
   schemaVersion: number;
   sha256: string;
@@ -26,7 +29,9 @@ export type ResolvedResultProfile = {
 export type ResultProfileMap = Record<string, ResolvedResultProfile>;
 
 /** The manifest-side declaration: `result_profiles: { <name>: { schema } }`. */
-export type DeclaredResultProfiles = Record<string, { schema: string }>;
+export type DeclaredResultProfiles = NonNullable<
+  MaisterPackageManifest["result_profiles"]
+>;
 
 /** `./schemas/research-result.v1.json` -> `research-result.v1`. */
 export function schemaStemOf(schemaPath: string): string {
@@ -45,10 +50,20 @@ export async function resolveProfileDoc(args: {
   readonly installedPath: string;
   readonly name: string;
   readonly schemaPath: string;
+  readonly nativeContract?: FindingsContract;
   /** The MEMBER flow's declared floor — the lowest member wins across a package. */
   readonly engineMin: string;
 }): Promise<ResolvedResultProfile> {
   const { installedPath, name, schemaPath, engineMin } = args;
+
+  if (
+    args.nativeContract !== undefined &&
+    !semverGte(engineMin, FINDINGS_ENGINE_MIN)
+  )
+    throw new MaisterError(
+      "FLOW_INSTALL",
+      `result_profiles.${name} declares ${args.nativeContract} but member engine_min "${engineMin}" < ${FINDINGS_ENGINE_MIN} — bump compat.engine_min to ${FINDINGS_ENGINE_MIN}`,
+    );
 
   if (schemaPath !== schemaPath.trim() || !isRootSchemaFilePath(schemaPath)) {
     throw new MaisterError(
@@ -88,6 +103,9 @@ export async function resolveProfileDoc(args: {
 
   return {
     schemaPath,
+    ...(args.nativeContract === undefined
+      ? {}
+      : { nativeContract: args.nativeContract }),
     schemaStem: schemaStemOf(schemaPath),
     schemaVersion: schema.schemaVersion,
     // Hash the document's EXACT bytes, so a schema edited under a stable
@@ -119,6 +137,7 @@ export async function resolveResultProfiles(args: {
       installedPath: args.installedPath,
       name,
       schemaPath: entry.schema,
+      nativeContract: entry.native_contract,
       engineMin: args.engineMin,
     });
   }

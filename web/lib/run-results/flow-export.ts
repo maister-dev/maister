@@ -1,7 +1,14 @@
+import type { FindingsContract } from "./findings-contract";
 import type { RunResultContract } from "@/lib/run-results/types";
 
 import { createHash } from "node:crypto";
 
+import {
+  findingsContractSchema,
+  FINDINGS_ENGINE_MIN,
+} from "./findings-contract";
+
+import { semverGte } from "@/lib/flows/semver";
 import { readFormSchemaDocWithBytes } from "@/lib/config";
 import { MaisterError } from "@/lib/errors";
 import { buildFlowExportContract } from "@/lib/run-results/contract";
@@ -27,14 +34,23 @@ export type ExportRevisionRef = {
  * `result` is typed `unknown` on the way in regardless. Narrowing at the one
  * place that reads the key beats a cast at every call site.
  */
-export function declaredResultExport(
-  manifest: unknown,
-): { schema: string; from: string[]; required: boolean } | null {
+export function declaredResultExport(manifest: unknown): {
+  schema: string;
+  from: string[];
+  required: boolean;
+  nativeContract?: FindingsContract;
+} | null {
   const block = (manifest as { result?: unknown } | null)?.result;
   const declared =
     block && typeof block === "object"
       ? ((block as { export?: unknown }).export as
-          { schema?: unknown; from?: unknown; required?: unknown } | undefined)
+          | {
+              schema?: unknown;
+              from?: unknown;
+              required?: unknown;
+              native_contract?: unknown;
+            }
+          | undefined)
       : undefined;
 
   if (
@@ -45,8 +61,32 @@ export function declaredResultExport(
     return null;
   }
 
+  const native = findingsContractSchema
+    .optional()
+    .safeParse(declared.native_contract);
+
+  if (!native.success)
+    throw new MaisterError(
+      "CONFIG",
+      "Pinned result export selects an unsupported native contract",
+    );
+  if (native.data !== undefined) {
+    const engineMin = (manifest as { compat?: { engine_min?: unknown } }).compat
+      ?.engine_min;
+
+    if (
+      typeof engineMin !== "string" ||
+      !semverGte(engineMin, FINDINGS_ENGINE_MIN)
+    )
+      throw new MaisterError(
+        "CONFIG",
+        `Native result exports require compat.engine_min >= ${FINDINGS_ENGINE_MIN}`,
+      );
+  }
+
   return {
     schema: declared.schema,
+    ...(native.data === undefined ? {} : { nativeContract: native.data }),
     from: declared.from as string[],
     // The Zod default already fills this, but a manifest read straight from a
     // stored jsonb column bypasses the parse — default here too rather than
@@ -94,6 +134,7 @@ export async function resolveFlowExportContract(args: {
     resolvedRevision: args.revision.resolvedRevision,
     flowRevisionId: args.revision.id,
     schemaPath: declared.schema,
+    nativeContract: declared.nativeContract,
     schema,
     sha256: createHash("sha256").update(new Uint8Array(bytes)).digest("hex"),
     required: declared.required,

@@ -5632,11 +5632,11 @@ Main migration reservation `0230_company_ownership` adds installation company id
 
 ## Specialist assignments and company execution (Designed)
 
-[Specialist persistence](db/specialist-assignments-domain.md) specifies reserved main migrations `0217`–`0221`, owner-aware bindings/triggers/actors/human waits, assignment/input/context/claim/work/acceptance/delivery rows and exact key/cascade/backfill rules. Existing `runs`, `node_attempts` and `run_results` remain the execution ledgers. A company result-only Flow pins installed `flow_revisions` with null project/task/project-flow fields; no project `flows` row is fabricated. These contracts are not implemented schema yet.
+[Specialist persistence](db/specialist-assignments-domain.md) specifies reserved main migrations `0219`–`0223`, owner-aware bindings/triggers/actors/human waits, assignment/input/context/claim/work/acceptance/delivery rows and exact key/cascade/backfill rules. Existing `runs`, `node_attempts` and `run_results` remain the execution ledgers. A company result-only Flow pins installed `flow_revisions` with null project/task/project-flow fields; no project `flows` row is fabricated. These contracts are not implemented schema yet.
 
 ## Stand operation model (Designed)
 
-[Stand operation persistence](db/stand-operations-domain.md) specifies main `0220_stand_operations` and separately hardened `0221_company_brain_constraints`: versioned targets/components, effect intents/receipts, canonical resource claims, current permits, independent probes and inspected recovery decisions. Unknown external effects outlive run cleanup. No operation success is inferred from process/HTTP status or current health.
+[Stand operation persistence](db/stand-operations-domain.md) specifies main `0222_stand_operations` and separately hardened `0223_company_brain_constraints`: versioned targets/components, effect intents/receipts, canonical resource claims, current permits, independent probes and inspected recovery decisions. Unknown external effects outlive run cleanup. No operation success is inferred from process/HTTP status or current health.
 
 
 Native Company Brain publication uses the existing `domain_events` outbox with exclusive project/company ownership. Company knowledge events carry only owner/record/revision/change identifiers and a cause. Project-only consumers skip these events while advancing their ordinary cursors; they cannot create a project or launch work for company knowledge. Existing project event payloads retain their contract. `runs.knowledge_access` is nullable versioned source-access metadata reserved for structured knowledge consumption; legacy NULL means unknown, never evidence of an empty source set.

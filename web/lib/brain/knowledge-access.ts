@@ -8,6 +8,8 @@ import type { SessionUser } from "@/lib/authz";
 
 import { sql } from "drizzle-orm";
 
+import { resolveKnowledgeRunIdentity } from "./knowledge-run-identity";
+
 import { projectRolesForActions } from "@/lib/authz";
 import { MaisterError } from "@/lib/errors";
 import { parseBoundRunId } from "@/lib/tokens/verify";
@@ -91,9 +93,29 @@ export async function resolveKnowledgePrincipal(
 ): Promise<KnowledgePrincipalIdentity> {
   if (principal.kind === "user")
     return currentKnowledgeUser(tx, principal.userId);
+  if (principal.kind === "execution") {
+    if (action !== "knowledge:read")
+      throw new MaisterError(
+        "UNAUTHORIZED",
+        "Execution inspection is read-only and cannot authorize knowledge changes",
+      );
+    const resolved = await resolveKnowledgeRunIdentity(
+      tx,
+      principal.runId,
+      principal.nodeAttemptId,
+    );
+
+    if (resolved.runKind === "flow" && principal.nodeAttemptId === null)
+      throw new MaisterError(
+        "UNAUTHORIZED",
+        "A Flow inspector must identify its current node attempt",
+      );
+
+    return resolved.identity;
+  }
   const token = (
     await tx.execute(
-      sql`SELECT id,name,token_kind,owner_user_id,project_id,agent_id,scopes FROM project_tokens WHERE id=${principal.tokenId} AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>now()) FOR SHARE`,
+      sql`SELECT id,name,token_kind,owner_user_id,project_id,agent_id,scopes,knowledge_node_attempt_id FROM project_tokens WHERE id=${principal.tokenId} AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>now()) FOR SHARE`,
     )
   ).rows[0];
 
@@ -127,77 +149,31 @@ export async function resolveKnowledgePrincipal(
       "An active bound specialist identity is required",
     );
   const runId = parseBoundRunId(String(token.name));
-  const run =
-    runId === null
-      ? undefined
-      : (
-          await tx.execute(
-            sql`SELECT id,project_id,source_agent_id,agent_activity_snapshot FROM runs WHERE id=${runId} AND status IN ('Pending','Running','NeedsInput','NeedsInputIdle','WaitingOnChildren','Review') FOR SHARE`,
-          )
-        ).rows[0];
-  const agentId =
-    token.token_kind === "agent" ? token.agent_id : run?.source_agent_id;
+
+  if (runId === null)
+    throw new MaisterError(
+      "UNAUTHORIZED",
+      "A bound specialist credential is required",
+    );
+  const resolved = await resolveKnowledgeRunIdentity(
+    tx,
+    runId,
+    typeof token.knowledge_node_attempt_id === "string"
+      ? token.knowledge_node_attempt_id
+      : null,
+  );
 
   if (
-    !run ||
-    typeof agentId !== "string" ||
-    typeof run.project_id !== "string" ||
-    token.project_id !== run.project_id
+    token.project_id !== resolved.identity.projectId ||
+    (token.token_kind === "agent" &&
+      token.agent_id !== resolved.identity.actor.id)
   )
     throw new MaisterError(
       "UNAUTHORIZED",
-      "An active bound specialist identity is required",
-    );
-  const activity = run.agent_activity_snapshot as Readonly<{
-    version?: number;
-    agentId?: string;
-    packageInstallId?: string;
-    packageName?: string;
-  }> | null;
-
-  if (typeof activity?.packageInstallId !== "string")
-    throw new MaisterError(
-      "PRECONDITION",
-      "An immutable agent package identity is required for native knowledge",
-    );
-  if (
-    run.source_agent_id !== agentId ||
-    activity.version !== 1 ||
-    activity.agentId !== agentId ||
-    typeof activity.packageName !== "string"
-  )
-    throw new MaisterError(
-      "UNAUTHORIZED",
-      "The native knowledge token does not match its immutable run identity",
-    );
-  const binding = (
-    await tx.execute(sql`
-    SELECT l.id,l.can_read_brain,l.can_write_brain FROM agent_project_links l
-    JOIN agents a ON a.id=l.agent_id
-    JOIN project_package_attachments pa ON pa.project_id=l.project_id AND pa.package_name=a.package_name
-    JOIN package_installs current_pin ON current_pin.id=pa.package_install_id
-    JOIN package_installs frozen_pin ON frozen_pin.id=${activity.packageInstallId} AND frozen_pin.name=a.package_name
-    WHERE l.agent_id=${agentId} AND a.package_name=${activity.packageName} AND l.project_id=${run.project_id} AND l.enabled AND a.enabled AND a.quarantined_at IS NULL
-      AND current_pin.package_status='Installed' AND current_pin.trust_status IN ('trusted','trusted_by_policy')
-      AND frozen_pin.package_status='Installed' AND frozen_pin.trust_status IN ('trusted','trusted_by_policy')
-    FOR SHARE OF l,a,pa,current_pin,frozen_pin
-  `)
-  ).rows[0];
-
-  if (!binding)
-    throw new MaisterError(
-      "UNAUTHORIZED",
-      "The active agent knowledge binding is unavailable",
+      "The credential does not match the immutable executing role",
     );
 
-  return {
-    kind: "agent",
-    actor: { kind: "agent", id: agentId, runId, attemptId: null },
-    projectId: run.project_id,
-    bindingId: String(binding.id),
-    canReadBrain: binding.can_read_brain === true,
-    canWriteBrain: binding.can_write_brain === true,
-  };
+  return resolved.identity;
 }
 
 /** Owner policies remain distinct from identity and are checked inside the domain transaction. */

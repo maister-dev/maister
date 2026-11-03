@@ -891,6 +891,52 @@ describe("ADR-111 launch-time config snapshot", () => {
       detect_duplicates: true,
       intake_mode: "triage_only",
     });
+    expect(
+      (
+        await pool.query("SELECT knowledge_access FROM runs WHERE id=$1", [
+          result.runId,
+        ])
+      ).rows[0]?.knowledge_access,
+    ).toBeNull();
+  });
+
+  it("IT-CBE-04 freezes server-owned project input restrictions before a native specialist can start", async () => {
+    const agentId = await seedTriager(null);
+    const result = await launchAgentRun({
+      agentId,
+      projectId,
+      trigger: { source: "manual" },
+      db,
+      resultContract: {
+        kind: "agent_profile",
+        nativeContract: "evidence_findings_v1",
+        profileName: "findings",
+        schemaRef: "native@aaaaaaaaaaaa:findings.v1",
+        schemaVersion: 1,
+        sha256: "b".repeat(64),
+        required: true,
+        schema: { schemaVersion: 1, fields: [] },
+        sourceFlowRevisionId: "pinned-native-profile",
+      },
+    });
+
+    if ("deduped" in result) throw new Error("unexpected dedup");
+    expect(
+      (
+        await pool.query(
+          "SELECT status,knowledge_access FROM runs WHERE id=$1",
+          [result.runId],
+        )
+      ).rows[0],
+    ).toEqual({
+      status: "Pending",
+      knowledge_access: {
+        schemaVersion: 1,
+        state: "complete",
+        generation: 1,
+        restrictions: [{ kind: "project_context", projectId }],
+      },
+    });
   });
 
   it("a null instance snapshots all declared defaults", async () => {

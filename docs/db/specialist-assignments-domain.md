@@ -4,7 +4,7 @@
 
 ## Migration reservations
 
-Main `0232_company_grant_requests` is reserved for T11 administrator grant receipts before the remaining unapplied units. Main design reservations: `0218_specialist_assignments`, `0219_company_specialist_bindings`, `0220_company_trigger_scope`, `0221_stand_operations`, `0222_company_brain_constraints`, following `0230_company_ownership`. No SQL/journal entries are claimed applied. The main migration units never FK a new Brain table; knowledge pointers store typed record/revision/witness/digest values and the owning service validates them after both lineages are ready. `runs.flow_revision_id` and existing immutable installed revision schema remain runtime truth.
+Main `0232_company_grant_requests` implements administrator grant receipts. T14 reserves `0233_native_knowledge_execution` for the existing attempt ledger’s role attestation before the remaining unapplied units. Main design reservations: `0234_specialist_assignments`, `0220_company_specialist_bindings`, `0221_company_trigger_scope`, `0222_stand_operations`, `0223_company_brain_constraints`, following `0230_company_ownership`. No SQL/journal entries are claimed applied. The main migration units never FK a new Brain table; knowledge pointers store typed record/revision/witness/digest values and the owning service validates them after both lineages are ready. `runs.flow_revision_id` and existing immutable installed revision schema remain runtime truth.
 
 The proposed business structures link existing execution records rather than duplicating attempts.
 
