@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "task": "T15",
+  "baselineCommit": "5f49344ad",
+  "status": "partial_checkpoint_qualified",
+  "engineVersion": "3.10.0",
+  "qualified": [
+    "Real Git publish refuses company, record, Brain-project, private-memory, foreign-project-context and unknown native capture. Destination-project execution context retains existing authorized delivery.",
+    "Existing handoff, PR open/finalize, promotion/parked finalization and sync-push service boundaries reject private native sources before repository delivery; the same existing claims and error taxonomy remain authoritative.",
+    "Source growth after a remote-head wait is rechecked before the irreversible push, leaving remote refs and publication metadata unchanged.",
+    "Operator archive and retention GC preserve/remove actual native work locally with optional archive push configured but withheld. Main-only PostgreSQL proves no Brain table/read/confirmation is needed for teardown, including unknown/deleted source references.",
+    "Existing sync/resolver/shared-tree/GC/PR finalization regressions pass. EN/RU Git-panel refusal copy and API/source-policy contracts agree."
+  ],
+  "tests": {
+    "owningIntegration": {
+      "passed": 170,
+      "files": 8
+    },
+    "fullWebUnit": {
+      "passed": 9261,
+      "files": 886
+    },
+    "typecheck": "passed",
+    "lint": "passed",
+    "contracts": "passed",
+    "docsAnd164TableErd": "passed"
+  },
+  "qualificationLimits": [
+    "Physical shared-workspace source union is not qualified by the own-worktree native tests; it remains an explicit T15 gate before native capability activation.",
+    "Session/project authorization and provider response seams use existing fixtures; Git refs, local preservation/removal and PostgreSQL writes are real. No installed-package/live ACP or pilot readiness is claimed.",
+    "The archive fixture initially lacked its configured allowed worktree root; two new commit fixture calls lacked required message arguments. Both fixture issues were corrected and fresh completed typecheck/owning qualification pass; neither is claimed as behavior RED."
+  ],
+  "pending": [
+    "Native physical shared-workspace/runtime-file policy and authorized original-input inspection.",
+    "Remaining outbound notification data and reduction/source-budget/concurrency/recovery/full-integration gates.",
+    "Native capability activation, installable companion/live ACP and stand-maintenance pilot."
+  ],
+  "logs": [
+    {
+      "path": "native-publication-red.log.gz",
+      "uncompressedSha256": "6d4c155e86ada47a7d2d190b1934674b5e58a073a0591eb91736e5a00dc54fef"
+    },
+    {
+      "path": "owning-integration-green.log.gz",
+      "uncompressedSha256": "f0c236c739009dc8ef6255069aab5a12400d3e7c82472cadbcdd947c4e1e002c"
+    },
+    {
+      "path": "full-web-unit-green.log.gz",
+      "uncompressedSha256": "87b4ac02c1d1b59259035aa33aae1fca4cefb88cdac89b0b553b86fc4d63ceb4"
+    },
+    {
+      "path": "typecheck-green.log.gz",
+      "uncompressedSha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+    },
+    {
+      "path": "lint-green.log.gz",
+      "uncompressedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "contracts-green.log.gz",
+      "uncompressedSha256": "36143c3daf679b15e067701c86c01bf80849f087bb261487b36c802f4edb8c7b"
+    },
+    {
+      "path": "docs-green.log.gz",
+      "uncompressedSha256": "15380de3970a824bc7f3bccf93f799640e3f5e11557291159879d17762c6cd42"
+    }
+  ]
+}

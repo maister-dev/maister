@@ -59,6 +59,7 @@ const REFRESH_DEBOUNCE_MS = 400;
 // The `details.reason` tokens the panel has copy for (T0.1's final set plus
 // the C19 policy tokens). Anything else falls back to the error code.
 const KNOWN_REASONS = new Set([
+  "native_publication_source_policy",
   "public_name_fixed",
   "public_branch_template_invalid",
   "clean_worktree",

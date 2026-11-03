@@ -4,6 +4,8 @@
 // OUTCOME — the bare remote's refs, the worktree's git config, the workspace row —
 // never the push argv.
 
+import type { KnowledgeAccessRestriction } from "@/lib/company/types";
+
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -294,6 +296,312 @@ async function refusal(p: Promise<unknown>): Promise<PushRefusal> {
 }
 
 describe("publish under a public branch name", () => {
+  it.each([
+    "company",
+    "record",
+    "project",
+    "agent_memory",
+    "foreign_context",
+    "unknown",
+  ] as const)(
+    "IT-CBE-06 native %s sources cannot escape through project Git publication",
+    async (sourceKind) => {
+      const run = await seeded({ status: "Review" });
+      const restriction: KnowledgeAccessRestriction =
+        sourceKind === "company"
+          ? { kind: "company", companyId: "retained-company" }
+          : sourceKind === "record"
+            ? { kind: "record", recordId: "retained-private-assertion" }
+            : sourceKind === "project"
+              ? { kind: "project", projectId: run.projectId }
+              : sourceKind === "agent_memory"
+                ? {
+                    kind: "agent_memory",
+                    projectId: run.projectId,
+                    agentId: "private-role",
+                  }
+                : { kind: "project_context", projectId: "foreign-project" };
+
+      await testDatabase.pool.query(
+        "UPDATE runs SET knowledge_access=$2::jsonb WHERE id=$1",
+        [
+          run.runId,
+          JSON.stringify({
+            schemaVersion: 1,
+            state: sourceKind === "unknown" ? "unknown" : "complete",
+            generation: 1,
+            restrictions: sourceKind === "unknown" ? [] : [restriction],
+          }),
+        ],
+      );
+      const before = await gitIn(repo.remote, [
+        "for-each-ref",
+        "--format=%(refname) %(objectname)",
+      ]);
+
+      await expect(publish(run.runId)).rejects.toMatchObject({
+        code: "PRECONDITION",
+        details: { reason: "native_publication_source_policy" },
+      });
+      expect(
+        await gitIn(repo.remote, [
+          "for-each-ref",
+          "--format=%(refname) %(objectname)",
+        ]),
+      ).toBe(before);
+      expect(
+        (await workspaceRow(db, run.workspaceId)).publishedBranch,
+      ).toBeNull();
+    },
+  );
+
+  it("IT-CBE-06 native destination project context retains the existing authorized publish path", async () => {
+    const run = await seeded();
+
+    await testDatabase.pool.query(
+      "UPDATE runs SET knowledge_access=$2::jsonb WHERE id=$1",
+      [
+        run.runId,
+        JSON.stringify({
+          schemaVersion: 1,
+          state: "complete",
+          generation: 1,
+          restrictions: [{ kind: "project_context", projectId: run.projectId }],
+        }),
+      ],
+    );
+    const result = await publish(run.runId);
+
+    expect(
+      await remoteHead(repo.remote, result.publishedBranch),
+    ).not.toBeNull();
+  });
+
+  it("IT-CBE-06 native private capture fences every repository delivery entry and preserves local cleanup without Brain reads", async () => {
+    const run = await seeded({ status: "Review" });
+
+    await commitFile(
+      run.worktree,
+      "private-diagnostic.txt",
+      "Restricted diagnostic conclusion\n",
+      "retain diagnostic fixture",
+    );
+    await testDatabase.pool.query(
+      "UPDATE runs SET knowledge_access=$2::jsonb WHERE id=$1",
+      [
+        run.runId,
+        JSON.stringify({
+          schemaVersion: 1,
+          state: "complete",
+          generation: 1,
+          restrictions: [
+            { kind: "record", recordId: "retained-private-assertion" },
+          ],
+        }),
+      ],
+    );
+    const lifecycle = await import("@/lib/workbench-lifecycle/service");
+    const services = await import("@/lib/workbench-git/service");
+    const { promoteRun, finalizeParkedPullRequest } =
+      await import("@/lib/runs/promote");
+    const { syncRunTarget } = await import("@/lib/runs/sync-target");
+    const ctx = {
+      sessionUser: { id: "user-1" },
+      authorize: async () => undefined,
+    };
+    const before = await gitIn(repo.remote, [
+      "for-each-ref",
+      "--format=%(refname) %(objectname)",
+    ]);
+
+    for (const action of [
+      () =>
+        lifecycle.createWorkbenchHandoffBranch(run.runId, {
+          remote: "origin",
+          handoffBranch: "restricted-handoff",
+        }),
+      () =>
+        services.openPullRequest(
+          run.runId,
+          {},
+          { origin: "http://localhost:3000" },
+        ),
+      () => services.finalizePullRequestRun(run.runId, {}),
+      () => promoteRun(run.runId, { mode: "local_merge" }, ctx, db),
+      () =>
+        finalizeParkedPullRequest({
+          runId: run.runId,
+          ctx,
+          sourceHead: repo.baseSha,
+          db,
+        }),
+      () =>
+        syncRunTarget({
+          runId: run.runId,
+          actor: { type: "user", id: "user-1" },
+          agent: false,
+          push: true,
+          db,
+        }),
+    ])
+      await expect(action()).rejects.toMatchObject({
+        code: "PRECONDITION",
+        details: { reason: "native_publication_source_policy" },
+      });
+    expect(
+      await gitIn(repo.remote, [
+        "for-each-ref",
+        "--format=%(refname) %(objectname)",
+      ]),
+    ).toBe(before);
+    await testDatabase.pool.query(
+      "UPDATE runs SET status='Failed',ended_at=now() WHERE id=$1",
+      [run.runId],
+    );
+    const previousArchivePush = process.env.MAISTER_GC_ARCHIVE_PUSH;
+    const previousWorktreesRoot = process.env.MAISTER_WORKTREES_ROOT;
+
+    process.env.MAISTER_GC_ARCHIVE_PUSH = "true";
+    process.env.MAISTER_WORKTREES_ROOT = root;
+    try {
+      const archived = await lifecycle.archiveWorkbench(run.runId);
+
+      expect(archived).toMatchObject({
+        ok: true,
+        workspaceRemoved: true,
+        archived: true,
+      });
+      expect(
+        await gitIn(repo.parent, [
+          "rev-parse",
+          `refs/heads/maister/archive/${run.runId}`,
+        ]),
+      ).not.toBe("");
+      expect(
+        await remoteHead(repo.remote, `maister/archive/${run.runId}`),
+      ).toBeNull();
+    } finally {
+      if (previousArchivePush === undefined)
+        delete process.env.MAISTER_GC_ARCHIVE_PUSH;
+      else process.env.MAISTER_GC_ARCHIVE_PUSH = previousArchivePush;
+      if (previousWorktreesRoot === undefined)
+        delete process.env.MAISTER_WORKTREES_ROOT;
+      else process.env.MAISTER_WORKTREES_ROOT = previousWorktreesRoot;
+    }
+  });
+
+  it("IT-CBE-06 publication rechecks native source growth after its remote-head wait", async () => {
+    const run = await seeded();
+    const restriction = { kind: "project_context", projectId: run.projectId };
+
+    await testDatabase.pool.query(
+      "UPDATE runs SET knowledge_access=$2::jsonb WHERE id=$1",
+      [
+        run.runId,
+        JSON.stringify({
+          schemaVersion: 1,
+          state: "complete",
+          generation: 1,
+          restrictions: [restriction],
+        }),
+      ],
+    );
+    vi.mocked(remoteBranchHead).mockImplementationOnce(async () => {
+      await testDatabase.pool.query(
+        "UPDATE runs SET knowledge_access=$2::jsonb WHERE id=$1",
+        [
+          run.runId,
+          JSON.stringify({
+            schemaVersion: 1,
+            state: "complete",
+            generation: 2,
+            restrictions: [
+              restriction,
+              { kind: "record", recordId: "newly-consumed-source" },
+            ],
+          }),
+        ],
+      );
+
+      return null;
+    });
+    await expect(publish(run.runId)).rejects.toMatchObject({
+      code: "PRECONDITION",
+      details: { reason: "native_publication_source_policy" },
+    });
+    expect(
+      await remoteHead(repo.remote, "feature/ABC-12-fix-login-redirect"),
+    ).toBeNull();
+    expect(
+      (await workspaceRow(db, run.workspaceId)).publishedBranch,
+    ).toBeNull();
+  });
+
+  it("IT-CBE-06 retention GC preserves and removes native restricted work locally with archive push configured", async () => {
+    const run = await seeded({ status: "Failed" });
+
+    await commitFile(
+      run.worktree,
+      "private-diagnostic.txt",
+      "Protected diagnostic output\n",
+      "retain GC diagnostic fixture",
+    );
+    await testDatabase.pool.query(
+      "UPDATE runs SET ended_at=now()-interval '365 days',knowledge_access=$2::jsonb WHERE id=$1",
+      [
+        run.runId,
+        JSON.stringify({
+          schemaVersion: 1,
+          state: "unknown",
+          generation: 1,
+          restrictions: [{ kind: "record", recordId: "deleted-source" }],
+        }),
+      ],
+    );
+    await testDatabase.pool.query(
+      "UPDATE workspaces SET scheduled_removal_at=now()-interval '1 minute' WHERE id=$1",
+      [run.workspaceId],
+    );
+    const previousArchivePush = process.env.MAISTER_GC_ARCHIVE_PUSH;
+    const previousWorktreesRoot = process.env.MAISTER_WORKTREES_ROOT;
+
+    process.env.MAISTER_GC_ARCHIVE_PUSH = "true";
+    process.env.MAISTER_WORKTREES_ROOT = root;
+    try {
+      const { runWorkspaceGcSweep } = await import("@/lib/gc/workspace-gc");
+      const summary = await runWorkspaceGcSweep({
+        db,
+        resolveBaseRef: async () => repo.baseSha,
+      });
+
+      expect(summary).toMatchObject({
+        scanned: 1,
+        pruned: 1,
+        failed: 0,
+        skippedUnpreserved: 0,
+      });
+      expect(
+        (await workspaceRow(db, run.workspaceId)).removedAt,
+      ).not.toBeNull();
+      expect(
+        await gitIn(repo.parent, [
+          "rev-parse",
+          `refs/heads/maister/archive/${run.runId}`,
+        ]),
+      ).not.toBe("");
+      expect(
+        await remoteHead(repo.remote, `maister/archive/${run.runId}`),
+      ).toBeNull();
+    } finally {
+      if (previousArchivePush === undefined)
+        delete process.env.MAISTER_GC_ARCHIVE_PUSH;
+      else process.env.MAISTER_GC_ARCHIVE_PUSH = previousArchivePush;
+      if (previousWorktreesRoot === undefined)
+        delete process.env.MAISTER_WORKTREES_ROOT;
+      else process.env.MAISTER_WORKTREES_ROOT = previousWorktreesRoot;
+    }
+  });
+
   it("IT-OPL-04 refuses operational delivery at service boundaries before any repository or provider mutation", async () => {
     const branch = "maister/operational";
     const worktree = await addRunWorktree(root, repo.parent, branch);

@@ -411,3 +411,21 @@ current sources before admission and prompt dispatch. Revocation during a wait
 cannot authorize another prompt or response disclosure. Existing turn leases,
 prompt owners, workspace recovery and failure settlement remain authoritative.
 The guards do not add a source-read requirement to cleanup or deletion.
+
+### Project publication boundary
+
+Native capture is not publication authority. A complete native source union may
+use existing project Git delivery only when every source is the destination's
+`project_context`. Brain records/project knowledge, company knowledge, private
+agent memory and foreign project contexts require a destination that retains
+their source policy. Current unclassified Git publish/handoff/PR/promotion
+refuses those sources with `native_publication_source_policy` before claiming or
+mutating the repository. Unknown native capture also refuses; historical NULL
+capture keeps the existing delivery contract. Result-only research/delegation
+and protected findings are separate from Git delivery.
+
+Preservation and deletion do not require Brain reads or confirmation. For native
+sources that cannot be published, retention/operator cleanup keeps its existing
+local preservation path and withholds the optional archive push; it does not
+block local teardown because a knowledge grant was revoked. The source policy
+is derived from retained capture metadata, without a live Brain dependency.

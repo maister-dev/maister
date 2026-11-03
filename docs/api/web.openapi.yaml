@@ -63,6 +63,14 @@ info:
       live run then run the worktree op in one call, and `stop` is generalized
       to dispatch on run kind (flow → Review, scratch → Review/Abandoned,
       agent → Abandoned).
+      Native publication uses the source boundary in
+      `docs/system-analytics/evidence-findings.md`: publish/handoff/PR/promotion
+      and sync pushes return 409 `native_publication_source_policy` unless the
+      complete native source union contains only the destination's project
+      context. Retention/archive/drop still preserve locally and remove the
+      workspace without Brain reads; protected/unknown native sources withhold
+      the optional archive push. Historical NULL capture keeps its existing
+      behavior.
     - `POST /api/runs/{runId}/hitl/{hitlRequestId}/respond` (M7) — durable
       HITL response surface. Permission-only flows resolve a supervisor
       deferred via the supervisor's `POST /sessions/{id}/input` and use a
@@ -11376,6 +11384,9 @@ paths:
             top-level `pushRejected` / `canForce` and adds the observed
             `remoteHead` / `remoteRef` — also when a forced push's remote moved
             past `expectedHead`.
+            Native sources that cannot be shared through the destination project
+            return `native_publication_source_policy`, including source growth
+            detected after a wait. This refusal does not publish the branch.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }

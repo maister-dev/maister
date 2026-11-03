@@ -4635,6 +4635,7 @@
     },
     "errors": {
       "public_name_fixed": "The branch is already published under another name.",
+      "native_publication_source_policy": "This run includes knowledge that cannot be shared with this repository. Keep the protected result or submit a knowledge proposal.",
       "public_branch_template_invalid": "The project's branch-name template renders no valid name — enter one.",
       "clean_worktree": "The worktree is clean — there is nothing to do.",
       "dirty_worktree": "Commit or discard the changes first.",

@@ -2386,6 +2386,12 @@ paths:
       tags: [runs]
       summary: (M37 — Implemented) Promote a reviewed delegated child to Done
       description: |
+        Native source capture is not permission to publish knowledge into a
+        repository. The existing promotion core returns 409
+        `native_publication_source_policy` unless every captured source is the
+        destination project's execution/repository context. Result collection
+        and acceptance do not confirm a fact or grant publication authority.
+
         (M37 — Implemented, ADR-100.) Scope `runs:promote` — held ONLY by the
         orchestrator's run-bound token (a child agent token does not), so a
         child→child promote is a 403 by scope. For an `own`-mode child this merges

@@ -9,6 +9,7 @@ import { and, eq, or } from "drizzle-orm";
 import pino from "pino";
 
 import { assertCodeDeliveryAllowed } from "@/lib/agents/operational-guard";
+import { assertNativeProjectPublication } from "@/lib/brain/knowledge-project-publication";
 import {
   createAssignment,
   ensureUserActor,
@@ -721,6 +722,7 @@ async function promoteWorkspaceRun(
     }
 
     await ctx.authorize(run.projectId);
+    await assertNativeProjectPublication(() => tx, run);
     assertNoLiveWorkbenchClaim(workspace);
 
     if (!canReclaim(workspace)) {
@@ -1059,6 +1061,7 @@ async function promoteWorkspaceRun(
           })
         : null;
 
+    await assertNativeProjectPublication(() => db, claim.run);
     commit =
       recoveredCommit ??
       (await promoteMergeSideEffect({
@@ -1808,6 +1811,7 @@ async function promotePullRequestSideEffect(args: {
       (await publicBranchForPromotion(db, claim, project));
 
     // Push then open/update the PR. Transport failures leave the claim retryable.
+    await assertNativeProjectPublication(() => db, claim.run);
     await pushBranch({
       projectRepoPath: claim.workspace.parentRepoPath,
       remote: "origin",
@@ -2226,6 +2230,7 @@ export async function finalizeParkedPullRequest(args: {
     const workspace = await loadPromotionWorkspaceForUpdate(tx, run);
 
     await ctx.authorize(run.projectId);
+    await assertNativeProjectPublication(() => tx, run);
     assertNoLiveWorkbenchClaim(workspace);
 
     if (!canReclaim(workspace)) {
@@ -2450,6 +2455,7 @@ async function promoteScratchRun(
     }
 
     await ctx.authorize(run.projectId);
+    await assertNativeProjectPublication(() => tx, run);
 
     const targetBranch = scratchPromotionTarget(scratch, input.targetBranch);
 
@@ -2565,6 +2571,7 @@ async function promoteScratchRun(
           })
         : null;
 
+    await assertNativeProjectPublication(() => db, claim.run);
     commit =
       recoveredCommit ??
       (await promoteMergeSideEffect({
