@@ -1,7 +1,7 @@
 schemaVersion: 1
 name: rah-control
 compat:
-  engine_min: 3.11.0
+  engine_min: 3.11.1
 metadata:
   title: Single-role evidence control
   summary: Read-only structured knowledge research through governed native findings.

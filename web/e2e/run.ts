@@ -5,7 +5,10 @@ import { fileURLToPath } from "node:url";
 
 import pino from "pino";
 
-import { prepareE2eDatabase } from "./_seed/prepare-db";
+import {
+  prepareE2eDatabase,
+  prepareNativeCompanyBrainDatabase,
+} from "./_seed/prepare-db";
 
 import {
   cleanupTestWorktrees,
@@ -335,7 +338,14 @@ export async function runE2eInvocation(
     });
     throwIfE2eInvocationInterrupted(signal);
 
-    await prepareE2eDatabase(
+    const prepareDatabase = arguments_.some(
+      (argument) =>
+        path.basename(argument) === "live-company-brain-specialists.spec.ts",
+    )
+      ? prepareNativeCompanyBrainDatabase
+      : prepareE2eDatabase;
+
+    await prepareDatabase(
       testDatabase.databaseUrl,
       // The SAME root the Playwright env below gets — seeding somewhere the
       // app cannot reach is the whole defect this argument closes.

@@ -1,0 +1,38 @@
+[
+  {
+    "path": "policy-red.log.gz",
+    "uncompressedSha256": "69f85483508aa5aa47f9b2dabde704f0f14df3154dbec8e09ef2e4263423151c"
+  },
+  {
+    "path": "actual-candidate-green.log.gz",
+    "uncompressedSha256": "b077bbdf85e84dd8d5bfe008303f2e1d1ab20228410490153c626768e8377c2c"
+  },
+  {
+    "path": "release-v101.log.gz",
+    "uncompressedSha256": "b13df09150c65ddcb2526adad59b96f943663ffa084319ae4d9b6ade6ad598d8"
+  },
+  {
+    "path": "version-integration.log.gz",
+    "uncompressedSha256": "737afa6340ab1e1011f34676cc206519c35447a91f909fe7220f16bd7642a0d2"
+  },
+  {
+    "path": "version-unit.log.gz",
+    "uncompressedSha256": "bd44ba60b22b6f9a0028b8a638964dd82ee97559eeaea15616d45d57f0563724"
+  },
+  {
+    "path": "contracts-sandbox.log.gz",
+    "uncompressedSha256": "99beca97d37359239cd05b36b1243ae01ae9269709f3b2fd3ca4921debcb57c2"
+  },
+  {
+    "path": "contracts-green.log.gz",
+    "uncompressedSha256": "1bcb43a2b8e6c537ab677a074b4834c37f9cf0aff62f4308195c580833aaed8c"
+  },
+  {
+    "path": "docs-sandbox.log.gz",
+    "uncompressedSha256": "2e20c5420403270381acde6720a2f31e0a1b5c8a976d712d1d72573697209b77"
+  },
+  {
+    "path": "docs-green.log.gz",
+    "uncompressedSha256": "af7a0fa996a6317f1d6bcc4aecf7285c58c9e2c1e61be492e36ef5fa43dc5ea4"
+  }
+]

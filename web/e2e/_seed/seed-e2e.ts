@@ -26,6 +26,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 
 import bcrypt from "bcryptjs";
 import { Pool } from "pg";
@@ -8935,7 +8936,69 @@ You answer when summoned by an @mention.
   }
 }
 
-main().catch((err) => {
-  console.error("seed-e2e failed:", err);
-  process.exit(1);
-});
+/** Seeds only generated inputs; real native runs must be created through the API. */
+export async function seedNativeCompanyBrain(): Promise<void> {
+  const url = process.env.DB_URL;
+
+  if (!url?.startsWith("postgres")) {
+    throw new Error("Native qualification requires its owned Postgres DB_URL");
+  }
+  const pool = new Pool({ connectionString: url });
+
+  try {
+    const existing = await pool.query<{ count: number }>(
+      "SELECT count(*)::int AS count FROM runs",
+    );
+
+    if (existing.rows[0]?.count !== 0) {
+      throw new Error(
+        "Native qualification requires an empty execution ledger",
+      );
+    }
+    const admin = await insertUser(pool, {
+      email: ADMIN_EMAIL,
+      password: ADMIN_PASSWORD,
+      name: "E2E Admin",
+      role: "admin",
+      accountStatus: "active",
+      mustChangePassword: false,
+    });
+
+    await seedPlatformRuntime(pool);
+    const scratch = await seedLaunchableProjectFixture(pool, {
+      slug: SCRATCH_SLUG,
+      projectName: "E2E Acceptance Scratch",
+      userId: admin.id,
+      repoPath: path.join(RUNTIME_ROOT, "repos", SCRATCH_SLUG),
+      defaultRunnerId: CODEX_RUNNER_ID,
+    });
+    const outDir = path.resolve("e2e/.auth");
+
+    mkdirSync(outDir, { recursive: true });
+    writeFileSync(
+      path.join(outDir, "fixtures.json"),
+      JSON.stringify({
+        adminEmail: ADMIN_EMAIL,
+        adminPassword: ADMIN_PASSWORD,
+        users: { admin },
+        byKey: { scratch },
+      }),
+      "utf8",
+    );
+    console.log(
+      "seed-native-company-brain: generated one project; no runs or Brain sources",
+    );
+  } finally {
+    await pool.end();
+  }
+}
+
+if (
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
+  main().catch((err: unknown) => {
+    console.error("seed-e2e failed:", err);
+    process.exit(1);
+  });
+}

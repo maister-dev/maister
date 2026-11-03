@@ -219,6 +219,7 @@ import { resolveAgentLaunchExecutionPolicy } from "@/lib/agents/execution-policy
 import { runnerCatalogEntry } from "@/lib/agents/runner-catalog";
 export { runnerCatalogEntry } from "@/lib/agents/runner-catalog";
 import { issueAgentRunToken } from "@/lib/agents/tokens";
+import { nativeFindingsCompletionPrompt } from "@/lib/run-results/findings-prompt";
 import { nativeKnowledgeCaptureAtLaunch } from "@/lib/brain/knowledge-launch-capture";
 import {
   assertLegacySharedWorkspace,
@@ -3049,7 +3050,10 @@ export async function buildAgentPrompt(
 
   if (requestBlock) sections.push(requestBlock);
 
-  return sections.join("\n\n");
+  return nativeFindingsCompletionPrompt(
+    run.resultContract,
+    sections.join("\n\n"),
+  );
 }
 
 type ConsensusDraftPayload = {
@@ -4959,12 +4963,15 @@ async function driveAgentSession(
         run,
         memoryText,
       );
-      const prompt = operationalCompletionPrompt(
+      const prompt = nativeFindingsCompletionPrompt(
+        run.resultContract,
+        operationalCompletionPrompt(
         run,
         overridePrompt ??
           (draftPayload
             ? consensusAgentDraftPrompt(basePrompt, draftPayload)
             : basePrompt),
+        ),
       );
 
 

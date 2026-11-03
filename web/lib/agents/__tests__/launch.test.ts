@@ -164,6 +164,66 @@ describe("buildAgentPrompt", () => {
     });
   }
 
+  it("supplies the closed native finding grammar instead of only opaque JSON arrays", async () => {
+    const prompt = await buildAgentPrompt(emptyPromptDb(), parsed, {
+      id: "native-prompt",
+      projectId: null,
+      taskId: null,
+      triggerType: "manual",
+      triggerPayload: {},
+      resultContract: {
+        kind: "agent_profile",
+        nativeContract: "evidence_findings_v1",
+      },
+    });
+    const marker = "Native result JSON Schema:\n";
+
+    expect(prompt).toContain(marker);
+    const grammar = JSON.parse(
+      prompt.slice(prompt.indexOf(marker) + marker.length),
+    ) as {
+      properties: {
+        findings: {
+          items: {
+            additionalProperties: boolean;
+            properties: {
+              supporting: {
+                items: {
+                  additionalProperties: boolean;
+                  properties: Record<string, object>;
+                };
+              };
+              sourceFindings: { items: { required: string[] } };
+            };
+          };
+        };
+        knowledgeProposals: {
+          items: { oneOf: Array<{ additionalProperties: boolean }> };
+        };
+      };
+    };
+    const finding = grammar.properties.findings.items;
+
+    expect(finding.additionalProperties).toBe(false);
+    expect(finding.properties.supporting.items.additionalProperties).toBe(
+      false,
+    );
+    expect(
+      Object.keys(finding.properties.supporting.items.properties).sort(),
+    ).toEqual(["id", "kind", "revision", "sha256", "version"]);
+    expect(finding.properties.sourceFindings.items.required).toEqual([
+      "childRunId",
+      "resultRevision",
+      "findingId",
+    ]);
+    expect(
+      grammar.properties.knowledgeProposals.items.oneOf.every(
+        (proposal: { additionalProperties: boolean }) =>
+          proposal.additionalProperties === false,
+      ),
+    ).toBe(true);
+  });
+
   it("injects the Effective configuration block from the run snapshot (ADR-111)", async () => {
     const configParsed = {
       prompt: "Classify the task.",

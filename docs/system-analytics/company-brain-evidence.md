@@ -1,5 +1,14 @@
 # Company Brain evidence and source independence
 
+Native result producers receive the closed nested `evidence_findings_v1` JSON
+Schema generated from the same runtime validator. An opaque package FormSchema
+array does not replace that grammar. Record/witness metadata stays outside the
+closed reference object; source findings identify exact direct-child results,
+and proposal content stays separate from mutation receipts. Agent prompt
+overrides retain this instruction; Flow injection applies only to declared
+public-result producers. Existing prompt ownership retains the actual dispatched
+text for inspection and recovery.
+
 ## Purpose
 
 **Partially implemented — ADR-202.** Indexed-source captures, immutable witnesses, correlated reuse and potential-conflict edges are implemented in storage. Native session/bearer retrieval, bounded evidence/conflict pages and the built MCP read/capture facade are implemented locally. Proposal review and native launch capture are qualified locally. Complete outward disclosure and installable-package/pilot qualification remain pending. This domain owns immutable source/version witnesses, source-observation independence and conflict-preserving retrieval. [Records](company-brain.md) owns publication/confirmation; current repository search anchors remain navigational projections.

@@ -191,7 +191,7 @@ it("IT-CBE-04 installs exact native RAH contracts without combining install, tru
     );
 
     for (const node of manifest.nodes) {
-      if (node.type !== "orchestrator") continue;
+      if (node.type !== "orchestrator" && node.type !== "ai_coding") continue;
       assertNodeLaunchable(node, "claude");
       expect(node.settings?.permissionMode).toBe("ask");
       const profile = deriveSessionEnforcementProfile({
@@ -207,7 +207,22 @@ it("IT-CBE-04 installs exact native RAH contracts without combining install, tru
           "mcp__maister__knowledge_conflicts",
         ]),
       );
-      for (const forbidden of ["Bash", "Write", "Edit"])
+      if (["rah-root-d1", "rah-root-d2"].includes(manifest.name))
+        expect(profile?.tools?.allow).toContain(
+          "mcp__maister__knowledge_propose",
+        );
+      else
+        expect(profile?.tools?.allow).not.toContain(
+          "mcp__maister__knowledge_propose",
+        );
+      for (const forbidden of [
+        "Bash",
+        "Write",
+        "Edit",
+        "mcp__maister__knowledge_confirm",
+        "mcp__maister__knowledge_decide",
+        "mcp__maister__knowledge_capture_source",
+      ])
         expect(profile?.tools?.allow).not.toContain(forbidden);
     }
     expect(revision.manifest.result.export.native_contract).toBe(

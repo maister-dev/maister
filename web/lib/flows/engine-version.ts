@@ -99,7 +99,8 @@ const log = pino({
 // 3.11.0 adds native evidence findings with server-validated references, source
 // capture and access-aware reduction/disclosure. Company result-only execution
 // still requires its own declared capability and binding preflight.
-export const MAISTER_ENGINE_VERSION = "3.11.0";
+// 3.11.1 fixes native safe-tool arbitration and read-only facade classification.
+export const MAISTER_ENGINE_VERSION = "3.11.1";
 
 // Minimum engine version a graph (`nodes[]`) manifest must declare in
 // `compat.engine_min` (ADR-026). Enforced in `loadFlowManifest`.

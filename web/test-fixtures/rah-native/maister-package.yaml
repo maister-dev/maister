@@ -1,7 +1,7 @@
 schemaVersion: 1
 name: rah
 compat:
-  engine_min: 3.11.0
+  engine_min: 3.11.1
 metadata:
   title: Governed evidence research
   summary: Pinned depth-1/depth-2 research and a single-role control over

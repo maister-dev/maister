@@ -1,10 +1,10 @@
 schemaVersion: 1
 name: rah-root-d2
 compat:
-  engine_min: 3.11.0
+  engine_min: 3.11.1
 metadata:
   title: Evidence research, depth 2
-  summary: Read-only structured knowledge research through governed native findings.
+  summary: Structured knowledge research and authorized proposals through governed native findings.
 runner_profiles:
   core-claude:
     capability_agent: claude
@@ -42,6 +42,7 @@ nodes:
           - mcp__maister__knowledge_evidence
           - mcp__maister__knowledge_conflicts
           - mcp__maister__knowledge_witness_get
+          - mcp__maister__knowledge_propose
           - mcp__maister__run_delegate
           - mcp__maister__run_collect
           - mcp__maister__run_cancel
@@ -65,6 +66,9 @@ nodes:
         Give each a bounded distinct question, the explicit requested owner and exact knowledge/source references.
         Each child may launch its own researcher agents at absolute depth two. Do not delegate directly to grandchildren.
         Collect every launched direct child through run_collect and inspect result.value and resultRevision.
+        If run_collect reports nonterminal children, end this turn with a short pending status and no final output block.
+        The harness parks this same run and resumes it when child work settles. On resume collect the existing child IDs;
+        do not launch replacement children, poll in a loop, start a shell timer, or read background-task files.
         Do not accept process exit, prose, or child Done alone as evidence of the required outcome.
         For each consumed source finding, selection must name the exact childRunId, resultRevision and findingId,
         with disposition retained/combined and real outputFindingIds, or omitted with a specific reason and empty outputFindingIds.
@@ -73,6 +77,11 @@ nodes:
         Novel combined conclusions are inferred, never mechanically confirmed. Keep fewer than eight output findings.
         Never fetch grandchildren directly. Use only governed delegation/collection; no Task, Agent, hidden subagents,
         parallel scheduler, independent retry loop or filesystem-based handoff. Source denial is a blocker, not permission to paraphrase withheld content.
+        After collecting and evaluating the required findings, submit one evidence-linked knowledge_propose only when
+        this root request explicitly authorizes proposal submission and the current grant permits it. Choose one stable
+        idempotency key for this root run and reuse the identical request after an uncertain response or interruption.
+        Include the same proposed content in knowledgeProposals. Without that authority, return the reviewable proposal
+        in the result only. Never accept/reject proposals or confirm facts on the requester's behalf.
         Return exactly one final fenced block labelled json maister:output. Its value must be evidence_findings_v1:
         {"schemaVersion":1,"findings":[],"knowledgeProposals":[],"selection":[]}.
         Each finding has id, assertion, basis (observed or inferred), supporting and contradicting reference arrays,

@@ -19,6 +19,9 @@ import { randomUUID } from "node:crypto";
 import { eq, and, isNull, isNotNull, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { isResultProducerNode } from "@/lib/run-results/contract";
+import { nativeFindingsCompletionPrompt } from "@/lib/run-results/findings-prompt";
+
 import { PERMISSION_RESUME_PROMPT } from "./graph/permission-resume";
 import { recordDispatchedPrompt } from "./graph/prompt-record";
 import { renderStrict } from "./templating";
@@ -1423,7 +1426,12 @@ async function dispatchAgentStep(
   }
 
   const ordinaryPrompt = appendScheduledRequest(
-    normalized.text,
+    nativeFindingsCompletionPrompt(
+      isResultProducerNode(ctx.resultContract ?? null, ctx.stepId)
+        ? ctx.resultContract
+        : null,
+      normalized.text,
+    ),
     parseScheduledRequestSnapshot(ctx.scheduledRequestSnapshot),
   );
   const actionPrompt =

@@ -437,6 +437,12 @@ settings file. Capability smoke contract version 2 is stored in the private cach
 older successful evidence becomes pending and requires a fresh ritual. The public
 diagnostic shape and historical run snapshots remain compatible.
 
+Engine 3.11.1 includes this native arbitration fix. RAH package `rah/v1.0.1`
+declares that minimum; the native findings format retains its 3.11.0 floor and
+historical result revisions remain valid. Root proposal write-back needs both its
+declared strict tool and current `knowledge:propose` authority. Intermediate research
+and control Flows keep read-only tool policies.
+
 The manager stamps only its injected native MCP descriptor with optional private
 `platformOrigin=maister_facade`. This field never reaches ACP and cannot originate
 in an authored MCP catalog entry. It lets read-only sessions classify the native

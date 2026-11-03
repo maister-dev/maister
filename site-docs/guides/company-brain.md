@@ -78,6 +78,34 @@ Revoking confirmation is a separate explicit decision with a reason and
 confirmation dialog. Prior confirmation history remains tied to its original
 revision.
 
+## Use evidence in a governed research Flow
+
+For the `rah` package, use engine 3.11.1 or newer and an immutable package
+revision. Install the package, review trust, attach it to the intended project,
+and explicitly enable the Flows and agent roles. Installing does not grant
+knowledge access. Bind the `research` session and subordinate roles to a Ready
+runner; strict tool enforcement requires a current capability smoke check.
+
+Enable Brain reading on all three role attachments and grant each receiving
+role the required company or project read access. Keep personal role memory
+separate. Include the owner, exact record references, objective and limitations
+in the request. The CB0 research Flows launch through a project even when the
+records are company-owned and require no repository.
+
+Use `rah-control` for a single-role check, `rah-root-d1` for direct researchers,
+and `rah-root-d2` for research through intermediate coordinators. Inspect the
+result's original evidence links and accepted child result revisions. Pending
+children park the coordinator; continuing the same run preserves their identity.
+A missing or revoked reference must appear as a limitation or refusal. It must
+not be replaced by a guessed citation or resolved by retrieval score.
+
+If you explicitly request a knowledge proposal, grant the root coordinator
+`knowledge:propose`. Only root Flows expose proposal submission; intermediate
+research and control remain read-only. Inspect the resulting proposal in
+**Proposal review**. Neither a successful run nor acceptance of child work
+confirms its assertions. Review and factual confirmation require separate
+current authority.
+
 ## Handle unavailable references and retries
 
 If a reference becomes unavailable, inspect current access with its owner.

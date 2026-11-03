@@ -204,7 +204,7 @@ describe("flow-run public result — publish at the seam (AC-13)", () => {
     expect(plan?.outputContract).toMatchObject({
       schemaRef: "./schemas/result.json",
       transport: "sentinel",
-      engineVersion: "3.11.0",
+      engineVersion: "3.11.1",
     });
   }, 60_000);
 

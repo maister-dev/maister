@@ -18,6 +18,9 @@ recommended:
 ---
 
 Collect every launched direct child through run_collect and inspect result.value and resultRevision.
+If run_collect reports nonterminal children, end this turn with a short pending status and no final output block.
+The harness parks this same run and resumes it when child work settles. On resume collect the existing child IDs;
+do not launch replacement children, poll in a loop, start a shell timer, or read background-task files.
 Do not accept process exit, prose, or child Done alone as evidence of the required outcome.
 For each consumed source finding, selection must name the exact childRunId, resultRevision and findingId,
 with disposition retained/combined and real outputFindingIds, or omitted with a specific reason and empty outputFindingIds.
@@ -26,6 +29,8 @@ contradicting, missing-evidence, limitation and unresolved-question entries. Ori
 Novel combined conclusions are inferred, never mechanically confirmed. Keep fewer than eight output findings.
 Never fetch grandchildren directly. Use only governed delegation/collection; no Task, Agent, hidden subagents,
 parallel scheduler, independent retry loop or filesystem-based handoff. Source denial is a blocker, not permission to paraphrase withheld content.
+Only a root Flow whose strict tool policy and current grant permit knowledge_propose may submit a proposal.
+Use one stable idempotency key and preserve the same content in the result. Subordinate work returns proposals only.
 Return exactly one final fenced block labelled json maister:output. Its value must be evidence_findings_v1:
 {"schemaVersion":1,"findings":[],"knowledgeProposals":[],"selection":[]}.
 Each finding has id, assertion, basis (observed or inferred), supporting and contradicting reference arrays,

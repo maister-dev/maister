@@ -19,6 +19,7 @@ const AUTH_SECRET =
   process.env.AUTH_SECRET ?? "e2e-insecure-test-secret-change-me";
 const databaseUrl = resolvePostgresDbUrl();
 const worktreesRoot = resolveTestWorktreesRoot("e2e-live", process.env);
+const webRuntimeRoot = path.join(worktreesRoot, "runtime", "web");
 
 process.env.MAISTER_WORKTREES_ROOT = worktreesRoot;
 
@@ -30,7 +31,7 @@ export default defineConfig({
   retries: 0,
   workers: testMaxWorkers(process.env),
   reporter: "list",
-  globalSetup: "./e2e/global-setup.ts",
+  globalSetup: "./e2e/live-global-setup.ts",
   use: {
     baseURL: BASE_URL,
     trace: "retain-on-failure",
@@ -55,16 +56,22 @@ export default defineConfig({
       reuseExistingServer: false,
       env: {
         MAISTER_SUPERVISOR_PORT: String(SUPERVISOR_PORT),
-        MAISTER_RUNTIME_ROOT: path.resolve("e2e/.runtime-live-supervisor"),
+        MAISTER_RUNTIME_ROOT: path.join(worktreesRoot, "runtime", "supervisor"),
         // ADR-166: the lane owns its execution-host state dir and pins the
         // host identity (never a developer's supervisor state), and its
         // adoption roots mirror the lane's worktrees root — a scratch launch
         // adopts the worktree it just created.
-        MAISTER_EXECUTION_HOST_STATE_DIR: path.resolve(
-          "e2e/.runtime-live-supervisor/.maister/execution-host",
+        MAISTER_EXECUTION_HOST_STATE_DIR: path.join(
+          worktreesRoot,
+          "runtime",
+          "supervisor",
+          ".maister",
+          "execution-host",
         ),
         MAISTER_EXECUTION_HOST_KEY: "eh_e2e_live_supervisor",
-        MAISTER_WORKSPACE_ROOTS: worktreesRoot,
+        MAISTER_WORKSPACE_ROOTS: [worktreesRoot, webRuntimeRoot].join(
+          path.delimiter,
+        ),
       },
     },
     {
@@ -75,12 +82,14 @@ export default defineConfig({
       env: {
         DB_URL: databaseUrl,
         AUTH_SECRET,
-        MAISTER_RUNTIME_ROOT: path.resolve("e2e/.runtime-live-web"),
+        MAISTER_RUNTIME_ROOT: webRuntimeRoot,
         MAISTER_WORKTREES_ROOT: worktreesRoot,
         MAISTER_SUPERVISOR_URL: SUPERVISOR_URL,
+        MAISTER_API_BASE_URL: BASE_URL,
         // The seeded e2e fixtures hold more than the default cap of live runs;
         // the live scratch launch must be admitted.
-        MAISTER_MAX_CONCURRENT_RUNS: "64",
+        MAISTER_MAX_CONCURRENT_RUNS:
+          process.env.E2E_LIVE_MAX_CONCURRENT_RUNS ?? "64",
       },
     },
   ],

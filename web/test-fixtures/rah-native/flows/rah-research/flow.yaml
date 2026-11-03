@@ -1,7 +1,7 @@
 schemaVersion: 1
 name: rah-research
 compat:
-  engine_min: 3.11.0
+  engine_min: 3.11.1
 metadata:
   title: Evidence research child
   summary: Read-only structured knowledge research through governed native findings.
@@ -65,6 +65,9 @@ nodes:
         rah:evidence-researcher for the question and rah:contradiction-researcher for contradictions and limitations.
         Pass the exact owner and references from the request.
         Collect every launched direct child through run_collect and inspect result.value and resultRevision.
+        If run_collect reports nonterminal children, end this turn with a short pending status and no final output block.
+        The harness parks this same run and resumes it when child work settles. On resume collect the existing child IDs;
+        do not launch replacement children, poll in a loop, start a shell timer, or read background-task files.
         Do not accept process exit, prose, or child Done alone as evidence of the required outcome.
         For each consumed source finding, selection must name the exact childRunId, resultRevision and findingId,
         with disposition retained/combined and real outputFindingIds, or omitted with a specific reason and empty outputFindingIds.
