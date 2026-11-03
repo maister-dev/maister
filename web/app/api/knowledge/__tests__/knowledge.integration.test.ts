@@ -1308,6 +1308,7 @@ it("IT-CBE-06 run-bound native reads bind current grants to the immutable role/p
 });
 
 it("IT-CBE-01 record references pin exact evidence, reuse one capture and retain declared opposition across corrections", async () => {
+  vi.stubEnv("AUTH_SECRET", "native-record-proposal-cursor-test-secret");
   const principal = { kind: "user" as const, userId: readerId };
   const owner = { kind: "company" as const, companyId };
   const draft = {
@@ -1397,6 +1398,35 @@ it("IT-CBE-01 record references pin exact evidence, reuse one capture and retain
   );
 
   expect(proposals[0]!.id).toBe(proposals[1]!.id);
+  const capturesBefore = await database.pool.query(
+    "SELECT count(*)::int AS n FROM brain_evidence_witnesses",
+  );
+  const pending = await getProposal(
+    new NextRequest(
+      `http://localhost/api/knowledge/proposals/${proposals[0]!.id}`,
+    ),
+    {
+      params: Promise.resolve({ proposalId: proposals[0]!.id }),
+    },
+  );
+
+  expect(pending.status).toBe(200);
+  assertContract("CBKnowledgeProposal", await pending.json());
+  const page = await listKnowledgeProposals(database.db, principal, {
+    owner,
+    status: "pending",
+    limit: 50,
+  });
+
+  expect(page.items.some((item) => item.id === proposals[0]!.id)).toBe(true);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS n FROM brain_evidence_witnesses",
+      )
+    ).rows,
+  ).toEqual(capturesBefore.rows);
+
   const derived = await publish(derivedInput);
   const proof = await getKnowledgeEvidencePage(
     database.db,
@@ -1517,6 +1547,22 @@ it("IT-CBE-01 record references pin exact evidence, reuse one capture and retain
     "UPDATE brain_items SET visibility='restricted' WHERE id=$1",
     [reference.id],
   );
+  const hiddenProposal = await getProposal(
+    new NextRequest(
+      `http://localhost/api/knowledge/proposals/${proposals[0]!.id}`,
+    ),
+    {
+      params: Promise.resolve({ proposalId: proposals[0]!.id }),
+    },
+  );
+
+  expect(hiddenProposal.status).toBe(404);
+  const visible = await listKnowledgeProposals(database.db, principal, {
+    owner,
+    limit: 50,
+  });
+
+  expect(visible.items.map((item) => item.id)).not.toContain(proposals[0]!.id);
   expect((await readRecord(derived.acceptedRecordId!)).status).toBe(404);
   await expect(
     createBrainProposal(database.db, {
@@ -1527,6 +1573,7 @@ it("IT-CBE-01 record references pin exact evidence, reuse one capture and retain
     code: "PRECONDITION",
     details: { reason: "knowledge_reference_unavailable" },
   });
+  vi.unstubAllEnvs();
 });
 
 it("IT-CBE-06 cross-owner record evidence inherits current source access and never obstructs source-project deletion", async () => {

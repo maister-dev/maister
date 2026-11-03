@@ -1,0 +1,60 @@
+$ vitest run --project integration --passWithNoTests app/api/knowledge/__tests__/knowledge.integration.test.ts --maxWorkers=1 -t 'record references pin'
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.5 /Users/kaa/.codex/worktrees/2599/mAIster/web
+
+{"level":30,"time":1793738987293,"pid":42355,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.11.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793738987375,"pid":42355,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-daemon-contact","outcome":"passed","durationMs":15,"serverVersion":"29.4.2","strategy":"ConfigurationStrategy","msg":"test container daemon contacted"}
+{"level":30,"time":1793738987375,"pid":42355,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"started","msg":"constructing test container runtime client"}
+{"level":30,"time":1793738987384,"pid":42355,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"passed","durationMs":9,"serverVersion":"29.4.2","msg":"test container runtime client ready"}
+{"level":30,"time":1793738987385,"pid":42355,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-create-start","preparationDurationMs":25,"storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"starting owned PostgreSQL container"}
+{"level":30,"time":1793738988284,"pid":42355,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-start","outcome":"passed","durationMs":897,"containerId":"5dcca84d6807db1b3a51348892cfa2d5aa153a36ae216a5d0ddd7ccd143f494c","storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"started owned PostgreSQL container"}
+{"level":30,"time":1793738988296,"pid":42355,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"bare","phase":"ready","durationMs":935,"containerId":"5dcca84d6807db1b3a51348892cfa2d5aa153a36ae216a5d0ddd7ccd143f494c","endpoint":"postgres://localhost:57925/native_knowledge_http","msg":"started bare test database"}
+{"level":30,"time":1793738988643,"pid":42355,"hostname":"MacBook-Pro-2.local","name":"test-database-migrations","migrationsFolder":"./lib/db/migrations","migrationsTable":"__drizzle_migrations","migrationCount":215,"querySubmissions":6,"durationMs":347,"msg":"applied test database migration lineage"}
+{"level":30,"time":1793738988690,"pid":42355,"hostname":"MacBook-Pro-2.local","name":"test-database-migrations","migrationsFolder":"./lib/db/brain-migrations","migrationsTable":"__drizzle_brain_migrations","migrationCount":11,"querySubmissions":6,"durationMs":47,"msg":"applied test database migration lineage"}
+{"level":30,"time":1793738988690,"pid":42355,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"main+brain","phase":"migrate","endpoint":"postgres://localhost:57925/native_knowledge_http","msg":"applied Brain test database migrations"}
+{"level":30,"time":1793738988974,"pid":42355,"hostname":"MacBook-Pro-2.local","name":"brain:knowledge","proposalId":"d0785f36-9ca4-4389-ab4e-823237743391","ownerKind":"company","ownerId":"b61b3a18-f4d8-48d0-b0e9-bfe499a280fc","actorId":"6daba88a-a69b-45c0-82d8-cb460c003979","msg":"knowledge proposed"}
+{"level":30,"time":1793738994242,"pid":42355,"hostname":"MacBook-Pro-2.local","name":"brain:knowledge","recordId":"bbd9c03d-3070-47b9-8bf6-cf91f41f82bc","revision":1,"priorRevision":null,"proposalId":"d0785f36-9ca4-4389-ab4e-823237743391","actorId":"6daba88a-a69b-45c0-82d8-cb460c003979","msg":"knowledge revision published"}
+{"level":30,"time":1793738994243,"pid":42355,"hostname":"MacBook-Pro-2.local","name":"brain:knowledge","proposalId":"d0785f36-9ca4-4389-ab4e-823237743391","decision":"accept","expectedRevision":1,"policyId":"3357990b-8e1e-4cea-bf6d-22054277195e","recordId":"bbd9c03d-3070-47b9-8bf6-cf91f41f82bc","msg":"knowledge proposal reviewed"}
+{"level":30,"time":1793738994278,"pid":42355,"hostname":"MacBook-Pro-2.local","name":"brain:knowledge","proposalId":"0b5a7072-97f6-45cc-805a-fcc9b8e02bb8","ownerKind":"company","ownerId":"b61b3a18-f4d8-48d0-b0e9-bfe499a280fc","actorId":"6daba88a-a69b-45c0-82d8-cb460c003979","msg":"knowledge proposed"}
+{"level":30,"time":1793738997000,"pid":42355,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"stop","durationMs":171,"containerId":"5dcca84d6807db1b3a51348892cfa2d5aa153a36ae216a5d0ddd7ccd143f494c","endpoint":"postgres://localhost:57925/native_knowledge_http","msg":"stopped test database"}
+ ❯ |integration| app/api/knowledge/__tests__/knowledge.integration.test.ts (15 tests | 1 failed | 14 skipped) 9643ms
+   × IT-CBE-01 record references pin exact evidence, reuse one capture and retain declared opposition across corrections 7866ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |integration| app/api/knowledge/__tests__/knowledge.integration.test.ts > IT-CBE-01 record references pin exact evidence, reuse one capture and retain declared opposition across corrections
+AssertionError: expected 409 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 409
+
+ ❯ publish app/api/knowledge/__tests__/knowledge.integration.test.ts:1334:28
+    1332|     });
+    1333|
+    1334|     expect(pending.status).toBe(200);
+       |                            ^
+    1335|     assertContract("CBKnowledgeProposal", await pending.json());
+    1336|     const page = await listKnowledgeProposals(database.db, principal, …
+ ❯ app/api/knowledge/__tests__/knowledge.integration.test.ts:1411:19
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 14 skipped (15)
+   Start at  23:49:46
+   Duration  10.67s (tests 91%, import 7%, transform 2%)
+
+[ELIFECYCLE] Command failed with exit code 1.

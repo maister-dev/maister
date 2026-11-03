@@ -50,6 +50,7 @@ import {
   knowledgeTimestamp,
 } from "./knowledge-witnesses";
 import { evidenceSummary } from "./knowledge-records";
+import { resolveKnowledgeRecordCapture } from "./knowledge-record-capture";
 
 import { ownerSchema } from "@/lib/company/types";
 import { postgresTextSchema } from "@/lib/text-schema";
@@ -147,17 +148,34 @@ async function readProposal(
   const evidence: KnowledgeProposalView["evidence"] = [];
 
   for (const link of parsed.data.evidence) {
-    if (link.reference.kind !== "witness")
+    if (
+      link.reference.kind !== "witness" &&
+      link.reference.kind !== "knowledge"
+    )
       throw new MaisterError(
         "PRECONDITION",
         "This proposal requires its native evidence resolver",
         { details: { reason: "native_reference_kind_unavailable" } },
       );
-    const present = (
-      await tx.execute(
-        sql`SELECT id FROM brain_evidence_witnesses WHERE id=${link.reference.id}`,
-      )
-    ).rows[0];
+    const resolved =
+      link.reference.kind === "knowledge"
+        ? await resolveKnowledgeRecordCapture(
+            tx,
+            principal,
+            link.reference,
+            access,
+          )
+        : { witnessId: link.reference.id, access };
+
+    access = resolved.access;
+    const present =
+      resolved.witnessId === null
+        ? undefined
+        : (
+            await tx.execute(
+              sql`SELECT id FROM brain_evidence_witnesses WHERE id=${resolved.witnessId}`,
+            )
+          ).rows[0];
 
     if (!present) {
       evidence.push({
@@ -173,7 +191,7 @@ async function readProposal(
     const inspection = await inspectKnowledgeWitness(
       tx,
       principal,
-      link.reference.id,
+      resolved.witnessId!,
       access,
     );
 

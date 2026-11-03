@@ -3,6 +3,7 @@ import "server-only";
 import type { KnowledgeAttribution } from "./record-types";
 import type { KnowledgeTransaction } from "./knowledge-access";
 import type { KnowledgePrincipal, KnowledgeReference } from "./knowledge-types";
+import type { KnowledgeAccessWalk } from "./knowledge-restrictions";
 
 import { sql } from "drizzle-orm";
 import pino from "pino";
@@ -22,13 +23,23 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-/** Pin assertion bytes without promoting a quoted claim into independent observation. */
-export async function captureKnowledgeRecordReference(
+type RecordCapture = Readonly<{
+  projectId: string | null;
+  companyId: string | null;
+  sourceId: string;
+  selector: string;
+  version: string;
+  digest: string;
+  content: string;
+  access: KnowledgeAccessWalk;
+}>;
+
+async function readRecordCapture(
   tx: KnowledgeTransaction,
   principal: KnowledgePrincipal,
   reference: KnowledgeReference,
-  actor: KnowledgeAttribution,
-): Promise<string> {
+  initial: KnowledgeAccessWalk,
+): Promise<RecordCapture> {
   if (reference.kind !== "knowledge" || reference.revision === undefined)
     throw new MaisterError(
       "CONFIG",
@@ -39,6 +50,7 @@ export async function captureKnowledgeRecordReference(
     principal,
     reference.id,
     reference.revision,
+    initial,
   );
   const row = (
     await tx.execute(sql`
@@ -67,23 +79,78 @@ export async function captureKnowledgeRecordReference(
       "Knowledge evidence version does not match its retained revision",
     );
   const owner = knowledgeOwner(row);
-  const sourceId = `record:${sha256(reference.id)}`;
-  const selector = `record:${reference.id}:${version}`;
-  const projectId = owner.kind === "project" ? owner.projectId : null;
-  const companyId = owner.kind === "company" ? owner.companyId : null;
 
-  await tx.execute(
-    sql`SELECT pg_advisory_xact_lock(hashtextextended(${`knowledge-record-capture:${reference.id}:${version}`},0))`,
-  );
+  return {
+    projectId: owner.kind === "project" ? owner.projectId : null,
+    companyId: owner.kind === "company" ? owner.companyId : null,
+    sourceId: `record:${sha256(reference.id)}`,
+    selector: `record:${reference.id}:${version}`,
+    version,
+    digest: String(row.content_sha256),
+    content,
+    access,
+  };
+}
+
+async function retainedRecordWitnessId(
+  tx: KnowledgeTransaction,
+  capture: RecordCapture,
+): Promise<string | null> {
+  const { projectId, companyId, sourceId, version, digest, selector } = capture;
   const existing = (
     await tx.execute(sql`
     SELECT w.id FROM brain_evidence_witnesses w JOIN brain_evidence_observations o ON o.id=w.observation_id
     WHERE o.project_id IS NOT DISTINCT FROM ${projectId} AND o.company_id IS NOT DISTINCT FROM ${companyId}
-      AND o.source_id=${sourceId} AND o.source_version=${version} AND o.content_sha256=${row.content_sha256} AND w.selector=${selector}
+      AND o.source_id=${sourceId} AND o.source_version=${version} AND o.content_sha256=${digest} AND w.selector=${selector}
   `)
   ).rows[0];
 
-  if (typeof existing?.id === "string") return existing.id;
+  return typeof existing?.id === "string" ? existing.id : null;
+}
+
+/** Resolve the already retained witness; inspection never creates evidence. */
+export async function resolveKnowledgeRecordCapture(
+  tx: KnowledgeTransaction,
+  principal: KnowledgePrincipal,
+  reference: KnowledgeReference,
+  initial: KnowledgeAccessWalk,
+): Promise<{ witnessId: string | null; access: KnowledgeAccessWalk }> {
+  const capture = await readRecordCapture(tx, principal, reference, initial);
+
+  return {
+    witnessId: await retainedRecordWitnessId(tx, capture),
+    access: capture.access,
+  };
+}
+
+/** Pin assertion bytes without promoting a quoted claim into independent observation. */
+export async function captureKnowledgeRecordReference(
+  tx: KnowledgeTransaction,
+  principal: KnowledgePrincipal,
+  reference: KnowledgeReference,
+  actor: KnowledgeAttribution,
+): Promise<string> {
+  const capture = await readRecordCapture(tx, principal, reference, {
+    visited: [],
+    remaining: 256,
+  });
+  const {
+    projectId,
+    companyId,
+    sourceId,
+    version,
+    digest,
+    selector,
+    content,
+    access,
+  } = capture;
+
+  await tx.execute(
+    sql`SELECT pg_advisory_xact_lock(hashtextextended(${`knowledge-record-capture:${reference.id}:${version}`},0))`,
+  );
+  const existing = await retainedRecordWitnessId(tx, capture);
+
+  if (existing !== null) return existing;
   const restrictions = restrictionsForKnowledgeAccess(access);
   const locator = {
     kind: "record",
@@ -100,7 +167,7 @@ export async function captureKnowledgeRecordReference(
   const observation = (
     await tx.execute(sql`
     INSERT INTO brain_evidence_observations(project_id,company_id,source_id,source_version,content_sha256,attribution)
-    VALUES(${projectId},${companyId},${sourceId},${version},${row.content_sha256},${JSON.stringify(actor)}::jsonb) RETURNING id
+    VALUES(${projectId},${companyId},${sourceId},${version},${digest},${JSON.stringify(actor)}::jsonb) RETURNING id
   `)
   ).rows[0];
 
@@ -112,7 +179,7 @@ export async function captureKnowledgeRecordReference(
   const witness = (
     await tx.execute(sql`
     INSERT INTO brain_evidence_witnesses(observation_id,source_version,content_sha256,selector,restrictions,capture_locator)
-    VALUES(${observation.id},${version},${row.content_sha256},${selector},${JSON.stringify(restrictions)}::jsonb,${JSON.stringify(locator)}::jsonb) RETURNING id
+    VALUES(${observation.id},${version},${digest},${selector},${JSON.stringify(restrictions)}::jsonb,${JSON.stringify(locator)}::jsonb) RETURNING id
   `)
   ).rows[0];
 
