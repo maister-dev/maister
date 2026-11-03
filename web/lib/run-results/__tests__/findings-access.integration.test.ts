@@ -1,6 +1,7 @@
 import type { StartedPostgresTestDb } from "@/test-support/pg-container";
 import type { NativeFindingsExecution } from "@/test-support/native-findings-seed";
 import type { SqlDatabase, SqlTransaction } from "@/lib/db/sql-types";
+import type { KnowledgeAccessCapture } from "@/lib/company/types";
 
 import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -9,6 +10,7 @@ import { join } from "node:path";
 
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+import { sql } from "drizzle-orm";
 
 import { createCompanyGrants, revokeCompanyGrant } from "@/lib/company/grants";
 import { captureKnowledgeSource } from "@/lib/brain/knowledge-source-capture";
@@ -30,6 +32,7 @@ import {
 import { authorizeRunsKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
 import { seedProjectRow, seedRun } from "@/test-support/execution-host-seed";
 import { seedNativeFindingsExecution } from "@/test-support/native-findings-seed";
+import { poll } from "@/test-support/durable-workers-ledger";
 import { startMainAndBrainPostgresTestDb } from "@/test-support/pg-container";
 import {
   readAgentMemoryRaw,
@@ -69,6 +72,124 @@ afterAll(async () => {
   } finally {
     vi.unstubAllEnvs();
   }
+});
+
+it("IT-CBE-06 concurrent knowledge reads retain both source restrictions without manufacturing confirmation", async () => {
+  const execution = await seedNativeFindingsExecution(database, contract);
+  const user = { kind: "user" as const, userId: execution.submitterId };
+  const owner = { kind: "company" as const, companyId: execution.companyId };
+  const proposal = await createKnowledgeProposal(database.db, {
+    kind: "knowledge_add",
+    owner,
+    principal: user,
+    idempotencyKey: `concurrent:${execution.runId}`,
+    draft: {
+      title: "Independent claim about the retained observation",
+      kind: "observation",
+      assertion: "The retained probe describes one observed source version.",
+      basis: "observed",
+      evidence: [
+        {
+          relation: "supports",
+          reference: { kind: "witness", id: execution.witness.id },
+        },
+      ],
+      limitations: ["The same witness is not independent corroboration."],
+      missingEvidence: [],
+    },
+  });
+
+  await reviewKnowledgeProposal(database.db, {
+    proposalId: proposal.id,
+    principal: user,
+    expectedRevision: proposal.revision,
+    decision: "accept",
+    reason:
+      "Retain a separate claim while preserving the same source identity.",
+    idempotencyKey: `concurrent-review:${execution.runId}`,
+  });
+  const secondRecordId = (
+    await database.pool.query<{ published_record_id: string }>(
+      "SELECT published_record_id FROM brain_proposals WHERE id=$1",
+      [proposal.id],
+    )
+  ).rows[0]!.published_record_id;
+  const principal = { kind: "token" as const, tokenId: execution.tokenId };
+  const held = Promise.withResolvers<number>();
+  const release = Promise.withResolvers<void>();
+  const first = database.db.transaction(async (tx) => {
+    const record = await getKnowledgeRecord(tx, principal, {
+      recordId: execution.recordId,
+    });
+    const backend = await tx.execute(sql`SELECT pg_backend_pid() AS pid`);
+
+    held.resolve(Number(backend.rows[0]!.pid));
+    await release.promise;
+
+    return record;
+  });
+
+  // Propagate setup failure to the waiter and settle every transaction even if the assertion fails.
+  void first.catch(held.reject);
+  const backendId = await held.promise;
+  const second = getKnowledgeRecord(database.db, principal, {
+    recordId: secondRecordId,
+  });
+
+  const settled = Promise.allSettled([first, second]);
+
+  try {
+    await poll(
+      async () => {
+        const blocked = await database.pool.query<{ waiting: boolean }>(
+          "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1::integer=ANY(pg_blocking_pids(pid))) AS waiting",
+          [backendId],
+        );
+
+        return blocked.rows[0]?.waiting === true ? true : null;
+      },
+      2000,
+      "the second actual knowledge reader to wait on the first capture transaction",
+      25,
+    );
+  } finally {
+    release.resolve();
+    await settled;
+  }
+  const records = await Promise.all([first, second]);
+
+  expect(records.map((record) => record.confirmation.state)).toEqual([
+    "unconfirmed",
+    "unconfirmed",
+  ]);
+  const capture = async (): Promise<KnowledgeAccessCapture> =>
+    (
+      await database.pool.query<{ knowledge_access: KnowledgeAccessCapture }>(
+        "SELECT knowledge_access FROM runs WHERE id=$1",
+        [execution.runId],
+      )
+    ).rows[0]!.knowledge_access;
+  const combined = await capture();
+
+  expect(combined).toMatchObject({ state: "complete", generation: 3 });
+  expect(combined.restrictions).toEqual(
+    expect.arrayContaining([
+      { kind: "company", companyId: execution.companyId },
+      { kind: "record", recordId: execution.recordId },
+      { kind: "record", recordId: secondRecordId },
+    ]),
+  );
+  expect(
+    combined.restrictions.filter((entry) => entry.kind === "company"),
+  ).toHaveLength(1);
+  expect(
+    (
+      await getKnowledgeRecord(database.db, principal, {
+        recordId: secondRecordId,
+      })
+    ).confirmation.state,
+  ).toBe("unconfirmed");
+  expect(await capture()).toEqual(combined);
 });
 
 it("IT-CBE-06 original delegated input inspection retains exact binding and current human source authority", async () => {

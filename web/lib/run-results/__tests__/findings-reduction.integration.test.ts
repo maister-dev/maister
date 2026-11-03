@@ -17,6 +17,7 @@ import {
   closeSucceededAttemptWithResult,
 } from "@/lib/run-results/close-attempt";
 import { nativeKnowledgeCaptureAtLaunch } from "@/lib/brain/knowledge-launch-capture";
+import { inspectFindingsReduction } from "@/lib/run-results/findings-reduction";
 import { launchConsensusDraftRuns } from "@/lib/flows/graph/consensus/drafts";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import { platformAcpRunners } from "@/lib/db/schema";
@@ -452,6 +453,130 @@ async function finishChild(
     }),
   ).toMatchObject({ finalized: true, status: "Done" });
 }
+
+it("IT-CBE-05 bounds aggregate retained reduction bytes before hydrating source bodies", async () => {
+  const source = await seedNativeFindingsExecution(database, agentContract);
+  const parent = await coordinator(source);
+  const input: EvidenceFindingsV1 = {
+    ...findings(source),
+    findings: Array.from({ length: 3 }, (_, index) => ({
+      ...findings(source).findings[0]!,
+      id: `bounded-${index}`,
+      limitations: Array.from({ length: 32 }, () => "l".repeat(1000)),
+      openQuestions: Array.from({ length: 32 }, () => "q".repeat(1000)),
+    })),
+  };
+  const selection: EvidenceFindingsV1["selection"] = [];
+
+  expect(Buffer.byteLength(JSON.stringify(input))).toBeLessThan(262144);
+  for (let index = 0; index < 22; index++) {
+    const childRunId = await child(source, parent.runId);
+
+    await finishChild(childRunId, input);
+    expect((await collect(parent.secret, childRunId)).status).toBe(200);
+    selection.push(
+      ...input.findings.map((finding) => ({
+        childRunId,
+        resultRevision: 1,
+        findingId: finding.id,
+        disposition: "omitted" as const,
+        outputFindingIds: [],
+        reason:
+          "Source retained for inspection; no new conclusion is asserted.",
+      })),
+    );
+    if (index === 19)
+      await expect(
+        database.db.transaction((tx) =>
+          inspectFindingsReduction(tx, parent.runId, {
+            schemaVersion: 1,
+            findings: [],
+            knowledgeProposals: [],
+            selection,
+          }),
+        ),
+      ).resolves.toMatchObject({ hasSources: true });
+  }
+  let queries = 0;
+
+  await expect(
+    database.db.transaction((tx) =>
+      inspectFindingsReduction(
+        {
+          execute: async (query) => {
+            queries++;
+
+            return tx.execute(query);
+          },
+        },
+        parent.runId,
+        { schemaVersion: 1, findings: [], knowledgeProposals: [], selection },
+      ),
+    ),
+  ).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "findings_reduction_invalid", path: "selection" },
+  });
+  expect(queries).toBe(1);
+});
+
+it("IT-CBE-05 accounts for every consumed source finding up to the bounded selection limit", async () => {
+  const source = await seedNativeFindingsExecution(database, agentContract);
+  const parent = await coordinator(source);
+  const input: EvidenceFindingsV1 = {
+    ...findings(source),
+    findings: Array.from({ length: 32 }, (_, index) => ({
+      ...findings(source).findings[0]!,
+      id: `source-${index}`,
+    })),
+  };
+  const selection: EvidenceFindingsV1["selection"] = [];
+
+  for (let index = 0; index < 8; index++) {
+    const childRunId = await child(source, parent.runId);
+
+    await finishChild(childRunId, input);
+    expect((await collect(parent.secret, childRunId)).status).toBe(200);
+    selection.push(
+      ...input.findings.map((finding) => ({
+        childRunId,
+        resultRevision: 1,
+        findingId: finding.id,
+        disposition: "omitted" as const,
+        outputFindingIds: [],
+        reason: "No combined claim is warranted by these collected findings.",
+      })),
+    );
+  }
+  const output: EvidenceFindingsV1 = {
+    schemaVersion: 1,
+    findings: [],
+    knowledgeProposals: [],
+    selection,
+  };
+
+  expect(selection).toHaveLength(256);
+  await expect(
+    database.db.transaction((tx) =>
+      inspectFindingsReduction(tx, parent.runId, output),
+    ),
+  ).resolves.toMatchObject({ hasSources: true });
+  const extra = await child(source, parent.runId);
+
+  await finishChild(extra, findings(source));
+  expect((await collect(parent.secret, extra)).status).toBe(200);
+  await expect(finishCoordinator(parent, output)).rejects.toMatchObject({
+    code: "PRECONDITION",
+  });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT validity,value FROM run_results WHERE run_id=$1",
+        [parent.runId],
+      )
+    ).rows,
+  ).toEqual([{ validity: "invalid", value: null }]);
+});
 
 async function finishCoordinator(
   target: Awaited<ReturnType<typeof coordinator>>,
