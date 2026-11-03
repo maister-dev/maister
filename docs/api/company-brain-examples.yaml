@@ -473,6 +473,11 @@ cases:
       requester: { kind: user, id: user_example, runId: null, attemptId: null }
       responsible: { kind: agent, id: specialist_example, runId: null, attemptId: null }
       specialistBindingId: specialist_binding_example
+      expectedResult:
+        schemaRef: rah@0123456789ab:evidence-findings.v1
+        schemaVersion: 1
+        sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        required: true
       inputRefs: [{ kind: knowledge, id: record_example, revision: 2 }]
       constraints: [Read-only diagnosis until an exact restart is authorized.]
       origin: { kind: manual, interactionId: interaction_example }
@@ -507,3 +512,8 @@ cases:
     schema: CBAssignmentOrigin
     valid: false
     value: { kind: webhook, endpointId: endpoint_example }
+  - id: assignment-expected-result-requires-exact-digest
+    surfaces: [web, external]
+    schema: CBExpectedAssignmentResult
+    valid: false
+    value: { schemaRef: "rah@0123456789ab:evidence-findings.v1", schemaVersion: 1, required: true }

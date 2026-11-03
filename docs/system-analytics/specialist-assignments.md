@@ -85,6 +85,10 @@ An accepted result is an exact `{id, revision}` reference, not a floating result
 identity. Its assignment/run membership and verification obligations are
 validated before acceptance. Historical input/authority revision contents remain
 separate immutable snapshots; the current read projection must not replace them.
+The assignment's expected result exposes the server-selected schema reference,
+version and digest with `required: true`. Launch must match that descriptor using
+the existing `RunResultContract` builder and immutable binding. This is a business
+requirement pointing to the existing result contract, not another output grammar.
 
 All assignments require nonblank objective (<=8000 characters), expected outcome (<=4000), explicit requester/responsible principal, owner, <=32 canonical targets, <=64 input/knowledge refs, <=16 typed verification obligations and one server-validated origin/destination. Pure research may declare zero operation obligations; configured restart policy always injects required effect and independent-health obligations. A model cannot clear them. Context <=128 KiB, update <=32 KiB/64 entries, per-entry text <=8000; no silent truncation.
 

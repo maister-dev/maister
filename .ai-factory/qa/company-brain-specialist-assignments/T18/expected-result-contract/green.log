@@ -1,0 +1,13 @@
+validate-contracts: operations.openapi.yaml ok
+validate-contracts: web.openapi.yaml ok
+validate-contracts: supervisor.openapi.yaml ok
+validate-contracts: stand-connector.openapi.yaml ok
+validate-contracts: operational-lifecycle.asyncapi.yaml ok
+validate-contracts: attention-stream.asyncapi.yaml ok
+validate-contracts: librarian-stream.asyncapi.yaml ok
+validate-contracts: outbound-webhooks.asyncapi.yaml ok
+validate-contracts: supervisor-sse.asyncapi.yaml ok
+validate-contracts: execution-host-events.asyncapi.yaml ok
+validate-contracts: web-evaluations.asyncapi.yaml ok
+validate-contracts: web-runs.asyncapi.yaml ok
+validate-contracts: 79 Company Brain surface examples and schema parity ok

@@ -35976,6 +35976,7 @@ components:
         - constraints
         - origin
         - destination
+        - expectedResult
       description: The business revision is distinct from inputRevision and contextRevision. Assignment state/input
         mutations compare expectedRevision against this revision. Context patches, work decisions and question
         responses compare their own subject revisions as declared by their endpoint; reads expose the business
@@ -36063,7 +36064,7 @@ components:
         updatedAt:
           type: string
           format: date-time
-        specialistBindingId: &a1
+        specialistBindingId:
           type: string
           minLength: 1
           maxLength: 128
@@ -36083,6 +36084,34 @@ components:
           $ref: "#/components/schemas/CBAssignmentOrigin"
         destination:
           $ref: "#/components/schemas/CBAssignmentDestination"
+        expectedResult:
+          $ref: "#/components/schemas/CBExpectedAssignmentResult"
+    CBExpectedAssignmentResult:
+      type: object
+      additionalProperties: false
+      description: Server-frozen expected result descriptor from the immutable binding. Launch must match the
+        existing RunResultContract schema reference/version/digest; this is not another result grammar.
+      required:
+        - schemaRef
+        - schemaVersion
+        - sha256
+        - required
+      properties:
+        schemaRef:
+          type: string
+          minLength: 1
+          maxLength: 512
+        schemaVersion:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        sha256:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        required:
+          type: boolean
+          enum:
+            - true
     CBAssignmentOrigin:
       description: Server-recorded source identity. Each source adapter validates its own canonical identifiers and
         current assignment scope; callers cannot nominate another origin.
@@ -36097,7 +36126,10 @@ components:
               type: string
               enum:
                 - manual
-            interactionId: *a1
+            interactionId:
+              type: string
+              minLength: 1
+              maxLength: 128
         - type: object
           additionalProperties: false
           required:
@@ -36110,9 +36142,18 @@ components:
               type: string
               enum:
                 - task_comment
-            projectId: *a1
-            taskId: *a1
-            commentId: *a1
+            projectId:
+              type: string
+              minLength: 1
+              maxLength: 128
+            taskId:
+              type: string
+              minLength: 1
+              maxLength: 128
+            commentId:
+              type: string
+              minLength: 1
+              maxLength: 128
         - type: object
           additionalProperties: false
           required:
@@ -36124,8 +36165,14 @@ components:
               type: string
               enum:
                 - schedule
-            scheduleId: *a1
-            triggerAttemptId: *a1
+            scheduleId:
+              type: string
+              minLength: 1
+              maxLength: 128
+            triggerAttemptId:
+              type: string
+              minLength: 1
+              maxLength: 128
         - type: object
           additionalProperties: false
           required:
@@ -36137,8 +36184,14 @@ components:
               type: string
               enum:
                 - event
-            eventId: *a1
-            subscriptionId: *a1
+            eventId:
+              type: string
+              minLength: 1
+              maxLength: 128
+            subscriptionId:
+              type: string
+              minLength: 1
+              maxLength: 128
         - type: object
           additionalProperties: false
           required:
@@ -36150,8 +36203,14 @@ components:
               type: string
               enum:
                 - webhook
-            endpointId: *a1
-            deliveryId: *a1
+            endpointId:
+              type: string
+              minLength: 1
+              maxLength: 128
+            deliveryId:
+              type: string
+              minLength: 1
+              maxLength: 128
         - type: object
           additionalProperties: false
           required:
@@ -36163,8 +36222,14 @@ components:
               type: string
               enum:
                 - delegation
-            parentRunId: *a1
-            workId: *a1
+            parentRunId:
+              type: string
+              minLength: 1
+              maxLength: 128
+            workId:
+              type: string
+              minLength: 1
+              maxLength: 128
     CBAssignmentDestination:
       description: Server-frozen delivery destination. Configured subscription identity resolves endpoint and
         credentials; arbitrary URLs are never accepted. Content delivery still requires current recipient/source
@@ -36180,7 +36245,10 @@ components:
               type: string
               enum:
                 - inbox
-            userId: *a1
+            userId:
+              type: string
+              minLength: 1
+              maxLength: 128
         - type: object
           additionalProperties: false
           required:
@@ -36193,8 +36261,14 @@ components:
               type: string
               enum:
                 - task_comment
-            projectId: *a1
-            taskId: *a1
+            projectId:
+              type: string
+              minLength: 1
+              maxLength: 128
+            taskId:
+              type: string
+              minLength: 1
+              maxLength: 128
             threadCommentId:
               type: string
               minLength: 1
@@ -36211,8 +36285,14 @@ components:
               type: string
               enum:
                 - outbound_subscription
-            subscriptionId: *a1
-            correlationId: *a1
+            subscriptionId:
+              type: string
+              minLength: 1
+              maxLength: 128
+            correlationId:
+              type: string
+              minLength: 1
+              maxLength: 128
     CBAcceptedAssignmentResult:
       description: Exact retained result accepted by the assignment authority. The server validates assignment/run
         membership, result validity and revision, input/context revisions and verification obligations before
@@ -36223,7 +36303,10 @@ components:
         - id
         - revision
       properties:
-        id: *a1
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
         revision:
           type: integer
           minimum: 1
