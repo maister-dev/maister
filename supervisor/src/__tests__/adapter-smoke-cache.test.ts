@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import {
+  CAPABILITY_ENFORCEMENT_SMOKE_PROBE_VERSION,
   READ_ONLY_SMOKE_PROBE_VERSION,
   invalidateAdapterReadOnlySmokeCache,
   readAdapterSmokeCache,
@@ -167,6 +168,7 @@ describe("adapter smoke diagnostics", () => {
             status: "ok",
             checkedAt,
             protocolVersion: 1,
+            probeVersion: CAPABILITY_ENFORCEMENT_SMOKE_PROBE_VERSION,
           },
         } as never,
       },
@@ -276,6 +278,7 @@ describe("adapter smoke diagnostics", () => {
             status: "ok",
             checkedAt,
             protocolVersion: 1,
+            probeVersion: CAPABILITY_ENFORCEMENT_SMOKE_PROBE_VERSION,
           },
         } as never,
       },
@@ -293,6 +296,31 @@ describe("adapter smoke diagnostics", () => {
       reason: null,
       checkedAt,
       protocolVersion: 1,
+    });
+  });
+
+  it("refuses historical capability smoke that never qualified native safe-tool shortcuts", () => {
+    const cache: AdapterSmokeCacheRead = {
+      entries: {
+        claude: {
+          status: "ok",
+          checkedAt,
+          protocolVersion: 1,
+          capabilityEnforcement: {
+            status: "ok",
+            checkedAt,
+            protocolVersion: 1,
+          },
+        },
+      },
+      error: null,
+    };
+
+    expect(
+      smokeDiagnosticForAdapter("claude", cache).capabilityEnforcement,
+    ).toMatchObject({
+      status: "pending",
+      reason: expect.stringContaining("probe version"),
     });
   });
 

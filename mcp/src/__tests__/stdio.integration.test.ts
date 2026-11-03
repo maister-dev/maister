@@ -241,10 +241,11 @@ describe("MCP stdio wire contract", () => {
     const { tools } = await client.listTools();
 
     expect(
-      tools.map(({ name, description, inputSchema }) => ({
+      tools.map(({ name, description, inputSchema, annotations }) => ({
         name,
         description,
         inputSchema,
+        ...(annotations ? { annotations } : {}),
       })),
     ).toEqual(
       Object.entries(TOOL_SPECS).map(([name, spec]) => ({ name, ...spec })),

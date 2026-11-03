@@ -324,7 +324,11 @@ function refineMcpServerFields(
 }
 
 export const McpServerInputSchema = z
-  .object({ name: z.string().min(1).max(128), ...mcpServerFields })
+  .object({
+    name: z.string().min(1).max(128),
+    platformOrigin: z.literal("maister_facade").optional(),
+    ...mcpServerFields,
+  })
   .strict()
   .superRefine(refineMcpServerFields);
 

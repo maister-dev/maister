@@ -423,12 +423,25 @@ Run `smoke:acp claude --capability-enforcement --runner /path/to/runner.json --c
 with the installed runner's `RunnerLaunch` JSON (version, runnerId, adapter,
 capabilityAgent, model, provider and default permission policy). Provider secrets
 remain environment references. A runner file requires exactly its matching adapter.
-The probe creates an isolated working directory and a private MCP server with one
-empty `hitl_list` tool; it has no connection to the application's Inbox or Brain.
-Claude's local settings explicitly select default/ask permissions and the supplied
-model, rather than inheriting automatic host permissions. Each shell/MCP prompt
-must independently reach `requestPermission`; duplicate callbacks from another
-prompt cannot qualify it. Requests are denied without persisting permission rules.
+The probe creates an isolated working directory and a private MCP server with empty
+`hitl_list` and read-only `probe_read` tools; it has no connection to Inbox or Brain.
+Its four independently checked calls cover a write command, a benign shell command,
+and both MCP effect annotations. Each target tool must reach `requestPermission`
+within sixty seconds; duplicate callbacks or tool discovery cannot qualify it.
+ToolSearch alone is allowed once to discover the isolated MCP tools; target calls
+are denied without persisting permission rules. Claude governed sessions and probes
+receive host-owned inline `permissions.ask=["*"]` settings and disable permission
+bypass on both new and resumed sessions. Default mode alone does not arbitrate safe
+native tools. The same rule covers read-only sessions without a materialized project
+settings file. Capability smoke contract version 2 is stored in the private cache;
+older successful evidence becomes pending and requires a fresh ritual. The public
+diagnostic shape and historical run snapshots remain compatible.
+
+The manager stamps only its injected native MCP descriptor with optional private
+`platformOrigin=maister_facade`. This field never reaches ACP and cannot originate
+in an authored MCP catalog entry. It lets read-only sessions classify the native
+knowledge GET tools from the shared effect contract; endpoint source grants and
+strict capability guards still apply. Model/MCP annotations cannot grant authority.
 Capability prompts have a 60-second deadline; initialization/session creation keep
 the ten-second bound. A successful probe demonstrates these observed permission
 callbacks and identities, not completion of an application workflow or pilot.

@@ -118,7 +118,7 @@ describe("smoke ACP adapter CLI helpers", () => {
     });
   });
 
-  it("produces ok capability-enforcement evidence after write + MCP tool-identity probes (ADR-130)", async () => {
+  it("produces ok capability-enforcement evidence after write, safe shell and both MCP effect probes (ADR-130)", async () => {
     const binaryPath = await fixtureBinary(fixturePath, [
       "--require-capability-server",
     ]);
@@ -154,7 +154,8 @@ describe("smoke ACP adapter CLI helpers", () => {
 
     expect(result.capabilityEnforcement).toMatchObject({
       status: "error",
-      reason: "opencode capability probe did not reach requestPermission",
+      reason:
+        "opencode capability probe for mcp__maister__hitl_list did not reach requestPermission",
     });
   });
 

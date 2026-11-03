@@ -1,0 +1,101 @@
+{
+  "runId": "57a449ff-1ebd-41d4-b7a8-7396f4ff7921",
+  "httpStatus": 200,
+  "tools": [
+    {
+      "name": "mcp__maister__run_collect",
+      "status": "completed",
+      "denied": false
+    },
+    {
+      "name": "mcp__maister__run_collect",
+      "status": "completed",
+      "denied": false
+    },
+    {
+      "name": "Bash",
+      "status": "completed",
+      "commandVerb": "true",
+      "denied": false,
+      "resultPreview": "Idle while awaiting timer"
+    },
+    {
+      "name": "mcp__maister__run_collect",
+      "status": "completed",
+      "denied": false
+    },
+    {
+      "name": "Bash",
+      "status": "completed",
+      "commandVerb": "true",
+      "denied": false,
+      "resultPreview": "No-op awaiting background timer"
+    },
+    {
+      "name": "mcp__maister__run_collect",
+      "status": "completed",
+      "denied": false
+    },
+    {
+      "name": "Read",
+      "status": "failed",
+      "denied": false
+    },
+    {
+      "name": "Bash",
+      "status": "completed",
+      "commandVerb": "sleep",
+      "denied": false,
+      "resultPreview": "Wait 150s then notify to collect remaining child\n```console\nCommand running in background with ID: bdhadvb4y. Output is being written to: /private/tmp/claude-501/-private-var-folders-p3-lj5f1-ys6650hwvry91-qr2c0000gn-T-maister-test-worktrees-e2e-live-5ecd5e81-4862-445f-bbe7-c302bdf05f66-e2e-acceptance-scratch-57a449ff-1ebd-41d4-b7a8-7396f4ff7921/33"
+    },
+    {
+      "name": "mcp__maister__run_collect",
+      "status": "completed",
+      "denied": false
+    },
+    {
+      "name": "mcp__maister__run_collect",
+      "status": "completed",
+      "denied": false
+    },
+    {
+      "name": "Bash",
+      "status": "completed",
+      "commandVerb": "true",
+      "denied": false,
+      "resultPreview": "Idle awaiting timer notification"
+    },
+    {
+      "name": "mcp__maister__run_collect",
+      "status": "completed",
+      "denied": false
+    },
+    {
+      "name": "ToolSearch",
+      "status": "completed",
+      "denied": false
+    },
+    {
+      "name": "mcp__maister__run_collect",
+      "status": "completed",
+      "denied": false
+    },
+    {
+      "name": "mcp__maister__run_collect",
+      "status": "completed",
+      "denied": false
+    },
+    {
+      "name": "Bash",
+      "status": "completed",
+      "commandVerb": "true",
+      "denied": false,
+      "resultPreview": "No-op while awaiting timer"
+    },
+    {
+      "name": "mcp__maister__run_collect",
+      "status": "completed",
+      "denied": false
+    }
+  ]
+}

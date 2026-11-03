@@ -1,0 +1,42 @@
+$ vitest run --project unit --passWithNoTests
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.5 /Users/kaa/.codex/worktrees/2599/mAIster/supervisor
+
+ ❯ |unit| src/__tests__/cancel-route.test.ts (3 tests | 3 failed) 73ms
+   ❯ POST /sessions/:id/cancel (3)
+     × returns 404 for an unknown session 42ms
+     × acks cancelled:false for a session with no live turn 13ms
+     × fires session/cancel, releases pending permissions, and flags the record on a live session 18ms
+ ❯ |unit| src/__tests__/checkpoint.test.ts (6 tests | 3 failed) 66ms
+   ❯ POST /sessions/:id/checkpoint — direct route coverage (3)
+     × unknown session returns 404 PRECONDITION 37ms
+     × body with unknown keys returns 409 PRECONDITION 13ms
+     × already-exited session returns 200 with alreadyCheckpointed: true (idempotency) 12ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 6 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |unit| src/__tests__/cancel-route.test.ts > POST /sessions/:id/cancel > returns 404 for an unknown session
+ FAIL  |unit| src/__tests__/cancel-route.test.ts > POST /sessions/:id/cancel > acks cancelled:false for a session with no live turn
+ FAIL  |unit| src/__tests__/cancel-route.test.ts > POST /sessions/:id/cancel > fires session/cancel, releases pending permissions, and flags the record on a live session
+ FAIL  |unit| src/__tests__/checkpoint.test.ts > POST /sessions/:id/checkpoint — direct route coverage > unknown session returns 404 PRECONDITION
+ FAIL  |unit| src/__tests__/checkpoint.test.ts > POST /sessions/:id/checkpoint — direct route coverage > body with unknown keys returns 409 PRECONDITION
+ FAIL  |unit| src/__tests__/checkpoint.test.ts > POST /sessions/:id/checkpoint — direct route coverage > already-exited session returns 200 with alreadyCheckpointed: true (idempotency)
+Error: listen EPERM: operation not permitted 127.0.0.1
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/6]⎯
+
+
+ Test Files  2 failed | 48 passed (50)
+      Tests  6 failed | 494 passed (500)
+   Start at  00:24:07
+   Duration  14.04s (tests 79%, import 14%, transform 6%, worker 1%)
+
+[ELIFECYCLE] Command failed with exit code 1.

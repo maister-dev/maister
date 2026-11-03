@@ -3,6 +3,7 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
 import schemas from "../../runtime/knowledge-tool-input.schema.json";
+import { NATIVE_KNOWLEDGE_TOOL_EFFECTS } from "../../runtime/knowledge-tool-effects";
 
 export type KnowledgeToolName = keyof typeof schemas;
 const descriptions: Readonly<Record<KnowledgeToolName, string>> = {
@@ -36,6 +37,10 @@ export const KNOWLEDGE_TOOL_SPECS = Object.fromEntries(
     {
       description: descriptions[name as KnowledgeToolName],
       inputSchema: inputSchema as Tool["inputSchema"],
+      annotations: {
+        readOnlyHint:
+          NATIVE_KNOWLEDGE_TOOL_EFFECTS[name as KnowledgeToolName] === "read",
+      },
     },
   ]),
 );

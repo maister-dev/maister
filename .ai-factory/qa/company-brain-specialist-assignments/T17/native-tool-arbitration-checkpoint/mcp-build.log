@@ -1,0 +1,5 @@
+$ esbuild src/main.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/main.js
+
+  dist/main.js  112.3kb
+
+⚡ Done in 11ms

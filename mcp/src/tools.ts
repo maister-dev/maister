@@ -30,6 +30,7 @@ import {
 export type ToolSpec = {
   description: string;
   inputSchema: Tool["inputSchema"];
+  annotations?: Tool["annotations"];
 };
 
 export const TOOL_SPECS: Record<string, ToolSpec> = {

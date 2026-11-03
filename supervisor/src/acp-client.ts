@@ -9,8 +9,11 @@ import { randomUUID } from "node:crypto";
 
 import * as acp from "@agentclientprotocol/sdk/unstable";
 
+import { isNativeKnowledgeReadTool } from "../../runtime/knowledge-tool-effects";
+
 import { connectAcpClient, type AcpConnection } from "./acp-connection";
 import { readSessionModels, type SessionModelView } from "./session-models";
+import { claudeToolArbitrationMeta } from "./claude-tool-arbitration";
 import { boundedAcpStream, type BoundedAcpClient } from "./bounded-acp-stream";
 import {
   clientCapabilitiesForAdapter,
@@ -581,6 +584,27 @@ export async function createAcpConnection(
           args.mcpServers?.filter((server) => server.name === "maister") ?? [];
         const facade =
           maisterServers.length === 1 ? maisterServers[0] : undefined;
+        const identity = extractToolIdentity(tc);
+        const nativeRead =
+          facade?.platformOrigin === "maister_facade" &&
+          facade.transport === "stdio" &&
+          Boolean(
+            facade.env?.MAISTER_PROJECT_TOKEN &&
+            facade.env?.MAISTER_API_BASE_URL,
+          ) &&
+          identity.mcpServer === "maister" &&
+          identity.name !== null &&
+          isNativeKnowledgeReadTool(
+            identity.name.slice("mcp__maister__".length),
+          );
+        const discovery =
+          identity.name === "ToolSearch" && identity.mcpServer === null;
+        const readOnlyCall =
+          tc.kind === "other" &&
+          !tc.locations?.length &&
+          (nativeRead || discovery)
+            ? { ...tc, kind: "read" }
+            : tc;
         const controlPlaneDecision =
           record.agentKind === "operational" &&
           facade?.transport === "stdio" &&
@@ -593,7 +617,11 @@ export async function createAcpConnection(
           !tc.locations?.length;
         const sessionDecision = controlPlaneDecision
           ? null
-          : resolveReadOnlySessionDecision(record.readOnlySession, tc, options);
+          : resolveReadOnlySessionDecision(
+              record.readOnlySession,
+              readOnlyCall,
+              options,
+            );
 
         if (record.hookHalted) return { outcome: { outcome: "cancelled" } };
 
@@ -609,13 +637,16 @@ export async function createAcpConnection(
             {
               sessionId,
               toolKind: tc.kind,
+              toolName: identity.name,
+              nativeFacadeRead: nativeRead,
+              toolDiscovery: discovery,
               decision: sessionDecision.decision,
               optionId: sessionDecision.option?.optionId ?? null,
             },
-            "[read-only-session] permission arbitrated inline (L1)",
+            "[read-only-session] permission decision prepared (L1)",
           );
 
-          if (sessionDecision.option) {
+          if (sessionDecision.decision === "deny" && sessionDecision.option) {
             return {
               outcome: {
                 outcome: "selected",
@@ -624,7 +655,8 @@ export async function createAcpConnection(
             };
           }
 
-          return { outcome: { outcome: "cancelled" } };
+          if (sessionDecision.decision === "deny")
+            return { outcome: { outcome: "cancelled" } };
         }
 
         // M30 (ADR-078 L2): a mutating tool on a read-only gate-chat turn is
@@ -634,7 +666,7 @@ export async function createAcpConnection(
         // (--dangerously-skip-permissions never calls this) — hence L3.
         const autoReject = resolveReadOnlyAutoReject(
           record.readOnlyTurn,
-          tc,
+          readOnlyCall,
           options,
         );
 
@@ -917,6 +949,20 @@ export async function createAcpConnection(
           // pass_through (no strict class governs this call) → fall through unchanged.
         }
 
+        if (sessionDecision?.decision === "allow") {
+          logger.debug(
+            { sessionId, toolName: identity.name },
+            "read-only permission allowed after capability guards",
+          );
+
+          return {
+            outcome: {
+              outcome: "selected",
+              optionId: sessionDecision.option.optionId,
+            },
+          };
+        }
+
         // B1 (execution-policy permissions=auto_approve, L3): a session launched
         // with autoApprovePermissions auto-selects the allow option inline — BELOW
         // the read-only layers AND the guardrail interceptor (L1 / L2 / guardrails
@@ -1075,6 +1121,12 @@ export async function createAcpConnection(
     };
   });
 
+  const permissionMeta =
+    args.adapter === "claude" &&
+    (record.enforcementProfile || record.readOnlySession)
+      ? { _meta: claudeToolArbitrationMeta() }
+      : {};
+
   // Resume uses the ACP `session/resume` call: it restores the prior
   // conversation into the agent's context WITHOUT replaying history (ACP spec:
   // "the Agent MUST NOT replay the conversation history") — which is exactly
@@ -1098,6 +1150,7 @@ export async function createAcpConnection(
         timeoutMs: handshakeTimeoutMs,
         run: () =>
           connection.resumeSession({
+            ...permissionMeta,
             sessionId: resumeSessionId,
             cwd: worktreePath,
             mcpServers: acpMcpServers as acp.McpServer[],
@@ -1148,6 +1201,7 @@ export async function createAcpConnection(
     timeoutMs: handshakeTimeoutMs,
     run: () =>
       connection.newSession({
+        ...permissionMeta,
         cwd: worktreePath,
         mcpServers: acpMcpServers as acp.McpServer[],
       }),

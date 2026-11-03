@@ -23,6 +23,7 @@ const log = pino({
 // ephemeral agent token on the MCP facade entry).
 export type AgentMcpServer = {
   name: string;
+  platformOrigin?: "maister_facade";
   transport: "stdio" | "sse" | "http";
   command?: string;
   args?: string[];

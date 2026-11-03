@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { NATIVE_KNOWLEDGE_TOOL_EFFECTS } from "../../../runtime/knowledge-tool-effects";
+
 import {
   knowledgePageInputSchema,
   knowledgeSearchSchema,
@@ -44,3 +46,8 @@ export const knowledgeToolInputSchemas = {
     .extend({ recordId: postgresTextSchema.min(1).max(128) })
     .strict(),
 } as const;
+
+export const knowledgeToolEffects =
+  NATIVE_KNOWLEDGE_TOOL_EFFECTS satisfies Readonly<
+    Record<keyof typeof knowledgeToolInputSchemas, "read" | "write">
+  >;

@@ -1,0 +1,23 @@
+$ vitest run --project integration --passWithNoTests
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.5 /Users/kaa/.codex/worktrees/2599/mAIster/supervisor
+
+Preparing worktree (detached HEAD eebce4b)
+[mock-resumable] info {"msg":"new-session","acpSessionId":"mock-c8f67596-bab9-4757-afef-7e98d7da3723"}
+[mock-resumable] info {"msg":"resume-session","acpSessionId":"mock-c8f67596-bab9-4757-afef-7e98d7da3723","hasPending":true}
+[mock-resumable] info {"msg":"replaying-permission","acpSessionId":"mock-c8f67596-bab9-4757-afef-7e98d7da3723","toolCallId":"tc-1"}
+
+ Test Files  37 passed (37)
+      Tests  345 passed (345)
+   Start at  00:27:10
+   Duration  18.44s (tests 97%, import 3%, transform 1%)
+

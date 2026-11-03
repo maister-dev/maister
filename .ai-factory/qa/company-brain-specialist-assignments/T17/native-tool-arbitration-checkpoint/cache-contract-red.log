@@ -1,0 +1,50 @@
+$ vitest run --project unit --passWithNoTests src/__tests__/adapter-smoke-cache.test.ts -t 'historical capability smoke'
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.5 /Users/kaa/.codex/worktrees/2599/mAIster/supervisor
+
+ ❯ |unit| src/__tests__/adapter-smoke-cache.test.ts (20 tests | 1 failed | 19 skipped) 5ms
+   ❯ adapter smoke diagnostics (20)
+     × refuses historical capability smoke that never qualified native safe-tool shortcuts 5ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |unit| src/__tests__/adapter-smoke-cache.test.ts > adapter smoke diagnostics > refuses historical capability smoke that never qualified native safe-tool shortcuts
+AssertionError: expected { status: 'ok', reason: null, …(2) } to match object { status: 'pending', …(1) }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "reason": StringContaining "probe version",
+-   "status": "pending",
++   "reason": null,
++   "status": "ok",
+  }
+
+ ❯ src/__tests__/adapter-smoke-cache.test.ts:305:78
+    303|     } }, error: null };
+    304|
+    305|     expect(smokeDiagnosticForAdapter("claude", cache).capabilityEnforc…
+       |                                                                              ^
+    306|       status: "pending", reason: expect.stringContaining("probe versio…
+    307|     });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 19 skipped (20)
+   Start at  00:10:04
+   Duration  112ms (import 53%, transform 34%, tests 10%, worker 3%)
+
+[ELIFECYCLE] Command failed with exit code 1.

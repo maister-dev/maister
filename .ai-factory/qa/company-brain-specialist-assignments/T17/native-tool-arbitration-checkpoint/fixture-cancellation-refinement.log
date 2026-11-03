@@ -1,0 +1,157 @@
+$ vitest run --project integration --passWithNoTests src/__tests__/guardrail-interceptor.integration.test.ts -t 'read-only native knowledge|forces native permission shortcuts'
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.5 /Users/kaa/.codex/worktrees/2599/mAIster/supervisor
+
+ ❯ |integration| src/__tests__/guardrail-interceptor.integration.test.ts (24 tests | 1 failed | 19 skipped) 551ms
+   ❯ capability_guard interceptor (ADR-130) (14)
+     × read-only native knowledge keeps source identity and strict scope: {"origin":true,"strict":true,"decisions":["allow","reject","reject","reject"]} 103ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |integration| src/__tests__/guardrail-interceptor.integration.test.ts > capability_guard interceptor (ADR-130) > read-only native knowledge keeps source identity and strict scope: {"origin":true,"strict":true,"decisions":["allow","reject","reject","reject"]}
+AssertionError: expected [ …(12) ] to deep equally contain ObjectContaining{…}
+
+- Expected:
+ObjectContaining {
+  "type": "session.update",
+  "update": ObjectContaining {
+    "rawOutput": {
+      "nativeDecisions": [
+        "allow",
+        "reject",
+        "reject",
+        "reject",
+      ],
+    },
+  },
+}
+
++ Received:
+[
+  {
+    "line": "{\"jsonrpc\":\"2.0\",\"id\":0,\"result\":{\"protocolVersion\":1,\"agentCapabilities\":{\"promptCapabilities\":{},\"sessionCapabilities\":{\"resume\":{}}}}}",
+    "monotonicId": 1,
+    "sessionId": "db600d40-3feb-4ffb-8504-fe94416ba4c9",
+    "type": "session.line",
+  },
+  {
+    "line": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"sessionId\":\"mock-5c71a8ea-6223-49fe-a909-7223f3d78e10\"}}",
+    "monotonicId": 2,
+    "sessionId": "db600d40-3feb-4ffb-8504-fe94416ba4c9",
+    "type": "session.line",
+  },
+  {
+    "commandId": "354ade5b-2829-4845-b2fb-8fa6f6c17f91",
+    "kind": "session.prompt",
+    "monotonicId": 3,
+    "phase": "accepted",
+    "sessionId": "db600d40-3feb-4ffb-8504-fe94416ba4c9",
+    "type": "session.command",
+  },
+  {
+    "line": "{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"session/request_permission\",\"params\":{\"sessionId\":\"mock-5c71a8ea-6223-49fe-a909-7223f3d78e10\",\"toolCall\":{\"toolCallId\":\"tc-native-read-0\",\"kind\":\"other\",\"title\":\"ToolSearch\"},\"options\":[{\"optionId\":\"allow\",\"kind\":\"allow_once\",\"name\":\"Allow\"},{\"optionId\":\"reject\",\"kind\":\"reject_once\",\"name\":\"Reject\"}]}}",
+    "monotonicId": 4,
+    "sessionId": "db600d40-3feb-4ffb-8504-fe94416ba4c9",
+    "type": "session.line",
+  },
+  {
+    "line": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"session/request_permission\",\"params\":{\"sessionId\":\"mock-5c71a8ea-6223-49fe-a909-7223f3d78e10\",\"toolCall\":{\"toolCallId\":\"tc-native-read-1\",\"kind\":\"other\",\"title\":\"mcp__maister__knowledge_get\"},\"options\":[{\"optionId\":\"allow\",\"kind\":\"allow_once\",\"name\":\"Allow\"},{\"optionId\":\"reject\",\"kind\":\"reject_once\",\"name\":\"Reject\"}]}}",
+    "monotonicId": 5,
+    "sessionId": "db600d40-3feb-4ffb-8504-fe94416ba4c9",
+    "type": "session.line",
+  },
+  {
+    "disposition": "deny",
+    "lifecycle": "pre_tool_call",
+    "monotonicId": 6,
+    "rule": "capability_guard",
+    "sessionId": "db600d40-3feb-4ffb-8504-fe94416ba4c9",
+    "toolCall": {
+      "kind": "other",
+      "title": "mcp__maister__knowledge_get",
+      "toolCallId": "tc-native-read-1",
+    },
+    "type": "session.hook_trip",
+  },
+  {
+    "line": "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"session/request_permission\",\"params\":{\"sessionId\":\"mock-5c71a8ea-6223-49fe-a909-7223f3d78e10\",\"toolCall\":{\"toolCallId\":\"tc-native-read-2\",\"kind\":\"other\",\"title\":\"mcp__maister__knowledge_propose\"},\"options\":[{\"optionId\":\"allow\",\"kind\":\"allow_once\",\"name\":\"Allow\"},{\"optionId\":\"reject\",\"kind\":\"reject_once\",\"name\":\"Reject\"}]}}",
+    "monotonicId": 7,
+    "sessionId": "db600d40-3feb-4ffb-8504-fe94416ba4c9",
+    "type": "session.line",
+  },
+  {
+    "line": "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"session/request_permission\",\"params\":{\"sessionId\":\"mock-5c71a8ea-6223-49fe-a909-7223f3d78e10\",\"toolCall\":{\"toolCallId\":\"tc-native-read-3\",\"kind\":\"other\",\"title\":\"mcp__foreign__knowledge_get\"},\"options\":[{\"optionId\":\"allow\",\"kind\":\"allow_once\",\"name\":\"Allow\"},{\"optionId\":\"reject\",\"kind\":\"reject_once\",\"name\":\"Reject\"}]}}",
+    "monotonicId": 8,
+    "sessionId": "db600d40-3feb-4ffb-8504-fe94416ba4c9",
+    "type": "session.line",
+  },
+  {
+    "line": "{\"jsonrpc\":\"2.0\",\"method\":\"session/update\",\"params\":{\"sessionId\":\"mock-5c71a8ea-6223-49fe-a909-7223f3d78e10\",\"update\":{\"sessionUpdate\":\"tool_call_update\",\"toolCallId\":\"tc-native-read-outcomes\",\"status\":\"completed\",\"rawOutput\":{\"nativeDecisions\":[\"allow\",\"cancelled\",\"reject\",\"reject\"]}}}}",
+    "monotonicId": 9,
+    "sessionId": "db600d40-3feb-4ffb-8504-fe94416ba4c9",
+    "type": "session.line",
+  },
+  {
+    "monotonicId": 10,
+    "sessionId": "db600d40-3feb-4ffb-8504-fe94416ba4c9",
+    "type": "session.update",
+    "update": {
+      "rawOutput": {
+        "nativeDecisions": [
+          "allow",
+          "cancelled",
+          "reject",
+          "reject",
+        ],
+      },
+      "sessionUpdate": "tool_call_update",
+      "status": "completed",
+      "toolCallId": "tc-native-read-outcomes",
+    },
+  },
+  {
+    "line": "{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"stopReason\":\"end_turn\"}}",
+    "monotonicId": 11,
+    "sessionId": "db600d40-3feb-4ffb-8504-fe94416ba4c9",
+    "type": "session.line",
+  },
+  {
+    "commandId": "354ade5b-2829-4845-b2fb-8fa6f6c17f91",
+    "kind": "session.prompt",
+    "monotonicId": 12,
+    "phase": "completed",
+    "result": {
+      "stopReason": "end_turn",
+    },
+    "sessionId": "db600d40-3feb-4ffb-8504-fe94416ba4c9",
+    "status": "succeeded",
+    "type": "session.command",
+  },
+]
+
+ ❯ src/__tests__/guardrail-interceptor.integration.test.ts:415:53
+    413|     await sendPrompt(host, sessionId);
+    414|
+    415|     expect(host.registry.snapshotEvents(sessionId)).toContainEqual(exp…
+       |                                                     ^
+    416|       type: "session.update", update: expect.objectContaining({ rawOut…
+    417|     }));
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 4 passed | 19 skipped (24)
+   Start at  00:21:45
+   Duration  764ms (tests 77%, import 15%, transform 8%)
+
+[ELIFECYCLE] Command failed with exit code 1.

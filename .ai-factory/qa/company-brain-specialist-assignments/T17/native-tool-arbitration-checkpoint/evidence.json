@@ -1,0 +1,319 @@
+{
+  "schemaVersion": 1,
+  "task": "T17",
+  "checkpoint": "native-tool-arbitration-checkpoint",
+  "platformBase": "a3b89e5891173f6e628d636ec6d48ed99f3cb113",
+  "status": "platform arbitration qualified; T16/T17 actual package outcome remains open",
+  "red": [
+    "Actual locally tagged rah/v1.0.0 root executed benign shell wait commands despite its declared strict no-shell profile. The synthetic qualification was cancelled through the supported abandon API (200 Abandoned), and the lane reported zero leaked processes.",
+    "Pinned Claude 0.95.0 direct probe executed Bash true with zero permission callbacks under native default mode.",
+    "The production supervisor wire shortcut test and historical smoke-cache eligibility test failed before their implementation.",
+    "Native read-only facade cases failed before private origin/effect classification and deferred read approval were implemented."
+  ],
+  "implementation": [
+    "Host-owned inline Claude ask rules cover new/resumed governed and read-only sessions; bypass is disabled.",
+    "Four independent expected-target probes cover writes, benign shell, ordinary MCP and read-only MCP. ToolSearch is allowed once only for discovery and cannot qualify a target probe.",
+    "Private smoke contract version 2 invalidates historical write-only success as pending without changing public diagnostic shape.",
+    "Only manager-stamped unique stdio native facade descriptors use the closed shared knowledge effect contract. Catalog mapping drops the private marker; ACP receives no marker. Endpoint current grants remain authoritative.",
+    "Read-only approval follows strict capability guards; knowledge mutations and unmarked/foreign tools remain refused. No new migration, scheduler or ledger."
+  ],
+  "green": {
+    "supervisorUnit": {
+      "tests": 500,
+      "files": 50,
+      "exitCode": 0
+    },
+    "supervisorIntegration": {
+      "tests": 345,
+      "files": 37,
+      "exitCode": 0
+    },
+    "finalOwningWire": {
+      "tests": 24,
+      "overlapsFullIntegration": true,
+      "exitCode": 0
+    },
+    "webUnit": {
+      "tests": 9261,
+      "files": 886,
+      "exitCode": 0
+    },
+    "webOwningIntegration": {
+      "tests": 16,
+      "files": 2,
+      "exitCode": 0
+    },
+    "mcpUnit": {
+      "tests": 402,
+      "files": 6,
+      "exitCode": 0
+    },
+    "mcpStdio": {
+      "tests": 8,
+      "files": 1,
+      "exitCode": 0
+    },
+    "pinnedRealClaudeFourProbe": 0,
+    "typecheckAllThreeTiers": 0,
+    "lintAllChangedTiers": 0,
+    "contractsAndMirrors": 0,
+    "docsAnd164TableErd": 0,
+    "mcpBuild": 0,
+    "standaloneProbeServerTypecheck": 0
+  },
+  "refinements": [
+    "The first full supervisor unit invocation failed six localhost socket tests under the sandbox; the unchanged escalated full suite passed.",
+    "The strict native-read fixture expected a selected reject option; the existing strict guard returns cancelled. The corrected expectation still requires the denial hook and prevents execution."
+  ],
+  "limits": [
+    "The actual tagged package has not completed depth-1/depth-2 reduction or write-back; no CB0/pilot readiness is claimed.",
+    "Only the full web unit suite and owning web integration suites were repeated here. The preceding full web integration phase remains recorded in T15.",
+    "The real qualification source was a local immutable Git tag via the real Git loader and a scoped standard URL rewrite, not a published remote release.",
+    "All live corpus data was generated in a fresh owned test database and temporary repository; no existing Brain or private repository data was an input.",
+    "Structured logging received a final wording/DEBUG-only update followed by the 24 owning wire checks; earlier full supervisor gates exercised the same permission decisions."
+  ],
+  "sourceSha256": {
+    "docs/api/supervisor.openapi.yaml": "7a28a84a4d5fbeb40c5d580c89f0615a23764b932a3b6671e7e039419dfdd8a9",
+    "docs/decisions/adr-130.md": "b02bfd1bd8b102f9091e58857f8b633148af69bfbc2d0fc351230d89cd8f6cd9",
+    "docs/supervisor.md": "32661c14a89db1c11223e3d38e53b97282347f335eca1c51b2ff5db9bff6faa4",
+    "docs/system-analytics/guardrail-hooks.md": "7188459f7058619e76f5ab4b2c510f6ef816f2d6c9fba76b2c241c98bbdcdbd7",
+    "mcp/src/__tests__/stdio.integration.test.ts": "684be52b1a9356f3cc369efb8149cb2ec183c72a79ba244b41dd43a1695fa718",
+    "mcp/src/__tests__/tool-contract.test.ts": "51f3eba947ad2e3cfd4efe545164b48386ef3aa869398397aba2e49ba174ac8e",
+    "mcp/src/knowledge-tools.ts": "06da3485af9d7afded93cb98b406ca57e4f07ad22fc593a7d6bbfb55bc1b0d38",
+    "mcp/src/tools.ts": "f9dc3456ae17232de05c3f543eee3862993a1bed8deec0c0090f6d3503662ca5",
+    "supervisor/scripts/smoke-acp-adapter.ts": "dff0a42488a7f2df3a02665afbfe702d03dc66b89b0662159420725ed7f3225a",
+    "supervisor/scripts/smoke-capability-server.ts": "9f51ab2f78a5dc57288c708a0ad5d11e66464b88783ea75169638f8bebc26c96",
+    "supervisor/src/__tests__/adapter-smoke-cache.test.ts": "f55a374fcd99728050685c9f4741ce695abd614a53b1bee8b786a7e42b3250c9",
+    "supervisor/src/__tests__/guardrail-interceptor.integration.test.ts": "4cced7e31b2bc9c134d195549e53fc3a8bb9797c55b6dbf74161c02561a9c581",
+    "supervisor/src/__tests__/smoke-acp-adapter-script.test.ts": "9b0dcd8596947685179f7146ed5e5267de5fc7d23537c497c3f077495044e6fb",
+    "supervisor/src/acp-client.ts": "c95760ef70fcb79bec0f922d51e36bcd8e97927e2f41e1378b5a01390e4e71c2",
+    "supervisor/src/adapter-smoke-cache.ts": "ce800d63716726d7476085d7af1e3f197955ef5c7410e2e332a0626369471743",
+    "supervisor/src/types.ts": "f2d17c22a50efb0294638f68789e9c6321c7df1dbe9ea406391b80d00ad5acf2",
+    "supervisor/test/fixtures/mock-acp-guardrail.mjs": "af37359809c9cd9b701191ff5160f10b5d71432d722274e58b15e282979c4f2a",
+    "web/lib/agents/launch.ts": "1ade5c82ef810975eee263d15cfbb62ff2c88936fe4a14b45b42ee0fa4942f2a",
+    "web/lib/brain/knowledge-tool-contract.ts": "0166f79c096828ddd9250f9a594f8ed76d51f7b2c86ca51937a7a743e9b71891",
+    "web/lib/capabilities/__tests__/agent-map.test.ts": "2cbfd825a0fd0d2403f3ac18d53480cc0c271a0677bc61c91c259388d2a97444",
+    "web/lib/capabilities/agent-map.ts": "0f198820d2bbc6b5bb241ad7b6183c5f017e051d7f0f1346521c739dd86ba245",
+    "runtime/knowledge-tool-effects.ts": "852d6c84624422d532a30abbc8112ab8582d0b353bc9644da730f4e1f60cce92",
+    "supervisor/src/claude-tool-arbitration.ts": "39513e0d2dd83b863598f31c2cbbceff0fa5e1bc1b94cbe4d8e8b1c584103a9b"
+  },
+  "logs": [
+    {
+      "name": "live-strict-run-refused.log",
+      "originalBytes": 24913,
+      "originalSha256": "c4a7125e981f8c8a1ab2f7f282e604bed7afb1068b20d00ab6805134eb0788f2",
+      "path": "live-strict-run-refused.log",
+      "bytes": 24913,
+      "sha256": "c4a7125e981f8c8a1ab2f7f282e604bed7afb1068b20d00ab6805134eb0788f2"
+    },
+    {
+      "name": "live-shell-attempts.json",
+      "originalBytes": 2513,
+      "originalSha256": "dfce1db28dc4303e59bc122c35e297860df7a2536bf2fe5a25725aed3871c36f",
+      "path": "live-shell-attempts.json",
+      "bytes": 2513,
+      "sha256": "dfce1db28dc4303e59bc122c35e297860df7a2536bf2fe5a25725aed3871c36f"
+    },
+    {
+      "name": "real-safe-shell-red.log",
+      "originalBytes": 873,
+      "originalSha256": "fb413526c16ec2a13c68e2194536542065234e34120d0ef31a860ad63f7eb169",
+      "path": "real-safe-shell-red.log",
+      "bytes": 873,
+      "sha256": "fb413526c16ec2a13c68e2194536542065234e34120d0ef31a860ad63f7eb169"
+    },
+    {
+      "name": "wire-arbitration-red.log",
+      "originalBytes": 2681,
+      "originalSha256": "a548b639d2e70c8348fc36229665079792cec0a7c1b90de541962e9c10c3b4e0",
+      "path": "wire-arbitration-red.log",
+      "bytes": 2681,
+      "sha256": "a548b639d2e70c8348fc36229665079792cec0a7c1b90de541962e9c10c3b4e0"
+    },
+    {
+      "name": "cache-contract-red.log",
+      "originalBytes": 2606,
+      "originalSha256": "6c288d8bc530bdaf39ad74a74c6ac4b4aeafb95deac1db62a5b946aac66cacbe",
+      "path": "cache-contract-red.log",
+      "bytes": 2606,
+      "sha256": "6c288d8bc530bdaf39ad74a74c6ac4b4aeafb95deac1db62a5b946aac66cacbe"
+    },
+    {
+      "name": "native-read-authority-red.log",
+      "originalBytes": 8546,
+      "originalSha256": "f240b3ec3a9e5babafd111e4d077b29b7f7f0f57e96373a53c8fc3d0d8f2b0c8",
+      "path": "native-read-authority-red.log",
+      "bytes": 8546,
+      "sha256": "f240b3ec3a9e5babafd111e4d077b29b7f7f0f57e96373a53c8fc3d0d8f2b0c8"
+    },
+    {
+      "name": "fixture-cancellation-refinement.log",
+      "originalBytes": 7541,
+      "originalSha256": "76a3652193c99329eaf26c5b998c5311e19a0e0ae9410e0053e66a12d72af4c1",
+      "path": "fixture-cancellation-refinement.log",
+      "bytes": 7541,
+      "sha256": "76a3652193c99329eaf26c5b998c5311e19a0e0ae9410e0053e66a12d72af4c1"
+    },
+    {
+      "name": "native-read-authority-green.log",
+      "originalBytes": 1395,
+      "originalSha256": "1e27ee93f0749142cd1adfe222cdeac679eb52e250bfa45c2aa0cb52c6a34cac",
+      "path": "native-read-authority-green.log",
+      "bytes": 1395,
+      "sha256": "1e27ee93f0749142cd1adfe222cdeac679eb52e250bfa45c2aa0cb52c6a34cac"
+    },
+    {
+      "name": "real-four-probe-green.log",
+      "originalBytes": 464,
+      "originalSha256": "a9947491ede2a57092c5541744d17a60a9166f694b6203474cf97ee04a3ee694",
+      "path": "real-four-probe-green.log",
+      "bytes": 464,
+      "sha256": "a9947491ede2a57092c5541744d17a60a9166f694b6203474cf97ee04a3ee694"
+    },
+    {
+      "name": "supervisor-unit-sandbox-refusal.log",
+      "originalBytes": 3115,
+      "originalSha256": "682f7e3ae41309c8f89698db86cbf4cb1e21e4e784d2a24032d3f4d61bffc801",
+      "path": "supervisor-unit-sandbox-refusal.log",
+      "bytes": 3115,
+      "sha256": "682f7e3ae41309c8f89698db86cbf4cb1e21e4e784d2a24032d3f4d61bffc801"
+    },
+    {
+      "name": "supervisor-unit-green.log",
+      "originalBytes": 1269,
+      "originalSha256": "f03e6ca7c38eef033a8d1a58f123c67859e9ea2b839a03f46f280efab49018ec",
+      "path": "supervisor-unit-green.log",
+      "bytes": 1269,
+      "sha256": "f03e6ca7c38eef033a8d1a58f123c67859e9ea2b839a03f46f280efab49018ec"
+    },
+    {
+      "name": "supervisor-integration-green.log",
+      "originalBytes": 1666,
+      "originalSha256": "abe561f43d1823f99bcec419ba7515e3a61244f0cfd3f1ad8287abcfc863f7c8",
+      "path": "supervisor-integration-green.log",
+      "bytes": 1666,
+      "sha256": "abe561f43d1823f99bcec419ba7515e3a61244f0cfd3f1ad8287abcfc863f7c8"
+    },
+    {
+      "name": "final-owning-green.log",
+      "originalBytes": 1315,
+      "originalSha256": "dc52781050132f28933da0b9dccc36a766f38e58a511e3331a13178899973031",
+      "path": "final-owning-green.log",
+      "bytes": 1315,
+      "sha256": "dc52781050132f28933da0b9dccc36a766f38e58a511e3331a13178899973031"
+    },
+    {
+      "name": "web-unit-green.log",
+      "originalBytes": 525041,
+      "originalSha256": "38c804192c9bf179945caf5d274948cdaefcfa8d4b4c0bbe3b3f7d5b76c282c3",
+      "encoding": "gzip",
+      "path": "web-unit-green.log.gz",
+      "bytes": 45800,
+      "sha256": "1ca2bf4dc42a188dd684593b3326bf33b58fdf7c3564a393617e7feec97bb0ea"
+    },
+    {
+      "name": "web-owning-green.log",
+      "originalBytes": 76074,
+      "originalSha256": "95a08055e93d7bbbabece845b9296eb4785a9602e5aa24a916d7fbcfcee23d66",
+      "path": "web-owning-green.log",
+      "bytes": 76074,
+      "sha256": "95a08055e93d7bbbabece845b9296eb4785a9602e5aa24a916d7fbcfcee23d66"
+    },
+    {
+      "name": "mcp-unit-green.log",
+      "originalBytes": 1260,
+      "originalSha256": "d181532a9dafaaf93b146803719e9a78878fc0a426479f335a859b36c73770bc",
+      "path": "mcp-unit-green.log",
+      "bytes": 1260,
+      "sha256": "d181532a9dafaaf93b146803719e9a78878fc0a426479f335a859b36c73770bc"
+    },
+    {
+      "name": "mcp-stdio-green.log",
+      "originalBytes": 1251,
+      "originalSha256": "f28958d9e57da3d30e2dd564f895fd5ed780b9111239d8cb0d49867ebd1017ba",
+      "path": "mcp-stdio-green.log",
+      "bytes": 1251,
+      "sha256": "f28958d9e57da3d30e2dd564f895fd5ed780b9111239d8cb0d49867ebd1017ba"
+    },
+    {
+      "name": "mcp-build.log",
+      "originalBytes": 146,
+      "originalSha256": "defe1b3a3e6a596185a38ad45c6bd88454e98e4b777a93cdcc943c9f311cde64",
+      "path": "mcp-build.log",
+      "bytes": 146,
+      "sha256": "defe1b3a3e6a596185a38ad45c6bd88454e98e4b777a93cdcc943c9f311cde64"
+    },
+    {
+      "name": "supervisor-typecheck.log",
+      "originalBytes": 15,
+      "originalSha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92",
+      "path": "supervisor-typecheck.log",
+      "bytes": 15,
+      "sha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+    },
+    {
+      "name": "web-typecheck.log",
+      "originalBytes": 0,
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "path": "web-typecheck.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "supervisor-lint.log",
+      "originalBytes": 0,
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "path": "supervisor-lint.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "contracts.log",
+      "originalBytes": 2488,
+      "originalSha256": "85383d7a691cd7338101f4008ce7487985f7009db20de93bb1ceae3954f9c715",
+      "path": "contracts.log",
+      "bytes": 2488,
+      "sha256": "85383d7a691cd7338101f4008ce7487985f7009db20de93bb1ceae3954f9c715"
+    },
+    {
+      "name": "docs.log",
+      "originalBytes": 683,
+      "originalSha256": "9cd88f6253db5acf09e46133a9e93479b4bd0beb428e7d83ad6a172c58ea3c59",
+      "path": "docs.log",
+      "bytes": 683,
+      "sha256": "9cd88f6253db5acf09e46133a9e93479b4bd0beb428e7d83ad6a172c58ea3c59"
+    },
+    {
+      "name": "web-lint.log",
+      "originalBytes": 0,
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "path": "web-lint.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "mcp-lint.log",
+      "originalBytes": 0,
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "path": "mcp-lint.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "mcp-typecheck.log",
+      "originalBytes": 15,
+      "originalSha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92",
+      "path": "mcp-typecheck.log",
+      "bytes": 15,
+      "sha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+    },
+    {
+      "name": "probe-server-typecheck.log",
+      "originalBytes": 0,
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "path": "probe-server-typecheck.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ]
+}

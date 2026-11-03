@@ -3266,6 +3266,14 @@ components:
               minLength: 1
               maxLength: 128
               description: Capability ref id, the server's name on the ACP wire.
+            platformOrigin:
+              type: string
+              enum: [maister_facade]
+              description: >-
+                Private manager attestation for its injected native facade.
+                Catalog definitions cannot set this field. It permits classification
+                of known native read tools; it grants no source access or mutation
+                authority and is stripped before the ACP MCP descriptor is sent.
         - $ref: "#/components/schemas/McpServerFields"
       description: |
         One gated MCP catalog entry on `POST /sessions`. `additionalProperties`

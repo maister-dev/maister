@@ -3842,6 +3842,7 @@ export function agentFacadeMcpServer(
 
   return {
     name: "maister",
+    platformOrigin: "maister_facade",
     transport: "stdio",
     command: launch.command,
     args: launch.args,

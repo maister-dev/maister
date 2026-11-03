@@ -49,11 +49,18 @@ class GuardrailAgent {
   async initialize() {
     return {
       protocolVersion: acp.PROTOCOL_VERSION,
-      agentCapabilities: { promptCapabilities: {} },
+      agentCapabilities: {
+        promptCapabilities: {},
+        sessionCapabilities: { resume: {} },
+      },
     };
   }
 
-  async newSession() {
+  async newSession(params) {
+    this.forcePermissionChecks =
+      params._meta?.claudeCode?.options?.settings?.permissions?.ask?.includes(
+        "*",
+      ) === true;
     return { sessionId: `mock-${randomUUID()}` };
   }
 
@@ -61,7 +68,11 @@ class GuardrailAgent {
     return {};
   }
 
-  async resumeSession() {
+  async resumeSession(params) {
+    this.forcePermissionChecks =
+      params._meta?.claudeCode?.options?.settings?.permissions?.ask?.includes(
+        "*",
+      ) === true;
     return {};
   }
 
@@ -154,6 +165,7 @@ class GuardrailAgent {
     });
 
     this.outcomes.push(res.outcome.outcome);
+    return res.outcome;
   }
 
   // ADR-130 D5: the real claude ordering for an ARBITRATED write — the pending
@@ -338,26 +350,110 @@ class GuardrailAgent {
       for (let i = 0; i < count - 1; i += 1) {
         await this.idleTurn(sessionId, `tc-npr-b-${i}`);
       }
+    } else if (scenario === "native_permission_shortcut") {
+      if (this.forcePermissionChecks) {
+        await this.requestTool(
+          sessionId,
+          "Bash",
+          "tc-native-shortcut",
+          "execute",
+        );
+      } else {
+        await this.connection.sessionUpdate({
+          sessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "tc-native-shortcut",
+            kind: "execute",
+            title: "Bash",
+            status: "pending",
+          },
+        });
+        await this.connection.sessionUpdate({
+          sessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "tc-native-shortcut",
+            status: "completed",
+          },
+        });
+      }
+    } else if (scenario === "read_only_native_knowledge") {
+      const decisions = [];
+
+      for (const [index, name] of [
+        "ToolSearch",
+        "mcp__maister__knowledge_get",
+        "mcp__maister__knowledge_propose",
+        "mcp__foreign__knowledge_get",
+      ].entries()) {
+        const outcome = await this.requestTool(
+          sessionId,
+          name,
+          `tc-native-read-${index}`,
+          "other",
+        );
+
+        decisions.push(
+          outcome.outcome === "selected" ? outcome.optionId : "cancelled",
+        );
+      }
+      await this.connection.sessionUpdate({
+        sessionId,
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "tc-native-read-outcomes",
+          status: "completed",
+          rawOutput: { nativeDecisions: decisions },
+        },
+      });
     } else if (scenario === "capability_allow") {
       // One in-profile tool call (name in the tools allow-list) → auto-allowed.
       await this.requestTool(sessionId, "Read", "tc-cap-allow");
     } else if (scenario === "capability_permission_delta") {
-      const pending = (id, owner) => ({ sessionId: owner, update: {
-        sessionUpdate: "tool_call", toolCallId: id, title: "Read", kind: "read", status: "pending",
-        _meta: { claudeCode: { toolName: "Read" } },
-      }});
-      const completed = id => ({ sessionId, update: {
-        sessionUpdate: "tool_call_update", toolCallId: id, status: "completed",
-      }});
+      const pending = (id, owner) => ({
+        sessionId: owner,
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: id,
+          title: "Read",
+          kind: "read",
+          status: "pending",
+          _meta: { claudeCode: { toolName: "Read" } },
+        },
+      });
+      const completed = (id) => ({
+        sessionId,
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: id,
+          status: "completed",
+        },
+      });
 
       for (const [id, notifications] of [
         ["tc-delta-own", [pending("tc-delta-own", sessionId)]],
         ["tc-delta-foreign", [pending("tc-delta-foreign", "foreign-session")]],
-        ["tc-delta-terminal", [pending("tc-delta-terminal", sessionId), completed("tc-delta-terminal")]],
-        ["tc-delta-evicted", [pending("tc-delta-evicted", sessionId), ...Array.from({length:32},(_, index) => pending(`tc-delta-bound-${index}`, sessionId))]],
+        [
+          "tc-delta-terminal",
+          [
+            pending("tc-delta-terminal", sessionId),
+            completed("tc-delta-terminal"),
+          ],
+        ],
+        [
+          "tc-delta-evicted",
+          [
+            pending("tc-delta-evicted", sessionId),
+            ...Array.from({ length: 32 }, (_, index) =>
+              pending(`tc-delta-bound-${index}`, sessionId),
+            ),
+          ],
+        ],
         ["tc-delta-bound-31", []],
       ]) {
-        for (const notification of notifications) await this.connection.sessionUpdate(notification);
+        for (const notification of notifications)
+          await this.connection.sessionUpdate(notification);
         const response = await this.connection.requestPermission({
           sessionId,
           toolCall: { toolCallId: id, title: "Read a controlled file" },

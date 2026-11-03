@@ -580,6 +580,11 @@ describe("TOOL_SPECS ↔ external OpenAPI contract", () => {
       const op = openapi.paths[path]?.[method];
 
       expect(op, `${tool} → ${method.toUpperCase()} ${path}`).toBeDefined();
+      if (tool.startsWith("knowledge_"))
+        expect(
+          TOOL_SPECS[tool].annotations?.readOnlyHint,
+          `${tool} effect`,
+        ).toBe(method === "get");
     }
   });
 

@@ -5,7 +5,7 @@
 // non-tripping permission requests auto-approve via B1 — yet guardrails still
 // deny/halt, proving the interceptor runs BEFORE B1 (not bypassed by auto-approve).
 
-import type { SessionEvent } from "../types";
+import type { SessionEvent, McpServerInput } from "../types";
 import type { Logger } from "pino";
 
 import pino from "pino";
@@ -48,6 +48,9 @@ type SessionOpts = {
   readOnlySession?: boolean;
   enforcementProfile?: unknown;
   autoApprovePermissions?: boolean;
+  resumeSessionId?: string;
+  readOnlySession?: boolean;
+  mcpServers?: McpServerInput[];
   // The directory adopted as the session workspace (cwd + path-guard root).
   cwd: string;
 };
@@ -68,7 +71,11 @@ async function createSession(
       fenceFor(host, RUN_ID),
       createBody(handle, {
         autoApprovePermissions: opts.autoApprovePermissions ?? true,
+        ...(opts.resumeSessionId
+          ? { resumeSessionId: opts.resumeSessionId }
+          : {}),
         ...(opts.readOnlySession ? { readOnlySession: true } : {}),
+        ...(opts.mcpServers ? { mcpServers: opts.mcpServers } : {}),
         ...(opts.hooksConfig ? { hooksConfig: opts.hooksConfig } : {}),
         ...(opts.enforcementProfile
           ? { enforcementProfile: opts.enforcementProfile }
@@ -516,6 +523,94 @@ describe("capability_guard interceptor (ADR-130)", () => {
     enforcedClasses: ["tools"],
     escalationThreshold: 3,
   };
+
+  it.each([undefined, "restored-native-session"])(
+    "forces native permission shortcuts through the strict guard on session %s",
+    async (resumeSessionId) => {
+      const host = await boot(["--scenario", "native_permission_shortcut"]);
+      const sessionId = await createSession(host, {
+        cwd: host.runtimeRoot,
+        autoApprovePermissions: true,
+        enforcementProfile: toolsProfile,
+        resumeSessionId,
+      });
+
+      await sendPrompt(host, sessionId);
+
+      expect(hookTrips(host.registry.snapshotEvents(sessionId))).toMatchObject([
+        {
+          rule: "capability_guard",
+          disposition: "deny",
+          lifecycle: "pre_tool_call",
+        },
+      ]);
+      expect(pendingPermissions.size(sessionId)).toBe(0);
+    },
+  );
+
+  it.each([
+    {
+      origin: true,
+      strict: false,
+      decisions: ["allow", "allow", "reject", "reject"],
+    },
+    {
+      origin: false,
+      strict: false,
+      decisions: ["allow", "reject", "reject", "reject"],
+    },
+    {
+      origin: true,
+      strict: true,
+      decisions: ["allow", "cancelled", "reject", "reject"],
+    },
+  ])(
+    "read-only native knowledge keeps source identity and strict scope: %j",
+    async ({ origin, strict, decisions }) => {
+      const host = await boot(["--scenario", "read_only_native_knowledge"]);
+      const sessionId = await createSession(host, {
+        cwd: host.runtimeRoot,
+        readOnlySession: true,
+        autoApprovePermissions: false,
+        mcpServers: [
+          {
+            name: "maister",
+            transport: "stdio",
+            command: process.execPath,
+            args: [],
+            env: {
+              MAISTER_PROJECT_TOKEN: "synthetic-test-token",
+              MAISTER_API_BASE_URL: "http://localhost:3000",
+            },
+            ...(origin ? { platformOrigin: "maister_facade" as const } : {}),
+          },
+        ],
+        ...(strict
+          ? {
+              enforcementProfile: {
+                ...toolsProfile,
+                tools: { allow: ["ToolSearch"] },
+              },
+            }
+          : {}),
+      });
+
+      await sendPrompt(host, sessionId);
+
+      expect(host.registry.snapshotEvents(sessionId)).toContainEqual(
+        expect.objectContaining({
+          type: "session.update",
+          update: expect.objectContaining({
+            rawOutput: { nativeDecisions: decisions },
+          }),
+        }),
+      );
+      expect(hookTrips(host.registry.snapshotEvents(sessionId))).toHaveLength(
+        strict ? 1 : 0,
+      );
+      expect(pendingPermissions.size(sessionId)).toBe(0);
+    },
+  );
 
   it("in-profile: auto-allows inline (zero HITL) even with autoApprove OFF", async () => {
     const host = await boot(["--scenario", "capability_allow"]);

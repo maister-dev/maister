@@ -42,6 +42,7 @@ import {
   resolveAdapterBinary,
 } from "../src/adapter-registry";
 import { extractToolIdentity } from "../src/guardrail-hooks";
+import { claudeToolArbitrationMeta } from "../src/claude-tool-arbitration";
 import {
   invalidateAdapterReadOnlySmokeCache,
   writeAdapterSmokeCache,
@@ -141,18 +142,31 @@ const SMOKE_OPERATION_TIMEOUT_MS = 10_000;
 const SMOKE_TEARDOWN_GRACE_MS = 2_000;
 
 // ADR-130 capability_guard smoke (DES-8): prove `requestPermission` fires per
-// write-class call under permissionPolicy=default AND that `params.toolCall`
+// write, benign shell and ordinary/read-only MCP call under default policy;
+// `params.toolCall`
 // carries a stable tool identity — a plain tool name and an MCP
 // `mcp__<server>__<tool>` name whose server is resolvable. The hints retain the
 // fixture adapter contract; real adapters receive executable, isolated probes.
 const CAPABILITY_ENFORCEMENT_PROBES = [
   {
+    toolName: "Bash",
     prompt:
       "MAIster capability-enforcement smoke probe tool-name:Bash permission-kind:execute. Use your shell tool to create only ./capability-probe.txt containing probe. This is an isolated temporary directory. If permission is denied or cancelled, stop immediately without another tool or method.",
   },
   {
     prompt:
       "MAIster capability-enforcement smoke probe tool-name:mcp__maister__hitl_list permission-kind:other. Call the configured maister MCP tool hitl_list exactly once with {}. It is a harmless isolated probe, not a real Inbox. If permission is denied or cancelled, stop immediately. Do not simulate the tool result.",
+    toolName: "mcp__maister__hitl_list",
+  },
+  {
+    toolName: "Bash",
+    prompt:
+      "MAIster capability-enforcement smoke probe tool-name:Bash permission-kind:execute. Use your Bash tool to run exactly true once. Do not write a file or use another command. If permission is denied or cancelled, stop immediately without another tool or method.",
+  },
+  {
+    toolName: "mcp__maister__probe_read",
+    prompt:
+      "MAIster capability-enforcement smoke probe tool-name:mcp__maister__probe_read permission-kind:read. Call the configured maister MCP tool probe_read exactly once with {}. It is an isolated read-only probe with no real data. If permission is denied or cancelled, stop immediately. Do not simulate its output.",
   },
 ] as const;
 
@@ -248,6 +262,16 @@ function createCapabilityEnforcementProbeClient(
     async requestPermission(params) {
       const started = performance.now();
       const identity = extractToolIdentity(params.toolCall);
+
+      if (identity.name === "ToolSearch" && identity.mcpServer === null) {
+        const allow = params.options.find(
+          (option) => option.kind === "allow_once",
+        );
+
+        return allow
+          ? { outcome: { outcome: "selected", optionId: allow.optionId } }
+          : { outcome: { outcome: "cancelled" } };
+      }
       const denyOption = params.options.find(
         (option) => option.kind === "reject_once",
       )?.optionId;
@@ -325,11 +349,15 @@ async function smokeCapabilityEnforcement(args: {
         `${args.adapter} capability permission probe`,
         60_000,
       );
-      if (args.observations.length === start) {
+      if (
+        !args.observations
+          .slice(start)
+          .some((observation) => observation.name === probe.toolName)
+      ) {
         return {
           status: "error",
           protocolVersion: args.protocolVersion,
-          reason: `${args.adapter} capability probe did not reach requestPermission`,
+          reason: `${args.adapter} capability probe for ${probe.toolName} did not reach requestPermission`,
         };
       }
     }
@@ -722,6 +750,10 @@ export async function smokeAdapter(
     );
     const session = await withSmokeTimeout(
       connection.newSession({
+        ...(adapter === "claude" &&
+        (options.capabilityEnforcement || options.readOnlySession)
+          ? { _meta: claudeToolArbitrationMeta() }
+          : {}),
         cwd,
         mcpServers: options.capabilityEnforcement
           ? [

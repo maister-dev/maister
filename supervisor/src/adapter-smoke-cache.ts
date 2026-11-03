@@ -16,7 +16,7 @@ const AdapterSmokeEvidenceSchema = z
   })
   .strict();
 
-const ReadOnlySmokeEvidenceSchema = AdapterSmokeEvidenceSchema.extend({
+const VersionedSmokeEvidenceSchema = AdapterSmokeEvidenceSchema.extend({
   probeVersion: z.number().int().positive().optional(),
 }).strict();
 
@@ -30,9 +30,9 @@ const SteeringSmokeEvidenceSchema = z
   .strict();
 
 const AdapterSmokeCacheEntrySchema = AdapterSmokeEvidenceSchema.extend({
-  readOnlySession: ReadOnlySmokeEvidenceSchema.optional(),
+  readOnlySession: VersionedSmokeEvidenceSchema.optional(),
   // ADR-130: cached evidence that capability_guard enforcement is safe at the seam.
-  capabilityEnforcement: AdapterSmokeEvidenceSchema.optional(),
+  capabilityEnforcement: VersionedSmokeEvidenceSchema.optional(),
   steering: SteeringSmokeEvidenceSchema.optional(),
 }).strict();
 
@@ -107,8 +107,7 @@ export type AdapterSmokeDimensionDiagnostic =
       readonly staleReason: "probe_contract" | "freshness";
     });
 
-// ADR-130: capability-enforcement evidence is a simple dimension — no read-only
-// probe version and no staleness, unlike the richer read-only-session evidence.
+// ADR-130: stale probe contracts are pending; the public diagnostic shape stays compatible.
 export type AdapterSmokeCapabilityDiagnostic = {
   readonly status: AdapterSmokeStatus;
   readonly reason: string | null;
@@ -147,6 +146,7 @@ const SMOKE_REQUIRED_ADAPTERS: ReadonlySet<ExecutorAgent> = new Set([
 ]);
 
 export const READ_ONLY_SMOKE_PROBE_VERSION = 1;
+export const CAPABILITY_ENFORCEMENT_SMOKE_PROBE_VERSION = 2;
 const READ_ONLY_SMOKE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1_000;
 
 function isMissingFile(err: unknown): boolean {
@@ -298,7 +298,7 @@ type StaleReadOnlyReason = {
 
 function staleReadOnlyReason(
   cacheVersion: 1 | 2 | undefined,
-  entry: z.infer<typeof ReadOnlySmokeEvidenceSchema>,
+  entry: z.infer<typeof VersionedSmokeEvidenceSchema>,
   evaluatedAt: Date,
 ): StaleReadOnlyReason | null {
   if (cacheVersion !== 2) {
@@ -460,6 +460,18 @@ function capabilityEnforcementDiagnosticForAdapter(
     };
   }
 
+  if (
+    entry.status === "ok" &&
+    entry.probeVersion !== CAPABILITY_ENFORCEMENT_SMOKE_PROBE_VERSION
+  ) {
+    return {
+      status: "pending",
+      reason: `${adapter} capability-enforcement probe version ${entry.probeVersion ?? "missing"} does not match ${CAPABILITY_ENFORCEMENT_SMOKE_PROBE_VERSION}`,
+      checkedAt: entry.checkedAt,
+      protocolVersion: entry.protocolVersion ?? null,
+    };
+  }
+
   return {
     status: entry.status,
     reason: entry.reason ?? null,
@@ -527,6 +539,7 @@ export async function writeAdapterSmokeCache(
         ? {
             capabilityEnforcement: {
               status: entry.capabilityEnforcement.status,
+              probeVersion: CAPABILITY_ENFORCEMENT_SMOKE_PROBE_VERSION,
               checkedAt,
               ...(entry.capabilityEnforcement.reason
                 ? { reason: entry.capabilityEnforcement.reason }
