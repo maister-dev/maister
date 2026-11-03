@@ -11,6 +11,7 @@ import type { KnowledgeTransaction } from "./knowledge-access";
 import { sql } from "drizzle-orm";
 import pino from "pino";
 
+import { assertNativeWorkspaceMode } from "./knowledge-workspace-policy";
 import { knowledgeWriteLockSql } from "./knowledge-write-lock";
 
 import {
@@ -113,7 +114,7 @@ async function lockRunKnowledgeReadConsumer(
       ? undefined
       : (
           await tx.execute(
-            sql`SELECT knowledge_access FROM runs WHERE id=${runId} AND status IN ('Pending','Running','NeedsInput','NeedsInputIdle','WaitingOnChildren','Review') FOR UPDATE`,
+            sql`SELECT knowledge_access,workspace_mode FROM runs WHERE id=${runId} AND status IN ('Pending','Running','NeedsInput','NeedsInputIdle','WaitingOnChildren','Review') FOR UPDATE`,
           )
         ).rows[0];
   const capture = knowledgeAccessCaptureSchema.safeParse(run?.knowledge_access);
@@ -129,6 +130,8 @@ async function lockRunKnowledgeReadConsumer(
       "Native knowledge requires a compatible server-owned source capture profile",
       { details: { reason: "knowledge_capture_profile_required" } },
     );
+
+  assertNativeWorkspaceMode(run.workspace_mode);
 
   return { runId, capture: capture.data };
 }

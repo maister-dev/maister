@@ -10,6 +10,7 @@ import { MaisterError } from "@/lib/errors";
 import { isNativeFindingsContract } from "@/lib/run-results/contract";
 
 type PublicationSource = Readonly<{
+  workspaceMode?: unknown;
   resultContract?: RunResultContract | null;
   knowledgeAccess?: unknown;
 }>;
@@ -27,6 +28,7 @@ export function projectPublicationPolicy(
     source.knowledgeAccess == null
   )
     return "legacy";
+  if (source.workspaceMode === "shared") return "unavailable";
   const capture = knowledgeAccessCaptureSchema.safeParse(
     source.knowledgeAccess,
   );
@@ -67,7 +69,7 @@ export async function assertNativeProjectPublication(
   if (policy !== "project_context") throw publicationRefusal(policy);
   const row = (
     await database().execute(
-      sql`SELECT project_id,result_contract,knowledge_access FROM runs WHERE id=${run.id}`,
+      sql`SELECT project_id,result_contract,knowledge_access,workspace_mode FROM runs WHERE id=${run.id}`,
     )
   ).rows[0];
 
@@ -77,6 +79,7 @@ export async function assertNativeProjectPublication(
     {
       resultContract: row.result_contract as RunResultContract | null,
       knowledgeAccess: row.knowledge_access,
+      workspaceMode: row.workspace_mode,
     },
     run.projectId,
   );

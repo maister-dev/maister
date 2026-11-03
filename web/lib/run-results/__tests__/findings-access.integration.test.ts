@@ -19,7 +19,11 @@ import { getKnowledgeRecord } from "@/lib/brain/knowledge-records";
 import { searchKnowledge } from "@/lib/brain/knowledge-search";
 import { buildAgentProfileContract } from "@/lib/run-results/contract";
 import { issueAgentRunToken } from "@/lib/agents/tokens";
-import { assertNativeRunKnowledgeInputs } from "@/lib/brain/knowledge-execution-access";
+import {
+  assertNativeRunKnowledgeInputs,
+  recordNativeRunSources,
+} from "@/lib/brain/knowledge-execution-access";
+import { authorizeRunsKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
 import { seedProjectRow, seedRun } from "@/test-support/execution-host-seed";
 import { seedNativeFindingsExecution } from "@/test-support/native-findings-seed";
 import { startMainAndBrainPostgresTestDb } from "@/test-support/pg-container";
@@ -541,6 +545,59 @@ it.each([
     });
   },
 );
+
+it("IT-CBE-06 retained native shared workspaces refuse consumption, dispatch and derived disclosure without blocking project deletion", async () => {
+  const execution = await seedNativeFindingsExecution(database, contract);
+
+  await database.pool.query(
+    "UPDATE runs SET workspace_mode='shared' WHERE id=$1",
+    [execution.runId],
+  );
+  const refusal = {
+    code: "PRECONDITION",
+    details: { reason: "native_shared_workspace_unsupported" },
+  };
+
+  await expect(
+    assertNativeRunKnowledgeInputs(database.db, execution.runId),
+  ).rejects.toMatchObject(refusal);
+  await expect(
+    recordNativeRunSources(database.db, execution.runId, []),
+  ).rejects.toMatchObject(refusal);
+  await expect(
+    getKnowledgeRecord(
+      database.db,
+      { kind: "token", tokenId: execution.tokenId },
+      { recordId: execution.recordId },
+    ),
+  ).rejects.toMatchObject(refusal);
+  await expect(
+    database.db.transaction((tx) =>
+      authorizeRunsKnowledgeDisclosure(
+        tx,
+        { kind: "token", tokenId: execution.tokenId },
+        [execution.runId],
+      ),
+    ),
+  ).rejects.toMatchObject(refusal);
+  await database.pool.query("DELETE FROM projects WHERE id=$1", [
+    execution.projectId,
+  ]);
+  expect(
+    (
+      await database.pool.query("SELECT id FROM runs WHERE id=$1", [
+        execution.runId,
+      ])
+    ).rows,
+  ).toEqual([]);
+  expect(
+    (
+      await database.pool.query("SELECT id FROM companies WHERE id=$1", [
+        execution.companyId,
+      ])
+    ).rows,
+  ).toHaveLength(1);
+});
 
 it("IT-CBE-06 native dispatch captures mounted repository sources and rechecks the current attachment grant", async () => {
   const execution = await seedNativeFindingsExecution(database, contract);

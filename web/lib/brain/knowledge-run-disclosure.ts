@@ -6,6 +6,7 @@ import type { KnowledgePrincipal } from "./knowledge-types";
 import { sql } from "drizzle-orm";
 import pino from "pino";
 
+import { assertNativeWorkspaceMode } from "./knowledge-workspace-policy";
 import { usesNativeKnowledgeTransport } from "./knowledge-execution-access";
 import { resolveKnowledgePrincipal } from "./knowledge-access";
 import {
@@ -74,7 +75,7 @@ export async function authorizeRunsKnowledgeDisclosure(
   const consumer = await lockKnowledgeReadConsumer(tx, recipient);
   const rows = (
     await tx.execute(
-      sql`SELECT knowledge_access FROM runs WHERE id IN (${sql.join(
+      sql`SELECT knowledge_access,workspace_mode FROM runs WHERE id IN (${sql.join(
         governed.map((id) => sql`${id}`),
         sql`, `,
       )}) ORDER BY id FOR SHARE`,
@@ -83,6 +84,7 @@ export async function authorizeRunsKnowledgeDisclosure(
 
   if (rows.length !== governed.length) throw unavailableKnowledgeReference();
   const restrictions = rows.flatMap((row) => {
+    assertNativeWorkspaceMode(row.workspace_mode);
     const capture = knowledgeAccessCaptureSchema.safeParse(
       row.knowledge_access,
     );
@@ -138,7 +140,7 @@ export async function readableKnowledgeRunIds(
     for (let offset = 0; offset < ids.length; offset += 256) {
       const page = ids.slice(offset, offset + 256);
       const rows = (
-        await tx.execute(sql`SELECT id,knowledge_access FROM runs
+        await tx.execute(sql`SELECT id,knowledge_access,workspace_mode FROM runs
         WHERE id IN (${sql.join(
           page.map((id) => sql`${id}`),
           sql`, `,
@@ -146,6 +148,7 @@ export async function readableKnowledgeRunIds(
       ).rows;
 
       for (const row of rows) {
+        if (row.workspace_mode === "shared") continue;
         const capture = knowledgeAccessCaptureSchema.safeParse(
           row.knowledge_access,
         );
@@ -228,6 +231,7 @@ export function isRunKnowledgeUnavailable(
       "knowledge_capture_profile_required",
       "knowledge_capture_limit",
       "knowledge_reference_budget_exceeded",
+      "native_shared_workspace_unsupported",
     ].includes(String(error.details?.reason))
   );
 }

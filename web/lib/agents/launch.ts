@@ -221,6 +221,10 @@ export { runnerCatalogEntry } from "@/lib/agents/runner-catalog";
 import { issueAgentRunToken } from "@/lib/agents/tokens";
 import { nativeKnowledgeCaptureAtLaunch } from "@/lib/brain/knowledge-launch-capture";
 import {
+  assertLegacySharedWorkspace,
+  assertNativeWorkspaceMode,
+} from "@/lib/brain/knowledge-workspace-policy";
+import {
   assertNativeAgentInputBinding,
   nativeDelegationExecutionInput,
 } from "@/lib/orchestrator/native-input";
@@ -232,7 +236,10 @@ import {
   assertNativeRunKnowledgeInputs,
   recordNativeRunSources,
 } from "@/lib/brain/knowledge-execution-access";
-import { usesStructuredKnowledgeContext } from "@/lib/run-results/contract";
+import {
+  isNativeFindingsContract,
+  usesStructuredKnowledgeContext,
+} from "@/lib/run-results/contract";
 import { type AgentMcpServer } from "@/lib/capabilities/agent-map";
 import {
   materializeAdapterCapabilityHome,
@@ -1486,6 +1493,14 @@ async function launchAgentRunWithAdmission(
     parentRunId: input.parentRunId ?? null,
     agentId: input.agentId,
   });
+
+  if (input.workspaceMode === "shared")
+    await assertLegacySharedWorkspace(_db, {
+      projectId: input.projectId,
+      parentRunId: input.parentRunId ?? input.rootRunId ?? null,
+      resultContract: input.resultContract ?? null,
+      nativeInput,
+    });
   const retryIntent = input.retryClaim
     ? await _db.transaction((tx: ExecutionDb) =>
         assertAgentRetryClaim(tx, input.retryClaim!),
@@ -4049,6 +4064,11 @@ async function driveAgentSession(
   if (!baseRun || baseRun.runKind !== "agent") {
     throw new MaisterError("PRECONDITION", `run ${runId} is not an agent run`);
   }
+  if (
+    baseRun.knowledgeAccess != null ||
+    isNativeFindingsContract(baseRun.resultContract)
+  )
+    assertNativeWorkspaceMode(baseRun.workspaceMode);
 
   const assignmentId =
     opts.assignmentId === undefined

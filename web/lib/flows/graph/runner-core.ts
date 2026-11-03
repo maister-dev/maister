@@ -19,6 +19,8 @@ import { taskLaunchFlowAssetsPathForRun } from "@/lib/tasks/launch-flow-assets";
 import { taskLaunchInputForRun } from "@/lib/tasks/launch-execution-input";
 import { MaisterError } from "@/lib/errors";
 import { nativeDelegationExecutionInput } from "@/lib/orchestrator/native-input";
+import { assertNativeWorkspaceMode } from "@/lib/brain/knowledge-workspace-policy";
+import { isNativeFindingsContract } from "@/lib/run-results/contract";
 import { runtimeRoot as configuredRuntimeRoot } from "@/lib/runtime-root";
 import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
 import * as schemaModule from "@/lib/db/schema";
@@ -192,6 +194,11 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
   if (!run) {
     throw new MaisterError("PRECONDITION", `run not found: ${runId}`);
   }
+  if (
+    run.knowledgeAccess != null ||
+    isNativeFindingsContract(run.resultContract)
+  )
+    assertNativeWorkspaceMode(run.workspaceMode);
 
   const taskRows: TaskRow[] = await db
     .select()

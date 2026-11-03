@@ -429,3 +429,21 @@ sources that cannot be published, retention/operator cleanup keeps its existing
 local preservation path and withholds the optional archive push; it does not
 block local teardown because a knowledge grant was revoked. The source policy
 is derived from retained capture metadata, without a live Brain dependency.
+
+### Physical workspace sharing
+
+Native cooperation uses separate owned workspaces or workspace-none execution.
+The legacy physical `workspaceMode: shared` has no recipient-aware source envelope
+for every process reading its common files; native enrollment therefore refuses
+that mode with `native_shared_workspace_unsupported` before carrier/worktree/run
+creation. The check covers explicit native profiles, retained native input and
+inherited native parent capture, independently of a child's result grammar.
+Historical NULL-capture shared work retains its existing behavior.
+
+Retained native shared rows cannot consume knowledge, dispatch/resume or disclose
+derived workspace content through native read paths. Their source closure is not
+declared complete for the common directory. Cleanup and cancellation remain
+independent. This does not replace required depth-2 cooperation: separate-workspace
+Flow/agent delegation and evidence-preserving collection remain supported. The
+durable, versioned assignment working context is a separate contract from physical
+Git workspace sharing.

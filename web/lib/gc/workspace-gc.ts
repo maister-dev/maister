@@ -103,6 +103,7 @@ export interface RunWorkspaceGcSweepOptions {
 }
 
 type CandidateRow = {
+  workspaceMode?: string | null;
   resultContract?: RunResultContract | null;
   knowledgeAccess?: KnowledgeAccessCapture | null;
   workspaceId: string;
@@ -273,6 +274,7 @@ async function loadCandidates(db: Db, now: Date): Promise<CandidateRow[]> {
       runStatus: runs.status,
       resultContract: runs.resultContract,
       knowledgeAccess: runs.knowledgeAccess,
+      workspaceMode: runs.workspaceMode,
       archivedBranch: workspaces.archivedBranch,
       archivedAt: workspaces.archivedAt,
       archivedCommit: workspaces.archivedCommit,

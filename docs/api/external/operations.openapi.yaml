@@ -11369,7 +11369,12 @@ components:
             `workspace: worktree` child. `own` (default) = a per-run worktree;
             `shared` = all children of this orchestrator tree share one
             pre-allocated tree with serialized writers (one active writer per
-            tree). `shared` requires a delegated child (a `rootRunId`); a top-level
+            tree). Native knowledge enrollment, including inherited enrollment
+            with a generic result contract, refuses `shared` with PRECONDITION
+            (409), reason `native_shared_workspace_unsupported`, before creating
+            a carrier, run or workspace. Use `own` or workspace-none execution;
+            this restriction does not apply to legacy NULL-capture runs.
+            `shared` requires a delegated child (a `rootRunId`); a top-level
             run is refused with `CONFIG`. AGENT target only — on a FLOW target
             the whole field is refused `CONFIG` → 422 **(Implemented — ADR-163)**;
             the shared-tree allocator lives in the agent launcher and is not

@@ -7,6 +7,7 @@ import type { KnowledgePrincipal } from "./knowledge-types";
 import { sql } from "drizzle-orm";
 import pino from "pino";
 
+import { assertNativeWorkspaceMode } from "./knowledge-workspace-policy";
 import { resolveKnowledgePrincipal } from "./knowledge-access";
 import { currentKnowledgeNodeAttemptPolicy } from "./knowledge-node-policy";
 import { recordKnowledgeDisclosure } from "./knowledge-disclosure";
@@ -125,7 +126,7 @@ export async function assertNativeRunKnowledgeInputs(
   await db.transaction(async (tx) => {
     const row = (
       await tx.execute(
-        sql`SELECT result_contract->>'nativeContract' AS native_contract,knowledge_access,status,context_mounts FROM runs WHERE id=${runId} FOR UPDATE`,
+        sql`SELECT result_contract->>'nativeContract' AS native_contract,knowledge_access,status,context_mounts,workspace_mode FROM runs WHERE id=${runId} FOR UPDATE`,
       )
     ).rows[0];
 
@@ -156,6 +157,7 @@ export async function assertNativeRunKnowledgeInputs(
         "Native execution requires an active run and complete source classification",
         { details: { reason: "knowledge_capture_profile_required" } },
       );
+    assertNativeWorkspaceMode(row.workspace_mode);
     const principal = await resolveRunKnowledgePrincipal(tx, runId);
 
     const mounts = mountedSourceRestrictions(row.context_mounts);
@@ -189,7 +191,7 @@ export async function recordNativeRunSources(
   await db.transaction(async (tx) => {
     const row = (
       await tx.execute(
-        sql`SELECT result_contract->>'nativeContract' AS native_contract,knowledge_access FROM runs WHERE id=${runId} FOR UPDATE`,
+        sql`SELECT result_contract->>'nativeContract' AS native_contract,knowledge_access,workspace_mode FROM runs WHERE id=${runId} FOR UPDATE`,
       )
     ).rows[0];
 
@@ -199,6 +201,7 @@ export async function recordNativeRunSources(
       row.knowledge_access === null
     )
       return;
+    assertNativeWorkspaceMode(row.workspace_mode);
     const capture = knowledgeAccessCaptureSchema.safeParse(
       row.knowledge_access,
     );

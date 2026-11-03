@@ -301,6 +301,40 @@ it.each(["task", "run"] as const)(
   },
 );
 
+it("IT-CBE-06 native shared-workspace delegation refuses before creating a carrier or child", async () => {
+  await enrollNativeDelegationParent(ctx, parentRunId);
+  const agentId = await seedAgent(ctx, { id: "shared-diagnostic" });
+  const response = await delegatePost(
+    delegateRequest(secret, {
+      target: { agentId },
+      mode: "task",
+      prompt: "Private diagnostic request",
+      workspaceMode: "shared",
+    }),
+    {},
+  );
+
+  expect(response.status).toBe(409);
+  expect(await response.json()).toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "native_shared_workspace_unsupported" },
+  });
+  expect(
+    (
+      await pool.query("SELECT id FROM tasks WHERE project_id=$1", [
+        ctx.projectId,
+      ])
+    ).rows,
+  ).toHaveLength(1);
+  expect(
+    (
+      await pool.query("SELECT id FROM runs WHERE project_id=$1", [
+        ctx.projectId,
+      ])
+    ).rows,
+  ).toHaveLength(1);
+});
+
 it.each(["unknown_capture", "oversized_input", "revoked_origin"] as const)(
   "IT-CBE-06 native delegation refuses %s before creating a shared carrier",
   async (failure) => {
