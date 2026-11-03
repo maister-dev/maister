@@ -59,6 +59,7 @@ export function attachHeartbeat(opts: AttachHeartbeatOptions): void {
           signal,
           intentional,
           reason: entry.intentionalReason,
+          stopReason: entry.record.hookHaltRule,
         },
         "session-exited",
       );
@@ -69,6 +70,9 @@ export function attachHeartbeat(opts: AttachHeartbeatOptions): void {
         exitCode: code ?? 0,
         ...(entry.intentionalReason ? { reason: entry.intentionalReason } : {}),
         ...(entry.intentionalCause ? { cause: entry.intentionalCause } : {}),
+        ...(entry.intentionalReason === "checkpoint"
+          ? { stopReason: entry.record.hookHaltRule ?? "checkpoint" }
+          : {}),
       });
     } else {
       logger.warn({ sessionId, code, signal }, "session-crashed");

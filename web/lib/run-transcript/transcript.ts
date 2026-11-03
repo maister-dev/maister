@@ -1,5 +1,9 @@
 import type { ScratchMessageRole } from "@/lib/db/schema";
 
+import {
+  parseNoProgressDiagnostics,
+  type NoProgressDiagnostics,
+} from "@/lib/runs/no-progress-diagnostics";
 import { decodeJsonbSafe } from "@/lib/execution-host/events/jsonb-safe";
 import {
   FLOW_ASSISTANT_ACTION_FENCE,
@@ -55,6 +59,7 @@ export type ScratchHookTripPayload = {
   kind: "hook_trip";
   rule: ScratchHookTripRule;
   disposition: "deny" | "halt";
+  diagnostics?: NoProgressDiagnostics;
 };
 
 export type ScratchFlowActionResultPayload = FlowActionResultPayload;
@@ -76,6 +81,7 @@ export type ParsedScratchMessage =
       kind: "hook_trip";
       rule: ScratchHookTripRule;
       disposition: "deny" | "halt";
+      diagnostics?: NoProgressDiagnostics;
     }
   | { kind: "flow_action_result"; payload: ScratchFlowActionResultPayload }
   | { kind: "legacy"; role: ScratchMessageRole; text: string };
@@ -375,12 +381,14 @@ export function encodePermissionPayload(prompt: string): string {
 export function encodeHookTripPayload(
   rule: ScratchHookTripRule,
   disposition: "deny" | "halt",
+  diagnostics?: NoProgressDiagnostics,
 ): string {
   const payload: ScratchHookTripPayload = {
     v: 1,
     kind: "hook_trip",
     rule,
     disposition,
+    ...(diagnostics ? { diagnostics } : {}),
   };
 
   return JSON.stringify(payload);
@@ -436,10 +444,13 @@ export function parseScratchMessageContent(
         obj.rule === "capability_guard") &&
       (obj.disposition === "deny" || obj.disposition === "halt")
     ) {
+      const diagnostics = parseNoProgressDiagnostics(obj.diagnostics);
+
       return {
         kind: "hook_trip",
         rule: obj.rule,
         disposition: obj.disposition,
+        ...(diagnostics ? { diagnostics } : {}),
       };
     }
     if (obj.kind === "flow_action_result") {

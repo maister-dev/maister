@@ -40,6 +40,7 @@ export type RegistryEntry = {
   intentionalShutdown: boolean;
   intentionalReason?: IntentionalReason;
   intentionalCause?: IntentionalCause;
+  checkpointTransportOpen?: boolean;
   eventBuffer: SessionEvent[];
   eventBufferBytes: number;
   connection?: AcpConnection;
@@ -100,6 +101,8 @@ export class SessionRegistry {
           },
         );
       }
+      if (event.type === "session.hook_trip" && event.disposition === "halt")
+        record.hookHaltRule ??= event.rule;
       let publicEvent = event;
 
       if (!this.canonicallyPersistedEvents.delete(event)) {
@@ -172,7 +175,11 @@ export class SessionRegistry {
 
     if (!entry) return false;
 
+    if (reason === "checkpoint" && entry.intentionalReason !== "checkpoint")
+      entry.checkpointTransportOpen =
+        entry.connection?.signal?.aborted === false;
     entry.intentionalShutdown = true;
+    entry.record.intentionalStopRequested = true;
     // A second checkpoint of the same session (the web sweeper racing the
     // host's own teardown) must not erase the cause that started it.
     entry.intentionalCause =

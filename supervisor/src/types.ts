@@ -1,3 +1,4 @@
+import type { ProgressState } from "./guardrail-progress";
 import type { SessionContentReference } from "./runtime-events";
 
 import { z } from "zod";
@@ -812,6 +813,7 @@ export type SupervisorErrorDetails = {
   // ADR-183: a prompt rejected `session_checkpointed` because the host's own
   // pause bound parked its session names that cause.
   cause?: "outbox_pressure";
+  stopReason?: HookRule | "checkpoint";
   // ADR-183 amendment 2026-09-28: which limit refused an
   // `event_outbox_backpressure` admission.
   outboxLimit?: OutboxLimit;
@@ -1032,6 +1034,24 @@ export type HooksConfig = NonNullable<StartSessionRequest["hooksConfig"]>;
 
 // ADR-108 (M40): a guardrail rule and its frozen lifecycle/disposition — see the
 // rule × lifecycle matrix in docs/system-analytics/guardrail-hooks.md.
+export type NoProgressDiagnostics = {
+  threshold: number;
+  countedOperations: number;
+  turnsSinceProgress: number;
+  progressResets: number;
+  pendingOperations: number;
+  ignoredUpdates: number;
+  progressMode: "investigation" | "read_only";
+  stopReason: "no_progress";
+  recentOperations: Array<{
+    toolCallId: string;
+    kind: string;
+    status: string;
+    progress: boolean;
+    reason: string;
+  }>;
+};
+
 export type HookRule =
   "path_guard" | "repetition" | "no_progress" | "capability_guard";
 export type HookLifecycle = "pre_tool_call" | "post_turn";
@@ -1353,10 +1373,13 @@ export type SessionRecord = {
   lastToolCallSig?: string;
   repeatCount?: number;
   turnsSinceProgress?: number;
+  noProgressState?: ProgressState;
+  intentionalStopRequested?: boolean;
   // ADR-108 (M40): set once a repetition/no_progress halt fires; every later
   // permission request is cancelled until the web tier checkpoints (the
   // supervisor never self-kills on a trip — D1).
   hookHalted?: boolean;
+  hookHaltRule?: HookRule;
   // ADR-108 (M40): WARN-once-per-session guard for the kind-only path-guard
   // fallback (adapters that do not populate toolCall.locations).
   hookFallbackWarned?: boolean;
@@ -1487,6 +1510,7 @@ export type SessionEvent =
       sessionId: string;
       monotonicId: number;
       rule: HookRule;
+      diagnostics?: NoProgressDiagnostics;
       lifecycle: HookLifecycle;
       disposition: HookDisposition;
       toolCall: unknown;
@@ -1504,6 +1528,7 @@ export type SessionEvent =
       // operator-cancel path. ADR-166: `"fenced"` = evicted by a command with a
       // higher assignment epoch.
       reason?: "checkpoint" | "intentional" | "fenced";
+      stopReason?: HookRule | "checkpoint";
       // ADR-180 / ADR-183: diagnostic only — present exactly when the host
       // itself started the teardown: its absolute permission cap, or a
       // producer paused by outbox pressure past its bound. Nothing branches on

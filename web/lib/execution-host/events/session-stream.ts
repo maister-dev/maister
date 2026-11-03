@@ -11,6 +11,7 @@ import { and, asc, eq, gt } from "drizzle-orm";
 import { runEventWakeBus } from "./run-wake";
 import { prepareSessionContent } from "./session-content";
 
+import { parseNoProgressDiagnostics } from "@/lib/runs/no-progress-diagnostics";
 import { executionEvents } from "@/lib/db/schema";
 
 const REPLAY_BATCH_SIZE = 200;
@@ -132,6 +133,7 @@ export function supervisorEventFromCanonicalRow(
     case "session.exited": {
       const exitCode = integerField(row.payload, "exitCode");
       const reason = row.payload?.reason;
+      const stopReason = row.payload?.stopReason;
 
       if (
         exitCode === null ||
@@ -148,6 +150,13 @@ export function supervisorEventFromCanonicalRow(
         monotonicId,
         exitCode,
         ...(reason ? { reason } : {}),
+        ...(stopReason === "path_guard" ||
+        stopReason === "repetition" ||
+        stopReason === "no_progress" ||
+        stopReason === "capability_guard" ||
+        stopReason === "checkpoint"
+          ? { stopReason }
+          : {}),
       };
     }
     case "session.crashed": {
@@ -198,6 +207,7 @@ export function supervisorEventFromCanonicalRow(
       const rule = row.payload?.rule;
       const lifecycle = row.payload?.lifecycle;
       const disposition = row.payload?.disposition;
+      const diagnostics = parseNoProgressDiagnostics(row.payload?.diagnostics);
 
       if (
         (rule !== "path_guard" &&
@@ -218,6 +228,7 @@ export function supervisorEventFromCanonicalRow(
         lifecycle,
         disposition,
         toolCall: row.payload.toolCall,
+        ...(diagnostics ? { diagnostics } : {}),
       };
     }
     case "session.command": {

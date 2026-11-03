@@ -4,7 +4,7 @@ import { hookEnvDefaults, resolveHooksConfig } from "@/lib/flows/hooks-config";
 
 const DEFAULTS = {
   repetitionMax: 5,
-  noProgressTurns: 15,
+  noProgressTurns: 150,
   defaultWritablePaths: undefined,
 };
 
@@ -36,7 +36,7 @@ describe("resolveHooksConfig — two-tier default (ADR-108 D4)", () => {
         preset: "unattended",
         defaults: DEFAULTS,
       }),
-    ).toEqual({ repetition: { max: 5 }, noProgress: { maxTurns: 15 } });
+    ).toEqual({ repetition: { max: 5 }, noProgress: { maxTurns: 150 } });
   });
 
   it("unattended + hooks.disabled:true → undefined (per-node opt-out)", () => {
@@ -66,7 +66,7 @@ describe("resolveHooksConfig — two-tier default (ADR-108 D4)", () => {
         preset: "unattended",
         defaults: DEFAULTS,
       }),
-    ).toEqual({ repetition: { max: 8 }, noProgress: { maxTurns: 15 } });
+    ).toEqual({ repetition: { max: 8 }, noProgress: { maxTurns: 150 } });
   });
 
   it("pathGuard with explicit allowedPaths → used verbatim (opt-in)", () => {
@@ -103,14 +103,14 @@ describe("resolveHooksConfig — two-tier default (ADR-108 D4)", () => {
 describe("hookEnvDefaults — env reading (host/service-env only)", () => {
   afterEach(() => vi.unstubAllEnvs());
 
-  it("defaults to 5 / 15 / undefined when env unset", () => {
+  it("defaults to 5 / 150 / undefined when env unset", () => {
     vi.stubEnv("MAISTER_HOOK_REPETITION_MAX", "");
     vi.stubEnv("MAISTER_HOOK_NO_PROGRESS_TURNS", "");
     vi.stubEnv("MAISTER_HOOK_DEFAULT_WRITABLE_PATHS", "");
 
     expect(hookEnvDefaults()).toEqual({
       repetitionMax: 5,
-      noProgressTurns: 15,
+      noProgressTurns: 150,
       defaultWritablePaths: undefined,
     });
   });
@@ -133,7 +133,7 @@ describe("hookEnvDefaults — env reading (host/service-env only)", () => {
 
     expect(hookEnvDefaults()).toMatchObject({
       repetitionMax: 5,
-      noProgressTurns: 15,
+      noProgressTurns: 150,
     });
   });
 });

@@ -1413,7 +1413,12 @@ paths:
             the host checkpoints mid-turn (the producer pause bound) settles
             its receipt and `session.command` completion `rejected` with
             `code: ACP_PROTOCOL` and `details: {reason: session_checkpointed,
-            cause: outbox_pressure}`.
+            cause: outbox_pressure}`. Other intentional checkpoints interrupting
+            a prompt settle `CHECKPOINT` with `details.reason: session_checkpointed`
+            and `details.stopReason` naming the guardrail rule or `checkpoint`.
+            The command receipt follows the durable `session.exited` checkpoint
+            terminal. Explicit adapter errors and producer output failures keep
+            their original error classification.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
@@ -3316,7 +3321,8 @@ components:
                   type: integer
                   minimum: 1
                   description: |
-                    Turns since the last edit/diff-producing tool call before halt.
+                    Completed, deduplicated operations without new mutation or investigation evidence before halt.
+                    Pending tools do not count. The web default is 150; explicit limits win.
             pathGuard:
               type: object
               additionalProperties: false
@@ -4168,6 +4174,10 @@ components:
           type: string
           enum: [outbox_pressure]
           description: (Implemented — ADR-183, with `session_checkpointed` on a prompt rejection) The host's own pause bound checkpointed the session while the prompt ran; the manager parks the run instead of failing it.
+        stopReason:
+          type: string
+          enum: [checkpoint, no_progress, repetition, path_guard, capability_guard]
+          description: (`CHECKPOINT` with `session_checkpointed`) The intentional pause reason, retained from the halting guardrail when present. This does not authorize Resume; guardrail pauses retain their human-only HITL decision.
         outboxLimit:
           allOf:
             - $ref: "#/components/schemas/OutboxLimit"

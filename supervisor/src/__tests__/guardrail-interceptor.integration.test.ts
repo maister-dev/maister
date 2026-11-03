@@ -22,6 +22,7 @@ import {
   envelope,
   fenceFor,
   postJson,
+  waitFor,
   type BootedHost,
 } from "./_fixtures/boot-host";
 
@@ -44,6 +45,7 @@ async function boot(
 
 type SessionOpts = {
   hooksConfig?: unknown;
+  readOnlySession?: boolean;
   enforcementProfile?: unknown;
   autoApprovePermissions?: boolean;
   // The directory adopted as the session workspace (cwd + path-guard root).
@@ -66,6 +68,7 @@ async function createSession(
       fenceFor(host, RUN_ID),
       createBody(handle, {
         autoApprovePermissions: opts.autoApprovePermissions ?? true,
+        ...(opts.readOnlySession ? { readOnlySession: true } : {}),
         ...(opts.hooksConfig ? { hooksConfig: opts.hooksConfig } : {}),
         ...(opts.enforcementProfile
           ? { enforcementProfile: opts.enforcementProfile }
@@ -159,6 +162,144 @@ describe("guardrail interceptor (universal supervisor seam)", () => {
     expect(pendingPermissions.size(sessionId)).toBe(0);
   });
 
+  it.each([
+    "pending_investigation",
+    "useful_investigation",
+    "investigation_then_edit",
+  ])(
+    "no_progress: %s does not exhaust 15 before the first edit",
+    async (scenario) => {
+      const host = await boot(["--scenario", scenario, "--count", "20"]);
+      const sessionId = await createSession(host, {
+        cwd: host.runtimeRoot,
+        hooksConfig: { noProgress: { maxTurns: 15 } },
+      });
+
+      await sendPrompt(host, sessionId);
+      expect(hookTrips(host.registry.snapshotEvents(sessionId))).toHaveLength(
+        0,
+      );
+    },
+  );
+
+  it("no_progress: useful read-only agent work does not require mutations", async () => {
+    const host = await boot([
+      "--scenario",
+      "useful_investigation",
+      "--count",
+      "20",
+    ]);
+    const sessionId = await createSession(host, {
+      cwd: host.runtimeRoot,
+      readOnlySession: true,
+      hooksConfig: { noProgress: { maxTurns: 3 } },
+    });
+
+    await sendPrompt(host, sessionId);
+    expect(hookTrips(host.registry.snapshotEvents(sessionId))).toHaveLength(0);
+  });
+
+  it("no_progress: cancelling an idle session cannot disable the next prompt watchdog", async () => {
+    const host = await boot(["--scenario", "no_progress", "--count", "4"]);
+    const sessionId = await createSession(host, {
+      cwd: host.runtimeRoot,
+      hooksConfig: { noProgress: { maxTurns: 4 } },
+    });
+    const cancelled = await postJson(
+      `${host.url}/sessions/${sessionId}/cancel`,
+      envelope("session.cancel", fenceFor(host, RUN_ID)),
+    );
+
+    expect(cancelled.status).toBe(200);
+    await sendPrompt(host, sessionId);
+    expect(hookTrips(host.registry.snapshotEvents(sessionId))).toHaveLength(1);
+  });
+
+  it("no_progress: intentional checkpoint drain cannot replace its stop cause", async () => {
+    const host = await boot(["--scenario", "checkpoint_drain"]);
+    const sessionId = await createSession(host, {
+      cwd: host.runtimeRoot,
+      hooksConfig: { noProgress: { maxTurns: 1 } },
+    });
+    const prompt = completePrompt(
+      host,
+      sessionId,
+      envelope("session.prompt", fenceFor(host, RUN_ID), {
+        stepId: "step-1",
+        prompt: "go",
+      }),
+    );
+
+    await waitFor(
+      () =>
+        host.registry
+          .get(sessionId)
+          ?.record.noProgressState?.pending.has("checkpoint-in-flight") ===
+        true,
+    );
+    const checkpoint = await postJson(
+      `${host.url}/sessions/${sessionId}/checkpoint`,
+      envelope("session.checkpoint", fenceFor(host, RUN_ID)),
+    );
+
+    expect(checkpoint.status).toBe(200);
+    expect((await prompt).body).toMatchObject({
+      code: "CHECKPOINT",
+      details: { stopReason: "checkpoint" },
+    });
+    expect(hookTrips(host.registry.snapshotEvents(sessionId))).toHaveLength(0);
+    expect(host.registry.snapshotEvents(sessionId)).toContainEqual(
+      expect.objectContaining({
+        type: "session.update",
+        update: expect.objectContaining({
+          toolCallId: "checkpoint-in-flight",
+          status: "failed",
+        }),
+      }),
+    );
+  });
+
+  it("no_progress: operator cancellation clears pending tools before the next prompt", async () => {
+    const host = await boot(["--scenario", "cancel_then_loop", "--count", "4"]);
+    const sessionId = await createSession(host, {
+      cwd: host.runtimeRoot,
+      hooksConfig: { noProgress: { maxTurns: 4 } },
+    });
+    const first = completePrompt(
+      host,
+      sessionId,
+      envelope("session.prompt", fenceFor(host, RUN_ID), {
+        stepId: "step-1",
+        prompt: "go",
+      }),
+    );
+
+    await waitFor(
+      () =>
+        host.registry
+          .get(sessionId)
+          ?.record.noProgressState?.pending.has("cancelled-in-flight") === true,
+    );
+    const cancelled = await postJson(
+      `${host.url}/sessions/${sessionId}/cancel`,
+      envelope("session.cancel", fenceFor(host, RUN_ID)),
+    );
+
+    expect(cancelled.status).toBe(200);
+    expect((await first).status).toBe(200);
+    expect(
+      host.registry.get(sessionId)?.record.noProgressState?.pending.size,
+    ).toBe(0);
+    await sendPrompt(host, sessionId);
+    const trips = hookTrips(host.registry.snapshotEvents(sessionId));
+
+    expect(trips).toHaveLength(1);
+    expect(trips[0]).toMatchObject({
+      rule: "no_progress",
+      diagnostics: { countedOperations: 4, threshold: 4, progressResets: 0 },
+    });
+  });
+
   it("no_progress: halts after maxTurns idle tool-call turns", async () => {
     const host = await boot(["--scenario", "no_progress", "--count", "4"]);
     const { registry, runtimeRoot } = host;
@@ -177,6 +318,14 @@ describe("guardrail interceptor (universal supervisor seam)", () => {
       lifecycle: "post_turn",
       disposition: "halt",
       toolCall: null,
+      diagnostics: {
+        threshold: 4,
+        countedOperations: 4,
+        turnsSinceProgress: 4,
+        progressResets: 0,
+        pendingOperations: 0,
+        stopReason: "no_progress",
+      },
     });
     expect(pendingPermissions.size(sessionId)).toBe(0);
   });

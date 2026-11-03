@@ -335,7 +335,7 @@ deterministic, not adapter-tool-identity-dependent; the evidence gate applies on
 `tools`/`mcps`.)
 
 **Two-tier default.** The resolver seeds the two liveness breakers (`repetition` =
-5, `noProgress` = 15, from `MAISTER_HOOK_*`) for runs under the `unattended`
+5, `noProgress` = 150, from `MAISTER_HOOK_*`) for runs under the `unattended`
 execution-policy preset unless the node opts out; `supervised` / `assisted` are
 opt-in; `path_guard` is always opt-in. See [`guardrail-hooks.md`](guardrail-hooks.md)
 and [`execution-policy.md`](execution-policy.md).

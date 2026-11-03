@@ -1634,6 +1634,46 @@ describe("HitlDecisionControls — hook_trip card (M40)", () => {
     expect(html).not.toContain('data-testid="hook-trip-tool-call"');
   });
 
+  it("renders the counted operation evidence for a no_progress pause", () => {
+    const diagnostics = {
+      threshold: 150,
+      countedOperations: 163,
+      turnsSinceProgress: 150,
+      progressResets: 13,
+      pendingOperations: 0,
+      ignoredUpdates: 200,
+      progressMode: "read_only",
+      stopReason: "no_progress",
+      recentOperations: [
+        {
+          toolCallId: "call-163",
+          kind: "read",
+          status: "completed",
+          progress: false,
+          reason: "repeated_evidence",
+        },
+      ],
+    };
+    const html = render({
+      kind: "hook_trip",
+      schema: {
+        kind: "hook_trip",
+        rule: "no_progress",
+        decisions: ["resume", "abort"],
+        diagnostics,
+      },
+      labels: HOOK_TRIP_LABELS,
+    });
+
+    expect(html).toContain('data-testid="hook-trip-diagnostics"');
+    expect(html).toContain("150/150");
+    expect(html).toContain("Counted operations: 163");
+    expect(html).toContain("progress resets: 13");
+    expect(html).toContain("Stop reason: no_progress");
+    expect(html).toContain("call-163");
+    expect(html).toContain("repeated_evidence");
+  });
+
   it("localizes a capability_guard trip + shows the offending tool identity (ADR-130)", () => {
     const html = render({
       kind: "hook_trip",

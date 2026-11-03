@@ -2669,6 +2669,8 @@
       "failures": "сбои",
       "wallclock": "время"
     },
+    "hookTripDiagnosticDetails": "Диагностические данные",
+    "hookTripDiagnostics": "Завершено без прогресса: $current/$threshold. Учтено операций: $counted; сбросов по прогрессу: $resets; выполняется: $pending. Причина остановки: $reason.",
     "hookTripTitle": "Срабатывание хука",
     "hookTripSummary": "Сработал защитный хук «$rule» — продолжите запуск или прекратите.",
     "hookTripToolCall": "Последний инструмент: $title",
@@ -4549,7 +4551,7 @@
       "hooks": {
         "title": "Защитные хуки",
         "repetitionMax": "Лимит повторов (идентичных вызовов)",
-        "noProgressMaxTurns": "Лимит без прогресса (ходов)",
+        "noProgressMaxTurns": "Лимит операций без прогресса",
         "pathGuardAllowedPaths": "Path guard — разрешённые пути (через запятую)",
         "disabled": "Отключить авто-взвод (unattended)",
         "hint": "Брейкеры живости авто-взводятся в пресете unattended; path guard всегда явный."

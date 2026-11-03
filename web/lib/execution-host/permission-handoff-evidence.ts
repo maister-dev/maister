@@ -8,6 +8,7 @@ import { and, eq, sql } from "drizzle-orm";
 
 import { assertTerminalEventConfirmed } from "./prompt-owners";
 import { HOST_PRESSURE_REFUSAL_REASON } from "./host-pressure";
+import { checkpointInterruptionReason } from "./checkpoint-interruption";
 
 import { executionEvents } from "@/lib/db/schema";
 
@@ -95,7 +96,9 @@ export function isPermissionResultCommand(
     (command.state === "succeeded" ||
       (command.state === "failed" &&
         (command.lastError?.code === "ACP_PROTOCOL" ||
-          command.lastError?.code === "EXECUTOR_UNAVAILABLE")))
+          command.lastError?.code === "EXECUTOR_UNAVAILABLE" ||
+          (command.lastError !== null &&
+            checkpointInterruptionReason(command.lastError) !== null))))
   );
 }
 
@@ -105,7 +108,9 @@ export function isPermissionCheckpointInterruption(
   return (
     isPermissionResultCommand(command) &&
     command.state === "failed" &&
-    command.lastError?.code === "ACP_PROTOCOL"
+    (command.lastError?.code === "ACP_PROTOCOL" ||
+      (command.lastError !== null &&
+        checkpointInterruptionReason(command.lastError) !== null))
   );
 }
 

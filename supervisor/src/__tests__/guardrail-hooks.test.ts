@@ -5,7 +5,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  classifyProgressUpdate,
   extractWritePath,
   HOOK_RULE_META,
   noProgressTick,
@@ -304,37 +303,6 @@ describe("repetitionTick", () => {
     state = { lastToolCallSig: r.lastToolCallSig, repeatCount: r.repeatCount };
     r = repetitionTick(state, "sig-B", max);
     expect(r).toMatchObject({ repeatCount: 3, tripped: true });
-  });
-});
-
-describe("classifyProgressUpdate", () => {
-  it("treats a write-kind tool_call as a progress turn", () => {
-    expect(
-      classifyProgressUpdate({ sessionUpdate: "tool_call", kind: "edit" }),
-    ).toEqual({ isTurn: true, isProgress: true });
-  });
-
-  it("treats a non-write tool_call as an idle turn", () => {
-    expect(
-      classifyProgressUpdate({ sessionUpdate: "tool_call", kind: "read" }),
-    ).toEqual({ isTurn: true, isProgress: false });
-    expect(
-      classifyProgressUpdate({ sessionUpdate: "tool_call", kind: "execute" }),
-    ).toEqual({ isTurn: true, isProgress: false });
-  });
-
-  it("ignores non-tool_call updates (chunks, plans, nulls) — not a turn", () => {
-    expect(
-      classifyProgressUpdate({ sessionUpdate: "agent_message_chunk" }),
-    ).toEqual({
-      isTurn: false,
-      isProgress: false,
-    });
-    expect(classifyProgressUpdate({ sessionUpdate: "plan" }).isTurn).toBe(
-      false,
-    );
-    expect(classifyProgressUpdate(null).isTurn).toBe(false);
-    expect(classifyProgressUpdate(undefined).isTurn).toBe(false);
   });
 });
 

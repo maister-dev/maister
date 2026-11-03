@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { NoProgressDiagnostics } from "./no-progress-diagnostics";
 import type { HookTripHaltRule } from "./hook-trip-rule";
 
 import { randomUUID } from "node:crypto";
@@ -57,6 +58,7 @@ export type EscalateHookTripArgs = {
   assignmentId?: string;
   rule: HookTripHaltRule;
   toolCall?: unknown;
+  diagnostics?: NoProgressDiagnostics;
   runKind: "flow" | "agent";
   // Injected so each consumer passes the `checkpoint` of the client bound to
   // the run's execution assignment (ADR-166). An EXECUTOR_UNAVAILABLE
@@ -74,7 +76,7 @@ function hookTripPrompt(rule: HookTripHaltRule, toolCall: unknown): string {
       ? "repeated the same tool call too many times"
       : rule === "capability_guard"
         ? "requested tool calls outside its enforced allow-list too many times"
-        : "made no progress for too many turns";
+        : "completed too many operations without new evidence";
 
   return title
     ? `Guardrail "${rule}" tripped: the agent ${which} (last tool: ${title}). Resume the run or abort.`
@@ -84,12 +86,14 @@ function hookTripPrompt(rule: HookTripHaltRule, toolCall: unknown): string {
 function hookTripSchema(
   rule: HookTripHaltRule,
   toolCall: unknown,
+  diagnostics: NoProgressDiagnostics | undefined,
 ): Record<string, unknown> {
   return {
     kind: "hook_trip",
     rule,
     decisions: ["resume", "abort"],
     ...(toolCall ? { toolCall } : {}),
+    ...(diagnostics ? { diagnostics } : {}),
   };
 }
 
@@ -215,7 +219,7 @@ export async function escalateHookTrip(
 
   const onStuck = onStuckFromSnapshot(run.executionPolicy ?? null);
   const assign = onStuck !== "notify_only";
-  const schema = hookTripSchema(rule, toolCall);
+  const schema = hookTripSchema(rule, toolCall, args.diagnostics);
   const prompt = hookTripPrompt(rule, toolCall);
   const hitlRequestId = randomUUID();
 
@@ -357,7 +361,7 @@ export async function escalateHookTrip(
     detail: { reason: "hook_trip", rule, nodeId: stepId },
   });
   log.warn(
-    { runId, rule, runKind, assign },
+    { runId, rule, runKind, assign, diagnostics: args.diagnostics },
     "[hook-trip] escalated → NeedsInput (hook_trip HITL)",
   );
 

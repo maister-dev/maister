@@ -771,6 +771,7 @@ function startEventConsumer(
                 supervisorSessionId: permissionCtx.supervisorSessionId,
                 rule: haltRule,
                 toolCall: ev.toolCall,
+                diagnostics: ev.diagnostics,
                 runKind: "flow",
                 checkpointSession: (id) => execution.client.checkpoint(id),
               }).then(

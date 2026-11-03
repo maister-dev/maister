@@ -27,6 +27,10 @@ import {
 } from "@heroicons/react/24/outline";
 import clsx from "clsx";
 
+import {
+  parseNoProgressDiagnostics,
+  type NoProgressDiagnostics,
+} from "@/lib/runs/no-progress-diagnostics";
 import { NodeInterruptControls } from "@/components/runs/node-interrupt-controls";
 import {
   consensusPartialCause,
@@ -149,6 +153,8 @@ export interface HitlDecisionControlsLabels extends ConsensusCardMappedLabels {
   // compiling without them. `$rule`/`$title` `$`-token templates.
   hookTripTitle?: string;
   hookTripSummary?: string;
+  hookTripDiagnostics?: string;
+  hookTripDiagnosticDetails?: string;
   "hookTripRule.repetition"?: string;
   "hookTripRule.no_progress"?: string;
   // ADR-130: the capability_guard breaker (Nth consecutive out-of-profile deny).
@@ -559,6 +565,7 @@ export function budgetBreachFromSchema(
 export interface HookTripView {
   rule: string;
   toolCallTitle?: string;
+  diagnostics?: NoProgressDiagnostics;
 }
 
 export function hookTripFromSchema(schema: unknown): HookTripView | null {
@@ -571,7 +578,13 @@ export function hookTripFromSchema(schema: unknown): HookTripView | null {
   const title =
     toolCall && typeof toolCall.title === "string" ? toolCall.title : undefined;
 
-  return { rule: s.rule, ...(title ? { toolCallTitle: title } : {}) };
+  const diagnostics = parseNoProgressDiagnostics(s.diagnostics);
+
+  return {
+    rule: s.rule,
+    ...(title ? { toolCallTitle: title } : {}),
+    ...(diagnostics ? { diagnostics } : {}),
+  };
 }
 
 export interface PlanReviewDecisionView {
@@ -1988,6 +2001,35 @@ export function HitlDecisionControls({
               },
             )}
           </p>
+          {hookTrip.diagnostics ? (
+            <p
+              className="font-mono text-[11px] text-mute"
+              data-testid="hook-trip-diagnostics"
+            >
+              {fillStringTemplate(
+                labels.hookTripDiagnostics ??
+                  "Completed without progress: $current/$threshold. Counted operations: $counted; progress resets: $resets; pending: $pending. Stop reason: $reason.",
+                {
+                  $current: String(hookTrip.diagnostics.turnsSinceProgress),
+                  $threshold: String(hookTrip.diagnostics.threshold),
+                  $counted: String(hookTrip.diagnostics.countedOperations),
+                  $resets: String(hookTrip.diagnostics.progressResets),
+                  $pending: String(hookTrip.diagnostics.pendingOperations),
+                  $reason: hookTrip.diagnostics.stopReason,
+                },
+              )}
+            </p>
+          ) : null}
+          {hookTrip.diagnostics ? (
+            <details className="text-[11px] text-mute">
+              <summary>
+                {labels.hookTripDiagnosticDetails ?? "Diagnostic evidence"}
+              </summary>
+              <pre className="overflow-x-auto whitespace-pre-wrap">
+                {JSON.stringify(hookTrip.diagnostics, null, 2)}
+              </pre>
+            </details>
+          ) : null}
           {hookTrip.toolCallTitle ? (
             <p
               className="font-mono text-[11px] text-mute"

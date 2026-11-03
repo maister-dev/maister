@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { NoProgressDiagnostics } from "@/lib/runs/no-progress-diagnostics";
 import type {
   PlatformStatus,
   PlatformUnavailableReason,
@@ -592,6 +593,12 @@ export type SupervisorEvent =
       // .asyncapi.yaml SessionExitedEvent. ADR-166: "fenced" = evicted by a
       // command carrying a higher assignment epoch.
       reason?: "checkpoint" | "intentional" | "fenced";
+      stopReason?:
+        | "path_guard"
+        | "repetition"
+        | "no_progress"
+        | "capability_guard"
+        | "checkpoint";
     }
   | {
       type: "session.crashed";
@@ -622,6 +629,7 @@ export type SupervisorEvent =
       sessionId: string;
       monotonicId: number;
       rule: "path_guard" | "repetition" | "no_progress" | "capability_guard";
+      diagnostics?: NoProgressDiagnostics;
       lifecycle: "pre_tool_call" | "post_turn";
       disposition: "deny" | "halt";
       toolCall: unknown;

@@ -2669,6 +2669,8 @@
       "failures": "failures",
       "wallclock": "wall-clock"
     },
+    "hookTripDiagnosticDetails": "Diagnostic evidence",
+    "hookTripDiagnostics": "Completed without progress: $current/$threshold. Counted operations: $counted; progress resets: $resets; pending: $pending. Stop reason: $reason.",
     "hookTripTitle": "Guardrail trip",
     "hookTripSummary": "\"$rule\" guardrail tripped — resume the run or abort.",
     "hookTripToolCall": "Last tool: $title",
@@ -4549,7 +4551,7 @@
       "hooks": {
         "title": "Guardrail hooks",
         "repetitionMax": "Repetition limit (identical calls)",
-        "noProgressMaxTurns": "No-progress limit (turns)",
+        "noProgressMaxTurns": "No-progress operation limit",
         "pathGuardAllowedPaths": "Path guard — allowed paths (comma-separated)",
         "disabled": "Disable auto-arm (unattended)",
         "hint": "Liveness breakers auto-arm under the unattended preset; path guard is always opt-in."

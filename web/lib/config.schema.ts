@@ -607,7 +607,7 @@ export const hooksSettingsSchema = z
       .object({ max: z.number().int().positive() })
       .strict()
       .optional(),
-    // Liveness breaker: turns since the last edit/diff-producing tool call.
+    // Liveness breaker: completed operations without new mutation/investigation evidence.
     noProgress: z
       .object({ maxTurns: z.number().int().positive() })
       .strict()

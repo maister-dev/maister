@@ -60,6 +60,7 @@ import {
   waitForChildExit,
 } from "./execution-fence";
 import { attachHeartbeat } from "./heartbeat";
+import { finishProgressTurn } from "./guardrail-progress";
 import { executionHostCapabilities } from "./data-plane-capabilities";
 import { outboxLimitOf } from "./host-runtime-errors";
 import {
@@ -1166,6 +1167,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
           );
         }
         if (transition.phase === "accepted") {
+          entry.record.cancelRequested = false;
           entry.record.activePromptCommandId = envelope.command.id;
         }
         emitCommandEvent(entry, event, true);
@@ -1493,7 +1495,21 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   // manager owner already, and its rejection evidence is unchanged. The code
   // stays ACP_PROTOCOL; a genuine output failure other than the interrupted
   // turn's incomplete output keeps its own evidence.
-  function throwIfParkedByPressure(entry: RegistryEntry): void {
+  function throwIfParkedByPressure(
+    entry: RegistryEntry,
+    error?: unknown,
+  ): void {
+    if (
+      error !== undefined &&
+      !(
+        entry.checkpointTransportOpen &&
+        entry.connection?.signal.aborted &&
+        isSupervisorError(error) &&
+        (error === entry.connection.signal.reason ||
+          error.cause === entry.connection.signal.reason)
+      )
+    )
+      return;
     if (
       !entry.intentionalShutdown ||
       entry.intentionalReason !== "checkpoint" ||
@@ -1609,6 +1625,14 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
           contentBlocks,
           preamble: mountPreamble ?? undefined,
           isUserCancel: () => entry.record.cancelRequested === true,
+          checkpointStopReason: () =>
+            entry.intentionalShutdown &&
+            entry.intentionalReason === "checkpoint" &&
+            entry.checkpointTransportOpen === true &&
+            entry.intentionalCause !== "outbox_pressure" &&
+            !entry.record.outputFailure
+              ? (entry.record.hookHaltRule ?? "checkpoint")
+              : undefined,
         },
         logger,
       );
@@ -1643,8 +1667,33 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     } catch (error) {
       chatBudget.release();
       throwIfFenced(entry, parsed.envelope);
-      throwIfParkedByPressure(entry);
+      throwIfParkedByPressure(entry, error);
       throwIfProducerOutputFailed(entry, error);
+      if (
+        isSupervisorError(error) &&
+        error.code === "CHECKPOINT" &&
+        error.details?.reason === "session_checkpointed"
+      ) {
+        // The command receipt follows the same durable terminal barrier as
+        // an unexpected disconnect; application never races a missing exit.
+        if (!(await waitForChildExit(entry, killGraceMs)))
+          throw new SupervisorError(
+            "EXECUTOR_UNAVAILABLE",
+            "checkpointed prompt has no durable session terminal",
+            { details: { reason: "required_output_incomplete" }, cause: error },
+          );
+        throwIfFenced(entry, parsed.envelope);
+        throwIfProducerOutputFailed(entry, error);
+        logger.info(
+          {
+            sessionId,
+            commandId: parsed.envelope.command.id,
+            ...error.details,
+          },
+          "[FIX] prompt interrupted by intentional checkpoint",
+        );
+        throw error;
+      }
       // A closed ACP transport cannot carry another turn. Its method rejection
       // may arrive before Node publishes the child's exit; let the heartbeat
       // durably publish the crashed incarnation before this command's failed
@@ -1662,7 +1711,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         // A terminal purge settles the bounded permission callbacks. Derive
         // the same precedence again from this causal barrier, not a timed tick.
         throwIfFenced(entry, parsed.envelope);
-        throwIfParkedByPressure(entry);
+        throwIfParkedByPressure(entry, error);
         throwIfProducerOutputFailed(entry, error);
         if (!terminalSettled) {
           throw new SupervisorError(
@@ -1686,6 +1735,10 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       throw error;
     } finally {
       entry.record.readOnlyTurn = false;
+      if (entry.record.noProgressState)
+        entry.record.noProgressState = finishProgressTurn(
+          entry.record.noProgressState,
+        );
       entry.record.cancelRequested = false;
       if (chatHitlId) entry.emitter.off(SESSION_EVENT_CHANNEL, chatListener);
     }

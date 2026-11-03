@@ -4,6 +4,7 @@ import type { CapabilityAgent } from "@/lib/config.schema";
 import type { MaisterErrorCode } from "@/lib/errors";
 import type { TaskClarificationContext } from "@/lib/tasks/clarifications";
 import type { RawNodeOutputPayload } from "./graph/node-output";
+import type { CheckpointStopReason } from "@/lib/execution-host/checkpoint-interruption";
 
 export type TemplateValue =
   | string
@@ -86,9 +87,8 @@ export type StepResult = {
   // back `assignment_fenced`) — the caller MUST yield without writing run,
   // ledger, HITL, or scratch state.
   fenced?: boolean;
-  // ADR-183 D-M1: the execution host's outbox pressure ended this turn (its
-  // own park, or a refused admission). The node parks; it has not failed.
-  reason?: "host_pressured";
+  // Positive host evidence of why the turn paused; never a timeout inference.
+  reason?: "host_pressured" | CheckpointStopReason;
 };
 
 export type RunContext = {

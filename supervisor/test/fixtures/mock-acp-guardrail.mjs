@@ -86,7 +86,7 @@ class GuardrailAgent {
   }
 
   async cancel() {
-    /* no-op */
+    this.cancelPrompt?.();
   }
 
   async requestWrite(sessionId, path, id) {
@@ -116,8 +116,7 @@ class GuardrailAgent {
     this.outcomes.push(res.outcome.outcome);
   }
 
-  // A write-kind tool_call NOTIFICATION (resets the no_progress counter — it is a
-  // diff-producing turn), distinct from a permission request.
+  // A successful mutation with stable request evidence.
   async progressTurn(sessionId, id) {
     await this.connection.sessionUpdate({
       sessionId,
@@ -126,7 +125,8 @@ class GuardrailAgent {
         toolCallId: id,
         kind: "edit",
         title: `edit ${id}`,
-        status: "pending",
+        rawInput: { path: "src/fix.ts", newText: id },
+        status: "completed",
       },
     });
   }
@@ -139,7 +139,7 @@ class GuardrailAgent {
         toolCallId: id,
         kind: "read",
         title: `read ${id}`,
-        status: "pending",
+        status: "completed",
       },
     });
   }
@@ -215,7 +215,58 @@ class GuardrailAgent {
   async prompt(params) {
     const sessionId = params.sessionId;
 
-    if (scenario === "repetition") {
+    if (scenario === "checkpoint_drain") {
+      this.checkpointSessionId = sessionId;
+      await this.connection.sessionUpdate({
+        sessionId,
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "checkpoint-in-flight",
+          kind: "execute",
+          title: "Inspect",
+          status: "pending",
+        },
+      });
+      await new Promise(() => {});
+    } else if (scenario === "cancel_then_loop") {
+      if (!this.cancelTurnSeen) {
+        this.cancelTurnSeen = true;
+        await this.connection.sessionUpdate({
+          sessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "cancelled-in-flight",
+            kind: "execute",
+            title: "Inspect",
+            status: "pending",
+          },
+        });
+        await new Promise((resolve) => {
+          this.cancelPrompt = resolve;
+        });
+        await this.connection.sessionUpdate({
+          sessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "cancelled-in-flight",
+            status: "failed",
+          },
+        });
+        return { stopReason: "cancelled" };
+      }
+      // A late terminal for the previous cancelled turn cannot consume work in
+      // this prompt or keep its pending cohort alive.
+      await this.connection.sessionUpdate({
+        sessionId,
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "cancelled-in-flight",
+          status: "failed",
+        },
+      });
+      for (let i = 0; i < count; i += 1)
+        await this.idleTurn(sessionId, `after-cancel-${i}`);
+    } else if (scenario === "repetition") {
       // Identical tool calls — same kind/title/locations, only toolCallId varies.
       for (let i = 0; i < count; i += 1) {
         await this.requestWrite(sessionId, "src/x.ts", `tc-rep-${i}`);
@@ -239,8 +290,41 @@ class GuardrailAgent {
       for (let i = 0; i < count; i += 1) {
         await this.requestWriteNoPath(sessionId, `tc-ko-${i}`);
       }
+    } else if (
+      scenario === "pending_investigation" ||
+      scenario === "useful_investigation" ||
+      scenario === "investigation_then_edit"
+    ) {
+      for (let i = 0; i < count; i += 1) {
+        const toolCallId = `investigate-${i}`;
+        await this.connection.sessionUpdate({
+          sessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId,
+            kind: i % 2 === 0 ? "read" : "search",
+            status: "pending",
+            rawInput: { path: `src/module-${i}.ts` },
+            locations: [{ path: `src/module-${i}.ts` }],
+            title: "Investigate source",
+          },
+        });
+        if (scenario !== "pending_investigation") {
+          await this.connection.sessionUpdate({
+            sessionId,
+            update: {
+              sessionUpdate: "tool_call_update",
+              toolCallId,
+              status: "completed",
+              rawOutput: { source: `export const value${i} = ${i};` },
+            },
+          });
+        }
+      }
+      if (scenario === "investigation_then_edit")
+        await this.progressTurn(sessionId, "first-edit");
     } else if (scenario === "no_progress") {
-      // M non-write tool_call turns — no diff-producing call resets the counter.
+      // M completed calls without evidence — no operation resets the counter.
       for (let i = 0; i < count; i += 1) {
         await this.idleTurn(sessionId, `tc-np-${i}`);
       }
@@ -334,9 +418,25 @@ const stream = acp.ndJsonStream(
   Readable.toWeb(process.stdin),
 );
 
-serveAgent((conn) => new GuardrailAgent(conn), stream);
+let activeAgent;
+serveAgent((conn) => {
+  activeAgent = new GuardrailAgent(conn);
+  return activeAgent;
+}, stream);
 
-process.on("SIGTERM", () => process.exit(143));
+process.on("SIGTERM", async () => {
+  if (activeAgent?.checkpointSessionId) {
+    await activeAgent.connection.sessionUpdate({
+      sessionId: activeAgent.checkpointSessionId,
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "checkpoint-in-flight",
+        status: "failed",
+      },
+    });
+  }
+  process.exit(143);
+});
 process.on("SIGINT", () => process.exit(130));
 
 setInterval(() => {}, 1 << 30);

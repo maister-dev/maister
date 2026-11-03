@@ -4750,6 +4750,7 @@ export async function consumeAgentSession(args: {
               assignmentId: args.execution.client.assignment.id,
               rule: haltRule,
               toolCall: event.toolCall,
+              diagnostics: event.diagnostics,
               runKind: "agent",
               checkpointSession: (sessionId: string) =>
                 args.execution.client.checkpoint(sessionId),

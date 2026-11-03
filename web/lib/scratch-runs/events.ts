@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { NoProgressDiagnostics } from "@/lib/runs/no-progress-diagnostics";
 import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 import type { ScratchDialogStatus } from "@/lib/db/schema";
 
@@ -139,6 +140,12 @@ type MinimalSupervisorEvent =
       type: "session.exited";
       monotonicId: number;
       reason?: "checkpoint" | "intentional" | "fenced";
+      stopReason?:
+        | "path_guard"
+        | "repetition"
+        | "no_progress"
+        | "capability_guard"
+        | "checkpoint";
     }
   | {
       type: "session.crashed";
@@ -161,6 +168,7 @@ type MinimalSupervisorEvent =
       type: "session.hook_trip";
       monotonicId: number;
       rule: "path_guard" | "repetition" | "no_progress" | "capability_guard";
+      diagnostics?: NoProgressDiagnostics;
       lifecycle: "pre_tool_call" | "post_turn";
       disposition: "deny" | "halt";
     }
@@ -1068,7 +1076,11 @@ function startScratchEventConsumer(args: {
               db: args.db,
               runId: args.runId,
               role: "system",
-              content: encodeHookTripPayload(event.rule, event.disposition),
+              content: encodeHookTripPayload(
+                event.rule,
+                event.disposition,
+                event.diagnostics,
+              ),
               supervisorEventId: String(event.monotonicId),
             });
           } catch (err) {

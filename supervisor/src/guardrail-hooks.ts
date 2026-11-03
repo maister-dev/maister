@@ -287,28 +287,9 @@ export function repetitionTick(
   return { lastToolCallSig: sig, repeatCount, tripped: repeatCount >= max };
 }
 
-// Classify a session.update for the no_progress watchdog (D5). Only a `tool_call`
-// notification counts as a "turn" (a unit of agent work); a write-kind tool call
-// is progress (resets the counter). Streaming chunks / plans / other updates are
-// ignored — counting them would trip the watchdog almost instantly.
-export function classifyProgressUpdate(update: unknown): {
-  isTurn: boolean;
-  isProgress: boolean;
-} {
-  const u = update as { sessionUpdate?: unknown; kind?: unknown } | null;
-
-  if (!u || u.sessionUpdate !== "tool_call") {
-    return { isTurn: false, isProgress: false };
-  }
-
-  const isProgress = typeof u.kind === "string" && WRITE_KINDS.has(u.kind);
-
-  return { isTurn: true, isProgress };
-}
-
-// Rule 3 — no_progress. Resets to 0 on a progress turn (a write-kind tool call);
+// Rule 3 — no_progress. Resets to 0 on an evidenced completed operation;
 // otherwise increments. Trips at EXACTLY `maxTurns` turns since the last
-// progress. Called once per "turn" (see classifyProgressUpdate).
+// progress. Called once per deduplicated completed operation.
 export function noProgressTick(
   prev: { turnsSinceProgress: number },
   isProgress: boolean,

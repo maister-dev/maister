@@ -288,6 +288,55 @@ describe("escalateHookTrip", () => {
     expect(await getAssignments(runId)).toHaveLength(0);
   });
 
+  it("retains no_progress diagnostics in the durable human-only pause", async () => {
+    const runId = await seedRun({
+      runKind: "flow",
+      currentStepId: "implement",
+    });
+
+    await seedAttempt(runId, "implement");
+    const diagnostics = {
+      threshold: 150,
+      countedOperations: 161,
+      turnsSinceProgress: 150,
+      progressResets: 11,
+      pendingOperations: 0,
+      ignoredUpdates: 28,
+      progressMode: "investigation" as const,
+      stopReason: "no_progress" as const,
+      recentOperations: [
+        {
+          toolCallId: "call-161",
+          kind: "execute",
+          status: "completed",
+          progress: false,
+          reason: "repeated_evidence",
+        },
+      ],
+    };
+
+    await escalateHookTrip({
+      db,
+      runId,
+      stepId: "implement",
+      supervisorSessionId: "sup-diagnostic",
+      rule: "no_progress",
+      diagnostics,
+      runKind: "flow",
+      checkpointSession: async () => ({}),
+    });
+
+    const hitls = await getHitl(runId);
+
+    expect(hitls).toHaveLength(1);
+    expect(hitls[0].schema).toMatchObject({
+      diagnostics,
+      decisions: ["resume", "abort"],
+    });
+    expect(hitls[0].respondedAt).toBeNull();
+    expect((await getRun(runId)).status).toBe("NeedsInput");
+  });
+
   it("CAS rejects a non-Running run: no escalate, no HITL", async () => {
     const runId = await seedRun({
       runKind: "flow",

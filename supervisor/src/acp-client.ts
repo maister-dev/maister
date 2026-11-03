@@ -19,16 +19,19 @@ import {
 } from "./adapter-registry";
 import { resolveContextMountDecision } from "./context-mounts";
 import {
-  classifyProgressUpdate,
   extractToolIdentity,
   HOOK_RULE_META,
-  noProgressTick,
   repetitionTick,
   resolveCapabilityGuardDecision,
   resolvePathGuardDecision,
   toolCallSignature,
   WRITE_KINDS,
 } from "./guardrail-hooks";
+import {
+  accountProgress,
+  initialProgressState,
+  progressDiagnostics,
+} from "./guardrail-progress";
 import { resolveMcpEnvVariables, resolveMcpHeaders } from "./mcp-values";
 import { modelCatalogCache } from "./model-catalog/cache";
 import { harvestSessionModels } from "./model-catalog/harvest";
@@ -45,6 +48,7 @@ import {
   type ExecutorAgent,
   type HookDisposition,
   type HookRule,
+  type NoProgressDiagnostics,
   type McpServerInput,
   type PermissionOptionDescriptor,
   type RunnerLaunch,
@@ -297,6 +301,7 @@ export function classifyAcpMethodError(args: {
   return new SupervisorError(
     "ACP_PROTOCOL",
     `ACP ${args.method} failed (${context}): ${rawMessage}`,
+    { cause: args.err },
   );
 }
 
@@ -325,6 +330,22 @@ async function callAcpMethod<T>(args: {
       err,
       sessionId: args.sessionId,
     });
+
+    if (
+      classified.code === "CHECKPOINT" &&
+      classified.details?.reason === "session_checkpointed"
+    ) {
+      args.logger.info(
+        {
+          adapter: args.adapter,
+          method: args.method,
+          sessionId: args.sessionId,
+          stopReason: classified.details.stopReason,
+        },
+        "[FIX] ACP prompt checkpointed",
+      );
+      throw classified;
+    }
 
     args.logger.warn(
       {
@@ -366,6 +387,7 @@ export async function createAcpConnection(
     rule: HookRule,
     toolCall: unknown,
     dispositionOverride?: HookDisposition,
+    diagnostics?: NoProgressDiagnostics,
   ): void => {
     record.monotonicId += 1;
     const meta = HOOK_RULE_META[rule];
@@ -377,9 +399,55 @@ export async function createAcpConnection(
       lifecycle: meta.lifecycle,
       disposition: dispositionOverride ?? meta.disposition,
       toolCall,
+      ...(diagnostics ? { diagnostics } : {}),
     };
 
     emitter.emit(SESSION_EVENT_CHANNEL, event);
+  };
+
+  record.noProgressState = initialProgressState();
+  const observeProgress = (update: unknown): void => {
+    const config = record.hooksConfig?.noProgress;
+
+    if (
+      !config ||
+      record.hookHalted ||
+      record.cancelRequested ||
+      record.intentionalStopRequested
+    )
+      return;
+    const progressState = record.noProgressState ?? initialProgressState();
+    const tick = accountProgress(progressState, update, config.maxTurns);
+
+    if (
+      tick.state.ignoredUpdates > progressState.ignoredUpdates &&
+      progressState.ignoredUpdates === 0
+    ) {
+      logger.debug(
+        { sessionId, ignoredUpdates: tick.state.ignoredUpdates },
+        "[FIX:guardrail] duplicate or unidentifiable tool update ignored",
+      );
+    }
+    record.noProgressState = tick.state;
+    record.turnsSinceProgress = tick.state.turnsSinceProgress;
+    if (!tick.tripped) return;
+    record.hookHalted = true;
+    const diagnostics = progressDiagnostics(
+      tick.state,
+      config.maxTurns,
+      record.readOnlySession || record.readOnlyTurn
+        ? "read_only"
+        : "investigation",
+    );
+
+    emitHookTrip("no_progress", null, undefined, diagnostics);
+    for (const requestId of pendingPermissions.requestIds(sessionId)) {
+      pendingPermissions.cancel(sessionId, requestId, "hook_trip:no_progress");
+    }
+    logger.info(
+      { sessionId, ...diagnostics },
+      "[FIX:guardrail] no_progress halt",
+    );
   };
 
   const lineEvent = (
@@ -434,46 +502,7 @@ export async function createAcpConnection(
         "session-update",
       );
 
-      // ADR-108 (M40): no_progress watchdog (post_turn; cannot block — the tool
-      // already ran). Count tool-call turns, reset on a write-kind (diff-producing)
-      // call, halt at >= maxTurns. On halt, cancel any in-flight permission
-      // deferred and stop; the web tier owns the escalate (the supervisor never
-      // self-kills).
-      if (record.hooksConfig?.noProgress && !record.hookHalted) {
-        const { isTurn, isProgress } = classifyProgressUpdate(params.update);
-
-        if (isTurn) {
-          const tick = noProgressTick(
-            { turnsSinceProgress: record.turnsSinceProgress ?? 0 },
-            isProgress,
-            record.hooksConfig.noProgress.maxTurns,
-          );
-
-          record.turnsSinceProgress = tick.turnsSinceProgress;
-
-          if (tick.tripped) {
-            record.hookHalted = true;
-            emitHookTrip("no_progress", null);
-
-            for (const requestId of pendingPermissions.requestIds(sessionId)) {
-              pendingPermissions.cancel(
-                sessionId,
-                requestId,
-                "hook_trip:no_progress",
-              );
-            }
-
-            logger.info(
-              {
-                sessionId,
-                turnsSinceProgress: tick.turnsSinceProgress,
-                maxTurns: record.hooksConfig.noProgress.maxTurns,
-              },
-              "[guardrail] no_progress halt",
-            );
-          }
-        }
-      }
+      observeProgress(params.update);
 
       // ADR-130 D5: always-ask sentinel. A WRITE that EXECUTES without ever
       // reaching the always-ask seam (requestPermission) means the adapter stopped
@@ -566,7 +595,16 @@ export async function createAcpConnection(
           ? null
           : resolveReadOnlySessionDecision(record.readOnlySession, tc, options);
 
+        if (record.hookHalted) return { outcome: { outcome: "cancelled" } };
+
         if (sessionDecision) {
+          if (sessionDecision.decision === "deny") {
+            observeProgress({
+              ...params.toolCall,
+              sessionUpdate: "tool_call_update",
+              status: "failed",
+            });
+          }
           logger.info(
             {
               sessionId,
@@ -601,6 +639,11 @@ export async function createAcpConnection(
         );
 
         if (autoReject) {
+          observeProgress({
+            ...params.toolCall,
+            sessionUpdate: "tool_call_update",
+            status: "failed",
+          });
           logger.info(
             {
               sessionId,
@@ -687,47 +730,14 @@ export async function createAcpConnection(
               );
             }
 
-            // A denied write makes no progress and (for a permission-only call)
-            // fires no session.update turn, so the post_turn no_progress watchdog
-            // never sees it. Count it here as a non-progress turn so a stream of
-            // denied writes — including VARIED ones repetition cannot match — trips
-            // no_progress instead of looping forever.
-            if (record.hooksConfig.noProgress) {
-              const tick = noProgressTick(
-                { turnsSinceProgress: record.turnsSinceProgress ?? 0 },
-                false,
-                record.hooksConfig.noProgress.maxTurns,
-              );
-
-              record.turnsSinceProgress = tick.turnsSinceProgress;
-
-              if (tick.tripped) {
-                record.hookHalted = true;
-                emitHookTrip("no_progress", null);
-
-                for (const requestId of pendingPermissions.requestIds(
-                  sessionId,
-                )) {
-                  pendingPermissions.cancel(
-                    sessionId,
-                    requestId,
-                    "hook_trip:no_progress",
-                  );
-                }
-
-                logger.info(
-                  {
-                    sessionId,
-                    toolKind: tc.kind,
-                    turnsSinceProgress: tick.turnsSinceProgress,
-                    maxTurns: record.hooksConfig.noProgress.maxTurns,
-                  },
-                  "[guardrail] no_progress halt (denied write)",
-                );
-
-                return { outcome: { outcome: "cancelled" } };
-              }
-            }
+            // Settle the same tool ID at the denial seam: the adapter may emit
+            // a failed completion later, which must not count a second time.
+            observeProgress({
+              ...params.toolCall,
+              sessionUpdate: "tool_call_update",
+              status: "failed",
+            });
+            if (record.hookHalted) return { outcome: { outcome: "cancelled" } };
 
             emitHookTrip("path_guard", params.toolCall);
             logger.info(
@@ -753,6 +763,11 @@ export async function createAcpConnection(
           });
 
           if (mountDecision.decision === "deny") {
+            observeProgress({
+              ...params.toolCall,
+              sessionUpdate: "tool_call_update",
+              status: "failed",
+            });
             logger.warn(
               {
                 sessionId,
@@ -1292,6 +1307,9 @@ export async function sendPromptOnConnection(
     // WITHOUT this (hook halt, unexpected abort) still throws ACP_PROTOCOL so
     // the flow/agent path marks the run crashed as before.
     isUserCancel?: () => boolean;
+    // Positive supervisor-owned checkpoint intent. Raw adapter errors are
+    // never reclassified merely because this marker exists.
+    checkpointStopReason?: () => HookRule | "checkpoint" | undefined;
   },
   logger: Logger,
 ): Promise<acp.PromptResponse> {
@@ -1322,12 +1340,21 @@ export async function sendPromptOnConnection(
     method: "prompt",
     sessionId: args.acpSessionId,
     logger,
-    run: () =>
-      conn.prompt({
-        sessionId: args.acpSessionId,
-        prompt,
-      }),
+    run: async () => {
+      try {
+        return await conn.prompt({ sessionId: args.acpSessionId, prompt });
+      } catch (error) {
+        // SDK 2 rejects pending requests with the exact abort reason. An
+        // unrelated adapter rejection must retain its own error, even if a
+        // checkpoint happens to race its continuation.
+        if (conn.signal?.aborted && error === conn.signal.reason)
+          throwIfCheckpointed();
+        throw error;
+      }
+    },
   });
+
+  throwIfCheckpointed();
 
   logger.info(
     {
@@ -1346,6 +1373,17 @@ export async function sendPromptOnConnection(
   }
 
   return resp;
+
+  function throwIfCheckpointed(): void {
+    const stopReason = args.checkpointStopReason?.();
+
+    if (!stopReason) return;
+    throw new SupervisorError(
+      "CHECKPOINT",
+      "the session was intentionally checkpointed during the prompt",
+      { details: { reason: "session_checkpointed", stopReason } },
+    );
+  }
 }
 
 // ADR-182: the host's own bound on one steer, waiting on an earlier steer

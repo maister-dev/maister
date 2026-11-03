@@ -91,7 +91,7 @@ optional claude-native backend delivered through a clean seam.
 | --- | --- | --- | --- |
 | `path_guard` | `pre_tool_call` | `deny` | Deny the tool call inline (cancelled outcome); **the run continues** (deny-and-continue). No web round-trip. |
 | `repetition` | `pre_tool_call` | `halt` | Cancel the tool call, stop issuing work; the **web** consumer checkpoints + escalates. |
-| `no_progress` | `post_turn` | `halt` | Stop issuing work; the **web** consumer checkpoints + escalates. (Driven from `sessionUpdate`, which fires after a tool already ran — post-hoc, never blocking.) |
+| `no_progress` | `post_turn` | `halt` | Stop issuing work; the **web** consumer checkpoints + escalates. (Driven by terminal `tool_call` / `tool_call_update` statuses and definitive denials; starts never count.) |
 | `capability_guard` _(ADR-130)_ | `pre_tool_call` | `deny` **and** `halt` (dual) | Per governed call: in-profile → auto-allow inline (zero HITL, reset counter); out-of-profile → deny the call inline (cancelled outcome), **the run continues** (deny-and-continue). The **Nth** consecutive out-of-profile deny → `halt` (cancel the call + stop issuing work; the web consumer checkpoints + escalates). |
 
 `deny` is resolved entirely inside the supervisor `requestPermission` callback.
@@ -117,7 +117,7 @@ settings:
     repetition:
       max: 5                 # consecutive identical tool-call cap (liveness breaker)
     noProgress:
-      maxTurns: 15           # turns-without-edit cap (liveness breaker)
+      maxTurns: 150          # completed operations without new evidence
     pathGuard:
       allowedPaths:          # ALWAYS opt-in; the writable set (globs)
         - "src/**"
@@ -137,7 +137,7 @@ survives. A node/agent that declares `hooks` requires `compat.engine_min >=
 ```json
 {
   "repetition": { "max": 5 },
-  "noProgress": { "maxTurns": 15 },
+  "noProgress": { "maxTurns": 150 },
   "pathGuard": { "allowedPaths": ["src/**", "tests/**"] }
 }
 ```
@@ -219,7 +219,7 @@ flat `hooksConfig`, keyed off the run's execution-policy **preset**
 ```mermaid
 flowchart TD
   A["resolve hooksConfig for a session"] --> B{"preset == unattended<br/>AND node not opted out?"}
-  B -- "yes" --> C["seed repetition.max = MAISTER_HOOK_REPETITION_MAX (5)<br/>seed noProgress.maxTurns = MAISTER_HOOK_NO_PROGRESS_TURNS (15)<br/>(node-explicit values win)"]
+  B -- "yes" --> C["seed repetition.max = MAISTER_HOOK_REPETITION_MAX (5)<br/>seed noProgress.maxTurns = MAISTER_HOOK_NO_PROGRESS_TURNS (150)<br/>(node-explicit values win)"]
   B -- "no (supervised / assisted / absent snapshot)" --> D["no auto-arm"]
   C --> E{"node declares hooks.pathGuard?"}
   D --> E
@@ -498,8 +498,39 @@ clobbers the sibling — see `writeAdapterSmokeCache` merge):
   the run continue (deny-and-continue) — never `halt`.
 - `repetition` MUST `halt` at exactly `>= repetition.max` consecutive identical
   tool-call signatures and MUST reset the counter on a differing signature.
-- `no_progress` MUST `halt` at `>= noProgress.maxTurns` `sessionUpdate` turns
-  since the last edit/diff-producing tool call and MUST reset on real progress.
+- `no_progress` counts each settled `toolCallId` once, merging `tool_call` and
+  `tool_call_update` metadata. Pending/in-progress calls and repeated terminal
+  notifications do not consume the budget. Failed operations and definitive
+  permission denials and unsolicited cancellations consume it. Intentional
+  operator/guardrail-stop notifications are neutral; incomplete tool IDs are
+  closed at the prompt boundary so they cannot delay a later turn. Missing IDs
+  are ignored and diagnosed because they cannot be deduplicated safely.
+- Successful mutations with a new canonical request, or successful read/search/
+  fetch/execute or structured other/think tools revealing both a new request and new result evidence,
+  reset the counter. Re-reading the same resource or rerunning the same command
+  with changing timestamps does not earn another reset. Display titles,
+  status changes, and tool IDs are excluded from evidence. Unknown kinds or
+  insufficient metadata consume the budget without progress credit. These
+  evidence criteria apply equally to implementation, investigation, and read-only
+  agents; no file edit is required. Only hashes are retained, capped at 4096
+  evidence entries; after that, unseen evidence receives no credit, preventing
+  eviction from crediting old loops again.
+- `no_progress` halts at `>= noProgress.maxTurns` completed operations without
+  progress after the parallel cohort known at threshold settles. This cohort has
+  at most `maxTurns` additional settled operations to provide evidence; new calls
+  do not extend its grace. A useful completion may reset the budget first.
+  Hanging calls without terminal notifications remain governed by the
+  independent duration budget; no 30-second network timeout is inferred.
+- The default is 150 completed operations without evidence; explicit node or
+  environment limits still win. Repetition retains its independent default of 5.
+  This allows extended investigation while repeated unchanged work stays bounded.
+- `session.hook_trip.diagnostics` persists threshold, counted operations, resets,
+  ignored updates, pending count, mode, bounded operation summaries, and
+  `stopReason: no_progress` into the human pause card. Inputs/results are omitted.
+  An in-flight prompt interrupted by checkpoint records `CHECKPOINT` with
+  `details.reason: session_checkpointed` and the original stop reason after the
+  durable process terminal. Flow application uses `STEP_CHECKPOINTED`; genuine
+  unexpected transport loss remains `ACP_PROTOCOL`. Resume remains human-only.
 - A `halt` MUST be escalated by the web tier (checkpoint + `NeedsInput`); the
   supervisor MUST NOT self-kill on a trip.
 - Escalation MUST branch on `run_kind` before routing: `flow`/`agent` →
@@ -511,7 +542,7 @@ clobbers the sibling — see `writeAdapterSmokeCache` merge):
   created iff `onStuck !== "notify_only"`.
 - Under the `unattended` preset and absent a per-node opt-out, `repetition` and
   `noProgress` MUST auto-arm from `MAISTER_HOOK_REPETITION_MAX` (5) and
-  `MAISTER_HOOK_NO_PROGRESS_TURNS` (15); `supervised` / `assisted` and an absent
+  `MAISTER_HOOK_NO_PROGRESS_TURNS` (150); `supervised` / `assisted` and an absent
   policy snapshot MUST NOT auto-arm.
 - `path_guard` MUST always be opt-in (armed only when a node declares
   `hooks.pathGuard`); an opt-in-without-paths node resolves `allowedPaths` from
@@ -588,13 +619,13 @@ clobbers the sibling — see `writeAdapterSmokeCache` merge):
   supervisor nor the native claude `Edit|Write|MultiEdit|NotebookEdit` hook
   statically proves a command stays in-lane). Under `unattended`
   (`permissions=auto_approve`) a single out-of-lane bash write is therefore
-  auto-approved. The liveness breakers bound bash *loops* (an `execute` turn is
-  not progress, so a non-writing bash loop trips `no_progress`), but a single
+  auto-approved. The liveness breakers bound bash *loops*: repeated requests or
+  unchanged results consume the `no_progress` budget, but a single
   destructive command is not blocked — true filesystem confinement is an
   OS-sandbox concern (Phase 2), not `path_guard`'s kind-based scope.
 - **Stall with no tool calls at all** (pure model output, no `tool_call`
-  `sessionUpdate`) → `no_progress` does NOT increment — only tool-call turns
-  count as a turn. That case is covered by the ADR-101 budget
+  `sessionUpdate`) → `no_progress` does NOT increment — only settled, identifiable
+  tool operations count. That case is covered by the ADR-101 budget
   (token / wallclock meter) and the keep-alive sweeper, not the hook engine.
 - **Invalid `hooks` block at compile/load** (negative caps, empty
   `allowedPaths`, unknown lifecycle) → `MaisterError("CONFIG")` with the field

@@ -83,7 +83,7 @@ nodes:
       permissionMode: ask
       hooks: # guardrail hooks (ADR-108); requires compat.engine_min >= 1.8.0
         repetition: { max: 5 } # liveness breaker — consecutive identical calls
-        noProgress: { maxTurns: 15 } # liveness breaker — turns without an edit
+        noProgress: { maxTurns: 150 } # completed operations without new evidence
         pathGuard:
           allowedPaths: ["src/**", "tests/**"] # always opt-in
       enforcement:
@@ -240,7 +240,7 @@ rationale is in [ADR-032](decisions.md#adr-032-settings-enforcement-refusal-boun
 **`hooks` capability class (Designed — ADR-108).** A seventh capability class
 `hooks` declares the per-tool-call guardrail rules enforced at the supervisor↔ACP
 seam — `repetition` (consecutive-identical-call cap), `noProgress`
-(turns-without-edit cap), and `pathGuard.allowedPaths` (an opt-in writable set).
+(completed operations without new evidence), and `pathGuard.allowedPaths` (an opt-in writable set).
 The block is sparse (every key optional); `enforcement.hooks` follows the same
 `strict | instruct (default) | off` intent, and a `strict` declaration is
 **refused** at launch (`hooks` is `instructed` in `ENFORCEABILITY_BY_AGENT`). A

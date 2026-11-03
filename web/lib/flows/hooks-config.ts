@@ -21,7 +21,7 @@ export type HookEnvDefaults = {
 };
 
 const DEFAULT_REPETITION_MAX = 5;
-const DEFAULT_NO_PROGRESS_TURNS = 15;
+const DEFAULT_NO_PROGRESS_TURNS = 150;
 
 function positiveIntEnv(name: string, fallback: number): number {
   const raw = process.env[name];

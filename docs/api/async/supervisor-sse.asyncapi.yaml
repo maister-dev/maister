@@ -529,6 +529,17 @@ components:
                 its run; its pending prompt request answered `409 FENCED`.
                 Absent for natural process exit (the adapter ran to
                 completion on its own).
+            stopReason:
+              type: string
+              enum:
+                [
+                  checkpoint,
+                  path_guard,
+                  repetition,
+                  no_progress,
+                  capability_guard,
+                ]
+              description: Original intentional stop cause, preserved across process exit and prompt interruption.
             cause:
               type: string
               enum: [permission_cap, outbox_pressure]
@@ -672,6 +683,64 @@ components:
         parentCommandId, …}` on a refusal. The parent prompt's own events,
         receipt and span are unchanged; output the steered agent produces
         rides the parent's `sourceCommandId`.
+    NoProgressDiagnostics:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          threshold,
+          countedOperations,
+          turnsSinceProgress,
+          progressResets,
+          pendingOperations,
+          ignoredUpdates,
+          progressMode,
+          stopReason,
+          recentOperations,
+        ]
+      properties:
+        threshold:
+          type: integer
+          minimum: 1
+        countedOperations:
+          type: integer
+          minimum: 0
+        turnsSinceProgress:
+          type: integer
+          minimum: 0
+        progressResets:
+          type: integer
+          minimum: 0
+        pendingOperations:
+          type: integer
+          minimum: 0
+        ignoredUpdates:
+          type: integer
+          minimum: 0
+        progressMode:
+          type: string
+          enum: [investigation, read_only]
+        stopReason:
+          type: string
+          const: no_progress
+        recentOperations:
+          type: array
+          description: Bounded operation summaries without raw tool inputs or outputs.
+          items:
+            type: object
+            additionalProperties: false
+            required: [toolCallId, kind, status, progress, reason]
+            properties:
+              toolCallId:
+                type: string
+              kind:
+                type: string
+              status:
+                type: string
+              progress:
+                type: boolean
+              reason:
+                type: string
     SessionHookTripEvent:
       allOf:
         - $ref: "#/components/schemas/EventBase"
@@ -700,6 +769,8 @@ components:
                 repetition / no_progress, or the Nth consecutive capability_guard
                 deny (the web consumer checkpoints + escalates). `capability_guard`
                 is the one dual-disposition rule (ADR-130).
+            diagnostics:
+              $ref: "#/components/schemas/NoProgressDiagnostics"
             toolCall:
               type: object
               nullable: true

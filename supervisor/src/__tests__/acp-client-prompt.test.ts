@@ -120,4 +120,41 @@ describe("sendPromptOnConnection — cancelled stop reason", () => {
 
     expect(resp.stopReason).toBe("cancelled");
   });
+
+  it("keeps an explicit adapter error when checkpoint and transport closure race it", async () => {
+    const controller = new AbortController();
+
+    controller.abort(new Error("ACP connection closed"));
+    const connection = {
+      signal: controller.signal,
+      prompt: vi
+        .fn()
+        .mockRejectedValue(new Error("adapter rejected bad input")),
+    } as unknown as AcpConnection;
+
+    await expect(
+      sendPromptOnConnection(
+        connection,
+        { ...baseArgs, checkpointStopReason: () => "no_progress" },
+        fakeLogger(),
+      ),
+    ).rejects.toMatchObject({ code: "ACP_PROTOCOL" });
+  });
+
+  it("classifies a cancelled response from an intentional checkpoint as a pause", async () => {
+    const connection = fakeConn(
+      vi.fn().mockResolvedValue({ stopReason: "cancelled" }),
+    );
+
+    await expect(
+      sendPromptOnConnection(
+        connection,
+        { ...baseArgs, checkpointStopReason: () => "no_progress" },
+        fakeLogger(),
+      ),
+    ).rejects.toMatchObject({
+      code: "CHECKPOINT",
+      details: { reason: "session_checkpointed", stopReason: "no_progress" },
+    });
+  });
 });

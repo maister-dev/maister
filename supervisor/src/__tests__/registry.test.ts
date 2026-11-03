@@ -1,4 +1,5 @@
 import type { ChildProcess } from "node:child_process";
+import type { AcpConnection } from "../acp-connection";
 
 import { EventEmitter } from "node:events";
 
@@ -146,6 +147,31 @@ describe("SessionRegistry", () => {
     });
     registry.markIntentionalShutdown("s1", "intentional");
     expect(registry.get("s1")?.intentionalCause).toBeUndefined();
+  });
+
+  it("does not attribute a previously closed ACP transport to a later checkpoint", () => {
+    const registry = new SessionRegistry(silentLogger);
+    const controller = new AbortController();
+
+    controller.abort(new Error("unexpected disconnect"));
+    registry.register(makeRecord("s1"), makeFakeChild(), new EventEmitter(), {
+      connection: { signal: controller.signal } as AcpConnection,
+    });
+    registry.markIntentionalShutdown("s1", "checkpoint");
+    expect(registry.get("s1")?.checkpointTransportOpen).toBe(false);
+  });
+
+  it("retains the initial open transport witness across repeated checkpoint marks", () => {
+    const registry = new SessionRegistry(silentLogger);
+    const controller = new AbortController();
+
+    registry.register(makeRecord("s1"), makeFakeChild(), new EventEmitter(), {
+      connection: { signal: controller.signal } as AcpConnection,
+    });
+    registry.markIntentionalShutdown("s1", "checkpoint");
+    controller.abort(new Error("checkpoint disconnect"));
+    registry.markIntentionalShutdown("s1", "checkpoint");
+    expect(registry.get("s1")?.checkpointTransportOpen).toBe(true);
   });
 
   it("exposes SESSION_EVENT_CHANNEL constant", () => {

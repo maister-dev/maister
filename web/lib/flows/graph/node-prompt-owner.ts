@@ -45,6 +45,7 @@ import { closeTurnLostAttempt } from "@/lib/runs/turn-lost-boundary";
 import { appendCapped } from "@/lib/flows/capped-text";
 import { isMaisterErrorCode } from "@/lib/errors-core";
 import { nodeOutputMaxBytes } from "@/lib/instance-config";
+import { checkpointInterruptionReason } from "@/lib/execution-host/checkpoint-interruption";
 
 export type NodePromptOwner = Readonly<{
   nodeAttemptId: string;
@@ -323,6 +324,27 @@ export async function decodeNodePromptCompletion(input: {
   const maxBytes = nodeOutputMaxBytes();
   let stdout = "";
   let sentinel = emptySentinelOutput();
+
+  const checkpointReason =
+    outcome.state === "failed"
+      ? checkpointInterruptionReason(outcome.error)
+      : null;
+
+  if (checkpointReason)
+    return {
+      version: 1,
+      commandId: input.commandId,
+      promptOrdinal: input.promptOrdinal,
+      result: {
+        ok: false,
+        stdout,
+        vars: {},
+        ...(input.acpSessionId ? { acpSessionId: input.acpSessionId } : {}),
+        errorCode: "STEP_CHECKPOINTED",
+        reason: checkpointReason,
+      },
+      originalOutput: finishSentinelOutput(sentinel, maxBytes),
+    };
 
   if (outcome.state === "failed" && isHostPressureFailure(outcome.error))
     return {
