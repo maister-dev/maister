@@ -13726,8 +13726,9 @@ components:
         - acceptedResult
         - createdAt
         - updatedAt
-      description: The business revision is distinct from inputRevision and contextRevision. Every mutation
-        compares expectedRevision against this revision; reads expose it so clients can continue without guessing.
+      description: The business revision is distinct from inputRevision and contextRevision. Assignment state/input
+        mutations compare expectedRevision against this revision. Context patches, work decisions and question responses
+        compare their own subject revisions as declared by their endpoint; reads expose the business value for safe continuation.
       properties:
         revision:
           type: integer

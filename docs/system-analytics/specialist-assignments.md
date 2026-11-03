@@ -66,11 +66,14 @@ sequenceDiagram
 
 ### Input/transition contract
 
-The assignment read model exposes a positive business `revision`. Every accepted
-assignment mutation increments it and compares the caller's `expectedRevision`
-in the same transaction. It is separate from `inputRevision` (frozen inputs) and
-`contextRevision` (working context); none substitutes for the other. A client
-obtains the current value through assignment GET rather than inventing it.
+The assignment read model exposes a positive business `revision`. Assignment
+state/input mutations compare the caller's `expectedRevision` against it in the
+same transaction. It is separate from `inputRevision` (frozen inputs) and
+`contextRevision` (working context). Context patches compare their
+`expectedRevision` against the context revision, work decisions against the work
+revision, and answers against the question revision. Each accepted change to the
+assignment advances its business revision under the stable parent lock. A client
+reads the exact subject revision rather than substituting another counter.
 
 All assignments require nonblank objective (<=8000 characters), expected outcome (<=4000), explicit requester/responsible principal, owner, <=32 canonical targets, <=64 input/knowledge refs, <=16 typed verification obligations and one server-validated origin/destination. Pure research may declare zero operation obligations; configured restart policy always injects required effect and independent-health obligations. A model cannot clear them. Context <=128 KiB, update <=32 KiB/64 entries, per-entry text <=8000; no silent truncation.
 
