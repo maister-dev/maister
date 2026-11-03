@@ -18,7 +18,10 @@ import {
 } from "@/lib/run-results/contract";
 import { runAgentStep } from "@/lib/flows/runner-agent";
 import { validateNodeStructuredOutput } from "@/lib/flows/graph/node-output";
-import { closeSucceededAttemptWithResult } from "@/lib/run-results/close-attempt";
+import {
+  assertSucceededAttemptResult,
+  closeSucceededAttemptWithResult,
+} from "@/lib/run-results/close-attempt";
 import { seedProjectRow, seedRun } from "@/test-support/execution-host-seed";
 import { startMainAndBrainPostgresTestDb } from "@/test-support/pg-container";
 import { seedNativeFindingsExecution } from "@/test-support/native-findings-seed";
@@ -638,15 +641,19 @@ it("IT-CBE-04 rechecks current source authority in the transaction that closes a
   ).rejects.toMatchObject({ code: "PRECONDITION" });
   expect(bindExecution).not.toHaveBeenCalled();
   await expect(
-    closeSucceededAttemptWithResult({
-      db: database.db,
-      runId: flowRunId,
-      nodeId: "findings",
-      nodeAttemptId: attemptId,
-      patch: { vars: value },
-      resultContract: nativeFlowContract,
-      structuredOutput,
-    }),
+    database.db
+      .transaction((tx) =>
+        closeSucceededAttemptWithResult({
+          db: tx,
+          runId: flowRunId,
+          nodeId: "findings",
+          nodeAttemptId: attemptId,
+          patch: { vars: value },
+          resultContract: nativeFlowContract,
+          structuredOutput,
+        }),
+      )
+      .then(assertSucceededAttemptResult),
   ).rejects.toMatchObject({
     code: "PRECONDITION",
     details: { reason: "native_findings_reference_unavailable" },

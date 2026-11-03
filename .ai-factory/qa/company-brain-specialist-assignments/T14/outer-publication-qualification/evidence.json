@@ -1,0 +1,49 @@
+{
+  "task": "T14",
+  "status": "Outer publication transaction refusal qualified locally",
+  "reproduction": "The actual enclosing graph transaction rolled back the failed attempt/invalid result when the nested close helper threw. The regression observed Running with a null error after refusal.",
+  "behavior": "Close returns an explicit outcome. The graph commits a refused attempt/result, omits advancement continuation, then signals failure outside its outer transaction. Successful paths keep their existing continuation. Traversal database fencing still guards the outer commit.",
+  "checks": {
+    "referenceRefusalInOuterTransaction": true,
+    "finalOwningIntegration": {
+      "files": 3,
+      "tests": 45,
+      "passed": true
+    },
+    "fullUnit": {
+      "files": 886,
+      "tests": 9261,
+      "passed": true
+    },
+    "typecheck": true,
+    "affectedLint": true
+  },
+  "failedRefinement": "An intermediate callback variable shadowed the existing graph outcome. Owning graph integration exposed 9 failures; the final 45-test owning invocation passes after the variable correction. No quarantine or assertion weakening.",
+  "releaseBoundary": "Engine stays 3.10.0. T15 disclosure/reduction, real installed packages and the pilot remain unqualified.",
+  "artifacts": [
+    {
+      "path": "outer-publication-red.log.gz",
+      "sha256": "23fa7167088712f1ee50c4184d121db5dbd0c417bc9d20f021509011918e18de"
+    },
+    {
+      "path": "outer-publication-green.log.gz",
+      "sha256": "182a40be7fb32a9d63e13829c5ab5adce9872e1eb1b283723638e3c89b3313f1"
+    },
+    {
+      "path": "outer-owning.log.gz",
+      "sha256": "8e53d00f40a12e95c0a58327777567bcd1b5e0810563ab3bb83396430cf851ef"
+    },
+    {
+      "path": "outer-owning-final.log.gz",
+      "sha256": "743731ad51e1f4ef3442c0a2ac60e6efc892185e8dce5ef867ede9df944220cf"
+    },
+    {
+      "path": "outer-full-unit.log.gz",
+      "sha256": "4d63dae51571645e6514b1c57e0ebd34022ed52400b8091d1eddf7dd935705b7"
+    },
+    {
+      "path": "outer-typecheck-final.log.gz",
+      "sha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+    }
+  ]
+}

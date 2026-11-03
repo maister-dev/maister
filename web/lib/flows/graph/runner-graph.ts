@@ -225,7 +225,10 @@ import {
   currentInstanceCeilings,
   writeDelegationBoundsIfChanged,
 } from "@/lib/orchestrator/bounds-store";
-import { closeSucceededAttemptWithResult } from "@/lib/run-results/close-attempt";
+import {
+  assertSucceededAttemptResult,
+  closeSucceededAttemptWithResult,
+} from "@/lib/run-results/close-attempt";
 import {
   decideFlowTerminalExit,
   emitResultOnlyDone,
@@ -3891,14 +3894,13 @@ export async function runGraph(
 
         return true;
       };
-      const closeNodeCompletion = async (
-        writeCompletion: (tx: Db) => Promise<void>,
-      ): Promise<boolean> =>
+      const closeNodeCompletion = async <Completion>(
+        writeCompletion: (tx: Db) => Promise<Completion>,
+      ): Promise<Readonly<{ value: Completion }> | null> =>
         db.transaction(async (tx: Db) => {
-          if (!(await closeCoordinatorDelegation(tx))) return false;
-          await writeCompletion(tx);
+          if (!(await closeCoordinatorDelegation(tx))) return null;
 
-          return true;
+          return { value: await writeCompletion(tx) };
         });
 
       if (result.needsInput) {
@@ -4833,8 +4835,8 @@ export async function runGraph(
             }
           }
 
-          const closed = await closeNodeCompletion(async (tx: Db) => {
-            await closeSucceededAttemptWithResult({
+          const closeOutcome = await closeNodeCompletion(async (tx: Db) => {
+            const attemptClose = await closeSucceededAttemptWithResult({
               db: tx,
               runId: loaded.run.id,
               nodeId: node.id,
@@ -4850,7 +4852,8 @@ export async function runGraph(
               knowledgeAccess: loaded.run.knowledgeAccess,
               structuredOutput,
             });
-            if (opts.driver)
+
+            if (attemptClose.kind === "succeeded" && opts.driver)
               await persistFinishContinuation(tx, runId, nodeAttemptId, {
                 version: 1,
                 targetNodeId: next,
@@ -4858,13 +4861,16 @@ export async function runGraph(
                 sessionPolicy: null,
                 autoRetry: false,
               });
+
+            return attemptClose;
           });
 
-          if (!closed) {
+          if (!closeOutcome) {
             result = { ...result, needsInput: true, waitsForChildren: true };
             if (!(await parkNodeForInput())) return;
             break;
           }
+          assertSucceededAttemptResult(closeOutcome.value);
           if (materialized) {
             await cleanupNodeMaterialization({
               nodeAttemptId,
@@ -4996,8 +5002,8 @@ export async function runGraph(
                 (o) => !reworkTargets.includes(node.transitions[o]),
               );
 
-        const closed = await closeNodeCompletion(async (tx: Db) => {
-          await closeSucceededAttemptWithResult({
+        const closeOutcome = await closeNodeCompletion(async (tx: Db) => {
+          const attemptClose = await closeSucceededAttemptWithResult({
             db: tx,
             runId: loaded.run.id,
             nodeId: node.id,
@@ -5016,7 +5022,8 @@ export async function runGraph(
             knowledgeAccess: loaded.run.knowledgeAccess,
             structuredOutput,
           });
-          if (opts.driver)
+
+          if (attemptClose.kind === "succeeded" && opts.driver)
             await persistFinishContinuation(tx, runId, nodeAttemptId, {
               version: 1,
               targetNodeId:
@@ -5027,13 +5034,16 @@ export async function runGraph(
               sessionPolicy: null,
               autoRetry: false,
             });
+
+          return attemptClose;
         });
 
-        if (!closed) {
+        if (!closeOutcome) {
           result = { ...result, needsInput: true, waitsForChildren: true };
           if (!(await parkNodeForInput())) return;
           break;
         }
+        assertSucceededAttemptResult(closeOutcome.value);
         if (materialized) {
           await cleanupNodeMaterialization({
             nodeAttemptId,
@@ -5360,8 +5370,8 @@ export async function runGraph(
         // ADR-162 (C-9): the contract identity rides the SAME closing UPDATE as
         // the vars it validated. ADR-165 (D9) widens that transaction to carry
         // the public result too, when this node is one of its producers.
-        const completion = await closeNodeCompletion(async (tx: Db) => {
-          await closeSucceededAttemptWithResult({
+        const closeOutcome = await closeNodeCompletion(async (tx: Db) => {
+          const attemptClose = await closeSucceededAttemptWithResult({
             db: tx,
             runId: loaded.run.id,
             nodeId: node.id,
@@ -5377,7 +5387,8 @@ export async function runGraph(
             knowledgeAccess: loaded.run.knowledgeAccess,
             structuredOutput,
           });
-          if (opts.driver)
+
+          if (attemptClose.kind === "succeeded" && opts.driver)
             await persistFinishContinuation(tx, runId, nodeAttemptId, {
               version: 1,
               targetNodeId:
@@ -5386,13 +5397,17 @@ export async function runGraph(
               sessionPolicy: null,
               autoRetry: false,
             });
+
+          return attemptClose;
         });
 
-        if (!completion) {
+        if (!closeOutcome) {
           result = { ...result, needsInput: true, waitsForChildren: true };
           if (!(await parkNodeForInput())) return;
           break;
         }
+        assertSucceededAttemptResult(closeOutcome.value);
+
         if (materialized) {
           await cleanupNodeMaterialization({
             nodeAttemptId,

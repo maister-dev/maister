@@ -47,6 +47,22 @@ export type CloseSucceededAttemptArgs = {
   structuredOutput: SeamOutcomeForClose;
 };
 
+export type AttemptResultClose = Readonly<{
+  kind: "succeeded" | "reference_refused";
+}>;
+
+/** Signal refusal only after the caller's outer publication transaction has committed its failed attempt/result. */
+export function assertSucceededAttemptResult(
+  outcome: AttemptResultClose,
+): void {
+  if (outcome.kind === "reference_refused")
+    throw new MaisterError(
+      "PRECONDITION",
+      "Execution result references or source authority changed before publication; inspect the retained invalid result",
+      { details: { reason: "native_findings_reference_unavailable" } },
+    );
+}
+
 /**
  * Close a SUCCEEDED node attempt and, when the node is a producer of the run's
  * public result, publish that result — in ONE transaction (ADR-165 D9, W1).
@@ -63,7 +79,7 @@ export type CloseSucceededAttemptArgs = {
  */
 export async function closeSucceededAttemptWithResult(
   args: CloseSucceededAttemptArgs,
-): Promise<void> {
+): Promise<AttemptResultClose> {
   const { db, structuredOutput } = args;
   const outputContract =
     structuredOutput.ok && structuredOutput.contract
@@ -83,7 +99,7 @@ export async function closeSucceededAttemptWithResult(
       db,
     );
 
-    return;
+    return { kind: "succeeded" };
   }
 
   const refused = await db.transaction(async (tx: Db): Promise<boolean> => {
@@ -140,10 +156,5 @@ export async function closeSucceededAttemptWithResult(
     return false;
   });
 
-  if (refused)
-    throw new MaisterError(
-      "PRECONDITION",
-      "Native findings references or source authority changed before publication; inspect the retained invalid result",
-      { details: { reason: "native_findings_reference_unavailable" } },
-    );
+  return { kind: refused ? "reference_refused" : "succeeded" };
 }
