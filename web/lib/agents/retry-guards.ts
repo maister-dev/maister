@@ -13,6 +13,10 @@ import { canonicalCommandJson } from "../../../runtime/command-json";
 import { MaisterError } from "@/lib/errors";
 import { projectRolesForActions } from "@/lib/authz";
 import { loadTaskQualificationInput } from "@/lib/tasks/qualification";
+import {
+  hasRejectedAgentCreateEvidence,
+  hasUnprovenAgentCreateFailure,
+} from "@/lib/agents/execution-quiescence";
 
 export function retryDigest(value: unknown): string {
   return createHash("sha256").update(canonicalCommandJson(value)).digest("hex");
@@ -90,7 +94,10 @@ export async function freshQualificationSafetyReason(
         OR command.transport_state IN ('dispatching','unknown','reconciliation_required')
         OR command.kind='session.prompt' AND command.application_state IN ('pending','applying','poisoned')))`);
 
-  return unresolved.rows.length ? "reconciliation_required" : null;
+  return unresolved.rows.length ||
+    (await hasUnprovenAgentCreateFailure(db, source.id))
+    ? "reconciliation_required"
+    : null;
 }
 
 export async function qualificationTaskRetryReason(
@@ -170,6 +177,15 @@ export async function retrySafetyReason(
           AND command.receipt_evidence->>'inflight'='false')))`);
 
   if (unsafe.rows.length) return "reconciliation_required";
+  const creates = await db.execute(
+    sql`SELECT 1 FROM execution_commands WHERE run_id=${source.id} AND kind='session.create' LIMIT 1`,
+  );
+
+  if (
+    creates.rows.length &&
+    !(await hasRejectedAgentCreateEvidence(db, source))
+  )
+    return "reconciliation_required";
   const proof = await db.execute(sql`SELECT 1 WHERE EXISTS(
     SELECT 1 FROM domain_events fact WHERE fact.run_id=${source.id} AND fact.kind IN ('run.failed','run.crashed')
       AND fact.payload->'cause'->>'source'='agent' AND

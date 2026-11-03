@@ -1,6 +1,6 @@
 # Task launch and preparation persistence
 
-**Implemented locally — ADR-200/201; final combined acceptance pending.** Main-lineage migrations `0215`–`0225` establish preparation ownership, immutable admission, shared reservations, frozen execution inputs, first-dispatch evidence and standalone-agent/derived-child guards. The migration ledger below identifies each additive change. Generated schema, journal and snapshots travel with SQL. Historical assessments, run snapshots and accepted input digests are not rewritten. Fresh/populated test databases exercise upgrades; this work does not migrate production.
+**Implemented locally — ADR-200/201; final combined acceptance pending.** Main-lineage migrations `0215`–`0226` establish preparation ownership, immutable admission, shared reservations, frozen execution inputs, first-dispatch evidence and owned session continuation. The migration ledger below identifies each additive change. Generated schema, journal and snapshots travel with SQL. Historical assessments, run snapshots and accepted input digests are not rewritten. Fresh/populated test databases exercise upgrades; this work does not migrate production.
 
 | Migration                              | Persistence change                                                                                                                         |
 | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -15,6 +15,25 @@
 | `0223_task_triage_flag_origin`         | Distinct qualification findings and explicit/dispatch/unknown holds.                                                                       |
 | `0224_task_launch_dispatch_receipt`    | Write-once first-dispatch witness bound to run, assignment/epoch and accepted digests.                                                     |
 | `0225_task_launch_agent_preparation`   | Standalone-agent preparation, exact agent/Flow binding, derived consensus/carrier admission and compatible historical continuation guards. |
+| `0226_session_create_owner_continuation` | Closed domain ownership and private prompt continuations on existing create commands; atomic admission, immutability and guarded terminal compaction. |
+
+Migration `0226` adds no table and no manual admission capability. The existing
+private create intent carries the original owner, request and domain continuation
+as one insert. Updates cannot attach that authority to a historical null intent
+or change accepted private bytes. Only the existing eligible terminal-retirement
+transition may compact them; nonterminal runs, including coordinators waiting
+for children, retain them under the existing parked-librarian exception. The
+[execution prompt contract](../system-analytics/execution-prompt-lifecycle.md)
+owns the exact domain identities and continuation shapes.
+
+Stop incompatible Web writers before applying this migration, then start the
+matching build under the existing maintenance cutover. An older owned-create
+writer's insert-then-update sequence is intentionally refused. Historical null
+or incomplete private context is not reconstructed from current task text or
+settings. Reading retained legacy evidence remains supported; application
+rollback to an incompatible writer requires a reviewed maintenance operation,
+not removal of the new guards. Supervisor process ownership uses its separate
+[private SQLite migration](../supervisor.md#execution-host-state-store-implemented--adr-166).
 
 ## Entities and cardinalities
 

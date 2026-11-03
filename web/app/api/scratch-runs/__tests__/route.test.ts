@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import type { MaisterError as RuntimeMaisterError } from "@/lib/errors";
+import type { BoundClient } from "@/lib/execution-host/client";
 
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -28,6 +29,31 @@ const mocks = vi.hoisted(() => ({
   sendPrompt: vi.fn(),
   worktreesRoot: vi.fn(),
 }));
+const ownedCreate = vi.hoisted(() => ({
+  fixture: undefined as
+    | ReturnType<
+        typeof import("@/test-support/scratch-owned-create-fixture").scratchOwnedCreateFixture
+      >
+    | undefined,
+}));
+
+vi.mock("@/lib/execution-host/owned-session-create", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("@/lib/execution-host/owned-session-create")
+    >();
+  const { scratchOwnedCreateFixture } =
+    await import("@/test-support/scratch-owned-create-fixture");
+
+  ownedCreate.fixture ??= scratchOwnedCreateFixture();
+
+  return {
+    ...actual,
+    readOwnedCreateContinuation: (
+      ...args: Parameters<typeof actual.readOwnedCreateContinuation>
+    ) => ownedCreate.fixture!.read(...args),
+  };
+});
 
 // These route controls use an in-memory DB seam. Allocator locking, retained
 // history and concurrent sequence claims are covered with real PostgreSQL in
@@ -112,7 +138,10 @@ function rowsForTable(table: unknown): Record<string, unknown>[] {
   if (tableName === "platform_acp_runners") return state.runners;
   if (tableName === "platform_runtime_settings") return state.runtimeSettings;
   if (tableName === "scratch_runs") {
-    return [{ runId: "run-1", dialogStatus: state.dialogStatus }];
+    return insertedRows(tableName).map((row) => ({
+      ...row,
+      dialogStatus: state.dialogStatus,
+    }));
   }
   if (tableName === "execution_runtime_objects") {
     return [...(hostCatalogue.objects?.values() ?? [])].map((object) => ({
@@ -121,7 +150,26 @@ function rowsForTable(table: unknown): Record<string, unknown>[] {
     }));
   }
 
-  return [];
+  return insertedRows(tableName);
+}
+
+function insertedRows(tableName: string): Record<string, unknown>[] {
+  return state.inserts
+    .filter((call) => getTableName(call.table as never) === tableName)
+    .flatMap((call) =>
+      Array.isArray(call.values) ? call.values : [call.values],
+    )
+    .map((row: Record<string, unknown>) =>
+      state.updates
+        .filter((call) => getTableName(call.table as never) === tableName)
+        .reduce(
+          (current, call) => ({
+            ...current,
+            ...(call.values as Record<string, unknown>),
+          }),
+          row,
+        ),
+    );
 }
 
 const fakeDb: FakeDb = {
@@ -173,12 +221,28 @@ const fakeDb: FakeDb = {
   insert: (table: unknown) => ({
     values: async (values: unknown) => {
       state.inserts.push({ table, values });
+      if (
+        getTableName(table as never) === "scratch_runs" &&
+        values &&
+        typeof values === "object" &&
+        "dialogStatus" in values &&
+        typeof values.dialogStatus === "string"
+      )
+        state.dialogStatus = values.dialogStatus;
     },
   }),
   update: (table: unknown) => ({
     set: (values: unknown) => ({
       where: () => {
         state.updates.push({ table, values });
+        if (
+          getTableName(table as never) === "scratch_runs" &&
+          values &&
+          typeof values === "object" &&
+          "dialogStatus" in values &&
+          typeof values.dialogStatus === "string"
+        )
+          state.dialogStatus = values.dialogStatus;
         const result = Promise.resolve(undefined) as Promise<undefined> & {
           returning: () => Promise<Record<string, unknown>[]>;
         };
@@ -273,20 +337,48 @@ vi.mock("@/lib/execution-host", async () => {
   const { executionHostModuleMock } =
     await import("@/test-support/execution-host-module-mock");
   const mock = executionHostModuleMock(sup as never);
+  const { scratchOwnedCreateFixture } =
+    await import("@/test-support/scratch-owned-create-fixture");
+  const { runs } = await import("@/lib/db/schema");
+
+  ownedCreate.fixture ??= scratchOwnedCreateFixture();
 
   hostCatalogue.objects = mock.runtimeObjects;
   // The driver binding (`executionFor`) composes the mock's bound client with
   // its admin surface until the module mock exports it itself.
   const hosts = {
     ...mock.executionHosts,
+    forRun: async (runId: string) => {
+      const client = await mock.executionHosts.forRun(runId);
+
+      return {
+        ...client,
+        createOwnedSession: (
+          ...args: Parameters<BoundClient["createOwnedSession"]>
+        ) => ownedCreate.fixture!.create(fakeDb as never, client, ...args),
+      };
+    },
     executionFor: async (runId: string) => ({
-      client: await mock.executionHosts.forRun(runId),
+      client: await hosts.forRun(runId),
       admin: mock.executionHosts.local(),
     }),
   };
 
   return {
     ...mock,
+    mintPlacement: async (
+      tx: unknown,
+      input: Parameters<typeof mock.mintPlacement>[1],
+    ) => {
+      const assignment = await mock.mintPlacement(tx, input);
+
+      await fakeDb
+        .update(runs)
+        .set({ executionAssignmentId: assignment.id })
+        .where(undefined);
+
+      return assignment;
+    },
     executionHosts: hosts,
     createExecutionHosts: () => hosts,
   };
@@ -315,6 +407,7 @@ const projectId = "11111111-1111-4111-8111-111111111111";
 const runnerId = "codex-openai";
 
 beforeEach(async () => {
+  ownedCreate.fixture?.clear();
   state.inserts = [];
   state.updates = [];
   state.selectCalls = 0;

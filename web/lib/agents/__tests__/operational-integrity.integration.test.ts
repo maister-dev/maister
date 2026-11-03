@@ -1,10 +1,11 @@
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   lstat,
   mkdtemp,
   mkdir,
   readFile,
+  realpath,
   rename,
   rm,
   symlink,
@@ -17,6 +18,12 @@ import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { materializeOperationalContextMounts } from "@/lib/context-mounts/service";
+import { materializeOperationalAdapterCapabilityHome } from "@/lib/capabilities/adapter-home";
+import { materializeAgentReadOnlySettings } from "@/lib/agents/dirty-watchdog";
+import {
+  agentMaterializationPathsForRun,
+  releaseAgentMaterialization,
+} from "@/lib/agents/materialization-manifest";
 import {
   captureOperationalBaseline,
   captureOperationalGeneration,
@@ -47,6 +54,74 @@ afterEach(async () => {
 });
 
 describe("operational source integrity", () => {
+  it("prepares real Claude package skills without changing source gitignore or index and still refuses unowned writes", async () => {
+    const materializationCwd = await realpath(cwd);
+    const bundle = join(root, "bundle");
+    const runId = randomUUID();
+
+    await mkdir(join(bundle, "skills", "qualify"), { recursive: true });
+    await writeFile(
+      join(bundle, "skills", "qualify", "SKILL.md"),
+      "---\nname: qualify\ndescription: fixture\n---\nInspect source.\n",
+    );
+    const baseline = await captureOperationalBaseline(
+      materializationCwd,
+      "ephemeral_checkout",
+    );
+    const gitignore = await readFile(join(cwd, ".gitignore"));
+    const index = await readFile(join(cwd, ".git", "index"));
+
+    await materializeAgentReadOnlySettings(materializationCwd, "claude", runId);
+    const home = await materializeOperationalAdapterCapabilityHome({
+      agent: "claude",
+      worktreePath: materializationCwd,
+      runId,
+      installedPaths: [bundle],
+    });
+
+    expect(home.materializedRoots).toContain(
+      join(materializationCwd, ".claude", "skills", "qualify"),
+    );
+    expect(await readFile(join(cwd, ".gitignore"))).toEqual(gitignore);
+    expect(await readFile(join(cwd, ".git", "index"))).toEqual(index);
+    const ownedPaths = await agentMaterializationPathsForRun(
+      materializationCwd,
+      runId,
+    );
+    const generationPaths = [
+      ...ownedPaths,
+      ".maister/agent-materialization/index.json",
+      `.maister/agent-materialization/runs/${runId}.json`,
+      ".maister/agent-materialization/mutex.sqlite",
+      ".maister/agent-materialization/mutex.sqlite-journal",
+      ".maister/agent-materialization/mutex.sqlite-shm",
+      ".maister/agent-materialization/mutex.sqlite-wal",
+    ];
+    const ready = await captureOperationalGeneration(
+      materializationCwd,
+      baseline,
+      generationPaths,
+    );
+
+    expect(ready.generation).toBe(1);
+    expect(
+      (await verifyOperationalIntegrity(materializationCwd, ready)).verdict,
+    ).toBe("clean");
+    await writeFile(join(cwd, "unowned-source.txt"), "Unexpected write.\n");
+    await expect(
+      captureOperationalGeneration(materializationCwd, ready, generationPaths),
+    ).rejects.toMatchObject({
+      code: "PRECONDITION",
+      details: { reason: "operational_materialization_conflict" },
+    });
+    await releaseAgentMaterialization(materializationCwd, runId);
+    expect(await readFile(join(cwd, ".gitignore"))).toEqual(gitignore);
+    expect(await readFile(join(cwd, ".git", "index"))).toEqual(index);
+    expect(await readFile(join(cwd, "unowned-source.txt"), "utf8")).toBe(
+      "Unexpected write.\n",
+    );
+  });
+
   it("TB05 preserves a real missing-root cause and probe operation without exposing filesystem paths", async () => {
     await rm(cwd, { recursive: true });
 

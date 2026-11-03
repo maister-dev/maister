@@ -109,10 +109,8 @@ export async function admitSyncPrompt(
     workspace.lifecycleOperationAttemptId !== owner.operationAttemptId
   )
     throw new PromptOwnerInvariantError("sync_admission_claim");
-  // The resolver spawns its session through the ordinary create path, not the
-  // owned-create path, so `run_sessions` carries no assignment binding here.
-  // The incarnation is the real fence: it is per host session and carries the
-  // assignment and epoch this turn must belong to.
+  // The owned create binds the resolver's logical session. Prompt admission
+  // additionally requires its exact active host incarnation and assignment.
   const [binding] = await tx
     .select({ incarnation: runSessionIncarnations })
     .from(runSessionIncarnations)

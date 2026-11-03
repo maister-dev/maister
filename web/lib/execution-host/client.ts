@@ -50,6 +50,7 @@ import { and, eq } from "drizzle-orm";
 import pino, { type Logger } from "pino";
 
 import { canonicalCommandJson } from "../../../runtime/command-json";
+import { hasSessionCreateQuiescence } from "../../../runtime/session-create-quiescence";
 
 import {
   ensureWorkspaceAdopted,
@@ -95,7 +96,7 @@ import { defaultTransport } from "./default-transport";
 import { streamCanonicalSessionEvents } from "./events/session-stream";
 import { asExecutionWorkspaceId, asHostSessionId } from "./types";
 
-import { MaisterError } from "@/lib/errors";
+import { isMaisterError, MaisterError } from "@/lib/errors";
 import { getDb } from "@/lib/db/client";
 import {
   executionAssignments,
@@ -263,6 +264,7 @@ export interface HostAdminClient {
   ): Promise<SupervisorModelCatalog>;
   probeMcp(req: SupervisorMcpProbeRequest): Promise<SupervisorMcpProbeResult>;
   listSessions(): Promise<SupervisorSessionRecord[]>;
+  listSessionsForRun(runId: string): Promise<SupervisorSessionRecord[]>;
   streamSession(
     sessionId: HostSessionId | string,
     opts?: { lastEventId?: number; signal?: AbortSignal },
@@ -321,6 +323,30 @@ export type ExecutionHostsDeps = {
   now?: () => Date;
   sleep?: (ms: number) => Promise<void>;
 };
+
+function throwSessionCreateFailure(
+  error: unknown,
+  assignment: Pick<ExecutionAssignment, "id" | "runId">,
+): never {
+  if (
+    (isReadoptableWorkspaceError(error) ||
+      (isMaisterError(error) && error.code === "CHECKPOINT")) &&
+    !hasSessionCreateQuiescence(error)
+  )
+    throw new MaisterError(
+      "EXECUTOR_UNAVAILABLE",
+      "The original session create has no confirmed process retirement; reconcile its execution host before retrying",
+      {
+        cause: error,
+        details: {
+          reason: "session_create_quiescence_unproven",
+          runId: assignment.runId,
+          assignmentId: assignment.id,
+        },
+      },
+    );
+  throw error;
+}
 
 export function createExecutionHosts(
   deps: ExecutionHostsDeps = {},
@@ -535,6 +561,8 @@ export function createExecutionHosts(
                   : {}),
               }),
             },
+          ).catch((error: unknown) =>
+            throwSessionCreateFailure(error, current),
           );
         };
         const withHostSessionId = (result: CreateSessionResult) => ({
@@ -790,11 +818,7 @@ export function createExecutionHosts(
         };
       },
       async sessionsForRun() {
-        const runId = current.runId;
-
-        return (await transport.listSessions()).filter(
-          (record) => record.runId === runId,
-        );
+        return transport.listSessionsForRun(current.runId);
       },
       cancelPrompt(sessionId) {
         return immediate<Record<string, never>, { cancelled: boolean }>(
@@ -1112,6 +1136,9 @@ export function createExecutionHosts(
       },
       listSessions() {
         return transport.listSessions();
+      },
+      listSessionsForRun(runId) {
+        return transport.listSessionsForRun(runId);
       },
       async *streamSession(sessionId, opts) {
         if (runId) {

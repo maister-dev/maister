@@ -212,7 +212,10 @@ import { runnerCatalogEntry } from "@/lib/agents/runner-catalog";
 export { runnerCatalogEntry } from "@/lib/agents/runner-catalog";
 import { issueAgentRunToken } from "@/lib/agents/tokens";
 import { type AgentMcpServer } from "@/lib/capabilities/agent-map";
-import { materializeAdapterCapabilityHome } from "@/lib/capabilities/adapter-home";
+import {
+  materializeAdapterCapabilityHome,
+  materializeOperationalAdapterCapabilityHome,
+} from "@/lib/capabilities/adapter-home";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import {
@@ -4855,9 +4858,13 @@ async function driveAgentSession(
 
       if (packageSkillRoots.length > 0 && redirectsHome)
         await mkdir(capabilityRoot, { recursive: true });
+      const materializeCapabilityHome =
+        run.agentKind === "operational"
+          ? materializeOperationalAdapterCapabilityHome
+          : materializeAdapterCapabilityHome;
       const packageSkillHome =
         packageSkillRoots.length > 0
-          ? await materializeAdapterCapabilityHome({
+          ? await materializeCapabilityHome({
               agent: snapshot.adapter as AdapterId,
               worktreePath: capabilityRoot,
               runId,
@@ -4965,10 +4972,18 @@ async function driveAgentSession(
           }),
         );
       }
-      if (preparation && agentTurn) {
+      const ownedTurn = agentTurn;
+
+      if (!ownedTurn)
+        throw new MaisterError(
+          "CONFLICT",
+          "Agent generation admission did not retain its owner",
+          { details: { runId, reason: "unowned_agent_generation" } },
+        );
+      if (preparation) {
         await preparation.advance({
           phase: "handed_off",
-          turnId: agentTurn.id,
+          turnId: ownedTurn.id,
         });
         await preparation.release();
       }
@@ -5008,35 +5023,22 @@ async function driveAgentSession(
             "auto_approve",
           ...(run.acpSessionId ? { resumeSessionId: run.acpSessionId } : {}),
         };
-        const session = agentTurn
-          ? await execution.client.createOwnedSession(
-              {
-                variant: "agent",
-                turnId: agentTurn.id,
-                promptOrdinal: agentTurn.ordinal,
-              },
-              async () => createPayload,
-            )
-          : await execution.client.createSession(createPayload);
+        const session = await execution.client.createOwnedSession(
+          {
+            variant: "agent",
+            turnId: ownedTurn.id,
+            promptOrdinal: ownedTurn.ordinal,
+          },
+          async () => createPayload,
+        );
 
-        if (agentTurn) {
-          await dispatchStoredAgentTurn(
-            _db,
-            execution,
-            agentTurn,
-            session.sessionId,
-            opts.signal,
-          );
-
-          return;
-        }
-
-        observeAgentSession({
-          db: _db,
+        await dispatchStoredAgentTurn(
+          _db,
           execution,
-          runId,
-          sessionId: session.sessionId,
-        });
+          ownedTurn,
+          session.sessionId,
+          opts.signal,
+        );
       });
     } catch (originalError) {
       const err = packageCapture.current

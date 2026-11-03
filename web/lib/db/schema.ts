@@ -120,6 +120,7 @@ import {
 } from "@/lib/project-config-persistence/types";
 import { ADAPTER_IDS, type AdapterId } from "@/lib/acp-runners/adapter-support";
 import { DOMAIN_EVENT_KINDS } from "@/lib/domain-events/taxonomy";
+import { ADDITIONAL_CREATE_OWNER_SHAPES } from "@/lib/execution-host/create-owner-contract";
 import { PROMPT_OWNER_SHAPES } from "@/lib/execution-host/prompt-owner-contract";
 import {
   ASSIGNMENT_STATES,
@@ -2831,10 +2832,35 @@ export const executionCommands = pgTable(
       sql`${t.createIntent} IS NULL OR (${t.kind} = 'session.create'
         AND jsonb_typeof(${t.createIntent}) = 'object' AND ${t.createIntent}->'version' = '1'::jsonb
         AND jsonb_typeof(${t.createIntent}->'owner') = 'object'
-        AND ${t.createIntent}->'owner'->>'variant' IN ('node', 'gate_ai', 'gate_skill', 'agent', 'librarian')
-        AND (${t.createIntent} - ARRAY['version','owner','operationKey','generation','supersedesCommandId','sessionFallback','requestCanonicalJson','requestSha256']) = '{}'::jsonb
+        AND ${t.createIntent}->'owner'->>'variant' IN ('node', 'gate_ai', 'gate_skill', 'agent', 'librarian', 'consensus_verifier', 'consensus_synthesis', 'scratch', 'package_scratch', 'gate_chat', 'sync_resolver', 'flow_resume', 'scratch_resume')
+        AND (${t.createIntent} - ARRAY['version','owner','operationKey','generation','supersedesCommandId','sessionFallback','requestCanonicalJson','requestSha256','continuation']) = '{}'::jsonb
         AND jsonb_typeof(${t.createIntent}->'sessionFallback') = 'boolean'
-        AND CASE WHEN ${t.createIntent}->'owner'->>'variant' = 'agent' THEN
+        AND CASE WHEN ${t.createIntent}->'owner'->>'variant' IN ('consensus_verifier', 'consensus_synthesis', 'scratch', 'package_scratch', 'gate_chat', 'sync_resolver', 'flow_resume', 'scratch_resume') THEN
+          (${sql.join(
+            ADDITIONAL_CREATE_OWNER_SHAPES.map(
+              ({ variant, keys, operation }) => {
+                const owner = sql`(${t.createIntent}->'owner')`;
+                const allowed = sql.raw(
+                  `ARRAY[${keys.map((key) => `'${key}'`).join(",")}]::text[]`,
+                );
+                const fields = keys.map((key) => {
+                  const name = sql.raw(`'${key}'`);
+
+                  return ["round", "promptOrdinal"].includes(key)
+                    ? sql`CASE WHEN jsonb_typeof(${owner}->${name}) = 'number' THEN (${owner}->>${name})::numeric BETWEEN 0 AND 9007199254740991 AND (${owner}->>${name}) ~ '^[0-9]+$' ELSE false END`
+                    : sql`jsonb_typeof(${owner}->${name}) = 'string' AND length(${owner}->>${name}) BETWEEN 1 AND 128`;
+                });
+                const operationParts = operation.fields.map(
+                  (field) => sql`(${owner}->>${sql.raw(`'${field}'`)})`,
+                );
+                const expectedKey = sql`${sql.raw(`'${operation.prefix}'`)} || ${sql.join(operationParts, sql` || ':' || `)}`;
+
+                return sql`(${owner}->>'variant' = ${sql.raw(`'${variant}'`)} AND ${owner} ?& ${allowed} AND ${owner} - ${allowed} = '{}'::jsonb AND ${sql.join(fields, sql` AND `)} AND ${t.createIntent}->>'operationKey' = ${expectedKey})`;
+              },
+            ),
+            sql` OR `,
+          )})
+        WHEN ${t.createIntent}->'owner'->>'variant' = 'agent' THEN
           ((${t.createIntent}->'owner') - ARRAY['variant','turnId','promptOrdinal']) = '{}'::jsonb
           AND jsonb_typeof(${t.createIntent}->'owner'->'turnId') = 'string'
           AND length(${t.createIntent}->'owner'->>'turnId') BETWEEN 1 AND 128
@@ -2855,6 +2881,42 @@ export const executionCommands = pgTable(
           AND jsonb_typeof(${t.createIntent}->'owner'->'gateId') = 'string'
           AND jsonb_typeof(${t.createIntent}->'owner'->'evaluationId') = 'string'
           AND ${t.createIntent}->>'operationKey' = 'flow-create:' || (${t.createIntent}->'owner'->>'variant') || ':' || (${t.createIntent}->'owner'->>'evaluationId') END END
+        AND CASE WHEN ${t.createIntent}->'owner'->>'variant' IN ('scratch', 'package_scratch') THEN
+          jsonb_typeof(${t.createIntent}->'continuation') = 'object'
+          AND ${t.createIntent}->'continuation' ?& ARRAY['version','kind','sourceMessageId','payload']
+          AND ((${t.createIntent}->'continuation') - ARRAY['version','kind','sourceMessageId','payload','recoveryState']) = '{}'::jsonb
+          AND ${t.createIntent}->'continuation'->'version' = '1'::jsonb
+          AND CASE WHEN ${t.createIntent}->'owner'->>'variant' = 'scratch' THEN ${t.createIntent}->'continuation'->>'kind' IN ('initial','recovery') ELSE ${t.createIntent}->'continuation'->>'kind' IN ('package_initial','package_recovery') END
+          AND CASE WHEN ${t.createIntent}->'continuation'->>'kind' IN ('recovery','package_recovery') THEN
+            jsonb_typeof(${t.createIntent}->'continuation'->'recoveryState') = 'object'
+            AND ${t.createIntent}->'continuation'->'recoveryState' ?& ARRAY['status','currentStepId','resumeRequestedAt']
+            AND ((${t.createIntent}->'continuation'->'recoveryState') - ARRAY['status','currentStepId','resumeRequestedAt']) = '{}'::jsonb
+            AND ${t.createIntent}->'continuation'->'recoveryState'->>'status' IN ('Crashed','NeedsInputIdle')
+            AND (${t.createIntent}->'continuation'->'recoveryState'->'currentStepId' = 'null'::jsonb OR jsonb_typeof(${t.createIntent}->'continuation'->'recoveryState'->'currentStepId') = 'string')
+            AND (${t.createIntent}->'continuation'->'recoveryState'->'resumeRequestedAt' = 'null'::jsonb OR jsonb_typeof(${t.createIntent}->'continuation'->'recoveryState'->'resumeRequestedAt') = 'string')
+          ELSE NOT (${t.createIntent}->'continuation' ? 'recoveryState') END
+          AND (${t.createIntent}->'continuation'->'sourceMessageId' = 'null'::jsonb OR jsonb_typeof(${t.createIntent}->'continuation'->'sourceMessageId') = 'string' AND length(${t.createIntent}->'continuation'->>'sourceMessageId') BETWEEN 1 AND 128)
+          AND (${t.createIntent}->'continuation'->'payload' = 'null'::jsonb OR jsonb_typeof(${t.createIntent}->'continuation'->'payload') = 'object'
+            AND ${t.createIntent}->'continuation'->'payload' ?& ARRAY['stepId','prompt']
+            AND ((${t.createIntent}->'continuation'->'payload') - ARRAY['stepId','prompt','contentBlocks','readOnlyTurn','nodeAttemptId']) = '{}'::jsonb
+            AND jsonb_typeof(${t.createIntent}->'continuation'->'payload'->'stepId') = 'string'
+            AND jsonb_typeof(${t.createIntent}->'continuation'->'payload'->'prompt') = 'string'
+            AND length(${t.createIntent}->'continuation'->'payload'->>'prompt') <= 1000000)
+        WHEN ${t.createIntent}->'owner'->>'variant' = 'sync_resolver' THEN
+          jsonb_typeof(${t.createIntent}->'continuation') = 'object'
+          AND ${t.createIntent}->'continuation' ?& ARRAY['version','kind','prompt','runnerTier']
+          AND ((${t.createIntent}->'continuation') - ARRAY['version','kind','prompt','runnerTier']) = '{}'::jsonb
+          AND ${t.createIntent}->'continuation'->'version' = '1'::jsonb
+          AND ${t.createIntent}->'continuation'->>'kind' = 'sync_resolver'
+          AND jsonb_typeof(${t.createIntent}->'continuation'->'runnerTier') = 'string'
+          AND length(${t.createIntent}->'continuation'->>'runnerTier') BETWEEN 1 AND 128
+          AND jsonb_typeof(${t.createIntent}->'continuation'->'prompt') = 'object'
+          AND ${t.createIntent}->'continuation'->'prompt' ?& ARRAY['stepId','prompt']
+          AND ((${t.createIntent}->'continuation'->'prompt') - ARRAY['stepId','prompt']) = '{}'::jsonb
+          AND ${t.createIntent}->'continuation'->'prompt'->>'stepId' = 'sync'
+          AND jsonb_typeof(${t.createIntent}->'continuation'->'prompt'->'prompt') = 'string'
+          AND length(${t.createIntent}->'continuation'->'prompt'->>'prompt') <= 1000000
+        ELSE NOT (${t.createIntent} ? 'continuation') END
         AND length(${t.createIntent}->>'operationKey') BETWEEN 1 AND 256
         AND (${t.createIntent}->>'generation') ~ '^(0|[1-9][0-9]*)$'
         AND (${t.createIntent}->>'generation')::numeric <= 2147483647
@@ -2866,7 +2928,7 @@ export const executionCommands = pgTable(
         AND (${t.createIntent}->>'requestCanonicalJson')::jsonb->'fence'->>'runId' = ${t.runId}
         AND (${t.createIntent}->>'requestCanonicalJson')::jsonb->'fence'->>'assignmentId' = ${t.executionAssignmentId}
         AND (${t.createIntent}->>'requestCanonicalJson')::jsonb->'fence'->'assignmentEpoch' = to_jsonb(${t.assignmentEpoch})
-        AND CASE WHEN ${t.createIntent}->'owner'->>'variant' IN ('agent', 'librarian') THEN
+        AND CASE WHEN ${t.createIntent}->'owner'->>'variant' IN ('agent', 'librarian', 'scratch', 'package_scratch', 'gate_chat', 'sync_resolver', 'flow_resume', 'scratch_resume') THEN
           NOT ((${t.createIntent}->>'requestCanonicalJson')::jsonb->'payload' ? 'nodeAttemptId')
         ELSE (${t.createIntent}->>'requestCanonicalJson')::jsonb->'payload'->>'nodeAttemptId' = ${t.createIntent}->'owner'->>'nodeAttemptId' END
       ) IS TRUE`,

@@ -436,7 +436,7 @@ export function startFlowContinuationWorker(input: {
   //
   // The SQL predicate identifies a candidate; it does not authorize
   // `driveResume`. Liveness decides, and it is a PROBE, not a column: the
-  // sweep resolves it from one `listSessions()` per tick and skips the whole
+  // sweep resolves it from an attested per-run inventory and skips this
   // tick when that call throws. Here the probe runs only for a candidate that
   // has already passed the cheap SQL filter AND the grace guard — a state that
   // exists only after a web death — so it is per-rare-candidate, never
@@ -477,7 +477,7 @@ export function startFlowContinuationWorker(input: {
     let liveSession: boolean;
 
     try {
-      const records = await hosts.local().listSessions();
+      const records = await hosts.local().listSessionsForRun(candidate.id);
 
       liveSession = records.some(
         (record: { runId: string; status: string }) =>

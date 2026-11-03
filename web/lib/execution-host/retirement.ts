@@ -19,6 +19,7 @@ import { getDb } from "@/lib/db/client";
 import { isMaisterError } from "@/lib/errors";
 import { isApplicationStopping } from "@/lib/server-lifecycle";
 import { pgErrorOf } from "@/lib/db/pg-error";
+import { isTerminalRunStatus } from "@/lib/runs/run-status-sets";
 
 // Retirement is bounded by the SAME window the ledger already promises for a
 // legal retry. Widening it silently would widen the idempotency claim too.
@@ -30,17 +31,6 @@ const defaultLog = pino({
   name: "execution-host",
   level: process.env.LOG_LEVEL ?? "info",
 }).child({ component: "command-retirement" });
-
-// A run whose commands may still be replayed by a driver. Retirement waits for
-// the run to leave every live status, not merely for its age.
-const RETAINED_RUN_STATUSES = [
-  "Pending",
-  "Running",
-  "NeedsInput",
-  "NeedsInputIdle",
-  "HumanWorking",
-  "Review",
-] as const;
 
 export type CommandProtectedReason =
   | "pre_activation_unowned"
@@ -169,10 +159,9 @@ export function classifyCommandRetirement(
   const parkedLibrarian =
     row.runKind === "librarian" && row.runStatus === "NeedsInputIdle";
 
-  if (
-    !parkedLibrarian &&
-    RETAINED_RUN_STATUSES.includes(row.runStatus as never)
-  ) {
+  // Every nonterminal lifecycle, including a slot-free parked coordinator,
+  // may replay its commands. Unknown future statuses fail closed as retained.
+  if (!parkedLibrarian && !isTerminalRunStatus(row.runStatus)) {
     return "run_retained";
   }
   if (row.completedAt.getTime() + opts.graceMs > opts.now.getTime()) {

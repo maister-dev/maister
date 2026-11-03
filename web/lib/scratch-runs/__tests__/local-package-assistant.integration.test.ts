@@ -17,7 +17,14 @@ import type { CommandEnvelope } from "@/lib/execution-host/types";
 import type { WorktreeInfo } from "@/lib/worktree";
 
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
+import {
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -42,6 +49,9 @@ import { assertRunScratchMetadataInvariant } from "@/lib/runs/run-kind-invariant
 import { parseScratchMessageContent } from "@/lib/scratch-runs/transcript";
 import { FLOW_ASSISTANT_ACTION_SCHEMA_VERSION } from "@/lib/studio/flow-assistant/protocol";
 import { packageFileHash } from "@/lib/studio/flow-assistant/actions";
+import { SessionInventoryPending } from "@/lib/execution-host/session-inventory";
+import { MaisterError } from "@/lib/errors";
+import { redriveOwnedScratchCreate } from "@/lib/scratch-runs/create-recovery";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -143,6 +153,7 @@ let userId: string;
 let runnerId: string;
 let localPackageId: string;
 let fake: FakeExecutionHost;
+let hosts: Awaited<ReturnType<typeof fakeExecutionHosts>>["hosts"];
 
 const RECON_GRACE_SECONDS = 90;
 
@@ -233,7 +244,7 @@ beforeAll(async () => {
 
     return result;
   });
-  await fakeExecutionHosts(db, { fake });
+  ({ hosts } = await fakeExecutionHosts(db, { fake }));
 
   ({
     markScratchCrashed,
@@ -610,6 +621,125 @@ describe("project-less rows are invisible to project-scoped queries (ADR-097)", 
 // --- T5.9: launch + turn at a real local-package working dir ----------------
 
 describe("launchLocalPackageAssistant + a turn (ADR-097 T5.7)", () => {
+  it.each(["live", "revoked"] as const)(
+    "retains package creation context and action identity under a %s edit lock",
+    async (lockState) => {
+      const pkg = await createLocalPackage({
+        name: `pending-package-${randomUUID().slice(0, 8)}`,
+        createdBy: userId,
+        db: db as never,
+      });
+      const sessionId = await lockLocalPackage(pkg.id, "pending-package");
+      const originalCreate = fake.transport.createSession;
+      const prompt = "create a new flow from the accepted package context";
+
+      fake.transport.createSession = async (envelope) => {
+        throw new SessionInventoryPending(
+          envelope.fence.runId,
+          new MaisterError("EXECUTOR_UNAVAILABLE", "Inventory is unproven", {
+            details: { reason: "session_inventory_unproven" },
+          }),
+        );
+      };
+      try {
+        const accepted = await launchLocalPackageAssistant({
+          body: { localPackageId: pkg.id, sessionId, prompt },
+          userId,
+        });
+        const [before] = await db
+          .select()
+          .from(schemaModule.executionCommands)
+          .where(
+            and(
+              eq(schemaModule.executionCommands.runId, accepted.runId),
+              eq(schemaModule.executionCommands.kind, "session.create"),
+            ),
+          );
+
+        expect(accepted.status.dialogStatus).toBe("Starting");
+        expect(before).toMatchObject({
+          state: "queued",
+          createIntent: {
+            owner: {
+              variant: "package_scratch",
+              localPackageId: pkg.id,
+              lockGeneration: sessionId,
+            },
+            continuation: {
+              kind: "package_initial",
+              payload: { prompt: expect.stringContaining(prompt) },
+            },
+          },
+        });
+        expect(supervisorMock.createSession).not.toHaveBeenCalled();
+        const frozen = before.createIntent as {
+          owner: { postprocessActionId: string };
+          continuation: { payload: { prompt: string } };
+        };
+
+        expect(frozen.owner.postprocessActionId).toEqual(expect.any(String));
+        const manifestPath = join(pkg.workingDir, "maister-package.yaml");
+        const manifest = await readFile(manifestPath, "utf8");
+
+        await writeFile(
+          manifestPath,
+          `${manifest}\n# edited after accepted create\n`,
+        );
+        await db
+          .update(schemaModule.scratchRuns)
+          .set({ initialPrompt: "later mutable dialog text" })
+          .where(eq(schemaModule.scratchRuns.runId, accepted.runId));
+        if (lockState === "revoked")
+          await db
+            .update(schemaModule.localPackages)
+            .set({ lockedBySession: `replacement-${randomUUID()}` })
+            .where(eq(schemaModule.localPackages.id, pkg.id));
+        fake.transport.createSession = originalCreate;
+        await redriveOwnedScratchCreate(db as never, accepted.runId, hosts);
+        if (lockState === "live")
+          await expect
+            .poll(
+              async () => {
+                await redriveOwnedScratchCreate(
+                  db as never,
+                  accepted.runId,
+                  hosts,
+                );
+
+                return supervisorMock.sendPrompt.mock.calls.length;
+              },
+              { timeout: 10_000, interval: 50 },
+            )
+            .toBe(1);
+        const [after] = await db
+          .select()
+          .from(schemaModule.executionCommands)
+          .where(eq(schemaModule.executionCommands.id, before.id));
+
+        expect(after.createIntent).toEqual(before.createIntent);
+        if (lockState === "revoked") {
+          expect(supervisorMock.createSession).not.toHaveBeenCalled();
+          expect(supervisorMock.sendPrompt).not.toHaveBeenCalled();
+        } else {
+          expect(supervisorMock.createSession).toHaveBeenCalledTimes(1);
+          expect(supervisorMock.sendPrompt).toHaveBeenCalledTimes(1);
+          expect(supervisorMock.sendPrompt.mock.calls[0][1]).toMatchObject({
+            prompt: frozen.continuation.payload.prompt,
+          });
+          const [scratch] = await db
+            .select()
+            .from(schemaModule.scratchRuns)
+            .where(eq(schemaModule.scratchRuns.runId, accepted.runId));
+
+          expect(scratch.dialogStatus).toBe("WaitingForUser");
+        }
+      } finally {
+        fake.transport.createSession = originalCreate;
+      }
+    },
+    90_000,
+  );
+
   it("scratch hook_trip appends a system notice and never escalates to NeedsInput", async () => {
     const pkg = await createLocalPackage({
       name: `hook-notice-${randomUUID().slice(0, 8)}`,

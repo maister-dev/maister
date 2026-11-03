@@ -68,6 +68,14 @@ function redriveScratchContinuation(
       .from(scratchRuns)
       .where(eq(scratchRuns.runId, runId));
 
+    if (scratch?.status === "Starting") {
+      const { redriveOwnedScratchCreate } =
+        await import("@/lib/scratch-runs/create-recovery");
+
+      await redriveOwnedScratchCreate(db, runId, hosts);
+
+      return;
+    }
     if (scratch?.status === "Running") {
       const { redriveRunningScratchPrompt } =
         await import("@/lib/scratch-runs/dispatch-recovery");
@@ -140,6 +148,38 @@ export function startAgentContinuationWorker(input: {
                 inArray(runs.runKind, ["agent", "scratch"]),
                 cursor ? gt(runs.id, cursor) : undefined,
                 or(
+                  and(
+                    eq(runs.runKind, "scratch"),
+                    eq(runs.status, "Running"),
+                    exists(
+                      tx
+                        .select({ id: scratchRuns.runId })
+                        .from(scratchRuns)
+                        .where(
+                          and(
+                            eq(scratchRuns.runId, runs.id),
+                            eq(scratchRuns.dialogStatus, "Starting"),
+                          ),
+                        ),
+                    ),
+                    exists(
+                      tx
+                        .select({ id: executionCommands.id })
+                        .from(executionCommands)
+                        .where(
+                          and(
+                            eq(executionCommands.runId, runs.id),
+                            eq(
+                              executionCommands.executionAssignmentId,
+                              runs.executionAssignmentId,
+                            ),
+                            eq(executionCommands.kind, "session.create"),
+                            sql`${executionCommands.createIntent}->'owner'->>'variant' IN ('scratch','package_scratch')`,
+                            sql`(${executionCommands.nextAttemptAt} IS NULL OR ${executionCommands.nextAttemptAt} <= clock_timestamp())`,
+                          ),
+                        ),
+                    ),
+                  ),
                   // Age only selects a wake; admission proves ledger absence
                   // and current ownership under the run lock (ADR-192).
                   and(

@@ -8,7 +8,13 @@ import type { StoredScratchAttachment } from "@/lib/scratch-runs/types";
 import { and, asc, desc, eq, isNotNull, isNull, or, sql } from "drizzle-orm";
 import pino from "pino";
 
-import { assertCurrentSessionBinding } from "@/lib/execution-host/session-binding";
+import {
+  completeOwnedScratchCreate,
+  ScratchCreateHandoffPending,
+  dispatchOwnedScratchCreatePrompt,
+} from "./create-continuation";
+import { lockScratchRunRows } from "./turn-completion";
+
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { mintPlacement } from "@/lib/execution-host";
@@ -23,12 +29,9 @@ import {
   promptAttachmentOrder,
   scratchPromptContentBlocks,
 } from "@/lib/scratch-runs/attachments";
-import {
-  normalizeScratchPrompt,
-  sendScratchPromptAndProjectEvents,
-} from "@/lib/scratch-runs/events";
+import { normalizeScratchPrompt } from "@/lib/scratch-runs/events";
 import { scratchStepId } from "@/lib/scratch-runs/launch";
-import { freezeScratchPromptIntent } from "@/lib/scratch-runs/prompt-intent";
+import { SessionCreatePending } from "@/lib/execution-host/owned-session-create";
 import {
   loadScratchRecoveryRows,
   respawnScratchSession,
@@ -36,7 +39,7 @@ import {
   type ScratchClaimObserved,
 } from "@/lib/scratch-runs/respawn";
 
-const { hitlRequests, runMessages, runs, scratchAttachments, scratchRuns } =
+const { runMessages, runs, scratchAttachments, scratchRuns } =
   schemaModule as unknown as Record<string, any>;
 
 const log = pino({
@@ -210,8 +213,9 @@ async function assistantLockHeld(tx: Db, runId: string): Promise<boolean> {
  * restored with `session/resume` and the interrupted turn's newest user row is
  * prompted again; when the agent raises the permission anew, the scratch
  * permission handler answers it from the stored row. The prompt is detached —
- * the caller answers at once. A failed create rolls the claim back to
- * `NeedsInputIdle` and rethrows (`EXECUTOR_UNAVAILABLE` is the retryable 503).
+ * the caller answers at once. A definitive failed create restores the frozen
+ * `NeedsInputIdle` state. A readiness-deferred create keeps its assignment and
+ * private continuation for the existing continuation worker.
  */
 export async function driveScratchIdleResume(args: {
   db: Db;
@@ -220,8 +224,8 @@ export async function driveScratchIdleResume(args: {
   assignmentId: string;
   // What the claim replaced, restored on a rollback.
   observed: ScratchClaimObserved;
-  // The respond route's success audit: committed with the resumed binding, so
-  // a rolled-back claim never leaves a 202 on record.
+  // The respond route's 202 audit commits with accepted private create admission,
+  // including a retained Starting handoff; refused admission leaves no receipt.
   recordSuccessAudit?: (tx: Db) => Promise<void>;
 }): Promise<void> {
   const { db, hosts, runId, observed } = args;
@@ -242,126 +246,129 @@ export async function driveScratchIdleResume(args: {
     await rollbackScratchClaim(
       db,
       runId,
+      args.assignmentId,
       observed,
       "scratch_idle_resume_rollback",
     );
     throw err;
   }
-  const { execution, session } = await respawnScratchSession({
-    db,
-    hosts,
-    runId,
-    assignmentId: args.assignmentId,
-    acpSessionId,
-    rows,
-    observed,
-    releaseReason: "scratch_idle_resume_rollback",
-  });
-  const now = new Date();
-  const turn = await db.transaction(async (tx: Db) => {
-    await assertCurrentSessionBinding(tx, {
-      runId,
-      sessionName: "default",
-      assignmentId: args.assignmentId,
-      hostSessionId: session.sessionId,
-      acpSessionId: session.acpSessionId,
-    });
-    await tx
-      .update(scratchRuns)
-      .set({
-        dialogStatus: "Running",
-        errorCode: null,
-        errorMessage: null,
-        errorMetadata: null,
-        updatedAt: now,
-      })
-      .where(eq(scratchRuns.runId, runId));
-    await tx.update(runs).set({ checkpointAt: null }).where(eq(runs.id, runId));
-    // A request the parked session raised that nobody answered is moot: the
-    // resumed agent re-raises what it still needs. Left open it pins the
-    // dialog `NeedsInput` behind a request no live session holds.
-    const moot = await tx
-      .update(hitlRequests)
-      .set({ respondedAt: now })
-      .where(
-        and(
-          eq(hitlRequests.runId, runId),
-          eq(hitlRequests.kind, "permission"),
-          isNull(hitlRequests.respondedAt),
-          isNull(hitlRequests.response),
-          isNull(hitlRequests.supersededAt),
-          sql`${hitlRequests.schema}->>'supervisorSessionId' IS DISTINCT FROM ${session.sessionId}`,
-        ),
-      )
-      .returning({ id: hitlRequests.id });
-
-    if (moot.length > 0)
-      log.info(
-        { runId, count: moot.length },
-        "scratch-idle-resume-unanswered-requests-closed",
-      );
-    await args.recordSuccessAudit?.(tx);
-    const [message] = await tx
-      .select({
-        id: runMessages.id,
-        content: runMessages.content,
-        delivery: runMessages.delivery,
-      })
-      .from(runMessages)
-      .where(
-        and(
-          eq(runMessages.runId, runId),
-          eq(runMessages.role, "user"),
-          // The interrupted turn's own prompt (the launch row carries no
-          // delivery). A newer `queued` row is its own next turn, and a
-          // `steered` one was folded into the turn the resumed session
-          // restores.
-          or(
-            isNull(runMessages.delivery),
-            eq(runMessages.delivery, "prompted"),
+  const turn = await db
+    .transaction(async (tx: Db) => {
+      await lockScratchRunRows(tx, runId);
+      const [message] = await tx
+        .select({
+          id: runMessages.id,
+          content: runMessages.content,
+          delivery: runMessages.delivery,
+        })
+        .from(runMessages)
+        .where(
+          and(
+            eq(runMessages.runId, runId),
+            eq(runMessages.role, "user"),
+            // The interrupted turn's own prompt (the launch row carries no
+            // delivery). A newer `queued` row is its own next turn, and a
+            // `steered` one was folded into the turn the resumed session
+            // restores.
+            or(
+              isNull(runMessages.delivery),
+              eq(runMessages.delivery, "prompted"),
+            ),
           ),
-        ),
-      )
-      .orderBy(desc(runMessages.sequence))
-      .limit(1);
-    const attachments: StoredScratchAttachment[] = message
-      ? await tx
-          .select()
-          .from(scratchAttachments)
-          .where(eq(scratchAttachments.messageId, message.id))
-          .orderBy(asc(scratchAttachments.createdAt))
-      : [];
+        )
+        .orderBy(desc(runMessages.sequence))
+        .limit(1);
+      const attachments: StoredScratchAttachment[] = message
+        ? await tx
+            .select()
+            .from(scratchAttachments)
+            .where(eq(scratchAttachments.messageId, message.id))
+            .orderBy(asc(scratchAttachments.createdAt))
+        : [];
 
-    const orderedAttachments = promptAttachmentOrder(attachments);
-    const prompt = normalizeScratchPrompt(
-      message?.content ?? rows.scratch.initialPrompt ?? "",
-      rows.executor.agent,
-      { runId },
-    );
-    const payload = {
-      stepId: scratchStepId(),
-      prompt,
-      contentBlocks: scratchPromptContentBlocks(prompt, orderedAttachments),
-    };
+      const orderedAttachments = promptAttachmentOrder(attachments);
+      const prompt = normalizeScratchPrompt(
+        message?.content ?? rows.scratch.initialPrompt ?? "",
+        rows.executor.agent,
+        { runId },
+      );
+      const payload = {
+        stepId: scratchStepId(),
+        prompt,
+        contentBlocks: scratchPromptContentBlocks(prompt, orderedAttachments),
+      };
 
-    await freezeScratchPromptIntent(tx, {
-      client: execution.client,
-      hostSessionId: session.sessionId,
-      owner: { variant: "recovery" },
-      sourceMessageId: message?.id ?? null,
-      payload,
+      return {
+        payload,
+        message: (message ?? null) as {
+          id: string;
+          content: string;
+          delivery: string | null;
+        } | null,
+        attachments: promptAttachmentOrder(attachments),
+      };
+    })
+    .catch(async (error: unknown) => {
+      await rollbackScratchClaim(
+        db,
+        runId,
+        args.assignmentId,
+        observed,
+        "scratch_idle_resume_rollback",
+      );
+      throw error;
     });
+  let resumed: Awaited<ReturnType<typeof respawnScratchSession>>;
 
-    return {
-      payload,
-      message: (message ?? null) as {
-        id: string;
-        content: string;
-        delivery: string | null;
-      } | null,
-      attachments: promptAttachmentOrder(attachments),
-    };
+  try {
+    resumed = await respawnScratchSession({
+      db,
+      hosts,
+      runId,
+      assignmentId: args.assignmentId,
+      acpSessionId,
+      rows,
+      observed,
+      releaseReason: "scratch_idle_resume_rollback",
+      continuation: {
+        version: 1,
+        kind: "recovery",
+        sourceMessageId: turn.message?.id ?? null,
+        payload: turn.payload,
+        recoveryState: {
+          ...observed,
+          resumeRequestedAt: observed.resumeRequestedAt?.toISOString() ?? null,
+        },
+      },
+      recordSuccessAudit: args.recordSuccessAudit,
+    });
+  } catch (error) {
+    if (error instanceof SessionCreatePending) {
+      log.info(
+        {
+          runId,
+          assignmentId: args.assignmentId,
+          commandId: error.details?.commandId,
+        },
+        "scratch-idle-create-retained",
+      );
+
+      return;
+    }
+    throw error;
+  }
+  const { execution, session, createOwner } = resumed;
+  const continuation = await completeOwnedScratchCreate(
+    db,
+    execution,
+    createOwner,
+    session,
+  ).catch((error: unknown) => {
+    if (error instanceof ScratchCreateHandoffPending) return null;
+    throw error;
   });
+
+  if (!continuation?.payload) return;
 
   log.info(
     {
@@ -374,14 +381,13 @@ export async function driveScratchIdleResume(args: {
   );
   void (async () => {
     try {
-      await sendScratchPromptAndProjectEvents({
+      await dispatchOwnedScratchCreatePrompt(
         db,
-        runId,
-        sessionId: session.sessionId,
-        ...turn.payload,
         execution,
-        owner: { variant: "recovery" },
-      });
+        createOwner,
+        session.sessionId,
+        continuation,
+      );
     } catch (err) {
       const { failScratchMessageTurn } =
         await import("@/lib/scratch-runs/service");

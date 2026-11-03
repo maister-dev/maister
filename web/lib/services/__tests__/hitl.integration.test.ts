@@ -625,6 +625,178 @@ describe("respondToHitl integration — concurrent two-racer CAS (409 contract)"
 });
 
 describe("respondToHitl integration — plan-review decision requests", () => {
+  it("serializes a plan-review parent response behind the Run before locking its HITL", async () => {
+    const projectId = await seedProject("test-plan-review-create-lock");
+    const runId = await seedRun(projectId);
+    const { parentHitlRequestId } = await seedPlanReviewHitls(runId);
+    const binding = await testDatabase.pool.connect();
+    let response: Promise<unknown> | undefined;
+
+    try {
+      await binding.query("BEGIN");
+      await binding.query("SET LOCAL statement_timeout='5s'");
+      await binding.query("SET LOCAL deadlock_timeout='100ms'");
+      const {
+        rows: [{ pid }],
+      } = await binding.query<{ pid: number }>(
+        "SELECT pg_backend_pid() AS pid",
+      );
+
+      await binding.query("SELECT id FROM runs WHERE id=$1 FOR UPDATE", [
+        runId,
+      ]);
+      response = respondToHitl(
+        {
+          runId,
+          hitlRequestId: parentHitlRequestId,
+          body: {
+            response: {
+              decision: "rework",
+              comments: "Serialize the real parent response",
+            },
+          },
+        },
+        { kind: "user", userId: "u-1", label: "Test User" },
+        { db },
+      );
+      void response.catch(() => undefined);
+      await expect
+        .poll(
+          async () => {
+            const result = await testDatabase.pool.query<{ count: number }>(
+              "SELECT count(*)::int AS count FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))",
+              [pid],
+            );
+
+            return result.rows[0].count;
+          },
+          { timeout: 10_000 },
+        )
+        .toBeGreaterThan(0);
+      const parentLock = await binding
+        .query("SELECT id FROM hitl_requests WHERE id=$1 FOR UPDATE", [
+          parentHitlRequestId,
+        ])
+        .then(
+          () => ({ ok: true }),
+          (error: unknown) => ({
+            ok: false,
+            sqlState:
+              error !== null && typeof error === "object" && "code" in error
+                ? error.code
+                : null,
+          }),
+        );
+
+      expect(parentLock).toEqual({ ok: true });
+      await binding.query("COMMIT");
+      expect(((await response) as { status: number }).status).toBe(200);
+      const parent = await testDatabase.pool.query<{
+        response: { comments: string };
+      }>("SELECT response FROM hitl_requests WHERE id=$1", [
+        parentHitlRequestId,
+      ]);
+
+      expect(parent.rows[0].response.comments).toBe(
+        "Serialize the real parent response",
+      );
+    } finally {
+      await binding.query("ROLLBACK");
+      binding.release();
+      await response?.catch(() => undefined);
+    }
+  }, 60_000);
+
+  it.each(["parent", "last_child"] as const)(
+    "keeps a pending reviewer turn when %s would close its plan-review parent",
+    async (source) => {
+      const projectId = await seedProject(`test-plan-review-chat-${source}`);
+      const runId = await seedRun(projectId);
+      const { parentHitlRequestId, childHitlRequestIds } =
+        await seedPlanReviewHitls(runId);
+      const actor: HitlActor = {
+        kind: "user",
+        userId: "u-1",
+        label: "Test User",
+      };
+
+      if (source === "last_child")
+        expect(
+          (
+            await respondToHitl(
+              {
+                runId,
+                hitlRequestId: childHitlRequestIds[0],
+                body: { optionId: "postgres" },
+              },
+              actor,
+              { db },
+            )
+          ).status,
+        ).toBe(200);
+      const messageId = randomUUID();
+
+      await (db as any).insert(schema.gateChatMessages).values({
+        id: messageId,
+        runId,
+        hitlRequestId: parentHitlRequestId,
+        nodeId: "review_plan",
+        gateAttempt: 1,
+        role: "user",
+        authorLabel: "Reviewer",
+        body: "Explain this plan before I decide",
+        seq: 1,
+      });
+      await (db as any).insert(schema.gateChatTurns).values({
+        id: randomUUID(),
+        runId,
+        hitlRequestId: parentHitlRequestId,
+        nodeId: "review_plan",
+        gateAttempt: 1,
+        userMessageId: messageId,
+        state: "pending",
+        leaseExpiresAt: new Date(Date.now() + 180_000),
+      });
+      try {
+        await expect(
+          respondToHitl(
+            source === "parent"
+              ? {
+                  runId,
+                  hitlRequestId: parentHitlRequestId,
+                  body: {
+                    response: {
+                      decision: "rework",
+                      comments: "Wait for the answer",
+                    },
+                  },
+                }
+              : {
+                  runId,
+                  hitlRequestId: childHitlRequestIds[1],
+                  body: { optionId: "graph" },
+                },
+            actor,
+            { db },
+          ),
+        ).rejects.toMatchObject({ code: "PRECONDITION" });
+        const parent = await testDatabase.pool.query<{
+          response: unknown;
+          responded_at: Date | null;
+        }>("SELECT response,responded_at FROM hitl_requests WHERE id=$1", [
+          parentHitlRequestId,
+        ]);
+
+        expect(parent.rows).toEqual([{ response: null, responded_at: null }]);
+      } finally {
+        await (db as any)
+          .update(schema.runs)
+          .set({ status: "Review" })
+          .where(eq(schema.runs.id, runId));
+      }
+    },
+  );
+
   it("serializes concurrent child answers, persists ordered parent input, and replays the final answer idempotently", async () => {
     const projectId = await seedProject("test-plan-review-decisions");
     const runId = await seedRun(projectId);

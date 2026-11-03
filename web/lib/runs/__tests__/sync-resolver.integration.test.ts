@@ -27,6 +27,10 @@ import {
 
 import * as fullSchema from "@/lib/db/schema";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
+import { MaisterError } from "@/lib/errors";
+import { SessionInventoryPending } from "@/lib/execution-host/session-inventory";
+import { createExecutionHosts } from "@/lib/execution-host";
+import { recoverSyncAttemptOnReconcile } from "@/lib/runs/sync-recovery";
 import {
   createFakeExecutionHost,
   fakeExecutionHosts,
@@ -80,7 +84,7 @@ vi.mock("@/lib/authz", () => ({
   requireProjectAction: vi.fn(async () => {}),
 }));
 
-let db: NodePgDatabase;
+let db: NodePgDatabase<typeof fullSchema>;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 
@@ -644,6 +648,105 @@ function backgrounded(): {
 }
 
 describe("syncRunTarget — agent resolver (ADR-141 Task 10)", () => {
+  it("retains a conflicted sync while its original create waits and resumes the frozen resolver prompt", async () => {
+    const { parent, wt } = await seedConflictWorktree("sync/pending-create");
+    const { projectId, flowId } = await seedGraph(parent);
+    const { runId, taskId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch: "sync/pending-create",
+      parentRepoPath: parent,
+      baseCommit: await headSha(parent, "main"),
+      title: "Preserve the original parser intent",
+    });
+    const create = fake.transport.createSession;
+    const bg = backgrounded();
+    const stream = eventStream();
+
+    fake.transport.createSession = async () => {
+      throw new SessionInventoryPending(
+        runId,
+        new MaisterError("EXECUTOR_UNAVAILABLE", "host ownership unproven", {
+          details: { reason: "session_inventory_unproven" },
+        }),
+      );
+    };
+    supMock.streamSession.mockImplementation(
+      (_sid: string, opts: { signal?: AbortSignal }) =>
+        stream.iterate(opts?.signal),
+    );
+    supMock.sendPrompt.mockImplementation(async () => {
+      await resolveConflictInWorktree(wt);
+
+      return { stopReason: "end_turn" as const };
+    });
+    try {
+      await syncRunTarget({
+        runId,
+        actor: actor(),
+        agent: true,
+        db,
+        push: false,
+        schedule: bg.schedule,
+      });
+      await bg.settled();
+      expect(supMock.createSession).not.toHaveBeenCalled();
+      expect(supMock.sendPrompt).not.toHaveBeenCalled();
+      expect((await readRun(runId)).status).toBe("Running");
+      expect((await attemptRow(runId)).phase).toBe("agent_running");
+      expect(await syncOperationInProgress(wt)).toBe(true);
+      const original = await pool.query<{ id: string; state: string }>(
+        "SELECT id,state FROM execution_commands WHERE run_id=$1 AND kind='session.create'",
+        [runId],
+      );
+
+      expect(original.rows).toEqual([
+        expect.objectContaining({ state: "queued" }),
+      ]);
+      await pool.query(
+        "UPDATE tasks SET title='A different later task title' WHERE id=$1",
+        [taskId],
+      );
+      await pool.query(
+        "UPDATE execution_commands SET next_attempt_at=now()-interval '1 second' WHERE id=$1",
+        [original.rows[0].id],
+      );
+      fake.transport.createSession = create;
+      await recoverSyncAttemptOnReconcile({
+        runId,
+        liveSessionId: null,
+        db,
+        executionHosts: createExecutionHosts({ db, transport: fake.transport }),
+      });
+      await waitFor(
+        async () =>
+          (await attemptRow(runId)).phase === "succeeded" &&
+          (await readRun(runId)).status === "Review" &&
+          !hasSyncDriver(runId),
+        15_000,
+      );
+      expect(supMock.createSession).toHaveBeenCalledTimes(1);
+      expect(supMock.sendPrompt).toHaveBeenCalledTimes(1);
+      const prompt = supMock.sendPrompt.mock.calls[0][1].prompt as string;
+
+      expect(prompt).toContain("Preserve the original parser intent");
+      expect(prompt).not.toContain("A different later task title");
+      expect(
+        (
+          await pool.query<{ id: string; state: string }>(
+            "SELECT id,state FROM execution_commands WHERE run_id=$1 AND kind='session.create'",
+            [runId],
+          )
+        ).rows,
+      ).toEqual([{ id: original.rows[0].id, state: "succeeded" }]);
+      expect((await readRun(runId)).status).toBe("Review");
+    } finally {
+      fake.transport.createSession = create;
+      stream.close();
+    }
+  }, 60_000);
+
   it("conflict + agent=true → resolver session launched, run Running, agent_launched", async () => {
     const { parent, wt } = await seedConflictWorktree("sync/agent-a", {
       publish: true,
@@ -698,7 +801,10 @@ describe("syncRunTarget — agent resolver (ADR-141 Task 10)", () => {
     expect(createArg).not.toHaveProperty("worktreePath");
     expect(
       (
-        fake.callsOf("adoptWorkspace")[0]?.envelope?.payload as {
+        fake
+          .callsOf("adoptWorkspace")
+          .find((call) => call.envelope?.fence.runId === runId)?.envelope
+          ?.payload as {
           path?: string;
         }
       )?.path,

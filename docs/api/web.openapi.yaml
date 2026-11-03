@@ -6351,6 +6351,20 @@ paths:
         ownership, optional task ownership, branch/base-ref safety, selected
         capability visibility, supervisor readiness, and shared live-session
         capacity. Scratch v1 rejects when capacity is full and does not queue.
+        After those gates accept a launch, an unconfirmed host session inventory
+        may retain its exact private session-create command. The normal result
+        is `runStatus: Running`, `dialogStatus: Starting`: accepted, not session
+        ready. The existing continuation worker reuses the same assignment,
+        command, runner request and frozen first prompt after readiness returns;
+        it does not reconstruct them from current settings. No `session_ready`
+        progress frame is emitted before the create acknowledgement. An empty
+        first prompt becomes `WaitingForUser` after acknowledgement without
+        issuing a prompt. Clients should open the returned Run rather than
+        launch a duplicate.
+        A session already acknowledged by the host can also remain `Starting`
+        while its private first-turn database handoff recovers. The session and
+        assignment stay owned; recovery reuses the original create rather than
+        launching another session or issuing a prompt before the handoff commits.
 
         Accepts JSON for text/metadata-only launches and multipart form data
         for binary uploads. Multipart requests carry a JSON `payload` field
@@ -6836,6 +6850,13 @@ paths:
         new supervisor session id, sends the supplied prompt, and returns the
         resulting dialog status. Permission or crash events observed during the
         prompt are preserved instead of being overwritten to `WaitingForUser`.
+        The recovery prompt and attachment references are frozen before session
+        creation. If inventory readiness delays the create, 202 reports
+        `dialogStatus: Starting`, `delivery: queued`; the current recovery
+        assignment and original create are retained for durable rediscovery.
+        Package recovery additionally retains its edit-lock generation and
+        structured-action identity, and cannot dispatch after that lock expires
+        or changes owner.
       operationId: recoverScratchRun
       parameters:
         - name: runId
@@ -14293,6 +14314,15 @@ paths:
         "message"}` frame; the gate failures BELOW stay JSON errors with their
         HTTP status because they precede the stream. Frames carry no `id:` line
         (not durable).
+
+        A create awaiting confirmed host inventory returns the normal launch
+        result with `dialogStatus: Starting`, without a `session_ready` frame.
+        Its private create request, grounded initial prompt, source-message
+        references and structured-action identity are frozen before delivery.
+        The continuation worker reuses them after readiness returns, subject to
+        the original package edit-lock generation still being live; it does not
+        rebuild context from later package edits. No prompt is sent for an empty
+        initial turn. This accepted state does not mean the session is ready.
 
         Identifier boundaries: `id` is the server-state local package lookup;
         `sessionId` is a body-controlled lock token compared with

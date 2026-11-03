@@ -6320,7 +6320,7 @@
     "stageBeforeWork": "Before operational work (verified)",
     "stageInspectEvidence": "Inspect the source execution evidence",
     "refusal": {
-      "reconciliation": "The previous execution may have started work. Reconcile its effects before starting another attempt.",
+      "reconciliation": "The previous execution may still have a process or unresolved effects. Inspect the original run and its execution host before starting another attempt.",
       "taskChanged": "The task has changed or was already triaged. Open the task and use its current qualification or explicit requeue action.",
       "runner": "No compatible ready runner is available. Configure one, then refresh this preview.",
       "notFailed": "This run is no longer in a retryable failed state.",

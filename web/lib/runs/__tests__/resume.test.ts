@@ -9,6 +9,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const createSessionSpy = vi.fn();
 
+// The real durable owner/create boundary is covered with Postgres; these
+// orchestration controls retain their claim/cap/error responsibilities.
+vi.mock("@/lib/runs/resume-session-create", () => ({
+  continueResumeSessionCreate: (input: unknown) => createSessionSpy(input),
+}));
+
 // ADR-166: the resume's `session.create` rides the client bound to the run's
 // freshly minted assignment; the placement host is resolved before the claim.
 // The fake client routes the create to the existing spy (handle-form payload).

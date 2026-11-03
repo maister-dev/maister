@@ -5,6 +5,7 @@ import type { FlowYamlV1 } from "@/lib/config.schema";
 import type { TaskLaunchReceipt } from "@/lib/tasks/launch-types";
 
 import { randomUUID } from "node:crypto";
+import { createServer, request as requestHttp } from "node:http";
 import { fork, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -36,6 +37,7 @@ import { startPromptOwnerWorker } from "@/lib/execution-host/prompt-owner-recove
 import { startAgentContinuationWorker } from "@/lib/agents/continuation-worker";
 import { CANONICAL_PROJECTION_CONSUMERS } from "@/lib/execution-host/events/projection-consumers";
 import { PromptIncarnationPending } from "@/lib/execution-host/prompt-incarnation";
+import { retireEligibleCommands } from "@/lib/execution-host/retirement";
 import { SessionCreatePending } from "@/lib/execution-host/owned-session-create";
 import { flowPromptOwners } from "@/lib/flows/graph/prompt-owner";
 import { consensusDraftPromptOwners } from "@/lib/flows/graph/consensus/draft-prompt-owner";
@@ -958,6 +960,321 @@ describe("Consensus prompt owners through the production graph driver", () => {
       ),
     ).toBe(true);
   }, 180_000);
+  it("retirement: a parked consensus parent retains an aged private create needed by its live lifecycle", async () => {
+    const seeded = await seedConsensusFlow(
+      consensusPrompt("agree"),
+      undefined,
+      "retained-scheduled-context",
+    );
+
+    await drive(seeded.runId);
+    await waitForDraftsDone(seeded.runId);
+    expect(
+      (
+        await database.db
+          .select({ status: runs.status })
+          .from(runs)
+          .where(eq(runs.id, seeded.runId))
+      )[0].status,
+    ).toBe("WaitingOnChildren");
+    const [command] = await database.db
+      .select()
+      .from(executionCommands)
+      .where(
+        and(
+          eq(executionCommands.runId, seeded.runId),
+          eq(executionCommands.kind, "session.create"),
+        ),
+      );
+
+    expect(command).toMatchObject({
+      state: "succeeded",
+      createIntent: { owner: { variant: "node" } },
+    });
+    const originalIntent = command.createIntent;
+
+    await database.db
+      .update(executionCommands)
+      .set({ completedAt: new Date(Date.now() - 30 * 86_400_000) })
+      .where(eq(executionCommands.id, command.id));
+    const hosts = createExecutionHosts({ db: database.db as unknown as Db });
+
+    expect(
+      (await hosts.local().listSessionsForRun(seeded.runId)).filter(
+        (session) => session.status === "live",
+      ),
+    ).toHaveLength(0);
+    const retired = await retireEligibleCommands({
+      db: database.db as unknown as Db,
+      hosts,
+    });
+    const [retained] = await database.db
+      .select()
+      .from(executionCommands)
+      .where(eq(executionCommands.id, command.id));
+
+    expect(retired.reasons.run_retained).toBeGreaterThanOrEqual(1);
+    expect(retained).toMatchObject({
+      retiredAt: null,
+      createIntent: originalIntent,
+    });
+    await expect(
+      database.pool.query(
+        "WITH stamp AS (SELECT clock_timestamp() AS at) UPDATE execution_commands SET retired_at=stamp.at,create_intent=NULL,request_canonical_json=NULL,receipt_evidence=NULL,result=NULL,last_error=NULL,payload='{}'::jsonb,updated_at=stamp.at FROM stamp WHERE id=$1",
+        [command.id],
+      ),
+    ).rejects.toMatchObject({
+      code: "23514",
+      constraint: "execution_commands_immutable_create_intent",
+    });
+  }, 180_000);
+
+  it.each(["consensus_verifier", "consensus_synthesis"] as const)(
+    "readiness: %s retains its exact create and resumes through a fresh driver",
+    async (variant) => {
+      const seeded = await seedConsensusFlow(consensusPrompt("agree"));
+      let blocked = true;
+      const posted: string[] = [];
+      const proxy = createServer((request, response) => {
+        void (async () => {
+          const url = new URL(request.url ?? "/", supervisor.url);
+
+          if (
+            blocked &&
+            request.method === "GET" &&
+            url.pathname === "/sessions" &&
+            url.searchParams.get("runId") === seeded.runId
+          ) {
+            const pending = await database.pool.query<{ pending: boolean }>(
+              "SELECT EXISTS(SELECT 1 FROM execution_commands WHERE run_id=$1 AND kind='session.create' AND state='delivering' AND create_intent->'owner'->>'variant'=$2) AS pending",
+              [seeded.runId, variant],
+            );
+
+            if (pending.rows[0].pending) {
+              response.writeHead(503, { "content-type": "application/json" });
+              response.end(
+                JSON.stringify({
+                  code: "EXECUTOR_UNAVAILABLE",
+                  message:
+                    "Scoped original process ownership remains unresolved",
+                  details: { reason: "session_process_owner_unconfirmed" },
+                }),
+              );
+
+              return;
+            }
+          }
+          const forwarding = requestHttp(
+            url,
+            { method: request.method, headers: request.headers },
+            (upstream) => {
+              response.writeHead(upstream.statusCode ?? 502, upstream.headers);
+              upstream.pipe(response);
+            },
+          );
+
+          response.once("close", () => forwarding.destroy());
+          forwarding.once("error", () => {
+            if (!response.headersSent) response.writeHead(502);
+            response.end();
+          });
+          if (request.method === "POST" && url.pathname === "/sessions") {
+            const chunks: Buffer[] = [];
+
+            request.on("data", (chunk: Buffer) => chunks.push(chunk));
+            request.on("end", () => {
+              const body = JSON.parse(
+                Buffer.concat(chunks).toString("utf8"),
+              ) as { command: { id: string }; fence: { runId: string } };
+
+              if (body.fence.runId === seeded.runId)
+                posted.push(body.command.id);
+            });
+          }
+          request.pipe(forwarding);
+        })().catch(() => {
+          if (!response.headersSent) response.writeHead(500);
+          response.end();
+        });
+      });
+
+      await new Promise<void>((resolve) =>
+        proxy.listen(0, "127.0.0.1", resolve),
+      );
+      const address = proxy.address();
+
+      if (!address || typeof address === "string")
+        throw new Error("Ownership proxy has no port");
+      const restoreProxyUrl = useRealSupervisorUrl(
+        `http://127.0.0.1:${address.port}`,
+      );
+      let continuation:
+        ReturnType<typeof startFlowContinuationWorker> | undefined;
+      const createRows = async () =>
+        (
+          await database.db
+            .select()
+            .from(executionCommands)
+            .where(
+              and(
+                eq(executionCommands.runId, seeded.runId),
+                eq(executionCommands.kind, "session.create"),
+              ),
+            )
+        ).filter((command) => command.createIntent?.owner.variant === variant);
+
+      try {
+        await drive(seeded.runId);
+        await settleDraftsAndResume(seeded.runId);
+        await expect
+          .poll(
+            async () =>
+              (await createRows()).some((command) => {
+                const details = command.lastError?.details;
+
+                return (
+                  command.state === "queued" &&
+                  details !== null &&
+                  typeof details === "object" &&
+                  "managerReadiness" in details
+                );
+              }),
+            { timeout: 30_000 },
+          )
+          .toBe(true);
+        const originals = await createRows();
+
+        expect(originals.length).toBeGreaterThan(0);
+        for (const command of originals) {
+          expect(command.state).toBe("queued");
+          expect(posted.filter((id) => id === command.id)).toHaveLength(0);
+        }
+        expect(
+          (
+            await database.db
+              .select({ status: runs.status })
+              .from(runs)
+              .where(eq(runs.id, seeded.runId))
+          )[0].status,
+        ).toBe("Running");
+        const initialOwner = originals[0].createIntent?.owner;
+
+        if (
+          !initialOwner ||
+          (initialOwner.variant !== "consensus_verifier" &&
+            initialOwner.variant !== "consensus_synthesis")
+        )
+          throw new Error("Readiness did not retain a consensus create owner");
+        const verdictsBefore = await database.db
+          .select()
+          .from(consensusRoundVerdicts)
+          .where(
+            eq(
+              consensusRoundVerdicts.nodeAttemptId,
+              initialOwner.nodeAttemptId,
+            ),
+          );
+
+        expect(verdictsBefore).toHaveLength(
+          variant === "consensus_verifier" ? 0 : 2,
+        );
+        expect(
+          verdictsBefore.every((verdict) => verdict.verdict === "agree"),
+        ).toBe(true);
+        blocked = false;
+        await database.db
+          .update(executionCommands)
+          .set({ nextAttemptAt: null })
+          .where(
+            and(
+              eq(executionCommands.runId, seeded.runId),
+              eq(executionCommands.kind, "session.create"),
+            ),
+          );
+        continuation = startFlowContinuationWorker({
+          db: database.db as unknown as Db,
+          runtimeRoot: supervisor.runtimeRoot,
+          executionHosts: createExecutionHosts({
+            db: database.db as unknown as Db,
+          }),
+        });
+        await expect
+          .poll(
+            async () =>
+              (
+                await database.db
+                  .select({ status: runs.status })
+                  .from(runs)
+                  .where(eq(runs.id, seeded.runId))
+              )[0].status,
+            { timeout: 60_000, interval: 100 },
+          )
+          .toBe("Review");
+        const after = await createRows();
+
+        expect(after).toHaveLength(variant === "consensus_verifier" ? 2 : 1);
+        expect(
+          new Set(after.map((command) => command.createIntent?.operationKey))
+            .size,
+        ).toBe(after.length);
+        expect(
+          after
+            .filter((command) =>
+              originals.some((original) => original.id === command.id),
+            )
+            .map((command) => command.id)
+            .sort(),
+        ).toEqual(originals.map((command) => command.id).sort());
+        for (const original of originals) {
+          const resumed = after.find((command) => command.id === original.id);
+
+          expect(resumed?.createIntent).toEqual(original.createIntent);
+          expect(resumed?.state).toBe("succeeded");
+          expect(posted.filter((id) => id === original.id)).toHaveLength(1);
+        }
+        const [attempt] = await database.db
+          .select()
+          .from(nodeAttempts)
+          .where(
+            and(
+              eq(nodeAttempts.runId, seeded.runId),
+              eq(nodeAttempts.nodeType, "consensus"),
+            ),
+          );
+        const verdicts = await database.db
+          .select()
+          .from(consensusRoundVerdicts)
+          .where(eq(consensusRoundVerdicts.nodeAttemptId, attempt.id));
+
+        expect(verdicts.map((verdict) => verdict.verdict)).toEqual([
+          "agree",
+          "agree",
+        ]);
+        const prompts = await database.db
+          .select()
+          .from(executionCommands)
+          .where(
+            and(
+              eq(executionCommands.runId, seeded.runId),
+              eq(executionCommands.kind, "session.prompt"),
+            ),
+          );
+
+        expect(
+          prompts.filter((command) => command.ownerRef?.variant === variant),
+        ).toHaveLength(after.length);
+      } finally {
+        await continuation?.stop();
+        restoreProxyUrl();
+        proxy.closeAllConnections();
+        await new Promise<void>((resolve, reject) =>
+          proxy.close((error) => (error ? reject(error) : resolve())),
+        );
+      }
+    },
+    180_000,
+  );
+
   it("owner-consensus-verify: every matrix cell owns its own command", async () => {
     const seeded = await seedConsensusFlow(
       consensusPrompt("agree"),

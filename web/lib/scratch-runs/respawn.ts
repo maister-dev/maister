@@ -4,11 +4,16 @@ import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { RunnerSnapshot } from "@/lib/acp-runners/resolve";
 import type { ExecutionHosts } from "@/lib/execution-host/client";
+import type { ScratchCreateOwner } from "@/lib/execution-host/create-owner-contract";
+import type { ScratchCreateContinuation } from "./create-continuation";
 
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 
 import { and, eq } from "drizzle-orm";
 import pino from "pino";
+
+import { assertScratchCreateContinuation } from "./create-continuation";
 
 import {
   mergeRunnerAdapterLaunch,
@@ -16,6 +21,7 @@ import {
 } from "@/lib/acp-runners/spawn-intent";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { projectPrivateCreateFailure } from "@/lib/execution-host/private-create-failure";
 import {
   isFencedError,
   publishCapabilityBundle,
@@ -23,6 +29,7 @@ import {
 } from "@/lib/execution-host";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import { scratchStepId } from "@/lib/scratch-runs/launch";
+import { SessionCreatePending } from "@/lib/execution-host/owned-session-create";
 
 const {
   localPackages,
@@ -56,6 +63,11 @@ type ScratchRecoveredRunner = {
   executor: ScratchLaunchExecutor;
   snapshot: RunnerSnapshot;
 };
+
+type ScratchRecoveryCreateContinuation = Extract<
+  ScratchCreateContinuation,
+  { kind: "recovery" | "package_recovery" }
+>;
 
 export type ScratchRespawnRows = Awaited<
   ReturnType<typeof loadScratchRecoveryRows>
@@ -222,7 +234,7 @@ async function loadScratchLaunchExecutor(
  * queue key an idle-resume claim cleared (absent for Recover, which never
  * touches it). */
 export type ScratchClaimObserved = {
-  status: string;
+  status: "Crashed" | "NeedsInputIdle";
   currentStepId: string | null;
   resumeRequestedAt?: Date | null;
 };
@@ -230,14 +242,31 @@ export type ScratchClaimObserved = {
 /** A failed respawn after a claim: `Running` → the observed pre-claim status
  * (predicated on `Running` so a concurrent transition is never clobbered) and
  * the never-driven generation released, in ONE tx — mirrors rollbackResumedRun.
- * The claim never touched `scratch_runs`, so the stored supervisor session id is
- * exactly as it was. */
+ * A private create may already have marked the dialog Starting; restore that
+ * unacknowledged handoff while preserving the previous session binding. */
 export async function rollbackScratchClaim(
   db: Db,
   runId: string,
+  assignmentId: string,
   observed: ScratchClaimObserved,
   releaseReason: string,
+  failure?: Readonly<{
+    commandId: string;
+    error: unknown;
+    assignmentEpoch?: number;
+  }>,
 ): Promise<void> {
+  const projectedFailure = failure
+    ? projectPrivateCreateFailure(failure.error, {
+        runId,
+        assignmentId,
+        ...(failure.assignmentEpoch === undefined
+          ? {}
+          : { assignmentEpoch: failure.assignmentEpoch }),
+        stage: "session_create",
+      })
+    : null;
+
   await db.transaction(async (tx: Db) => {
     const rows = await tx
       .update(runs)
@@ -249,10 +278,42 @@ export async function rollbackScratchClaim(
           ? {}
           : { resumeRequestedAt: observed.resumeRequestedAt }),
       })
-      .where(and(eq(runs.id, runId), eq(runs.status, "Running")))
+      .where(
+        and(
+          eq(runs.id, runId),
+          eq(runs.status, "Running"),
+          eq(runs.executionAssignmentId, assignmentId),
+        ),
+      )
       .returning({ id: runs.id });
 
     if (rows.length === 0) return;
+
+    await tx
+      .update(scratchRuns)
+      .set({
+        dialogStatus: observed.status === "Crashed" ? "Crashed" : "NeedsInput",
+        updatedAt: new Date(),
+        ...(failure && projectedFailure
+          ? {
+              errorCode: projectedFailure.code,
+              errorMessage: projectedFailure.message,
+              errorMetadata: {
+                ...projectedFailure.details,
+                diagnosticStage: projectedFailure.details?.stage ?? null,
+                stage: "session_create",
+                commandId: failure.commandId,
+                assignmentId,
+              },
+            }
+          : {}),
+      })
+      .where(
+        and(
+          eq(scratchRuns.runId, runId),
+          eq(scratchRuns.dialogStatus, "Starting"),
+        ),
+      );
 
     await releaseAssignmentForRun(
       tx as unknown as ExecutionDb,
@@ -278,7 +339,12 @@ export async function respawnScratchSession(args: {
   // The conversation to restore. Required: a respawn without it would be a
   // `session/new` that silently orphans the dialog.
   acpSessionId: string;
-  rows: Pick<ScratchRespawnRows, "executor" | "runnerSnapshot" | "profile">;
+  rows: Pick<
+    ScratchRespawnRows,
+    "executor" | "runnerSnapshot" | "profile" | "run"
+  >;
+  continuation: ScratchRecoveryCreateContinuation;
+  recordSuccessAudit?: (tx: ExecutionDb) => Promise<void>;
   observed: ScratchClaimObserved;
   releaseReason: string;
 }) {
@@ -287,33 +353,87 @@ export async function respawnScratchSession(args: {
     assignmentId: args.assignmentId,
   });
 
+  const packageId = rows.run.localPackageId as string | null;
+  const [pkg] = packageId
+    ? await db
+        .select()
+        .from(localPackages)
+        .where(eq(localPackages.id, packageId))
+    : [];
+  const owner: ScratchCreateOwner = packageId
+    ? {
+        variant: "package_scratch",
+        scratchRunId: runId,
+        turnId: args.assignmentId,
+        promptOrdinal: 0,
+        localPackageId: packageId,
+        postprocessActionId: randomUUID(),
+        lockGeneration: pkg?.lockedBySession ?? "",
+      }
+    : {
+        variant: "scratch",
+        scratchRunId: runId,
+        turnId: args.assignmentId,
+        promptOrdinal: 0,
+      };
+  const continuation: ScratchRecoveryCreateContinuation = {
+    ...args.continuation,
+    kind: packageId ? "package_recovery" : "recovery",
+  };
+
   try {
-    const capabilityBundle = rows.profile?.materializedPath
-      ? await publishCapabilityBundle({
-          client: execution.client,
-          runId,
-          sourceId: "scratch-session",
-          profileLogicalName: "scratch-capability-profile.json",
-          profilePath: join(rows.profile.materializedPath, "profile.json"),
-          instructionsLogicalName: "scratch-capability-instructions.md",
-          instructionsPath: join(
-            rows.profile.materializedPath,
-            "instructions.md",
+    if (packageId && !pkg?.lockedBySession)
+      throw new MaisterError(
+        "CONFLICT",
+        "Reopen the local package and acquire its edit lock before recovering the assistant",
+        { details: { reason: "assistant_edit_lock_required", runId } },
+      );
+    const session = await execution.client.createOwnedSession(
+      owner,
+      async () => {
+        const capabilityBundle = rows.profile?.materializedPath
+          ? await publishCapabilityBundle({
+              client: execution.client,
+              runId,
+              sourceId: "scratch-session",
+              profileLogicalName: "scratch-capability-profile.json",
+              profilePath: join(rows.profile.materializedPath, "profile.json"),
+              instructionsLogicalName: "scratch-capability-instructions.md",
+              instructionsPath: join(
+                rows.profile.materializedPath,
+                "instructions.md",
+              ),
+            })
+          : undefined;
+
+        return {
+          ...(packageId ? { readOnlySession: true } : {}),
+          stepId: scratchStepId(),
+          executor: rows.executor,
+          runner: runnerSupervisorInput({ snapshot: rows.runnerSnapshot }),
+          resumeSessionId: args.acpSessionId,
+          capabilityProfileObjectId: capabilityBundle?.profileObjectId,
+          capabilityInstructionsObjectId:
+            capabilityBundle?.instructionsObjectId,
+          adapterLaunch: mergeRunnerAdapterLaunch(
+            rows.runnerSnapshot,
+            rows.profile?.adapterLaunch ?? undefined,
           ),
-        })
-      : undefined;
-    const session = await execution.client.createSession({
-      stepId: scratchStepId(),
-      executor: rows.executor,
-      runner: runnerSupervisorInput({ snapshot: rows.runnerSnapshot }),
-      resumeSessionId: args.acpSessionId,
-      capabilityProfileObjectId: capabilityBundle?.profileObjectId,
-      capabilityInstructionsObjectId: capabilityBundle?.instructionsObjectId,
-      adapterLaunch: mergeRunnerAdapterLaunch(
-        rows.runnerSnapshot,
-        rows.profile?.adapterLaunch ?? undefined,
-      ),
-    });
+        };
+      },
+      {
+        prepareContinuation: async () => continuation,
+        assertCommit: async (tx) => {
+          await assertScratchCreateContinuation(
+            tx,
+            execution.client,
+            owner,
+            continuation,
+          );
+          await args.recordSuccessAudit?.(tx);
+        },
+      },
+    );
 
     log.info(
       {
@@ -324,13 +444,20 @@ export async function respawnScratchSession(args: {
       "scratch-session-respawned",
     );
 
-    return { execution, session };
+    return { execution, session, createOwner: owner };
   } catch (err) {
+    if (err instanceof SessionCreatePending) throw err;
     if (isFencedError(err)) {
       log.warn({ runId, assignmentId: args.assignmentId }, "driver-yielded");
       throw err;
     }
-    await rollbackScratchClaim(db, runId, args.observed, args.releaseReason);
+    await rollbackScratchClaim(
+      db,
+      runId,
+      args.assignmentId,
+      args.observed,
+      args.releaseReason,
+    );
     throw err;
   }
 }

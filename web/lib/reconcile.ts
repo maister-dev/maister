@@ -1745,10 +1745,8 @@ export async function runReconcileSweep(
 
   // listSessions ONCE up front. On throw → skip the whole tick (never crash on
   // transient supervisor unavailability).
-  let liveMap: Map<string, SupervisorSessionRecord>;
   let liveByRunStep: Map<string, SupervisorSessionRecord>;
   // One live session per run — the in-flight guard's index.
-  let liveByRun: Map<string, SupervisorSessionRecord>;
   let cutoverSessionsStopped = 0;
   let orphanSessionsReaped = 0;
   let handlesLost = 0;
@@ -1803,18 +1801,14 @@ export async function runReconcileSweep(
     });
     handlesLost = await checkWorkspaceHandles({ db, hosts });
 
-    liveMap = new Map();
     liveByRunStep = new Map();
-    liveByRun = new Map();
     for (const rec of records) {
       if (rec.status !== "live") continue;
-      if (rec.acpSessionId) liveMap.set(rec.acpSessionId, rec);
-      // Per-(run, step) index of live sessions. NOT the in-flight guard — that
-      // reads `liveByRun` below; nothing `.get`s this map. It is consumed whole
+      // Per-(run, step) index of positive live observations. The in-flight
+      // guard probes each run's attested inventory separately. Consumed whole
       // by the D3 cutover stop and the host identity scan, which need every
       // live session of this supervisor, de-duplicated per (run, step).
       liveByRunStep.set(runStepKey(rec.runId, rec.stepId), rec);
-      if (!liveByRun.has(rec.runId)) liveByRun.set(rec.runId, rec);
     }
   } catch (err) {
     log.warn(
@@ -1908,6 +1902,22 @@ export async function runReconcileSweep(
   };
 
   await runWithConcurrency(candidates, PER_PASS_CONCURRENCY, async (cand) => {
+    let scopedRecords: SupervisorSessionRecord[];
+
+    try {
+      scopedRecords = await hosts.local().listSessionsForRun(cand.runId);
+    } catch (error) {
+      skipped += 1;
+      log.warn(
+        {
+          runId: cand.runId,
+          errorType: error instanceof Error ? error.name : typeof error,
+        },
+        "reconcile: process inventory unproven; retaining candidate",
+      );
+
+      return;
+    }
     // M34: a null worktreePath is the no-workspace agent shape (none/
     // repo_read) — there is no worktree to lose. A project-less assistant run
     // (project_id NULL) likewise has no managed worktree by design, so its null
@@ -1919,7 +1929,13 @@ export async function runReconcileSweep(
         ? cand.runKind === "agent" || cand.projectId == null
         : cand.repoPath != null &&
           (worktreesByRepo.get(cand.repoPath)?.has(cand.worktreePath) ?? false);
-    const live = cand.acpSessionId ? liveMap.get(cand.acpSessionId) : undefined;
+    const live = cand.acpSessionId
+      ? scopedRecords.find(
+          (record) =>
+            record.status === "live" &&
+            record.acpSessionId === cand.acpSessionId,
+        )
+      : undefined;
     // acp_session_id unmatched but the RUN has a live session → its prompt is
     // still in-flight (acp_session_id is persisted only after it returns).
     // Keyed by the run alone: a session's stepId is a label the host rewrites
@@ -1927,7 +1943,9 @@ export async function runReconcileSweep(
     // so keying on it left this guard unable to fire for them — and a live node
     // was crashed as `agent-session-gone`. Over-matching here only skips a
     // tick; under-matching kills a working run.
-    const liveRunStep = !live ? liveByRun.get(cand.runId) : undefined;
+    const liveRunStep = !live
+      ? scopedRecords.find((record) => record.status === "live")
+      : undefined;
 
     // A parked orchestrator (WaitingOnChildren) is classified by the §0
     // branch which reads no node-kind — skip the resolve.
@@ -2095,8 +2113,8 @@ export async function runReconcileSweep(
           // whole sub-tree for the next tick rather than cascade under a
           // coordinator that is still spending. A terminal (non-5xx) failure
           // means the session is already gone; proceed.
-          const ownSessions = [...liveByRunStep.values()].filter(
-            (record) => record.runId === cand.runId,
+          const ownSessions = scopedRecords.filter(
+            (record) => record.status === "live",
           );
 
           for (const record of ownSessions) {
@@ -2305,9 +2323,7 @@ export async function runReconcileSweep(
                 [
                   live,
                   liveRunStep,
-                  ...[...liveByRunStep.values()].filter(
-                    (record) => record.runId === cand.runId,
-                  ),
+                  ...scopedRecords.filter((record) => record.status === "live"),
                 ].filter((record) => record !== undefined),
               ),
             ];

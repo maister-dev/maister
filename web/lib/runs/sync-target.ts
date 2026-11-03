@@ -17,6 +17,7 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { RUN_SYNC_TERMINAL_PHASES, type RunSyncPhase } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { SessionCreatePending } from "@/lib/execution-host/owned-session-create";
 import { isLaunchedLineageRun } from "@/lib/evaluations/membership";
 import { syncShapeRefusal } from "@/lib/runs/sync-shape";
 import {
@@ -1196,7 +1197,8 @@ export async function syncRunTarget(
             // ADR-166 E-EH-11: a fenced resolver already yielded — the attempt,
             // the claim and the worktree are the newer generation's to settle;
             // the safety net below would clobber them.
-            if (isFencedError(err)) return;
+            if (isFencedError(err) || err instanceof SessionCreatePending)
+              return;
             // Nothing is listening any more: a backgrounded failure is not an
             // HTTP error but a durable state change (the attempt ledger +
             // `runs.status`) that the UI observes over SSE.
@@ -1694,6 +1696,24 @@ async function driveSyncResolver(
       },
     });
   } catch (err) {
+    if (err instanceof SessionCreatePending) {
+      log.warn(
+        {
+          runId,
+          attemptId: claim.attemptId,
+          commandId: err.details?.commandId,
+        },
+        "sync resolver awaits its original create; conflicted workspace retained",
+      );
+
+      return {
+        attemptId: claim.attemptId,
+        outcome: "agent_launched",
+        behind,
+        pushed: false,
+        conflictedFiles: args.conflictedFiles,
+      };
+    }
     // ADR-166 E-EH-11: a fenced resolver belongs to a superseded generation —
     // the run, its attempt and the sync claim are that generation's to settle.
     if (isFencedError(err)) {

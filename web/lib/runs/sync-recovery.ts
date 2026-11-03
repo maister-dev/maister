@@ -12,6 +12,7 @@ import { isBranchPublished } from "@/lib/runs/branch-published";
 import { hasSyncDriver } from "@/lib/runs/sync-driver-registry";
 import {
   SYNC_STEP_ID,
+  resumePendingSyncResolverCreate,
   teardownResolverSession,
 } from "@/lib/runs/sync-resolver";
 import {
@@ -374,6 +375,18 @@ export async function recoverSyncAttemptOnReconcile(args: {
     return { window: args.liveSessionId ? "w2" : "w3", outcome: "aborted" };
   }
 
+  if (
+    attempt.mode === "agent" &&
+    attempt.phase === "agent_running" &&
+    (await resumePendingSyncResolverCreate({
+      db,
+      runId,
+      executionHosts: hosts,
+    }))
+  ) {
+    return { window: args.liveSessionId ? "w2" : "w3", outcome: "noop" };
+  }
+
   // --- W2: an orphaned LIVE resolver session with no in-proc driver -----------
   if (args.liveSessionId) {
     // D2: an orphaned session is not evidence the resolution is worthless. If
@@ -678,32 +691,37 @@ export async function runSyncRecoverySweep(
     return { candidates: 0, orphanOperationsAborted: 0, durationCapKilled: 0 };
   }
 
-  // listSessions ONCE up front. On throw → skip the whole tick (never act on a
-  // transient supervisor outage — the split-brain the keepalive/reconcile sweeps
-  // also guard against).
-  let records: SupervisorSessionRecord[];
-
-  try {
-    records = await hosts.local().listSessions();
-  } catch (err) {
-    log.warn(
-      { err: err instanceof Error ? err.message : String(err) },
-      "sync recovery sweep: listSessions failed — skipping tick",
-    );
-
-    return {
-      candidates: candidates.length,
-      orphanOperationsAborted: 0,
-      durationCapKilled: 0,
-    };
-  }
-
   const cutoffMs = now().getTime() - SYNC_ATTEMPT_MAX_MINUTES * 60_000;
   let orphanOperationsAborted = 0;
   let durationCapKilled = 0;
 
   for (const cand of candidates) {
     const { attempt } = cand;
+    let records: SupervisorSessionRecord[];
+
+    try {
+      records = await hosts.local().listSessionsForRun(attempt.runId);
+    } catch (error) {
+      log.warn(
+        {
+          runId: attempt.runId,
+          errorType: error instanceof Error ? error.name : typeof error,
+        },
+        "sync recovery: process inventory unproven; retaining this run",
+      );
+      continue;
+    }
+
+    if (
+      attempt.mode === "agent" &&
+      attempt.phase === "agent_running" &&
+      (await resumePendingSyncResolverCreate({
+        db,
+        runId: attempt.runId,
+        executionHosts: hosts,
+      }))
+    )
+      continue;
 
     // W5: an agent resolver whose continuous-Running active time exceeded the cap.
     if (

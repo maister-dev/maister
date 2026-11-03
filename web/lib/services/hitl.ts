@@ -243,11 +243,27 @@ async function lockPlanReviewParent(
   tx: any,
   parentHitlRequestId: string,
 ): Promise<any> {
+  const [source] = await tx
+    .select({ runId: hitlRequests.runId })
+    .from(hitlRequests)
+    .where(eq(hitlRequests.id, parentHitlRequestId));
+
+  if (!source) return undefined;
+  await tx
+    .select({ id: runs.id })
+    .from(runs)
+    .where(eq(runs.id, source.runId))
+    .for("update");
   await tx.execute(
     sql`SELECT pg_advisory_xact_lock(hashtext(${parentHitlRequestId}))`,
   );
 
-  return lockHitlRow(tx, parentHitlRequestId);
+  const parent = await lockHitlRow(tx, parentHitlRequestId);
+
+  if (parent && parent.runId !== source.runId)
+    throw new MaisterError("CONFLICT", "plan-review parent binding changed");
+
+  return parent;
 }
 
 // Schedule a runner wake-up for a delivered HITL row. Called from both
@@ -2496,6 +2512,11 @@ async function completePlanReviewResponse(args: {
   recordSuccessAudit?: (db: any, statusCode: number) => Promise<void>;
 }): Promise<void> {
   await args.db.transaction(async (tx: any) => {
+    await tx
+      .select({ id: runs.id })
+      .from(runs)
+      .where(eq(runs.id, args.runId))
+      .for("update");
     const now = new Date();
 
     if (args.childHitlRequestId) {
@@ -2661,6 +2682,11 @@ async function completeRecoveredPlanReviewHandoff(
   },
 ): Promise<boolean> {
   return args.db.transaction(async (tx: any) => {
+    await tx
+      .select({ id: runs.id })
+      .from(runs)
+      .where(eq(runs.id, args.runId))
+      .for("update");
     const now = new Date();
 
     if (args.childHitlRequestIds.length > 0) {
@@ -3021,6 +3047,7 @@ async function handlePlanReviewDecisionResponse(
         throw new MaisterError("CONFLICT", "parent review is closing");
       }
     } else {
+      await requireNoLiveGateChatTurn(tx, parent.id);
       await tx
         .update(hitlRequests)
         .set({
@@ -3247,6 +3274,8 @@ async function handlePlanReviewParentResponse(
         closedChildCount: 0,
       };
     }
+
+    await requireNoLiveGateChatTurn(tx, parent.id);
 
     if (planDecision === "rework") {
       const now = new Date();
@@ -3515,12 +3544,14 @@ async function handleFormHumanResponse(
   // payloads return 409 BEFORE either request can write to disk.
 
   const claim: FormClaim = await db.transaction(async (tx: any) => {
-    const lockedHitl = await lockHitlRow(tx, hitlRequestId);
+    // Session create ACKs and gate-chat admission share Run -> HITL -> turn.
     const lockedRunRows = await tx
       .select()
       .from(runs)
-      .where(eq(runs.id, runId));
+      .where(eq(runs.id, runId))
+      .for("update");
     const lockedRun = lockedRunRows[0];
+    const lockedHitl = await lockHitlRow(tx, hitlRequestId);
 
     if (!lockedHitl || !lockedRun) {
       throw new MaisterError("PRECONDITION", "row vanished mid-transaction");

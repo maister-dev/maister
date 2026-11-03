@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, desc, eq, gt, isNotNull, isNull } from "drizzle-orm";
+import { and, desc, eq, gt, isNotNull, isNull, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import pino from "pino";
 
@@ -18,7 +18,7 @@ import {
 } from "@/lib/execution-host";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { gateResults, hitlRequests, nodeAttempts, runs } =
+const { executionCommands, gateResults, hitlRequests, nodeAttempts, runs } =
   schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -132,7 +132,10 @@ async function fetchCandidates(db: Db): Promise<RecoveryCandidate[]> {
   return candidates;
 }
 
-async function loadSupervisorSessionMap(hosts: ExecutionHosts): Promise<
+async function loadSupervisorSessionMap(
+  hosts: ExecutionHosts,
+  runIds: readonly string[],
+): Promise<
   | {
       ok: true;
       map: Map<string, SupervisorSessionRecord>;
@@ -140,7 +143,10 @@ async function loadSupervisorSessionMap(hosts: ExecutionHosts): Promise<
   | { ok: false; reason: string }
 > {
   try {
-    const records = await hosts.local().listSessions();
+    const records: SupervisorSessionRecord[] = [];
+
+    for (const runId of new Set(runIds))
+      records.push(...(await hosts.local().listSessionsForRun(runId)));
     const map = new Map<string, SupervisorSessionRecord>();
 
     for (const rec of records) {
@@ -200,11 +206,13 @@ export async function runResumeRecoverySweep(
 ): Promise<ResumeRecoverySweepResult> {
   const db = opts.db ?? getDb();
   const hosts = opts.executionHosts ?? createExecutionHosts({ db });
-  const loadSessions =
-    opts.loadSessions ?? (() => loadSupervisorSessionMap(hosts));
   const scheduleDriver = opts.scheduleDriver ?? scheduleResumedSessionDrive;
 
   const candidates = await fetchCandidates(db);
+  const loadSessions: (
+    runId: string,
+  ) => ReturnType<typeof loadSupervisorSessionMap> =
+    opts.loadSessions ?? ((runId) => loadSupervisorSessionMap(hosts, [runId]));
 
   if (candidates.length === 0) {
     log.info({}, "resume-recovery sweep: no claimed-but-undelivered rows");
@@ -222,30 +230,22 @@ export async function runResumeRecoverySweep(
     "resume-recovery sweep: claimed-but-undelivered rows found",
   );
 
-  const sessionLoad = await loadSessions();
-
-  // Transient supervisor unavailability: skip this boot. The keepalive
-  // sweeper's TTL Pass 2 is the long-term safety net (NeedsInput rows
-  // stuck past keepaliveUntil → NeedsInputIdle → eventually Abandoned).
-  if (!sessionLoad.ok) {
-    log.warn(
-      { candidates: candidates.length, reason: sessionLoad.reason },
-      "resume-recovery sweep: supervisor listSessions failed — skipping all candidates this boot",
-    );
-
-    return {
-      candidatesFound: candidates.length,
-      rescheduled: 0,
-      rolledBack: 0,
-      skipped: candidates.length,
-    };
-  }
-
   let rescheduled = 0;
   let rolledBack = 0;
   let skipped = 0;
 
   await runWithConcurrency(candidates, PER_PASS_CONCURRENCY, async (cand) => {
+    const sessionLoad = await loadSessions(cand.runId);
+
+    if (!sessionLoad.ok) {
+      skipped += 1;
+      log.warn(
+        { runId: cand.runId, reason: sessionLoad.reason },
+        "resume recovery: process inventory unproven; retaining this run",
+      );
+
+      return;
+    }
     if (await hasFlowPermissionResume(db, cand.runId)) {
       scheduleDriver({
         runId: cand.runId,
@@ -287,6 +287,35 @@ export async function runResumeRecoverySweep(
       return;
     }
 
+    const [originalCreate] = await db
+      .select({ id: executionCommands.id })
+      .from(executionCommands)
+      .where(
+        and(
+          eq(executionCommands.runId, cand.runId),
+          eq(executionCommands.kind, "session.create"),
+          isNotNull(executionCommands.createIntent),
+          sql`${executionCommands.executionAssignmentId} = (select execution_assignment_id from runs where id = ${cand.runId})`,
+          sql`${executionCommands.createIntent}->'owner'->>'variant' in ('node', 'gate_ai', 'gate_skill', 'flow_resume', 'scratch_resume')`,
+        ),
+      )
+      .limit(1);
+
+    if (originalCreate) {
+      scheduleDriver({
+        runId: cand.runId,
+        supervisorSessionId: null,
+        acpSessionId: cand.acpSessionId,
+        stepId: cand.stepId,
+        db,
+        executionHosts: hosts,
+      });
+      rescheduled += 1;
+
+      return;
+    }
+
+    // No owned create or live session can continue this historical resume.
     // Supervisor session is GONE (process exited, supervisor restarted).
     // Roll the run back to NeedsInputIdle (status-guarded) so the
     // operator's same-payload retry on /respond can re-resume cleanly.

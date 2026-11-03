@@ -40,14 +40,6 @@ import {
   ConsensusGenerationPending,
   type ConsensusPromptOwner,
 } from "./graph/consensus/prompt-owner";
-function isConsensusOwner(
-  owner: GatePromptOwner | NodePromptOwner | ConsensusPromptOwner,
-): owner is ConsensusPromptOwner {
-  return (
-    owner.variant === "consensus_verifier" ||
-    owner.variant === "consensus_synthesis"
-  );
-}
 import {
   assertFlowDriverClaim,
   assertFlowDriverCommit,
@@ -116,6 +108,15 @@ import { isMaisterError, MaisterError } from "@/lib/errors";
 import { SessionCreatePending } from "@/lib/execution-host/owned-session-create";
 import { PromptIncarnationPending } from "@/lib/execution-host/prompt-incarnation";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
+
+function isConsensusOwner(
+  owner: GatePromptOwner | NodePromptOwner | ConsensusPromptOwner,
+): owner is ConsensusPromptOwner {
+  return (
+    owner.variant === "consensus_verifier" ||
+    owner.variant === "consensus_synthesis"
+  );
+}
 
 const log = pino({
   name: "flow-runner",
@@ -1523,79 +1524,43 @@ async function runNewSession(
       };
     };
 
-    const createOwner =
-      ctx.promptOwner && isConsensusOwner(ctx.promptOwner)
-        ? undefined
-        : ctx.promptOwner;
+    const createOwner = ctx.promptOwner;
 
-    if (createOwner) {
-      const created = await client.createOwnedSession(
-        createOwner.variant === "permission_resume"
-          ? {
-              variant: "node",
+    if (!createOwner)
+      throw new PromptOwnerInvariantError("flow_create_owner_missing");
+    const created = await client.createOwnedSession(
+      createOwner.variant === "permission_resume"
+        ? {
+            variant: "node",
+            nodeAttemptId: createOwner.nodeAttemptId,
+            promptOrdinal: createOwner.promptOrdinal,
+          }
+        : createOwner.variant === "node" || isConsensusOwner(createOwner)
+          ? createOwner
+          : {
+              variant: createOwner.variant,
               nodeAttemptId: createOwner.nodeAttemptId,
-              promptOrdinal: createOwner.promptOrdinal,
-            }
-          : createOwner.variant === "node"
-            ? createOwner
-            : {
-                variant: createOwner.variant,
-                nodeAttemptId: createOwner.nodeAttemptId,
-                gateId: createOwner.gateId,
-                evaluationId: createOwner.evaluationId,
-              },
-        async () => ({
-          ...(await prepareCreatePayload()),
-          ...(ctx.resumeSessionId
-            ? { resumeSessionId: ctx.resumeSessionId }
-            : {}),
-        }),
-        {
-          assertCommit: async (tx) => {
-            if (!ctx.flowDriverClaim) return;
-            if (ctx.signal?.aborted)
-              throw new FlowDriverClaimLost(ctx.flowDriverClaim);
-            await assertFlowDriverClaim(tx, ctx.flowDriverClaim);
-          },
-        },
-      );
-
-      session = created;
-      sessionFallback = created.sessionFallback;
-    } else {
-      const createInput = await prepareCreatePayload();
-
-      if (ctx.resumeSessionId) {
-        // M30 (ADR-081): try the resume respawn first; a gone/unresumable
-        // session degrades OBSERVABLY to a fresh one (session_fallback).
-        try {
-          session = await client.createSession({
-            ...createInput,
-            resumeSessionId: ctx.resumeSessionId,
-          });
-        } catch (err) {
-          if (
-            isFencedError(err) ||
-            !isMaisterError(err) ||
-            err.code !== "CHECKPOINT"
-          )
-            throw err;
-          sessionFallback = true;
-          log.warn(
-            {
-              runId: ctx.runId,
-              stepId: ctx.stepId,
-              resumeSessionId: ctx.resumeSessionId,
-              err: (err as Error).message,
+              gateId: createOwner.gateId,
+              evaluationId: createOwner.evaluationId,
             },
-            "[session-policy] resume failed — falling back to a new session",
-          );
-          session = await client.createSession(createInput);
-        }
-      } else {
-        session = await client.createSession(createInput);
-      }
-    }
+      async () => ({
+        ...(await prepareCreatePayload()),
+        ...(ctx.resumeSessionId
+          ? { resumeSessionId: ctx.resumeSessionId }
+          : {}),
+      }),
+      {
+        assertCommit: async (tx) => {
+          if (!ctx.flowDriverClaim) return;
+          if (ctx.signal?.aborted)
+            throw new FlowDriverClaimLost(ctx.flowDriverClaim);
+          await assertFlowDriverClaim(tx, ctx.flowDriverClaim);
+        },
+      },
+    );
+
+    session = created;
+    sessionFallback = created.sessionFallback;
 
     consumer = startEventConsumer(session.hostSessionId, execution, {
       db: ctx.db ?? getDb(),
@@ -1943,10 +1908,9 @@ async function runNewSession(
     }
     // No durable incarnation yet: the session is live and still ours, so it
     // must survive for the continuation worker's re-drive. An OWNED create is
-    // re-admitted on the same session once its ACK (or its fold) is durable; an
-    // unowned one (consensus substeps, the resume fallback) is re-created by
-    // the re-drive, and the ACK-authored row makes this yield practically
-    // unreachable there (SDD C4).
+    // re-admitted on the same session once its ACK (or its fold) is durable;
+    // every consensus cell and resume fallback retains that same owned
+    // create as well. The ACK-authored row normally closes this window.
     if (err instanceof PromptIncarnationPending) {
       continuationPending = true;
       log.warn(

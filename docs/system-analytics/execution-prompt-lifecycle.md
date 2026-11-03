@@ -44,35 +44,89 @@ before running the payload factory again; a manager restart does not authorize
 another session. The Flow continuation worker discovers these creates even
 when the first prompt does not exist yet, using the same traversal lease.
 
+Pre-incarnation owner extension (approved implementation contract; validation in progress):
+all current session constructors retain the same private create intent across readiness
+waiting, manager restart and acknowledgement. The closed additional owners are:
+
+| Owner | Durable identity |
+| --- | --- |
+| `consensus_verifier` | node attempt, round, verifier, target and verdict ID |
+| `consensus_synthesis` | node attempt, round and synthesis ID |
+| `scratch`, `package_scratch` | scratch run, placement turn and prompt ordinal; package owner also freezes package, postprocess action and edit-lock generation |
+| `gate_chat` | pending turn, HITL and accepted user-message IDs |
+| `sync_resolver` | sync attempt, lifecycle operation attempt and prompt ordinal |
+| `flow_resume`, `scratch_resume` | exact logical session and retained source incarnation |
+
+These identities are server-produced from existing domain records. The shared
+engine validates both the requesting owner and the original stored owner under
+the domain locks; a client flag or another active assignment cannot authorize
+replay. A resumed source must be a real retained incarnation with the original
+resume handle, not an invented session or qualification result. Historical
+create owners retain their existing shape and meaning.
+
+`create_intent.continuation` is private execution data, separate from the owner
+identity and all public receipts and diagnostics. Scratch/package continuation
+freezes its initial or recovery prompt, source message and runtime-object
+references before creation, including an explicit null payload for an empty
+initial dialog. Sync continuation freezes its prepared `sync` prompt and runner
+tier. Gate chat uses its existing durable user transcript. Replay reads the
+original intent before invoking either payload or continuation factory. A
+readiness deferral keeps that exact command, request, owner, continuation and
+wire budget; it cannot become a crash, a negative model assessment, a lost
+prompt or a second queued create. Pre-incarnation continuation object references
+participate in the existing runtime-object retention/deletion fence.
+
+Recovery continuations also freeze the locked source dialog state needed to
+restore a definitively refused recovery; initial continuations cannot carry
+that state. The complete private intent and canonical request are inserted
+atomically. Migration `0226` refuses later owner, request or continuation
+rewrites, including attaching an intent to a historical unknown command. Only
+the existing eligible terminal-retirement compaction may clear these bytes.
+Every nonterminal Run, including `WaitingOnChildren`, retains its private
+create evidence; the existing parked-librarian exception is unchanged.
+
+A lost database COMMIT reply is not rollback evidence. The create engine keeps
+its server-allocated command identity and yields pending admission. The next
+continuation reacquires the same durable owner lock before inspecting the
+original operation key, serializing with a late commit or rollback. A failed
+initial lookup also retains the owner: its diagnostic names the operation key
+and omits an unknown command ID. Re-entry consumes the original private request
+and continuation. Private query failures are projected through
+`execution-host/private-create-failure.ts` before consumer logging or DTOs;
+safe domain codes and bounded SQL/cause diagnostics survive, while SQL,
+parameters, prompt/environment values and raw nested causes do not.
+Once the command ID is known, the same owner-retained storage guard covers
+receipt settlement, live and recovered ACK application, re-ACK and outcome
+reload. A durable201 cannot become a new create or an owner release because a
+later database read is unavailable; authoritative typed refusals remain distinct.
+
 S5.2 receipt-first retry amendment (implemented; hosted CI qualification pending): an
 attempted owned create probes its exact receipt before another POST. Confirmed
 404 permits reissue of the same stored envelope; transport uncertainty defers.
-An **accepted** receipt splits on `inflight`, and the split is the whole
-specification of this window: `inflight: true` means the live host incarnation
-still owns the turn, so the driver defers to it. `inflight: false` means the
-host restarted between writing the receipt and finishing the turn — the
-turn_lost signature. Nothing advances such a receipt: the supervisor settles it
-only when the SAME command id is re-sent, and `session.create` is not a
-restartable object kind, so a re-send answers turn_lost rather than a session.
-The driver therefore records the lost turn on the original command and
-authorizes a replacement generation from the stored bytes, the same answer the
-no-receipt window gets one step earlier. This is safe precisely because an
-accepted-but-unfinished create returned no session id to fold and a restarted
-host holds no live adapter to orphan. The replacement is bounded by the same
-generation ceiling as the definitive-refusal arms above it, so a host that keeps
-losing the turn ends in a terminal create failure rather than an unbounded
-sequence of sessions. A completed 201 with matching command/run/kind/epoch
+An **accepted** create retains its original command and defers. Legacy
+`inflight: false` describes the host's in-memory request table; it does not
+prove that an adapter stopped. Receipt v2 carries no process-liveness field.
+A Supervisor crash can leave an adapter alive, even when startup records
+`turn_lost` and the new registry is empty. Neither that rejection nor a missing
+session authorizes a replacement or workspace cleanup. A replacement requires
+positive host retirement evidence for the exact original create, assignment
+and epoch, using the [rejected-create proof contract](../supervisor.md#command-envelope-fences-and-receipts-implemented--adr-166).
+Unstamped historical evidence stays unproven; recovery must not synthesize a
+successful retirement. Safe replacements retain the stored request bytes and
+the existing generation ceiling. A completed 201 with matching command/run/kind/epoch
 and a validated create result commits command settlement and binding under the
 current owner lock, without re-sending. A rejected receipt uses the existing
-definitive-refusal policy. Receipt lookup never reconstructs launch inputs.
+definitive-refusal policy, with positive process-quiescence evidence required
+before another create. Receipt lookup never reconstructs launch inputs.
 
 The live ACK, recovered receipt and canonical `session.created` all check the
 creator command against the current node visit/evaluation and newest admitted
 create generation before binding. The host publishes `createdByCommandId` on
 created events. An unknown create outcome retains its original command and
 backs off for recovery; it cannot authorize a fresh session. The existing
-observable resume fallback requires a definitive CHECKPOINT refusal, while
-workspace readoption requires the host's explicit invalid-handle refusal.
+observable resume fallback requires a definitive CHECKPOINT refusal and
+positive failed-create quiescence, while workspace readoption requires the
+host's explicit invalid-handle refusal and the same quiescence proof.
 A replacement retains its predecessor command and increments the create
 generation without advancing the Flow prompt ordinal. The global continuation
 worker runs in the production web boot (see

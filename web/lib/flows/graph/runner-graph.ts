@@ -455,7 +455,7 @@ async function checkpointCoordinatorSession(
       // ack) is the key — no acp-id scan. Liveness is read first so a
       // long-exited one-shot session does not turn into a failed checkpoint
       // command on every park.
-      const sessions = await execution.admin.listSessions();
+      const sessions = await execution.admin.listSessionsForRun(runId);
       const live = sessions.find(
         (s) => s.status === "live" && s.sessionId === hostSessionId,
       );

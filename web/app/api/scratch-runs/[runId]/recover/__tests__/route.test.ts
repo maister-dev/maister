@@ -1,8 +1,12 @@
+import type { BoundClient } from "@/lib/execution-host/client";
+
 import { NextRequest } from "next/server";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   localPackages as localPackagesTable,
+  hitlRequests as hitlRequestsTable,
+  flowAssistantActions as flowAssistantActionsTable,
   projects as projectsTable,
   runMessages as runMessagesTable,
   runs as runsTable,
@@ -27,6 +31,31 @@ const { createSession, releaseAssignmentForRunSpy } = vi.hoisted(() => ({
   })),
   releaseAssignmentForRunSpy: vi.fn(async () => null),
 }));
+const ownedCreate = vi.hoisted(() => ({
+  fixture: undefined as
+    | ReturnType<
+        typeof import("@/test-support/scratch-owned-create-fixture").scratchOwnedCreateFixture
+      >
+    | undefined,
+}));
+
+vi.mock("@/lib/execution-host/owned-session-create", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("@/lib/execution-host/owned-session-create")
+    >();
+  const { scratchOwnedCreateFixture } =
+    await import("@/test-support/scratch-owned-create-fixture");
+
+  ownedCreate.fixture ??= scratchOwnedCreateFixture();
+
+  return {
+    ...actual,
+    readOwnedCreateContinuation: (
+      ...args: Parameters<typeof actual.readOwnedCreateContinuation>
+    ) => ownedCreate.fixture!.read(...args),
+  };
+});
 
 type Row = Record<string, unknown>;
 type Tables = {
@@ -39,6 +68,8 @@ type Tables = {
   // ADR-182: Recover asks whether messages are still queued from before the
   // crash; none are in these cases.
   run_messages: Row[];
+  hitl_requests: Row[];
+  flow_assistant_actions: Row[];
 };
 type FakeDb = {
   execute: (query: unknown) => Promise<void>;
@@ -56,6 +87,8 @@ const dbState: { tables: Tables } = {
     scratch_capability_profiles: [],
     local_packages: [],
     run_messages: [],
+    hitl_requests: [],
+    flow_assistant_actions: [],
   },
 };
 
@@ -69,15 +102,19 @@ function tableOf(t: unknown): keyof Tables {
   }
   if (t === localPackagesTable) return "local_packages";
   if (t === runMessagesTable) return "run_messages";
+  if (t === hitlRequestsTable) return "hitl_requests";
+  if (t === flowAssistantActionsTable) return "flow_assistant_actions";
   throw new Error("unknown table");
 }
 
 const selectChain = () => ({
   from: (table: unknown) => {
-    const rows = async () => dbState.tables[tableOf(table)];
+    const rows = async () =>
+      dbState.tables[tableOf(table)].map((row) => ({ ...row }));
     const query = {
       for: async () => rows(),
       limit: async () => rows(),
+      orderBy: () => query,
       then: <TResult1 = Row[], TResult2 = never>(
         onfulfilled?:
           ((value: Row[]) => TResult1 | PromiseLike<TResult1>) | null,
@@ -229,6 +266,10 @@ vi.mock("@/lib/execution-host", async () => {
   const { executionHostModuleMock } =
     await import("@/test-support/execution-host-module-mock");
   const mock = executionHostModuleMock(sup as never);
+  const { scratchOwnedCreateFixture } =
+    await import("@/test-support/scratch-owned-create-fixture");
+
+  ownedCreate.fixture ??= scratchOwnedCreateFixture();
   // The driver binding (`executionFor`) composes the mock's bound client with
   // its admin surface until the module mock exports it itself.
   const hosts = {
@@ -236,7 +277,7 @@ vi.mock("@/lib/execution-host", async () => {
     forRun: async (runId: string) => {
       const client = await mock.executionHosts.forRun(runId);
 
-      return {
+      const acknowledgedClient = {
         ...client,
         createSession: async (payload: unknown) => {
           const result = await client.createSession(payload);
@@ -254,6 +295,18 @@ vi.mock("@/lib/execution-host", async () => {
           return result;
         },
       };
+
+      return {
+        ...acknowledgedClient,
+        createOwnedSession: (
+          ...args: Parameters<BoundClient["createOwnedSession"]>
+        ) =>
+          ownedCreate.fixture!.create(
+            fakeDb as never,
+            acknowledgedClient,
+            ...args,
+          ),
+      };
     },
     executionFor: async (runId: string) => ({
       client: await hosts.forRun(runId),
@@ -263,6 +316,19 @@ vi.mock("@/lib/execution-host", async () => {
 
   return {
     ...mock,
+    mintPlacement: async (
+      tx: unknown,
+      input: Parameters<typeof mock.mintPlacement>[1],
+    ) => {
+      const assignment = await mock.mintPlacement(tx, input);
+
+      await fakeDb
+        .update(runsTable)
+        .set({ executionAssignmentId: assignment.id })
+        .where();
+
+      return assignment;
+    },
     executionHosts: hosts,
     createExecutionHosts: () => hosts,
     releaseAssignmentForRun: releaseAssignmentForRunSpy,
@@ -320,6 +386,8 @@ function emptyTables(): Tables {
     scratch_capability_profiles: [],
     local_packages: [],
     run_messages: [],
+    hitl_requests: [],
+    flow_assistant_actions: [],
   };
 }
 
@@ -427,6 +495,7 @@ function seedAssistantRun(
     runId,
     projectId: null,
     localPackageId: "lp1",
+    createdByUserId: overrides.createdByUserId ?? "user-1",
     dialogStatus: "Crashed",
     supervisorSessionId: "sup-old",
     updatedAt: null,
@@ -437,6 +506,10 @@ function seedAssistantRun(
     id: "lp1",
     slug: "my-package",
     workingDir: "/home/.maister/local/my-package",
+    status: "active",
+    lockedByUserId: overrides.createdByUserId ?? "user-1",
+    lockedBySession: "lock-assistant",
+    lockExpiresAt: new Date(Date.now() + 60_000),
   });
   dbState.tables.scratch_capability_profiles.push({
     id: "profile-1",
@@ -472,6 +545,7 @@ async function invokePost(runId: string, body: unknown) {
 }
 
 beforeEach(() => {
+  ownedCreate.fixture?.clear();
   dbState.tables = emptyTables();
   vi.mocked(checkSupervisorHealth).mockClear();
   vi.mocked(checkSupervisorHealth).mockResolvedValue({

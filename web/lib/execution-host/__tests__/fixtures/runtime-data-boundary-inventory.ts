@@ -94,6 +94,12 @@ function wrappers(
 export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
   [
     ...classified(
+      "../runtime/process-group.ts",
+      "repository-worktree",
+      "Read-only native group observation for the Web caller's reviewed repository Git owner; accepts no filesystem path and never reads supervisor runtime data",
+      [["inspectProcessGroup", "node:child_process.execFile", "spawn", "ps"]],
+    ),
+    ...classified(
       "lib/agents/finalization.ts",
       "repository-worktree",
       "Accepted terminal cleanup uses the same physical preparation owner before removing its plain runtime overlay",
@@ -594,7 +600,6 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "Reviewed configuration persistence: repository policy, private staging and Git process ownership; no supervisor runtime data",
       [
         ["commonGitDirectory", "node:fs/promises.realpath", "stat"],
-        ["groupIsDead", "node:child_process.execFile", "spawn", "ps"],
         ["readOwner", "node:fs/promises.lstat", "stat"],
         ["readOwner", "node:fs/promises.readFile", "read"],
         ["assertOnlyOwnedMetadata", "node:fs/promises.readdir", "list"],
@@ -2559,6 +2564,10 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
   ];
 
 export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
+  // Numeric native process observation has no caller-selected filesystem path.
+  ...wrappers("../runtime/process-group.ts", "repository-worktree", [
+    ["inspectProcessGroup", false],
+  ]),
   ...wrappers("lib/tasks/launch-capture-path.ts", "manager-flow-state", [
     ["assertManagedCapturePath", true],
   ]),
@@ -2689,7 +2698,6 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
       ["acquireRepositoryFence", false],
       ["commonGitDirectory", false],
       ["withRepositoryMutationFence", false],
-      ["assertConfigGitOwnerRetired", false],
     ],
   ),
   ...wrappers(
@@ -2829,6 +2837,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["buildAutoPromotionReaders", false],
   ]),
   ...wrappers("lib/capabilities/adapter-home.ts", "repository-worktree", [
+    ["materializeOperationalAdapterCapabilityHome", false],
     ["materializeAdapterCapabilityHome", false],
     ["materializeFlowAuthoringSkill", false],
     ["materializeSubagentDefinition", false],

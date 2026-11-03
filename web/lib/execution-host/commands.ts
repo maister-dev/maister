@@ -1,6 +1,7 @@
 import type { Db } from "./db";
 import type { PgUpdateSetSource } from "drizzle-orm/pg-core";
 import type { CommandId, CommandKind, CommandState } from "./types";
+import type { SessionCreateIntent } from "./create-intent";
 
 import { randomUUID } from "node:crypto";
 
@@ -36,6 +37,7 @@ export type InsertCommandInput = {
   kind: Exclude<CommandKind, "session.prompt">;
   targetSessionId?: string | null;
   payload: unknown;
+  createIntent?: SessionCreateIntent;
   maxAttempts: number;
   driverless?: boolean;
   now?: Date;
@@ -68,6 +70,7 @@ export async function insertCommand(
       kind: input.kind,
       targetSessionId: input.targetSessionId ?? null,
       payload: redactPayload(input.kind, input.payload),
+      createIntent: input.createIntent ?? null,
       state: "queued",
       attempts: 0,
       maxAttempts: input.maxAttempts,

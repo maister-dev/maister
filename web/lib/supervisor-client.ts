@@ -253,6 +253,8 @@ export type SupervisorSessionRecord = {
   sessionName?: string;
   status: "live" | "exited" | "crashed";
   pid: number;
+  processGroup?: number;
+  adapterPid?: number;
   startedAt: string;
   exitedAt?: string;
   exitCode?: number | null;
@@ -1030,6 +1032,55 @@ export async function listSessions(): Promise<SupervisorSessionRecord[]> {
   return (await res.json()) as SupervisorSessionRecord[];
 }
 
+/** An empty scoped inventory is usable only when the host attests native process ownership checks. */
+export async function listSessionsForRun(
+  runId: string,
+): Promise<SupervisorSessionRecord[]> {
+  const response = await request<SupervisorSessionRecord[]>({
+    method: "GET",
+    path: `/sessions?runId=${encodeURIComponent(runId)}`,
+    ctx: "listSessionsForRun",
+    fallbackCode: "EXECUTOR_UNAVAILABLE",
+    timeoutMs: ADMIN_READ_TIMEOUT_MS,
+  });
+
+  const version = response.headers.get("x-maister-session-ownership-version");
+
+  if (version === null)
+    throw new MaisterError(
+      "EXECUTOR_UNAVAILABLE",
+      "The execution host cannot attest this run's process inventory; upgrade or reconcile the original host before continuing",
+      { details: { reason: "session_inventory_unproven", runId } },
+    );
+  if (version !== "1")
+    throw new MaisterError(
+      "CONFIG",
+      "Unsupported execution host session-ownership contract",
+      { details: { reason: "session_inventory_version_unsupported", runId } },
+    );
+  const parsed = z
+    .array(
+      z
+        .object({
+          runId: z.literal(runId),
+          sessionId: z.string().min(1),
+          status: z.enum(["live", "exited", "crashed"]),
+          pid: z.number().int().positive(),
+        })
+        .passthrough(),
+    )
+    .safeParse(response.body);
+
+  if (!parsed.success)
+    throw new MaisterError(
+      "EXECUTOR_UNAVAILABLE",
+      "The execution host returned an invalid scoped process inventory",
+      { details: { reason: "session_inventory_invalid", runId } },
+    );
+
+  return response.body;
+}
+
 export async function resolveModelSuggestions(
   draft: SupervisorModelCatalogDraft,
   opts?: { force?: boolean },
@@ -1390,7 +1441,12 @@ type WireRequest = {
   signal?: AbortSignal;
 };
 
-type WireResponse<T> = { status: number; body: T; replayed: boolean };
+type WireResponse<T> = {
+  status: number;
+  body: T;
+  replayed: boolean;
+  headers: Headers;
+};
 
 function combineSignals(
   a: AbortSignal | undefined,
@@ -1432,11 +1488,21 @@ async function request<T>(spec: WireRequest): Promise<WireResponse<T>> {
 
     if (res.ok) {
       if (res.status === 204) {
-        return { status: res.status, body: null as T, replayed };
+        return {
+          status: res.status,
+          body: null as T,
+          replayed,
+          headers: res.headers,
+        };
       }
 
       try {
-        return { status: res.status, body: (await res.json()) as T, replayed };
+        return {
+          status: res.status,
+          body: (await res.json()) as T,
+          replayed,
+          headers: res.headers,
+        };
       } catch (error) {
         // A truncated/timed-out success body may follow an already applied
         // effect. Keep the original request unknown rather than guessing failure.

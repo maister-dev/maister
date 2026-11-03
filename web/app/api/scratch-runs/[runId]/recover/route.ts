@@ -7,8 +7,13 @@ import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
 
-import { freezeScratchPromptIntent } from "@/lib/scratch-runs/prompt-intent";
-import { assertCurrentSessionBinding } from "@/lib/execution-host/session-binding";
+import {
+  completeOwnedScratchCreate,
+  ScratchCreateHandoffPending,
+  dispatchOwnedScratchCreatePrompt,
+} from "@/lib/scratch-runs/create-continuation";
+import { lockScratchRunRows } from "@/lib/scratch-runs/turn-completion";
+import { SessionCreatePending } from "@/lib/execution-host/owned-session-create";
 import { PromptIncarnationPending } from "@/lib/execution-host/prompt-incarnation";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
@@ -18,10 +23,7 @@ import {
   classifyScratchRecovery,
   liveScratchHostSessionIds,
 } from "@/lib/scratch-runs/recovery";
-import {
-  normalizeScratchPrompt,
-  sendScratchPromptAndProjectEvents,
-} from "@/lib/scratch-runs/events";
+import { normalizeScratchPrompt } from "@/lib/scratch-runs/events";
 import { scratchStepId } from "@/lib/scratch-runs/launch";
 import { appendScratchMessage } from "@/lib/scratch-runs/messages";
 import {
@@ -31,6 +33,7 @@ import {
 import {
   loadScratchRecoveryRows,
   respawnScratchSession,
+  rollbackScratchClaim,
 } from "@/lib/scratch-runs/respawn";
 import { workbenchClaimHoldsTree } from "@/lib/runs/lifecycle-claim";
 import {
@@ -296,11 +299,14 @@ export async function POST(
     // rolls the claim back. The ADR-097 working-dir confinement rides the
     // adopted handle (directory adoption of the package dir), no longer a wire
     // field.
-    const observed = {
-      status: "Crashed",
-      currentStepId: (run.currentStepId ?? null) as string | null,
-    };
     const claimed = await db.transaction(async (tx: Db) => {
+      const [source] = await tx
+        .select()
+        .from(runs)
+        .where(eq(runs.id, runId))
+        .for("update");
+
+      if (source?.status !== "Crashed") return null;
       const claimedRows = await tx
         .update(runs)
         .set({
@@ -308,7 +314,7 @@ export async function POST(
           currentStepId: scratchStepId(),
           resumeStartedAt: new Date(),
         })
-        .where(and(eq(runs.id, runId), eq(runs.status, observed.status)))
+        .where(and(eq(runs.id, runId), eq(runs.status, "Crashed")))
         .returning({ id: runs.id });
 
       if (claimedRows.length === 0) return null;
@@ -322,7 +328,7 @@ export async function POST(
         .for("update");
 
       if (dialog?.dialogStatus !== "Crashed")
-        throw notRecoverable(runId, observed.status);
+        throw notRecoverable(runId, "Crashed");
 
       // ADR-181 C26, the recover direction: one writer per worktree. The CAS
       // above holds the run row, so a workbench claim committed before it is
@@ -347,21 +353,75 @@ export async function POST(
         );
       }
 
-      return mintPlacement(tx as unknown as ExecutionDb, {
+      const assignment = await mintPlacement(tx as unknown as ExecutionDb, {
         runId,
         reason: "scratch_recover",
         host: placementHost,
       });
+
+      return {
+        ...assignment,
+        observed: {
+          status: "Crashed" as const,
+          currentStepId: source.currentStepId as string | null,
+          resumeRequestedAt: source.resumeRequestedAt as Date | null,
+        },
+      };
     });
 
     if (!claimed) {
       throw new MaisterError(
         "CONFLICT",
-        `scratch run ${runId} left ${observed.status} concurrently — recover refused`,
+        `scratch run ${runId} left Crashed concurrently — recover refused`,
       );
     }
+    const observed = claimed.observed;
 
-    const { execution, session } = await respawnScratchSession({
+    const prompt = body.prompt;
+    const preparedPayload = {
+      stepId: scratchStepId(),
+      prompt: normalizeScratchPrompt(prompt, rows.executor.agent, { runId }),
+    };
+    const prepared = await db
+      .transaction(async (tx: Db) => {
+        await lockScratchRunRows(tx as unknown as ExecutionDb, runId);
+        const [current] = await tx
+          .select()
+          .from(runs)
+          .where(eq(runs.id, runId));
+
+        if (
+          current?.status !== "Running" ||
+          current.executionAssignmentId !== claimed.id
+        )
+          throw notRecoverable(runId, current?.status ?? "missing");
+        const queued = await queueScratchRecoverMessageBehind(
+          tx,
+          runId,
+          prompt,
+        );
+        const message = queued
+          ? null
+          : await appendScratchMessage(tx as unknown as ExecutionDb, {
+              runId,
+              role: "user",
+              content: prompt,
+              delivery: "prompted",
+            });
+
+        return { queued, messageId: message?.id ?? null };
+      })
+      .catch(async (error: unknown) => {
+        await rollbackScratchClaim(
+          db,
+          runId,
+          claimed.id,
+          observed,
+          "scratch_recover_rollback",
+        );
+        throw error;
+      });
+    const { execution, session, createOwner } = await respawnScratchSession({
       db,
       hosts,
       runId,
@@ -370,57 +430,27 @@ export async function POST(
       rows,
       observed,
       releaseReason: "scratch_recover_rollback",
+      continuation: {
+        version: 1,
+        kind: "recovery",
+        sourceMessageId: prepared.messageId,
+        payload: prepared.queued ? null : preparedPayload,
+        recoveryState: {
+          ...observed,
+          resumeRequestedAt: observed.resumeRequestedAt?.toISOString() ?? null,
+        },
+      },
     });
-    const now = new Date();
-    const prompt = body.prompt;
-    const recoveryPayload = {
-      stepId: scratchStepId(),
-      prompt: normalizeScratchPrompt(prompt, rows.executor.agent, { runId }),
+    const completed = await completeOwnedScratchCreate(
+      db as unknown as ExecutionDb,
+      execution,
+      createOwner,
+      session,
+    );
+    const persisted = {
+      queued: prepared.queued || !completed?.payload,
+      messageId: completed?.sourceMessageId ?? prepared.messageId,
     };
-    const persisted = await db.transaction(async (tx: Db) => {
-      await assertCurrentSessionBinding(tx, {
-        runId,
-        sessionName: "default",
-        assignmentId: claimed.id,
-        hostSessionId: session.sessionId,
-        acpSessionId: session.acpSessionId,
-      });
-      const queued = await queueScratchRecoverMessageBehind(tx, runId, prompt);
-      // The operator's text is a transcript row before it is a prompt, so the
-      // transcript shows it and a yield can return it to the queue (A4).
-      const message = queued
-        ? null
-        : await appendScratchMessage(tx as unknown as ExecutionDb, {
-            runId,
-            role: "user",
-            content: prompt,
-            delivery: "prompted",
-          });
-
-      await tx
-        .update(scratchRuns)
-        .set({
-          dialogStatus: queued ? "WaitingForUser" : "Running",
-          activePromptIntent: null,
-          errorCode: null,
-          errorMessage: null,
-          errorMetadata: null,
-          ...(queued ? {} : { lastUserMessageAt: now }),
-          updatedAt: now,
-        })
-        .where(eq(scratchRuns.runId, runId));
-
-      if (!queued)
-        await freezeScratchPromptIntent(tx as unknown as ExecutionDb, {
-          client: execution.client,
-          hostSessionId: session.sessionId,
-          owner: { variant: "recovery" },
-          sourceMessageId: message?.id ?? null,
-          payload: recoveryPayload,
-        });
-
-      return { queued, messageId: message?.id ?? null };
-    });
 
     if (persisted.queued) {
       wakeQueuedScratchDispatch(db as never, runId, hosts);
@@ -437,13 +467,15 @@ export async function POST(
     }
 
     try {
-      const promptResult = await sendScratchPromptAndProjectEvents({
-        runId,
-        sessionId: session.sessionId,
-        ...recoveryPayload,
-        execution,
-        owner: { variant: "recovery" },
-      });
+      const promptResult = completed
+        ? await dispatchOwnedScratchCreatePrompt(
+            db as unknown as ExecutionDb,
+            execution,
+            createOwner,
+            session.sessionId,
+            completed,
+          )
+        : null;
 
       const dialogStatus = await readScratchDialogStatus(db as never, runId);
 
@@ -452,7 +484,7 @@ export async function POST(
           runId,
           action,
           dialogStatus,
-          stopReason: promptResult.stopReason,
+          stopReason: promptResult?.stopReason,
         },
         { status: 202 },
       );
@@ -535,6 +567,20 @@ export async function POST(
       throw err;
     }
   } catch (err) {
+    if (
+      err instanceof SessionCreatePending ||
+      err instanceof ScratchCreateHandoffPending
+    )
+      return NextResponse.json(
+        {
+          runId,
+          action: "recover",
+          dialogStatus: "Starting",
+          delivery: "queued",
+        },
+        { status: 202 },
+      );
+
     return errorResponse(err, runId);
   }
 }

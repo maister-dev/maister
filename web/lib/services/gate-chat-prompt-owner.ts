@@ -41,7 +41,7 @@ import { checkpointRefName } from "@/lib/flows/graph/workspace-checkpoint";
 import { MaisterError } from "@/lib/errors";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { gateChatMessages, gateChatTurns, hitlRequests, workspaces } =
+const { gateChatMessages, gateChatTurns, hitlRequests, runs, workspaces } =
   schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -74,19 +74,19 @@ export async function admitGateChatPrompt(
   owner: GateChatPromptOwner,
 ): Promise<PromptOwnerAdmission> {
   const runId = client.assignment.runId;
-  // The response claim takes the HITL row first; every writer here keeps that
-  // order or a concurrent turn deadlocks against it.
-  const [hitl] = await tx
-    .select({ id: hitlRequests.id, runId: hitlRequests.runId })
-    .from(hitlRequests)
-    .where(eq(hitlRequests.id, owner.hitlRequestId))
-    .for("update");
+  // Create ACKs already hold the run; response and chat admission share
+  // Run -> assignment -> HITL -> turn instead of inverting that boundary.
   const assignment = await lockCurrentSessionAssignment(tx as LedgerDb, {
     runId,
     assignmentId: client.assignment.id,
   });
 
   if (!assignment) throw staleSessionBinding(runId, client.assignment.id);
+  const [hitl] = await tx
+    .select({ id: hitlRequests.id, runId: hitlRequests.runId })
+    .from(hitlRequests)
+    .where(eq(hitlRequests.id, owner.hitlRequestId))
+    .for("update");
   const [turn] = await tx
     .select({
       id: gateChatTurns.id,
@@ -249,6 +249,13 @@ export async function prepareGateChatPrompt(input: {
 
   return {
     apply: async (tx) => {
+      // Inserting the reply references the Run; take its lock before HITL so
+      // the FK check cannot invert an in-flight create ACK.
+      await tx
+        .select({ id: runs.id })
+        .from(runs)
+        .where(eq(runs.id, ref.runId))
+        .for("update");
       const [lockedHitl] = await tx
         .select({
           response: hitlRequests.response,

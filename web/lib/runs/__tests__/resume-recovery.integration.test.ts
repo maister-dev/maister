@@ -8,6 +8,7 @@
 //   - resume-recovery.test.ts::takeover-returned-stranded-running-is-requeued
 
 import { randomUUID } from "node:crypto";
+import { rm } from "node:fs/promises";
 
 import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
@@ -41,12 +42,22 @@ import {
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 import { executionCommands } from "@/lib/db/schema";
+import { MaisterError } from "@/lib/errors";
+import { releaseAssignmentForRun } from "@/lib/execution-host";
+import { SessionInventoryPending } from "@/lib/execution-host/session-inventory";
+import { continueResumeSessionCreate, resumeRun } from "@/lib/runs/resume";
+import {
+  createFakeExecutionHost,
+  fakeExecutionHosts,
+} from "@/test-support/fake-execution-host";
+import { initRepoWithWorktree, git } from "@/test-support/git-fixture";
+import { mkdtempReal } from "@/test-support/worktree-test-root";
 
 const schema = schemaModule as unknown as Record<string, any>;
 const { flows, projects, runs, tasks, users } = schema;
 
 let testDatabase: StartedPostgresTestDb;
-let db: NodePgDatabase;
+let db: NodePgDatabase<typeof schemaModule>;
 let projectId: string;
 let executorId: string;
 let flowId: string;
@@ -141,6 +152,141 @@ async function readRun(runId: string): Promise<any> {
 
   return rows[0];
 }
+
+describe("resume-recovery — original create ownership", () => {
+  it("keeps a preflight-pending checkpoint resume on its original assignment and command", async () => {
+    const root = await mkdtempReal("resume-create-owner-");
+    const { repoPath, worktreePath, branch } = await initRepoWithWorktree(root);
+    const runId = await seedRun("Running", { currentStepId: "implement" });
+    const fake = createFakeExecutionHost();
+    const create = fake.transport.createSession;
+    const { hosts } = await fakeExecutionHosts(db, { fake, runId });
+
+    try {
+      await db
+        .update(projects)
+        .set({ repoPath })
+        .where(eq(projects.id, projectId));
+      await db.insert(schema.workspaces).values({
+        id: randomUUID(),
+        runId,
+        projectId,
+        branch,
+        worktreePath,
+        parentRepoPath: repoPath,
+        baseBranch: "main",
+        targetBranch: "main",
+        baseCommit: await git(repoPath, "rev-parse", "HEAD"),
+      });
+      await db.insert(schema.runSessions).values({
+        id: randomUUID(),
+        runId,
+        sessionName: "default",
+        runnerId: executorId,
+        capabilityAgent: "claude",
+        runnerSnapshot: testRunnerSnapshot(executorId),
+      });
+      const client = await hosts.forRun(runId);
+      const originalSession = await client.createSession({
+        stepId: "implement",
+        executor: { agent: "claude", model: "claude-sonnet-4-6" },
+      });
+
+      await client.checkpoint(originalSession.sessionId);
+      await releaseAssignmentForRun(db, runId, "checkpointed");
+      await db
+        .update(runs)
+        .set({ status: "NeedsInputIdle", checkpointAt: new Date() })
+        .where(eq(runs.id, runId));
+      await db.insert(schema.hitlRequests).values({
+        id: randomUUID(),
+        runId,
+        stepId: "implement",
+        kind: "form",
+        schema: {},
+        prompt: "Continue the stored checkpoint",
+        response: { continue: true },
+      });
+      fake.transport.createSession = async () => {
+        throw new SessionInventoryPending(
+          runId,
+          new MaisterError("EXECUTOR_UNAVAILABLE", "host ownership unproven", {
+            details: { reason: "session_inventory_unproven" },
+          }),
+        );
+      };
+      const resumed = await resumeRun(runId, { db, executionHosts: hosts });
+
+      expect(resumed).toMatchObject({
+        ok: true,
+        runStatus: "NeedsInput",
+        newSupervisorSessionId: null,
+      });
+      expect((await readRun(runId)).status).toBe("NeedsInput");
+      const original = await testDatabase.pool.query<{
+        id: string;
+        state: string;
+      }>(
+        "SELECT id,state FROM execution_commands WHERE run_id=$1 AND kind='session.create' AND create_intent IS NOT NULL",
+        [runId],
+      );
+
+      expect(original.rows).toEqual([
+        expect.objectContaining({ state: "queued" }),
+      ]);
+      const scheduled: Array<{ supervisorSessionId: string | null }> = [];
+      const recovery = await runResumeRecoverySweep({
+        db,
+        executionHosts: hosts,
+        scheduleDriver: (input) => {
+          scheduled.push(input);
+
+          return "owned-resume-test";
+        },
+      });
+
+      expect(recovery).toMatchObject({ rescheduled: 1, rolledBack: 0 });
+      expect(scheduled).toEqual([
+        expect.objectContaining({ supervisorSessionId: null }),
+      ]);
+      expect(fake.callsOf("createSession")).toHaveLength(1);
+      fake.transport.createSession = create;
+      await testDatabase.pool.query(
+        "UPDATE execution_commands SET next_attempt_at=now()-interval '1 second' WHERE id=$1",
+        [original.rows[0].id],
+      );
+      const continued = await continueResumeSessionCreate({
+        runId,
+        assignmentId: resumed.ok ? resumed.assignmentId : null,
+        db,
+        executionHosts: hosts,
+      });
+
+      expect(continued.sessionId).not.toBe(originalSession.sessionId);
+      expect(fake.callsOf("createSession")).toHaveLength(2);
+      expect(fake.callsOf("createSession")[1].envelope?.payload).toMatchObject({
+        resumeSessionId: originalSession.acpSessionId,
+      });
+      expect(
+        (
+          await testDatabase.pool.query<{ id: string; state: string }>(
+            "SELECT id,state FROM execution_commands WHERE run_id=$1 AND kind='session.create' AND create_intent IS NOT NULL",
+            [runId],
+          )
+        ).rows,
+      ).toEqual([{ id: original.rows[0].id, state: "succeeded" }]);
+    } finally {
+      fake.transport.createSession = create;
+      for (const session of fake.sessions.values()) {
+        if (session.status === "live")
+          await (
+            await hosts.forRun(runId, { teardown: true })
+          ).deleteSession(session.sessionId);
+      }
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 60_000);
+});
 
 describe("resume-recovery — HumanWorking exclusion (M11b)", () => {
   it("humanworking-survives-restart: a HumanWorking run is never a sweep candidate and is NOT flipped to Crashed", async () => {

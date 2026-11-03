@@ -8,8 +8,10 @@ import {
   markResumed,
   rollbackResumedRun,
 } from "./state-transitions";
+import { continueResumeSessionCreate } from "./resume-session-create";
 
 import { getDb } from "@/lib/db/client";
+import { SessionCreatePending } from "@/lib/execution-host/owned-session-create";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import {
   hasFlowPermissionResume,
@@ -34,11 +36,8 @@ import {
   localHost,
   type ExecutionHosts,
 } from "@/lib/execution-host";
-import {
-  mergeRunnerAdapterLaunch,
-  runnerExecutorInput,
-  runnerSupervisorInput,
-} from "@/lib/acp-runners/spawn-intent";
+
+export { continueResumeSessionCreate } from "./resume-session-create";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { projects, runs, workspaces } = schemaModule as unknown as Record<
@@ -392,13 +391,11 @@ export async function resumeRun(
     // Bound to the generation the claim just minted — never "the run's active
     // assignment", which a racing re-entry could have replaced; the workspace
     // handle was copied forward, so the create needs no re-adopt.
-    const { client } = await hosts.executionFor(runId, { assignmentId });
-    const result = await client.createSession({
-      stepId: runRow.currentStepId ?? "resume",
-      executor: runnerExecutorInput(runRow.runnerSnapshot),
-      runner: runnerSupervisorInput({ snapshot: runRow.runnerSnapshot }),
-      resumeSessionId: runRow.acpSessionId,
-      adapterLaunch: mergeRunnerAdapterLaunch(runRow.runnerSnapshot),
+    const result = await continueResumeSessionCreate({
+      runId,
+      assignmentId,
+      db,
+      executionHosts: hosts,
     });
 
     if (!result.acpSessionId) {
@@ -434,6 +431,33 @@ export async function resumeRun(
       assignmentId,
     };
   } catch (err) {
+    if (err instanceof SessionCreatePending) {
+      log.warn(
+        { runId, assignmentId, commandId: err.details?.commandId },
+        "resume retains its original create for continuation",
+      );
+
+      return {
+        ok: true,
+        runStatus: "NeedsInput",
+        newSupervisorSessionId: null,
+        acpSessionId: runRow.acpSessionId,
+        assignmentId,
+      };
+    }
+    if (
+      isMaisterError(err) &&
+      err.details?.reason === "resume_create_source_unproven"
+    ) {
+      await rollbackResumedRun(runId, { db });
+
+      return {
+        ok: false,
+        code: "PRECONDITION",
+        retryable: false,
+        message: err.message,
+      };
+    }
     // ADR-166 yield rule: a newer generation already owns this run — write no
     // run state (its own driver re-issues the stored intent).
     if (isFencedError(err)) {

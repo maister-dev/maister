@@ -12,6 +12,7 @@ import type {
 } from "./types";
 import type { PromptOwner } from "./prompt-owner-contract";
 import type { SendPromptInput } from "@/lib/supervisor-client";
+import type { SessionCreateIntent } from "./create-intent";
 
 import { randomUUID } from "node:crypto";
 
@@ -52,6 +53,7 @@ export type IssueCommandInput<TPayload> = {
   // cannot mint a prompt; `issueOwnedPrompt` is the only one that can.
   kind: Exclude<CommandKind, "session.prompt">;
   payload: TPayload;
+  createIntent?: SessionCreateIntent;
   maxAttempts: number;
   targetSessionId?: string | null;
   driverless?: boolean;
@@ -135,6 +137,7 @@ export async function issueCommand<TPayload>(
     kind: input.kind,
     targetSessionId: input.targetSessionId ?? null,
     payload: input.payload,
+    createIntent: input.createIntent,
     maxAttempts: input.maxAttempts,
     driverless: input.driverless ?? false,
     now: input.now,

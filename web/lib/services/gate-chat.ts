@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { ExecutionAssignment } from "@/lib/db/schema";
+import type { ExecutionAssignment, RunnerSnapshot } from "@/lib/db/schema";
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -45,10 +45,22 @@ import {
   type HostAdminClient,
 } from "@/lib/execution-host";
 import { isUniqueViolation } from "@/lib/db/pg-error";
+import { SessionCreatePending } from "@/lib/execution-host/owned-session-create";
+import {
+  lockCurrentSessionAssignment,
+  staleSessionBinding,
+} from "@/lib/execution-host/session-binding";
+import { lockGateChatCreateOwner } from "@/lib/services/gate-chat-create-owner";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { gateChatMessages, gateChatTurns, hitlRequests, runs, workspaces } =
-  schemaModule as unknown as Record<string, any>;
+const {
+  executionCommands,
+  gateChatMessages,
+  gateChatTurns,
+  hitlRequests,
+  runs,
+  workspaces,
+} = schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -291,7 +303,7 @@ async function claimExpiredGateChatRecovery(args: {
   now: Date;
 }): Promise<ClaimedGateChatRecovery | null> {
   return await args.db.transaction(async (tx: Db) => {
-    // Keep the lock order identical to response claim and chat admission.
+    // Expiry needs only HITL -> turn; it never acquires the Run afterwards.
     const hitlRows = await tx
       .select({ id: hitlRequests.id })
       .from(hitlRequests)
@@ -319,6 +331,25 @@ async function claimExpiredGateChatRecovery(args: {
     ) {
       return null;
     }
+    const [pendingCreate] = await tx
+      .select({ id: executionCommands.id })
+      .from(executionCommands)
+      .where(
+        and(
+          eq(executionCommands.runId, args.candidate.runId),
+          eq(executionCommands.kind, "session.create"),
+          sql`${executionCommands.createIntent}->'owner'->>'variant' = 'gate_chat'`,
+          sql`${executionCommands.createIntent}->'owner'->>'turnId' = ${turn.id}`,
+          sql`not exists (select 1 from execution_commands prompt
+          where prompt.run_id = ${args.candidate.runId}
+            and prompt.kind = 'session.prompt'
+            and prompt.owner_kind = 'gate_chat'
+            and prompt.owner_ref->>'turnId' = ${turn.id})`,
+        ),
+      )
+      .limit(1);
+
+    if (pendingCreate) return null;
 
     const workspaceRows = await tx
       .select({
@@ -413,6 +444,109 @@ async function completeExpiredGateChatRecovery(args: {
 }
 
 // Process death clears the in-memory deadline, not the database coordinator.
+/** Resume only turns with a durable create owner; an absent model command is
+ * not permission to discard the accepted reviewer request or restore its tree. */
+async function recoverPendingGateChatCreates(
+  db: Db,
+  hosts: ExecutionHosts,
+): Promise<
+  Readonly<{ protectedTurnIds: ReadonlySet<string>; completed: number }>
+> {
+  const rows = await db
+    .select({
+      turn: gateChatTurns,
+      userMessage: gateChatMessages,
+      run: runs,
+      commandId: executionCommands.id,
+    })
+    .from(gateChatTurns)
+    .innerJoin(
+      gateChatMessages,
+      eq(gateChatMessages.id, gateChatTurns.userMessageId),
+    )
+    .innerJoin(runs, eq(runs.id, gateChatTurns.runId))
+    .innerJoin(
+      executionCommands,
+      and(
+        eq(executionCommands.runId, gateChatTurns.runId),
+        eq(executionCommands.kind, "session.create"),
+        sql`${executionCommands.createIntent}->'owner'->>'variant' = 'gate_chat'`,
+        sql`${executionCommands.createIntent}->'owner'->>'turnId' = ${gateChatTurns.id}`,
+      ),
+    )
+    .where(
+      and(
+        eq(gateChatTurns.state, "pending"),
+        sql`not exists (select 1 from execution_commands prompt
+        where prompt.run_id = ${gateChatTurns.runId}
+          and prompt.kind = 'session.prompt'
+          and prompt.owner_kind = 'gate_chat'
+          and prompt.owner_ref->>'turnId' = ${gateChatTurns.id})`,
+      ),
+    )
+    .orderBy(asc(gateChatTurns.createdAt))
+    .limit(GATE_CHAT_RECOVERY_BATCH_SIZE);
+  const protectedTurnIds = new Set<string>();
+  let completed = 0;
+
+  for (const row of rows) {
+    if (protectedTurnIds.has(row.turn.id)) continue;
+    protectedTurnIds.add(row.turn.id);
+    if (!row.turn.leaseExpiresAt) continue;
+    const active = await loadActiveRunSession(db, row.run.id);
+
+    if (!active?.acpSessionId) continue;
+    try {
+      const leaseExpiresAt = turnLeaseExpiresAt(new Date());
+      const renewed = await db
+        .update(gateChatTurns)
+        .set({ leaseExpiresAt })
+        .where(
+          and(
+            eq(gateChatTurns.id, row.turn.id),
+            eq(gateChatTurns.state, "pending"),
+          ),
+        )
+        .returning({ id: gateChatTurns.id });
+
+      if (renewed.length === 0) continue;
+      await driveGateChatTurn({
+        runId: row.run.id,
+        hitlRequestId: row.turn.hitlRequestId,
+        message: row.userMessage.body,
+        db,
+        hosts,
+        run: { status: row.run.status, runnerSnapshot: active.runnerSnapshot },
+        activeAcpSessionId: active.acpSessionId,
+        admitted: {
+          turnId: row.turn.id,
+          leaseExpiresAt,
+          userMessage: {
+            ...row.userMessage,
+            role: "user",
+            mutationReverted: false,
+          },
+        },
+        createCommandId: row.commandId,
+      });
+      completed += 1;
+    } catch (error) {
+      log.warn(
+        {
+          runId: row.run.id,
+          turnId: row.turn.id,
+          commandId: row.commandId,
+          reason: error instanceof MaisterError ? error.details?.reason : null,
+          errorType: error instanceof Error ? error.name : typeof error,
+        },
+        "gate-chat owned create recovery deferred",
+      );
+    }
+  }
+
+  return { protectedTurnIds, completed };
+}
+
 // Reconcile owns this durable recovery: claim the expired turn by extending its
 // fence, cancel any still-live supervisor prompt, run L3 restore, and only then
 // release response admission by terminalizing it. A failed cancellation or
@@ -428,6 +562,7 @@ export async function recoverExpiredGateChatTurns(args: {
   const now = args.now ?? (() => new Date());
   const observedAt = now();
   const recoverySignal = new AbortController().signal;
+  const createRecovery = await recoverPendingGateChatCreates(d, hosts);
   const candidates = (await d
     .select({
       id: gateChatTurns.id,
@@ -443,9 +578,10 @@ export async function recoverExpiredGateChatTurns(args: {
     )
     .orderBy(asc(gateChatTurns.leaseExpiresAt))
     .limit(GATE_CHAT_RECOVERY_BATCH_SIZE)) as ExpiredGateChatCandidate[];
-  let recovered = 0;
+  let recovered = createRecovery.completed;
 
   for (const candidate of candidates) {
+    if (createRecovery.protectedTurnIds.has(candidate.id)) continue;
     let claim: ClaimedGateChatRecovery | null;
 
     try {
@@ -471,11 +607,10 @@ export async function recoverExpiredGateChatTurns(args: {
 
     if (!claim) continue;
 
-    const liveSession = args.sessions.find(
-      (session) => session.runId === claim.runId && session.status === "live",
-    );
-
     try {
+      const records = await hosts.local().listSessionsForRun(claim.runId);
+      const liveSession = records.find((session) => session.status === "live");
+
       // D2: reconcile this turn's own command evidence BEFORE treating an
       // expired lease as a failure. A completed turn lands its reply here.
       if (await reconcileOwnedGateChatTurn(d, claim.id, recoverySignal)) {
@@ -730,18 +865,18 @@ export async function sendGateChatTurn(args: {
 
   try {
     admitted = await d.transaction(async (tx: Db) => {
-      const lockedHitlRows = await tx
-        .select()
-        .from(hitlRequests)
-        .where(eq(hitlRequests.id, args.hitlRequestId))
-        .for("update");
-      const lockedHitl = lockedHitlRows[0];
       const lockedRunRows = await tx
         .select()
         .from(runs)
         .where(eq(runs.id, args.runId))
         .for("update");
       const lockedRun = lockedRunRows[0];
+      const lockedHitlRows = await tx
+        .select()
+        .from(hitlRequests)
+        .where(eq(hitlRequests.id, args.hitlRequestId))
+        .for("update");
+      const lockedHitl = lockedHitlRows[0];
 
       if (!lockedRun || !lockedHitl || lockedHitl.runId !== args.runId) {
         throw new MaisterError(
@@ -846,6 +981,39 @@ export async function sendGateChatTurn(args: {
     rethrowSeqConflict(err);
   }
 
+  return driveGateChatTurn({
+    runId: args.runId,
+    hitlRequestId: args.hitlRequestId,
+    message: args.message,
+    db: d,
+    hosts,
+    run,
+    activeAcpSessionId: activeAcpSessionId as string,
+    admitted,
+    createCommandId: null,
+  });
+}
+
+type AdmittedGateChatTurn = Readonly<{
+  turnId: string;
+  leaseExpiresAt: Date;
+  userMessage: GateChatMessageView;
+}>;
+
+async function driveGateChatTurn(
+  args: Readonly<{
+    runId: string;
+    hitlRequestId: string;
+    message: string;
+    db: Db;
+    hosts: ExecutionHosts;
+    run: Readonly<{ status: string; runnerSnapshot: RunnerSnapshot | null }>;
+    activeAcpSessionId: string;
+    admitted: AdmittedGateChatTurn;
+    createCommandId: string | null;
+  }>,
+): Promise<SendGateChatTurnResult> {
+  const { db: d, hosts, run, activeAcpSessionId, admitted } = args;
   // (4) resolve the session: live (NeedsInput) vs chat-resume (Idle).
   const stepId = gateChatStepId(args.hitlRequestId);
   let supervisorSessionId: string;
@@ -855,7 +1023,7 @@ export async function sendGateChatTurn(args: {
   let admin!: HostAdminClient;
 
   try {
-    if (run.status === "NeedsInput") {
+    if (run.status === "NeedsInput" && args.createCommandId === null) {
       // The live driver's epoch: the chat turn reuses the run's ACTIVE
       // assignment (Q5) and its live session.
       client = await hosts.forRun(args.runId);
@@ -882,6 +1050,7 @@ export async function sendGateChatTurn(args: {
       );
       throw err;
     }
+    if (err instanceof SessionCreatePending) throw err;
     await failGateChatTurn({
       db: d,
       turnId: admitted.turnId,
@@ -926,22 +1095,67 @@ export async function sendGateChatTurn(args: {
       client = claimed
         ? await hosts.forAssignment(claimed)
         : await hosts.forRun(args.runId);
-      created = await client.createSession({
-        stepId,
-        executor: {
-          agent: (run.runnerSnapshot?.capabilityAgent ?? "claude") as
-            "claude" | "codex",
-          model: run.runnerSnapshot?.model ?? "unknown",
+      created = await client.createOwnedSession(
+        {
+          variant: "gate_chat",
+          turnId: admitted.turnId,
+          hitlRequestId: args.hitlRequestId,
+          userMessageId: admitted.userMessage.id,
         },
-        runner: run.runnerSnapshot
-          ? runnerSupervisorInput({ snapshot: run.runnerSnapshot })
-          : undefined,
-        resumeSessionId: activeAcpSessionId as string,
-      });
+        async () => ({
+          stepId,
+          executor: {
+            agent: (run.runnerSnapshot?.capabilityAgent ?? "claude") as
+              "claude" | "codex",
+            model: run.runnerSnapshot?.model ?? "unknown",
+          },
+          runner: run.runnerSnapshot
+            ? runnerSupervisorInput({ snapshot: run.runnerSnapshot })
+            : undefined,
+          resumeSessionId: activeAcpSessionId,
+        }),
+        {
+          assertCommit: async (tx) => {
+            const owner = {
+              variant: "gate_chat" as const,
+              turnId: admitted.turnId,
+              hitlRequestId: args.hitlRequestId,
+              userMessageId: admitted.userMessage.id,
+            };
+            const assignment = await lockCurrentSessionAssignment(tx, {
+              runId: args.runId,
+              assignmentId: client.assignment.id,
+            });
+
+            if (
+              !assignment ||
+              !(await lockGateChatCreateOwner(tx, {
+                runId: args.runId,
+                owner,
+              }))
+            )
+              throw staleSessionBinding(args.runId, client.assignment.id);
+            const [turn] = await tx
+              .select({ leaseExpiresAt: gateChatTurns.leaseExpiresAt })
+              .from(gateChatTurns)
+              .where(eq(gateChatTurns.id, admitted.turnId));
+
+            if (
+              turn?.leaseExpiresAt?.getTime() !==
+              admitted.leaseExpiresAt.getTime()
+            )
+              throw staleSessionBinding(args.runId, client.assignment.id);
+          },
+        },
+      );
     } catch (err) {
       // A fenced create means a newer generation owns the run — its claim is
       // not ours to roll back (E-EH-11).
-      if (idleClaim && !isFencedError(err)) {
+      if (
+        idleClaim &&
+        !isFencedError(err) &&
+        !(err instanceof SessionCreatePending)
+      ) {
         try {
           await rollbackResumedRun(args.runId, { db: d });
           log.warn(

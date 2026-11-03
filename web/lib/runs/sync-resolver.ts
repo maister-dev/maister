@@ -2,7 +2,7 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
 import * as schemaModule from "@/lib/db/schema";
@@ -12,7 +12,13 @@ import {
   type SyncPromptOwner,
   waitForSyncPrompt,
 } from "@/lib/runs/sync-prompt-owner";
-import { MaisterError } from "@/lib/errors";
+import { isMaisterError, MaisterError } from "@/lib/errors";
+import {
+  readOwnedCreateContinuation,
+  SessionCreatePending,
+} from "@/lib/execution-host/owned-session-create";
+import { readCreateIntent } from "@/lib/execution-host/create-intent";
+import { hasSyncDriver } from "@/lib/runs/sync-driver-registry";
 import { nextKeepaliveAt } from "@/lib/runs/keepalive-config";
 import {
   createExecutionHosts,
@@ -26,7 +32,8 @@ import {
 } from "@/lib/execution-host";
 
 // FIXME(any): dual drizzle-orm peer-dep variants — mirror sync-target.ts.
-const { runs } = schemaModule as unknown as Record<string, any>;
+const { executionCommands, runSyncAttempts, runs } =
+  schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): the injected db seam is a Drizzle client OR a Testcontainers pg
 // client; both expose select/insert/update/transaction.
@@ -243,7 +250,33 @@ export async function runResolverSession(args: {
   const { client, admin } = await hosts.executionFor(args.runId, {
     assignmentId: args.assignmentId,
   });
-  const created = await client.createSession(args.input);
+  const owner = { variant: "sync_resolver" as const, ...args.owner };
+  const stored = await readOwnedCreateContinuation(args.db, client, owner);
+
+  if (stored && stored.kind !== "sync_resolver")
+    throw new MaisterError(
+      "CONFLICT",
+      "Sync resolver continuation has the wrong owner",
+      {
+        details: { reason: "command_invariant_conflict" },
+      },
+    );
+  const prompt =
+    stored?.kind === "sync_resolver"
+      ? stored.prompt
+      : { stepId: SYNC_STEP_ID, prompt: args.prompt };
+  const created = await client.createOwnedSession(
+    owner,
+    async () => args.input,
+    {
+      prepareContinuation: async () => ({
+        version: 1,
+        kind: "sync_resolver",
+        prompt: { stepId: SYNC_STEP_ID, prompt: args.prompt },
+        runnerTier: args.runnerTier,
+      }),
+    },
+  );
   const sessionId = created.sessionId;
 
   // ADR-141: mark this run as owned by a LIVE in-process resolver
@@ -275,13 +308,9 @@ export async function runResolverSession(args: {
   let promptResult: PromptResult | null;
 
   try {
-    const promptHandle = await client.prompt(
-      sessionId,
-      { stepId: SYNC_STEP_ID, prompt: args.prompt },
-      {
-        admitOwner: (tx) => admitSyncPrompt(tx, client, sessionId, args.owner),
-      },
-    );
+    const promptHandle = await client.prompt(sessionId, prompt, {
+      admitOwner: (tx) => admitSyncPrompt(tx, client, sessionId, args.owner),
+    });
 
     promptResult = await waitForSyncPrompt(args.db, client, promptHandle);
   } catch (err) {
@@ -318,4 +347,118 @@ export async function runResolverSession(args: {
   );
 
   return { sessionId, stopReason: promptResult?.stopReason ?? "end_turn" };
+}
+
+/** Existing reconciliation wakes this pre-prompt owner before any orphan restore. */
+export async function resumePendingSyncResolverCreate(args: {
+  db: Db;
+  runId: string;
+  executionHosts: ExecutionHosts;
+}): Promise<boolean> {
+  const [command] = await args.db
+    .select({ command: executionCommands, attempt: runSyncAttempts })
+    .from(executionCommands)
+    .innerJoin(
+      runSyncAttempts,
+      and(
+        eq(runSyncAttempts.runId, executionCommands.runId),
+        sql`${executionCommands.createIntent}->'owner'->>'syncAttemptId' = ${runSyncAttempts.id}`,
+      ),
+    )
+    .where(
+      and(
+        eq(executionCommands.runId, args.runId),
+        eq(executionCommands.kind, "session.create"),
+        eq(runSyncAttempts.phase, "agent_running"),
+        sql`${executionCommands.createIntent}->'owner'->>'variant' = 'sync_resolver'`,
+        sql`not exists (select 1 from execution_commands prompt
+        where prompt.run_id = ${executionCommands.runId}
+          and prompt.kind = 'session.prompt'
+          and prompt.owner_kind = 'sync_resolution'
+          and prompt.owner_ref->>'syncAttemptId' = ${runSyncAttempts.id})`,
+      ),
+    )
+    .orderBy(desc(executionCommands.createdAt), desc(executionCommands.id))
+    .limit(1);
+
+  if (!command) return false;
+  if (hasSyncDriver(args.runId)) return true;
+  const { client } = await args.executionHosts.executionFor(args.runId, {
+    assignmentId: command.command.executionAssignmentId,
+  });
+  const { envelope, intent } = readCreateIntent(
+    command.command,
+    client.host.hostKey,
+  );
+
+  if (intent.owner.variant !== "sync_resolver")
+    throw new MaisterError("CONFLICT", "Sync create has a different owner");
+  const owner = intent.owner;
+  const continuation = await readOwnedCreateContinuation(
+    args.db,
+    client,
+    owner,
+  );
+
+  if (!continuation || continuation.kind !== "sync_resolver")
+    throw new MaisterError(
+      "PRECONDITION",
+      "Sync resolver's original request is unavailable; reconcile the original attempt",
+      {
+        details: { reason: "sync_create_continuation_unproven" },
+      },
+    );
+  const { acquireSyncDriver } = await import("@/lib/runs/sync-target");
+
+  if (hasSyncDriver(args.runId)) return true;
+  const release = acquireSyncDriver(args.db, args.runId, {
+    workspaceId: command.attempt.workspaceId,
+    attemptId: command.attempt.id,
+    attempt: command.attempt.attempt,
+    lifecycleAttemptId: owner.operationAttemptId,
+  });
+
+  queueMicrotask(() => {
+    void (async () => {
+      try {
+        const session = await runResolverSession({
+          db: args.db,
+          runId: args.runId,
+          input: envelope.payload,
+          prompt: continuation.prompt.prompt,
+          runnerTier: continuation.runnerTier,
+          executionHosts: args.executionHosts,
+          assignmentId: command.command.executionAssignmentId,
+          owner,
+        });
+
+        await teardownResolverSession(
+          args.executionHosts,
+          args.runId,
+          session.sessionId,
+        );
+        const { recoverSyncAttemptOnReconcile } =
+          await import("@/lib/runs/sync-recovery");
+
+        await recoverSyncAttemptOnReconcile({ ...args, liveSessionId: null });
+      } catch (error) {
+        log.warn(
+          {
+            runId: args.runId,
+            attemptId: command.attempt.id,
+            commandId: command.command.id,
+            code: isMaisterError(error) ? error.code : null,
+            reason: isMaisterError(error) ? error.details?.reason : null,
+            errorType: error instanceof Error ? error.name : typeof error,
+            pending: error instanceof SessionCreatePending,
+          },
+          "sync original create continuation retained for reconciliation",
+        );
+      } finally {
+        release();
+      }
+    })();
+  });
+
+  return true;
 }

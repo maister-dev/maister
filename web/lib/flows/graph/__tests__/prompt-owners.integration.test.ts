@@ -1370,7 +1370,11 @@ describe("Flow prompt owners through the production graph driver", () => {
       const sessionName = request.envelope.payload.sessionName ?? "default";
       const oldOwner = request.intent.owner;
 
-      if (oldOwner.variant === "agent" || oldOwner.variant === "librarian")
+      if (
+        oldOwner.variant !== "node" &&
+        oldOwner.variant !== "gate_ai" &&
+        oldOwner.variant !== "gate_skill"
+      )
         throw new Error("expected a Flow create owner");
       let nextOwner: FlowCreateOwner;
 
