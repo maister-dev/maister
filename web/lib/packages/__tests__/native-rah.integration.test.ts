@@ -13,6 +13,7 @@ import { loadFlowManifest, readAndValidateFormSchemaDoc } from "@/lib/config";
 import { assertNodeLaunchable } from "@/lib/flows/enforcement";
 import { deriveSessionEnforcementProfile } from "@/lib/flows/enforcement-profile";
 import { enableRevision } from "@/lib/flows/lifecycle";
+import { renderStrict } from "@/lib/flows/templating";
 import {
   attachPackage,
   detachPackage,
@@ -192,6 +193,23 @@ it("IT-CBE-04 installs exact native RAH contracts without combining install, tru
 
     for (const node of manifest.nodes) {
       if (node.type !== "orchestrator" && node.type !== "ai_coding") continue;
+      const feedback =
+        "Native findings reduction is invalid at selection[5]; preserve the exact collected finding and its evidence, limitations and questions";
+      const commentsVar = node.rework?.commentsVar;
+
+      if (!commentsVar)
+        throw new Error("The native producer has no rework feedback binding");
+      const initialPrompt = renderStrict(node.action.prompt, {
+        task: { prompt: "Inspect the controlled corpus" },
+        [commentsVar]: "",
+      });
+      const reworkPrompt = renderStrict(node.action.prompt, {
+        task: { prompt: "Inspect the controlled corpus" },
+        [commentsVar]: feedback,
+      });
+
+      expect(initialPrompt).not.toContain(feedback);
+      expect(reworkPrompt).toContain(feedback);
       assertNodeLaunchable(node, "claude");
       expect(node.settings?.permissionMode).toBe("ask");
       const profile = deriveSessionEnforcementProfile({

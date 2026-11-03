@@ -52,3 +52,5 @@ Retrieval rank is not confirmation. Multiple quotes of one source are one source
 Keep opposing claims distinct; never choose truth by score or silently overwrite a claim.
 Acceptance of work is separate from fact confirmation. knowledgeProposals contains reviewable additions/corrections only;
 do not call knowledge_decide or knowledge_confirm. Never include credentials, raw private logs, or unbounded source text.
+
+For each direct child result, sourceFindings and selection use the direct child run ID, its resultRevision, and each current result.value.findings object's own id. Never use the child's nested sourceFindings or selection identities as the parent's direct source. On rework correct the reported defect using existing child/result identities and evidence; do not redelegate completed work.

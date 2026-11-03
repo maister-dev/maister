@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "task": "T17",
+  "status": "direct_child_identity_and_feedback_checkpoint_qualified_live_pending",
+  "basePlatformCommit": "23562d82b574c4ffcd65507c9688eb2ad5358a8e",
+  "engineVersion": "3.11.1",
+  "failedLivePackage": {
+    "tag": "rah/v1.0.3",
+    "commit": "2074179904b09917a81e86585bdccd4fe2952d20"
+  },
+  "nextPackage": {
+    "tag": "rah/v1.0.4",
+    "commit": "a1ddf140369bbae7fe7efc9db88ff82b0a2289e6",
+    "localAnnotatedTag": true,
+    "published": false
+  },
+  "red": [
+    "Actual corrected-control v1.0.3 run passed depth one but depth-two root used a grandchild finding ID under the direct intermediate child identity; strict reduction rejected selection[5]. All four leaves and both intermediate results remained valid.",
+    "Existing bounded rework persisted native feedback in finish_continuation.injectedVars, but package action prompts did not render the declared commentsVar. The root exhausted bounded rework and failed; invocation cleanup reported zero leaks.",
+    "Actual candidate install plus rendering the installed node action under its declared feedback variable failed before the fix."
+  ],
+  "green": [
+    "Each Flow renders its declared rework feedback, and coordinator guidance explicitly selects the immediate child result.value.findings object ID rather than nested sourceFindings/selection identities. Existing children and exact result revisions are reused on rework.",
+    "Shared platform guidance and the fixture package match the actual companion; strict reduction and evidence access validation are unchanged. EN/RU companion guide describes the same behavior.",
+    "Normal clean release wrapper passed and created a new immutable local v1.0.4 tag."
+  ],
+  "checks": {
+    "actualCandidateAndReductionIntegration": {
+      "passed": 20,
+      "files": 2
+    },
+    "fullWebUnit": {
+      "passed": 9263,
+      "files": 886
+    },
+    "actualCompanionRelease": {
+      "passed": 1,
+      "exitCode": 0
+    },
+    "typecheck": {
+      "exitCode": 0
+    },
+    "lint": {
+      "exitCode": 0
+    },
+    "contracts": {
+      "exitCode": 0
+    },
+    "docsAndErd": {
+      "exitCode": 0
+    }
+  },
+  "limits": [
+    "The corrected-control scenario was not reached by this failed run. Prior full depth-two/review success belongs to the separate retained revoked-role checkpoint.",
+    "Fresh v1.0.4 full actual workflow and localized browser checks remain required; T16/T17 stay open.",
+    "No publication, production deployment or stand pilot readiness is claimed."
+  ],
+  "noRefactor": "No automatic citation repair, rewritten source identity or relaxed validator is introduced. The package now uses existing feedback and immediate-child identities correctly."
+}

@@ -48,6 +48,9 @@ nodes:
         maxDurationMinutes: 10
     action:
       prompt: |-
+        Previous validation feedback (empty on the first attempt): {{ review_comments }}
+        If feedback is present, correct that result defect using existing authorized evidence and completed work.
+        Do not repeat completed effects or submit changed proposal content under an existing idempotency key.
         Investigate {{ task.prompt }} directly, without child delegation.
         Use the MAIster knowledge_search, knowledge_get, knowledge_evidence and knowledge_conflicts tools
         with the explicit owner/record inputs supplied in the task. Read the returned records and original evidence before concluding.

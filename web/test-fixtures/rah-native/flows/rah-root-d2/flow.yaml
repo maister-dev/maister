@@ -62,6 +62,9 @@ nodes:
           consecutive_failures: 2
     action:
       prompt: |-
+        Previous validation feedback (empty on the first attempt): {{ review_comments }}
+        If feedback is present, correct that result defect using existing authorized evidence and completed work.
+        Do not repeat completed effects or submit changed proposal content under an existing idempotency key.
         Research {{ task.prompt }}.
         Delegate at most two FLOW children with run_delegate, target.flowId rah-research and mode run.
         Give each a bounded distinct question, the explicit requested owner and exact knowledge/source references.
@@ -75,6 +78,10 @@ nodes:
         copy assertion, basis, supporting, contradicting, missingEvidence, limitations and openQuestions EXACTLY.
         Change only id to a compact unique output id, and replace sourceFindings with the exact direct-child
         {childRunId,resultRevision,findingId}. Add selection with disposition retained and exactly that one outputFindingId.
+        For each finding in a direct child's collected result.value.findings, findingId is THAT finding object's id.
+        childRunId is that direct child's run ID and resultRevision is its collected resultRevision.
+        Never copy childRunId or findingId from the child's own sourceFindings or selection; those identify an earlier depth.
+        Rework reuses already launched child IDs and collected result revisions; do not redelegate the completed work.
         Retained requires byte-identical assertion and unchanged basis; never paraphrase an entry while calling it retained.
         Copy every original version/digest field and every missing-evidence/limitation/question string, without shortening or rewriting.
         If an explicitly requested combined conclusion is necessary, use disposition combined and basis inferred,
