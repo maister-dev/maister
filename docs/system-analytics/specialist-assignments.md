@@ -111,6 +111,14 @@ All assignments require nonblank objective (<=8000 characters), expected outcome
 | Explicit reopen | failed/cancelled only, current recovery authority and fresh recovery/input revision | New owner epoch; preserve original terminal event; outstanding unknown effect routes to reconciling, not dispatch |
 | Completed replay | completed and exact original request/decision | Safe existing receipt only; independent new objective is new assignment |
 
+Business transitions append the existing transactional `specialist.assignment_changed`
+outbox fact with business revision, previous/current state, safe cause and server
+actor in the same transaction as the assignment head. Reopening cannot erase a
+prior failed/cancelled fact. Facts contain no objective, input, source excerpt or
+free-text terminal reason and are not agent triggers. Input/context/result
+contents remain in their current-access-controlled owning stores; this is not an
+additional execution or attempt ledger.
+
 ### Clarification and context
 
 Existing agent-question/HITL services gain an assignment subject without a task requirement. Human `assignments` retains claim/answer ownership; company actor scope and role mapping come from the company Flow binding. A question stores assignment, expected input revision, coordinator epoch, prompt/turn and source principal. Same answer replay is inert; changed/late/wrong-assignment/terminal answer returns 409. Persist answer intent before delivery and mark delivered only after ACK. Failed DB/delivery handling explicitly cancels/releases the supervisor's owned permission deferred; no hidden promise waits.

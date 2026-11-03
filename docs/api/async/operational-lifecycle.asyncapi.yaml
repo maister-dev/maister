@@ -203,6 +203,8 @@ components:
           - assignmentId
           - revision
           - cause
+          - previousStatus
+          - status
         properties:
           owner:
             oneOf:
@@ -241,7 +243,14 @@ components:
           revision:
             type: integer
             minimum: 1
-            maximum: 9007199254740991
+            maximum: 2147483647
+          previousStatus:
+            type: string
+            nullable: true
+            enum: [queued, active, waiting_input, waiting_children, waiting_resource, reconciling, awaiting_acceptance, completed, failed, cancelled, null]
+          status:
+            type: string
+            enum: [queued, active, waiting_input, waiting_children, waiting_resource, reconciling, awaiting_acceptance, completed, failed, cancelled]
           cause:
             type: string
             enum:
@@ -254,6 +263,8 @@ components:
               - acceptance
               - cancelled
               - ownership
+              - state
+              - recovered
     StandOperationChanged:
       name: stand.operation_changed
       summary: Designed — operation/verification/recovery changed without implying success
