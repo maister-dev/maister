@@ -280,15 +280,16 @@ async function signalAdapter(
     assignment_id: string;
     assignment_epoch: number;
     acp_session_id: string;
+    host_session_id: string;
   }>(
     `SELECT r.id AS run_id, a.id AS assignment_id,
-       a.epoch AS assignment_epoch, rs.acp_session_id
+       a.epoch AS assignment_epoch, rs.acp_session_id, rs.host_session_id
      FROM runs r
      JOIN execution_assignments a ON a.id = r.execution_assignment_id
        AND a.run_id = r.id AND a.state = 'active'
      JOIN run_sessions rs ON rs.run_id = r.id
        AND rs.execution_assignment_id = a.id
-     WHERE rs.host_session_id = $1 AND rs.acp_session_id IS NOT NULL`,
+     WHERE rs.acp_session_id = $1 AND rs.host_session_id <> ''`,
     [row.sessionId],
   );
 
@@ -297,7 +298,7 @@ async function signalAdapter(
   const { adapter } = await captureOwnedAdapterProcess({
     invocation: invocationFromEnvironment()!,
     supervisor: fixture!.supervisor,
-    sessionId: row.sessionId,
+    sessionId: owner.host_session_id,
     expected: {
       runId: owner.run_id,
       assignmentId: owner.assignment_id,

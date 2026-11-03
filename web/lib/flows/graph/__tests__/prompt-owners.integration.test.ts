@@ -3310,9 +3310,9 @@ describe("Flow prompt owners through the production graph driver", () => {
     runId: string,
   ): Promise<SupervisorSessionRecord[]> {
     const hosts = createExecutionHosts({ db: database.db as unknown as Db });
-    const sessions = await (
-      await hosts.executionFor(runId)
-    ).admin.listSessions();
+    // Inventory is an attested read of the known host, even after this run's
+    // assignment is legitimately released. It must not mint a new placement.
+    const sessions = await hosts.local().listSessionsForRun(runId);
 
     return sessions.filter(
       (session) => session.runId === runId && session.status === "live",
@@ -4255,6 +4255,7 @@ describe("Flow prompt owners through the production graph driver", () => {
       runtimeRoot: supervisor.runtimeRoot,
       executionHosts: hosts,
     }).catch(() => undefined);
+    let primaryFailure: unknown;
 
     try {
       await expect
@@ -4471,10 +4472,30 @@ describe("Flow prompt owners through the production graph driver", () => {
           })
           .where(eq(executionEvents.id, childCrash.id));
       });
+    } catch (error) {
+      primaryFailure = error;
+      throw error;
     } finally {
-      await stopRemainingRunAdapters(seeded.runId);
-      await driver;
+      const failures: unknown[] = [];
+
+      for (const release of [
+        () => stopRemainingRunAdapters(seeded.runId),
+        () => driver,
+      ]) {
+        try {
+          await release();
+        } catch (error) {
+          failures.push(error);
+        }
+      }
       prepare.mockRestore();
+      if (failures.length > 0)
+        throw new AggregateError(
+          primaryFailure === undefined
+            ? failures
+            : [primaryFailure, ...failures],
+          "Node crash fixture and cleanup failed",
+        );
     }
   }
 
@@ -4568,6 +4589,7 @@ describe("Flow prompt owners through the production graph driver", () => {
     }).catch(() => undefined);
     let released = false;
     let sibling: Awaited<ReturnType<typeof startSiblingAdapter>> | undefined;
+    let primaryFailure: unknown;
 
     try {
       sibling = await startSiblingAdapter();
@@ -4640,15 +4662,38 @@ describe("Flow prompt owners through the production graph driver", () => {
           { timeout: 30_000, interval: 25 },
         )
         .toBe("Crashed");
+    } catch (error) {
+      primaryFailure = error;
+      throw error;
     } finally {
-      if (held.observations.length > 0 && !released) held.release();
-      await stopRemainingRunAdapters(seeded.runId);
-      await sibling?.stop();
-      await driver;
+      const failures: unknown[] = [];
+      const releases: ReadonlyArray<() => Promise<unknown>> = [
+        async () => {
+          if (held.observations.length > 0 && !released) held.release();
+        },
+        () => stopRemainingRunAdapters(seeded.runId),
+        async () => sibling?.stop(),
+        () => driver,
+        () => proxy.close(),
+      ];
+
+      for (const release of releases) {
+        try {
+          await release();
+        } catch (error) {
+          failures.push(error);
+        }
+      }
       restoreProxy();
       resetRegistrarStateForTests();
       resetResolverForTests();
-      await proxy.close();
+      if (failures.length > 0)
+        throw new AggregateError(
+          primaryFailure === undefined
+            ? failures
+            : [primaryFailure, ...failures],
+          "Held crash fixture and cleanup failed",
+        );
     }
   }, 90_000);
 });
