@@ -31,6 +31,7 @@ erDiagram
         text company_id FK
         text project_id FK
         text status
+        integer revision
         integer input_revision
         integer context_revision
         jsonb requester
@@ -97,7 +98,7 @@ All new entity IDs are server-generated; timestamps UTC. Versioned closed JSON c
 | Existing schedule/trigger attempt | Nullable company/project owner pair with exactly one owner; explicit binding/scope snapshot version, existing request/receipt/fence/reserved-run identities | Preserve old project rows and request bytes; partial owner-aware unique/index keys avoid NULL loopholes; all selectors/writers updated together |
 | Existing run additions | company_id/company binding reference, immutable owner snapshot and specialist assignment link; company result-only flow has project/task/project-flow null and exact flow_revision_id/result_contract | Dedicated CHECK for company run shape, not a new run kind; owner indexes for history/pool/recovery |
 | Existing actor/human assignments | Company/project owner union and server principal binding; company role labels resolve reviewed explicit current users | Preserve existing human assignment IDs/claims/events; no fabricated project roles; same current answer authorization |
-| `specialist_assignments` | Exclusive owner, all assignment fields above, status queued default, input revision 1/context 0, created/updated times | CHECK positive revisions/known state; completed requires acceptance/timestamp, failed/cancelled require reason; terminal fields coherent; owner/status/activity and responsible-principal indexes |
+| `specialist_assignments` | Exclusive owner, all assignment fields above, status queued default, business revision 1, input revision 1/context 0, created/updated times | CHECK positive revisions/known state; completed requires acceptance/timestamp, failed/cancelled require reason; terminal fields coherent; owner/status/activity and responsible-principal indexes |
 | `specialist_input_revisions` | PK assignment/revision; immutable objective/input/ref/authority/standing/scheduled planes, digest, actor/time | Assignment FK RESTRICT; creation or accepted input update and parent revision CAS commit together |
 | `specialist_context_revisions` | PK assignment/revision; base revision, structured context and server restrictions, actor/epoch/time | Parent row lock + exact base/epoch CAS; immutable rows, no last-writer merge |
 | `specialist_owner_claims` | Assignment PK, owner/run, positive epoch, renewed_at and expires_at, explicit claim state | Owner+epoch+fresh-expiry in every write predicate; lease 120s/renew 40s, not an in-memory mutex; no slot from lease alone |

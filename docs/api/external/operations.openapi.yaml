@@ -13710,6 +13710,7 @@ components:
       additionalProperties: false
       required:
         - id
+        - revision
         - owner
         - objective
         - expectedOutcome
@@ -13725,7 +13726,13 @@ components:
         - acceptedResult
         - createdAt
         - updatedAt
+      description: The business revision is distinct from inputRevision and contextRevision. Every mutation
+        compares expectedRevision against this revision; reads expose it so clients can continue without guessing.
       properties:
+        revision:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
         id:
           type: string
           minLength: 1

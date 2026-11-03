@@ -459,3 +459,26 @@ cases:
       publishedAt: "2026-11-03T09:00:00.000Z"
       collectedAt: null
       supersededByRevision: null
+
+  - id: assignment-read-exposes-independent-business-revision
+    surfaces: [web, external]
+    schema: CBAssignment
+    valid: true
+    value:
+      id: assignment_example
+      revision: 7
+      owner: { kind: company, companyId: company_example }
+      objective: Diagnose the configured component.
+      expectedOutcome: Return an evidence-linked diagnosis.
+      requester: { kind: user, id: user_example, runId: null, attemptId: null }
+      responsible: { kind: agent, id: specialist_example, runId: null, attemptId: null }
+      inputRevision: 2
+      contextRevision: 4
+      status: waiting_input
+      targetIds: [target_example]
+      verification: []
+      runIds: [run_example]
+      blockers: [The component identity needs clarification.]
+      acceptedResult: null
+      createdAt: "2026-11-04T00:00:00Z"
+      updatedAt: "2026-11-04T00:01:00Z"
