@@ -41,8 +41,10 @@ Return exactly one final fenced block labelled json maister:output. Its value mu
 {"schemaVersion":1,"findings":[],"knowledgeProposals":[],"selection":[]}.
 Each finding has id, assertion, basis (observed or inferred), supporting and contradicting reference arrays,
 missingEvidence, limitations, openQuestions, and sourceFindings. Use at most 32 findings.
-References identify an actual accessible knowledge record at its returned revision, an original witness,
-or an exact collected result revision. Preserve returned version/content witnesses when present.
+Use minimal exact references: {kind:"knowledge",id,revision}, {kind:"witness",id}, or {kind:"result",id,revision}.
+An immutable witness ID binds its captured source version and digest; inspect its evidence view for those details.
+Do not retype optional long digests or version strings unless explicitly requested. If supplied, they must match exactly.
+Reducers must preserve any optional version/digest fields already present in collected child references.
 Do not fabricate an ID, citation, timestamp, source, author, permission or confirmation.
 When proof is missing, leave reference arrays empty and populate missingEvidence with
 {state:"absent",reason:"the specific missing check"}; preserve stale/unknown applicability and unresolved questions.

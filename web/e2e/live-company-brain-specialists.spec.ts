@@ -142,6 +142,14 @@ async function inspectTree(rootId: string): Promise<RunProof[]> {
       [rootId],
     );
 
+    const states = z
+      .array(z.object({ runId: z.string(), status: z.string() }))
+      .parse(rows.rows);
+
+    expect(
+      states.filter((run) => run.status !== "Done" && run.status !== "Review"),
+      "Every required child must complete with a valid result before this scenario qualifies",
+    ).toEqual([]);
     return z.array(proofSchema).parse(rows.rows);
   });
 }
