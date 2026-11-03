@@ -51,10 +51,37 @@ policy. The database invalidates semantic inputs across all task-row writers,
 blocking clarification mutations and default-target updates, with transactional
 content-free outbox facts. Source-run → task remains the write lock order.
 
-
 0209 declares the task-qualification writer capability on production and owned test
 connections. Undeclared old writers cannot mutate governed task or admission rows.
 It also persists the agent declaration and write-once first-dispatch check receipt.
 Default legacy DB values preserve upgraded data; registration assigns new-project
 required policy. Independent request admission and execution-child proof are checked
 by their existing service owners and database constraints, never inferred from text.
+
+### Human authoring payload identity (Implemented — LA11)
+
+The optional human adapter reuses the immutable `payload_digest` with a separate
+canonical hash domain (`kind=human_authoring`, version, project/task/author and
+original human request). Machine endpoint hashing and historical values remain
+unchanged. Exact authoring replay checks this digest before resolving live
+references, under the existing task/key serialization and current access checks;
+a different adapter payload, author or human payload cannot reuse that receipt.
+No additive column or migration is necessary for this adapter.
+
+### Flag provenance (Implemented — additive 0223)
+
+`tasks.triage_flag_origin` is nullable text in the closed set `qualification`,
+`explicit`, `dispatch_failure`, `unknown`. `tasks_triage_flag_origin_check`
+requires a non-null origin exactly while `triage_status='flagged'`; otherwise
+origin is null. No default fabricates provenance for new flags. Populated
+upgrade backfills only existing flagged rows to `unknown`; task and assessment
+history are retained. Existing explicit/dispatch hold writers increment the
+existing task revision on each assertion. Human resolution compares that
+revision and origin in the same transaction that clears both columns and the
+auto arm. No new table, history rewrite, automatic authority or down migration.
+
+`task_launch_intents_01_manual_hold` locks only the existing task row after
+shared reservation fencing. It refuses uncommitted manual admission/reactivation
+in either reservation lane while an independent hold remains, including first
+dispatch commitment. Held/cancelled/failed/settled history and already committed
+same-run continuation retain their receipts. No new advisory or intent locks.

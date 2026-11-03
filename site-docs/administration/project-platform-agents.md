@@ -90,6 +90,14 @@ Launch the enabled attachment by hand. A standalone agent creates a normal Run
 with `run_kind=agent`. An agent that drives a same-package Flow creates a Flow
 Run and injects its persona into the coding nodes.
 
+For code-delivery against an existing task, review the task revision, actual
+agent/workspace and runner/model in its launch preview, then press the separate
+Launch action. The accepted request can wait before a Run exists; follow its
+receipt and eventual Run link. A Flow-driving agent uses its declared Flow.
+Missing or failed triage does not require a manual assessment form for an
+authorized manual launch. [Task launch](/product-tour/tasks-and-runs#launch-deliberately)
+explains the independent automatic and manual decisions.
+
 Open the Run to inspect its session, prompt, tool activity, requests for human
 input, token use, cost, and terminal result. MAIster quarantines a writable
 agent when the dirty-workspace guard detects changes outside its declared
@@ -101,7 +109,6 @@ contract; the project admin must inspect and release it.
 - [Repository and project packages](/product-tour/project-repository-and-packages)
 - [Project Brain and platform agents](/concepts/project-brain-and-agents)
 - [Run history and Run workspace](/product-tour/run-history-and-workbench)
-
 
 ## Deliverable kind
 

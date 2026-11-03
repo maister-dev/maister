@@ -179,7 +179,7 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | Getting Started | `docs/getting-started.md` | Install, dev workflow, first run |
 | Russian Guide | `docs/ru/README.md` | Purpose, workflow, operator guide |
 | Supervisor | `docs/supervisor.md` | ACP daemon: HTTP+SSE API, lifecycle, durable events, runtime objects, env vars |
-| Database Schema | `docs/database-schema.md` | 153 tables, FK cascade chain, indexes, Drizzle workflow |
+| Database Schema | `docs/database-schema.md` | 155 tables, FK cascade chain, indexes, Drizzle workflow |
 | Error Taxonomy | `docs/error-taxonomy.md` | `MaisterError` codes — when each fires, what the UI does |
 | Configuration | `docs/configuration.md` | `maister.yaml` v2 + `flow.yaml` v1 + `form_schema` versioning + env vars |
 | Project configuration persistence | `docs/system-analytics/project-config-persistence.md` | Reviewed export, commits, recovery and push; Implemented |

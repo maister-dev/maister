@@ -1,6 +1,20 @@
 # Task launch and preparation persistence
 
-**Persistence and acceptance slice implemented; dispatch cutover designed — ADR-200/201.** Main-lineage migration `0215_agent_preparation` adds preparation ownership. `0216_task_launch_admission` adds immutable intents, v2 run bindings and writer guards; `0217_task_launch_events` extends the complete event-kind constraint. `0218_task_launch_commit_shape` restricts canonical commit IDs; `0219_task_launch_execution_snapshots` freezes complete execution input/capability identities; INSERT-only `0220_task_launch_token_origin` validates bearer-origin identity. Each has matching generated schema/journal/snapshot metadata; transport and dispatch cutover remain in progress. No Brain migration or historical assessment/run snapshot rewrite. Test databases apply these migrations; this task performs no production migration.
+**Implemented locally — ADR-200/201; final combined acceptance pending.** Main-lineage migrations `0215`–`0225` establish preparation ownership, immutable admission, shared reservations, frozen execution inputs, first-dispatch evidence and standalone-agent/derived-child guards. The migration ledger below identifies each additive change. Generated schema, journal and snapshots travel with SQL. Historical assessments, run snapshots and accepted input digests are not rewritten. Fresh/populated test databases exercise upgrades; this work does not migrate production.
+
+| Migration                              | Persistence change                                                                                                                         |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `0215_agent_preparation`               | Durable run/assignment/epoch preparation operations and ownership constraints.                                                             |
+| `0216_task_launch_admission`           | Immutable launch intents, v2 run admission/binding and compatibility writer guards.                                                        |
+| `0217_task_launch_events`              | Complete event-kind constraint including launch-state facts.                                                                               |
+| `0218_task_launch_commit_shape`        | Canonical commit-ID shapes.                                                                                                                |
+| `0219_task_launch_execution_snapshots` | Complete execution input v2 and resolved capability identities.                                                                            |
+| `0220_task_launch_token_origin`        | Credential-free bearer origin validated on new intent writes.                                                                              |
+| `0221_task_launch_shared_reservation`  | Shared ordinary reservation, cancellation/replacement and historical occupancy guards.                                                     |
+| `0222_task_launch_preparation`         | Immutable pre-run identity, preparation phases, capacity ownership and materialization guards.                                             |
+| `0223_task_triage_flag_origin`         | Distinct qualification findings and explicit/dispatch/unknown holds.                                                                       |
+| `0224_task_launch_dispatch_receipt`    | Write-once first-dispatch witness bound to run, assignment/epoch and accepted digests.                                                     |
+| `0225_task_launch_agent_preparation`   | Standalone-agent preparation, exact agent/Flow binding, derived consensus/carrier admission and compatible historical continuation guards. |
 
 ## Entities and cardinalities
 
@@ -60,8 +74,7 @@ Already checkedAt does not establish actual dispatch or frozen input. Hold incom
 - [Qualification persistence](task-qualification-domain.md), [runs](runs-domain.md), [operational agents](operational-agents-domain.md).
 - [Database reference](../database-schema.md), [generated implemented ERD](erd.dbml).
 
-
-## Frozen execution format v2 (designed before dispatch consumption)
+## Frozen execution format v2
 
 Input v2 captures the ordered answered clarification projection actually used by
 execution, including nonblocking answers and sequence numbers, under its existing
@@ -79,12 +92,13 @@ Flow gates and runner resolution remain authoritative; changing one of these
 inputs before acceptance/dispatch cannot silently select a different executor.
 
 An additive migration accepts historical snapshot formats without rewriting them,
-requires input/settings v2 for new intent/run bindings, and raises the launch
-writer floor to v2. The public receipt remains schemaVersion 1 and exposes only
+requires input/settings v2 for new intent/run bindings. Migration `0219` raised
+the launch writer floor to v2; current preparation/binding uses the later v3
+compatibility floor. The public receipt remains schemaVersion 1 and exposes only
 its existing metadata fields. This change does not version the seven-check result
 or alter existing qualification digests.
 
-## Bearer-origin identity (internal acceptance implemented)
+## Bearer-origin identity
 
 An automatic bearer basis additionally retains a bounded version-1 origin object:
 `kind=token`, token ID/kind, original nullable project scope, owner user, agent,
@@ -96,3 +110,50 @@ scope, grants, expiry, owner and turn/parent availability. Dispatch repeats thos
 checks. Existing system automatic bases and all historical receipts remain
 unchanged; no absent historical bearer identity is reconstructed from mutable
 token rows.
+
+## Intent-owned preparation journal
+
+Migration `0222_task_launch_preparation` adds nullable `preparationIdentity`,
+`preparationPhase` and `cleanupState` to the existing intent. Historical rows keep
+NULL; no Run or workspace is invented to record preparation. Before the first
+Git mutation, the scheduler transaction allocates a fixed run UUID, monotonically
+allocated task attempt, branch, managed worktree path, canonical parent repository,
+resource/incarnation IDs, exact base commit and input/settings digests. The identity
+is immutable once written and is not part of the public source-free receipt.
+
+Preparation phases are `reserved`, `checkout_ready`, `materializing`, `materialized`
+and `run_bound`. Advancement requires the current unexpired intent lease; an expired
+owner cannot publish a phase. A successor retains the same identity. A completed
+materialization may be reused only after checking its owned receipt; interrupted
+materialization is preserved and held for reconciliation, never silently deleted
+or accepted as complete. `cleanupState` records `pending`, `removed` or `retained`
+after cancellation/failure/hold. Removing the worktree requires the same physical
+repository fence, positive identity/provenance, no bound/in-use run and proven
+quiescence. Lease expiry alone never proves quiescence.
+
+An intent in preparation reserves one capacity slot; run binding transfers that
+slot exactly once under the scheduler lock. A bound Pending run retains that
+reservation until the atomic first-dispatch decision or an explicit hold/cancel.
+If live capacity or automatic reserve/project share no longer permits dispatch,
+`run_bound -> queued` records `launch_capacity_wait` and releases that slot before
+any model command. The same immutable Run, workspace and preparation identity
+remain linked. A later claim verifies and reuses that workspace without allocating
+another attempt or replaying materialization. Terminalization also settles a bound
+Run while its intent is queued or being reclaimed.
+The first-dispatch transaction commits the immutable request receipt and Running
+transition together. Every later driver executes the frozen request and retains
+normal host/assignment/workspace fences. Git and filesystem work remain outside
+SQL transactions.
+
+Migration `0224_task_launch_dispatch_receipt` freezes the first commitment's
+Run, current assignment ID/epoch, input/settings digests and a database timestamp
+at millisecond precision. A timestamp alone cannot mint or replace this receipt.
+Continuation on a later assignment keeps the original first-dispatch receipt and
+must acquire its own current execution reservation and effect fences. Existing
+historical NULL receipts remain NULL.
+
+The `v3` writer compatibility floor covers new Run creation and acquisition of
+slot-holding status. A historical active run can continue within its existing
+slot under an older writer; a new Run or reactivation must use the counter-aware
+writer. This database GUC identifies compatible binaries and provides no user
+authorization.

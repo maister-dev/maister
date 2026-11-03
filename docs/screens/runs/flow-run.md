@@ -54,6 +54,22 @@ timeline. Raw command bodies and server output are not copied into these
 messages. A failed node does not show a successful readiness summary; missing
 or unrecognized error codes receive the localized unknown-cause explanation.
 
+## Admission and failure provenance
+
+The Run consumes its accepted task input and settings, including answered
+clarifications, pinned target/assets and runner identity. Later task edits cannot
+silently change an executing request. A same-run recovery preserves the original
+admission/input and requires current recovery authority; a successor retry is a
+new linked decision. The [launch contract](../../system-analytics/task-launch-admission.md)
+owns these rules and compatibility limits for historical receipts.
+
+An agent preparation failure before model dispatch is shown separately from a
+negative task assessment. The result explains that the model did not start and
+exposes the infrastructure cause, remediation and expandable safe diagnostics (stage,
+operation, assignment/epoch and cause chain when recorded). A missing baseline is
+not presented as successful preparation; missing historical causes remain unknown.
+Operational runs still have no promotion or Git delivery actions.
+
 ## Roles & capabilities
 
 | Role                  | Sees / does                                                                                                         |
@@ -319,7 +335,7 @@ this screen owns only the surface. All copy comes from the `run` namespace.
   (`?git=update`, [`git-panel.md`](git-panel.md)).
 - **Sync-in-progress panel** — while an attempt runs it shows the durable
   `run_sync_attempts` phase (`starting → rebasing → agent_running → verifying →
-  pushing`), resolved server-side by `buildRunSyncPanelData`. It is TEXT ONLY —
+pushing`), resolved server-side by `buildRunSyncPanelData`. It is TEXT ONLY —
   there is no Stop control (a runaway resolver is bounded by the
   `SYNC_ATTEMPT_MAX_MINUTES` active-time cap, not by a UI action). A resolver
   requesting permission surfaces through the normal HITL / `NeedsInput` path, not
@@ -404,15 +420,15 @@ base-to-run-to-target meaning. Both paths must state that distinction in EN/RU.
 Two operator affordances share this page and are never both actionable at once,
 because they enter from different run statuses.
 
-**Handoff panel (rework claim).** On a `Review` run the panel offers *Take for
-rework*; on a `HumanWorking` run held by an open rework claim it offers *Return
-to flow* and *Release*. Availability, the refusal reason, and the resolved
+**Handoff panel (rework claim).** On a `Review` run the panel offers _Take for
+rework_; on a `HumanWorking` run held by an open rework claim it offers _Return
+to flow_ and _Release_. Availability, the refusal reason, and the resolved
 re-entry node are all server-owned — the client renders what it is given and
 never re-derives eligibility, so a disabled button always carries the server's
 own sentence for why. While a claim is open the panel shows the local checkout
 context (branch + worktree path) through the same block the ADR-030 takeover
 uses; the field renders the abbreviated path while the copy button puts the real
-one on the clipboard. A non-fast-forward *Return* renders the server's structured
+one on the clipboard. A non-fast-forward _Return_ renders the server's structured
 remediation — the exact command, the local/remote SHAs, and how far the branch
 has diverged — as copyable text rather than a generic error.
 
@@ -420,8 +436,8 @@ has diverged — as copyable text rather than a generic error.
 orchestrator`) carries an interrupt trigger; `cli` and `check` nodes refuse with
 a message that names the deferral rather than failing obscurely. Once the run has
 parked with a `node_interrupt` HITL, the decision surface renders the four
-server-supplied options with *Restart node* marked as the one-click default,
-*Resume* and *Stop* beside it, and the rarer *Restart from* behind a disclosure
+server-supplied options with _Restart node_ marked as the one-click default,
+_Resume_ and _Stop_ beside it, and the rarer _Restart from_ behind a disclosure
 toggle so it does not compete with the default. A correction textarea and a
 workspace-policy selector apply to both restart options. Options the server
 marked unavailable render disabled with their reason — the safety cap disables
@@ -439,11 +455,11 @@ its event budget is exhausted. It resumes automatically when the host catches
 up; you can also stop or restart it.") in place of the operator-interrupt lead
 line,
 selected by the row's `schema.cause`. The four options are unchanged, but
-*Resume* — not *Restart node* — is the marked one-click default and the primary
+_Resume_ — not _Restart node_ — is the marked one-click default and the primary
 (amber) button: a restart would discard the ACP context the park preserved and
 spend an operator restart (the server's option matrix sets `defaultOptionId`
 from the cause; ADR-183 amendment 2026-09-28). The
-system answers *Resume* itself when the host recovers, and a card answered that
+system answers _Resume_ itself when the host recovers, and a card answered that
 way disappears like any answered HITL.
 
 **Queued by host pressure (Implemented — ADR-183).** Any `Pending` run shows an

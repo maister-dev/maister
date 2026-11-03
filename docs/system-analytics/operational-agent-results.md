@@ -1,6 +1,6 @@
 # Operational agent results
 
-**Designed preparation extension:** [agent workspace preparation](agent-preparation.md) adds durable pre-session ownership and a shared physical disposal fence; the existing implementation below remains the current boundary until cutover.
+**Current preparation boundary:** [agent workspace preparation](agent-preparation.md) owns the implemented durable preparation claim, baseline, first-command handoff and shared physical disposal fence. The execution/result contracts below continue after that boundary. Local validation does not establish deployed or live-provider qualification.
 
 ## Purpose
 
@@ -51,7 +51,22 @@ sequenceDiagram
 ### Value schema and semantics
 
 ```json
-{"schemaVersion":1,"outcome":"success","summary":"Complete scan; no new work.","coverage":{"state":"complete","remainingKnown":0},"counts":{"scanned":0,"attempted":0,"completed":0,"failed":0,"skipped":0,"created":0},"references":[],"diagnostics":[]}
+{
+  "schemaVersion": 1,
+  "outcome": "success",
+  "summary": "Complete scan; no new work.",
+  "coverage": { "state": "complete", "remainingKnown": 0 },
+  "counts": {
+    "scanned": 0,
+    "attempted": 0,
+    "completed": 0,
+    "failed": 0,
+    "skipped": 0,
+    "created": 0
+  },
+  "references": [],
+  "diagnostics": []
+}
 ```
 
 The exact wire fields are specified in the web OpenAPI operational components.

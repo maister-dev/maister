@@ -1,6 +1,6 @@
 # External operations domain
 
-**Designed admission extension:** [explicit task launch](task-launch-admission.md) separates manual authorization from qualification; the existing implementation below remains the v1 boundary until cutover. Qualification content/publication protections remain unchanged.
+**Current launch boundary:** [explicit task launch](task-launch-admission.md) owns the implemented manual/automatic admission, immutable request and dispatch contract. New task-delivery allocations use that boundary; historical v1 receipts remain readable without invented authorization. Qualification content and publication remain separate. Final combined acceptance is tracked by the active implementation plan; this is not production qualification.
 
 > **Status: Implemented, expanded by migration `0031_token_actor_scope_support.sql`.**
 > Project API tokens, user-owned tokens, route-scope enforcement, token audit log,
@@ -64,8 +64,8 @@ surface exists.
 - **Agent tokens** (Implemented, ADR-089) — `token_kind='agent'` rows with
   an `agent_id` FK: per-LAUNCH ephemeral credentials for platform-agent runs.
   Issued at agent-run spawn with exactly the fixed scope set `tasks:read,
-  tasks:update, tasks:triage, comments:read, comments:create, relations:read,
-  relations:create, relations:delete, flows:read, runners:read`; injected
+tasks:update, tasks:triage, comments:read, comments:create, relations:read,
+relations:create, relations:delete, flows:read, runners:read`; injected
   server-side into the
   session's MCP-facade `mcpServers` entry; revoked at the run's terminal
   transition, on attachment detach, and by GC. Verification maps them to the
@@ -134,7 +134,7 @@ surface exists.
   Every denial keeps the existing **existence-hidden 404** — an agent must never be
   able to probe whether a sibling project exists — accompanied by a WARN carrying
   `reason: "no_link" | "link_disabled" | "reach_off" | "scope_not_in_subset" |
-  "chain_depth_exhausted"`, and the reasons stay indistinguishable from the
+"chain_depth_exhausted"`, and the reasons stay indistinguishable from the
   response. The failure audit row records the **target** project in
   `token_audit_log.project_id` with `actor_label = agent:<id>`. Because
   `projectActionForScope` ends in `?? "readBoard"`
@@ -248,8 +248,8 @@ surface exists.
     `toTaskKey: { type: "string" }` as the alternative to
     `toNumber: { type: "integer", minimum: 1 }`, and both `kind` enums gain
     `requires` — yielding `{ slug, taskId, kind:
-    "blocks"|"depends_on"|"parent_of"|"requires"|"duplicate_of", toNumber?,
-    toTaskKey? }` with `required: ["slug", "taskId", "kind"]` and exactly one
+"blocks"|"depends_on"|"parent_of"|"requires"|"duplicate_of", toNumber?,
+toTaskKey? }` with `required: ["slug", "taskId", "kind"]` and exactly one
     locator supplied. The tool **descriptions** change with the schema: the target
     may be a per-project number OR a platform-unique `KEY-N`, and `requires` is
     success-gated — it does NOT release on `Abandoned`/`Failed`, so a model that
@@ -273,35 +273,35 @@ surface exists.
   [project-brain.md](project-brain.md).
   - `memory_recall` (scope `memory:read`, `GET`): `inputSchema` =
     `{ slug: string, query: string(1..2000), limit?: integer(1..50, default 5),
-    kinds?: ("lesson"|"observation"|"state_fact"|"decision"|"direction")[],
-    minConfidence?: number(0..1) }` — an unknown `kinds` value → 422 `CONFIG`
+kinds?: ("lesson"|"observation"|"state_fact"|"decision"|"direction")[],
+minConfidence?: number(0..1) }` — an unknown `kinds` value → 422 `CONFIG`
     (not silently ignored). Returns the owned/indexed recall union and writes a
     `brain_snapshots` audit row (`run_id` = the token's `boundRunId` when the
     token is run-bound, else NULL). Indexed hits include canonical pointers and
     capped previews, never file-content payloads.
   - `memory_retain` (scope `memory:write`, `POST`): `inputSchema` =
     `{ slug: string, content: string(≤ 32000 chars), kind:
-    "lesson"|"observation"|"state_fact"|"decision"|"direction", title?:
-    string(1..512), tags?: string[] (≤ 10 items, each ≤ 64 chars) }` — body
+"lesson"|"observation"|"state_fact"|"decision"|"direction", title?:
+string(1..512), tags?: string[] (≤ 10 items, each ≤ 64 chars) }` — body
     carries NO project id. Embeds and **dedup-or-reinforces** or inserts at
     confidence₀. `decision`/`direction` retain is refused when a registered
     canonical home covers the kind.
   - `memory_clusters` (scope `memory:read`, `GET
-    /api/v1/ext/projects/{slug}/memory/clusters`): server-computed recurring
+/api/v1/ext/projects/{slug}/memory/clusters`): server-computed recurring
     evidence clusters for the improver. It is read-only and returns evidence ids,
     recurrence, summary, and `clusterHash`.
   - `memory_propose` (scope `memory:write`, `POST
-    /api/v1/ext/projects/{slug}/memory/proposals`): creates a
+/api/v1/ext/projects/{slug}/memory/proposals`): creates a
     `brain_proposals` row. Project autonomy may immediately auto-draft allowed
     low-risk catalog proposals into unpublished authored drafts, but the route
     never publishes or writes repo files. Duplicate `clusterHash` values are
     idempotent and return the existing proposal status.
-  All memory tools are gated by `brain_enabled` + the `can_read_brain`/`can_write_brain` link
-  axis. When the Brain migration lineage is not provisioned, tools stay
-  **listed** (static `TOOL_SPECS`) but fail closed with `PRECONDITION`; a transient embedding outage returns
-  `EMBEDDING_UNAVAILABLE` (503, retryable) while a deterministic provider 4xx maps
-  to 422 `CONFIG`. Ext rate limiting remains deferred until the multi-tenant
-  middleware exists.
+    All memory tools are gated by `brain_enabled` + the `can_read_brain`/`can_write_brain` link
+    axis. When the Brain migration lineage is not provisioned, tools stay
+    **listed** (static `TOOL_SPECS`) but fail closed with `PRECONDITION`; a transient embedding outage returns
+    `EMBEDDING_UNAVAILABLE` (503, retryable) while a deterministic provider 4xx maps
+    to 422 `CONFIG`. Ext rate limiting remains deferred until the multi-tenant
+    middleware exists.
 
 ## State machine — token lifecycle
 
@@ -323,6 +323,7 @@ stateDiagram-v2
 ```
 
 Transitions:
+
 - `[*] → active`: session-auth `POST /api/projects/{slug}/tokens` with
   `requireProjectAction(editSettings)`. Generates a 256-bit random token string,
   stores `prefix` + `sha256` hash, returns the plaintext once; `expires_at` is
@@ -356,6 +357,7 @@ stateDiagram-v2
 ```
 
 Transitions:
+
 - `pending → passed|failed`: the gate-report endpoint atomically updates the
   `gate_results` row, records a `test_report` artifact, and writes a success
   `token_audit_log` row — all in one `db.transaction`.
@@ -643,10 +645,10 @@ no route or tool accepts a user id. Behaviour contracts:
   `librarianTurnToken` scheme (`handleExt` option `idempotency: "required"`);
   the MCP facade sends each effectful tool's `operationKey` argument as the
   header. Same key + same canonical digest returns the stored result; same key
-  + different digest → `CONFLICT{reason:"idempotency_payload_mismatch"}`; a new
-  key matching a succeeded operation's digest in the same segment →
-  `CONFLICT{reason:"duplicate_of_operation"}` unless `allowDuplicate`. Read
-  routes never carry an operation.
+  - different digest → `CONFLICT{reason:"idempotency_payload_mismatch"}`; a new
+    key matching a succeeded operation's digest in the same segment →
+    `CONFLICT{reason:"duplicate_of_operation"}` unless `allowDuplicate`. Read
+    routes never carry an operation.
 - **Human-only boundary.** Human HITL answers, promotion and discard are never
   reachable with the token; they appear in the librarian panel as confirmation
   cards whose click runs through a session route as `HitlActor{kind:"user"}`.
@@ -846,7 +848,7 @@ allow-list come from one source with a drift test
   existence-hiding rule is deliberately not applied — ADR-155 records the
   asymmetry, so a reviewer does not "fix" it back to 404. (Designed)
 - **Agent reach denied** (`no_link | link_disabled | reach_off |
-  scope_not_in_subset | chain_depth_exhausted`) → existence-hidden 404 + failure
+scope_not_in_subset | chain_depth_exhausted`) → existence-hidden 404 + failure
   audit on the target project + a WARN naming the reason; the five reasons MUST NOT
   be distinguishable from the response, and the agent MUST NOT be able to infer
   whether the project exists. (Designed)
@@ -946,6 +948,24 @@ a global personal token with exact `hitl:respond:human`; `*` is insufficient.
   hash compare), `web/app/api/v1/ext/`, `web/app/api/projects/[slug]/tokens/`,
   `web/lib/flows/graph/evidence-readiness.ts` (extended for `external_check`),
   `mcp/` (`@maister/mcp` workspace package).
+
+## Task-launch resource
+
+New `/api/v1/ext/task-launch-intents` writes and the `task_launch*` MCP tools use
+the common immutable admission service. Options are read-only; launch/replace
+carry the displayed task revision/settings token and stable idempotency key.
+Status returns source-free metadata, not protected task input. Cancellation,
+replacement and uncertain replay retain their exact operation scope and current
+authority checks. JSON fields cannot construct a human actor or server-source
+capability; a user-owned bearer token still uses automatic or parent admission.
+
+The existing `/api/v1/ext/runs` compatibility adapter requires the same optimistic
+witnesses and reports accepted pending work without inventing a Run ID. Existing
+historical receipts remain readable; they do not grant new launch authority.
+[Task launch admission](task-launch-admission.md) owns policy, scope, first dispatch
+and source matrices; [external OpenAPI](../api/external/operations.openapi.yaml)
+owns the exact request/response/error shapes and scopes. These paths use existing
+audit/operation-ledger and attention invalidation; no client polling is added.
 
 ## Scheduled request privacy (Implemented)
 

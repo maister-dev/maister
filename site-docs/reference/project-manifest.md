@@ -79,7 +79,6 @@ Unknown schema versions, duplicate Flow identifiers, empty sources or versions,
 and unresolved runner references fail configuration validation. MAIster reports
 the error and does not guess a replacement.
 
-
 ## Incoming qualification policy
 
 `project.task_qualification: required | legacy` sets the project override.
@@ -88,3 +87,8 @@ tasks remain explicit legacy until opted in; new projects default required.
 Changing this setting requires project configuration permission. Required task
 holds survive a later policy change. Qualification-capable core packages require
 engine 3.10.0 and required project policy before activation.
+
+This controls qualification policy, not a transferable launch grant. New automatic
+task execution still requires a current accepted Ready assessment. An authorized
+[manual Launch](/product-tour/tasks-and-runs#launch-deliberately) is a separate
+one-time decision and does not require or overwrite that assessment.

@@ -1,6 +1,6 @@
 # Execution hosts domain
 
-**Designed preparation extension:** [agent workspace preparation](agent-preparation.md) adds durable pre-session ownership and a shared physical disposal fence; the existing implementation below remains the current boundary until cutover.
+**Current preparation boundary:** [agent workspace preparation](agent-preparation.md) owns the implemented durable preparation claim, baseline, first-command handoff and shared physical disposal fence. The execution/result contracts below continue after that boundary. Local validation does not establish deployed or live-provider qualification.
 
 > **Status: Implemented foundations; stabilization in progress** (AB-01–17 below).
 > AB-01–04 qualified in S1 and AB-05–08/10 in S2 (prompt owners, single terminal

@@ -22,8 +22,8 @@ One row per file — this table is the **canonical index** of the folder
 
 | Domain | File | What it covers |
 | ------ | ---- | -------------- |
-| Task launch admission | [`task-launch-admission.md`](task-launch-admission.md) | Designed: explicit manual authority, qualified automation, immutable requests and dispatch. |
-| Agent preparation | [`agent-preparation.md`](agent-preparation.md) | Designed: fenced physical preparation, baseline, session handoff and cleanup. |
+| Task launch admission              | [`task-launch-admission.md`](task-launch-admission.md)                                   | Implemented locally: explicit manual authority, qualified automation, immutable requests and dispatch; final combined acceptance tracked by the active plan.                                                                                                                                                                                                                                                                                  |
+| Agent preparation                  | [`agent-preparation.md`](agent-preparation.md)                                           | Implemented locally: fenced physical preparation, baseline, session handoff and cleanup; deployed qualification is separate.                                                                                                                                                                                                                                                                                                                  |
 | Scheduled agent requests | [`scheduled-agent-requests.md`](scheduled-agent-requests.md) | Implemented: immutable per-cron invocation input, delivery and protected history. |
 | Agent activity history | [`agent-activity-history.md`](agent-activity-history.md) | Implemented: active executions and retained run/attempt history. |
 | Agent incidents | [`agent-incidents.md`](agent-incidents.md) | Implemented: quiet grouped attention and causal recovery. |

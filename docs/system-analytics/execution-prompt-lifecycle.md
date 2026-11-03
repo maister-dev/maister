@@ -1,6 +1,6 @@
 # Execution prompt lifecycle
 
-**Designed preparation extension:** [agent workspace preparation](agent-preparation.md) adds durable pre-session ownership and a shared physical disposal fence; the existing implementation below remains the current boundary until cutover.
+**Current preparation boundary:** [agent workspace preparation](agent-preparation.md) owns the implemented durable preparation claim, baseline, first-command handoff and shared physical disposal fence. The execution/result contracts below continue after that boundary. Local validation does not establish deployed or live-provider qualification.
 
 **Status:** Implemented short-lived admission, private v2 request/owner storage and shared canonical-event/receipt reconciliation. Request-bound receipt/event v2 and verified immutable command-output manifests are implemented on the explicit v2 development path. Unknown-admission reconciliation, frozen-request recovery, create/ACP binding fences and the registered owner application engine are implemented. Every domain adapter is implemented (Flow node/gate, consensus, agent, scratch and local-package, gate chat, sync resolver), the prompt owner is mandatory at both the client boundary and the ledger constraint, and state-aware command/receipt retirement is implemented as a two-sided handshake (AB-05–07/10).
 

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-**Designed — ADR-201.** Own the interval from preparation claim through physical checkout/baseline/materialization to durable session handoff, including terminal cancellation and disposal. Existing session/create/prompt ownership governs model execution after handoff. Integrity validation and operational result publication remain mandatory.
+**Implemented — ADR-201.** Own the interval from preparation claim through physical checkout/baseline/materialization to durable session handoff, including terminal cancellation and disposal. Existing session/create/prompt ownership governs model execution after handoff. Integrity validation and operational result publication remain mandatory. Local regression evidence and outstanding combined qualification belong to the active implementation plan; no production upgrade is implied.
 
 ## Domain entities
 
@@ -62,6 +62,13 @@ sequenceDiagram
 ### Ownership and locking
 
 Claim is scoped to run, exact assignment ID/epoch, canonical physical resource ID/incarnation and operation token. Claim/renew/publish/release use current DB time and short run/assignment-fenced transactions. Terminal/released runs cannot claim preparation. Completed same-owner receipts and identity are validated and reused; absent baseline is not permission to remove/add a checkout.
+
+Several admitted agent Runs may borrow one shared writable root. The physical
+resource incarnation stays stable, but a different Run captures its own current
+operational commit and baseline under that resource fence. Only same-Run re-entry
+inherits its previously resolved commit. The accepted root seed remains part of
+the launch witness; borrower cleanup never removes the root workspace. These
+rules are enforced by preparation ownership and the accepted shared-root resolver.
 
 The implementation acquires the physical fence before the short claim transaction. This permits retiring an abandoned durable publisher only after its filesystem/Git activity is proven quiescent. No checkout mutation precedes the claim, and no SQL transaction waits for physical ownership. Repository resources reuse the existing common-Git-directory mutation fence (including durable process-group registration and gated Git start). This intentionally serializes preparation and cleanup within one repository; its key remains stable across assignment epochs and disposable checkout paths. Plain directories use the existing SQLite mutex under the persistent manager runtime root because that branch starts no Git children. Context-mount locks follow the main resource fence.
 

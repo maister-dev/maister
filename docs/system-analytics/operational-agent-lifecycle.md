@@ -1,6 +1,6 @@
 # Operational agent lifecycle
 
-**Designed preparation extension:** [agent workspace preparation](agent-preparation.md) adds durable pre-session ownership and a shared physical disposal fence; the existing implementation below remains the current boundary until cutover.
+**Current preparation boundary:** [agent workspace preparation](agent-preparation.md) owns the implemented durable preparation claim, baseline, first-command handoff and shared physical disposal fence. The execution/result contracts below continue after that boundary. Local validation does not establish deployed or live-provider qualification.
 
 ## Purpose
 
@@ -61,7 +61,7 @@ flowchart TD
 
 | Run state                                        | Owned resource                         | Continuation / disposal                                                                                        |
 | ------------------------------------------------ | -------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| Pending                                          | allocation/preparation only            | no cleanup while launch claim may win; failed allocation compensates its own resources                         |
+| Pending                                          | allocation/preparation only            | retain while any preparation/launch owner can act; cleanup requires fenced quiescent ownership                 |
 | Running/NeedsInput                               | live session or business question      | normal permission/question handling; no destructive cleanup                                                    |
 | NeedsInputIdle or nonterminal host-pressure park | checkpoint and original contract       | retain; request-bound continuation under existing admission cap                                                |
 | Done/Failed/Abandoned                            | owned worktree/plain/detached resource | verify quiescence, preserve unexpected bytes, dispose promptly                                                 |
@@ -75,18 +75,20 @@ is different. Retry never rewrites old history or blindly replays external effec
 
 ### Integrity boundary
 
-Before dispatch capture source HEAD/branch plus a protected baseline of exact
-materialization paths, types, hashes/targets and prior ownership. Initial
-operational context descriptors are persisted before checkout creation, so a
-partial preparation failure retains a durable cleanup owner. Existing target
-paths are refused rather than overwritten. Preparation and context disposal
-share a per-run OS-backed materialization mutex outside source checkouts;
-preparation revalidates the running owner after acquiring it. Cancellation
-cannot release absent paths and then let the old preparation create them.
-Contention defers cleanup through its existing retry owner. A process crash
-releases the mutex while committed descriptors remain available for cleanup.
-Git effects stay outside Postgres transactions. Context mounts are prepared
-before that first baseline is persisted.
+Before model dispatch, `claimAgentPreparation` and `openAgentPreparation` bind
+checkout creation, baseline and materialization to the exact Run/assignment epoch
+under stable physical exclusion. Repository operations reuse the common-Git
+mutation fence; plain directories retain their persistent manager-side mutex.
+A baseline-less re-entry cannot delete/recreate an in-use checkout, and an expired
+lease alone does not prove physical quiescence. The
+[preparation contract](agent-preparation.md) owns ordering, recovery and child
+process lifetime guarantees.
+
+Initial context descriptors are persisted before checkout creation so partial
+preparation retains a cleanup owner. Context-mount locks follow main-resource
+ownership; cancellation invalidates publication before deferred physical cleanup.
+Git/filesystem effects stay outside SQL transactions. All context mounts precede
+the first baseline, and a real probe failure prevents session create/prompt.
 The same baseline freezes each mount descriptor and its complete integrity witness;
 continuations reuse those mounts without resetting or rematerializing them. Platform writes
 append generation evidence under the existing ownership/run fences. Keep dynamic
