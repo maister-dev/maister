@@ -75,6 +75,17 @@ revision, and answers against the question revision. Each accepted change to the
 assignment advances its business revision under the stable parent lock. A client
 reads the exact subject revision rather than substituting another counter.
 
+Assignment reads also return the exact specialist binding, current input
+references and constraints, and server-recorded origin and frozen destination.
+Origin variants carry the identity of the actual manual interaction, task
+comment, scheduled trigger, event subscription, webhook delivery or delegated
+work. Destination variants identify a user Inbox, task thread or configured
+outbound subscription; they never contain a caller-supplied endpoint URL.
+An accepted result is an exact `{id, revision}` reference, not a floating result
+identity. Its assignment/run membership and verification obligations are
+validated before acceptance. Historical input/authority revision contents remain
+separate immutable snapshots; the current read projection must not replace them.
+
 All assignments require nonblank objective (<=8000 characters), expected outcome (<=4000), explicit requester/responsible principal, owner, <=32 canonical targets, <=64 input/knowledge refs, <=16 typed verification obligations and one server-validated origin/destination. Pure research may declare zero operation obligations; configured restart policy always injects required effect and independent-health obligations. A model cannot clear them. Context <=128 KiB, update <=32 KiB/64 entries, per-entry text <=8000; no silent truncation.
 
 | Incoming meaning | Correlation/admission | Durable result |

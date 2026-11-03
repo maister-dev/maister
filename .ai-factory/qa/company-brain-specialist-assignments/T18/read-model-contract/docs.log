@@ -1,0 +1,7 @@
+$ node scripts/validate-docs-mermaid.mjs && node scripts/validate-docs-adr-anchors.mjs && node scripts/validate-docs-links.mjs && node scripts/validate-docs-indexes.mjs && pnpm --filter maister-web db:erd --check
+validate-docs-mermaid: 3/3 mermaid block(s) passed across 2 file(s)
+validate-docs-adr-anchors: 1 ADR anchor link(s) resolved across 2 file(s); 202 hub stub(s) ↔ body files in sync
+validate-docs-links: 15 relative link(s) resolved across 2 file(s)
+validate-docs-indexes: 187 file(s) indexed across 4 canonical README(s)
+$ tsx --import ./scripts/_register-shim.mjs scripts/generate-erd-dbml.ts --check
+generate-erd-dbml --check: docs/db/erd.dbml is current (164 tables)

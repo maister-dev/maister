@@ -36,6 +36,7 @@ erDiagram
         integer context_revision
         jsonb requester
         jsonb responsible
+        text specialist_binding_id
         jsonb targets
         jsonb expected_result
         jsonb verification_requirements

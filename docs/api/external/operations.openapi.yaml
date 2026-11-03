@@ -13726,9 +13726,15 @@ components:
         - acceptedResult
         - createdAt
         - updatedAt
+        - specialistBindingId
+        - inputRefs
+        - constraints
+        - origin
+        - destination
       description: The business revision is distinct from inputRevision and contextRevision. Assignment state/input
-        mutations compare expectedRevision against this revision. Context patches, work decisions and question responses
-        compare their own subject revisions as declared by their endpoint; reads expose the business value for safe continuation.
+        mutations compare expectedRevision against this revision. Context patches, work decisions and question
+        responses compare their own subject revisions as declared by their endpoint; reads expose the business
+        value for safe continuation.
       properties:
         revision:
           type: integer
@@ -13800,16 +13806,183 @@ components:
             maxLength: 2000
           maxItems: 32
         acceptedResult:
-          type: string
-          minLength: 1
-          maxLength: 128
-          nullable: true
+          oneOf:
+            - $ref: "#/components/schemas/CBAcceptedAssignmentResult"
+            - type: object
+              nullable: true
+              enum:
+                - null
         createdAt:
           type: string
           format: date-time
         updatedAt:
           type: string
           format: date-time
+        specialistBindingId: &a1
+          type: string
+          minLength: 1
+          maxLength: 128
+        inputRefs:
+          type: array
+          items:
+            $ref: "#/components/schemas/CBRef"
+          maxItems: 64
+        constraints:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 2000
+          maxItems: 32
+        origin:
+          $ref: "#/components/schemas/CBAssignmentOrigin"
+        destination:
+          $ref: "#/components/schemas/CBAssignmentDestination"
+    CBAssignmentOrigin:
+      description: Server-recorded source identity. Each source adapter validates its own canonical identifiers and
+        current assignment scope; callers cannot nominate another origin.
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required:
+            - kind
+            - interactionId
+          properties:
+            kind:
+              type: string
+              enum:
+                - manual
+            interactionId: *a1
+        - type: object
+          additionalProperties: false
+          required:
+            - kind
+            - projectId
+            - taskId
+            - commentId
+          properties:
+            kind:
+              type: string
+              enum:
+                - task_comment
+            projectId: *a1
+            taskId: *a1
+            commentId: *a1
+        - type: object
+          additionalProperties: false
+          required:
+            - kind
+            - scheduleId
+            - triggerAttemptId
+          properties:
+            kind:
+              type: string
+              enum:
+                - schedule
+            scheduleId: *a1
+            triggerAttemptId: *a1
+        - type: object
+          additionalProperties: false
+          required:
+            - kind
+            - eventId
+            - subscriptionId
+          properties:
+            kind:
+              type: string
+              enum:
+                - event
+            eventId: *a1
+            subscriptionId: *a1
+        - type: object
+          additionalProperties: false
+          required:
+            - kind
+            - endpointId
+            - deliveryId
+          properties:
+            kind:
+              type: string
+              enum:
+                - webhook
+            endpointId: *a1
+            deliveryId: *a1
+        - type: object
+          additionalProperties: false
+          required:
+            - kind
+            - parentRunId
+            - workId
+          properties:
+            kind:
+              type: string
+              enum:
+                - delegation
+            parentRunId: *a1
+            workId: *a1
+    CBAssignmentDestination:
+      description: Server-frozen delivery destination. Configured subscription identity resolves endpoint and
+        credentials; arbitrary URLs are never accepted. Content delivery still requires current recipient/source
+        access.
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required:
+            - kind
+            - userId
+          properties:
+            kind:
+              type: string
+              enum:
+                - inbox
+            userId: *a1
+        - type: object
+          additionalProperties: false
+          required:
+            - kind
+            - projectId
+            - taskId
+            - threadCommentId
+          properties:
+            kind:
+              type: string
+              enum:
+                - task_comment
+            projectId: *a1
+            taskId: *a1
+            threadCommentId:
+              type: string
+              minLength: 1
+              maxLength: 128
+              nullable: true
+        - type: object
+          additionalProperties: false
+          required:
+            - kind
+            - subscriptionId
+            - correlationId
+          properties:
+            kind:
+              type: string
+              enum:
+                - outbound_subscription
+            subscriptionId: *a1
+            correlationId: *a1
+    CBAcceptedAssignmentResult:
+      description: Exact retained result accepted by the assignment authority. The server validates assignment/run
+        membership, result validity and revision, input/context revisions and verification obligations before
+        storing this reference.
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - revision
+      properties:
+        id: *a1
+        revision:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
     CBVerificationRequirement:
       type: object
       additionalProperties: false

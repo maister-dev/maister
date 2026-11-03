@@ -472,6 +472,11 @@ cases:
       expectedOutcome: Return an evidence-linked diagnosis.
       requester: { kind: user, id: user_example, runId: null, attemptId: null }
       responsible: { kind: agent, id: specialist_example, runId: null, attemptId: null }
+      specialistBindingId: specialist_binding_example
+      inputRefs: [{ kind: knowledge, id: record_example, revision: 2 }]
+      constraints: [Read-only diagnosis until an exact restart is authorized.]
+      origin: { kind: manual, interactionId: interaction_example }
+      destination: { kind: inbox, userId: user_example }
       inputRevision: 2
       contextRevision: 4
       status: waiting_input
@@ -482,3 +487,23 @@ cases:
       acceptedResult: null
       createdAt: "2026-11-04T00:00:00Z"
       updatedAt: "2026-11-04T00:01:00Z"
+  - id: accepted-assignment-result-pins-exact-revision
+    surfaces: [web, external]
+    schema: CBAcceptedAssignmentResult
+    valid: true
+    value: { id: result_example, revision: 3 }
+  - id: accepted-assignment-result-refuses-floating-identity
+    surfaces: [web, external]
+    schema: CBAcceptedAssignmentResult
+    valid: false
+    value: { id: result_example }
+  - id: assignment-destination-is-configured-not-arbitrary-url
+    surfaces: [web, external]
+    schema: CBAssignmentDestination
+    valid: false
+    value: { kind: outbound_subscription, subscriptionId: subscription_example, correlationId: delivery_example, url: "https://example.invalid/untrusted" }
+  - id: assignment-origin-requires-source-specific-delivery
+    surfaces: [web, external]
+    schema: CBAssignmentOrigin
+    valid: false
+    value: { kind: webhook, endpointId: endpoint_example }
