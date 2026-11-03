@@ -1,0 +1,106 @@
+{
+  "task": "T13",
+  "status": "T13 native human/API/MCP cross-surface slice qualified locally; launch-wide and package/pilot readiness remains pending",
+  "postgres": {
+    "files": 18,
+    "tests": 145,
+    "passed": true,
+    "includesProjectDeletion": true,
+    "actualBuiltMcpRoundTrip": true
+  },
+  "unit": {
+    "files": 886,
+    "tests": 9259,
+    "passed": true,
+    "subsequentFixtureTypingAndProviderAdjustment": "21 owning unit checks pass; typecheck and lint pass"
+  },
+  "mcp": {
+    "unitContractTests": 402,
+    "stdioTests": 8,
+    "actualNativeWorkflowHttpRequests": 19,
+    "currentReadRevocation": "record/witness refused; search empty"
+  },
+  "browser": {
+    "scenarioTests": 1,
+    "setupTests": 1,
+    "passed": true,
+    "locales": [
+      "en",
+      "ru"
+    ],
+    "leaks": 0,
+    "includes": [
+      "stale competing review",
+      "missing evidence direct link",
+      "revocation after search",
+      "exact-revision publication/history",
+      "back and refresh",
+      "server-rendered review queue"
+    ]
+  },
+  "contracts": {
+    "explicitSurfaceExamples": 64,
+    "passed": true
+  },
+  "redGreen": [
+    "cross-owner cyclic writers",
+    "bounded write admission without consuming delivery",
+    "external 422 and revision-only error details",
+    "real same-owner review-summary query budget",
+    "review source-footprint continuation",
+    "existing expiry/native writer lock ordering"
+  ],
+  "storage": "No new migration. Committed 0217/0011 remain unchanged. Project deletion still cascades project-local Brain history and preserves company history. Existing expiry and native record mutations share transaction write admission; unrelated reads stay concurrent.",
+  "gates": [
+    "web typecheck",
+    "affected lint",
+    "production build",
+    "contract/schema parity",
+    "all internal docs/164-table ERD",
+    "EN/RU public build and links",
+    "test discovery"
+  ],
+  "fullIntegration": {
+    "initial": {
+      "files": 633,
+      "passedFiles": 626,
+      "failedFiles": 5,
+      "skippedFiles": 2,
+      "passedTests": 5614,
+      "failedTests": 13,
+      "skippedTests": 2
+    },
+    "initialVerdict": "failed; retained in full-integration-initial.log.gz",
+    "classification": {
+      "environment": "Docker CLI was omitted from the command PATH; competing manual/browser builds contended over shared Next.js artifacts.",
+      "fixture": "Baseline-proved evaluation fixture did not keep Pending capacity occupied. Integrity test incorrectly required null diagnostics despite documented recovered deferred history."
+    },
+    "owningReruns": {
+      "cleanupDockerReaper": {
+        "files": 3,
+        "tests": 24,
+        "passed": true
+      },
+      "evaluation": {
+        "files": 1,
+        "tests": 15,
+        "passed": true
+      },
+      "integrityRefusal": {
+        "files": 1,
+        "tests": 1,
+        "passed": true,
+        "otherCases": "61 cases passed in the full run; only the recovered-diagnostic assertion changed"
+      }
+    },
+    "unresolved": [],
+    "quarantineAdded": false,
+    "reportingBoundary": "The initial full run and targeted complete owning reruns are separate evidence. No claim that the original full invocation was green."
+  },
+  "remaining": [
+    "T14 launch/result source inheritance",
+    "installable RAH and specialist packages",
+    "durable assignments/cooperation",
+    "real stand pilot"
+  ]
+}

@@ -37437,8 +37437,7 @@ components:
         details:
           type: object
           additionalProperties: false
-          required:
-            - reason
+          minProperties: 1
           properties:
             reason:
               type: string

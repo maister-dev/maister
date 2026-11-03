@@ -6,6 +6,7 @@ type RailNavigationLabelKey =
   | "agents"
   | "home"
   | "inbox"
+  | "knowledge"
   | "mcps"
   | "observatory"
   | "projects"
@@ -20,8 +21,8 @@ export function buildLeftRailSections(
   label: (key: RailNavigationLabelKey) => string,
   userRole: GlobalRole | undefined,
 ): LeftRailNavSection[] {
-  // The order ADR-172 D4 fixes: Home / Projects / Work / Activity / Inbox /
-  // Flow Studio / Observatory, then the admin-only tail.
+  // The ADR-172 spine gains native Knowledge (ADR-200) after Inbox;
+  // the administrator-only destinations remain in the tail.
   const sections: LeftRailNavSection[] = [
     { id: "home", label: label("home"), href: "/", ready: true },
     {
@@ -41,6 +42,12 @@ export function buildLeftRailSections(
       ready: true,
     },
     { id: "inbox", label: label("inbox"), href: "/inbox", ready: true },
+    {
+      id: "knowledge",
+      label: label("knowledge"),
+      href: "/knowledge",
+      ready: true,
+    },
     { id: "studio", label: label("studio"), href: "/studio", ready: true },
     {
       id: "observatory",

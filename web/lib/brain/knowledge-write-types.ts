@@ -69,3 +69,12 @@ export const knowledgeProposalListSchema = z
   })
   .strict();
 export type KnowledgeProposalList = z.infer<typeof knowledgeProposalListSchema>;
+
+export const knowledgeMutationReceiptSchema = z
+  .object({
+    id: postgresTextSchema.min(1).max(128),
+    revision: knowledgeRevisionSchema,
+    status: z.enum(["pending", "accepted", "rejected", "confirmed", "revoked"]),
+    duplicate: z.boolean(),
+  })
+  .strict();

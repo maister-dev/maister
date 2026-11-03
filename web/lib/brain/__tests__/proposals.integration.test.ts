@@ -1,8 +1,16 @@
+import type { KnowledgeProposalReceipt } from "@/lib/brain/knowledge-proposals";
+import type {
+  KnowledgeDatabase,
+  KnowledgeTransaction,
+} from "@/lib/brain/knowledge-access";
+
 import { randomUUID } from "node:crypto";
 
 import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
+import { getKnowledgeRecord } from "@/lib/brain/knowledge-records";
+import { runBrainDecaySweep } from "@/lib/brain/decay";
 import {
   concludeBrainProposal,
   createBrainProposal,
@@ -1171,4 +1179,350 @@ it("IT-CBK-02 concurrent corrections preserve one exact revision winner and requ
       decision: "reject",
     }),
   ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+});
+
+it("IT-CBK-02 dependent native writers and expiry serialize before record locks while unrelated reads remain concurrent", async () => {
+  const native = await import("@/lib/brain/proposals");
+  const companyId = String(
+    (await ctx.pool.query("SELECT id FROM companies")).rows[0].id,
+  );
+  const userId = randomUUID();
+  const principal = { kind: "user" as const, userId };
+  const owner = { kind: "company" as const, companyId };
+
+  await ctx.pool.query(
+    "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'member','active')",
+    [userId, `${userId}@example.test`],
+  );
+  await ctx.pool.query(
+    "INSERT INTO company_grants(company_id,principal_type,principal_id,action,created_by) SELECT $1,'user',$2,action,$2 FROM unnest(ARRAY['knowledge:read','knowledge:propose','knowledge:review']) action",
+    [companyId, userId],
+  );
+  const a = randomUUID();
+  const b = randomUUID();
+  const independent = randomUUID();
+
+  for (const [id, dependency] of [
+    [a, b],
+    [b, a],
+    [independent, null],
+  ] as const)
+    await ctx.pool.query(
+      "INSERT INTO brain_items(id,company_id,project_id,kind,title,content,content_hash,confidence,source_restrictions) VALUES($1,$2,$6,'decision',$3,$3,$4,0.3,$5::jsonb)",
+      [
+        id,
+        id === b ? null : companyId,
+        `Original ${id}`,
+        randomUUID(),
+        JSON.stringify(
+          dependency === null ? [] : [{ kind: "record", recordId: dependency }],
+        ),
+        id === b ? projectId : null,
+      ],
+    );
+  await ctx.pool.query(
+    "INSERT INTO project_members(id,project_id,user_id,role) VALUES($1,$2,$3,'admin')",
+    [randomUUID(), projectId, userId],
+  );
+  await ctx.pool.query(
+    "UPDATE brain_items SET expires_at=now()-INTERVAL '1 day' WHERE id=ANY($1::text[])",
+    [[a, b]],
+  );
+  const proposals: KnowledgeProposalReceipt[] = [];
+
+  for (const id of [a, b])
+    proposals.push(
+      await createBrainProposal(ctx.db, {
+        kind: "knowledge_correct",
+        owner: id === b ? { kind: "project", projectId } : owner,
+        principal,
+        targetRecordId: id,
+        expectedRecordRevision: 1,
+        idempotencyKey: `dependent_propose_${id}`,
+        draft: {
+          title: `Dependent ${id}`,
+          kind: "decision",
+          assertion: `Reviewed dependent correction ${id}`,
+          basis: "inferred",
+          evidence: [],
+          missingEvidence: [
+            {
+              state: "unknown",
+              reason:
+                "This provisional assertion has not been independently verified.",
+            },
+          ],
+          limitations: [],
+        },
+      }),
+    );
+  const firstLocked = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const secondPid = Promise.withResolvers<number>();
+  const readerPid = Promise.withResolvers<number>();
+  const expiryPid = Promise.withResolvers<number>();
+  let firstPaused = false;
+  let secondReachedRecord = false;
+  const firstDatabase: KnowledgeDatabase = {
+    execute: (query) => ctx.db.execute(query),
+    transaction: (action) =>
+      ctx.db.transaction(async (tx) => {
+        const wrapped: KnowledgeTransaction = {
+          execute: async (query) => {
+            const result = await tx.execute(query);
+
+            if (
+              !firstPaused &&
+              result.rows.some(
+                (row) => row.id === a && Object.hasOwn(row, "content_hash"),
+              )
+            ) {
+              firstPaused = true;
+              firstLocked.resolve();
+              await release.promise;
+            }
+
+            return result;
+          },
+        };
+
+        return action(wrapped);
+      }),
+  };
+  const secondDatabase: KnowledgeDatabase = {
+    execute: (query) => ctx.db.execute(query),
+    transaction: (action) =>
+      ctx.db.transaction(async (tx) => {
+        secondPid.resolve(
+          Number(
+            (await tx.execute(sql`SELECT pg_backend_pid() AS pid`)).rows[0].pid,
+          ),
+        );
+
+        return action({
+          execute: async (query) => {
+            const result = await tx.execute(query);
+
+            if (
+              result.rows.some(
+                (row) => row.id === b && Object.hasOwn(row, "content_hash"),
+              )
+            )
+              secondReachedRecord = true;
+
+            return result;
+          },
+        });
+      }),
+  };
+  const readerDatabase: KnowledgeDatabase = {
+    execute: (query) => ctx.db.execute(query),
+    transaction: (action) =>
+      ctx.db.transaction(async (tx) => {
+        readerPid.resolve(
+          Number(
+            (await tx.execute(sql`SELECT pg_backend_pid() AS pid`)).rows[0].pid,
+          ),
+        );
+
+        return action(tx);
+      }),
+  };
+  const decision = (proposalId: string) => ({
+    proposalId,
+    principal,
+    expectedRevision: 1,
+    decision: "accept" as const,
+    reason: "Publish the exact dependent base under current source authority",
+    idempotencyKey: `dependent_decide_${proposalId}`,
+  });
+  const first = native.reviewKnowledgeProposal(
+    firstDatabase,
+    decision(proposals[0].id),
+  );
+  const firstOutcome = first.then(
+    (value) => ({ value }),
+    (error) => ({ error }),
+  );
+
+  await Promise.race([
+    firstLocked.promise,
+    first.then(() => {
+      throw new Error("Writer did not reach the owned record-lock barrier");
+    }),
+  ]);
+  const second = native.reviewKnowledgeProposal(
+    secondDatabase,
+    decision(proposals[1].id),
+  );
+  const secondOutcome = second.then(
+    (value) => ({ value }),
+    (error) => ({ error }),
+  );
+  const expiry = ctx.db.transaction(async (tx) => {
+    expiryPid.resolve(
+      Number(
+        (await tx.execute(sql`SELECT pg_backend_pid() AS pid`)).rows[0].pid,
+      ),
+    );
+
+    return runBrainDecaySweep({ db: tx, force: true });
+  });
+  const expiryOutcome = expiry.then(
+    (value) => ({ value }),
+    (error) => ({ error }),
+  );
+  const reader = getKnowledgeRecord(readerDatabase, principal, { recordId: a });
+  const readerOutcome = reader.then(
+    (value) => ({ value }),
+    (error) => ({ error }),
+  );
+
+  try {
+    const pid = await secondPid.promise;
+
+    await expect
+      .poll(
+        async () =>
+          (
+            await ctx.pool.query(
+              "SELECT wait_event FROM pg_stat_activity WHERE pid=$1",
+              [pid],
+            )
+          ).rows[0]?.wait_event,
+        { timeout: 3000 },
+      )
+      .toBe("advisory");
+    expect(secondReachedRecord).toBe(false);
+    await expect
+      .poll(
+        async () =>
+          (
+            await ctx.pool.query(
+              "SELECT wait_event FROM pg_stat_activity WHERE pid=$1",
+              [await expiryPid.promise],
+            )
+          ).rows[0]?.wait_event,
+        { timeout: 3000 },
+      )
+      .toBe("advisory");
+
+    const reading = await readerPid.promise;
+
+    await expect
+      .poll(
+        async () =>
+          (
+            await ctx.pool.query(
+              "SELECT wait_event FROM pg_stat_activity WHERE pid=$1",
+              [reading],
+            )
+          ).rows[0]?.wait_event,
+        { timeout: 3000 },
+      )
+      .toBe("transactionid");
+    expect(
+      await getKnowledgeRecord(ctx.db, principal, { recordId: independent }),
+    ).toMatchObject({ id: independent, revision: 1 });
+  } finally {
+    release.resolve();
+    await Promise.all([
+      firstOutcome,
+      secondOutcome,
+      readerOutcome,
+      expiryOutcome,
+    ]);
+  }
+  expect(await firstOutcome).toMatchObject({
+    value: {
+      status: "accepted",
+      acceptedRecordId: a,
+      acceptedRecordRevision: 2,
+    },
+  });
+  expect(await secondOutcome).toMatchObject({
+    value: {
+      status: "accepted",
+      acceptedRecordId: b,
+      acceptedRecordRevision: 2,
+    },
+  });
+  expect(await expiryOutcome).toMatchObject({
+    value: { ran: true, errors: [] },
+  });
+  expect(await readerOutcome).toMatchObject({ value: { id: a, revision: 2 } });
+  expect(
+    (
+      await ctx.pool.query(
+        "SELECT record_id,count(*)::int AS revisions FROM brain_record_revisions WHERE record_id=ANY($1::text[]) GROUP BY record_id ORDER BY record_id",
+        [[a, b]],
+      )
+    ).rows,
+  ).toEqual([a, b].sort().map((record_id) => ({ record_id, revisions: 2 })));
+});
+
+it("IT-CBK-03 exhausted native write admission returns an actionable conflict without consuming the delivery", async () => {
+  const companyId = String(
+    (await ctx.pool.query("SELECT id FROM companies")).rows[0].id,
+  );
+  const userId = randomUUID();
+
+  await ctx.pool.query(
+    "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'member','active')",
+    [userId, `${userId}@example.test`],
+  );
+  await ctx.pool.query(
+    "INSERT INTO company_grants(company_id,principal_type,principal_id,action,created_by) SELECT $1,'user',$2,action,$2 FROM unnest(ARRAY['knowledge:read','knowledge:propose']) action",
+    [companyId, userId],
+  );
+  const input = {
+    kind: "knowledge_add" as const,
+    owner: { kind: "company" as const, companyId },
+    principal: { kind: "user" as const, userId },
+    idempotencyKey: `busy_delivery_${userId}`,
+    draft: {
+      title: "Bounded write admission",
+      kind: "assertion" as const,
+      assertion: `Provisional claim ${userId}`,
+      basis: "inferred" as const,
+      evidence: [],
+      missingEvidence: [
+        {
+          state: "unknown" as const,
+          reason: "Independent evidence remains to be collected.",
+        },
+      ],
+      limitations: [],
+    },
+  };
+  const controller = await ctx.pool.connect();
+
+  try {
+    await controller.query("BEGIN");
+    await controller.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended('maister:native-knowledge-writes:v1',0))",
+    );
+    await expect(createBrainProposal(ctx.db, input)).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "knowledge_write_busy" },
+    });
+    expect(
+      (
+        await ctx.pool.query(
+          "SELECT id FROM brain_knowledge_submissions WHERE principal_key=$1 AND delivery_key=$2",
+          [`user:${userId}`, input.idempotencyKey],
+        )
+      ).rows,
+    ).toEqual([]);
+  } finally {
+    await controller.query("ROLLBACK");
+    controller.release();
+  }
+  const created = await createBrainProposal(ctx.db, input);
+
+  expect(created).toMatchObject({ status: "pending", duplicate: false });
+  expect(await createBrainProposal(ctx.db, input)).toMatchObject({
+    id: created.id,
+    duplicate: true,
+  });
 });

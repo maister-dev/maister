@@ -8,6 +8,10 @@ lexical retrieval over canonical repository sources with governed memory
 retained from delivery events. Platform agents can read or propose changes to
 that knowledge only through explicit project grants.
 
+For company-owned assertions, exact evidence and separate publication/confirmation,
+use [structured knowledge review](/guides/company-brain). The Knowledge surface
+works for company ownership without a repository and keeps explicit access separate.
+
 ## Prerequisites
 
 - A pgvector-enabled Postgres database with the Brain migrations applied.

@@ -145,6 +145,18 @@ try {
     name: "knowledge_confirm",
     arguments: confirmation,
   });
+  workflow.revokedRecord = await client.callTool({
+    name: "knowledge_get",
+    arguments: { recordId: publishedId },
+  });
+  workflow.revokedWitness = await client.callTool({
+    name: "knowledge_witness_get",
+    arguments: { witnessId: witness.id },
+  });
+  workflow.revokedSearch = await client.callTool({
+    name: "knowledge_search",
+    arguments: { owner, q: query, limit: 1 },
+  });
   const malformed = [];
 
   for (const argumentsValue of [

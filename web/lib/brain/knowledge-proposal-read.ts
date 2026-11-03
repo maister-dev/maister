@@ -54,7 +54,7 @@ import { evidenceSummary } from "./knowledge-records";
 import { ownerSchema } from "@/lib/company/types";
 import { postgresTextSchema } from "@/lib/text-schema";
 import { redactQueryError } from "@/lib/db/pg-error";
-import { MaisterError } from "@/lib/errors";
+import { MaisterError, isMaisterError } from "@/lib/errors";
 import { truncateUtf16 } from "@/lib/utf8";
 
 const log = pino({
@@ -272,6 +272,41 @@ export async function getKnowledgeProposal(
   }
 }
 
+/** A review page exposes bounded metadata; evidence inspection remains a separate exact-detail operation. */
+function proposalSummary(
+  row: Record<string, unknown>,
+): KnowledgeProposalSummary {
+  const parsed = knowledgeDraftSchema.safeParse(row.draft);
+
+  if (!parsed.success)
+    throw new MaisterError(
+      "CONFIG",
+      "Retained knowledge proposal does not match its native contract",
+    );
+  const draft = parsed.data;
+  const assertionPreview = truncateUtf16(draft.assertion, 1000);
+
+  return knowledgeProposalSummarySchema.parse({
+    id: row.id,
+    owner: knowledgeOwner(row),
+    revision: row.revision,
+    status: row.status,
+    attribution: row.knowledge_attribution,
+    acceptedRecordId: row.published_record_id,
+    acceptedRecordRevision: row.published_record_revision,
+    createdAt: knowledgeTimestamp(row.created_at),
+    updatedAt: knowledgeTimestamp(row.updated_at),
+    change: row.kind === "knowledge_add" ? "add" : "correct",
+    title: draft.title,
+    kind: draft.kind,
+    basis: draft.basis,
+    assertionPreview,
+    assertionTruncated: assertionPreview.length !== draft.assertion.length,
+    targetRecordId: row.target_record_id,
+    expectedRecordRevision: row.expected_record_revision,
+  });
+}
+
 function listSelection(input: KnowledgeProposalList): SQL {
   const conditions: SQL[] = [sql`true`];
 
@@ -336,7 +371,16 @@ export async function listKnowledgeProposals(
           : sql`(p.created_at,p.id)<(${cursor.at}::timestamptz,${cursor.id})`;
       const rows = (
         await tx.execute(
-          sql`${policy} SELECT p.id,to_char(p.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at FROM knowledge_readable_proposals p WHERE p.inspection_action='review' AND p.created_at<=${upper}::timestamptz AND ${after} ORDER BY p.created_at DESC,p.id DESC LIMIT ${filters.limit + 1}`,
+          sql`${policy} SELECT p.*,to_char(p.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at,
+            (SELECT coalesce(jsonb_agg(DISTINCT dependencies.ref),'[]'::jsonb) FROM (
+              SELECT jsonb_build_object('kind',CASE WHEN o.company_id IS NULL THEN 'project' ELSE 'company' END,CASE WHEN o.company_id IS NULL THEN 'projectId' ELSE 'companyId' END,coalesce(o.company_id,o.project_id)) AS ref
+              FROM jsonb_array_elements(p.draft->'evidence') proof JOIN brain_evidence_witnesses w ON proof->'reference'->>'kind'='witness' AND w.id=proof->'reference'->>'id' JOIN brain_evidence_observations o ON o.id=w.observation_id
+              UNION ALL
+              SELECT ref FROM jsonb_array_elements(p.draft->'evidence') proof JOIN brain_evidence_witnesses w ON proof->'reference'->>'kind'='witness' AND w.id=proof->'reference'->>'id' CROSS JOIN LATERAL jsonb_array_elements(w.restrictions) ref
+            ) dependencies) AS evidence_restrictions
+            FROM brain_proposals p JOIN knowledge_readable_proposals permitted ON permitted.id=p.id
+            WHERE permitted.inspection_action='review' AND p.created_at<=${upper}::timestamptz AND ${after}
+            ORDER BY p.created_at DESC,p.id DESC LIMIT ${filters.limit + 1} FOR SHARE OF p`,
         )
       ).rows;
       const items: KnowledgeProposalSummary[] = [];
@@ -348,31 +392,52 @@ export async function listKnowledgeProposals(
         index < rows.length && index < filters.limit;
         index++
       ) {
-        const result = await readProposal(
-          tx,
-          principal,
-          String(rows[index].id),
-        );
-        const { proposal } = result;
-        const { content, evidence: _evidence, ...metadata } = proposal;
-        const assertionPreview = truncateUtf16(content.assertion, 1000);
-        const summary = knowledgeProposalSummarySchema.parse({
-          ...metadata,
-          change: content.change,
-          title: content.title,
-          kind: content.kind,
-          basis: content.basis,
-          assertionPreview,
-          assertionTruncated:
-            assertionPreview.length !== content.assertion.length,
-          targetRecordId:
-            content.change === "correct" ? content.recordId : null,
-          expectedRecordRevision:
-            content.change === "correct" ? content.expectedRevision : null,
-        });
-        const visited = [
-          ...new Set([...access.visited, ...result.access.visited]),
-        ];
+        const row = rows[index];
+        const summary = proposalSummary(row);
+        let candidateAccess = access;
+
+        try {
+          candidateAccess = await authorizeSourceRestrictions(
+            tx,
+            principal,
+            [summary.owner],
+            access,
+          );
+
+          candidateAccess = await authorizeSourceRestrictions(
+            tx,
+            principal,
+            row.source_restrictions,
+            candidateAccess,
+          );
+          candidateAccess = await authorizeSourceRestrictions(
+            tx,
+            principal,
+            row.evidence_restrictions,
+            candidateAccess,
+          );
+          if (
+            summary.acceptedRecordId !== null &&
+            summary.acceptedRecordRevision !== null
+          )
+            candidateAccess = await authorizeKnowledgeRevisionRead(
+              tx,
+              principal,
+              summary.acceptedRecordId,
+              summary.acceptedRecordRevision,
+              candidateAccess,
+            );
+        } catch (error) {
+          if (
+            items.length > 0 &&
+            isMaisterError(error) &&
+            error.code === "PRECONDITION" &&
+            error.details?.reason === "knowledge_reference_budget_exceeded"
+          )
+            break;
+          throw error;
+        }
+        const visited = candidateAccess.visited;
         const next =
           index + 1 < rows.length
             ? encodeKnowledgeCursor({

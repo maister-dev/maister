@@ -46,6 +46,10 @@ flowchart TD
     Brain --> Task["Board task for docs projection"]
 ```
 
+The **Structured knowledge records** link opens the project-filtered native
+[Company Brain](../company-brain.md) surface. Its assertion/evidence and factual
+confirmation views remain separate from indexing and existing improvement proposals.
+
 ## Layout & regions
 
 The page uses the existing app shell and project chrome. Primary regions:

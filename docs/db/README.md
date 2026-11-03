@@ -47,7 +47,7 @@ Two kinds of view live here (ADR-159):
 Mermaid `erDiagram` cardinality symbols used throughout:
 
 | Symbol | Meaning |
-| ------ | ------- |
+| --- | --- |
 | `||--||` | One-to-one (mandatory both sides). |
 | `||--o{` | One-to-many (mandatory parent, zero-or-more children). |
 | `||--|{` | One-to-many (mandatory parent, one-or-more children). |
@@ -60,7 +60,7 @@ the parent is mandatory (NOT NULL FK), the children are zero-or-more.
 
 Deletion policies include CASCADE, SET NULL and RESTRICT. Company identity/grants use RESTRICT. Project-owned Brain records and their local history cascade on project deletion; Brain never blocks that deletion. Operational evidence has a separately governed lifetime. See [`../database-schema.md#cascade-chain`](../database-schema.md#cascade-chain).
 
-- [Company Brain persistence](company-brain-domain.md) — Designed owner/revision/witness/confirmation model and lineage contract.
+- [Company Brain persistence](company-brain-domain.md) — Native owner/revision/witness/confirmation persistence and additive lineage contract; specialist runtime slices pending.
 
 - [Specialist assignment persistence](specialist-assignments-domain.md) — Designed company execution, durable inputs/context, responsibility and result links.
 

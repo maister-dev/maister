@@ -1,0 +1,55 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.5 /Users/kaa/.codex/worktrees/2599/mAIster/web
+
+{"level":30,"time":1793677796007,"pid":81636,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793677796073,"pid":81636,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-daemon-contact","outcome":"passed","durationMs":16,"serverVersion":"29.4.2","strategy":"ConfigurationStrategy","msg":"test container daemon contacted"}
+{"level":30,"time":1793677796073,"pid":81636,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"started","msg":"constructing test container runtime client"}
+{"level":30,"time":1793677796083,"pid":81636,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"passed","durationMs":10,"serverVersion":"29.4.2","msg":"test container runtime client ready"}
+{"level":30,"time":1793677796084,"pid":81636,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-create-start","preparationDurationMs":27,"storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"starting owned PostgreSQL container"}
+{"level":30,"time":1793677796956,"pid":81636,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-start","outcome":"passed","durationMs":871,"containerId":"cd2b566e9e94d4f262d189e38f2c5cd342f56538b091b73e84040dccf3e9b0df","storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"started owned PostgreSQL container"}
+{"level":30,"time":1793677796968,"pid":81636,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"bare","phase":"ready","durationMs":911,"containerId":"cd2b566e9e94d4f262d189e38f2c5cd342f56538b091b73e84040dccf3e9b0df","endpoint":"postgres://localhost:64755/native_knowledge_http","msg":"started bare test database"}
+{"level":30,"time":1793677797239,"pid":81636,"hostname":"MacBook-Pro-2.local","name":"test-database-migrations","migrationsFolder":"./lib/db/migrations","migrationsTable":"__drizzle_migrations","migrationCount":214,"querySubmissions":6,"durationMs":271,"msg":"applied test database migration lineage"}
+{"level":30,"time":1793677797272,"pid":81636,"hostname":"MacBook-Pro-2.local","name":"test-database-migrations","migrationsFolder":"./lib/db/brain-migrations","migrationsTable":"__drizzle_brain_migrations","migrationCount":11,"querySubmissions":6,"durationMs":33,"msg":"applied test database migration lineage"}
+{"level":30,"time":1793677797272,"pid":81636,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"main+brain","phase":"migrate","endpoint":"postgres://localhost:64755/native_knowledge_http","msg":"applied Brain test database migrations"}
+{"level":30,"time":1793677797760,"pid":81636,"hostname":"MacBook-Pro-2.local","name":"brain:knowledge","proposalId":"de3974b6-6258-4462-8246-d35be72f8c40","ownerKind":"company","ownerId":"5e4c1a64-ac17-4f97-b58a-2e22ef532e94","actorId":"f7ef668d-8964-45cf-b665-657b9a5e6240","msg":"knowledge proposed"}
+{"level":30,"time":1793677797950,"pid":81636,"hostname":"MacBook-Pro-2.local","name":"brain:knowledge","proposalId":"f7b7f0a4-441c-42e2-8bfc-cca9b51356b4","ownerKind":"company","ownerId":"5e4c1a64-ac17-4f97-b58a-2e22ef532e94","actorId":"f7ef668d-8964-45cf-b665-657b9a5e6240","msg":"knowledge proposed"}
+{"level":30,"time":1793677798424,"pid":81636,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"stop","durationMs":184,"containerId":"cd2b566e9e94d4f262d189e38f2c5cd342f56538b091b73e84040dccf3e9b0df","endpoint":"postgres://localhost:64755/native_knowledge_http","msg":"stopped test database"}
+ ❯ |integration| app/api/knowledge/__tests__/knowledge.integration.test.ts (14 tests | 1 failed | 13 skipped) 2369ms
+   × IT-CBK-06 a review page continues before its combined source footprint exceeds the resolution budget 698ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |integration| app/api/knowledge/__tests__/knowledge.integration.test.ts > IT-CBK-06 a review page continues before its combined source footprint exceeds the resolution budget
+MaisterError: Knowledge access dependencies exceed the bounded resolution budget
+ ❯ enterRestriction lib/brain/knowledge-restrictions.ts:54:11
+     52| ): KnowledgeAccessWalk {
+     53|   if (state.remaining === 0)
+     54|     throw new MaisterError(
+       |           ^
+     55|       "PRECONDITION",
+     56|       "Knowledge access dependencies exceed the bounded resolution bud…
+ ❯ authorizeKnowledgeRecordRead lib/brain/knowledge-restrictions.ts:131:16
+ ❯ authorizeSourceRestrictions lib/brain/knowledge-restrictions.ts:101:13
+ ❯ authorizeKnowledgeRecordRead lib/brain/knowledge-restrictions.ts:155:12
+ ❯ authorizeSourceRestrictions lib/brain/knowledge-restrictions.ts:101:13
+ ❯ lib/brain/knowledge-proposal-read.ts:404:27
+ ❯ NodePgSession.transaction ../node_modules/.pnpm/drizzle-orm@0.45.4_@opentelemetry+api@1.10.0_@types+pg@8.23.1_pg@8.23.1/node_modules/src/node-postgres/session.ts:259:19
+ ❯ Module.listKnowledgeProposals lib/brain/knowledge-proposal-read.ts:335:12
+ ❯ app/api/knowledge/__tests__/knowledge.integration.test.ts:2101:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 13 skipped (14)
+   Start at  06:49:55
+   Duration  2.96s (tests 82%, import 13%, transform 5%)

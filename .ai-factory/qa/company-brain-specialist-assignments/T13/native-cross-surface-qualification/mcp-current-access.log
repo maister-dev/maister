@@ -1,0 +1,35 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.5 /Users/kaa/.codex/worktrees/2599/mAIster/web
+
+{"level":30,"time":1793675421013,"pid":61464,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793675421064,"pid":61464,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-daemon-contact","outcome":"passed","durationMs":15,"serverVersion":"29.4.2","strategy":"ConfigurationStrategy","msg":"test container daemon contacted"}
+{"level":30,"time":1793675421064,"pid":61464,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"started","msg":"constructing test container runtime client"}
+{"level":30,"time":1793675421073,"pid":61464,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"passed","durationMs":9,"serverVersion":"29.4.2","msg":"test container runtime client ready"}
+{"level":30,"time":1793675421074,"pid":61464,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-create-start","preparationDurationMs":25,"storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"starting owned PostgreSQL container"}
+{"level":30,"time":1793675421965,"pid":61464,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-start","outcome":"passed","durationMs":888,"containerId":"eb5e0d3c3a6fc64b5eb73c61ed536817a54b1eec7da406aaa826b951b9df9d22","storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"started owned PostgreSQL container"}
+{"level":30,"time":1793675421978,"pid":61464,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"bare","phase":"ready","durationMs":929,"containerId":"eb5e0d3c3a6fc64b5eb73c61ed536817a54b1eec7da406aaa826b951b9df9d22","endpoint":"postgres://localhost:64055/native_knowledge_http","msg":"started bare test database"}
+{"level":30,"time":1793675422263,"pid":61464,"hostname":"MacBook-Pro-2.local","name":"test-database-migrations","migrationsFolder":"./lib/db/migrations","migrationsTable":"__drizzle_migrations","migrationCount":214,"querySubmissions":6,"durationMs":285,"msg":"applied test database migration lineage"}
+{"level":30,"time":1793675422298,"pid":61464,"hostname":"MacBook-Pro-2.local","name":"test-database-migrations","migrationsFolder":"./lib/db/brain-migrations","migrationsTable":"__drizzle_brain_migrations","migrationCount":11,"querySubmissions":6,"durationMs":35,"msg":"applied test database migration lineage"}
+{"level":30,"time":1793675422298,"pid":61464,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"main+brain","phase":"migrate","endpoint":"postgres://localhost:64055/native_knowledge_http","msg":"applied Brain test database migrations"}
+{"level":30,"time":1793675422556,"pid":61464,"hostname":"MacBook-Pro-2.local","name":"tokens-issue","tokenId":"68d9affb-1322-43a4-8f74-415913a7a9e4","ownerUserId":"446fa22d-2094-48db-92f1-3de743ee6747","scopeCount":4,"global":true,"hasExpiry":false,"msg":"api token issued"}
+{"invocationId":"1f02a6c7-107f-47f1-9f00-1e474ebc71e3","event":"process-registered","parentPid":61464,"rootId":"none","runtime":"darwin/arm64/node-24.15.0","pid":61492,"pgid":61492,"role":"fixture","caseName":"IT-CBX-02 built native MCP","rootRole":"test-support","bootId":"1f02a6c7-107f-47f1-9f00-1e474ebc71e3","outcome":"registered"}
+{"level":30,"time":1793675424613,"pid":61464,"hostname":"MacBook-Pro-2.local","name":"brain:source-capture","ownerKind":"company","ownerId":"5b36482d-43e3-479e-bc88-fd87ea0c92ea","sourceId":"c82670be-e3de-417e-8b2e-d1e954c43a7b","witnessId":"b49a7b72-13c2-42c6-bd33-66757970ed59","bytes":61,"duplicate":false,"msg":"source capture retained"}
+{"level":30,"time":1793675425011,"pid":61464,"hostname":"MacBook-Pro-2.local","name":"brain:knowledge","proposalId":"1ed29b5f-818a-4f54-9564-50e81600b2f5","ownerKind":"company","ownerId":"5b36482d-43e3-479e-bc88-fd87ea0c92ea","actorId":"446fa22d-2094-48db-92f1-3de743ee6747","msg":"knowledge proposed"}
+{"level":30,"time":1793675425493,"pid":61464,"hostname":"MacBook-Pro-2.local","name":"brain:knowledge","recordId":"117facd0-20f1-4874-b783-b5f768b57626","revision":1,"priorRevision":null,"proposalId":"1ed29b5f-818a-4f54-9564-50e81600b2f5","actorId":"446fa22d-2094-48db-92f1-3de743ee6747","msg":"knowledge revision published"}
+{"level":30,"time":1793675425494,"pid":61464,"hostname":"MacBook-Pro-2.local","name":"brain:knowledge","proposalId":"1ed29b5f-818a-4f54-9564-50e81600b2f5","decision":"accept","expectedRevision":1,"policyId":"3043fec6-72b6-4cd3-8dce-df4be6a278ef","recordId":"117facd0-20f1-4874-b783-b5f768b57626","msg":"knowledge proposal reviewed"}
+{"level":30,"time":1793675425752,"pid":61464,"hostname":"MacBook-Pro-2.local","name":"brain:knowledge","confirmationId":"b5fd61a0-9a34-484e-b560-c05708ecebae","recordId":"117facd0-20f1-4874-b783-b5f768b57626","revision":1,"decision":"confirm","policyId":"d97c4299-95a0-4070-a619-affcb4558186","evidenceCount":1,"msg":"knowledge confirmation decided"}
+{"level":30,"time":1793675426158,"pid":61464,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"stop","durationMs":189,"containerId":"eb5e0d3c3a6fc64b5eb73c61ed536817a54b1eec7da406aaa826b951b9df9d22","endpoint":"postgres://localhost:64055/native_knowledge_http","msg":"stopped test database"}
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 12 skipped (13)
+   Start at  06:10:20
+   Duration  5.64s (tests 91%, import 7%, transform 2%)

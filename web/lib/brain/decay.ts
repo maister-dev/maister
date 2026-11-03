@@ -5,6 +5,7 @@ import pino from "pino";
 
 import { brainSchemaMissingWarnOnce, isBrainSchemaApplied } from "./guard";
 import { BRAIN_POLICY } from "./policy";
+import { knowledgeWriteLockSql } from "./knowledge-write-lock";
 
 import { getDb } from "@/lib/db/client";
 
@@ -84,9 +85,10 @@ export async function runBrainDecaySweep(
 
   try {
     const r = await db.execute(sql`
-      WITH u AS (
+      WITH knowledge_write AS MATERIALIZED (SELECT ${knowledgeWriteLockSql()}), u AS (
         UPDATE brain_items
         SET status = 'expired', updated_at = now()
+        FROM knowledge_write
         WHERE status = 'active' AND expires_at IS NOT NULL AND expires_at < now()
         RETURNING 1
       )

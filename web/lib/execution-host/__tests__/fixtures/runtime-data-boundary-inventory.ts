@@ -441,6 +441,24 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       ],
     ),
     ...classified(
+      "scripts/generate-ask-human-json.ts",
+      "build-tooling",
+      "Explicit schema generation and validation access only repository-owned contract artifacts",
+      [
+        ["<module>", "node:fs/promises.readFile", "read"],
+        ["<module>", "node:fs/promises.writeFile", "write"],
+      ],
+    ),
+    ...classified(
+      "scripts/generate-knowledge-tool-json.ts",
+      "build-tooling",
+      "Explicit schema generation and validation access only repository-owned contract artifacts",
+      [
+        ["<module>", "node:fs/promises.readFile", "read"],
+        ["<module>", "node:fs/promises.writeFile", "write"],
+      ],
+    ),
+    ...classified(
       "scripts/generate-task-qualification-json.ts",
       "build-tooling",
       "Generated MCP qualification schema is built and checked only by explicit tooling",

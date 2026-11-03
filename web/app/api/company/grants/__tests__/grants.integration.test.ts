@@ -11,6 +11,13 @@ import { parse } from "yaml";
 import { NextRequest } from "next/server";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
+import {
+  knowledgeOwnerChoices,
+  knowledgeOwnerActions,
+  knowledgeRecordActions,
+} from "@/lib/brain/knowledge-ui";
+import { listCompanyPrincipalOptions } from "@/lib/company/principal-options";
+import { seedProjectRow } from "@/test-support/execution-host-seed";
 import { createCompanyGrants } from "@/lib/company/grants";
 import { GET as listAuthority } from "@/app/api/company/grants/route";
 import { DELETE as revokeAuthority } from "@/app/api/company/grants/[grantId]/route";
@@ -167,7 +174,10 @@ it("IT-CBK-01 an installation administrator grants explicit company access witho
   );
 
   expect(stale.status).toBe(409);
-  expect(await stale.json()).toMatchObject({
+  const staleBody = await stale.json();
+
+  assertContract("CBError", staleBody);
+  expect(staleBody).toMatchObject({
     code: "CONFLICT",
     details: { currentRevision: 1 },
   });
@@ -462,4 +472,96 @@ it("IT-CBK-03 concurrent administrators serialize conflicting grants before publ
       )
     ).rows,
   ).toEqual([{ created_by: firstAdmin, creation_key: input.idempotencyKey }]);
+});
+
+it("IT-CBK-01 native UI owner choices and recipient search use current authority without widening a narrow record", async () => {
+  const userId = randomUUID();
+  const principal = { kind: "user" as const, userId };
+  const companyId = String(
+    (await database.pool.query("SELECT id FROM companies")).rows[0].id,
+  );
+  const owner = { kind: "company" as const, companyId };
+
+  await database.pool.query(
+    "INSERT INTO users(id,email,name,role,account_status) VALUES($1,$2,'Literal 100% policy recipient','member','active')",
+    [userId, `${userId}@example.test`],
+  );
+  const visible = await seedProjectRow(database.db);
+  const hidden = await seedProjectRow(database.db);
+
+  await database.pool.query(
+    "UPDATE projects SET brain_enabled=true WHERE id=ANY($1::text[])",
+    [[visible.id, hidden.id]],
+  );
+  await database.pool.query(
+    "INSERT INTO project_members(id,project_id,user_id,role) VALUES($1,$2,$3,'viewer')",
+    [randomUUID(), visible.id, userId],
+  );
+  expect(
+    await knowledgeOwnerChoices(database.db, principal, "knowledge:read"),
+  ).toEqual([]);
+  await database.pool.query(
+    "UPDATE project_members SET role='member' WHERE project_id=$1 AND user_id=$2",
+    [visible.id, userId],
+  );
+  expect(
+    (await knowledgeOwnerChoices(database.db, principal, "knowledge:read")).map(
+      (choice) => choice.owner,
+    ),
+  ).toEqual([{ kind: "project", projectId: visible.id }]);
+  expect(
+    await knowledgeOwnerChoices(database.db, principal, "knowledge:review"),
+  ).toEqual([]);
+  expect(await knowledgeOwnerActions(database.db, principal, owner)).toEqual({
+    propose: false,
+    review: false,
+    confirm: false,
+  });
+  await database.pool.query(
+    "INSERT INTO company_grants(company_id,principal_type,principal_id,action,created_by) SELECT $1,'user',$2,action,$2 FROM unnest(ARRAY['knowledge:read','knowledge:propose','knowledge:review','knowledge:confirm']) action",
+    [companyId, userId],
+  );
+  const recordId = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO brain_items(id,company_id,kind,title,content,content_hash,confidence) VALUES($1,$2,'assertion','Narrow UI record','Native action gates remain authoritative',$3,0.3)",
+    [recordId, companyId, randomUUID()],
+  );
+  await database.pool.query(
+    "INSERT INTO brain_record_grants(record_id,principal_type,principal_id,action,created_by) SELECT $1,'user',$2,action,jsonb_build_object('kind','user','id',$2::text,'runId',NULL,'attemptId',NULL) FROM unnest(ARRAY['knowledge:read','knowledge:review']) action",
+    [recordId, userId],
+  );
+  expect(
+    await knowledgeRecordActions(database.db, principal, owner, recordId),
+  ).toEqual({ propose: false, review: true, confirm: false });
+  await database.pool.query(
+    "UPDATE brain_record_grants SET revoked_at=now() WHERE record_id=$1 AND action='knowledge:review'",
+    [recordId],
+  );
+  expect(
+    await knowledgeRecordActions(database.db, principal, owner, recordId),
+  ).toEqual({ propose: false, review: false, confirm: false });
+  await expect(
+    listCompanyPrincipalOptions(database.db, userId, "%"),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  await database.pool.query("UPDATE users SET role='admin' WHERE id=$1", [
+    userId,
+  ]);
+  expect(await listCompanyPrincipalOptions(database.db, userId, "%")).toEqual([
+    {
+      kind: "user",
+      id: userId,
+      value: `user:${userId}`,
+      label: "Literal 100% policy recipient",
+    },
+  ]);
+  await expect(
+    listCompanyPrincipalOptions(database.db, userId, "invalid\0query"),
+  ).rejects.toMatchObject({ code: "CONFIG" });
+  await database.pool.query("UPDATE users SET role='member' WHERE id=$1", [
+    userId,
+  ]);
+  await expect(
+    listCompanyPrincipalOptions(database.db, userId, userId),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
 });

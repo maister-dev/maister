@@ -28,6 +28,8 @@ Inside `web/`, two organizational axes coexist:
 Native company identity and grant administration live in `web/lib/company/`; structured knowledge,
 proposal review and evidence inspection extend `web/lib/brain/`. Session and bearer Route Handlers
 share these server-only services, while generated MCP inputs preserve the same native contracts.
+The `/knowledge` and `/settings/company-grants` server-rendered surfaces use these same services;
+client mutation controls submit strict native requests and preserve uncertain delivery identities.
 Private agent and personal librarian memory remain separate stores. Current contracts and persistence
 boundaries live in `docs/system-analytics/company-brain.md` and `docs/db/company-brain-domain.md`.
 

@@ -1,3 +1,4 @@
+import type { KnowledgeDatabase } from "@/lib/brain/knowledge-access";
 import type { SessionUser } from "@/lib/authz";
 import type { StartedPostgresTestDb } from "@/test-support/pg-container";
 import type { KnowledgeWitnessDto } from "@/lib/brain/knowledge-read-types";
@@ -57,6 +58,7 @@ import { getKnowledgeEvidencePage } from "@/lib/brain/knowledge-evidence-page";
 import { sha256 } from "@/lib/brain/codec";
 import { captureKnowledgeSource } from "@/lib/brain/knowledge-source-capture";
 import { searchKnowledge } from "@/lib/brain/knowledge-search";
+import { listKnowledgeProposals } from "@/lib/brain/knowledge-proposal-read";
 import { knowledgeSearchSchema } from "@/lib/brain/knowledge-read-types";
 import { issueAgentRunToken } from "@/lib/agents/tokens";
 import { seedRun } from "@/test-support/execution-host-seed";
@@ -863,6 +865,11 @@ it("IT-CBX-02 the built MCP publishes nested native schemas and calls the real H
               "UPDATE company_grants SET revoked_at=now(),revision=revision+1 WHERE company_id=$1 AND principal_id=$2 AND action='knowledge:confirm' AND revoked_at IS NULL",
               [companyId, readerId],
             );
+          else
+            await database.pool.query(
+              "UPDATE company_grants SET revoked_at=now(),revision=revision+1 WHERE company_id=$1 AND principal_id=$2 AND action='knowledge:read' AND revoked_at IS NULL",
+              [companyId, readerId],
+            );
         } else response = await extRecord(request, params);
       }
 
@@ -1008,7 +1015,7 @@ it("IT-CBX-02 the built MCP publishes nested native schemas and calls the real H
     );
 
     for (const [name, response] of Object.entries(result.workflow)) {
-      if (name !== "revokedReplay")
+      if (!["revokedReplay", "revokedRecord", "revokedWitness"].includes(name))
         expect(response.isError, JSON.stringify({ name, response })).not.toBe(
           true,
         );
@@ -1042,6 +1049,15 @@ it("IT-CBX-02 the built MCP publishes nested native schemas and calls the real H
     });
     expect(result.workflow.revokedReplay.isError).toBe(true);
     expect(workflow.revokedReplay).toMatchObject({ code: "UNAUTHORIZED" });
+    for (const name of ["revokedRecord", "revokedWitness"]) {
+      expect(result.workflow[name].isError).toBe(true);
+      expect(workflow[name]).toMatchObject({
+        code: "PRECONDITION",
+        details: { reason: "knowledge_reference_unavailable" },
+      });
+    }
+    assertContract("CBKnowledgePage", workflow.revokedSearch);
+    expect(workflow.revokedSearch).toEqual({ items: [], nextCursor: null });
     expect(result.malformed).toHaveLength(8);
     for (const invalid of result.malformed) {
       expect(invalid.isError).toBe(true);
@@ -1050,7 +1066,7 @@ it("IT-CBX-02 the built MCP publishes nested native schemas and calls the real H
         details: { reason: "knowledge_tool_input_invalid" },
       });
     }
-    expect(received).toHaveLength(16);
+    expect(received).toHaveLength(19);
     expect(failures).toEqual([]);
   } finally {
     clearTimeout(deadline);
@@ -1821,6 +1837,38 @@ it("IT-CBK-06 review pagination applies source authority before LIMIT, bounds su
 
     visible.push(proposed.id);
   }
+  let submissions = 0;
+  const counted: KnowledgeDatabase = {
+    execute: (query) => database.db.execute(query),
+    transaction: (action) =>
+      database.db.transaction((tx) =>
+        action({
+          execute: (query) => {
+            submissions++;
+
+            return tx.execute(query);
+          },
+        }),
+      ),
+  };
+
+  await listKnowledgeProposals(counted, principal, {
+    owner,
+    status: "pending",
+    limit: 1,
+  });
+  const singleQueries = submissions;
+
+  submissions = 0;
+  const summaries = await listKnowledgeProposals(counted, principal, {
+    owner,
+    status: "pending",
+    limit: 26,
+  });
+
+  expect(summaries.items.length).toBeGreaterThan(1);
+  // One owner/source policy walk, rather than repeated detail/evidence reads for every summary.
+  expect(submissions).toBeLessThanOrEqual(singleQueries + 2);
   const project = await seedProjectRow(database.db);
 
   await database.pool.query(
@@ -1965,4 +2013,139 @@ it("IT-CBK-06 review pagination applies source authority before LIMIT, bounds su
   expect(afterRevocation.status).toBe(200);
   expect(await afterRevocation.json()).toEqual({ items: [], nextCursor: null });
   vi.unstubAllEnvs();
+});
+
+it("IT-CBX-02 native external validation keeps the established 422 contract and concealed references remain 404", async () => {
+  const issued = await issueUserAccessToken(
+    {
+      ownerUserId: readerId,
+      name: "Native external status qualification",
+      scopes: normalizeTokenScopes(["knowledge:read", "knowledge:propose"]),
+    },
+    database.db,
+  );
+  const headers = {
+    Authorization: `Bearer ${issued.secret}`,
+    "Content-Type": "application/json",
+  };
+  const invalid = await extCapture(
+    new NextRequest("http://localhost/api/v1/ext/knowledge/sources", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        owner: { kind: "company", companyId },
+        title: "Rejected fabricated actor",
+        content: "Source input",
+        idempotencyKey: `${readerId}_external_bad_actor`,
+        attribution: { kind: "user", id: "forged" },
+      }),
+    }),
+  );
+
+  expect(invalid.status).toBe(422);
+  const invalidBody = await invalid.json();
+
+  assertContract("CBError", invalidBody);
+  expect(invalidBody).toMatchObject({ code: "CONFIG" });
+  const query = await extSearch(
+    new NextRequest("http://localhost/api/v1/ext/knowledge?limit=1&limit=2", {
+      headers,
+    }),
+  );
+
+  expect(query.status).toBe(422);
+  assertContract("CBError", await query.json());
+  const missing = await extWitness(
+    new NextRequest(
+      "http://localhost/api/v1/ext/knowledge/witnesses/unavailable",
+      { headers },
+    ),
+    { params: Promise.resolve({ witnessId: "unavailable" }) },
+  );
+
+  expect(missing.status).toBe(404);
+  const missingBody = await missing.json();
+
+  assertContract("CBError", missingBody);
+  expect(missingBody).toMatchObject({
+    details: { reason: "knowledge_reference_unavailable" },
+  });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT source_id FROM brain_source_submissions WHERE principal_key=$1 AND delivery_key=$2",
+        [`user:${readerId}`, `${readerId}_external_bad_actor`],
+      )
+    ).rows,
+  ).toEqual([]);
+});
+
+it("IT-CBK-06 a review page continues before its combined source footprint exceeds the resolution budget", async () => {
+  vi.stubEnv("AUTH_SECRET", "native-review-footprint-cursor");
+  const principal = { kind: "user" as const, userId: readerId };
+  const owner = { kind: "company" as const, companyId };
+  const proposals: string[] = [];
+
+  for (let group = 0; group < 2; group++) {
+    const leaves = Array.from({ length: 128 }, () => randomUUID());
+
+    await database.pool.query(
+      "INSERT INTO brain_items(id,company_id,kind,title,content,content_hash,confidence,source_restrictions) SELECT id,$2,'assertion',id,id,id,0.3,'[]'::jsonb FROM unnest($1::text[]) id",
+      [leaves, companyId],
+    );
+    const root = randomUUID();
+
+    await database.pool.query(
+      "INSERT INTO brain_items(id,company_id,kind,title,content,content_hash,confidence,source_restrictions) VALUES($1,$2,'assertion',$1,$1,$1,0.3,$3::jsonb)",
+      [
+        root,
+        companyId,
+        JSON.stringify(
+          leaves.map((recordId) => ({ kind: "record", recordId })),
+        ),
+      ],
+    );
+    const proposal = await createBrainProposal(database.db, {
+      kind: "knowledge_correct",
+      owner,
+      principal,
+      targetRecordId: root,
+      expectedRecordRevision: 1,
+      idempotencyKey: `${readerId}_footprint_${group}`,
+      draft: {
+        title: `Bounded source closure ${group}`,
+        kind: "assertion",
+        assertion: `Provisional correction ${root}`,
+        basis: "inferred",
+        evidence: [],
+        missingEvidence: [
+          {
+            state: "unknown",
+            reason:
+              "These source records do not independently confirm this provisional assertion.",
+          },
+        ],
+        limitations: [],
+      },
+    });
+
+    proposals.push(proposal.id);
+  }
+  const first = await listKnowledgeProposals(database.db, principal, {
+    owner,
+    status: "pending",
+    limit: 2,
+  });
+
+  expect(first.items.map((item) => item.id)).toEqual([proposals[1]]);
+  expect(first.nextCursor).not.toBeNull();
+  const second = await listKnowledgeProposals(database.db, principal, {
+    owner,
+    status: "pending",
+    limit: 2,
+    cursor: first.nextCursor!,
+  });
+
+  expect(second.items[0].id).toBe(proposals[0]);
+  expect(second.items.map((item) => item.id)).not.toContain(proposals[1]);
 });

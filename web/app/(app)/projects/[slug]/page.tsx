@@ -566,84 +566,92 @@ export default async function ProjectBoardPage({
       ) : null}
 
       {tab === "brain" ? (
-        <ProjectBrainPanel
-          canManageSources={isAdmin}
-          indexStatus={brainPanelData.indexStatus}
-          labels={{
-            title: tBrain("title"),
-            memoryTitle: tBrain("memoryTitle"),
-            searchPlaceholder: tBrain("searchPlaceholder"),
-            searchAction: tBrain("searchAction"),
-            emptyMemory: tBrain("emptyMemory"),
-            memorySearchRequired: tBrain("memorySearchRequired"),
-            tierOwned: tBrain("tierOwned"),
-            tierIndexed: tBrain("tierIndexed"),
-            confidence: tBrain("confidence"),
-            indexStatusTitle: tBrain("indexStatusTitle"),
-            indexLatestSourceIndex: tBrain("indexLatestSourceIndex"),
-            indexIndexedFiles: tBrain("indexIndexedFiles"),
-            indexIndexedChunks: tBrain("indexIndexedChunks"),
-            indexSources: tBrain("indexSources"),
-            indexSourcesHint: tBrain("indexSourcesHint"),
-            indexFailedSources: tBrain("indexFailedSources"),
-            indexQueue: tBrain("indexQueue"),
-            indexQueueHint: tBrain("indexQueueHint"),
-            indexLastCompleted: tBrain("indexLastCompleted"),
-            indexQueued: tBrain("indexQueued"),
-            indexRunning: tBrain("indexRunning"),
-            indexFailed: tBrain("indexFailed"),
-            indexCompleted: tBrain("indexCompleted"),
-            indexConfigureProfile: tBrain("indexConfigureProfile"),
-            indexActiveJobs: tBrain("indexActiveJobs"),
-            indexNoActiveJobs: tBrain("indexNoActiveJobs"),
-            indexOwnedGeneration: tBrain("indexOwnedGeneration"),
-            indexProgress: tBrain("indexProgress"),
-            indexJobStatus: {
-              queued: tBrain("indexJobStatus.queued"),
-              running: tBrain("indexJobStatus.running"),
-              completed: tBrain("indexJobStatus.completed"),
-              failed: tBrain("indexJobStatus.failed"),
-            },
-            indexJobReason: {
-              model_switch: tBrain("indexJobReason.model_switch"),
-              manual: tBrain("indexJobReason.manual"),
-              event: tBrain("indexJobReason.event"),
-              chunker_upgrade: tBrain("indexJobReason.chunker_upgrade"),
-            },
-            sourcesTitle: tBrain("sourcesTitle"),
-            sourcePath: tBrain("sourcePath"),
-            sourceKind: tBrain("sourceKind"),
-            sourceChunker: tBrain("sourceChunker"),
-            sourceStatus: tBrain("sourceStatus"),
-            sourceLastIndexed: tBrain("sourceLastIndexed"),
-            sourceError: tBrain("sourceError"),
-            sourceIndexedFiles: tBrain("sourceIndexedFiles"),
-            sourceChunks: tBrain("sourceChunks"),
-            sourceEnabled: tBrain("sourceEnabled"),
-            sourceDisabled: tBrain("sourceDisabled"),
-            sourceNeverIndexed: tBrain("sourceNeverIndexed"),
-            reindex: tBrain("reindex"),
-            reindexAll: tBrain("reindexAll"),
-            proposalsTitle: tBrain("proposalsTitle"),
-            pendingBadge: tBrain("pendingBadge"),
-            proposalEvidence: tBrain("proposalEvidence"),
-            proposalDraft: tBrain("proposalDraft"),
-            accept: tBrain("accept"),
-            reject: tBrain("reject"),
-            rejectReason: tBrain("rejectReason"),
-            emptyProposals: tBrain("emptyProposals"),
-          }}
-          memory={brainPanelData.memory}
-          proposalCapabilities={{
-            canAcceptCatalog: isAdmin,
-            canAcceptProjection: canAct,
-            canReject: canAct,
-          }}
-          proposals={brainPanelData.proposals}
-          query={brainQuery}
-          slug={slug}
-          sources={brainPanelData.sources}
-        />
+        <>
+          <Link
+            className="mb-4 inline-block text-sm text-ink underline"
+            href={`/knowledge?owner=${encodeURIComponent(`p:${project.id}`)}`}
+          >
+            {tBrain("structuredKnowledge")}
+          </Link>
+          <ProjectBrainPanel
+            canManageSources={isAdmin}
+            indexStatus={brainPanelData.indexStatus}
+            labels={{
+              title: tBrain("title"),
+              memoryTitle: tBrain("memoryTitle"),
+              searchPlaceholder: tBrain("searchPlaceholder"),
+              searchAction: tBrain("searchAction"),
+              emptyMemory: tBrain("emptyMemory"),
+              memorySearchRequired: tBrain("memorySearchRequired"),
+              tierOwned: tBrain("tierOwned"),
+              tierIndexed: tBrain("tierIndexed"),
+              confidence: tBrain("confidence"),
+              indexStatusTitle: tBrain("indexStatusTitle"),
+              indexLatestSourceIndex: tBrain("indexLatestSourceIndex"),
+              indexIndexedFiles: tBrain("indexIndexedFiles"),
+              indexIndexedChunks: tBrain("indexIndexedChunks"),
+              indexSources: tBrain("indexSources"),
+              indexSourcesHint: tBrain("indexSourcesHint"),
+              indexFailedSources: tBrain("indexFailedSources"),
+              indexQueue: tBrain("indexQueue"),
+              indexQueueHint: tBrain("indexQueueHint"),
+              indexLastCompleted: tBrain("indexLastCompleted"),
+              indexQueued: tBrain("indexQueued"),
+              indexRunning: tBrain("indexRunning"),
+              indexFailed: tBrain("indexFailed"),
+              indexCompleted: tBrain("indexCompleted"),
+              indexConfigureProfile: tBrain("indexConfigureProfile"),
+              indexActiveJobs: tBrain("indexActiveJobs"),
+              indexNoActiveJobs: tBrain("indexNoActiveJobs"),
+              indexOwnedGeneration: tBrain("indexOwnedGeneration"),
+              indexProgress: tBrain("indexProgress"),
+              indexJobStatus: {
+                queued: tBrain("indexJobStatus.queued"),
+                running: tBrain("indexJobStatus.running"),
+                completed: tBrain("indexJobStatus.completed"),
+                failed: tBrain("indexJobStatus.failed"),
+              },
+              indexJobReason: {
+                model_switch: tBrain("indexJobReason.model_switch"),
+                manual: tBrain("indexJobReason.manual"),
+                event: tBrain("indexJobReason.event"),
+                chunker_upgrade: tBrain("indexJobReason.chunker_upgrade"),
+              },
+              sourcesTitle: tBrain("sourcesTitle"),
+              sourcePath: tBrain("sourcePath"),
+              sourceKind: tBrain("sourceKind"),
+              sourceChunker: tBrain("sourceChunker"),
+              sourceStatus: tBrain("sourceStatus"),
+              sourceLastIndexed: tBrain("sourceLastIndexed"),
+              sourceError: tBrain("sourceError"),
+              sourceIndexedFiles: tBrain("sourceIndexedFiles"),
+              sourceChunks: tBrain("sourceChunks"),
+              sourceEnabled: tBrain("sourceEnabled"),
+              sourceDisabled: tBrain("sourceDisabled"),
+              sourceNeverIndexed: tBrain("sourceNeverIndexed"),
+              reindex: tBrain("reindex"),
+              reindexAll: tBrain("reindexAll"),
+              proposalsTitle: tBrain("proposalsTitle"),
+              pendingBadge: tBrain("pendingBadge"),
+              proposalEvidence: tBrain("proposalEvidence"),
+              proposalDraft: tBrain("proposalDraft"),
+              accept: tBrain("accept"),
+              reject: tBrain("reject"),
+              rejectReason: tBrain("rejectReason"),
+              emptyProposals: tBrain("emptyProposals"),
+            }}
+            memory={brainPanelData.memory}
+            proposalCapabilities={{
+              canAcceptCatalog: isAdmin,
+              canAcceptProjection: canAct,
+              canReject: canAct,
+            }}
+            proposals={brainPanelData.proposals}
+            query={brainQuery}
+            slug={slug}
+            sources={brainPanelData.sources}
+          />
+        </>
       ) : null}
       {tab === "mcps" ? (
         <McpPanel

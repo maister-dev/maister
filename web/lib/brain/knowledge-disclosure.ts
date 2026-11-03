@@ -9,6 +9,9 @@ import type { KnowledgePrincipal } from "./knowledge-types";
 import type { KnowledgeTransaction } from "./knowledge-access";
 
 import { sql } from "drizzle-orm";
+import pino from "pino";
+
+import { knowledgeWriteLockSql } from "./knowledge-write-lock";
 
 import {
   knowledgeAccessCaptureSchema,
@@ -16,7 +19,13 @@ import {
 } from "@/lib/company/types";
 import { contentDigest } from "@/lib/evaluations/digest";
 import { MaisterError } from "@/lib/errors";
+import { pgErrorOf } from "@/lib/db/pg-error";
 import { parseBoundRunId } from "@/lib/tokens/verify";
+
+const log = pino({
+  name: "brain:knowledge-disclosure",
+  level: process.env.LOG_LEVEL ?? "info",
+});
 
 export type KnowledgeReadConsumer = Readonly<{
   runId: string;
@@ -112,6 +121,41 @@ export async function lockKnowledgeReadConsumer(
     );
 
   return { runId, capture: capture.data };
+}
+
+/** Cross-owner source graphs can cycle. Serialize bounded native writes before taking any record locks. */
+export async function lockKnowledgeWriteConsumer(
+  tx: KnowledgeTransaction,
+  principal: KnowledgePrincipal,
+): Promise<KnowledgeReadConsumer> {
+  const consumer = await lockKnowledgeReadConsumer(tx, principal);
+
+  try {
+    await tx.execute(sql`SELECT ${knowledgeWriteLockSql()}`);
+  } catch (error) {
+    if (pgErrorOf(error)?.code === "55P03") {
+      log.warn(
+        {
+          principalKind: principal.kind,
+          runId: consumer?.runId,
+          reason: "knowledge_write_busy",
+        },
+        "native knowledge write admission exhausted its lock bound",
+      );
+      throw new MaisterError(
+        "CONFLICT",
+        "Another knowledge update is in progress; retry the same delivery after inspecting current state",
+        { details: { reason: "knowledge_write_busy" } },
+      );
+    }
+    throw error;
+  }
+  log.debug(
+    { principalKind: principal.kind, runId: consumer?.runId },
+    "native knowledge write admitted before source record locks",
+  );
+
+  return consumer;
 }
 
 /** Disclosure commits its complete restriction union before any bytes leave the service. */

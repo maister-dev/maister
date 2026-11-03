@@ -1,0 +1,231 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.5 /private/tmp/maister-cb-baseline-djnua9ds/web
+
+ ❯ |unit| components/runs/__tests__/flow-run-center.test.ts (13 tests | 11 failed) 34ms
+   ❯ FlowRunCenter (13)
+     × defaults to the current node 17ms
+     × renders node statuses as icons with a localized accessible name, not raw words 2ms
+     × renders stored failure diagnostics through the result DTO 1ms
+     × uses a localized explanation when the stored failure code is unknown 1ms
+     × mounts the per-node agent transcript panel for the selected node 1ms
+     × formats selected-node token totals with the selected locale 1ms
+     × renders the per-attempt resolved prompt disclosure for the selected node 1ms
+     × keeps the selected-node column shrink-safe for long agent event payloads 1ms
+     × omits the prompt disclosure when no resolved prompt was captured 1ms
+     × falls back when ?node= is invalid 1ms
+     × renders compact result sections for the selected node 1ms
+{"level":30,"time":1793676025126,"pid":7190,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793676025861,"pid":7190,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793676025885,"pid":7190,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793676025912,"pid":7190,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793676025936,"pid":7190,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+ ❯ |unit| app/api/scratch-runs/[runId]/messages/__tests__/route.test.ts (5 tests | 5 failed) 1545ms
+   ❯ POST /api/scratch-runs/[runId]/messages (5)
+     × appends the next user message and sends a supervisor prompt 1441ms
+     × accepts multipart messages with mixed metadata and uploaded files 25ms
+     × accepts while running and reports delivery 28ms
+     × still refuses a dialog blocked on a permission 23ms
+     × leaves the dialog retryable when supervisor prompt delivery fails 27ms
+ ❯ |unit| lib/execution-host/__tests__/runtime-data-boundary-inventory.test.ts (9 tests | 4 failed) 6844ms
+   ❯ D10 operation-scoped filesystem ownership (9)
+     × classifies every production callsite exactly once and keeps no stale entry 2944ms
+     × fails when a host-runtime read is injected into an already classified mixed file 1293ms
+     × fails when a path-generic wrapper is called from a new site in a classified file 1322ms
+     × fails when a previously omitted .tsx page or script root performs filesystem access 1279ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 20 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |unit| components/runs/__tests__/flow-run-center.test.ts > FlowRunCenter > defaults to the current node
+ FAIL  |unit| components/runs/__tests__/flow-run-center.test.ts > FlowRunCenter > renders node statuses as icons with a localized accessible name, not raw words
+ FAIL  |unit| components/runs/__tests__/flow-run-center.test.ts > FlowRunCenter > renders stored failure diagnostics through the result DTO
+ FAIL  |unit| components/runs/__tests__/flow-run-center.test.ts > FlowRunCenter > uses a localized explanation when the stored failure code is unknown
+ FAIL  |unit| components/runs/__tests__/flow-run-center.test.ts > FlowRunCenter > mounts the per-node agent transcript panel for the selected node
+ FAIL  |unit| components/runs/__tests__/flow-run-center.test.ts > FlowRunCenter > formats selected-node token totals with the selected locale
+ FAIL  |unit| components/runs/__tests__/flow-run-center.test.ts > FlowRunCenter > renders the per-attempt resolved prompt disclosure for the selected node
+ FAIL  |unit| components/runs/__tests__/flow-run-center.test.ts > FlowRunCenter > keeps the selected-node column shrink-safe for long agent event payloads
+ FAIL  |unit| components/runs/__tests__/flow-run-center.test.ts > FlowRunCenter > omits the prompt disclosure when no resolved prompt was captured
+ FAIL  |unit| components/runs/__tests__/flow-run-center.test.ts > FlowRunCenter > falls back when ?node= is invalid
+ FAIL  |unit| components/runs/__tests__/flow-run-center.test.ts > FlowRunCenter > renders compact result sections for the selected node
+Error: Failed to call `useTranslations` because the context from `NextIntlClientProvider` was not found.
+
+This can happen because:
+1) You intended to render this component as a Server Component, the render
+   failed, and therefore React attempted to render the component on the client
+   instead. If this is the case, check the console for server errors.
+2) You intended to render this component on the client side, but no context was found.
+   Learn more about this error here: https://next-intl.dev/docs/environments/server-client-components#missing-context
+ ❯ ../../../../Users/kaa/.codex/worktrees/2599/mAIster/node_modules/.pnpm/next-intl@4.14.9_@swc+helpers@0.5.23_@types+react@19.3.0_next@16.4.3_@babel+core@7.29.7_3afec0656beed5fc53d6921932fa29d6/node_modules/next-intl/dist/esm/development/react-client/index.js:20:13
+ ❯ RunTranscriptHistory components/runs/run-transcript-history.tsx:211:13
+    209|   labels?: TranscriptLabels;
+    210| }): ReactNode {
+    211|   const t = useTranslations("runPeek"),
+       |             ^
+    212|     runT = useTranslations("run");
+    213|   const stream = useRunPageStream(runId, live);
+ ❯ Object.react_stack_bottom_frame ../../../../Users/kaa/.codex/worktrees/2599/mAIster/node_modules/.pnpm/react-dom@19.3.1_react@19.3.1/node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:10371:18
+ ❯ renderWithHooks ../../../../Users/kaa/.codex/worktrees/2599/mAIster/node_modules/.pnpm/react-dom@19.3.1_react@19.3.1/node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:5361:19
+ ❯ renderElement ../../../../Users/kaa/.codex/worktrees/2599/mAIster/node_modules/.pnpm/react-dom@19.3.1_react@19.3.1/node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:5796:23
+ ❯ retryNode ../../../../Users/kaa/.codex/worktrees/2599/mAIster/node_modules/.pnpm/react-dom@19.3.1_react@19.3.1/node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:6783:21
+ ❯ renderNodeDestructive ../../../../Users/kaa/.codex/worktrees/2599/mAIster/node_modules/.pnpm/react-dom@19.3.1_react@19.3.1/node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:6717:11
+ ❯ renderNode ../../../../Users/kaa/.codex/worktrees/2599/mAIster/node_modules/.pnpm/react-dom@19.3.1_react@19.3.1/node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:7268:18
+ ❯ renderElement ../../../../Users/kaa/.codex/worktrees/2599/mAIster/node_modules/.pnpm/react-dom@19.3.1_react@19.3.1/node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:5917:18
+ ❯ retryNode ../../../../Users/kaa/.codex/worktrees/2599/mAIster/node_modules/.pnpm/react-dom@19.3.1_react@19.3.1/node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:6783:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/20]⎯
+
+ FAIL  |unit| lib/execution-host/__tests__/runtime-data-boundary-inventory.test.ts > D10 operation-scoped filesystem ownership > classifies every production callsite exactly once and keeps no stale entry
+AssertionError: expected [ …(2) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "scripts/generate-ask-human-json.ts:17 <module> → node:fs/promises.readFile (read)",
++   "scripts/generate-ask-human-json.ts:21 <module> → node:fs/promises.writeFile (write)",
++ ]
+
+ ❯ lib/execution-host/__tests__/runtime-data-boundary-inventory.test.ts:86:36
+     84|         .filter((key, index, all) => all.indexOf(key) !== index);
+     85|
+     86|       expect(unclassified(result)).toEqual([]);
+       |                                    ^
+     87|       expect(stale).toEqual([]);
+     88|       expect(duplicates).toEqual([]);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/20]⎯
+
+ FAIL  |unit| lib/execution-host/__tests__/runtime-data-boundary-inventory.test.ts > D10 operation-scoped filesystem ownership > fails when a host-runtime read is injected into an already classified mixed file
+AssertionError: expected [ …(3) ] to deeply equal [ Array(1) ]
+
+- Expected
++ Received
+
+  [
+    "lib/services/hitl.ts:7068 peekHostState → node:fs/promises.readFile (read)",
++   "scripts/generate-ask-human-json.ts:17 <module> → node:fs/promises.readFile (read)",
++   "scripts/generate-ask-human-json.ts:21 <module> → node:fs/promises.writeFile (write)",
+  ]
+
+ ❯ lib/execution-host/__tests__/runtime-data-boundary-inventory.test.ts:203:36
+    201|       const result = scan(new Map([[source, injected]]));
+    202|
+    203|       expect(unclassified(result)).toEqual([
+       |                                    ^
+    204|         `${source}:${line} peekHostState → node:fs/promises.readFile (…
+    205|       ]);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/20]⎯
+
+ FAIL  |unit| lib/execution-host/__tests__/runtime-data-boundary-inventory.test.ts > D10 operation-scoped filesystem ownership > fails when a path-generic wrapper is called from a new site in a classified file
+AssertionError: expected [ …(3) ] to deeply equal [ Array(1) ]
+
+- Expected
++ Received
+
+  [
+    "lib/services/hitl.ts:7067 mirrorIntoHostRoot → lib/atomic.ts#atomicWriteJson (wrapper)",
++   "scripts/generate-ask-human-json.ts:17 <module> → node:fs/promises.readFile (read)",
++   "scripts/generate-ask-human-json.ts:21 <module> → node:fs/promises.writeFile (write)",
+  ]
+
+ ❯ lib/execution-host/__tests__/runtime-data-boundary-inventory.test.ts:223:36
+    221|       const result = scan(new Map([[source, injected]]));
+    222|
+    223|       expect(unclassified(result)).toEqual([
+       |                                    ^
+    224|         `${source}:${line} mirrorIntoHostRoot → lib/atomic.ts#atomicWr…
+    225|       ]);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/20]⎯
+
+ FAIL  |unit| lib/execution-host/__tests__/runtime-data-boundary-inventory.test.ts > D10 operation-scoped filesystem ownership > fails when a previously omitted .tsx page or script root performs filesystem access
+AssertionError: expected [ …(4) ] to deeply equal [ …(2) ]
+
+- Expected
++ Received
+
+  [
+    "components/board/host-log-preview.tsx:3 HostLogPreview → node:fs.readFileSync (read)",
+    "scripts/dump-host-state.mjs:2 <module> → node:fs.readFileSync (read)",
++   "scripts/generate-ask-human-json.ts:17 <module> → node:fs/promises.readFile (read)",
++   "scripts/generate-ask-human-json.ts:21 <module> → node:fs/promises.writeFile (write)",
+  ]
+
+ ❯ lib/execution-host/__tests__/runtime-data-boundary-inventory.test.ts:252:36
+    250|       );
+    251|
+    252|       expect(unclassified(result)).toEqual([
+       |                                    ^
+    253|         `${page}:3 HostLogPreview → node:fs.readFileSync (read)`,
+    254|         `${script}:2 <module> → node:fs.readFileSync (read)`,
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/20]⎯
+
+ FAIL  |unit| app/api/scratch-runs/[runId]/messages/__tests__/route.test.ts > POST /api/scratch-runs/[runId]/messages > appends the next user message and sends a supervisor prompt
+Error: [vitest] No "configuredEventStreamLagAgeMs" export is defined on the "@/lib/instance-config" mock. Did you forget to return it from "vi.mock"?
+If you need to partially mock a module, you can use "importOriginal" helper inside:
+
+vi.mock(import("@/lib/instance-config"), async (importOriginal) => {
+  const actual = await importOriginal()
+  return {
+    ...actual,
+    // your mocked methods
+  }
+})
+
+ ❯ defaultTransport lib/execution-host/default-transport.ts:16:44
+     14|   return (
+     15|     override ??
+     16|     createLocalDirectTransport({ lagAgeMs: configuredEventStreamLagAge…
+       |                                            ^
+     17|   );
+     18| }
+ ❯ createExecutionHosts lib/execution-host/client.ts:328:39
+ ❯ lib/execution-host/client.ts:1230:41
+ ❯ lib/agents/execution-quiescence.ts:15:1
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/20]⎯
+
+ FAIL  |unit| app/api/scratch-runs/[runId]/messages/__tests__/route.test.ts > POST /api/scratch-runs/[runId]/messages > accepts multipart messages with mixed metadata and uploaded files
+ FAIL  |unit| app/api/scratch-runs/[runId]/messages/__tests__/route.test.ts > POST /api/scratch-runs/[runId]/messages > accepts while running and reports delivery
+ FAIL  |unit| app/api/scratch-runs/[runId]/messages/__tests__/route.test.ts > POST /api/scratch-runs/[runId]/messages > still refuses a dialog blocked on a permission
+ FAIL  |unit| app/api/scratch-runs/[runId]/messages/__tests__/route.test.ts > POST /api/scratch-runs/[runId]/messages > leaves the dialog retryable when supervisor prompt delivery fails
+Error: [vitest] No "configuredEventStreamLagAgeMs" export is defined on the "@/lib/instance-config" mock. Did you forget to return it from "vi.mock"?
+If you need to partially mock a module, you can use "importOriginal" helper inside:
+
+vi.mock(import("@/lib/instance-config"), async (importOriginal) => {
+  const actual = await importOriginal()
+  return {
+    ...actual,
+    // your mocked methods
+  }
+})
+
+ ❯ defaultTransport lib/execution-host/default-transport.ts:16:44
+     14|   return (
+     15|     override ??
+     16|     createLocalDirectTransport({ lagAgeMs: configuredEventStreamLagAge…
+       |                                            ^
+     17|   );
+     18| }
+ ❯ createExecutionHosts lib/execution-host/client.ts:328:39
+ ❯ lib/execution-host/client.ts:1230:41
+ ❯ lib/agents/execution-quiescence.ts:15:1
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/20]⎯
+
+
+ Test Files  3 failed | 1 passed (4)
+      Tests  20 failed | 10 passed (30)
+   Start at  06:20:24
+   Duration  7.13s (tests 90%, import 5%, transform 5%, setup 1%)

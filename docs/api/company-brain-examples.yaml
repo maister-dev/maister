@@ -379,3 +379,20 @@ cases:
       witnessIds: []
       reason: "invalid\0reason"
       idempotencyKey: invalid_confirmation_001
+
+  - id: revision-conflict-may-carry-current-revision-without-a-reason-code
+    surfaces: [web, external]
+    schema: CBError
+    valid: true
+    value:
+      code: CONFLICT
+      message: The policy revision is stale.
+      details: { currentRevision: 2 }
+  - id: an-optional-error-diagnostic-object-must-not-be-empty
+    surfaces: [web, external]
+    schema: CBError
+    valid: false
+    value:
+      code: CONFLICT
+      message: The policy revision is stale.
+      details: {}

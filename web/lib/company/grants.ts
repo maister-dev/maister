@@ -32,7 +32,7 @@ const log = pino({
 });
 const cursorNamespace = "maister.company-grants.v1";
 
-async function authorizeAdministrator(
+export async function authorizeCompanyAdministrator(
   tx: SqlTransaction,
   userId: string,
 ): Promise<void> {
@@ -82,7 +82,7 @@ async function beginPolicyTransaction(
 ): Promise<string> {
   await tx.execute(sql`SET LOCAL statement_timeout='10s'`);
   await tx.execute(sql`SET LOCAL lock_timeout='5s'`);
-  await authorizeAdministrator(tx, administratorId);
+  await authorizeCompanyAdministrator(tx, administratorId);
 
   return installationCompany(tx);
 }

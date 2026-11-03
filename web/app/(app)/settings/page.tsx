@@ -64,6 +64,17 @@ export default async function SettingsPage(): Promise<ReactElement> {
       {isAdmin ? (
         <>
           <a
+            className="mb-5 block rounded-[16px] border border-line bg-paper px-7 py-5 hover:border-mute"
+            href="/settings/company-grants"
+          >
+            <span className="block text-[14px] font-semibold text-ink">
+              {t("companyAccessTitle")}
+            </span>
+            <span className="mt-1 block text-[12.5px] text-mute">
+              {t("companyAccessSub")}
+            </span>
+          </a>
+          <a
             className="mb-5 flex items-center justify-between gap-3 rounded-[16px] border border-line bg-paper px-7 py-5 shadow-[0_1px_0_color-mix(in_oklab,var(--paper)_60%,transparent)_inset,0_12px_32px_-16px_rgba(0,0,0,0.12)] hover:border-mute"
             href="/settings/evaluations"
           >

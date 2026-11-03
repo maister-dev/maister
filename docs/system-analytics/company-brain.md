@@ -2,7 +2,7 @@
 
 ## Purpose
 
-**Partially implemented — ADR-202.** Storage, internal review/confirmation policy, native session/bearer read APIs and the built MCP read/capture facade are implemented locally. Session/bearer proposal inspection, publication decisions, evidence-bound confirmation and session-only company grant administration are implemented locally. Review UI, launch-wide capture inheritance and installable-package/pilot qualification remain pending. Structured company/project knowledge extends Project Brain. This domain owns record identity, publication and confirmation; [evidence](company-brain-evidence.md) owns source witnesses. Personal librarian and private agent memory are separate stores.
+**Partially implemented — ADR-202.** Storage, internal review/confirmation policy, native session/bearer read APIs and the built MCP read/capture facade are implemented locally. Session/bearer proposal inspection, publication decisions, evidence-bound confirmation and session-only company grant administration are implemented locally. The minimum EN/RU native knowledge/review and company-access UI is implemented locally. Launch-wide capture inheritance and installable-package/pilot qualification remain pending. Structured company/project knowledge extends Project Brain. This domain owns record identity, publication and confirmation; [evidence](company-brain-evidence.md) owns source witnesses. Personal librarian and private agent memory are separate stores.
 
 ## Domain entities
 
@@ -153,3 +153,63 @@ Native proposal inputs freeze additional source restrictions from the agent's en
 An active installation administrator can list, create and revoke explicit company grants without creating a project or manually editing SQL. Administration grants no implicit content access; the administrator must explicitly grant their own required knowledge actions. Model credentials cannot administer grants. Creation accepts existing user/agent identities and distinct actions; agent confirmation requires explicit assertion classes. Company/principal policy publication is serialized across administrators. A competing live grant returns an actionable conflict. Creation replay returns its original rows even after revocation, without restoring authority. Revocation requires the exact revision, nonblank reason and a content-guarded delivery key; revoked authority and its receipts are immutable. Restoring authority requires an intentional new grant and delivery key. Every request rechecks the current administrator account and role. List pages are bounded to 128 KiB; the bounded create receipt contains at most 20 original grant rows.
 
 A new factual confirmation requires an available captured witness with matching retained bytes and current source version. Stale, missing or unknown source support can remain inspectable but cannot establish a new confirmation. Replay of a previously accepted decision remains historical and inert, subject to current authority. A correction creates a new unconfirmed revision. Failure before publication commit leaves the proposal pending and emits no accepted-change event.
+
+## Native human interface (Implemented locally)
+
+The Knowledge rail entry opens `/knowledge`; the existing project Brain tab links
+to its owner-filtered native record list. Company access has a dedicated
+administrator settings entry. Server rendering uses native read services and the
+same current owner-policy predicates for available choices. Lists keep filters
+and signed continuation in the URL. A missing/concealed reference has a localized
+unavailable view; unrelated failures reach the shared route error boundary.
+
+Record details keep assertion basis, factual confirmation, freshness, applicability,
+visibility and lifecycle as separate labeled fields. Proposal publication links
+to the exact accepted revision; a separate current-record link precedes new
+confirmation work. Capture and correction forms preserve source bytes/references,
+server attribution and exact base revision. Already-shortened legacy assertions
+cannot become silent partial corrections. Confirmation and company authority
+revocations use the shared busy-fenced portaled dialog. Uncertain retries in an
+unchanged form retain their delivery identity. EN/RU UI copy is separate from the
+original submitted assertion/source language. See the [screen contract](../screens/company-brain.md)
+and [public guide](../../site-docs/guides/company-brain.md) for interaction details.
+
+`E2E-CBU-01` drives the actual session/browser/native PostgreSQL path through
+administrator grant bootstrap without a new project, captured evidence, proposal
+review, independent confirmation, exact-revision correction/history, Russian
+controls, confirmation revocation and current access revocation. Its fixture
+supervisor does not qualify installed agents, ACP cooperation or the stand pilot.
+
+### Native write admission and transport refusals
+
+Native create/review/confirmation transactions take the consumer run lock first,
+then the installation-wide transaction advisory write lock before any record or
+proposal/source locks. Cross-company/project source dependencies may cycle;
+serializing these bounded writes prevents record-lock inversion. The existing
+expiry sweep takes the same lock in its atomic update statement before changing
+any record, so it cannot invert record locks against a source-linked correction.
+Read-only
+transactions keep their existing shared record/source locks and can read
+unrelated knowledge concurrently. The five-second write-admission lock limit
+returns `409 CONFLICT` with `reason: knowledge_write_busy`; no delivery receipt
+is consumed, so the unchanged delivery can be retried. Other database errors
+remain explicit failures. This guard adds no scheduler or attempt ledger.
+
+Session validation failures use 400; the external token surface preserves its
+established 422 validation convention. Missing and inaccessible native references
+share 404. Other precondition/conflict failures use 409. Error details may carry
+a refusal reason, a current revision, or both; empty details are invalid.
+
+Review pages select and lock bounded proposal metadata and evidence-owner/source
+restrictions in one SQL projection. They do not repeat the full detail/witness
+inspection for each summary. The transaction shares one deduplicated source
+access walk across the page and retains exact/current publication restrictions.
+The review-pagination integration case compares real query submissions for one
+and many same-owner unsupported proposals; source authority still filters rows
+before `LIMIT`, and page bytes and continuation revocation stay enforced.
+
+A review page stops at its last fully authorized item when the next item's
+combined source closure would exceed the page resolution budget. Its signed
+continuation starts with that unserved item; a single item that cannot fit still
+returns an explicit budget refusal. The real-Postgres footprint case verifies
+this boundary independently of the response-byte limit.

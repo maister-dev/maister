@@ -35,7 +35,7 @@ import {
 import { inspectKnowledgeWitness } from "./knowledge-witnesses";
 import {
   additionalKnowledgeRestrictions,
-  lockKnowledgeReadConsumer,
+  lockKnowledgeWriteConsumer,
 } from "./knowledge-disclosure";
 import {
   authorizeKnowledgeRecordRead,
@@ -314,7 +314,7 @@ export async function createKnowledgeProposal(
     return await db.transaction(async (tx) => {
       await tx.execute(sql`SET LOCAL statement_timeout='10s'`);
       await tx.execute(sql`SET LOCAL lock_timeout='5s'`);
-      const consumer = await lockKnowledgeReadConsumer(tx, input.principal);
+      const consumer = await lockKnowledgeWriteConsumer(tx, input.principal);
       const authority = await authorizeKnowledge(
         tx,
         input.principal,
@@ -673,7 +673,7 @@ export async function reviewKnowledgeProposal(
     return await db.transaction(async (tx) => {
       await tx.execute(sql`SET LOCAL statement_timeout='10s'`);
       await tx.execute(sql`SET LOCAL lock_timeout='5s'`);
-      await lockKnowledgeReadConsumer(tx, input.principal);
+      await lockKnowledgeWriteConsumer(tx, input.principal);
       const proposal = await nativeProposal(tx, input.proposalId);
       const owner = knowledgeOwner(proposal);
       const authority = await authorizeKnowledge(
@@ -829,7 +829,7 @@ export async function confirmKnowledgeRecord(
     return await db.transaction(async (tx) => {
       await tx.execute(sql`SET LOCAL statement_timeout='10s'`);
       await tx.execute(sql`SET LOCAL lock_timeout='5s'`);
-      await lockKnowledgeReadConsumer(tx, input.principal);
+      await lockKnowledgeWriteConsumer(tx, input.principal);
       const current = await recordAccess(
         tx,
         input.principal,
