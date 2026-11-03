@@ -392,3 +392,22 @@ capture. The input snapshot does not grant access; current source/role checks
 still precede dispatch and outward inspection. It cannot enter shared task DTOs,
 activity or board search. This contract does not add a Brain prerequisite to
 cancellation, teardown or project deletion.
+
+### Attention and gate chat
+
+Portfolio attention summaries/counts and project activity HITL text use the same
+current source policy as Inbox. Source-denied native questions are excluded;
+unrelated legacy attention stays visible. The project page passes its actual
+session recipient. A missing recipient never admits native prompt content.
+Current source permission is rechecked before returning the assembled view.
+Server-defined status, node identity, timestamps, branch and bounded numeric
+progress remain control metadata; cross-project activity selects only its
+explicit scalar whitelist and never arbitrary event/webhook bodies.
+
+Gate-chat HTTP reads check project HITL authority and native sources before and
+after loading retained messages. Sending checks current human source access
+before a turn can be admitted; execution also rechecks the actual native role's
+current sources before admission and prompt dispatch. Revocation during a wait
+cannot authorize another prompt or response disclosure. Existing turn leases,
+prompt owners, workspace recovery and failure settlement remain authoritative.
+The guards do not add a source-read requirement to cleanup or deletion.

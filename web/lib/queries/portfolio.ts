@@ -492,6 +492,7 @@ export async function getPortfolio(
         projectId: assignments.projectId,
         runId: runs.id,
         prompt: assignments.title,
+        nativeKnowledge: sql<boolean>`${runs.knowledgeAccess} IS NOT NULL OR ${runs.resultContract}->>'nativeContract'='evidence_findings_v1'`,
         capabilityAgent: activeSessionCapabilityAgent(runs.id),
         runnerSnapshot: activeSessionRunnerSnapshot(runs.id),
         branch: workspaces.branch,
@@ -517,6 +518,7 @@ export async function getPortfolio(
         runId: runs.id,
         kind: hitlRequests.kind,
         prompt: hitlRequests.prompt,
+        nativeKnowledge: sql<boolean>`${runs.knowledgeAccess} IS NOT NULL OR ${runs.resultContract}->>'nativeContract'='evidence_findings_v1'`,
         storedResponse: hitlRequests.response,
         capabilityAgent: activeSessionCapabilityAgent(runs.id),
         runnerSnapshot: activeSessionRunnerSnapshot(runs.id),
@@ -721,13 +723,21 @@ export async function getPortfolio(
   const needCountByProject = new Map<string, number>();
   const firstNeedByProject = new Map<string, PortfolioNeed>();
   const assignmentNeedRunIds = new Set(needRows.map((row) => row.runId));
+  const recipient = { kind: "user" as const, userId };
+  const readableNeeds = await readableKnowledgeRunIds(
+    client,
+    recipient,
+    [...needRows, ...legacyNeedRows]
+      .filter((row) => row.nativeKnowledge)
+      .map((row) => row.runId),
+  );
   const effectiveNeedRows = [
     ...needRows,
     ...legacyNeedRows.filter(
       (row) =>
         !assignmentNeedRunIds.has(row.runId) && isInboxVisibleHitlRow(row),
     ),
-  ];
+  ].filter((row) => !row.nativeKnowledge || readableNeeds.has(row.runId));
 
   for (const row of effectiveNeedRows) {
     // Project-scoped query (inArray projectIds) ⇒ non-null; defensive narrow.
@@ -804,6 +814,14 @@ export async function getPortfolio(
       },
     };
   });
+
+  await assertRunsKnowledgeDisclosure(
+    client,
+    recipient,
+    effectiveNeedRows
+      .filter((row) => row.nativeKnowledge)
+      .map((row) => row.runId),
+  );
 
   return {
     onboarding: derivePortfolioOnboarding({

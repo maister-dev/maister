@@ -2,8 +2,9 @@ import "server-only";
 
 import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import type { KnowledgeRecipient } from "@/lib/brain/knowledge-run-disclosure";
 
-import { desc, eq, inArray } from "drizzle-orm";
+import { desc, eq, inArray, sql } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
@@ -12,6 +13,10 @@ import {
   activeSessionRunnerSnapshot,
 } from "@/lib/runs/active-run-session";
 import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
+import {
+  readableKnowledgeRunIds,
+  assertRunsKnowledgeDisclosure,
+} from "@/lib/brain/knowledge-run-disclosure";
 
 const { hitlRequests, nodeAttempts, runs, workspaces } = schema;
 
@@ -53,6 +58,7 @@ function relativeTime(from: Date, now: Date): string {
 
 export async function getActivityFeed(
   projectId: string,
+  options: Readonly<{ recipient?: KnowledgeRecipient }> = {},
 ): Promise<ActivityEvent[]> {
   const now = new Date();
   const client = db();
@@ -76,6 +82,7 @@ export async function getActivityFeed(
 
   const events: ActivityEvent[] = [];
   const runIds = runRows.map((r) => r.runId);
+  const disclosedNativeIds = new Set<string>();
 
   for (const row of runRows) {
     const at = row.endedAt ?? row.startedAt;
@@ -140,6 +147,7 @@ export async function getActivityFeed(
         id: hitlRequests.id,
         kind: hitlRequests.kind,
         prompt: hitlRequests.prompt,
+        nativeKnowledge: sql<boolean>`${runs.knowledgeAccess} IS NOT NULL OR ${runs.resultContract}->>'nativeContract'='evidence_findings_v1'`,
         respondedAt: hitlRequests.respondedAt,
         createdAt: hitlRequests.createdAt,
         branch: workspaces.branch,
@@ -154,7 +162,15 @@ export async function getActivityFeed(
       .orderBy(desc(hitlRequests.createdAt))
       .limit(FEED_LIMIT);
 
+    const readable = await readableKnowledgeRunIds(
+      client,
+      options.recipient,
+      hitlRows.filter((row) => row.nativeKnowledge).map((row) => row.runId),
+    );
+
     for (const hitl of hitlRows) {
+      if (hitl.nativeKnowledge && !readable.has(hitl.runId)) continue;
+      if (hitl.nativeKnowledge) disclosedNativeIds.add(hitl.runId);
       const at = hitl.respondedAt ?? hitl.createdAt;
       const agent = runnerAgentFromFields({
         capabilityAgent: hitl.capabilityAgent,
@@ -175,6 +191,11 @@ export async function getActivityFeed(
       });
     }
   }
+
+  if (options.recipient)
+    await assertRunsKnowledgeDisclosure(client, options.recipient, [
+      ...disclosedNativeIds,
+    ]);
 
   return events
     .sort((a, b) => b.at.getTime() - a.at.getTime())

@@ -534,7 +534,11 @@ export default async function ProjectBoardPage({
 
       {tab === "activity" ? (
         <>
-          <ActivityPanel events={await getActivityFeed(project.id)} />
+          <ActivityPanel
+            events={await getActivityFeed(project.id, {
+              recipient: { kind: "user", userId: user.id },
+            })}
+          />
           {activityLog ? (
             <TaskActivityLog
               filters={logFilters}

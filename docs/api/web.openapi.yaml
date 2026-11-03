@@ -8517,6 +8517,9 @@ paths:
       tags: [hitl]
       summary: (M30 — Implemented, ADR-078) List gate-chat messages for a HITL pause
       description: |
+        Native execution source access is checked for the current session user
+        before and after transcript assembly. Unavailable/revoked source content
+        returns 409 without retained message bodies.
         Requires project membership at `member` or above
         (`requireProjectAction("answerHitl")`). Returns the ordered
         `gate_chat_messages` for this pause plus the DD2 `available` flag.
@@ -8568,10 +8571,16 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
     post:
       tags: [hitl]
       summary: (M30 — Implemented, ADR-078) Send an answer-only gate-chat turn
       description: |
+        Native turns require current human source access before admission and
+        response delivery, plus the actual execution role's current source access
+        before turn admission and prompt dispatch. Source refusal returns 409;
+        role/recipient authority refusal returns 403. Historical NULL capture
+        retains its existing behavior.
         Requires project membership at `member` or above
         (`requireProjectAction("answerHitl")`). Sends an answer-only question to
         the parked agent at a `human`/`form` pause and waits for the reply: the

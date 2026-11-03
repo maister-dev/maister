@@ -9,9 +9,13 @@ import { getKnowledgeRecord } from "@/lib/brain/knowledge-records";
 import { createCompanyGrants, revokeCompanyGrant } from "@/lib/company/grants";
 import { hitlRequests } from "@/lib/db/schema";
 import { getHitlInbox } from "@/lib/queries/hitl";
-import { getCrossProjectHitlInbox } from "@/lib/queries/portfolio";
+import {
+  getCrossProjectHitlInbox,
+  getPortfolio,
+} from "@/lib/queries/portfolio";
+import { getActivityFeed } from "@/lib/queries/activity";
 import { issueUserAccessToken } from "@/lib/tokens/issue";
-import { seedRun } from "@/test-support/execution-host-seed";
+import { seedRun, seedWorkspace } from "@/test-support/execution-host-seed";
 import { buildAgentProfileContract } from "@/lib/run-results/contract";
 import { seedNativeFindingsExecution } from "@/test-support/native-findings-seed";
 import { startMainAndBrainPostgresTestDb } from "@/test-support/pg-container";
@@ -29,7 +33,13 @@ afterAll(async () => {
   await database?.stop();
 });
 
-it.each(["project", "cross-project", "external"] as const)(
+it.each([
+  "project",
+  "cross-project",
+  "external",
+  "portfolio",
+  "activity",
+] as const)(
   "IT-CBE-06 %s HITL includes only currently authorized source content",
   async (surface) => {
     const contract = buildAgentProfileContract({
@@ -82,8 +92,17 @@ it.each(["project", "cross-project", "external"] as const)(
       stepId: "review",
       kind: "human",
       prompt: "Independent project review",
+      createdAt: new Date(Date.now() - 60000),
       schema: { review: true },
     });
+    for (const runId of [source.runId, legacyRunId]) {
+      await seedWorkspace(database.db, {
+        runId,
+        projectId: source.projectId,
+        worktreePath: `/tmp/native-attention-${runId}`,
+        parentRepoPath: `/tmp/native-attention-${source.projectId}`,
+      });
+    }
     const token = await issueUserAccessToken(
       {
         ownerUserId: userId,
@@ -93,6 +112,26 @@ it.each(["project", "cross-project", "external"] as const)(
       database.db,
     );
     const read = async (): Promise<unknown> => {
+      if (surface === "portfolio") {
+        const portfolio = await getPortfolio(userId, "member");
+
+        return {
+          ...portfolio,
+          count: portfolio.projects.find(
+            (project) => project.id === source.projectId,
+          )!.pendingHitlCount,
+        };
+      }
+      if (surface === "activity") {
+        const events = await getActivityFeed(source.projectId, {
+          recipient: { kind: "user", userId },
+        });
+
+        return {
+          events,
+          count: events.filter((event) => event.id.startsWith("hitl-")).length,
+        };
+      }
       if (surface === "project")
         return getHitlInbox(source.projectId, {
           db: database.db,

@@ -10,6 +10,9 @@ import pino from "pino";
 
 import { runnerSupervisorInput } from "@/lib/acp-runners/spawn-intent";
 import { getDb } from "@/lib/db/client";
+import { assertRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
+import { assertNativeRunKnowledgeInputs } from "@/lib/brain/knowledge-execution-access";
+import { usesStructuredKnowledgeContext } from "@/lib/run-results/contract";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import {
@@ -787,6 +790,21 @@ export async function sendGateChatTurn(args: {
       `hitl request ${args.hitlRequestId} not found for run ${args.runId}`,
     );
   }
+  const nativeContext = usesStructuredKnowledgeContext(baseRun);
+
+  if (nativeContext) {
+    if (!args.actorUserId)
+      throw new MaisterError(
+        "UNAUTHORIZED",
+        "Native gate chat requires its current human recipient",
+      );
+    await assertRunKnowledgeDisclosure(
+      d,
+      { kind: "user", userId: args.actorUserId },
+      args.runId,
+    );
+    await assertNativeRunKnowledgeInputs(d, args.runId);
+  }
 
   const availability = gateChatAvailability({
     runStatus: run.status,
@@ -1231,6 +1249,14 @@ async function driveGateChatTurn(
   let promptResult: PromptResult | null;
 
   try {
+    if (nativeContext) {
+      await assertRunKnowledgeDisclosure(
+        d,
+        { kind: "user", userId: args.actorUserId! },
+        args.runId,
+      );
+      await assertNativeRunKnowledgeInputs(d, args.runId);
+    }
     const handle = await client.prompt(
       supervisorSessionId,
       {

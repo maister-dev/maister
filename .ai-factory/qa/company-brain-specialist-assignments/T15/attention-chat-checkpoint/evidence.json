@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "task": "T15",
+  "baselineCommit": "a473b8902",
+  "status": "partial_checkpoint_qualified",
+  "engineVersion": "3.10.0",
+  "qualified": [
+    "Portfolio native attention counts/summaries and project Activity HITL text respect current source access. Denied native content is excluded while independent legacy attention survives grant and revocation.",
+    "The actual project Activity page passes its session recipient. Omitting the recipient cannot expose native HITL prose.",
+    "Gate-chat HTTP transcript reads/sends check current project and source authority before and after assembly. Native execution checks the actual role source policy before turn admission and again before prompt dispatch.",
+    "Real PostgreSQL checks show denied retained replies contain no private body and source-revoked execution admits no gate-chat turn. Existing gate-chat lease, prompt-owner and recovery integration cases pass."
+  ],
+  "tests": {
+    "owningIntegration": {
+      "passed": 97,
+      "files": 6
+    },
+    "fullWebUnit": {
+      "passed": 9261,
+      "files": 886
+    },
+    "typecheck": "passed",
+    "lint": "passed",
+    "contracts": "passed",
+    "docsAnd164TableErd": "passed"
+  },
+  "qualificationLimits": [
+    "The first unit invocation overlapped an interruption and reported timeout/worker errors plus nine route-contract mock failures. The exclusive retry cleared timing failures and exposed only the missing source-service transport mock; the final full suite passes without skips or timeout changes.",
+    "A fixture ordering error and a missing required revocation reason were corrected; neither is claimed as behavior RED.",
+    "Actual session authentication is supplied at the test seam; native policy, grants, reads and refused turn admission use real PostgreSQL. Existing peer/session recovery cases are regression fixtures, not installed-package/live ACP qualification.",
+    "Cross-project activity was audited as an explicit scalar/status whitelist; no arbitrary event/webhook body is selected.",
+    "Fresh completed typecheck exposed nullable task-ID inference in the prior atomic-carrier edit. Explicitly typing the existing transaction result restores narrowing. The prior checkpoint record is corrected instead of claiming its pre-edit check validated the final carrier code; this checkpoint retains the completed fresh green check."
+  ],
+  "pending": [
+    "Native shared workspace/runtime-file policy and authorized original-input inspection.",
+    "Publication/export/notification channels, further source/budget/concurrency/recovery qualification and full integration phase gate.",
+    "Native capability activation, installed companion/live ACP and stand-maintenance pilot."
+  ],
+  "logs": [
+    {
+      "path": "attention-projections-red.log.gz",
+      "uncompressedSha256": "3dc8f1455307655c7c0cbb226866175cd3355fef8ab4fc713e3bc38604455376"
+    },
+    {
+      "path": "gate-chat-disclosure-red.log.gz",
+      "uncompressedSha256": "382306a6c6d3aa52e4d6ef9ce792206ec951a5e6b9ffb551832e9485203ac947"
+    },
+    {
+      "path": "owning-integration-green.log.gz",
+      "uncompressedSha256": "b44fb30d8179cad60f17dbfe6eee605709bd64e88cf4a151220acb52761e98ad"
+    },
+    {
+      "path": "interrupted-unit-failures.log.gz",
+      "uncompressedSha256": "9f9f3cdb48c93c982b0254687d88526100f1ee9aa930a329ec29c62ffb7eebd1"
+    },
+    {
+      "path": "stale-route-mock-failure.log.gz",
+      "uncompressedSha256": "a5942dd64b1ad25573ab3d41477247c38cd2402dc1bcf4febfe46add85efce42"
+    },
+    {
+      "path": "full-web-unit-green.log.gz",
+      "uncompressedSha256": "bef8b5fdb3ff402abc305268e5f5ac24f361ca18ab56d477e6f9acb738d1f826"
+    },
+    {
+      "path": "typecheck-green.log.gz",
+      "uncompressedSha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+    },
+    {
+      "path": "contracts-green.log.gz",
+      "uncompressedSha256": "c2691163f71a909a8f045ade9ebc76bda1b36b13a13f846dbcfa8d728755feb6"
+    },
+    {
+      "path": "docs-green.log.gz",
+      "uncompressedSha256": "7b193b7f558b52ce79fc4e014031799067f6bc6ca5da237a973398e5c1c1f7f8"
+    },
+    {
+      "path": "lint-green.log.gz",
+      "uncompressedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ]
+}
