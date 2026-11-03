@@ -2,7 +2,7 @@
 //
 // Real Postgres (the predicate, the partial index and the budget arithmetic are
 // not faithfully mockable), with the three seams the arm actually consults
-// injected: `listSessions` through the passed `executionHosts`, and the two
+// injected: `listSessionsForRun` through the passed `executionHosts`, and the two
 // dispatchers `driveResume` / `runFlow` as module mocks. That is the same shape
 // `reconcile-sweep.integration.test.ts` uses for the sweep, and it is the level
 // this arm lives at — the production-boot suite proves the workers START; this
@@ -12,7 +12,10 @@
 // `reattach` route and must never reach `driveResume`, whose
 // `closeCrashedNodeAttempts` would close an attempt the session is still
 // producing so the re-prompt double-spends the turn.
-import type { SupervisorSessionRecord } from "@/lib/execution-host";
+import type {
+  HostAdminClient,
+  SupervisorSessionRecord,
+} from "@/lib/execution-host";
 
 import { randomUUID } from "node:crypto";
 
@@ -79,15 +82,16 @@ let hostId = "";
 let liveSessions: SupervisorSessionRecord[] = [];
 let listSessionsThrows = false;
 
-const executionHosts = {
-  local: () => ({
-    listSessions: async (): Promise<SupervisorSessionRecord[]> => {
-      if (listSessionsThrows)
-        throw new Error("supervisor unavailable (network): fetch failed");
+const listSessionsForRun = vi.fn<HostAdminClient["listSessionsForRun"]>(
+  async (runId) => {
+    if (listSessionsThrows)
+      throw new Error("supervisor unavailable (network): fetch failed");
 
-      return liveSessions;
-    },
-  }),
+    return liveSessions.filter((session) => session.runId === runId);
+  },
+);
+const executionHosts = {
+  local: () => ({ listSessionsForRun }),
 } as never;
 
 beforeAll(async () => {
@@ -168,18 +172,13 @@ function driveResumeDouble(state: string) {
  * double that leaves the marker set keeps the run a candidate forever and the
  * worker re-dispatches it on every wake.
  */
-let crashResumeWinners = 0;
-
 async function runFlowDouble(runId: string) {
-  const claimed = await db
+  await db
     .update(schema.runs)
     .set({ resumeStartedAt: null })
     .where(
       and(eq(schema.runs.id, runId), isNotNull(schema.runs.resumeStartedAt)),
-    )
-    .returning({ id: schema.runs.id });
-
-  if (claimed.length > 0) crashResumeWinners += 1;
+    );
 }
 
 // The worker serves on `projectionLimitsFromEnv().concurrency` slots (2), each
@@ -194,7 +193,6 @@ beforeEach(async () => {
   driveResumeMock.mockReset().mockImplementation(driveResumeDouble("resumed"));
   runFlowMock.mockReset().mockImplementation(runFlowDouble);
   logLines.length = 0;
-  crashResumeWinners = 0;
   liveSessions = [];
   listSessionsThrows = false;
   await db.delete(schema.nodeAttempts);
@@ -347,6 +345,10 @@ describe("flow continuation worker — crash-recover arm (ADR-176)", () => {
     expect(driveResumeMock.mock.calls.length).toBeLessThanOrEqual(SLOTS);
     for (const call of driveResumeMock.mock.calls) expect(call[0]).toBe(runId);
     expect(runFlowMock.mock.calls.length).toBe(0);
+    expect(listSessionsForRun).toHaveBeenCalledWith(runId);
+    expect(listSessionsForRun.mock.calls.every(([id]) => id === runId)).toBe(
+      true,
+    );
     const lines = reentryLines();
 
     // Authorship: the worker's own id, not the sweep's `reconcile:` line.
@@ -384,6 +386,10 @@ describe("flow continuation worker — crash-recover arm (ADR-176)", () => {
     expect(runFlowMock.mock.calls.length).toBeGreaterThanOrEqual(1);
     expect(runFlowMock.mock.calls.length).toBeLessThanOrEqual(SLOTS);
     expect(runFlowMock.mock.calls[0][0]).toBe(runId);
+    expect(listSessionsForRun).toHaveBeenCalledWith(runId);
+    expect(listSessionsForRun.mock.calls.every(([id]) => id === runId)).toBe(
+      true,
+    );
     expect(runFlowMock.mock.calls[0][1]).toMatchObject({
       crashResume: { targetStepId: "implement" },
     });
@@ -422,6 +428,9 @@ describe("flow continuation worker — crash-recover arm (ADR-176)", () => {
     );
 
     expect(warn?.payload.runId).toBe(runId);
+    expect(warn?.payload.reason).toBe(
+      "supervisor unavailable (network): fetch failed",
+    );
     // Yielded, not consumed: the run keeps its full budget for the sweep.
     expect((await runRow(runId)).attempts).toBe(0);
   }, 60_000);
@@ -551,53 +560,9 @@ describe("flow continuation worker — crash-recover arm (ADR-176)", () => {
     expect(driveResumeMock.mock.calls.length).toBeGreaterThanOrEqual(1);
   }, 60_000);
 
-  // D3/D4 — the two Scope-6 racers the worker adds. `claimFlowDriver`'s
-  // single-winner is already pinned by `driver-claim.integration.test.ts`; what
-  // is NEW here is that the crash-recover RE-ENTRY has its own CAS
-  // (`runner-graph.ts:2410` clears `resume_started_at`, the loser bails), and
-  // the worker is now a concurrent caller of it alongside the sweep's reattach
-  // arm and the scheduler's queued-recover promotion.
-  it.each([
-    ["D3: the reconcile sweep's reattach arm"],
-    ["D4: the scheduler's queued-recover promotion"],
-  ])(
-    "%s racing the worker yields exactly one crash-resume winner",
-    async () => {
-      const runId = await seedCrashRecoverRun();
-
-      liveSessions = [
-        {
-          runId,
-          sessionId: "sup-1",
-          acpSessionId: "acp-1",
-          stepId: "implement",
-          status: "live",
-        } as unknown as SupervisorSessionRecord,
-      ];
-
-      const { startFlowContinuationWorker } =
-        await import("../continuation-worker");
-      const worker = startFlowContinuationWorker({
-        db: db as never,
-        executionHosts,
-      });
-
-      try {
-        // The competing dispatcher enters the same re-entry concurrently — both
-        // it and the worker's two slots reach the marker CAS.
-        await Promise.all([
-          runFlowDouble(runId),
-          new Promise((r) => setTimeout(r, 3_000)),
-        ]);
-      } finally {
-        await worker.stop().catch(() => undefined);
-      }
-
-      expect(crashResumeWinners).toBe(1);
-      expect((await runRow(runId)).resumeStartedAt).toBeNull();
-    },
-    60_000,
-  );
+  // Actual reconcile and scheduler races are owned by their domain suites:
+  // reconcile-sweep.integration.test.ts D3 and recover.integration.test.ts D4.
+  // Both prove worker participation before the real driver claim is released.
 
   it("a run with no current step is not a candidate", async () => {
     await seedCrashRecoverRun({ currentStepId: null });

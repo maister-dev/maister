@@ -23,6 +23,9 @@
 //      crashed.
 
 import type { SupervisorSessionRecord } from "@/lib/execution-host";
+import type { Db } from "@/lib/execution-host/db";
+import type { FlowDriverClaim } from "@/lib/flows/graph/driver-claim";
+import type { RunFlowResumeOpts } from "@/lib/runs/recover";
 import type { WorktreeInfo } from "@/lib/worktree";
 
 import { randomUUID } from "node:crypto";
@@ -47,6 +50,11 @@ import {
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
 import { runReconcileSweep } from "@/lib/reconcile";
+import { startFlowContinuationWorker } from "@/lib/flows/graph/continuation-worker";
+import {
+  claimFlowDriver,
+  releaseFlowDriverClaim,
+} from "@/lib/flows/graph/driver-claim";
 import {
   createFakeExecutionHost,
   fakeExecutionHosts,
@@ -55,6 +63,12 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+
+const workerRunFlow = vi.hoisted(() =>
+  vi.fn<(runId: string, options?: RunFlowResumeOpts) => Promise<void>>(),
+);
+
+vi.mock("@/lib/flows/runner", () => ({ runFlow: workerRunFlow }));
 
 const schema = schemaModule as unknown as Record<string, any>;
 const {
@@ -204,6 +218,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  workerRunFlow.mockReset();
   await db.delete(nodeAttempts);
   await db.delete(workspaces);
   // Command evidence protects its run from deletion (D6), so a fixture reset
@@ -698,6 +713,101 @@ describe("runReconcileSweep (integration)", () => {
     // than left to a log grep, which is the whole point of the counter.
     expect(summary.runningIdleSession).toBeGreaterThanOrEqual(1);
     expect(summary.crashRecoverReentered).toBe(0);
+  }, 60_000);
+
+  it("D3: the actual reconcile reattach and continuation worker share one driver for a committed recover intent", async () => {
+    const runId = await seedRun({
+      status: "Running",
+      currentStepId: "implement",
+      acpSessionId: "acp-recover-race",
+      resumeStartedAt: new Date(Date.now() - 120_000),
+    });
+
+    await seedWorkspace(runId, `/worktrees/${runId}`);
+    const { opts, hosts } = await makeOpts({
+      worktreePaths: [`/worktrees/${runId}`],
+      liveSessions: [liveRecord(runId, "acp-recover-race")],
+    });
+    const { assignment } = await hosts.forRun(runId, {
+      reason: "recover",
+    });
+    const scopedProbe = vi.spyOn(hosts.local(), "listSessionsForRun");
+    const release = Promise.withResolvers<void>();
+    const arrivals = new Set<"worker" | "reconcile">();
+    const completed = new Set<"worker" | "reconcile">();
+    const claims: FlowDriverClaim[] = [];
+    const reconcileDispatches: Promise<void>[] = [];
+    const enter = async (
+      source: "worker" | "reconcile",
+      id: string,
+      options?: RunFlowResumeOpts,
+    ): Promise<void> => {
+      expect(id).toBe(runId);
+      expect(options).toMatchObject({
+        crashResume: { targetStepId: "implement" },
+      });
+      arrivals.add(source);
+      await release.promise;
+      const claim = await claimFlowDriver(db as unknown as Db, {
+        runId,
+        assignmentId: assignment.id,
+      });
+
+      if (claim) claims.push(claim);
+      completed.add(source);
+    };
+
+    workerRunFlow.mockImplementation((id, options) =>
+      enter("worker", id, options),
+    );
+    const worker = startFlowContinuationWorker({
+      db: db as unknown as Db,
+      executionHosts: hosts,
+    });
+
+    try {
+      const summary = await runReconcileSweep({
+        ...opts,
+        runFlow: (id, options) => {
+          const dispatched = enter("reconcile", id, options);
+
+          reconcileDispatches.push(dispatched);
+
+          return dispatched;
+        },
+      });
+
+      await expect
+        .poll(() => [...arrivals].sort(), { timeout: 15_000 })
+        .toEqual(["reconcile", "worker"]);
+      expect(summary.crashRecoverReentered).toBe(1);
+      expect(summary.reattached).toBe(1);
+      expect(scopedProbe).toHaveBeenCalledWith(runId);
+      expect(scopedProbe.mock.calls.every(([id]) => id === runId)).toBe(true);
+      expect(workerRunFlow).toHaveBeenCalledWith(
+        runId,
+        expect.objectContaining({
+          crashResume: { targetStepId: "implement" },
+        }),
+      );
+      release.resolve();
+      await expect
+        .poll(() => [...completed].sort(), { timeout: 15_000 })
+        .toEqual(["reconcile", "worker"]);
+      await worker.stop();
+      expect(claims).toHaveLength(1);
+      expect((await readRun(runId)).flowDriverToken).toBe(claims[0]!.token);
+    } finally {
+      release.resolve();
+      try {
+        await worker.stop();
+        await Promise.all(reconcileDispatches);
+        for (const claim of claims)
+          await releaseFlowDriverClaim(db as unknown as Db, claim);
+      } finally {
+        scopedProbe.mockRestore();
+      }
+    }
   }, 60_000);
 
   it("does NOT reattach/crash a live Running scratch dialog — leaves it Running, no resume driver", async () => {

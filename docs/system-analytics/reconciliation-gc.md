@@ -137,9 +137,11 @@ They preserve this domain's existing code-delivery behavior.
 - **Flow revision** — `flow_revisions` row. GC deletes rows whose
   `package_status='Removed'` once unreferenced and past age. See
   [`flow-packages.md`](flow-packages.md).
-- **Live session set** — supervisor `listSessions()` records keyed by
-  `acp_session_id` with `status: 'live' | 'exited' | 'crashed'`. The
-  reconcile classifier (`reconcile.ts`) matches this against each run's ACTIVE
+- **Live session set** — the supervisor's `listSessions()` supplies the sweep's
+  host census; `listSessionsForRun(runId)` supplies the authoritative ownership
+  inventory for each candidate. Records are keyed by `acp_session_id` with
+  `status: 'live' | 'exited' | 'crashed'`. The reconcile classifier
+  (`reconcile.ts`) matches this against each run's ACTIVE
   `run_sessions` `acp_session_id`, resolved via `loadActiveRunSessionsByRunId`
   (no longer a `runs.acp_session_id` column join).
 - **Worktree set** — `listWorktrees(projectRepoPath)` paths, joined against
@@ -427,8 +429,8 @@ Two things make the adoption safe, and both are ADR-176's decision:
   already-failing supervisor. Reset happens at every claim-marker write site, so
   each new intent starts from zero.
 
-Liveness is a probe, not a column: the worker calls the same
-`hosts.local().listSessions()` the sweep uses, but only for a candidate that has
+Liveness is a probe, not a column: the worker calls the same scoped
+`hosts.local().listSessionsForRun(runId)` the sweep uses, but only for a candidate that has
 already passed the SQL filter and the grace guard — a state that exists only
 after a web death. A throwing probe yields the candidate to the sweep and
 dispatches nothing.
@@ -439,6 +441,19 @@ the same head row and both dispatch — single-winner is `claimFlowDriver` insid
 failing round spends two attempts against the cap of five. The shared
 `crash_recover_next_retry_at` still removes the run from both slots' candidate
 sets until it expires, so the loop stays bounded and backed off.
+
+Concurrent recovery entry has separate integration owners. The `D3` case in
+`web/lib/__tests__/reconcile-sweep.integration.test.ts` drives the actual sweep's
+committed-marker reattach beside the worker. The `D4` case in
+`web/lib/runs/__tests__/recover.integration.test.ts` drives capped Recover through
+the actual scheduler promotion and `driveResume` beside the worker. Both hold
+their graph dispatch callbacks until each caller has arrived, then compete for
+the existing `claimFlowDriver` lease in real Postgres. The shared serializer's
+full contract belongs to `driver-claim.integration.test.ts`; the worker's routing,
+grace, probe refusal and budget belong to `crash-recover-continuation.integration.test.ts`.
+These controls cover manager domain entry and database serialization with
+injected graph dispatch, rather than native process-death or production-boot
+behavior. Those boundaries have their own [test infrastructure controls](test-infrastructure.md).
 
 **Recovery-window table (normative).** Every reachable cell names its owner. The
 worker's cells all additionally require `execution_assignments.state = 'active'`
